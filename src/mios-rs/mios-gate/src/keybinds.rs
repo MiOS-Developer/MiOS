@@ -849,7 +849,30 @@ const NAV_SETTINGS: &[&str] = &[
     "contexts",
     "repeat",
     "tmux_sockets",
+    "apps",
+    "app_poll_ms",
+    "app_query_timeout_ms",
 ];
+/// The base contexts a foreground app may refine (mios-inputd nav.rs APP_CONTEXTS).
+const APP_CONTEXTS: &[&str] = &["terminal", "console"];
+const APP_KEYS: &[&str] = &["exe", "user_exe", "camera", "contexts", "repeat"];
+/// An app's exe: absolute, no empty, `.` or `..` component (mios-inputd nav.rs exe_path_ok).
+fn app_path_ok(p: &str) -> bool {
+    p.len() <= 4096
+        && !p.chars().any(char::is_control)
+        && p.strip_prefix('/').is_some_and(|rest| {
+            rest.split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+        })
+}
+/// `[delay_ms, rate_ms]` within the bounds mios-inputd accepts (50..=5000, 16..=5000).
+fn repeat_ok(v: &Value) -> bool {
+    v.as_array().is_some_and(|a| {
+        a.len() == 2
+            && a[0].as_integer().is_some_and(|d| (50..=5000).contains(&d))
+            && a[1].as_integer().is_some_and(|r| (16..=5000).contains(&r))
+    })
+}
 /// Cursor mode (mios-inputd nav.rs CURSOR): a button toggles it. On the console the sticks drive the gpm pointer and
 /// the triggers select, so it is the one pointer: action a VT profile may use; no other pointer: action reaches a VT.
 const CURSOR: &str = "pointer:cursor";
@@ -1102,6 +1125,14 @@ pub fn controller_audit(
                 "controller.nav.repeat.{k}: needs a known input and [delay_ms, rate_ms] > 0"
             ));
         }
+        if k.starts_with("RS_") {
+            out.push(format!("controller.nav.repeat.{k}: right-stick flicks repeat only inside a camera app ([nav.apps.<name>].repeat)"));
+        }
+        if k == "TOGGLE_CHORD" {
+            out.push(format!(
+                "controller.nav.repeat.{k}: the toggle chord never repeats"
+            ));
+        }
     }
     if let Some(s) = nav.get("tmux_sockets") {
         // tmux -L names whose clients select the <profile>_tmux profile (mios-inputd nav.rs, the same rule).
@@ -1224,7 +1255,155 @@ pub fn controller_audit(
             }
         }
     }
+    app_audit(nav, &check_value, &mut out);
     out
+}
+
+/// mios-inputd's verified foreground-app layer (protocol P1/P2, nav.rs load_apps): `app_poll_ms` and
+/// `app_query_timeout_ms`, and each `[nav.apps.<name>]`. An app profile obeys the rules of the base context it
+/// refines, a camera app's stick rows are `key:` or `none`, and only a camera app has a repeat table, the one place a
+/// right-stick flick may repeat. mios-inputd drops an invalid app layer and keeps base navigation; the gate fails it.
+/// controller_audit's value check: (tag, input, value, console, findings).
+type CheckValue<'a> = dyn Fn(&str, &str, &Value, bool, &mut Vec<String>) + 'a;
+fn app_audit(nav: &toml::Table, check_value: &CheckValue, out: &mut Vec<String>) {
+    let ms = |k: &str, lo: i64, hi: i64, out: &mut Vec<String>| -> Option<i64> {
+        let v = nav.get(k)?;
+        let n = v.as_integer().filter(|n| (lo..=hi).contains(n));
+        if n.is_none() {
+            out.push(format!("controller.nav.{k}: an integer in {lo}..={hi} ms"));
+        }
+        n
+    };
+    let poll = ms("app_poll_ms", 50, 2000, out);
+    let query = ms("app_query_timeout_ms", 20, 1000, out);
+    if let (Some(p), Some(q)) = (poll, query) {
+        if q > p {
+            out.push("controller.nav.app_query_timeout_ms must not exceed app_poll_ms".into());
+        }
+    }
+    let Some(apps) = nav.get("apps") else {
+        return;
+    };
+    let Some(apps) = apps.as_table() else {
+        out.push("controller.nav.apps: must be a table of apps".into());
+        return;
+    };
+    if !apps.is_empty()
+        && !(nav.contains_key("app_poll_ms") && nav.contains_key("app_query_timeout_ms"))
+    {
+        out.push(
+            "controller.nav.apps needs controller.nav.app_poll_ms and app_query_timeout_ms".into(),
+        );
+    }
+    for (name, app) in apps {
+        let tag = format!("controller.nav.apps.{name}");
+        if name.is_empty()
+            || name.len() > 32
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        {
+            out.push(format!("{tag}: an app name is [a-z0-9_]{{1,32}}"));
+        }
+        let Some(app) = app.as_table() else {
+            out.push(format!("{tag}: must be a table"));
+            continue;
+        };
+        for k in app.keys().filter(|k| !APP_KEYS.contains(&k.as_str())) {
+            out.push(format!("{tag}.{k}: unknown key ({})", APP_KEYS.join(", ")));
+        }
+        for (key, min) in [("exe", 1usize), ("user_exe", 0)] {
+            match app.get(key) {
+                None if min == 0 => {}
+                Some(Value::Array(list))
+                    if (min..=8).contains(&list.len())
+                        && list.iter().all(|e| e.as_str().is_some_and(app_path_ok)) => {}
+                _ => out.push(format!("{tag}.{key}: {min} to 8 absolute paths without empty, . or .. components (never a basename)")),
+            }
+        }
+        let camera = app.get("camera").and_then(Value::as_bool);
+        if camera.is_none() {
+            out.push(format!("{tag}.camera: must be a boolean"));
+        }
+        match app.get("repeat") {
+            None => {}
+            Some(_) if camera != Some(true) => out.push(format!(
+                "{tag}.repeat: only a camera app (camera = true) has its own repeat table"
+            )),
+            Some(Value::Table(rows)) => {
+                for (input, v) in rows {
+                    if input == "TOGGLE_CHORD" {
+                        out.push(format!(
+                            "{tag}.repeat.{input}: the toggle chord never repeats"
+                        ));
+                    } else if !input_known(input) {
+                        out.push(format!(
+                            "{tag}.repeat.{input}: unknown controller input {input}"
+                        ));
+                    } else if !repeat_ok(v) {
+                        out.push(format!("{tag}.repeat.{input}: [delay_ms, rate_ms], delay 50..=5000 ms, rate 16..=5000 ms"));
+                    }
+                }
+            }
+            Some(_) => out.push(format!("{tag}.repeat: must be a table")),
+        }
+        let contexts = app.get("contexts").and_then(Value::as_table);
+        if contexts.is_none_or(toml::Table::is_empty) {
+            out.push(format!(
+                "{tag}.contexts: base context -> profile (terminal, console)"
+            ));
+        }
+        for (ctx, profile) in contexts.into_iter().flatten() {
+            if !APP_CONTEXTS.contains(&ctx.as_str()) {
+                out.push(format!(
+                    "{tag}.contexts.{ctx}: an app refines only the terminal or console context"
+                ));
+                continue;
+            }
+            let Some(profile) = profile.as_str() else {
+                out.push(format!("{tag}.contexts.{ctx}: must name a profile"));
+                continue;
+            };
+            let names: Vec<String> = if nav.contains_key(profile) {
+                vec![profile.to_string()]
+            } else if nav.contains_key(&format!("{profile}_tmux"))
+                && nav.contains_key(&format!("{profile}_plain"))
+            {
+                vec![format!("{profile}_tmux"), format!("{profile}_plain")]
+            } else {
+                out.push(format!("{tag}.contexts.{ctx}: no profile {profile} (or {profile}_tmux and {profile}_plain)"));
+                continue;
+            };
+            let console = ctx == CONSOLE;
+            for n in names {
+                let Some(map) = resolve_profile(nav, &n, out) else {
+                    continue;
+                };
+                let ptag = format!("controller.nav {ctx} app {name} ({n})");
+                for (input, v) in &map {
+                    if console {
+                        check_value(&format!("{ptag}.{input}"), input, v, true, out);
+                    } else if CONTRACT_INPUTS.contains(&input.as_str())
+                        && v.as_str() != Some("none")
+                    {
+                        out.push(format!("{ptag}: {input} is owned by the capture contract or the room on a compositor; it cannot be remapped here"));
+                    }
+                    if camera == Some(true)
+                        && (input.starts_with("LS_") || input.starts_with("RS_"))
+                    {
+                        let ok = v
+                            .as_str()
+                            .is_some_and(|a| a == "none" || a.starts_with("key:"));
+                        if !ok {
+                            out.push(format!(
+                                "{ptag}.{input}: a camera app's stick rows are key: or none"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn check(root: &Path) -> Report {
@@ -2075,6 +2254,185 @@ RS_RIGHT = "none"
             bad.iter().any(|x| x
                 .contains("controller.nav.desktop.RS_LEFT: pointer:cursor toggles cursor mode")),
             "{bad:?}"
+        );
+    }
+
+    /// mios-inputd's P1 foreground-app layer (the Mon camera), as the game lane lands it in G2: the settings, the
+    /// app table and the four mon_* profiles over the NAV fixture's base profiles.
+    fn with_mon(nav: &str) -> String {
+        let rows = "LS_LEFT = \"key:ALT+4\"\nLS_RIGHT = \"key:ALT+6\"\nLS_UP = \"key:ALT+8\"\nLS_DOWN = \"key:ALT+2\"\n\
+RS_LEFT = \"key:ALT+7\"\nRS_RIGHT = \"key:ALT+9\"\nRS_UP = \"key:ALT+3\"\nRS_DOWN = \"key:ALT+1\"\n\
+BTN_TL2 = \"key:ALT+MINUS\"\nBTN_TR2 = \"key:ALT+EQUAL\"\nBTN_THUMBL = \"key:ALT+z\"\nBTN_THUMBR = \"key:ALT+5\"\n";
+        let mut out = nav.replacen(
+            "flick_off = 0.3",
+            "flick_off = 0.3\napp_poll_ms = 250\napp_query_timeout_ms = 150",
+            1,
+        );
+        out += r#"
+[keybindings.global.controller.nav.apps.mon]
+exe = ["/usr/bin/mios-tamagotchi"]
+user_exe = ["/home/mios/.local/bin/mios-tamagotchi-sample"]
+camera = true
+contexts = { terminal = "mon", console = "mon_console" }
+[keybindings.global.controller.nav.apps.mon.repeat]
+LS_UP = [200, 70]
+RS_UP = [200, 70]
+RS_DOWN = [200, 70]
+BTN_TL2 = [250, 90]
+"#;
+        for (p, base) in [
+            ("mon_tmux", "terminal_tmux"),
+            ("mon_plain", "terminal_plain"),
+            ("mon_console_tmux", "console_tmux"),
+            ("mon_console_plain", "console_plain"),
+        ] {
+            out +=
+                &format!("[keybindings.global.controller.nav.{p}]\ninherits = \"{base}\"\n{rows}");
+        }
+        out
+    }
+
+    /// INPUTD spec test 14: the P1 tables pass the audit, and `apps`, `app_poll_ms` and `app_query_timeout_ms` are
+    /// settings, never profiles (negative: drop "apps" from NAV_SETTINGS and the gate reports "unknown controller
+    /// input mon").
+    #[test]
+    fn inputd_app_layer_passes_the_audit() {
+        let ok = with_mon(NAV);
+        let f = audit(&ok);
+        assert!(f.is_empty(), "{f:#?}");
+        assert!(!f.iter().any(|x| x.contains("unknown controller input mon")));
+    }
+
+    /// INPUTD spec test 14: the gate rejects the same P2 cases mios-inputd drops (mios-inputd keeps base navigation;
+    /// the gate fails the tree).
+    #[test]
+    fn inputd_app_layer_violations_are_findings() {
+        let ok = with_mon(NAV);
+        let app = "[keybindings.global.controller.nav.apps.mon]\n";
+        for (from, to, why) in [
+            (
+                "exe = [\"/usr/bin/mios-tamagotchi\"]",
+                "exe = [\"usr/bin/mios-tamagotchi\"]",
+                "apps.mon.exe: 1 to 8 absolute paths",
+            ),
+            (
+                "exe = [\"/usr/bin/mios-tamagotchi\"]",
+                "exe = []",
+                "apps.mon.exe: 1 to 8 absolute paths",
+            ),
+            (
+                "user_exe = [\"/home/mios/.local/bin/mios-tamagotchi-sample\"]",
+                "user_exe = [\"mios-tamagotchi-sample\"]",
+                "never a basename",
+            ),
+            (
+                "user_exe = [\"/home/mios/.local/bin/mios-tamagotchi-sample\"]",
+                "user_exe = [\"/home/mios/../x\"]",
+                "apps.mon.user_exe",
+            ),
+            (
+                "terminal = \"mon\", console",
+                "desktop-3d = \"mon\", console",
+                "refines only the terminal or console",
+            ),
+            (
+                "terminal = \"mon\", console",
+                "shell = \"mon\", console",
+                "refines only the terminal or console",
+            ),
+            (
+                "terminal = \"mon\", console",
+                "terminal = \"missing\", console",
+                "no profile missing",
+            ),
+            ("camera = true", "camera = false", "only a camera app"),
+            (
+                "camera = true",
+                "camera = \"yes\"",
+                "camera: must be a boolean",
+            ),
+            (
+                "RS_UP = [200, 70]\nRS_DOWN",
+                "TOGGLE_CHORD = [200, 70]\nRS_DOWN",
+                "toggle chord never repeats",
+            ),
+            (
+                "RS_UP = [200, 70]\nRS_DOWN",
+                "RS_UP = [49, 70]\nRS_DOWN",
+                "delay 50..=5000",
+            ),
+            (
+                "app_poll_ms = 250",
+                "app_poll_ms = 49",
+                "app_poll_ms: an integer in 50..=2000",
+            ),
+            (
+                "app_poll_ms = 250",
+                "app_poll_ms = 2001",
+                "app_poll_ms: an integer in 50..=2000",
+            ),
+            (
+                "app_query_timeout_ms = 150",
+                "app_query_timeout_ms = 300",
+                "must not exceed app_poll_ms",
+            ),
+            (
+                "app_query_timeout_ms = 150\n",
+                "",
+                "needs controller.nav.app_poll_ms and app_query_timeout_ms",
+            ),
+            (
+                app,
+                "[keybindings.global.controller.nav.apps.Mon]\n",
+                "[a-z0-9_]{1,32}",
+            ),
+            (
+                app,
+                "[keybindings.global.controller.nav.apps.mon]\nlauncher = \"x\"\n",
+                "launcher: unknown key",
+            ),
+        ] {
+            assert!(ok.contains(from), "{from}");
+            let f = audit(&ok.replacen(from, to, 1));
+            assert!(f.iter().any(|x| x.contains(why)), "{to}: {f:#?}");
+        }
+        // Profile rules of the refined base context, and the camera stick rule (each edit lands in one profile).
+        let in_profile = |profile: &str, row: &str| {
+            let at = ok
+                .find(&format!("[keybindings.global.controller.nav.{profile}]\n"))
+                .unwrap();
+            let (head, tail) = ok.split_at(at);
+            match row.split_once(" = ") {
+                Some((key, _)) if tail.contains(&format!("\n{key} = ")) => {
+                    let line = tail
+                        .lines()
+                        .find(|l| l.starts_with(&format!("{key} = ")))
+                        .unwrap();
+                    format!("{head}{}", tail.replacen(line, row, 1))
+                }
+                _ => format!("{head}{}", tail.replacen('\n', &format!("\n{row}\n"), 1)),
+            }
+        };
+        for (profile, row, want) in [
+            ("mon_tmux", "BTN_START = \"key:ENTER\"", "app mon (mon_tmux): BTN_START is owned by the capture contract"),
+            ("mon_plain", "RS_UP = \"tmux:focus up\"", "app mon (mon_plain).RS_UP: a camera app's stick rows are key: or none"),
+            ("mon_console_plain", "BTN_SOUTH = \"hypr:movefocus left\"", "app mon (mon_console_plain).BTN_SOUTH: action \"hypr:movefocus left\" cannot run on the console"),
+        ] {
+            let bad = in_profile(profile, row);
+            assert_ne!(bad, ok);
+            let f = audit(&bad);
+            assert!(f.iter().any(|x| x.contains(want)), "{want}: {f:#?}");
+        }
+        // The RS-never-repeats rule is relaxed only inside a camera app: [nav.repeat] still rejects it.
+        let f = audit(&ok.replacen(
+            "BTN_DPAD_UP = [400, 60]",
+            "BTN_DPAD_UP = [400, 60]\nRS_UP = [400, 60]",
+            1,
+        ));
+        assert!(
+            f.iter().any(|x| x
+                .contains("nav.repeat.RS_UP: right-stick flicks repeat only inside a camera app")),
+            "{f:#?}"
         );
     }
 
