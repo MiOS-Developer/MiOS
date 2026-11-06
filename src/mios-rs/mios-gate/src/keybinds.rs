@@ -1259,15 +1259,14 @@ pub fn controller_audit(
     out
 }
 
+/// One validated nav row (the shared per-profile value check the audit threads through).
+type ValueCheck<'a> = &'a dyn Fn(&str, &str, &Value, bool, &mut Vec<String>);
+
 /// mios-inputd's verified foreground-app layer (protocol P1/P2, nav.rs load_apps): `app_poll_ms` and
 /// `app_query_timeout_ms`, and each `[nav.apps.<name>]`. An app profile obeys the rules of the base context it
 /// refines, a camera app's stick rows are `key:` or `none`, and only a camera app has a repeat table, the one place a
 /// right-stick flick may repeat. mios-inputd drops an invalid app layer and keeps base navigation; the gate fails it.
-fn app_audit(
-    nav: &toml::Table,
-    check_value: &dyn Fn(&str, &str, &Value, bool, &mut Vec<String>),
-    out: &mut Vec<String>,
-) {
+fn app_audit(nav: &toml::Table, check_value: ValueCheck<'_>, out: &mut Vec<String>) {
     let ms = |k: &str, lo: i64, hi: i64, out: &mut Vec<String>| -> Option<i64> {
         let v = nav.get(k)?;
         let n = v.as_integer().filter(|n| (lo..=hi).contains(n));
