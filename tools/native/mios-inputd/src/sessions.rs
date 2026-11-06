@@ -292,6 +292,24 @@ pub fn inspect_argv(route: &SessionRoute) -> Result<Vec<String>, String> {
     )
 }
 
+/// P3: the pane's process (its tty's foreground group is the verified app). Local routes only: an ssh route's pane
+/// runs on another host, whose /proc this bridge cannot verify, so it never selects an app.
+pub fn pane_pid_argv(route: &SessionRoute) -> Result<Vec<String>, String> {
+    if route.ssh_host.is_some() {
+        return Err("controller session: an ssh route never selects a foreground app".into());
+    }
+    transport(
+        route,
+        vec![
+            "display-message".into(),
+            "-p".into(),
+            "-t".into(),
+            route.pane.clone(),
+            "#{pane_pid}".into(),
+        ],
+    )
+}
+
 /// Compatibility query for callers which only need an exact session-name
 /// guard. Workers should also use inspect_argv to pin the server lifetime.
 pub fn verify_argv(route: &SessionRoute) -> Result<Vec<String>, String> {

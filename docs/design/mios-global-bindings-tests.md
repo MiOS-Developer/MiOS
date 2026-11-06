@@ -73,6 +73,22 @@ active pane is per window, shared by every client of that window).
 | C-13 | L3 tap → `key:CTRL+t` on release. L3 then R3 within `debounce_ms` → room toggle only. | Slow overlap (L3 down, R3 down 400 ms later) → no singles. L3 pressed while the left stick is deflected → nothing. Guide+L3+R3 → no lock + latch double fire. |
 | C-32 | Capture and release each send one notification that names the window class. | No notification on a focus change without a capture change. |
 
+## I5: foreground apps and camera profiles
+
+Router unit tests `camera_contract`, nav and config unit tests (`app_layer_*`, `user_exe_is_an_explicit_layered_registration`,
+`an_invalid_app_layer_never_disables_base_navigation`), and runtime tests `app_detection` (fake /proc over real files)
+and `session_worker_integration` (private tmux servers and clients). Fixtures inject the P1 tables; the vendor SSOT
+does not carry them until G2.
+
+| ID | Positive control | Negative control |
+|---|---|---|
+| A-1 schema | The P1 tables parse. `mon` selects `mon_tmux`/`mon_plain`/`mon_console_tmux`/`mon_console_plain`. A sparse user tier adds `user_exe` and inherits the vendor app. | Every P2 violation is reported and drops only the app layer: the base profiles still resolve. `[nav.repeat].RS_UP` is still a load error. |
+| A-2 matching | A registered, canonical, self-owned candidate run as the foreground leader → `mon`. A root-owned system binary (`exe`) → `mon`. | A same-basename binary elsewhere, a foreign-owned candidate, a group- or world-writable file or directory, a registered symlink (whichever path the kernel names), a link to an unlisted target, a `(deleted)` image, a removed file, a foreign `/proc/<pid>`, a background job, or a non-leader → none. |
+| A-3 binding | A result applies only to the window it was verified for. A new focus verifies at once; the same identity at most every `app_poll_ms`. | A late result for the previous window, or a result with no target, selects nothing. A result older than `context_stale_ms` is none. A stalled tmux server is none within `app_query_timeout_ms`. |
+| A-4 sticks | LS +0.8 → `ALT+6` at once and 1 + 1 + ⌊(1000-200)/70⌋ = 13 fires in 1 s. A diagonal holds both halves. A roll or sign flip moves without centring. The camera RS repeats. TR2 gives 1 + 1 + ⌊750/90⌋ = 10 fires. R3 tap → `ALT+5` on release. | Without an app, RS flicks `tmux:focus right` once in 2 s. Raw 0.11 and post-radial 0.55 do nothing. 0.25 releases, and no release fires. R3 with RS deflected does nothing. L3+R3 fires only the toggle chord. |
+| A-5 flush | After each flush case (app cleared, focus change, tmux toggle, Guide, shell overlay, SYN_DROPPED and resync, North capture, START cursor toggle, L3+R3), a deflected stick re-arms below `flick_off`. | No held camera direction survives any of them, the cursor toggle included (before I5 a held repeat crossed it). |
+| A-6 isolation | Route A (the app) selects `mon_console_tmux`. `M-4` and `M--` reach exactly route B's pane. | Route B (a shell) stays `console_tmux`. An ssh route never verifies. Without a verified app, no stick, trigger or thumb produces an Alt form, so nothing types into the seed editor. In the camera profile, only atomic Alt strokes (or the contract chord) are sent. Nothing reaches the pad or the pointer. |
+
 ## I3: console (landed)
 
 Automated in tests/test-inputd-console.py (real binary; `MIOS_INPUTD_UINPUT_TEST=1` for the fixture pad, pre-I3 pair in `MIOS_INPUTD_OLD_BIN` + `MIOS_INPUTD_OLD_SSOT`) and tests/test-inputd-console-live.py (`MIOS_LIVE_NESTED=1`). A pty stands in for the VT, logind is a private copy of its state files, gpm is a private socket, tmux runs with a private `TMUX_TMPDIR`.
