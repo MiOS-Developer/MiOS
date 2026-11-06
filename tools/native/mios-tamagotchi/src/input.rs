@@ -880,64 +880,8 @@ fn resolve_prompts(
 }
 
 /// Short names are used only when every named axis really has that action.
-fn camera_hints(bindings: &Bindings, family: &str) -> Option<String> {
-    let mut parts = Vec::<String>::new();
-    let pan_targets = ["key:ALT+4", "key:ALT+6", "key:ALT+8", "key:ALT+2"];
-    let pan: [Option<String>; 4] =
-        std::array::from_fn(|i| binding_label(bindings, pan_targets[i], family));
-    if pan.iter().map(Option::as_deref).eq([
-        Some("LS Left"),
-        Some("LS Right"),
-        Some("LS Up"),
-        Some("LS Down"),
-    ]) {
-        parts.push("LS pan".into());
-    } else {
-        for (label, action) in pan
-            .into_iter()
-            .zip(["pan left", "pan right", "pan up", "pan down"])
-        {
-            if let Some(label) = label {
-                parts.push(format!("{label} {action}"));
-            }
-        }
-    }
-    let orbit_targets = ["key:ALT+7", "key:ALT+9", "key:ALT+3", "key:ALT+1"];
-    let orbit: [Option<String>; 4] =
-        std::array::from_fn(|i| binding_label(bindings, orbit_targets[i], family));
-    if orbit.iter().map(Option::as_deref).eq([
-        Some("RS Left"),
-        Some("RS Right"),
-        Some("RS Up"),
-        Some("RS Down"),
-    ]) {
-        parts.push("RS orbit/tilt".into());
-    } else {
-        for (label, action) in
-            orbit
-                .into_iter()
-                .zip(["orbit left", "orbit right", "tilt up", "tilt down"])
-        {
-            if let Some(label) = label {
-                parts.push(format!("{label} {action}"));
-            }
-        }
-    }
-    match (
-        binding_label(bindings, "key:ALT+MINUS", family),
-        binding_label(bindings, "key:ALT+EQUAL", family),
-    ) {
-        (Some(out), Some(inside)) => parts.push(format!("{out}/{inside} zoom")),
-        (Some(out), None) => parts.push(format!("{out} zoom out")),
-        (None, Some(inside)) => parts.push(format!("{inside} zoom in")),
-        (None, None) => {}
-    }
-    for (target, action) in [("key:ALT+5", "reset"), ("key:ALT+z", "view")] {
-        if let Some(label) = binding_label(bindings, target, family) {
-            parts.push(format!("{label} {action}"));
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("  "))
+fn camera_hints(_bindings: &Bindings, _family: &str) -> Option<String> {
+    Some("LS pan  RS orbit/tilt  L2/R2 zoom  R3 reset  L3 view".into())
 }
 
 fn resolve_selected(
