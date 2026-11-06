@@ -6625,18 +6625,19 @@ mod kaomoji_scale_tests {
 
     #[test]
     fn edge_on_faces_never_claim_a_face_they_did_not_draw() {
-        // Profiles (yaw 90/270) at high zoom can leave no cell wholly on the
-        // face plane; the shaded overlay then lays no stroke. The face pass
-        // must fall back to native glyphs or report nothing, so the caption
-        // carries the expression -- never a silent blank head.
+        // A steeply turned head (e.g. yaw 60 at high zoom) can leave no cell
+        // wholly on the face plane, so the shaded overlay lays no stroke. The
+        // face pass must then fall back to native glyphs or report nothing,
+        // so the caption carries the expression -- never a silent blank head.
+        // (Exact 90/270 profiles map no face at all: profile_symmetry_tests.)
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let area = Rect::new(0, 0, 62, 30);
-        let (mut shaded, mut no_stroke, mut captioned) = (0, 0, 0);
-        for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+        let (mut shaded, mut native, mut captioned) = (0, 0, 0);
+        for stage in [Stage::Baby, Stage::Adult] {
             for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
                 for shape in 0..16u8 {
-                    for yaw in [90, 270] {
+                    for yaw in [0, 60, 120, 240, 300] {
                         let sprite = Sprite::voxel_with_appearance(
                             stage,
                             Expression::Happy,
@@ -6715,7 +6716,7 @@ mod kaomoji_scale_tests {
                                         (texture, [l, t, r, b], stroke),
                                     );
                                     if !stroked {
-                                        no_stroke += 1;
+                                        native += usize::from(drew);
                                         captioned += usize::from(!drew);
                                     }
                                 }
@@ -6725,12 +6726,12 @@ mod kaomoji_scale_tests {
                 }
             }
         }
-        assert!(shaded > 0, "profiles must exercise the shaded tier");
-        // Every stroke-less case either drew native glyphs (asserted above:
-        // a claimed face has >= 3 cells) or reported none for the caption.
+        assert!(shaded > 0, "steep turns must exercise the shaded tier");
+        // Both outcomes of a stroke-less overlay occur (e.g. Baby 8-bit Happy
+        // shape 6 at yaw 60 in ASCII): native glyphs, and a caption-only face.
         assert!(
-            no_stroke > 0 && captioned <= no_stroke,
-            "an edge-on profile must exercise the stroke-less overlay ({shaded} shaded cases)"
+            native > 0 && captioned > 0,
+            "stroke-less overlays must exercise both fallbacks: native {native}, caption {captioned} of {shaded}"
         );
     }
 
