@@ -119,6 +119,48 @@ fn pane_metadata(socket: &Path) -> Result<Vec<Value>, String> {
         .collect())
 }
 
+/// Registry size the observer accepts and every send keeps within. Clients
+/// started before [mcp.agents].max_state_bytes keep the previous fixed limit.
+const LEGACY_MAX_STATE_BYTES: u64 = 2 * 1024 * 1024;
+
+fn state_budget(cfg: &Value) -> u64 {
+    cfg["max_state_bytes"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .unwrap_or(LEGACY_MAX_STATE_BYTES)
+}
+
+/// Bytes `save_json_file` writes for `state`.
+fn saved_size(state: &Value) -> u64 {
+    serde_json::to_vec_pretty(state).map_or(u64::MAX, |v| v.len() as u64 + 1)
+}
+
+/// Fit the saved registry within `budget` by dropping the oldest received
+/// receipts. Queued mail is never dropped: false means only queued mail is left
+/// over budget, and the caller must refuse the send that grew it.
+fn fit_state_budget(state: &mut Value, budget: u64) -> bool {
+    loop {
+        let size = saved_size(state);
+        if size <= budget {
+            return true;
+        }
+        let messages = state["messages"].as_array_mut().unwrap();
+        let mut excess = size - budget;
+        let mut removed = false;
+        while excess > 0 {
+            let Some(index) = messages.iter().position(|m| m["status"] == "received") else {
+                break;
+            };
+            excess = excess.saturating_sub(saved_size(&messages[index]));
+            messages.remove(index);
+            removed = true;
+        }
+        if !removed {
+            return false;
+        }
+    }
+}
+
 fn observe(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::Error>> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let path = directory.join("state.json");
@@ -130,8 +172,13 @@ fn observe(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::erro
         if !owned_path(&path) {
             return Err("unsafe agent state file".into());
         }
-        if fs::metadata(&path)?.len() > 2 * 1024 * 1024 {
-            return Err("agent state exceeds observer limit".into());
+        let budget = state_budget(&request["config"]);
+        let size = fs::metadata(&path)?.len();
+        if size > budget {
+            return Err(format!(
+                "agent state exceeds observer limit ({size} > {budget} bytes, [mcp.agents].max_state_bytes)"
+            )
+            .into());
         }
         serde_json::from_slice(&fs::read(&path)?)?
     } else {
@@ -1343,6 +1390,12 @@ fn dispatch_relay(
                 if let Some(index) = messages.iter().position(|m| m["status"] == "received") {
                     messages.remove(index);
                 }
+            }
+            if !fit_state_budget(state, state_budget(cfg)) {
+                state["messages"].as_array_mut().unwrap().pop();
+                return Err(
+                    "agent relay state is full of queued mail; recipients must drain it".into(),
+                );
             }
             Ok(
                 json!({"message_id":message_id,"to":to,"status":"queued","recipient_online":recipient_online}),
@@ -3761,6 +3814,77 @@ mod tests {
                 assert!(text.contains("Head %1 chooser") && text.contains("W1 %2 empty"));
             }
         }
+    }
+    #[test]
+    fn sends_keep_the_registry_within_the_observer_budget() {
+        let mut state = json!({"agents":{},"messages":[]});
+        dispatch(&mut state, &request("register", "head"), 1).unwrap();
+        dispatch(&mut state, &request("register", "worker"), 1).unwrap();
+        let budget = 4096;
+        // Already over budget, as a long-lived registry gets: old receipts.
+        for i in 0..64 {
+            state["messages"].as_array_mut().unwrap().push(json!({"message_id":format!("old-{i}"),
+                "from":"head","to":"worker","message":"r".repeat(200),"created":1,"status":"received"}));
+        }
+        assert!(saved_size(&state) > budget);
+        let mut send = request("send", "head");
+        send["config"]["max_receipts"] = json!(4096);
+        send["config"]["max_pending"] = json!(64);
+        send["config"]["max_state_bytes"] = json!(budget);
+        send["to"] = json!("worker");
+        send["message"] = json!("fresh");
+        send["message_id"] = json!("new-1");
+        assert_eq!(dispatch(&mut state, &send, 2).unwrap()["status"], "queued");
+        assert!(saved_size(&state) <= budget);
+        let messages = state["messages"].as_array().unwrap();
+        assert_eq!(messages.last().unwrap()["message_id"], "new-1");
+        let kept: Vec<&str> = messages
+            .iter()
+            .filter(|m| m["status"] == "received")
+            .map(|m| m["message_id"].as_str().unwrap())
+            .collect();
+        assert!(
+            !kept.contains(&"old-0"),
+            "oldest receipts go first: {kept:?}"
+        );
+        assert!(kept.is_empty() || kept.last() == Some(&"old-63"));
+
+        // Queued mail is never dropped: a send that cannot fit is refused intact.
+        for i in 0..32 {
+            state["messages"].as_array_mut().unwrap().push(json!({"message_id":format!("q-{i}"),
+                "from":"head","to":"worker","message":"q".repeat(200),"created":3,"status":"queued"}));
+        }
+        send["message_id"] = json!("new-2");
+        assert!(dispatch(&mut state, &send, 4)
+            .unwrap_err()
+            .contains("full of queued mail"));
+        let messages = state["messages"].as_array().unwrap();
+        assert!(messages
+            .iter()
+            .all(|m| m["message_id"] != "new-2" && m["status"] == "queued"));
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|m| m["message_id"].as_str().unwrap().starts_with("q-"))
+                .count(),
+            32
+        );
+    }
+    #[test]
+    fn observer_limit_is_the_ssot_state_budget() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("registry");
+        fs::create_dir(&dir).unwrap();
+        let state = json!({"agents":{},"messages":[{"message_id":"m","from":"a","to":"b",
+            "message":"s".repeat(5000),"created":1,"status":"received"}]});
+        save_json_file(&dir.join("state.json"), &state).unwrap();
+        let mut req = observer_request();
+        req["config"] = json!({"max_state_bytes": 4096});
+        let error = observe(&dir, &req).unwrap_err().to_string();
+        assert!(error.contains("max_state_bytes"), "{error}");
+        req["config"]["max_state_bytes"] = json!(8192);
+        assert_eq!(observe(&dir, &req).unwrap()["registry"], "present");
+        assert_eq!(state_budget(&json!({})), LEGACY_MAX_STATE_BYTES);
     }
     fn request(action: &str, id: &str) -> Value {
         json!({"action":action,"agent_id":id,"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"codex","config":{"lease_s":60,"mailbox_retention_s":120,"queue_offline":true,"max_agents":2,"max_pending":2,"max_message_bytes":256,"max_receipts":2}})

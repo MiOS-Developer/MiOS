@@ -4078,6 +4078,10 @@ max_agents = 64
 max_pending = 1024
 max_message_bytes = 32768
 max_receipts = 4096
+# Saved state.json budget, in bytes. mios-agent-relay drops the oldest received
+# receipts to stay within it, refuses a send when only queued mail is left over
+# it, and the observer (MiOS AI agent view) reads registries up to this size.
+max_state_bytes = 2097152
 
 [mcp.agents.observation]
 refresh_s = 2

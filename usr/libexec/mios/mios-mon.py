@@ -654,7 +654,12 @@ if TEXTUAL_AVAILABLE:
                     cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "mios", "--", request["config"]["binary"], "--state", self.ui_request["state"], "--observe"]
                 result = subprocess.run(cmd, input=json.dumps(request), capture_output=True, text=True, timeout=10)
                 if result.returncode:
-                    raise RuntimeError(result.stderr.strip() or f"Observer exit {result.returncode}")
+                    # The relay reports its refusal as a JSON receipt on stdout.
+                    try:
+                        refusal = json.loads(result.stdout).get("error")
+                    except (ValueError, AttributeError):
+                        refusal = None
+                    raise RuntimeError(result.stderr.strip() or refusal or f"Observer exit {result.returncode}")
                 receipt = json.loads(result.stdout)
                 if not isinstance(receipt, dict):
                     raise RuntimeError("Invalid native observation receipt")

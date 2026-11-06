@@ -197,6 +197,8 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
         cases = [
             (1, "", "observer denied", "observer denied"),
             (7, "", "", "Observer exit 7"),
+            (7, "[]", "", "Observer exit 7"),
+            (2, '{"ok": false, "error": "agent state exceeds observer limit"}', "", "exceeds observer limit"),
             (0, "not-json", "", "observation failed"),
             (0, "[]", "", "Invalid native observation receipt"),
             (0, '{"ok": true, "result": []}', "", "Invalid native observation receipt"),
