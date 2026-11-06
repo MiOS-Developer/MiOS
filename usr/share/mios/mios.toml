@@ -20122,7 +20122,7 @@ light_direction = [-45, 65, 45] # view-space X/right Y/up Z/viewer, each-100..10
 ascii_ramp = ".:-=+*#%@"    # low-to-high density, printable ASCII; occupied surfaces remain visible
 
 # One shared interactive detail decision follows cell budget, font-driven resize and zoom.
-# AI-hint: Fixed isometric voxel room; only azimuth and framing change during play.
+# AI-hint: Isometric voxel room at a 30-degree rest elevation; azimuth, framing and the [tamagotchi.camera] tilt offset change during play.
 # AI-related: tools/native/mios-tamagotchi/src/world.rs, render.rs, ui.rs
 # AI-hint: Version-one birth identity vocabulary; code replay uses the same generation settings.
 # AI-related: tools/native/mios-tamagotchi/src/genetics.rs
@@ -20143,6 +20143,19 @@ orbit_step_degrees = 45
 elevation_degrees = 30
 follow_percent = 100
 backdrop = 6
+
+# Interactive camera (presentation only; never saved, never steers the Mon). Zoom keeps [tamagotchi] zoom_*,
+# coarse orbit keeps [tamagotchi.world] orbit_step_degrees, and every axis eases over zoom_transition_frames.
+[tamagotchi.camera]
+pan_step_permille = 25        # one pan step (key, stick repeat), per-mille of the scene width (x) or height (y),5..200
+pan_max_permille = 300        # pan target limit per axis, per-mille of the scene,0..400; 0 disables pan
+pan_margin_permille = 100     # the subject centre stays this far inside every scene edge,0..250; max+margin<=500
+tilt_step_degrees = 3         # one tilt step,1..30
+tilt_min_degrees = -15        # lowest elevation offset from each view's rest pitch,-17..0 (room rest 30, pet/face 18.3)
+tilt_max_degrees = 40         # highest elevation offset,0..55
+orbit_fine_step_degrees = 5   # numpad 7/9, Alt+7/9, right stick and horizontal wheel,1..90
+max_lead_steps = 4            # held camera input never runs a target more than this many steps ahead of the view,1..10
+preview_orbit_pauses_turntable = true # explicit orbit in Roster/Studio holds that preview's turntable until it closes
 
 [tamagotchi.presentation]
 automatic = true
