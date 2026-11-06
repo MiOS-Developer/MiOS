@@ -107,7 +107,7 @@ unconsumed = [
 # ----------------------------------------------------------------------------
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
-max_drift = 55
+max_drift = 52
 max_undeclared = 161
 max_undeclared_user = 19
 strict_no_write = [
@@ -7784,12 +7784,14 @@ ask_clarify_judge   = false
 # Gated build catalog authority (V3 Build Catalog): when true, the clean build
 # container materializes package sets and phase order from the seeded DB.
 build_catalog_authoritative = false
-# #62 out-of-process policy arbiter: when set, a high-risk action (tier >=
-# hitl_threshold) is POSTed to this URL ({verb,tier,args}) for an {allow,reason}
-# verdict, on top of the in-process gate above. Empty (default) -> no arbiter, no
-# overhead. hitl_arbiter_fail = open (default; a down/erroring arbiter proceeds)
-# or closed (fail-safe-deny).
-hitl_arbiter_url    = "http://127.0.0.1:8760"
+# #62 out-of-process policy arbiter: a high-risk action (tier >= hitl_threshold)
+# is POSTed to this URL ({verb,tier,args}) for an {allow,reason} verdict, on top
+# of the in-process gate above. Empty (default) -> the local mios-policy-arbiter
+# at http://127.0.0.1:[ports].arbiter, so an /etc/mios overlay moves it by moving
+# the port; set a full URL only to point at an arbiter elsewhere.
+# hitl_arbiter_fail = open (a down/erroring arbiter proceeds) or closed
+# (default; fail-safe-deny).
+hitl_arbiter_url    = ""
 hitl_arbiter_fail   = "closed"
 pdp_audit_allow     = false
 tokenizer_backend   = "tiktoken"
@@ -10472,11 +10474,12 @@ piper              = 8179     # mios-piper: Piper streaming TTS engine (audio ba
 stale_fallbacks = []
 
 # Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
-# Per-key reasons: TASKS.jsonl task_261. chrome_cdp_worker's only binder is an
-# `Environment=` literal in a shipped .service -- systemd does not expand ${} in
-# Environment=, and the [units] block that WOULD render the placeholder is inert
-# until task_267 makes mios-unit-gen faithful.
-unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
+# Per-key reasons: TASKS.jsonl task_261. ai_legacy (mios-ai-legacy-forward.service
+# ExecStart) and chrome_cdp_worker (hermes-worker.service) left once their units
+# named MIOS_PORTS_<KEY>. chrome_cdp_worker's binder is an `Environment=` line,
+# which systemd does not expand; that is a binding-correctness question (shared
+# with llm_heavy in the same unit) this register does not measure.
+unbound = ["field_live_chat"]
 
 [ports.categories.edge]
 base    = 8050
@@ -12160,7 +12163,7 @@ power_interval_s    = 1                                     # CPU package watts:
 # (EdgeReveal) and hides again afterwards. Material: the island's (Glass.qml fill over the hyprglass mios preset on the
 # glass-covered "mios-notifications" layer); corner radius: the global window rounding. Never anywhere else on screen.
 [desktop.notifications]
-position            = "top-center"   # placement: top-centered horizontally below the TopBar/HUD
+position            = "island"   # the only placement: out of the status island (no island on the output: its place, top centre)
 timeout_ms          = 5000       # expiry when the app leaves it to the server (expire_timeout -1); 0 from the app = never; critical/resident stay
 max_visible         = 4          # cards in the stack; a new one past this expires the oldest
 width_px            = 0          # card width (logical px); 0 = [theme.shell] notification_width_px; clamped to the output minus the edge margins
@@ -15934,6 +15937,7 @@ miosd                          = ["service-plane"]   # supervises the AI plane
 mios-webtools-firecrawl-api    = ["service-plane"]
 mios-webtools-firecrawl-worker = ["service-plane"]
 mios-webtools-redis            = ["service-plane"]
+mios-enforcer                  = ["service-plane"]   # Tetragon egress quarantine of the agent namespaces, which only a blade runs
 # Native (non-Quadlet) long-running units. Same rule: a seat offloads them.
 hermes-worker                  = ["service-plane"]
 mios-searxng                   = ["service-plane"]
@@ -15950,6 +15954,9 @@ mios-policy-arbiter            = ["service-plane"]
 mios-attest        = ["controller", "service-plane"]   # TPM-quote verifier + onboarding: controller blades only
 mios-registry                  = ["service-plane"]   # local OCI registry
 mios-thermald                  = ["service-plane"]   # CPU/GPU power caps, like mios-powerd: the blade owns the hardware
+mios-power-sampler             = ["service-plane"]   # root RAPL sampler, like mios-thermald: the blade owns the hardware
+ventulusd                      = ["service-plane"]   # fan control (alias mios-fan-control), like mios-thermald: the blade owns the hardware
+mios-fhs-sync                  = ["service-plane"]   # FHS overlay + host-guest topology sync, like mios-thermald: the blade owns the hardware
 mios-wol-proxy                 = ["service-plane"]   # wake-on-LAN relay for the fleet
 # Units that activate a gated unit and cannot work without it. See ADR-0016 D4.
 mios-embed-backfill            = ["service-plane"]
@@ -18321,9 +18328,12 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # package used by the Xbox firmware regression. A suite that cannot run its live
 # tier exits 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
 # Desktop resilience runs real offscreen QML/lint and a non-activating GObject D-Bus fixture.
+# The MiOS-Xbox gates build a real offline image: regf hives filled by hivexregedit (perl-hivex) and captured
+# with wimlib-imagex (wimlib-utils).
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
-            "quickshell", "qt6-qtdeclarative-devel", "python3-gobject"]
+            "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
+            "perl-hivex", "wimlib-utils"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.

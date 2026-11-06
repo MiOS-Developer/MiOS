@@ -58,8 +58,8 @@ class WebSearchTool(Tool):
 
         from server import _toml_section
         gateway_cfg = _toml_section("gateway")
-        # SSOT [ports].searxng_internal: the in-container listener (host maps 8800->8080).
-        searxng_port = int(os.environ.get("MIOS_PORTS_SEARXNG_INTERNAL", "8080"))
+        # SSOT [ports].searxng_internal: the in-container listener (host maps 8800->8888).
+        searxng_port = int(os.environ.get("MIOS_PORTS_SEARXNG_INTERNAL", "8888"))
         searxng_url = gateway_cfg.get("searxng_url", f"http://mios-searxng:{searxng_port}")
         tools.append(WebSearchTool(searxng_url))
 

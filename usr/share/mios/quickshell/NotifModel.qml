@@ -21,8 +21,9 @@ Singleton {
     property bool loaded: false
 
     function num(key, dflt) { const v = cfg[key]; return (typeof v === "number" && isFinite(v)) ? v : dflt }
-    // "top-center": default placement -- every notification is centered at y = 44px (8px below TopBar/HUD).
-    readonly property string position: typeof cfg.position === "string" ? cfg.position : (theme.notificationPosition || "top-center")
+    // "island": the only placement -- every notification grows out of the status island (top centre). Before the SSOT
+    // is read, the theme bridge's copy of [desktop.notifications] position stands in, else the vendor value.
+    readonly property string position: typeof cfg.position === "string" ? cfg.position : (theme.notificationPosition || "island")
     // Expiry for notifications that leave it to the server (expire_timeout -1); critical / resident ones stay.
     readonly property int timeoutMs: Math.max(1000, num("timeout_ms", 5000))
     readonly property int maxVisible: Math.max(1, Math.round(num("max_visible", 4)))

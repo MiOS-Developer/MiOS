@@ -18,6 +18,7 @@ import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -1051,6 +1052,82 @@ def _load_mios_mcp_server_module():
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
+
+
+class TestVendoredBundleUnpack(unittest.TestCase):
+    """install-native runs on the source tree (CI's workspace) before the unit tier."""
+
+    def setUp(self):
+        import tarfile
+        import tempfile
+        self.mod = _load_mios_mcp_server_module()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.vdir = Path(self.tmp.name) / "usr/share/mios/vendored"
+        (self.vdir / "k3s").mkdir(parents=True)
+        self.tracked = "tmux_mcp=v2.0.0\n\n# Locked Python wheel provenance\npython_wheel_openai_version=2.24.0\n"
+        (self.vdir / "VERSIONS.txt").write_text(self.tracked)
+        (self.vdir / "k3s" / "k3s-install.sh").write_text("current\n")
+        stage = Path(self.tmp.name) / "stage"
+        (stage / "k3s").mkdir(parents=True)
+        (stage / "VERSIONS.txt").write_text("tmux_mcp=v1.0.0\n")            # the bundle's stale copy
+        (stage / "k3s" / "k3s-install.sh").write_text("stale\n")
+        (stage / "k3s" / "sha256sum-amd64.txt").write_text("only-in-bundle\n")
+        with tarfile.open(self.vdir / "bin.tar", "w") as tf:
+            for name in ("VERSIONS.txt", "k3s/k3s-install.sh", "k3s/sha256sum-amd64.txt"):
+                tf.add(stage / name, arcname=name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_tracked_files_survive_and_missing_members_unpack(self):
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+        self.assertEqual((self.vdir / "k3s" / "k3s-install.sh").read_text(), "current\n")
+        self.assertEqual((self.vdir / "k3s" / "sha256sum-amd64.txt").read_text(), "only-in-bundle\n")
+
+    def test_bundle_only_tree_is_fully_unpacked(self):
+        (self.vdir / "VERSIONS.txt").unlink()
+        (self.vdir / "k3s" / "k3s-install.sh").unlink()
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), "tmux_mcp=v1.0.0\n")
+        self.assertEqual((self.vdir / "k3s" / "k3s-install.sh").read_text(), "stale\n")
+
+    def _bundle(self, name, members):
+        import tarfile
+        with tarfile.open(self.vdir / name, "w") as tf:
+            for arcname, data in members:
+                info = tarfile.TarInfo(arcname)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+
+    def test_member_escaping_the_tree_is_never_written(self):
+        # "../../../x" from usr/share/mios/vendored resolves to <tmp>/usr/x.
+        escape = Path(os.path.normpath(self.vdir / "../../../escaped.txt"))
+        self.assertEqual(escape, Path(self.tmp.name) / "usr" / "escaped.txt")
+        self._bundle("evil.tar", [("../../../escaped.txt", b"x")])
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertFalse(escape.exists())
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+
+    def test_absolute_or_dotted_names_cannot_reach_a_tracked_file(self):
+        self._bundle("odd.tar", [("/VERSIONS.txt", b"absolute\n"), ("nope/../VERSIONS.txt", b"dotted\n")])
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "VERSIONS.txt").read_text(), self.tracked)
+        self.assertFalse((self.vdir / "nope").exists())
+
+    def test_a_refused_member_does_not_stop_the_members_after_it(self):
+        self._bundle("mixed.tar", [("../../../escaped.txt", b"x"), ("k3s/after-refusal.txt", b"kept\n")])
+        self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertEqual((self.vdir / "k3s" / "after-refusal.txt").read_text(), "kept\n")
+
+    def test_an_unreadable_bundle_is_reported_and_the_rest_still_unpack(self):
+        (self.vdir / "a-corrupt.tar").write_bytes(b"not a tar archive" * 64)
+        (self.vdir / "k3s" / "sha256sum-amd64.txt").unlink(missing_ok=True)
+        err = io.StringIO()
+        with mock.patch("sys.stderr", err):
+            self.mod._unpack_vendored_bundles(self.vdir)
+        self.assertIn("a-corrupt.tar unreadable", err.getvalue())
+        self.assertEqual((self.vdir / "k3s" / "sha256sum-amd64.txt").read_text(), "only-in-bundle\n")
 
 
 class TestAgentCliCatalog(unittest.TestCase):

@@ -189,4 +189,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # The unit tier runs every registered suite with no arguments and no compositor. This reproduction needs a nested
+    # Hyprland the caller owns (never the operator's), named by --seat, so like every other live suite it is opt-in:
+    # MIOS_LIVE_NESTED=1 or an explicit argument runs it (a missing --seat then fails), otherwise it reports the skip.
+    if len(sys.argv) == 1 and os.environ.get("MIOS_LIVE_NESTED") != "1":
+        print("skip: live nested capture reproduction (set MIOS_LIVE_NESTED=1 and pass --seat <owned nested seat>)")
+        sys.exit(0)
     main()

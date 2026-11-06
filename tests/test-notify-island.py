@@ -4,7 +4,8 @@
 # org.freedesktop.Notifications (Config.qml NotificationServer) and the shell's own toasts -- as ONE glass blob per output
 # that starts as the status island (ShellGeometry.drawnIslands, published by PanelWindow.qml) and grows on the island menus'
 # morph (Emerge.qml) into the card / stack below it, melting back on dismiss / expiry.
-#   1. SSOT (always): [desktop.notifications] is well-formed (position "island", timeout, max_visible, width, morph ...);
+#   1. SSOT (always): [desktop.notifications] is well-formed (position "island", timeout, max_visible, width, morph,
+#      history_max_height_px >= 1 (the NotificationCenter list cap) ...); the key set is closed;
 #      mutated copies fail (negative controls).
 #   2. static (always, MIOS_QS_DIR or the repo QML): the surface spans the output's top row (never anchored top-right), its
 #      layer namespace is glass-covered (not in [desktop.hyprland.hyprglass.config.layers] exclude_namespaces), it grows
@@ -75,7 +76,7 @@ def notifications_errors(d: dict) -> list[str]:
     e = []
     if t.get("position") != "island":
         e.append("position must be \"island\" (the only placement: out of the status island, top centre)")
-    for k, lo in (("timeout_ms", 1000), ("max_visible", 1)):
+    for k, lo in (("timeout_ms", 1000), ("max_visible", 1), ("history_max_height_px", 1)):
         if not isinstance(t.get(k), int) or isinstance(t.get(k), bool) or t[k] < lo:
             e.append(f"{k} must be an integer >= {lo}")
     for k in ("width_px", "morph_ms", "image_max_height_px", "actions_max"):
@@ -87,8 +88,8 @@ def notifications_errors(d: dict) -> list[str]:
         e.append("do_not_disturb must be a boolean")
     if t.get("no_anim") is not True:
         e.append("no_anim must be true (the blob's layer box moves; an animated box stretches the blob)")
-    extra = set(t) - {"position", "timeout_ms", "max_visible", "width_px", "morph_ms", "image_max_height_px",
-                      "body_max_lines", "actions_max", "do_not_disturb", "no_anim"}
+    extra = set(t) - {"position", "timeout_ms", "max_visible", "width_px", "morph_ms", "history_max_height_px",
+                      "image_max_height_px", "body_max_lines", "actions_max", "do_not_disturb", "no_anim"}
     if extra:
         e.append(f"unknown keys {sorted(extra)}")
     return e
@@ -99,14 +100,20 @@ class Ssot(unittest.TestCase):
         self.assertEqual(notifications_errors(ssot()), [])
 
     def test_negative_bad_values(self):
-        for key, val, frag in (("position", "top-right", "position"), ("max_visible", 0, "max_visible"),
+        for key, val, frag in (("position", "top-right", "position"), ("position", "top-center", "position"),
+                               ("max_visible", 0, "max_visible"),
                                ("timeout_ms", -1, "timeout_ms"), ("width_px", -5, "width_px"), ("morph_ms", "fast", "morph_ms"),
                                ("do_not_disturb", "no", "do_not_disturb"), ("body_max_lines", 0, "body_max_lines"),
-                               ("no_anim", False, "no_anim"),
+                               ("no_anim", False, "no_anim"), ("history_max_height_px", 0, "history_max_height_px"),
+                               ("history_max_height_px", "tall", "history_max_height_px"),
+                               ("history_max_height_px", True, "history_max_height_px"),
                                ("anchor", "right", "unknown")):
             d = copy.deepcopy(ssot())
             d["desktop"]["notifications"][key] = val
             self.assertTrue(any(frag in x for x in notifications_errors(d)), (key, notifications_errors(d)))
+        d = copy.deepcopy(ssot())
+        del d["desktop"]["notifications"]["history_max_height_px"]
+        self.assertTrue(any("history_max_height_px" in x for x in notifications_errors(d)), notifications_errors(d))
         d = copy.deepcopy(ssot())
         del d["desktop"]["notifications"]
         self.assertTrue(notifications_errors(d))
