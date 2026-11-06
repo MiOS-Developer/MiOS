@@ -384,11 +384,15 @@ class TestAgyAgentPipeline(unittest.TestCase):
             self.assertEqual(_literal_ai_defaults(line), [], f"scan flagged a non-literal: {line}")
 
     def test_no_literal_endpoint_or_model_default_under_any_name(self):
-        """Law 7 across the installer, its heredocs and the wrappers it stages: no
-        endpoint/model variable, under any name, takes a literal default or value."""
+        """Law 7 across the installer, its heredocs, the wrappers it stages and the CI agy
+        runner (which the hardcode lint does not reach): no endpoint/model variable, under
+        any name, takes a literal default or value."""
         installer_txt = (REPO_ROOT / "install-mios-agents.sh").read_text(encoding="utf-8")
         self.assertEqual(_literal_ai_defaults(installer_txt), [],
                          "install-mios-agents.sh gives an endpoint/model variable a literal default")
+        runner_txt = (REPO_ROOT / "automation" / "cicd" / "05-run-agy-pipeline-agent.sh").read_text(encoding="utf-8")
+        self.assertEqual(_literal_ai_defaults(runner_txt), [],
+                         "05-run-agy-pipeline-agent.sh gives an endpoint/model variable a literal default")
         with tempfile.TemporaryDirectory(prefix="mios-agents-literal-") as tmpdir:
             bindir, _ = _stage_installer(self, tmpdir)
             staged = sorted(bindir.iterdir())
@@ -570,23 +574,30 @@ class TestAgyAgentPipeline(unittest.TestCase):
 
         # 4. Behavioral test for 05: Failure propagation (Negative Control)
         # When agy exits non-zero, 05-run-agy-pipeline-agent.sh MUST fail (non-zero returncode).
+        # The endpoint and model are exported and install.env is absent, so the run
+        # reaches agy and its exit status, not the runner's unresolved-key guard.
         with tempfile.TemporaryDirectory(prefix="mock-agy-") as tmpdir:
             tmp_path = Path(tmpdir)
+            ran = tmp_path / "agy-ran"
             mock_sh = tmp_path / "agy"
-            mock_sh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            mock_sh.write_text(f"#!/bin/sh\n: > '{ran.as_posix()}'\nexit 1\n", encoding="utf-8")
             os.chmod(mock_sh, 0o755)
             if os.name == "nt":
                 mock_bat = tmp_path / "agy.bat"
                 mock_bat.write_text("@echo off\nexit /b 1\n", encoding="utf-8")
 
-            env = dict(os.environ)
-            env["PATH"] = f"{tmpdir}{os.pathsep}{env.get('PATH', '')}"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(PATH=f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                       MIOS_ETC_DIR=str(tmp_path / "etc-no-install-env"),
+                       MIOS_AI_ENDPOINT="http://caller.invalid/v1", MIOS_AI_MODEL="caller-model")
             res_fail = subprocess.run(
                 [bash_bin, scripts[4].as_posix()],
                 capture_output=True,
                 text=True,
                 env=env,
             )
+            self.assertTrue(ran.exists() or os.name == "nt",
+                            f"05-run-agy-pipeline-agent.sh stopped before agy: {res_fail.stderr}")
             self.assertNotEqual(
                 res_fail.returncode,
                 0,
@@ -606,6 +617,109 @@ class TestAgyAgentPipeline(unittest.TestCase):
             )
             self.assertEqual(res_ok.returncode, 0, f"05 failed with mock agy: {res_ok.stderr}")
             self.assertIn("Completed Successfully", res_ok.stdout)
+
+    def test_cicd_agy_runner_refuses_a_half_resolved_endpoint_or_model(self):
+        """Drives automation/cicd/05-run-agy-pipeline-agent.sh with only one of the endpoint
+        and the model resolvable. As in the wrappers, each key resolves on its own, from a
+        caller's export or install.env; a key that resolves from neither is a named error
+        before agy is run. The control is a copy with a literal model default planted back
+        in: it runs agy on that literal, which is exactly what the checks below reject."""
+        bash_bin = shutil.which("bash") or "bash"
+        runner = REPO_ROOT / "automation" / "cicd" / "05-run-agy-pipeline-agent.sh"
+        runner_txt = runner.read_text(encoding="utf-8")
+        endpoint, model = "http://ssot.invalid/v1", "ssot-model"
+        caller_endpoint, caller_model = "http://caller.invalid/v1", "caller-model"
+        keys = {"MIOS_AI_ENDPOINT", "MIOS_AI_MODEL"}
+        with tempfile.TemporaryDirectory(prefix="mios-cicd-half-") as tmpdir:
+            tmp = Path(tmpdir)
+
+            # The runner writes its artifact under the checkout it lives in, so each copy
+            # runs from a scratch tree rather than this one.
+            def stage(name, text):
+                script = tmp / name / "automation" / "cicd" / runner.name
+                script.parent.mkdir(parents=True)
+                script.write_text(text, encoding="utf-8")
+                return script
+
+            entry = "run_pipeline_agent() {\n"
+            self.assertEqual(runner_txt.count(entry), 1, "the runner no longer defines run_pipeline_agent")
+            real = stage("real", runner_txt)
+            planted = stage("planted", runner_txt.replace(
+                entry, entry + '    MIOS_AI_MODEL="${MIOS_AI_MODEL:-literal-model}"\n'))
+
+            # A recording fake for the agy the runner prefers: it leaves the endpoint and
+            # model it was handed, then its argv, NUL-separated.
+            mock_dir = tmp / "bin"
+            mock_dir.mkdir()
+            record = tmp / "agy-argv"
+            fake = mock_dir / "mios-agent-agy"
+            fake.write_text("#!/bin/sh\n"
+                            f"printf '%s\\0' \"$MIOS_AI_ENDPOINT\" \"$MIOS_AI_MODEL\" \"$@\" > '{record.as_posix()}'\n"
+                            "echo '{}'\n", encoding="utf-8")
+            os.chmod(fake, 0o755)
+            base_env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            base_env["PATH"] = f"{mock_dir}{os.pathsep}{base_env.get('PATH', '')}"
+
+            def etc(name, install_env):
+                etc_dir = tmp / name
+                etc_dir.mkdir()
+                if install_env is not None:
+                    (etc_dir / "install.env").write_text(install_env, encoding="utf-8")
+                return etc_dir
+
+            etc_both = etc("etc-both", f"MIOS_AI_ENDPOINT={endpoint}\nMIOS_AI_MODEL={model}\n")
+            etc_endpoint = etc("etc-endpoint-only", f"MIOS_AI_ENDPOINT={endpoint}\n")
+            etc_model = etc("etc-model-only", f"MIOS_AI_MODEL={model}\n")
+            etc_blank_model = etc("etc-blank-model", f"MIOS_AI_ENDPOINT={endpoint}\nMIOS_AI_MODEL=\n")
+            etc_none = etc("etc-no-install-env", None)
+
+            def run(script, etc_dir, export):
+                record.unlink(missing_ok=True)
+                return subprocess.run([bash_bin, script.as_posix(), "task"],
+                                      capture_output=True, text=True, cwd=tmpdir,
+                                      env={**base_env, "MIOS_ETC_DIR": str(etc_dir), **export})
+
+            def recorded():
+                return record.read_bytes().decode("utf-8").split("\0")[:-1]
+
+            half_resolved = [
+                # (install.env, the caller's export, the key that resolves from neither)
+                (etc_endpoint, {}, "MIOS_AI_MODEL"),
+                (etc_none, {"MIOS_AI_ENDPOINT": caller_endpoint}, "MIOS_AI_MODEL"),
+                (etc_blank_model, {}, "MIOS_AI_MODEL"),
+                (etc_model, {}, "MIOS_AI_ENDPOINT"),
+                (etc_none, {"MIOS_AI_MODEL": caller_model}, "MIOS_AI_ENDPOINT"),
+            ]
+            for etc_dir, export, missing in half_resolved:
+                with self.subTest(install_env=etc_dir.name, export=sorted(export)):
+                    res = run(real, etc_dir, export)
+                    self.assertNotEqual(res.returncode, 0, f"the runner ran with {missing} unresolved")
+                    self.assertIn(f"{missing} is unset", res.stderr)
+                    self.assertNotIn(f"{(keys - {missing}).pop()} is unset", res.stderr)
+                    self.assertFalse(record.exists(), f"the runner ran agy with {missing} unresolved")
+
+            resolved = [
+                # (install.env, the caller's export, the endpoint and model agy must be handed)
+                (etc_both, {}, endpoint, model),
+                (etc_both, {"MIOS_AI_ENDPOINT": caller_endpoint, "MIOS_AI_MODEL": caller_model},
+                 caller_endpoint, caller_model),
+                (etc_model, {"MIOS_AI_ENDPOINT": caller_endpoint}, caller_endpoint, model),
+                (etc_endpoint, {"MIOS_AI_MODEL": caller_model}, endpoint, caller_model),
+            ]
+            for etc_dir, export, want_endpoint, want_model in resolved:
+                with self.subTest(install_env=etc_dir.name, export=sorted(export)):
+                    res = run(real, etc_dir, export)
+                    self.assertEqual(res.returncode, 0, f"the runner failed: {res.stderr}")
+                    self.assertEqual(recorded(), [want_endpoint, want_model, "-p", "task", "--output-format", "json"])
+
+            # The control: a literal model default hides behind the endpoint resolving,
+            # so this half-resolved run succeeds on the literal instead of naming the key.
+            res = run(planted, etc_endpoint, {})
+            self.assertEqual(res.returncode, 0, f"the planted control did not run: {res.stderr}")
+            self.assertNotIn("MIOS_AI_MODEL is unset", res.stderr)
+            self.assertEqual(recorded()[:2], [endpoint, "literal-model"])
+            self.assertTrue(_literal_ai_defaults(planted.read_text(encoding="utf-8")),
+                            "the literal-default scan missed the planted runner default")
 
 
 if __name__ == "__main__":

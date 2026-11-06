@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AI-hint: Automated Antigravity CLI (AGY) agent runner for MiOS CI/CD pipeline cycles and artifact generation.
 # AI-related: automation/cicd/, .agents/subagents.json, .agents/skills/pipeline/SKILL.md, usr/share/mios/mios.toml
-# AI-functions: main, run_pipeline_agent
+# AI-functions: main, run_pipeline_agent, _mios_env
 
 set -euo pipefail
 
@@ -9,6 +9,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 log() {
     echo "==> [05-AGY-PIPELINE] $*"
+}
+
+_mios_env() {
+    local f="${MIOS_ETC_DIR:-/etc/mios}/install.env"
+    [[ -r "$f" ]] || return 0
+    sed -n "s/^$1=//p" "$f" | tail -n 1
 }
 
 run_pipeline_agent() {
@@ -48,9 +54,15 @@ run_pipeline_agent() {
         return 0
     fi
 
+    # The endpoint and model resolve from the layered SSOT via the resolver-rendered
+    # install.env (bare KEY=value); a caller's export wins, and an unresolved value
+    # is a named error, never a literal default.
+    export MIOS_AI_ENDPOINT="${MIOS_AI_ENDPOINT:-$(_mios_env MIOS_AI_ENDPOINT)}"
+    export MIOS_AI_MODEL="${MIOS_AI_MODEL:-$(_mios_env MIOS_AI_MODEL)}"
+    : "${MIOS_AI_ENDPOINT:?MIOS_AI_ENDPOINT is unset -- ${MIOS_ETC_DIR:-/etc/mios}/install.env is missing or stale}"
+    : "${MIOS_AI_MODEL:?MIOS_AI_MODEL is unset -- ${MIOS_ETC_DIR:-/etc/mios}/install.env is missing or stale}"
+
     log "Dispatching Antigravity Pipeline Agent with prompt: $prompt"
-    export MIOS_AI_ENDPOINT="${MIOS_AI_ENDPOINT:-http://localhost:8642/v1}"
-    export MIOS_AI_MODEL="${MIOS_AI_MODEL:-mi-os-7b}"
 
     # Execute agy in headless print mode
     "$agy_bin" -p "$prompt" \
