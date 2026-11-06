@@ -1900,8 +1900,13 @@ impl Ui {
         }
         let mut camera_key = key;
         camera_key.kind = KeyEventKind::Press;
-        if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none()) {
-            if key.kind == KeyEventKind::Press && self.camera_scope() {
+        // Plain camera chords retain their ordinary meaning outside camera
+        // views: Shift+arrows still navigate menus, edit seeds and answer memory.
+        // Strict Alt aliases remain isolated by the guard below.
+        if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none())
+            .filter(|_| self.camera_scope())
+        {
+            if key.kind == KeyEventKind::Press {
                 self.camera_command(command);
             }
             return Effect::Continue;
@@ -4868,7 +4873,8 @@ impl Ui {
                 "Click an action/menu row to choose it.",
                 "Click the pet: Talk. Right-click: Home/context.",
                 "Click footer Choose/Back or O Menu / ? Help.",
-                "Wheel: zoom in the room; scroll choices in menus.",
+                "Wheel: scene zoom; Shift tilts; sideways orbits.",
+                "Wheel outside the scene scrolls menu choices.",
                 "Menus freeze care time; animation keeps moving.",
                 "Compact HUD: *=100. Tiny frames page all needs.",
                 "Header E/B/C/A/D: Egg/Baby/Child/Adult/Dead.",
@@ -4877,8 +4883,10 @@ impl Ui {
                 "PgUp/PgDn pages. Home/End first/last.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
-                "[ left / ] right: orbit; Graphics resets orbit only.",
-                "Fixed isometric elevation; no tilt controls.",
+                "Camera: 4/6/8/2 or Shift+arrows pan; 7/9 orbit.",
+                "1/3 or { } tilt; 5 reset pose and zoom.",
+                "Roster/Studio: Shift+arrows, braces or Alt+digits.",
+                "[ left / ] right: coarse orbit. Graphics has pose controls.",
                 "Room/Mon follow world yaw; Face starts front, then [/] orbits.",
                 "Camera controls never steer your pet.",
                 "Compact controller H- means Hold; labels match mapped buttons.",
@@ -9838,6 +9846,168 @@ mod controller_hint_scope_tests {
                 .collect::<String>();
             assert!(bottom.contains("Circle"), "{width}: {bottom}");
             assert!(!bottom.contains("Esc Back"), "{width}: {bottom}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod camera_plain_fallthrough_tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        (config.clone(), Ui::configured(game, &config))
+    }
+
+    fn shifted(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::SHIFT)
+    }
+
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16) -> String {
+        let colors = Colors::from_config(config, crate::capabilities::Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, config, Renderer::Ascii, &colors, ui.frame, false))
+            .unwrap();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn shifted_arrows_reach_menu_scroll_and_seed_editors() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        for menu in [
+            Menu::Home,
+            Menu::Care,
+            Menu::Games,
+            Menu::Graphics,
+            Menu::Training,
+            Menu::Habitat,
+        ] {
+            ui.open(menu);
+            ui.handle(shifted(KeyCode::Down), &config.game);
+            assert_eq!(ui.menu_selected, 1, "{menu:?} must receive Shift+Down");
+            ui.handle(shifted(KeyCode::Up), &config.game);
+            assert_eq!(ui.menu_selected, 0, "{menu:?} must receive Shift+Up");
+            assert_eq!(ui.camera_pan_target.get(), (0, 0));
+            assert_eq!(ui.game, game);
+        }
+        ui.open(Menu::Help);
+        draw(&ui, &config, 40, 16);
+        ui.handle(shifted(KeyCode::Down), &config.game);
+        assert_eq!(ui.menu_scroll, 1);
+        ui.handle(shifted(KeyCode::Up), &config.game);
+        assert_eq!(ui.menu_scroll, 0);
+
+        ui.open_seed();
+        ui.seed_entry.edit(SeedEdit::Clear);
+        for c in ['4', '6'] {
+            ui.handle(
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                &config.game,
+            );
+        }
+        assert_eq!(ui.seed_entry.cursor(), 2);
+        ui.handle(shifted(KeyCode::Left), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 1);
+        ui.handle(shifted(KeyCode::Left), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 0);
+        ui.handle(shifted(KeyCode::Right), &config.game);
+        assert_eq!(ui.seed_entry.cursor(), 1);
+        assert_eq!(ui.camera_pan_target.get(), (0, 0));
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn shifted_memory_answer_is_a_guess_while_alt_camera_aliases_stay_inert() {
+        let (config, mut ui) = fixture();
+        ui.care(Care::Play, &config.game);
+        let challenge = ui.game.challenge.as_mut().unwrap();
+        challenge.reveal = 0;
+        let code = match challenge.pattern[0] {
+            Direction::Up => KeyCode::Up,
+            Direction::Down => KeyCode::Down,
+            Direction::Left => KeyCode::Left,
+            Direction::Right => KeyCode::Right,
+        };
+        let game = ui.game.clone();
+        for digit in ['2', '6', '9'] {
+            ui.handle(
+                KeyEvent::new(KeyCode::Char(digit), KeyModifiers::ALT),
+                &config.game,
+            );
+        }
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            let mut key = shifted(code);
+            key.kind = kind;
+            ui.handle(key, &config.game);
+        }
+        assert_eq!(ui.game, game);
+        ui.handle(shifted(code), &config.game);
+        assert_eq!(ui.game.challenge.as_ref().unwrap().entered, 1);
+        assert_eq!(ui.camera_pan_target.get(), (0, 0));
+    }
+
+    #[test]
+    fn shifted_camera_press_owns_live_view_but_not_native_dialog() {
+        let (config, mut ui) = fixture();
+        ui.set_scene(Rect::new(0, 0, 80, 24));
+        let game = ui.game.clone();
+        ui.handle(shifted(KeyCode::Down), &config.game);
+        let pan = ui.camera_pan_target.get();
+        assert!(pan.1 > 0);
+        for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+            let mut key = shifted(KeyCode::Down);
+            key.kind = kind;
+            ui.handle(key, &config.game);
+            assert_eq!(ui.camera_pan_target.get(), pan);
+        }
+        ui.native_modal = true;
+        ui.handle(shifted(KeyCode::Up), &config.game);
+        assert_eq!(ui.camera_pan_target.get(), pan);
+        assert_eq!(ui.game, game);
+        assert_eq!(
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                &config.game
+            ),
+            Effect::Quit
+        );
+    }
+
+    #[test]
+    fn rendered_help_describes_implemented_camera_and_wheel_controls() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Help);
+        let text = draw(&ui, &config, 130, 70);
+        for hint in [
+            "4/6/8/2",
+            "Shift+arrows",
+            "7/9 orbit",
+            "1/3",
+            "5 reset",
+            "Shift tilts",
+            "sideways orbits",
+            "Roster/Studio",
+            "Alt+digits",
+        ] {
+            assert!(text.contains(hint), "missing {hint}: {text}");
+        }
+        for stale in ["no tilt controls", "resets orbit only"] {
+            assert!(!text.contains(stale), "{text}");
         }
     }
 }
