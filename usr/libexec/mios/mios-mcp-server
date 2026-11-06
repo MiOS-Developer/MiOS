@@ -2041,14 +2041,31 @@ def _project_agent_clients(home=None):
     if text.startswith(legacy_header):
         text = text[len(legacy_header):]
     selected = tomllib.loads(text).get("model_provider") if text.strip() else None
-    text = re.sub(r"(?ms)^\[model_providers\.mios(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?ms)^\[mcp_servers\.mios-control(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
-    text = text.rstrip() + "\n\n[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"TMUX\", \"TMUX_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n"
+
+    def owned_table(text, header, block):
+        # Refresh an owned table (and drop its subtables) where it already stands; append
+        # it only when absent. Re-appending moved it behind tables the interaction
+        # projection added after it, such as the [agents] that provider-scoped values add
+        # once a legacy header has migrated to the mios provider, so every second launch
+        # rewrote the file.
+        placed = []
+
+        def place(match):
+            placed.append(match)
+            if len(placed) > 1:
+                return ""
+            region = match.group(0)
+            return block.rstrip("\n") + (region[len(region.rstrip()):] or "\n")
+
+        text = re.sub(r"(?ms)^\[" + re.escape(header) + r"(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", place, text)
+        return text if placed else text.rstrip() + "\n\n" + block
+
+    text = owned_table(text, "mcp_servers.mios-control", "[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"TMUX\", \"TMUX_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n")
     if selected is None:
         text = 'model_provider = "mios"\n' + text
         if "model" not in tomllib.loads(text):
             text = 'model = ' + json.dumps(model) + '\n' + text
-    text += '\n[model_providers.mios]\nname = "MiOS"\nbase_url = ' + json.dumps(endpoint) + '\nwire_api = "responses"\nrequires_openai_auth = false\n'
+    text = owned_table(text, "model_providers.mios", '[model_providers.mios]\nname = "MiOS"\nbase_url = ' + json.dumps(endpoint) + '\nwire_api = "responses"\nrequires_openai_auth = false\n')
     codex.parent.mkdir(parents=True, exist_ok=True)
     if not codex.exists() or codex.read_text() != text:
         mios_toml.write_atomic(str(codex), text)
