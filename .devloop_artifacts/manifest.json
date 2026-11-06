@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T02:30:40.704262+00:00",
-  "total_artifacts": 133,
+  "last_updated": "2026-11-06T02:35:37.866266+00:00",
+  "total_artifacts": 136,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -2066,6 +2066,48 @@
       },
       "sha256": "e0934abaf0ca5d221b528573dbeabc1ebaffc4cac395eeb3c99d89d5ea42480d",
       "size_bytes": 20856
+    },
+    {
+      "path": "ROADMAP.md",
+      "artifact_type": "doc",
+      "created_at": "2026-11-06T02:35:37.866266+00:00",
+      "metadata": {
+        "mios_console_projections": {
+          "stages": 29,
+          "context": "podman-MiOS-DEV-mios-mons-console-projection-retry",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-console-projection/host.log"
+        }
+      },
+      "sha256": "9171cf35c0db52fb1a52d236cfa522b7afaa1b2559c1a5f870df63914a2e6fdd",
+      "size_bytes": 163128
+    },
+    {
+      "path": "usr/share/mios/reference/manual-corpus.tsv",
+      "artifact_type": "config",
+      "created_at": "2026-11-06T02:35:37.866266+00:00",
+      "metadata": {
+        "mios_console_projections": {
+          "stages": 29,
+          "context": "podman-MiOS-DEV-mios-mons-console-projection-retry",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-console-projection/host.log"
+        }
+      },
+      "sha256": "1166d08a7823c01cea6446eab0f69a1c00594c995ff893290454e8d64219c583",
+      "size_bytes": 3367197
+    },
+    {
+      "path": "usr/share/mios/referenced_names.txt",
+      "artifact_type": "config",
+      "created_at": "2026-11-06T02:35:37.866266+00:00",
+      "metadata": {
+        "mios_console_projections": {
+          "stages": 29,
+          "context": "podman-MiOS-DEV-mios-mons-console-projection-retry",
+          "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-console-projection/host.log"
+        }
+      },
+      "sha256": "16afce6e9dcc2d7399d13c9e95bf37363427ec29c192464641b24a8799ff7c0c",
+      "size_bytes": 39993
     }
   ]
 }
