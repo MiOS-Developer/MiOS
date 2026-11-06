@@ -68,11 +68,13 @@ def load_sync(path: str):
 
 def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
              host_dropin: str = "", pings: dict | None = None,
-             cooling: dict | None = None, out: dict | None = None) -> list[str]:
+             cooling: dict | None = None, out: dict | None = None,
+             active_exit: str = "") -> list[str]:
     """Run `script` under a fake tailscale; return the argv lines `set` recorded.
     `host_dropin` becomes a host-tier mios.d fragment over the vendor layer;
     `pings` maps "direct" or an exit-node IP to (loss %, avg RTT ms or None);
-    `cooling` seeds the health state file and `out["state"]` receives it."""
+    `cooling` seeds the health state file and `out["state"]` receives it;
+    `active_exit` is the exit node the fake reports as already in use."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = os.path.join(tmp, "bin")
         os.mkdir(bindir)
@@ -93,7 +95,10 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
         toml = toml.replace("@STATE@", state_path)
         status = os.path.join(tmp, "status.json")
         with open(status, "w") as f:
-            json.dump({"BackendState": state, "Peer": peers}, f)
+            snapshot = {"BackendState": state, "Peer": peers}
+            if active_exit:
+                snapshot["ExitNodeStatus"] = {"Online": True, "TailscaleIPs": [f"{active_exit}/32"]}
+            json.dump(snapshot, f)
         vendor = os.path.join(tmp, "vendor.toml")
         with open(vendor, "w") as f:
             f.write(toml)
@@ -152,6 +157,7 @@ state = "@STATE@"
 _PIXEL, _KABU = "100.122.33.108", "100.89.218.102"
 _BOTH = {"a": _peer("pixel-7-pro", _PIXEL, True, True), "b": _peer("kabu", _KABU, True, True)}
 _KEEP = "is_worse = exit_is_worse(direct, via_exit, health)"
+_STANDBY = 'if direct[0] <= health["max_extra_loss_pct"]:'
 
 
 def check_applies(script: str) -> str | None:
@@ -184,13 +190,23 @@ def check_health_gate(script: str) -> str | None:
     """None when an exit node worse than the direct uplink is cooled down and
     the next preference is tried."""
     out: dict = {}
-    calls = run_sync(script, _HEALTH, _BOTH, out=out,
+    calls = run_sync(script, _HEALTH, _BOTH, out=out, active_exit=_PIXEL,
                      pings={"direct": (0, 25), _PIXEL: (33, 500), _KABU: (0, 60)})
     exits = [c.split("--exit-node=")[1].split()[0] for c in calls if "--exit-node=" in c]
     if exits != [_PIXEL, _KABU]:
         return f"worse exit node kept: applied exit nodes {exits!r}"
     if _PIXEL not in out.get("state", {}):
         return f"no cooldown recorded: {out.get('state')!r}"
+    return None
+
+
+def check_standby(script: str) -> str | None:
+    """None when a healthy direct uplink leaves the exit nodes untried."""
+    calls = run_sync(script, _HEALTH, _BOTH, pings={"direct": (0, 25), _PIXEL: (0, 60)})
+    if any(f"--exit-node={ip}" in c for c in calls for ip in (_PIXEL, _KABU)):
+        return f"exit node trialled on a healthy uplink: {calls!r}"
+    if len(calls) != 1 or "--exit-node= " not in calls[0] + " ":
+        return f"standby did not apply the cleared exit node: {calls!r}"
     return None
 
 
@@ -246,7 +262,8 @@ class TestTailscaleSync(unittest.TestCase):
         self.assertIn("drop-in ignored", defect)
 
     def test_health_gate_keeps_a_healthy_exit_node(self) -> None:
-        calls = run_sync(_SCRIPT, _HEALTH, _BOTH, pings={"direct": (0, 25), _PIXEL: (0, 70)})
+        calls = run_sync(_SCRIPT, _HEALTH, _BOTH, active_exit=_PIXEL,
+                         pings={"direct": (0, 25), _PIXEL: (0, 70)})
         self.assertEqual(len(calls), 1, calls)
         self.assertIn(f"--exit-node={_PIXEL}", calls[0])
 
@@ -254,16 +271,38 @@ class TestTailscaleSync(unittest.TestCase):
         self.assertIsNone(check_health_gate(_SCRIPT))
 
     def test_health_gate_clears_when_every_exit_node_is_worse(self) -> None:
-        calls = run_sync(_SCRIPT, _HEALTH, _BOTH,
+        calls = run_sync(_SCRIPT, _HEALTH, _BOTH, active_exit=_PIXEL,
                          pings={"direct": (0, 25), _PIXEL: (33, 500), _KABU: (100, None)})
         self.assertEqual(len(calls), 3, calls)
         self.assertIn("--exit-node= ", calls[2] + " ")
 
     def test_health_gate_honours_cooldown(self) -> None:
         calls = run_sync(_SCRIPT, _HEALTH, _BOTH, cooling={_PIXEL: 4102444800},
-                         pings={"direct": (0, 25), _KABU: (0, 60)})
+                         pings={"direct": (55, 25), _KABU: (0, 60)})
         self.assertEqual(len(calls), 1, calls)
         self.assertIn(f"--exit-node={_KABU}", calls[0])
+
+    def test_healthy_uplink_keeps_exit_nodes_on_standby(self) -> None:
+        self.assertIsNone(check_standby(_SCRIPT))
+
+    def test_degraded_uplink_fails_over_to_a_less_lossy_exit_node(self) -> None:
+        calls = run_sync(_SCRIPT, _HEALTH, _BOTH, pings={"direct": (55, 25), _PIXEL: (35, 600)})
+        self.assertEqual(len(calls), 1, calls)
+        self.assertIn(f"--exit-node={_PIXEL}", calls[0])
+
+    def test_negative_no_standby_trials_exit_nodes_on_a_healthy_uplink(self) -> None:
+        with open(_SCRIPT) as f:
+            source = f.read()
+        self.assertEqual(source.count(_STANDBY), 1)
+        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
+                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
+            f.write(source.replace(_STANDBY, "if False:"))
+        try:
+            defect = check_standby(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertIsNotNone(defect)
+        self.assertIn("healthy uplink", defect)
 
     def test_exit_is_worse_rule(self) -> None:
         mod = load_sync(_SCRIPT)
