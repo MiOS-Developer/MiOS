@@ -46,16 +46,17 @@ def build(tmp, snippet, auto_attach="true"):
         f"echo \"terminal SHOWN=${{MIOS_MOTD_SHOWN:-}}\" >> {log}\n"
         f"[ \"$(grep -c ^terminal {log})\" -lt 3 ] || exit 0\n"
         f"exec /bin/bash --noprofile --norc -i -c '. {tmp}/snippet.sh; echo NESTED-PLAIN >> {log}'\n")
+    # A tmux pane runs the native workspace hook named by [mcp.agents].binary (never an interpreter per pane).
     (stub / "mios-toml-get").write_text(
         "#!/bin/bash\n"
         "case \"$1 $2\" in\n"
         f"  'terminal.startup auto_attach') echo {auto_attach} ;;\n"
-        f"  'mcp python') echo {stub}/py ;;\n"
+        f"  'mcp.agents binary') echo {stub}/relay ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n")
-    (stub / "py").write_text(f"#!/bin/bash\necho \"workspace $*\" >> {log}\n")
+    (stub / "relay").write_text(f"#!/bin/bash\necho \"workspace $*\" >> {log}\n")
     (stub / "mios-mcp-server").write_text("")
-    for f in ("mios-terminal", "mios-toml-get", "py"):
+    for f in ("mios-terminal", "mios-toml-get", "relay"):
         (stub / f).chmod(0o755)
 
 
@@ -113,8 +114,8 @@ def main():
 
     # POSITIVE: a tmux pane (inherits the guard from the server) still ensures its workspace.
     calls = scenario(snippet, {"MIOS_MOTD_SHOWN": "1", "TMUX": "/tmp/fake,1,0"})
-    check("tmux pane still runs --workspace-ensure",
-          any("--workspace-ensure" in c for c in calls) and not any(c.startswith("terminal") for c in calls),
+    check("tmux pane still runs the workspace hook (--workspace-hook ensure)",
+          "workspace --workspace-hook ensure" in calls and not any(c.startswith("terminal") for c in calls),
           str(calls))
 
     # POSITIVE: auto_attach=false never execs and leaves the shell usable.
