@@ -13,6 +13,7 @@ Keywords=web;browser;internet;zen;
 Terminal=false
 StartupNotify=true
 StartupWMClass=zen
+MimeType=text/xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/mailto;
 X-Flatpak=app.zen_browser.zen
 Actions=new-window;new-private-window;
 

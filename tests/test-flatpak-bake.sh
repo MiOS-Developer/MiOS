@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI-hint: Headless Flatpak bake and default-browser tests: MiOS-Portal is the SSOT, resolver and freedesktop default (gio/xdg-mime over fixture-stubbed entries, never host programs), the tree ships its Exec program, and each planted regression fails.
+# AI-hint: Headless Flatpak bake and default-browser tests: MiOS-Portal is the SSOT, resolver and freedesktop default for web content only (gio/xdg-mime over stubbed entries), mailto/PDF keep their handler, the tree ships its Exec, and each plant fails.
 # AI-related: automation/61-flatpak-bake.sh, etc/xdg/mimeapps.list, usr/share/applications/mios-portal.desktop, usr/bin/mios-portal, tools/native/mios-browser/src/main.rs, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -143,38 +143,59 @@ echo 'PASS mios-app-type, mios-launch and mios-open-url resolve the default brow
 # The freedesktop layer: what xdg-open, gio open and the OpenURI portal pick. Every MiOS key above
 # can name MiOS-Portal and a session still opens Zen, because exported Flatpaks declare their own
 # http/https/html associations and Fedora ships mimeapps.list and gnome-mimeapps.list defaults.
-python3 - "$ROOT" <<'PY'
+# The default browser covers web content only; mailto, PDF, feeds and XML keep their earlier handler.
+FD_ZEN_TYPES='text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;'
+python3 - "$ROOT" "$FD_ZEN_TYPES" <<'PY'
 import copy, os, sys, tomllib
-root = sys.argv[1]
+root, zen_before = sys.argv[1], {t for t in sys.argv[2].split(';') if t}
 with open(os.path.join(root, 'usr/share/mios/mios.toml'), 'rb') as source:
     shipped = tomllib.load(source)['desktop']
 BROWSER = {'text/html', 'application/xhtml+xml', 'x-scheme-handler/http', 'x-scheme-handler/https'}
+def need(ok, reason, detail):
+    if not ok:
+        raise AssertionError(f'{reason}: {detail}')
 def check(desktop):
     portal = desktop['portal']['launcher']
     launchers = desktop['launchers']
-    types = lambda name: {t.strip() for t in launchers[name].get('mime_type', '').split(';') if t.strip()}
-    assert BROWSER <= types(portal), types(portal)
-    assert '%u' in launchers[portal]['exec_cmd'].split(), launchers[portal]['exec_cmd']
-    assert desktop['default_applications']['launchers'][0] == portal, desktop['default_applications']
-    assert 'mios-zen' in launchers and 'mime_type' not in launchers['mios-zen'], launchers['mios-zen']
+    types = lambda name: {t.strip() for t in launchers.get(name, {}).get('mime_type', '').split(';') if t.strip()}
+    need(types(portal) == BROWSER, 'portal-not-web-only', sorted(types(portal) ^ BROWSER))
+    need('%u' in launchers[portal]['exec_cmd'].split(), 'portal-no-url', launchers[portal]['exec_cmd'])
+    named = desktop['default_applications']['launchers']
+    need(named[:1] == [portal], 'portal-not-first', named)
+    # render-desktop lists every type a named launcher declares, so the projection is web-only too.
+    need(all(types(n) <= BROWSER for n in named), 'projection-not-web-only', {n: sorted(types(n) - BROWSER) for n in named})
+    need('mios-zen' in launchers and not types('mios-zen') & BROWSER, 'zen-web-type', sorted(types('mios-zen') & BROWSER))
+    need(zen_before - BROWSER <= types('mios-zen'), 'zen-lost-type', sorted(zen_before - BROWSER - types('mios-zen')))
     rivals = {n: sorted(types(n) & types(portal)) for n in launchers if n != portal and types(n) & types(portal)}
-    assert not rivals, rivals
+    need(not rivals, 'rival-web-type', rivals)
 check(shipped)
-print('PASS SSOT gives the browser MIME types and %u to MiOS-Portal alone and names it in [desktop.default_applications]')
+print('PASS SSOT gives the four web types and %u to MiOS-Portal alone, heads a web-only [desktop.default_applications] with it, and leaves mailto, PDF, feeds and XML to mios-zen')
 def zen_first(d): d['default_applications']['launchers'] = ['mios-zen'] + d['default_applications']['launchers']
+def zen_listed_after(d): d['default_applications']['launchers'] = d['default_applications']['launchers'] + ['mios-zen']
 def zen_mime(d): d['launchers']['mios-zen']['mime_type'] = 'x-scheme-handler/http;x-scheme-handler/https;'
+def zen_drops_mailto(d):
+    entry = d['launchers']['mios-zen']
+    entry['mime_type'] = entry['mime_type'].replace('x-scheme-handler/mailto;', '')
 def portal_no_url(d): d['launchers'][d['portal']['launcher']]['exec_cmd'] = '/usr/bin/mios-portal'
 def portal_no_https(d):
     entry = d['launchers'][d['portal']['launcher']]
     entry['mime_type'] = entry['mime_type'].replace('x-scheme-handler/https;', '')
+def portal_mailto(d): d['launchers'][d['portal']['launcher']]['mime_type'] += 'x-scheme-handler/mailto;'
+def portal_pdf(d): d['launchers'][d['portal']['launcher']]['mime_type'] += 'application/pdf;'
 def rival_html(d): d['launchers']['mios-terminal']['mime_type'] = 'text/html;'
-for plant in (zen_first, zen_mime, portal_no_url, portal_no_https, rival_html):
+for plant, expect in ((zen_first, 'portal-not-first'), (zen_listed_after, 'projection-not-web-only'),
+                      (zen_mime, 'zen-web-type'), (zen_drops_mailto, 'zen-lost-type'),
+                      (portal_no_url, 'portal-no-url'), (portal_no_https, 'portal-not-web-only'),
+                      (portal_mailto, 'portal-not-web-only'), (portal_pdf, 'portal-not-web-only'),
+                      (rival_html, 'rival-web-type')):
     planted = copy.deepcopy(shipped)
     plant(planted)
     try:
         check(planted)
-    except AssertionError:
-        print(f'PASS planted SSOT {plant.__name__} fails the check')
+    except AssertionError as failed:
+        if not str(failed).startswith(expect + ':'):
+            raise SystemExit(f'FAIL planted SSOT {plant.__name__} failed for another reason: {failed}')
+        print(f'PASS planted SSOT {plant.__name__} fails the check ({failed})')
     else:
         raise SystemExit(f'FAIL planted SSOT {plant.__name__} passed the check')
 PY
@@ -183,6 +204,12 @@ for tool in gio xdg-mime update-desktop-database; do
 done
 FD_PATH="$(dirname "$(command -v gio)"):$(dirname "$(command -v xdg-mime)"):/usr/bin:/bin"
 FD_TYPES='x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml'
+# FD_NON_WEB: the types mios-zen.desktop declared before MiOS-Portal that are not web content.
+FD_NON_WEB=''
+for type in $(printf '%s' "$FD_ZEN_TYPES" | tr ';' ' '); do
+    case " $FD_TYPES " in *" $type "*) ;; *) FD_NON_WEB="${FD_NON_WEB:+$FD_NON_WEB }$type" ;; esac
+done
+[ -n "$FD_NON_WEB" ] || { echo 'FAIL no non-web type is left to check' >&2; exit 1; }
 # fd_ships_portal <tree>: the session tier below runs MiOS-Portal's entry against a stub, so the
 # program it Execs is checked here, in the tree: shipped, as an executable file, at the absolute path
 # the [Desktop Entry] Exec names. Prints that path, or the finding.
@@ -300,6 +327,10 @@ fd_guard() {
             echo "guard: mios-zen.desktop declares $type"; return 1
         fi
     done
+    # Web content only: the portal declares no mailto, PDF, feed, XML or other type.
+    for type in $(grep -E '^MimeType=' "$entry" | cut -d= -f2- | tr ';' ' '); do
+        case " $FD_TYPES " in *" $type "*) ;; *) echo "guard: mios-portal.desktop declares $type, which is not web content"; return 1 ;; esac
+    done
     # GLib still resolves a hidden entry as the default, but mios-gui hands it to mios-browser, which refuses it.
     if awk '/^\[/ { main = ($0 == "[Desktop Entry]"); next } main && /^Hidden[ \t]*=[ \t]*true[ \t]*$/ { hidden = 1 } END { exit !hidden }' "$entry"; then
         echo "guard: mios-portal.desktop is Hidden=true, which mios-browser refuses to launch"; return 1
@@ -314,6 +345,13 @@ fd_guard() {
                 END { exit !found }' "$list"; then
             echo "guard: ${list##*/} lists mios-portal.desktop under [Removed Associations]"; return 1
         fi
+        # No shipped list sets a default for a non-web type, or adds the portal for one.
+        got="$(awk -v web=" $FD_TYPES " '/^[ \t]*#/ { next } /^\[/ { group = $0; next }
+            /=/ { type = $0; sub(/[ \t]*=.*/, "", type); ids = ";" $0; sub(/^;[^=]*=/, ";", ids); gsub(/[ \t]/, "", ids)
+                  if (index(web, " " type " ")) next
+                  if (group ~ /^\[Default Applications\]/ || (group ~ /^\[Added Associations\]/ && ids ~ /;mios-portal\.desktop(;|$)/)) {
+                      print type " under " group; exit } }' "$list")"
+        [ -z "$got" ] || { echo "guard: ${list##*/} claims $got, which is not web content"; return 1; }
     done
     for de in '' GNOME Hyprland; do
         for tool in gio xdg-mime; do
@@ -324,11 +362,77 @@ fd_guard() {
             done
         done
     done
+    fd_non_web "$r"
+}
+# fd_non_web <dir>: every non-web type keeps the handler it has in $FD_BEFORE, the pre-portal layer.
+fd_non_web() {
+    local r="$1" de tool type got before
+    for de in '' GNOME Hyprland; do
+        for tool in gio xdg-mime; do
+            for type in $FD_NON_WEB; do
+                before="$(fd_default "$FD_BEFORE" "$de" "$tool" "$type")"
+                [ -n "$before" ] && [ "$before" != mios-portal.desktop ] \
+                    || { echo "guard: the pre-portal layer gives $type to '${before:-nothing}' ($tool, XDG_CURRENT_DESKTOP='$de')"; return 1; }
+                got="$(fd_default "$r" "$de" "$tool" "$type")"
+                [ "$got" = "$before" ] \
+                    || { echo "guard: $tool picks '${got:-nothing}' for $type (XDG_CURRENT_DESKTOP='$de'), not its pre-portal handler '$before'"; return 1; }
+            done
+        done
+    done
+}
+fd_stray_list() {
+    local type
+    printf '[Default Applications]\n' > "$1"
+    for type in $FD_TYPES; do printf '%s=app.zen_browser.zen.desktop;\n' "$type" >> "$1"; done
+}
+plant_zen_flatpak_default() { sed -i -E 's|^(x-scheme-handler/https?)=.*|\1=app.zen_browser.zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
+plant_zen_listed_first() { sed -i -E 's#^(x-scheme-handler/https?|text/html|application/xhtml\+xml)=#\1=app.zen_browser.zen.desktop;#' "$1/etc-xdg/mimeapps.list"; }
+plant_zen_launcher_default() { sed -i 's|^text/html=.*|text/html=mios-zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
+plant_no_default_list() { rm -f "$1/etc-xdg/mimeapps.list"; }
+plant_stray_gnome_list() { fd_stray_list "$1/etc-xdg/gnome-mimeapps.list"; }
+plant_stray_hyprland_list() { fd_stray_list "$1/etc-xdg/hyprland-mimeapps.list"; }
+plant_zen_launcher_mime() {
+    local f="$1/shipped/applications/mios-zen.desktop"
+    if grep -q '^MimeType=' "$f"; then
+        sed -i 's|^MimeType=|&text/html;x-scheme-handler/http;x-scheme-handler/https;|' "$f"
+    else
+        sed -i 's|^\[Desktop Entry\]$|&\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;|' "$f"
+    fi
+}
+plant_zen_drops_non_web() { sed -i '/^MimeType=/d' "$1/shipped/applications/mios-zen.desktop"; }
+plant_portal_without_url() { sed -i 's|^Exec=\(.*\) %u$|Exec=\1|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_without_mime() { sed -i '/^MimeType=/d' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_claims_mailto() { sed -i 's|^MimeType=.*|&x-scheme-handler/mailto;|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_claims_pdf() { sed -i 's|^MimeType=.*|&application/pdf;|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_list_claims_mailto() { printf 'x-scheme-handler/mailto=mios-portal.desktop;\n' >> "$1/etc-xdg/mimeapps.list"; }
+plant_list_adds_pdf() { printf '\n[Added Associations]\napplication/pdf=mios-portal.desktop;\n' >> "$1/etc-xdg/mimeapps.list"; }
+plant_portal_hidden() { sed -i 's|^\[Desktop Entry\]$|&\nHidden=true|' "$1/shipped/applications/mios-portal.desktop"; }
+plant_portal_removed_association() { printf '\n[Removed Associations]\nx-scheme-handler/https=mios-portal.desktop;\n' >> "$1/etc-xdg/mimeapps.list"; }
+# The layer before MiOS-Portal took the browser types: mios-zen.desktop declared them, the portal's
+# Exec took no URL and it declared none, and no list shipped.
+plant_pre_portal_layer() {
+    sed -i -e '/^MimeType=/d' -e "s|^\[Desktop Entry\]\$|&\nMimeType=$FD_ZEN_TYPES|" "$1/shipped/applications/mios-zen.desktop"
+    plant_portal_without_url "$1"; plant_portal_without_mime "$1"; plant_no_default_list "$1"
+}
+# The layer before the web-only scope: the portal declared and was the listed default for every type
+# mios-zen.desktop had declared, mailto and PDF included, and mios-zen.desktop declared none.
+plant_pre_web_only_layer() {
+    local type
+    sed -i '/^MimeType=/d' "$1/shipped/applications/mios-zen.desktop"
+    sed -i "s|^MimeType=.*|MimeType=$FD_ZEN_TYPES|" "$1/shipped/applications/mios-portal.desktop"
+    for type in $FD_NON_WEB; do printf '%s=mios-portal.desktop;\n' "$type" >> "$1/etc-xdg/mimeapps.list"; done
 }
 FDT="$TMP/freedesktop"
+FD_BEFORE="$FDT/before"
+fd_fixture "$FD_BEFORE" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
+plant_pre_portal_layer "$FD_BEFORE"
+out="$(fd_session "$FD_BEFORE")" || { echo "FAIL the pre-portal reference layer: $out" >&2; exit 1; }
 fd_fixture "$FDT/shipped" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
-fd_guard "$FDT/shipped" || { echo 'FAIL the shipped freedesktop layer does not make MiOS-Portal the default browser' >&2; exit 1; }
+fd_guard "$FDT/shipped" || { echo 'FAIL the shipped freedesktop layer does not make MiOS-Portal the default browser for web content only' >&2; exit 1; }
 echo 'PASS gio and xdg-mime resolve http, https and html to mios-portal.desktop over exported Flatpaks and the Fedora lists (GNOME, Hyprland, none), with every Exec program a fixture stub'
+for type in $FD_NON_WEB; do
+    echo "PASS gio and xdg-mime keep $type on '$(fd_default "$FDT/shipped" '' gio "$type")', its pre-portal handler, not mios-portal.desktop (GNOME, Hyprland, none)"
+done
 # Planted: each one alone must make the guard fail.
 # fd_plant <name> <expected guard finding>: plant_<name> mutates a copy of the shipped layer.
 fd_plant() {
@@ -342,29 +446,6 @@ fd_plant() {
     case "$out" in *"$expect"*) ;; *) echo "FAIL planted $name failed for another reason: $out" >&2; exit 1 ;; esac
     echo "PASS planted $name fails the freedesktop guard ($out)"
 }
-FD_ZEN_MIME='MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;'
-fd_stray_list() {
-    local type
-    printf '[Default Applications]\n' > "$1"
-    for type in $FD_TYPES; do printf '%s=app.zen_browser.zen.desktop;\n' "$type" >> "$1"; done
-}
-plant_zen_flatpak_default() { sed -i -E 's|^(x-scheme-handler/https?)=.*|\1=app.zen_browser.zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
-plant_zen_listed_first() { sed -i -E 's#^(x-scheme-handler/https?|text/html|application/xhtml\+xml)=#\1=app.zen_browser.zen.desktop;#' "$1/etc-xdg/mimeapps.list"; }
-plant_zen_launcher_default() { sed -i 's|^text/html=.*|text/html=mios-zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
-plant_no_default_list() { rm -f "$1/etc-xdg/mimeapps.list"; }
-plant_stray_gnome_list() { fd_stray_list "$1/etc-xdg/gnome-mimeapps.list"; }
-plant_stray_hyprland_list() { fd_stray_list "$1/etc-xdg/hyprland-mimeapps.list"; }
-plant_zen_launcher_mime() { sed -i 's|^\[Desktop Entry\]$|&\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;|' "$1/shipped/applications/mios-zen.desktop"; }
-plant_portal_without_url() { sed -i 's|^Exec=\(.*\) %u$|Exec=\1|' "$1/shipped/applications/mios-portal.desktop"; }
-plant_portal_without_mime() { sed -i '/^MimeType=/d' "$1/shipped/applications/mios-portal.desktop"; }
-plant_portal_hidden() { sed -i 's|^\[Desktop Entry\]$|&\nHidden=true|' "$1/shipped/applications/mios-portal.desktop"; }
-plant_portal_removed_association() { printf '\n[Removed Associations]\nx-scheme-handler/https=mios-portal.desktop;\n' >> "$1/etc-xdg/mimeapps.list"; }
-# The layer before MiOS-Portal took the browser types: mios-zen.desktop declared them, the portal's
-# Exec took no URL and it declared none, and no list shipped.
-plant_pre_portal_layer() {
-    sed -i "s|^\[Desktop Entry\]\$|&\n$FD_ZEN_MIME|" "$1/shipped/applications/mios-zen.desktop"
-    plant_portal_without_url "$1"; plant_portal_without_mime "$1"; plant_no_default_list "$1"
-}
 fd_plant zen_flatpak_default "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='')"
 fd_plant zen_listed_first "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='')"
 fd_plant zen_launcher_default "gio picks 'mios-zen.desktop' for text/html (XDG_CURRENT_DESKTOP='')"
@@ -372,11 +453,17 @@ fd_plant no_default_list 'etc/xdg/mimeapps.list is not shipped'
 fd_plant stray_gnome_list "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='GNOME')"
 fd_plant stray_hyprland_list "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http (XDG_CURRENT_DESKTOP='Hyprland')"
 fd_plant zen_launcher_mime 'mios-zen.desktop declares x-scheme-handler/http'
+fd_plant zen_drops_non_web "gio picks 'nothing' for text/xml (XDG_CURRENT_DESKTOP=''), not its pre-portal handler 'mios-zen.desktop'"
 fd_plant portal_without_url 'mios-portal.desktop Exec has no %u'
 fd_plant portal_without_mime 'mios-portal.desktop does not declare x-scheme-handler/http'
+fd_plant portal_claims_mailto 'mios-portal.desktop declares x-scheme-handler/mailto, which is not web content'
+fd_plant portal_claims_pdf 'mios-portal.desktop declares application/pdf, which is not web content'
+fd_plant list_claims_mailto 'mimeapps.list claims x-scheme-handler/mailto under [Default Applications], which is not web content'
+fd_plant list_adds_pdf 'mimeapps.list claims application/pdf under [Added Associations], which is not web content'
 fd_plant portal_hidden 'mios-portal.desktop is Hidden=true'
 fd_plant portal_removed_association 'mimeapps.list lists mios-portal.desktop under [Removed Associations]'
 fd_plant pre_portal_layer 'mios-portal.desktop Exec has no %u'
+fd_plant pre_web_only_layer 'mios-portal.desktop declares text/xml, which is not web content'
 # Without the projected list a session opens an exported Flatpak, never MiOS-Portal; so did the layer before it.
 for layer in no_default_list pre_portal_layer; do
     for de in '' GNOME Hyprland; do
@@ -384,4 +471,12 @@ for layer in no_default_list pre_portal_layer; do
         [ -n "$got" ] && [ "$got" != mios-portal.desktop ] || { echo "FAIL planted $layer: gio picked '${got:-nothing}' (XDG_CURRENT_DESKTOP='$de')" >&2; exit 1; }
         echo "PASS planted $layer: gio picks $got for https (XDG_CURRENT_DESKTOP='$de'), which is why the list ships"
     done
+done
+# The static checks above fire first; the live tier alone must also see the portal take the non-web types.
+for layer in pre_web_only_layer list_claims_mailto; do
+    if out="$(fd_non_web "$FDT/$layer")"; then
+        echo "FAIL planted $layer: gio and xdg-mime keep every non-web type off the portal" >&2; exit 1
+    fi
+    case "$out" in *"picks 'mios-portal.desktop' for "*) ;; *) echo "FAIL planted $layer failed the live non-web check for another reason: $out" >&2; exit 1 ;; esac
+    echo "PASS planted $layer fails the live non-web check ($out)"
 done

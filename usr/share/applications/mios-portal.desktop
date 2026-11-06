@@ -1,4 +1,4 @@
-# AI-hint: Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:8700/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for every mime_type listed here (etc/xdg/mimeapps.list from [desktop.default_applications]); the window class is startup_wm_class, the size and glass come from [desktop.portal].
+# AI-hint: Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:8700/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for web content only, http, https, HTML and XHTML (its mime_type, projected to etc/xdg/mimeapps.list by [desktop.default_applications]); mailto, PDF and feeds keep their own handlers. The window class is startup_wm_class, the size and glass come from [desktop.portal].
 # AI-related: /usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, /etc/xdg/mimeapps.list, mios.toml [desktop.portal], [desktop.default_applications], http://localhost:{port}/
 [Desktop Entry]
 Type=Application
@@ -13,4 +13,4 @@ Keywords=mios;portal;agent;ai;services;dashboard;web;browser;internet;
 Terminal=false
 StartupNotify=true
 StartupWMClass=mios-portal
-MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
