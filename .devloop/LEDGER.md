@@ -4422,8 +4422,9 @@ are still running; their receipts, not this intermediate note, establish results
 
 Large-face visual acceptance is still open: the first color captures showed
 connected small text but unclear enlarged facial ink. Initial filenames200/400
-were requests, while their actual headers were150/250 because repeated key
-presses were filtered; those historical captures are preserved, and new
+were requested labels, while their actual headers were150/250: the script
+assumed50-point steps, but the embedded sample uses25-point steps. All six
+presses were accounted for. Those historical captures are preserved; new
 separately spaced keypresses assert the actual zoom before capture. No claim of
 physical phone, controller, VT, ARM64, fleet or image acceptance follows.
 
