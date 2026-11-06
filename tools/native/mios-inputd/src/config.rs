@@ -1483,8 +1483,13 @@ BTN_TR2 = [250, 90]
         }
         // A base-navigation row stays a load error, as before.
         assert!(try_fixture_mon_with(|v| {
-            v["keybindings"]["global"]["controller"]["nav"]["repeat"]["RS_UP"] =
-                toml::Value::Array(vec![200.into(), 70.into()]);
+            v["keybindings"]["global"]["controller"]["nav"]["repeat"]
+                .as_table_mut()
+                .unwrap()
+                .insert(
+                    "RS_UP".into(),
+                    toml::Value::Array(vec![200.into(), 70.into()]),
+                );
         })
         .is_err());
     }

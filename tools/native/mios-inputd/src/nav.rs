@@ -1403,7 +1403,10 @@ mod tests {
         .unwrap();
         assert!(c.controller.nav.app_error.is_none() && c.controller.nav.apps.contains_key("mon"));
         assert!(crate::config::tests::try_fixture_nav_with(|v| {
-            v["keybindings"]["global"]["controller"]["nav"]["app_poll_ms"] = 250.into();
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .insert("app_poll_ms".into(), 250.into());
         })
         .is_ok_and(|(c, _)| c.controller.nav.apps.is_empty()));
     }
