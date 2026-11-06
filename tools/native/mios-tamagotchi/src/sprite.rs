@@ -137,6 +137,9 @@ struct FaceMapping {
     text: &'static str,
     texels: Vec<Option<[u16; 2]>>,
     head_texels: Vec<Option<[u16; 2]>>,
+    /// Physical width/height of the face plane in thousandths (0 = unknown),
+    /// so a glyph atlas keeps its proportions instead of filling the UV square.
+    aspect_milli: u16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -165,6 +168,16 @@ impl Sprite {
     /// determines which part survives yaw and real surface occlusion.
     pub fn face_text(&self) -> Option<&'static str> {
         self.face_mapping.as_ref().map(|mapping| mapping.text)
+    }
+
+    /// Physical width/height of the mapped face plane, when known. UVs span
+    /// the unit square whatever the plane's shape; this restores its shape.
+    pub fn face_aspect(&self) -> Option<f64> {
+        self.face_mapping
+            .as_ref()
+            .map(|mapping| mapping.aspect_milli)
+            .filter(|milli| *milli > 0)
+            .map(|milli| f64::from(milli) / 1000.0)
     }
 
     /// Head-local normalized UV on the nearest visible face-bearing voxel.
@@ -423,6 +436,7 @@ impl Sprite {
                 text: mapping.text,
                 texels,
                 head_texels,
+                aspect_milli: mapping.aspect_milli,
             }
         });
         let surface_shading = self.surface_shading.as_ref().map(|samples| {
@@ -1830,10 +1844,17 @@ impl VoxelModel {
             }
             // Canonical texture identity survives complete occlusion. No UV
             // samples means a hidden mapped face, never a legacy billboard.
+            let ratio = head.face_half[0] / head.face_half[1];
+            let aspect_milli = if ratio.is_finite() && ratio > 0.0 {
+                (ratio * 1000.0).round().clamp(1.0, f32::from(u16::MAX)) as u16
+            } else {
+                0
+            };
             sprite.face_mapping = Some(FaceMapping {
                 text,
                 texels,
                 head_texels,
+                aspect_milli,
             });
         }
 
@@ -3900,5 +3921,45 @@ mod posed_world_ground_regressions {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod face_aspect_tests {
+    use super::*;
+    use crate::game::Stage;
+
+    #[test]
+    fn face_aspect_is_known_for_mapped_faces_and_survives_downsampling() {
+        for shape in 0..16 {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                let sprite = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    0,
+                    false,
+                    Appearance {
+                        shape,
+                        body: shape,
+                        accent: (shape + 5) % 16,
+                    },
+                );
+                let aspect = sprite
+                    .face_aspect()
+                    .unwrap_or_else(|| panic!("shape {shape} {stage:?}: no face aspect"));
+                assert!(
+                    (0.1..10.0).contains(&aspect),
+                    "shape {shape} {stage:?}: {aspect}"
+                );
+                let small = sprite.downsample_to_fit(sprite.width() / 2, sprite.height() / 2);
+                assert_eq!(small.face_aspect(), Some(aspect), "shape {shape} {stage:?}");
+            }
+        }
+        assert_eq!(
+            Sprite::new(1, 1, vec![Some(1)]).unwrap().face_aspect(),
+            None
+        );
     }
 }

@@ -865,17 +865,48 @@ fn face_glyph(glyph: u8) -> Option<[u8; 9]> {
 #[derive(Clone, Copy, Debug)]
 struct FaceTexture {
     text: &'static str,
+    /// Physical width/height of the face plane. None keeps the legacy mapping
+    /// that stretches the text box over the whole UV square.
+    aspect: Option<f64>,
 }
 
 impl FaceTexture {
     fn new(sprite: &Sprite) -> Option<Self> {
         let text = sprite.face_text()?;
-        (printable_face(text) && text.bytes().all(|b| face_glyph(b).is_some()))
-            .then_some(Self { text })
+        (printable_face(text) && text.bytes().all(|b| face_glyph(b).is_some())).then_some(Self {
+            text,
+            aspect: sprite.face_aspect(),
+        })
     }
 
     fn width(self) -> f64 {
         (self.text.len() * 8 - 3) as f64
+    }
+
+    /// The glyph grid including its one-unit margins.
+    fn grid_box(self) -> [f64; 2] {
+        [self.width() + 2.0, 11.0]
+    }
+
+    /// Grid units per unit of UV. With a known face plane the text box is
+    /// fitted uniformly (letterboxed and centred), so `o` stays round and a
+    /// tall head cannot stretch the eyes into bars.
+    fn grid_per_uv(self) -> [f64; 2] {
+        let grid = self.grid_box();
+        match self.aspect.filter(|a| a.is_finite() && *a > 0.0) {
+            None => grid,
+            Some(aspect) => {
+                let per_height = (grid[0] / aspect).max(grid[1]);
+                [per_height * aspect, per_height]
+            }
+        }
+    }
+
+    /// Share of the face plane the text box occupies on each axis (1 = all).
+    fn text_fraction(self) -> [f64; 2] {
+        let grid = self.grid_box();
+        let scale = self.grid_per_uv();
+        [grid[0] / scale[0], grid[1] / scale[1]]
     }
 
     fn bit(self, x: i32, y: i32) -> bool {
@@ -895,13 +926,22 @@ impl FaceTexture {
     }
 
     fn sample(self, uv: [f64; 2], footprint: [f64; 2]) -> bool {
-        let grid = [(self.width() + 2.0) * uv[0] - 1.0, 11.0 * uv[1] - 1.0];
+        let size = self.grid_box();
+        let scale = self.grid_per_uv();
+        let grid = if self.aspect.is_some() {
+            [
+                scale[0] * (uv[0] - 0.5) + size[0] / 2.0 - 1.0,
+                scale[1] * (uv[1] - 0.5) + size[1] / 2.0 - 1.0,
+            ]
+        } else {
+            [size[0] * uv[0] - 1.0, size[1] * uv[1] - 1.0]
+        };
         // Coverage, rather than ANY touched ink, keeps side bearings open.
         // Capping the filter prevents minification from growing a solid face.
         // Underresolved heads use independently surface-anchored terminal glyphs.
         let radius = [
-            ((self.width() + 2.0) * footprint[0].abs() / 2.0).clamp(0.025, 0.75),
-            (11.0 * footprint[1].abs() / 2.0).clamp(0.025, 0.75),
+            (scale[0] * footprint[0].abs() / 2.0).clamp(0.025, 0.75),
+            (scale[1] * footprint[1].abs() / 2.0).clamp(0.025, 0.75),
         ];
         let left = (grid[0] - radius[0]).floor() as i32;
         let right = (grid[0] + radius[0]).floor() as i32;
@@ -1147,6 +1187,61 @@ fn native_micro_candidates(
     empty
 }
 
+/// A head with room for the whole expression on one row draws it as one
+/// connected word: anchors spread across a broad head read as separate marks
+/// and let a muzzle sit in the middle of the expression. Every cell is still a
+/// complete, depth-authorized head cell (a nose or occluder wins its cells),
+/// u increases along the run, rows stay on one surface band, and the eye
+/// halves straddle the head's UV centre. The run nearest the eye line and the
+/// head's centre wins; None keeps the anchored placement.
+fn native_run_candidates(
+    texture: FaceTexture,
+    visible: &[NativeHeadCell],
+) -> Option<Vec<NativeGlyphCell>> {
+    let length = texture.text.len();
+    if length < 3 {
+        return None;
+    }
+    let middle = length / 2;
+    let mut best: Option<(f64, Vec<NativeGlyphCell>)> = None;
+    for &(start, _, _) in visible {
+        let mut run: Vec<((u16, u16), [f64; 2])> = Vec::with_capacity(length);
+        for offset in 0..length {
+            let Some(column) = start.0.checked_add(offset as u16) else {
+                break;
+            };
+            let Some(&(_, uv, _)) = visible.iter().find(|(pos, _, _)| *pos == (column, start.1))
+            else {
+                break;
+            };
+            if run
+                .last()
+                .is_some_and(|(_, p)| uv[0] <= p[0] || (uv[1] - p[1]).abs() > 0.16)
+            {
+                break;
+            }
+            run.push(((column, start.1), uv));
+        }
+        if run.len() != length
+            || run[..middle].iter().any(|(_, uv)| uv[0] >= 0.5)
+            || run[middle + 1..].iter().any(|(_, uv)| uv[0] <= 0.5)
+        {
+            continue;
+        }
+        let centre = run[middle].1;
+        let score = (centre[0] - 0.5).powi(2) + (centre[1] - 0.35).powi(2);
+        if best.as_ref().is_none_or(|(previous, _)| score < *previous) {
+            let cells = run
+                .iter()
+                .zip(texture.text.bytes())
+                .map(|((pos, _), glyph)| Some((*pos, glyph)))
+                .collect();
+            best = Some((score, cells));
+        }
+    }
+    best.map(|(_, cells)| cells)
+}
+
 /// Terminal-sized glyphs are a level of detail for an underresolved atlas.
 /// Each character finds its own visible head-local UV anchor. Its entire packed
 /// cell must be mapped head material, so a nose, ear or occluder wins outright.
@@ -1196,6 +1291,17 @@ fn draw_surface_glyphs(
         let mut painted = false;
         for (pos, glyph) in candidates.into_iter().flatten() {
             if let Some(cell) = buf.cell_mut(pos) {
+                paint_face_character(cell, colors, char::from(glyph));
+                painted = true;
+            }
+        }
+        return painted;
+    }
+    if let Some(run) = native_run_candidates(texture, &visible) {
+        let mut painted = false;
+        for (pos, glyph) in run.into_iter().flatten() {
+            if let Some(cell) = buf.cell_mut(pos) {
+                // Preserve the room plane, including terminal tint/opacity.
                 paint_face_character(cell, colors, char::from(glyph));
                 painted = true;
             }
@@ -1293,8 +1399,10 @@ fn draw_camera_face(
     let columns = right - left;
     let rows = bottom - top;
     // Native cells use full visible head coverage, including the forehead.
-    // Atlas resolution still comes from its original narrow face surface.
-    if columns < texture.text.len() as f64 * 5.0 || rows < 4.5 {
+    // Atlas resolution comes from the letterboxed text box on the narrow face
+    // surface: a box too small to resolve its glyphs keeps native characters.
+    let fraction = texture.text_fraction();
+    if columns * fraction[0] < texture.text.len() as f64 * 5.0 || rows * fraction[1] < 4.5 {
         return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     }
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
@@ -3422,7 +3530,10 @@ mod camera_tests {
 
     #[test]
     fn optional_parentheses_cannot_starve_a_three_cell_native_expression_core() {
-        let texture = FaceTexture { text: "(^_^)" };
+        let texture = FaceTexture {
+            text: "(^_^)",
+            aspect: None,
+        };
         let visible = [
             ((1, 1), [0.20, 0.35], 0.22),
             ((2, 1), [0.50, 0.35], 0.22),
@@ -3443,7 +3554,10 @@ mod camera_tests {
 
     #[test]
     fn micro_text_runs_are_adjacent_and_cannot_bridge_occluders_or_reverse_head_uvs() {
-        let texture = FaceTexture { text: "(^_^)" };
+        let texture = FaceTexture {
+            text: "(^_^)",
+            aspect: None,
+        };
         let visible: Vec<NativeHeadCell> = (0..5)
             .map(|index| {
                 (
@@ -3640,7 +3754,10 @@ mod camera_tests {
 
     #[test]
     fn thin_atlas_keeps_curved_parentheses_eyes_and_mouth_separate() {
-        let texture = FaceTexture { text: "(^_^)" };
+        let texture = FaceTexture {
+            text: "(^_^)",
+            aspect: None,
+        };
         let atlas: Vec<String> = (0..9)
             .map(|y| {
                 (0..37)
@@ -3683,7 +3800,7 @@ mod camera_tests {
         assert_eq!(q[7], 0b00001, "Q needs a descending tail");
         assert_ne!(q, face_glyph(b'O').unwrap());
         for text in ["(^w^)", "(o3o)", "(Q_Q)"] {
-            let texture = FaceTexture { text };
+            let texture = FaceTexture { text, aspect: None };
             for (index, glyph) in text.bytes().enumerate() {
                 let rows =
                     face_glyph(glyph).expect("every new expression character needs a font glyph");
@@ -3706,7 +3823,10 @@ mod camera_tests {
 
     #[test]
     fn coverage_rejects_a_grazed_stroke_instead_of_dilating_it() {
-        let texture = FaceTexture { text: "(^_^)" };
+        let texture = FaceTexture {
+            text: "(^_^)",
+            aspect: None,
+        };
         let uv = |x: f64, y: f64| [(x + 1.0) / 39.0, (y + 1.0) / 11.0];
         assert!(texture.sample(uv(10.5, 1.5), [0.0, 0.0]));
         // The footprint touches the caret, but 90% of the sample is clear.
@@ -4366,7 +4486,10 @@ mod camera_tests {
     fn surface_texture_preserves_species_material_through_stroke_gaps() {
         // This point is a transparent gap above the mouth. Underlying species
         // material must survive; a universal cream plate would erase its mask.
-        let texture = FaceTexture { text: "(^_^)" };
+        let texture = FaceTexture {
+            text: "(^_^)",
+            aspect: None,
+        };
         assert!(!texture.sample([10.25 / 21.0, 2.25 / 7.0], [0.0, 0.0]));
 
         let config = Config::sample().unwrap();
@@ -5500,5 +5623,174 @@ mod legible_silhouette_tests {
             textured_somewhere,
             "magnified views must show shadow texture"
         );
+    }
+}
+
+#[cfg(test)]
+mod kaomoji_scale_tests {
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    /// Ink extent of the whole text as width/height on a face plane of the
+    /// given physical aspect (width `aspect`, height 1).
+    fn ink_ratio(texture: FaceTexture, aspect: f64) -> f64 {
+        let (n, m) = (480usize, 240usize);
+        let footprint = [1.0 / n as f64, 1.0 / m as f64];
+        let (mut u0, mut u1, mut v0, mut v1) = (1.0f64, 0.0f64, 1.0f64, 0.0f64);
+        for j in 0..m {
+            for i in 0..n {
+                let uv = [(i as f64 + 0.5) / n as f64, (j as f64 + 0.5) / m as f64];
+                if texture.sample(uv, footprint) {
+                    u0 = u0.min(uv[0]);
+                    u1 = u1.max(uv[0]);
+                    v0 = v0.min(uv[1]);
+                    v1 = v1.max(uv[1]);
+                }
+            }
+        }
+        assert!(u1 > u0 && v1 > v0, "no ink sampled");
+        (u1 - u0) * aspect / (v1 - v0)
+    }
+
+    #[test]
+    fn face_atlas_keeps_glyph_proportions_on_the_face_plane() {
+        let text = "(o_O)";
+        // The bitmap's own ink box: 37 columns by 9 rows.
+        let ink = 37.0 / 9.0;
+        for aspect in [0.8, 1.2, 1.6, 2.5, 6.0] {
+            let fitted = FaceTexture {
+                text,
+                aspect: Some(aspect),
+            };
+            let ratio = ink_ratio(fitted, aspect);
+            assert!(
+                (ratio / ink - 1.0).abs() < 0.12,
+                "aspect {aspect}: fitted ink ratio {ratio} vs {ink}"
+            );
+            let fraction = fitted.text_fraction();
+            assert!(fraction.iter().all(|f| *f <= 1.0 + 1e-9), "{fraction:?}");
+            assert!(
+                fraction.iter().any(|f| (f - 1.0).abs() < 1e-9),
+                "the box fills one axis: {fraction:?}"
+            );
+            // Negative control: the legacy map stretches the box to the UV
+            // square, so tall eyes appear wherever the plane is not its shape.
+            if aspect <= 1.6 || aspect >= 6.0 {
+                let stretched = ink_ratio(FaceTexture { text, aspect: None }, aspect);
+                assert!(
+                    (stretched / ink - 1.0).abs() > 0.3,
+                    "aspect {aspect}: legacy ratio {stretched} should distort"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn moderate_heads_draw_one_connected_kaomoji_word_on_real_head_cells() {
+        let config = Config::sample().unwrap();
+        let mut connected = 0;
+        for shape in 0..16 {
+            for stage in [Stage::Child, Stage::Adult] {
+                let appearance = Appearance {
+                    shape,
+                    body: shape,
+                    accent: (shape + 5) % 16,
+                };
+                let front = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    0,
+                    false,
+                    appearance,
+                );
+                let rear = Sprite::voxel_with_appearance(
+                    stage,
+                    Expression::Happy,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    180,
+                    false,
+                    appearance,
+                );
+                let text = front.face_text().unwrap();
+                for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                    for depth in [Depth::Mono, Depth::Rgb] {
+                        let colors = Colors::from_config(&config, depth).unwrap();
+                        for (width, height) in [(24, 6), (32, 8), (40, 10)] {
+                            let label = format!(
+                                "shape {shape} {stage:?} {renderer:?} {depth:?} {width}x{height}"
+                            );
+                            let area = Rect::new(0, 0, width, height);
+                            let camera = Camera {
+                                view: CameraView::Face,
+                                from_view: CameraView::Face,
+                                ..Camera::default()
+                            };
+                            let rows = |sprite: &Sprite| {
+                                let mut buf = Buffer::empty(area);
+                                let projection = Projection::camera(
+                                    sprite,
+                                    SolidBounds::of(sprite).unwrap(),
+                                    area,
+                                    renderer,
+                                    0,
+                                    (500, 500),
+                                    camera,
+                                );
+                                draw_projection(
+                                    sprite, renderer, &colors, projection, area, &mut buf,
+                                );
+                                // The native face path alone: no caption can satisfy this.
+                                let painted = draw_surface_glyphs(
+                                    sprite, renderer, &colors, projection, area, &mut buf,
+                                );
+                                let rows: Vec<String> = (0..height)
+                                    .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect())
+                                    .collect();
+                                (painted, rows, projection)
+                            };
+                            let (_, rear_rows, _) = rows(&rear);
+                            assert!(
+                                rear_rows.iter().all(|line| !line.contains(text)),
+                                "{label}: rear view revealed the face"
+                            );
+                            let (painted, front_rows, projection) = rows(&front);
+                            if !painted {
+                                continue;
+                            }
+                            let (row, line) = front_rows
+                                .iter()
+                                .enumerate()
+                                .find(|(_, line)| line.contains(text))
+                                .unwrap_or_else(|| {
+                                    panic!("{label}: expression not one connected word: {front_rows:#?}")
+                                });
+                            connected += 1;
+                            let column = line[..line.find(text).unwrap()].chars().count();
+                            let (dx, dy) = renderer.packing();
+                            for k in 0..text.len() {
+                                for sy in 0..dy {
+                                    for sx in 0..dx {
+                                        let px =
+                                            (column + k) as u32 * u32::from(dx) + u32::from(sx);
+                                        let py = row as u32 * u32::from(dy) + u32::from(sy);
+                                        assert!(
+                                            projected_head_uv(&front, projection, px, py).is_some(),
+                                            "{label}: glyph {k} is not on visible head material"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(connected >= 32, "only {connected} connected native faces");
     }
 }
