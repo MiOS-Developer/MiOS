@@ -2430,9 +2430,11 @@ def _unpack_vendored_bundles(vdir):
     predates the tracked wheel provenance block), so an existing file is never
     overwritten: a bundle-only tree still gets its members, a full checkout is
     left byte-identical. Each member is judged by the path it would really
-    write: the data filter refuses absolute paths, links out of the tree and
-    device nodes, the name is normalised (so "/x" or "d/../x" cannot reach a
-    tracked "x"), and presence is tested without following links. A refused
+    write: the data filter strips a leading "/" (so "/x" names the in-tree
+    "x") and refuses members, links or targets that would leave the tree and
+    device nodes; the name is then normalised (so "d/../x" is judged as "x")
+    and presence is tested without following links, so neither form can
+    overwrite a tracked "x". A refused
     member or an unreadable bundle is reported and skipped, never silently
     aborting the members after it.
     """
