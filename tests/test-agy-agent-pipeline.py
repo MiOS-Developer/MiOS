@@ -167,6 +167,82 @@ class TestAgyAgentPipeline(unittest.TestCase):
         bash_bin = shutil.which("bash") or "bash"
         res = subprocess.run([bash_bin, "-n", cicd_runner.as_posix()], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"Syntax error in {cicd_runner}: {res.stderr}")
+        res = subprocess.run([bash_bin, "-n", installer_path.as_posix()], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Syntax error in {installer_path}: {res.stderr}")
+
+    def test_installer_stages_wrappers_against_the_current_tree(self):
+        """Runs install-mios-agents.sh into a DESTDIR and drives the staged mios-agent-agy."""
+        installer_path = REPO_ROOT / "install-mios-agents.sh"
+        installer_txt = installer_path.read_text(encoding="utf-8")
+        # Law 7: the endpoint and model are never literal defaults in the installer or its wrappers.
+        self.assertIsNone(re.search(r"MIOS_AI_(ENDPOINT|MODEL):-[^$]", installer_txt),
+                          "install-mios-agents.sh hardcodes an endpoint/model default")
+        bash_bin = shutil.which("bash") or "bash"
+        wrappers = ["mios-agent-claude", "mios-agent-gemini", "mios-agent-agy", "mios-llm"]
+        with tempfile.TemporaryDirectory(prefix="mios-agents-stage-") as tmpdir:
+            stage = Path(tmpdir) / "root"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(DESTDIR=str(stage), MIOS_AGREEMENT_BANNER="off")
+            res = subprocess.run([bash_bin, installer_path.as_posix()], capture_output=True,
+                                 text=True, env=env, cwd=tmpdir)
+            self.assertEqual(res.returncode, 0, f"installer failed: {res.stdout}\n{res.stderr}")
+
+            # The staged prompt is the canonical one, not the root redirector, and the
+            # /etc host-override tier is left to the operator.
+            prompt = stage / "usr" / "share" / "mios" / "ai" / "system.md"
+            self.assertEqual(prompt.read_bytes(),
+                             (REPO_ROOT / "usr" / "share" / "mios" / "ai" / "system.md").read_bytes())
+            self.assertFalse((stage / "etc").exists(), "installer wrote the /etc host-override tier")
+
+            bindir = stage / "usr" / "local" / "bin"
+            for name in wrappers:
+                wrapper = bindir / name
+                self.assertTrue(wrapper.is_file(), f"installer did not stage {wrapper}")
+                self.assertTrue(os.access(wrapper, os.X_OK) or os.name == "nt", f"{wrapper} not executable")
+                self.assertTrue(wrapper.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash\n"),
+                                f"{wrapper} has no shebang")
+                res = subprocess.run([bash_bin, "-n", wrapper.as_posix()], capture_output=True, text=True)
+                self.assertEqual(res.returncode, 0, f"Syntax error in {wrapper}: {res.stderr}")
+
+            # mios-agent-agy resolves the endpoint and model from install.env, lets a
+            # caller's export win, and refuses to run agy when neither supplies them.
+            mock_dir = Path(tmpdir) / "bin"
+            mock_dir.mkdir()
+            marker = Path(tmpdir) / "agy-ran"
+            mock = mock_dir / "agy"
+            mock.write_text("#!/bin/sh\n"
+                            f"echo \"$MIOS_AI_ENDPOINT|$MIOS_AI_MODEL|$*\" > '{marker.as_posix()}'\n",
+                            encoding="utf-8")
+            os.chmod(mock, 0o755)
+            etc_fixture = Path(tmpdir) / "etc-mios"
+            etc_fixture.mkdir()
+            (etc_fixture / "install.env").write_text(
+                "MIOS_AI_ENDPOINT=http://ssot.invalid/v1\nMIOS_AI_MODEL=ssot-model\n", encoding="utf-8")
+            etc_empty = Path(tmpdir) / "etc-empty"
+            etc_empty.mkdir()
+            run_env = {k: v for k, v in env.items() if k != "DESTDIR"}
+            run_env.update(PATH=f"{mock_dir}{os.pathsep}{env.get('PATH', '')}",
+                           DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
+            agy = [bash_bin, (bindir / "mios-agent-agy").as_posix(), "-p", "task"]
+
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_fixture)})
+            self.assertEqual(res.returncode, 0, f"mios-agent-agy failed: {res.stderr}")
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), "http://ssot.invalid/v1|ssot-model|-p task")
+
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_fixture),
+                                      "MIOS_AI_ENDPOINT": "http://caller.invalid/v1",
+                                      "MIOS_AI_MODEL": "caller-model"})
+            self.assertEqual(res.returncode, 0, f"mios-agent-agy failed: {res.stderr}")
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), "http://caller.invalid/v1|caller-model|-p task")
+
+            marker.unlink()
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_empty)})
+            self.assertNotEqual(res.returncode, 0, "mios-agent-agy ran with no resolvable endpoint")
+            self.assertIn("MIOS_AI_ENDPOINT is unset", res.stderr)
+            self.assertFalse(marker.exists(), "agy was executed without a resolved endpoint")
 
     def test_agents_command_definitions(self):
         """Verifies canonical commands/antigravity/agents.toml and agents workflow."""
