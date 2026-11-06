@@ -62,6 +62,16 @@ def prefix_script(dest):
     return dest
 
 
+def _mode(path):
+    return f'{os.stat(path).st_mode & 0o7777:o}'
+
+
+# The ancestor modes an install --root / reports inside the Sandbox: /usr and /usr/lib64 are the host's own read-only
+# directories (Fedora ships /usr/lib64 0555, a container image such as the CI one 0755), /usr/bin is the 0755 scratch
+# destination the Sandbox binds there.
+SANDBOX_ANCESTOR_MODES = rf'\n{_mode("/usr")} \S+ /usr\n755 \S+ /usr/bin\n{_mode("/usr/lib64")} \S+ /usr/lib64\n'
+
+
 def can_sandbox():
     if not shutil.which('bwrap'):
         return False
@@ -427,7 +437,7 @@ class TestEmptyPrefixRoot(unittest.TestCase):
         self.assertIn('replace /usr/bin/quickshell', plan.stdout)
         r = self.sb.run(SCRIPT, 'install', '--root', '/', '--stage', self.stage)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertRegex(r.stderr, r'\n755 \S+ /usr\n755 \S+ /usr/bin\n555 \S+ /usr/lib64\n')
+        self.assertRegex(r.stderr, SANDBOX_ANCESTOR_MODES)
         after = self.sb.snapshot()
         for name in DEST_DIRS:
             self.assertEqual(after[name]['.'], self.before[name]['.'], f'{name} directory mode changed')
@@ -452,13 +462,20 @@ class TestEmptyPrefixRoot(unittest.TestCase):
         # a root-owned host file appearing at a stage path (bind-mounted here; a hard link would look the same to a
         # path check): the kernel path of the open file is the stage path, but its owner is not the stage's owner
         rel = 'usr/share/applications/org.quickshell.desktop'
-        bind = ['--ro-bind', '/etc/os-release', str(self.stage / rel)]
+        foreign = Path('/etc/os-release')
+        if os.geteuid() == 0:
+            # run as root (the CI container) the stage is root's too, so a root-owned host file is not foreign:
+            # bind one that another uid owns instead
+            foreign = self.tmp / 'foreign-owned'
+            foreign.write_text(Path('/etc/os-release').read_text())
+            os.chown(foreign, 65534, 65534)
+        bind = ['--ro-bind', str(foreign), str(self.stage / rel)]
         # negative control: the pre-fix copy line (install -m 0644 -o root -g root -T -- "$STAGE/$rel" "$tmp"), run as
         # the sandbox root; the pre-fix script itself cannot reach it under --root / (its dir_snapshot never ends)
         cp = subprocess.run(self.sb.argv(SCRIPT, f'install -m 0644 -o root -g root -T -- "{self.stage}/{rel}" /tmp/x && cat /tmp/x',
                                          bind), capture_output=True, text=True, timeout=60)
         self.assertEqual(cp.returncode, 0, cp.stderr)
-        self.assertEqual(cp.stdout, Path('/etc/os-release').read_text(), 'pre-fix: root copies the foreign file (the defect)')
+        self.assertEqual(cp.stdout, foreign.read_text(), 'pre-fix: root copies the foreign file (the defect)')
         r = self.sb.run(SCRIPT, 'install', '--root', '/', '--stage', self.stage, extra=bind)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn('not the stage owner', r.stderr)
@@ -638,7 +655,7 @@ class TestRealStage(unittest.TestCase):
             before = sb.snapshot()
             r = sb.run(SCRIPT, 'install', '--root', '/', '--stage', stage, timeout=600)
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertRegex(r.stderr, r'\n755 \S+ /usr\n755 \S+ /usr/bin\n555 \S+ /usr/lib64\n')
+            self.assertRegex(r.stderr, SANDBOX_ANCESTOR_MODES)
             q = sb.dirs['bin'] / 'quickshell'
             self.assertFalse(has_debug(q))
             self.assertLess(q.stat().st_size, 32 << 20)
