@@ -7784,12 +7784,14 @@ ask_clarify_judge   = false
 # Gated build catalog authority (V3 Build Catalog): when true, the clean build
 # container materializes package sets and phase order from the seeded DB.
 build_catalog_authoritative = false
-# #62 out-of-process policy arbiter: when set, a high-risk action (tier >=
-# hitl_threshold) is POSTed to this URL ({verb,tier,args}) for an {allow,reason}
-# verdict, on top of the in-process gate above. Empty (default) -> no arbiter, no
-# overhead. hitl_arbiter_fail = open (default; a down/erroring arbiter proceeds)
-# or closed (fail-safe-deny).
-hitl_arbiter_url    = "http://127.0.0.1:8760"
+# #62 out-of-process policy arbiter: a high-risk action (tier >= hitl_threshold)
+# is POSTed to this URL ({verb,tier,args}) for an {allow,reason} verdict, on top
+# of the in-process gate above. Empty (default) -> the local mios-policy-arbiter
+# at http://127.0.0.1:[ports].arbiter, so an /etc/mios overlay moves it by moving
+# the port; set a full URL only to point at an arbiter elsewhere.
+# hitl_arbiter_fail = open (a down/erroring arbiter proceeds) or closed
+# (default; fail-safe-deny).
+hitl_arbiter_url    = ""
 hitl_arbiter_fail   = "closed"
 pdp_audit_allow     = false
 tokenizer_backend   = "tiktoken"
