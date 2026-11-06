@@ -5619,11 +5619,12 @@ cmd        = "mios-open-url {url}{mode?--mode}{browser?--browser}{private?--priv
   desc    = "Reuse the already-running browser instance (open a TAB) rather than cold-launching a new one. false = force a new instance/window."
 
 [browser.family]
-firefox  = ["firefox", "mozilla", "librewolf", "waterfox", "zen", "floorp"]
+firefox  = ["firefox", "mozilla", "librewolf", "waterfox", "zen", "floorp", "mios-portal"]
 chromium = ["chrome", "chromium", "brave", "edge", "vivaldi", "opera"]
 epiphany = ["epiphany", "gnome.web", "gnome.epiphany"]
 
-# Zen is the native MiOS browser on every platform (Linux: Flathub; Windows: [browser_ai]).
+# Zen is a secondary MiOS browser on Linux (Flathub) and the Windows browser ([browser_ai]); the
+# Linux default browser is MiOS-Portal ([aliases].browser, [desktop.portal.gecko]).
 # mios-theme-render --web projects into each Gecko profile under profile_roots:
 # chrome/userContent.css (dotfiles "web"), chrome/userChrome.css (dotfiles "gecko-chrome")
 # and a MiOS-managed user.js block from prefs ("name|type|value", type = bool|string|int).
@@ -7953,7 +7954,7 @@ flatpaks      = [
     # carry Nautilus.
     "gnome-nightly:org.gnome.Nautilus.Devel",
     "fedora:org.gnome.Epiphany",                       # 50.x current (vs. potentially-stale Flathub)
-    "flathub:app.zen_browser.zen",                     # Zen -- the native MiOS browser ([browser.zen])
+    "flathub:app.zen_browser.zen",                     # Zen -- secondary browser ([browser.zen])
     "com.github.tchx84.Flatseal",                      # Flatpak permissions UI
     "com.mattjakeman.ExtensionManager",                # GNOME shell extensions
     "com.google.ChromeDev",                           # secondary browser and agent CDP target
@@ -7977,9 +7978,9 @@ WEBKIT_DISABLE_DMABUF_RENDERER           = 1
 id          = "app.zen_browser.zen"
 remote      = "flathub"
 role        = "browser"
-default     = true
+default     = false
 desktop     = "mios-zen"
-description = "Zen -- the native MiOS browser on every platform; SSOT web/chrome CSS and prefs from [browser.zen] via mios-theme-render --web; launched through mios-flatpak-run."
+description = "Zen -- secondary MiOS flatpak browser; SSOT web/chrome CSS and prefs from [browser.zen] via mios-theme-render --web; launched through mios-flatpak-run."
 
 [[desktop.apps]]
 id          = "org.gnome.Nautilus.Devel"
@@ -10969,9 +10970,9 @@ launcher_socket = "/run/mios-launcher/launcher.sock"
 [[desktop.app_types]]
 type            = "browser"
 os_pref         = "linux-first"
-default         = "zen"
+default         = "mios-portal"
 windows_default = "zen"
-description     = "Web browser -- Linux flatpak by default; Zen (the Windows default browser) on Windows / 'my browser' intent."
+description     = "Web browser -- MiOS-Portal (the native Gecko build, [desktop.portal.gecko]) on Linux; Zen (the Windows default browser) on Windows / 'my browser' intent."
 [[desktop.app_types]]
 type        = "files"
 os_pref     = "linux-first"
@@ -11010,7 +11011,7 @@ description = "System / OS apps -- assume either side; agent discerns from conte
 # ----------------------------------------------------------------------------
 [mios-find.aliases]
 # Canonical Linux/freedesktop role -> app id. ONE word per role.
-web        = "zen"
+web        = "mios-portal"
 files      = "nautilus"
 terminal   = "ptyxis"
 editor     = "gedit"
@@ -11413,9 +11414,11 @@ core_subnet = "10.89.0.0/24"
 core_gateway = "10.89.0.1"
 
 [aliases]
-# browser: the ONE default-browser key (mios-browser, mios-open-url). The
-# freedesktop role -> app ids (web, files, terminal) are [mios-find.aliases].
-browser         = "zen"
+# browser: the ONE default-browser key (mios-browser, mios-open-url, mios-launch). It names
+# MiOS-Portal's launcher ([desktop.portal].launcher), a native app, so no flatpak in
+# [[desktop.apps]] carries a browser default. The freedesktop role -> app ids (web,
+# files, terminal) are [mios-find.aliases].
+browser         = "mios-portal"
 editor          = "code"
 
 [colors]
@@ -14148,7 +14151,7 @@ os_priority = "both"
 [[desktop.app_types]]
 type = "browser"
 os_priority = "linux-first"
-linux_default = "mios-zen"
+linux_default = "mios-portal"
 windows_default = "zen"
 
 [[desktop.app_types]]
@@ -17824,7 +17827,7 @@ actions = [
   { id = "new-window", name = "New Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --new-window" },
   { id = "new-private-window", name = "New Private Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --private-window" },
 ]
-ai_hint = "Zen, the native MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it."
+ai_hint = "Zen, a secondary MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it."
 ai_related = "/usr/libexec/mios/mios-flatpak-run, /usr/libexec/mios/mios-theme-render (apply_web)"
 
 # Native MiOS Portal window (usr/bin/mios-portal -> usr/share/mios/portal/Host.qml in the qml runtime;

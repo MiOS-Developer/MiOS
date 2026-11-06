@@ -728,8 +728,8 @@ class Tools:
 
         :param url: Absolute URL to open (http/https/file/etc).
         :param browser: Override the default browser name (e.g.
-            'chromedev'). None = use mios.toml [[desktop.apps]]
-            role=browser default=true.
+            'chromedev'). None = the SSOT default browser,
+            mios.toml [aliases].browser (MiOS-Portal).
         :return: JSON {success, url, browser, stderr}.
         """
         if not self.valves.ENABLED:
