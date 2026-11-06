@@ -68,7 +68,14 @@ class TestThemeMerge(unittest.TestCase):
         env["PYTHONPATH"] = repo_lib + os.pathsep + env.get("PYTHONPATH", "")
         return env
 
+    # The [theme] keys every dotfiles render reads (mios-dotfiles-render _resolved_for: the bg_alpha token from
+    # opacity / acrylic). The vendor SSOT always carries them; a fixture SSOT without them is not one the renderer
+    # can be handed, so each fixture gets them unless the test brings its own [theme].
+    RENDER_THEME = {"opacity": 100, "acrylic": False}
+
     def write_vendor_toml(self, data):
+        if "theme" not in data:
+            data = {"theme": dict(self.RENDER_THEME), **data}
         path = os.path.join(self.root, "usr/share/mios/mios.toml")
         with open(path, "w", encoding="utf-8") as f:
             for section, keys in data.items():
@@ -584,9 +591,13 @@ class TestGtkImport(unittest.TestCase):
         colors = mios_toml.colors({})
         self.assertEqual(mod.render_gtk_css(colors).splitlines()[1], '@import url("mios-edge.css");')
         self.assertNotIn("@import", mod.render_gtk_css(colors, edge_import=False))
-        skel = _read(os.path.join(REPO, "etc/skel/.config/gtk-4.0/gtk.css")).splitlines()
-        first_rule = next(ln for ln in skel if ln.strip() and not ln.startswith("/*"))
-        self.assertEqual(first_rule, '@import url("mios-edge.css");')
+        # The skel layering apply_gtk writes: gtk.css imports the generated palette (user rules below it stay the
+        # user's), and the palette imports the edge stylesheet first, so the edge rules still lead the cascade.
+        def first_rule(rel):
+            lines = _read(os.path.join(REPO, rel)).splitlines()
+            return next(ln for ln in lines if ln.strip() and not ln.startswith("/*"))
+        self.assertEqual(first_rule("etc/skel/.config/gtk-4.0/gtk.css"), '@import url("mios-colors.css");')
+        self.assertEqual(first_rule("etc/skel/.config/gtk-4.0/mios-colors.css"), '@import url("mios-edge.css");')
 
 
 class TestConfigurator(unittest.TestCase):
