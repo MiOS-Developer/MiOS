@@ -8877,15 +8877,31 @@ mod camera_continuity_regressions {
             previous = pet;
         }
         assert_eq!(ui.camera_mix(), [0, 1000, 0]);
-        // A zoom during a resize keeps the resize carrying the view blend.
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn zoom_during_resize_keeps_the_resize_carrying_the_view() {
+        let (_, mut ui) = fixture();
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
+        let game = ui.game.clone();
+        rescene(&mut ui, 0, Rect::new(0, 0, 40, 20));
         rescene(&mut ui, 30, Rect::new(0, 0, 20, 8));
         ui.frame = 32;
         let before = ui.camera_mix();
+        assert!(before[2] > 0 && before[2] < 1000, "{before:?}");
         ui.zoom_by(true);
         assert_eq!(ui.camera_mix(), before);
-        ui.animate(40);
-        assert_eq!(ui.camera_mix(), [0, 0, 1000]);
-        ui.animate(44);
+        // The Face weight never falls back when the resize ends before the
+        // zoom's own transition does.
+        let mut previous = before[2];
+        for frame in 33..=44 {
+            ui.animate(frame);
+            let face = ui.camera_mix()[2];
+            assert!(face >= previous, "frame {frame}: {face} < {previous}");
+            previous = face;
+        }
         assert_eq!(ui.camera_mix(), [0, 0, 1000]);
         assert_eq!(ui.game, game);
     }
