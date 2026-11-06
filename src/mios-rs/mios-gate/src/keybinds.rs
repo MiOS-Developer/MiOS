@@ -1265,11 +1265,7 @@ pub fn controller_audit(
 /// right-stick flick may repeat. mios-inputd drops an invalid app layer and keeps base navigation; the gate fails it.
 type BindingValidator<'a> = dyn Fn(&str, &str, &Value, bool, &mut Vec<String>) + 'a;
 
-fn app_audit(
-    nav: &toml::Table,
-    check_value: &BindingValidator<'_>,
-    out: &mut Vec<String>,
-) {
+fn app_audit(nav: &toml::Table, check_value: &BindingValidator<'_>, out: &mut Vec<String>) {
     let ms = |k: &str, lo: i64, hi: i64, out: &mut Vec<String>| -> Option<i64> {
         let v = nav.get(k)?;
         let n = v.as_integer().filter(|n| (lo..=hi).contains(n));
