@@ -1332,9 +1332,18 @@ app_query_timeout_ms = 150
 exe = ["/usr/bin/mios-tamagotchi"]
 camera = true
 contexts = { terminal = "mon", console = "mon_console" }
-repeat = { LS_UP = [200, 70], LS_DOWN = [200, 70], LS_LEFT = [200, 70], LS_RIGHT = [200, 70],
-           RS_UP = [200, 70], RS_DOWN = [200, 70], RS_LEFT = [200, 70], RS_RIGHT = [200, 70],
-           BTN_TL2 = [250, 90], BTN_TR2 = [250, 90] }
+# The spec's multi-line inline `repeat = { ... }` is not TOML 1.0 (inline tables are one line): a sub-table.
+[apps.mon.repeat]
+LS_UP = [200, 70]
+LS_DOWN = [200, 70]
+LS_LEFT = [200, 70]
+LS_RIGHT = [200, 70]
+RS_UP = [200, 70]
+RS_DOWN = [200, 70]
+RS_LEFT = [200, 70]
+RS_RIGHT = [200, 70]
+BTN_TL2 = [250, 90]
+BTN_TR2 = [250, 90]
 "#
         .to_owned();
         for (profile, base) in [
