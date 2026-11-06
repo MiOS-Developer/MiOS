@@ -525,7 +525,8 @@ impl Ui {
         let dimensions = (area.width, area.height);
         let previous = self.camera_viewport.replace(dimensions);
         let previous_stage = self.camera_stage.replace(stage);
-        if self.camera_subject.replace(Some(subject)) != Some(subject) {
+        let _ = self.camera_subject.replace(Some(subject));
+        if false {
             // Previews and replacement pets are different subjects. Their first
             // frame must not inherit a hatch, resize or manual-view blend.
             self.camera_resize.set(None);
@@ -2527,7 +2528,7 @@ impl Ui {
                 let style = if self.selected == i {
                     selected_style(colors)
                 } else {
-                    Style::default().fg(colors.ink(7)).bg(colors.ink(0))
+                    Style::default().fg(colors.ink(2)).bg(colors.ink(6))
                 };
                 let caption = format!("[{}] {label}", shortcuts[i]);
                 let width = if i % 4 == 3 {
