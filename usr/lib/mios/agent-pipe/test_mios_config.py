@@ -643,6 +643,9 @@ class TestRestoreRedacted(unittest.TestCase):
             "ai": {}})
         self.assertEqual(restore_redacted({"ai": {"api_key": REDACTED, "endpoint": "e"}}, None),
                          {"ai": {"endpoint": "e"}})
+        from mios_pipe.kernel.config import has_redacted
+        self.assertTrue(has_redacted(posted))
+        self.assertFalse(has_redacted(restore_redacted(posted, live)))
         self.assertEqual(posted["portal"]["password"], REDACTED, "the input is not mutated")
 
 
@@ -658,6 +661,7 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
               '[ai]\napi_key = ""\nendpoint = "vendor"\n')
     HOST = '[portal]\nsecret = "host-tier-cookie-secret"\n'
     USER = '[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n'
+    BROKEN = '[portal\npassword = \n'
 
     def setUp(self):
         if not HAS_DEPS:
@@ -762,6 +766,76 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
         live = mios_toml.load_merged()
         self.assertEqual((live["portal"]["password"], live["portal"]["secret"], live["ai"]["api_key"]),
                          ("user-tier-portal-pw", "host-tier-cookie-secret", "user-tier-api-key"))
+
+    def broken_user_d(self):
+        """A malformed user.d override beside the valid user tier."""
+        frag = os.path.join(self.tmp, "user.d", "10-broken.toml")
+        os.makedirs(os.path.dirname(frag), exist_ok=True)
+        with open(frag, "w", encoding="utf-8") as fh:
+            fh.write(self.BROKEN)
+        mios_toml.clear_cache()
+        return frag
+
+    def assert_refused_and_kept(self, response):
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertIn("nothing was written", response.json()["error"])
+        self.assertEqual(self.tier(), self.USER)
+        self.assertFalse(os.path.exists(self.user + ".tmp"))
+
+    def assert_saved_and_kept(self, response):
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = tl.loads(self.tier())
+        self.assertEqual((saved["identity"], saved["portal"], saved["ai"]),
+                         ({"username": "echo-op"}, {"password": "user-tier-portal-pw"},
+                          {"api_key": "user-tier-api-key"}))
+
+    def test_an_echo_against_a_malformed_override_is_refused(self):
+        self.plant_user_tier()
+        body = json.dumps({"toml": self.redacted_echo().replace('username = "user"',
+                                                                'username = "echo-op"')})
+        frag = self.broken_user_d()
+        self.assert_refused_and_kept(self.post(body, "application/json"))
+        with open(frag, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), self.BROKEN)
+        # Planted-error control: the same echo saves once the override parses.
+        os.remove(frag)
+        mios_toml.clear_cache()
+        self.assert_saved_and_kept(self.post(body, "application/json"))
+
+    def test_an_echo_whose_live_config_did_not_load_is_refused(self):
+        self.plant_user_tier()
+        body = json.dumps({"toml": self.redacted_echo().replace('username = "user"',
+                                                                'username = "echo-op"')})
+        real, calls = mios_toml.load_merged, []
+
+        def first_load_fails(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise RuntimeError("live config unloadable")
+            return real(*args, **kwargs)
+
+        # Only the handler's live_config load fails; the size-cap lookup after it resolves.
+        with patch("mios_toml.load_merged", side_effect=first_load_fails):
+            self.assert_refused_and_kept(self.post(body, "application/json"))
+        self.assertGreaterEqual(len(calls), 2, "the refusal came before the live load failed")
+        # Planted-error control: the same echo saves once the live config loads.
+        self.assert_saved_and_kept(self.post(body, "application/json"))
+
+    def test_unresolved_lower_tiers_refuse_the_write(self):
+        from mios_pipe.kernel.config import REDACTED, TiersUnresolved, write_user_config
+        self.plant_user_tier()
+        live = mios_toml.load_merged()
+        cfg = {"identity": {"username": "echo-op"}, "portal": {"password": REDACTED, "secret": REDACTED},
+               "ai": {"api_key": REDACTED}}
+        with patch("mios_toml.derive_ports", side_effect=RuntimeError("ports did not derive")):
+            with self.assertRaises(TiersUnresolved):
+                write_user_config(cfg, dest_path=self.user, live_config=live)
+        self.assertEqual(self.tier(), self.USER, "an empty base copied the host-tier secret up")
+        # Planted-error control: the same write lands once the lower tiers resolve.
+        write_user_config(cfg, dest_path=self.user, live_config=live)
+        self.assertEqual(tl.loads(self.tier()), {"identity": {"username": "echo-op"},
+                                                 "portal": {"password": "user-tier-portal-pw"},
+                                                 "ai": {"api_key": "user-tier-api-key"}})
 
     def test_a_no_edit_echo_writes_nothing_beyond_what_changed(self):
         for content_type in ("application/json", "application/toml"):

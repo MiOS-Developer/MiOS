@@ -92,7 +92,8 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await scope["ast_review_endpoint"](request)).content["review_id"], "existing")
 
     async def test_portal_configuration_failures_and_success(self):
-        config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])))
+        config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])),
+                                 TiersUnresolved=type("TiersUnresolved", (RuntimeError,), {}))
         toml = SimpleNamespace(load_merged=Mock(return_value={}))
         scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None)
         request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"), headers={})
@@ -112,6 +113,10 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
             request.body.return_value = b"[identity]\nusername='mios'\n"
             config.write_user_config.side_effect = RuntimeError(MARKER)
             self.assert_redacted(await scope["post_portal_config"](request, background), 500)
+            config.write_user_config.side_effect = config.TiersUnresolved(MARKER)
+            refused = await scope["post_portal_config"](request, background)
+            self.assert_redacted(refused, 500)
+            self.assertIn("nothing was written", refused.content["error"])
             background.add_task.assert_not_called()
             config.write_user_config.side_effect = None
             self.assertEqual((await scope["post_portal_config"](request, background)).content, {"status": "ok"})

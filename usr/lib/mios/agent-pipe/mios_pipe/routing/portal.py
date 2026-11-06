@@ -1327,7 +1327,7 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
         log.warning("Invalid TOML posted to /portal/config: %s", e)
         return JSONResponse({"error": "Invalid TOML syntax"}, status_code=400)
 
-    from mios_pipe.kernel.config import write_user_config, validate_config
+    from mios_pipe.kernel.config import TiersUnresolved, validate_config, write_user_config
 
     live_config = None
     try:
@@ -1351,6 +1351,11 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
         background_tasks.add_task(run_db_reseed_bg)
 
         return JSONResponse({"status": "ok"})
+    except TiersUnresolved as e:
+        log.error("Refused a config save: %s", e)
+        return JSONResponse({"error": "Refusing the save: the current config did not resolve,"
+                                      " so it cannot be diffed or its <redacted> markers"
+                                      " restored; nothing was written"}, status_code=500)
     except Exception as e:
         log.error("Failed to save config: %s", e)
         return JSONResponse({"error": "Unable to save configuration"}, status_code=500)

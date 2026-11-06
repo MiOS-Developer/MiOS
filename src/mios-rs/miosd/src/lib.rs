@@ -857,6 +857,9 @@ pub mod server {
     /// What GET /portal/config serves in place of every secret value.
     pub const REDACTED: &str = "<redacted>";
 
+    /// The error a save carrying [`REDACTED`] gets when the current tiers do not resolve.
+    pub const UNRESOLVED_REFUSAL: &str = "Refusing the save: it carries <redacted> markers but the current config did not resolve, so the values they stand for are unknown; nothing was written";
+
     pub fn redact_secrets(merged: &mut toml::Value) {
         if let Some(portal) = merged.get_mut("portal").and_then(toml::Value::as_table_mut) {
             if portal.contains_key("password") {
@@ -927,13 +930,26 @@ pub mod server {
         }
     }
 
-    /// A save that echoes GET /portal/config carries [`REDACTED`] where each
-    /// secret was. That marker means "unchanged": it takes back the live value
-    /// GET hid, so the delta keeps a user-tier secret and drops a lower-tier
-    /// one. With no live value at that path the marker is dropped. Either way
-    /// the marker itself is never written over portal.password, portal.secret,
-    /// ai.api_key or any other redacted key.
-    pub fn restore_redacted(posted: &mut toml::Value, live: Option<&toml::Value>) {
+    /// True when `value` holds a [`REDACTED`] marker anywhere, as a save that
+    /// echoes GET /portal/config does.
+    pub fn contains_redacted(value: &toml::Value) -> bool {
+        match value {
+            toml::Value::String(s) => s == REDACTED,
+            toml::Value::Table(table) => table.values().any(contains_redacted),
+            toml::Value::Array(items) => items.iter().any(contains_redacted),
+            _ => false,
+        }
+    }
+
+    /// Each [`REDACTED`] marker takes back the `live` value at its path (a
+    /// user-tier secret stays, a lower-tier one leaves the delta) and is dropped
+    /// where `live` has none. `live` is a resolved config: [`save_user_tier`]
+    /// refuses a save whose tiers did not resolve, never treating them as empty.
+    pub fn restore_redacted(posted: &mut toml::Value, live: &toml::Value) {
+        restore_at(posted, Some(live));
+    }
+
+    fn restore_at(posted: &mut toml::Value, live: Option<&toml::Value>) {
         match posted {
             toml::Value::Table(table) => {
                 let keys: Vec<String> = table.keys().cloned().collect();
@@ -949,7 +965,7 @@ pub mod server {
                             }
                         }
                     } else if let Some(v) = table.get_mut(&k) {
-                        restore_redacted(v, live_v);
+                        restore_at(v, live_v);
                     }
                 }
             }
@@ -962,7 +978,7 @@ pub mod server {
                         kept.extend(live_item.cloned());
                         continue;
                     }
-                    restore_redacted(&mut item, live_item);
+                    restore_at(&mut item, live_item);
                     kept.push(item);
                 }
                 *items = kept;
@@ -1144,8 +1160,13 @@ pub mod server {
         let mut posted = body
             .parse::<toml::Value>()
             .map_err(|e| format!("Invalid TOML: {e}"))?;
-        let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false).ok();
-        restore_redacted(&mut posted, live.as_ref());
+        if contains_redacted(&posted) {
+            // A marker stands for a live value. Tiers that do not resolve leave
+            // that value unknown, so the save is refused and the user tier kept.
+            let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false)
+                .map_err(|e| format!("{UNRESOLVED_REFUSAL} ({e})"))?;
+            restore_redacted(&mut posted, &live);
+        }
         let base = mios_resolver::resolve_below_user(config.ssot_root.as_deref())
             .map_err(|e| format!("the lower tiers did not resolve: {e}"))?;
         let delta = mios_resolver::merge::diff_against(&posted, &base)
@@ -2108,7 +2129,9 @@ list = ["<redacted>", "<redacted>", "kept"]
 "#
             .parse()
             .unwrap_or_else(|e| panic!("{e}"));
-            restore_redacted(&mut posted, Some(&live));
+            assert!(contains_redacted(&posted));
+            restore_redacted(&mut posted, &live);
+            assert!(!contains_redacted(&posted), "{posted}");
             assert_eq!(posted["portal"]["password"].as_str(), Some("live-pw"));
             assert!(posted["portal"].get("secret").is_none(), "{posted}");
             assert_eq!(posted["portal"]["user"].as_str(), Some("edited"));
@@ -2136,19 +2159,278 @@ list = ["<redacted>", "<redacted>", "kept"]
                 .unwrap_or_else(|e| panic!("{e}"))
                 .contains(REDACTED));
 
-            // No live config at all: every marker is dropped, nothing else is.
+            // A live config with nothing at those paths: every marker is dropped,
+            // nothing else is.
             let mut orphan: toml::Value = "[ai]\napi_key = \"<redacted>\"\nendpoint = \"e\"\n"
                 .parse()
                 .unwrap_or_else(|e| panic!("{e}"));
-            restore_redacted(&mut orphan, None);
+            restore_redacted(&mut orphan, &toml::Value::Table(toml::Table::new()));
             assert!(orphan["ai"].get("api_key").is_none());
             assert_eq!(orphan["ai"]["endpoint"].as_str(), Some("e"));
+            assert!(!contains_redacted(&orphan));
+        }
+
+        /// Names the fixture root inside a [`user_tier_child`] process.
+        const USER_TIER_FIXTURE: &str = "MIOS_TEST_USER_TIER_FIXTURE";
+
+        /// The user tier the resolver reads inside a [`user_tier_child`] process.
+        fn child_user_tier(root: &Path) -> PathBuf {
+            root.join("home/.config/mios/mios.toml")
+        }
+
+        /// In the parent, runs this module's `test` in a child test process whose
+        /// resolver user tier is a fresh temp fixture, and returns None. In that
+        /// child, returns the fixture root, so no other test reads that tier.
+        fn user_tier_child(test: &str) -> Option<PathBuf> {
+            if let Some(root) = std::env::var_os(USER_TIER_FIXTURE) {
+                return Some(PathBuf::from(root));
+            }
+            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+            let user = child_user_tier(tmp_dir.path());
+            let exe = std::env::current_exe().unwrap_or_else(|e| panic!("{e}"));
+            let mut child = std::process::Command::new(exe);
+            let filter = format!("server::tests::{test}");
+            child.args(["--exact", filter.as_str(), "--test-threads=1"]);
+            for var in [
+                "MIOS_ROOT",
+                "MIOS_TOML",
+                "MIOS_TOML_ROOT",
+                "MIOS_VENDOR_TOML",
+                "MIOS_VENDOR_TOML_D",
+                "MIOS_HOST_TOML",
+                "MIOS_HOST_TOML_D",
+            ] {
+                child.env_remove(var);
+            }
+            let out = child
+                .env(USER_TIER_FIXTURE, tmp_dir.path())
+                .env("MIOS_USER_TOML", &user)
+                .env("MIOS_USER_TOML_D", user.with_file_name("mios.d"))
+                .output()
+                .unwrap_or_else(|e| panic!("{e}"));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success() && stdout.contains("test result: ok. 1 passed"),
+                "{test} failed in its user-tier child:\n{stdout}\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            None
+        }
+
+        /// The vendor and host tiers of the user-tier echo tests.
+        fn plant_echo_tiers(root: &Path) {
+            fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{e}"));
+            fs::create_dir_all(root.join("etc/mios")).unwrap_or_else(|e| panic!("{e}"));
+            fs::write(
+                root.join("usr/share/mios/mios.toml"),
+                r#"
+[identity]
+mios_user = "echo-user"
+[portal]
+require_login = true
+password = ""
+secret = ""
+session_ttl = 604800
+[ai]
+api_key = ""
+endpoint = "vendor"
+[git]
+user_name = "vendor-git-user"
+[security.secret_keys]
+keys = ["MIOS_GITHUB_TOKEN"]
+[ports]
+a = 1
+"#,
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+            fs::write(
+                root.join("etc/mios/mios.toml"),
+                "[portal]\nsecret = \"host-tier-cookie-secret\"\n",
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+        }
+
+        /// A user tier holding a secret beside every key the echo tests edit.
+        const ECHO_USER_TIER: &str = "[portal]\npassword = \"user-tier-portal-pw\"\n\n[ai]\napi_key = \"user-tier-api-key\"\n\n[git]\ngithub_token = \"user-tier-gh-token\"\n";
+
+        fn get_config(config: &ConfigServerConfig) -> String {
+            let get = handle_request(
+                &request(
+                    "GET",
+                    "/portal/config",
+                    None,
+                    &[
+                        ("host", "localhost:8700"),
+                        ("cookie", "mios_portal=gate-token-7f3a"),
+                    ],
+                    b"",
+                ),
+                config,
+            );
+            assert_eq!(get.status_code, 200);
+            String::from_utf8_lossy(&get.body).to_string()
+        }
+
+        fn post_toml(config: &ConfigServerConfig, toml_text: &str) -> HttpResponse {
+            let body = serde_json::json!({ "toml": toml_text }).to_string();
+            handle_request(
+                &request(
+                    "POST",
+                    "/portal/config",
+                    None,
+                    &[
+                        ("host", "localhost:8700"),
+                        ("cookie", "mios_portal=gate-token-7f3a"),
+                        ("origin", "http://localhost:8700"),
+                        ("content-type", "application/json"),
+                    ],
+                    body.as_bytes(),
+                ),
+                config,
+            )
+        }
+
+        #[test]
+        fn config_server_echo_keeps_a_user_tier_secret_beside_an_edited_key() {
+            let Some(root) =
+                user_tier_child("config_server_echo_keeps_a_user_tier_secret_beside_an_edited_key")
+            else {
+                return;
+            };
+            plant_echo_tiers(&root);
+            let user = child_user_tier(&root);
+            fs::create_dir_all(user.parent().unwrap_or_else(|| panic!("{user:?}")))
+                .unwrap_or_else(|e| panic!("{e}"));
+            fs::write(&user, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            let config = gated_config(&root, user.clone(), true);
+
+            let served = get_config(&config);
+            for secret in [
+                "user-tier-portal-pw",
+                "user-tier-api-key",
+                "user-tier-gh-token",
+                "host-tier-cookie-secret",
+            ] {
+                assert!(!served.contains(secret), "GET leaked {secret}: {served}");
+            }
+            // Edit a key in the same table as each user-tier secret, so the whole
+            // [portal] and [git] tables reach the delta and replace the tier's.
+            let edited = served
+                .replace("session_ttl = 604800", "session_ttl = 3600")
+                .replace(
+                    "user_name = \"vendor-git-user\"",
+                    "user_name = \"edited-git-user\"",
+                );
+            assert!(edited.contains("session_ttl = 3600"), "{edited}");
+            assert!(edited.contains("edited-git-user"), "{edited}");
+            let saved = post_toml(&config, &edited);
+            assert_eq!(
+                saved.status_code,
+                200,
+                "{}",
+                String::from_utf8_lossy(&saved.body)
+            );
+
+            let text = fs::read_to_string(&user).unwrap_or_else(|e| panic!("{e}"));
+            assert!(
+                !text.contains(REDACTED),
+                "the marker reached the user tier: {text}"
+            );
+            assert!(
+                !text.contains("host-tier-cookie-secret"),
+                "a lower-tier secret was copied up: {text}"
+            );
+            let tier: toml::Value = text.parse().unwrap_or_else(|e| panic!("{e}: {text}"));
+            assert_eq!(
+                tier["portal"]["session_ttl"].as_integer(),
+                Some(3600),
+                "{text}"
+            );
+            assert_eq!(
+                tier["portal"]["password"].as_str(),
+                Some("user-tier-portal-pw"),
+                "{text}"
+            );
+            assert_eq!(tier["git"]["user_name"].as_str(), Some("edited-git-user"));
+            assert_eq!(
+                tier["git"]["github_token"].as_str(),
+                Some("user-tier-gh-token"),
+                "{text}"
+            );
+            assert_eq!(tier["ai"]["api_key"].as_str(), Some("user-tier-api-key"));
+            assert!(tier["portal"].get("secret").is_none(), "{text}");
+        }
+
+        #[test]
+        fn config_server_refuses_an_echo_when_the_tiers_do_not_resolve() {
+            let Some(root) =
+                user_tier_child("config_server_refuses_an_echo_when_the_tiers_do_not_resolve")
+            else {
+                return;
+            };
+            plant_echo_tiers(&root);
+            let user = child_user_tier(&root);
+            fs::create_dir_all(user.parent().unwrap_or_else(|| panic!("{user:?}")))
+                .unwrap_or_else(|e| panic!("{e}"));
+            fs::write(&user, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            let config = gated_config(&root, user.clone(), true);
+            let edited = get_config(&config).replace("session_ttl = 604800", "session_ttl = 3600");
+
+            // A malformed user.d override: the merged tiers no longer resolve,
+            // while the tiers below the user tier still do.
+            let broken = user.with_file_name("mios.d").join("10-broken.toml");
+            let broken_bytes = b"[portal\nsession_ttl = \n";
+            fs::create_dir_all(user.with_file_name("mios.d")).unwrap_or_else(|e| panic!("{e}"));
+            fs::write(&broken, broken_bytes).unwrap_or_else(|e| panic!("{e}"));
+            assert!(mios_resolver::resolve_merged(Some(root.as_path()), false).is_err());
+            assert!(mios_resolver::resolve_below_user(Some(root.as_path())).is_ok());
+
+            let refused = post_toml(&config, &edited);
+            let reply = String::from_utf8_lossy(&refused.body).to_string();
+            assert_eq!(refused.status_code, 500, "{reply}");
+            assert!(reply.contains(UNRESOLVED_REFUSAL), "{reply}");
+            assert_eq!(
+                fs::read(&user).unwrap_or_else(|e| panic!("{e}")),
+                ECHO_USER_TIER.as_bytes(),
+                "the refused save rewrote the user tier"
+            );
+            assert_eq!(
+                fs::read(&broken).unwrap_or_else(|e| panic!("{e}")),
+                broken_bytes
+            );
+            assert!(!user.with_extension("toml.tmp").exists());
+
+            // Planted-error control: the same echo saves once the override parses.
+            fs::remove_file(&broken).unwrap_or_else(|e| panic!("{e}"));
+            let saved = post_toml(&config, &edited);
+            assert_eq!(
+                saved.status_code,
+                200,
+                "{}",
+                String::from_utf8_lossy(&saved.body)
+            );
+            let text = fs::read_to_string(&user).unwrap_or_else(|e| panic!("{e}"));
+            let tier: toml::Value = text.parse().unwrap_or_else(|e| panic!("{e}: {text}"));
+            assert_eq!(
+                tier["portal"]["session_ttl"].as_integer(),
+                Some(3600),
+                "{text}"
+            );
+            assert_eq!(
+                tier["portal"]["password"].as_str(),
+                Some("user-tier-portal-pw"),
+                "{text}"
+            );
         }
 
         #[test]
         fn config_server_save_echoing_the_redacted_get_never_writes_the_marker() {
-            let tmp_dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{}", e));
-            let root = tmp_dir.path();
+            let Some(root) = user_tier_child(
+                "config_server_save_echoing_the_redacted_get_never_writes_the_marker",
+            ) else {
+                return;
+            };
+            let root = root.as_path();
             fs::create_dir_all(root.join("usr/share/mios")).unwrap_or_else(|e| panic!("{}", e));
             fs::create_dir_all(root.join("etc/mios")).unwrap_or_else(|e| panic!("{}", e));
             fs::write(
@@ -2178,7 +2460,7 @@ a = 1
                 "[ai]\napi_key = \"host-api-key\"\n",
             )
             .unwrap_or_else(|e| panic!("{}", e));
-            let user = root.join("home/.config/mios/mios.toml");
+            let user = child_user_tier(root);
             let config = gated_config(root, user.clone(), true);
             let cookie = ("cookie", "mios_portal=gate-token-7f3a");
             let host = ("host", "localhost:8700");

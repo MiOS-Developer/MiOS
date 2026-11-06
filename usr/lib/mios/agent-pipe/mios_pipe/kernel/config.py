@@ -449,12 +449,22 @@ def validate_config(toml_text: str, live_config: dict = None):
 # What miosd's GET /portal/config serves in place of every secret value.
 REDACTED = "<redacted>"
 
+class TiersUnresolved(RuntimeError):
+    """The tiers a save diffs against, or restores its REDACTED markers from,
+    did not resolve: write_user_config refuses and writes nothing."""
+
+def has_redacted(value) -> bool:
+    """True when value holds a REDACTED marker anywhere."""
+    if isinstance(value, dict):
+        return any(has_redacted(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_redacted(v) for v in value)
+    return isinstance(value, str) and value == REDACTED
+
 def restore_redacted(posted, live):
-    """A save that echoes a redacted GET carries REDACTED where each secret
-    was. The marker means "unchanged": it takes back the live value at the same
-    path (so the delta keeps a user-tier secret and drops a lower-tier one), and
-    with no live value there it is dropped. The marker itself is never written
-    over portal.password, portal.secret, ai.api_key or any other secret."""
+    """Each REDACTED marker takes back the live value at its path (a user-tier
+    secret stays, a lower-tier one leaves the delta) and is dropped where live
+    has none. The input is not mutated."""
     if isinstance(posted, dict):
         out = {}
         for k, v in posted.items():
@@ -477,17 +487,33 @@ def restore_redacted(posted, live):
         return out
     return posted
 
-def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
-    """Atomically write the dictionary to the user-layer config file.
+def _unparsed_layers(paths) -> list:
+    """The layer files in paths that exist but do not parse as TOML."""
+    try:
+        import tomllib as _toml
+    except ImportError:
+        import tomli as _toml  # type: ignore
+    bad = []
+    for p in paths:
+        if p and os.path.isfile(p):
+            try:
+                with open(p, "rb") as fh:
+                    _toml.load(fh)
+            except Exception as e:  # noqa: BLE001 -- any unreadable layer is unresolved
+                bad.append(f"{p}: {e}")
+    return bad
 
-    live_config is the merged config the save was made against; redaction
-    markers in cfg resolve against it before the diff (restore_redacted)."""
-    cfg = restore_redacted(cfg, live_config)
+def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
+    """Atomically write what cfg changes over vendor..host.d to the user tier.
+
+    live_config is the merged config the save was made against; cfg's REDACTED
+    markers take their values from it. Raises TiersUnresolved, writing nothing,
+    when the tiers or that live config did not resolve."""
+    import sys
+    if "/usr/lib/mios" not in sys.path:
+        sys.path.insert(0, "/usr/lib/mios")
     base_cfg = {}
     try:
-        import sys
-        if "/usr/lib/mios" not in sys.path:
-            sys.path.insert(0, "/usr/lib/mios")
         import mios_toml
         vendor, vendor_d, host, host_d, user, user_d = mios_toml._tier_dirs()
         paths = ([vendor] + mios_toml._frags(vendor_d)
@@ -498,8 +524,14 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
         # (GET serves load_merged); derive the base the same way so a derived
         # value is not frozen into the user tier. miosd's save does the same.
         mios_toml.derive_ports(base_cfg)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 -- an empty base would copy every tier upward
+        raise TiersUnresolved(f"the tiers below the user tier did not resolve: {e}") from e
+    if has_redacted(cfg):
+        unparsed = _unparsed_layers(paths + [user] + mios_toml._frags(user_d))
+        if live_config is None or unparsed:
+            raise TiersUnresolved("the save carries REDACTED markers but the live config"
+                                  " did not resolve: " + ("; ".join(unparsed) or "not loaded"))
+        cfg = restore_redacted(cfg, live_config)
 
     def _dict_diff(new_dict: dict, base_dict: dict) -> dict:
         diff = {}
