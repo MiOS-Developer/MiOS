@@ -500,6 +500,11 @@ fn luminance(color: Color) -> Option<u32> {
         .map(|[r, g, b]| (299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b)) / 1000)
 }
 
+/// The configured outline strength as a luma separation, 0..=255.
+fn outline_separation(lighting: &crate::lighting::VoxelLighting) -> u32 {
+    u32::from(lighting.outline_percent.min(100)) * 255 / 100
+}
+
 /// Keep a silhouette sample distinct from the scene behind it. Bounded: only
 /// screen-edge samples reach here, and their lit color changes only when it
 /// would quantize too close to the background. The required separation is the
@@ -814,26 +819,190 @@ fn printable_face(text: &str) -> bool {
     !text.is_empty() && text.is_ascii() && !text.bytes().any(|c| c.is_ascii_control())
 }
 
-/// Face strokes use the dark face ink unless it would vanish into the head
-/// under them (a black-bodied species): then, exactly as a silhouette against
-/// its scene, the configured outline separation picks a legible tone. The head
-/// is the material at the face-plane centre (or a legacy face's anchor).
-/// Without lighting there is no configured separation and the ink stays.
-fn face_ink(sprite: &Sprite, colors: &Colors) -> Color {
+/// Native glyphs ride the head map near this eye line (head-map v), within
+/// this reach either side.
+const NATIVE_EYE_LINE: f64 = 0.35;
+const NATIVE_BAND_REACH: f64 = 0.16;
+
+/// Where a face tier draws its strokes, so its ink is judged against the head
+/// actually under them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InkRegion {
+    /// Native characters: the head map's eye-line band.
+    NativeBand,
+    /// Shaded and atlas strokes: the letterboxed text box on the face plane.
+    TextBox,
+}
+
+/// The head under a face tier's strokes as the viewer sees it, held in fixed
+/// histograms so a frame allocates nothing: the luma of each texel's rendered
+/// color (its material lit by the body's own model when lighting is enabled,
+/// flat palette material when it is not) and its palette material.
+struct HeadHistogram {
+    luma: [u32; 256],
+    material: [u32; 256],
+    total: u32,
+}
+
+impl HeadHistogram {
+    /// A region the sprite does not map falls back to the whole mapped head,
+    /// then to a legacy face's anchor.
+    fn of(
+        sprite: &Sprite,
+        colors: &Colors,
+        lighting: &crate::lighting::VoxelLighting,
+        region: InkRegion,
+    ) -> Self {
+        let text_box = FaceTexture::new(sprite).map(|texture| texture.text_fraction());
+        let in_region = |x, y| match region {
+            InkRegion::NativeBand => valid_head_uv(sprite, x, y)
+                .is_some_and(|uv| (uv[1] - NATIVE_EYE_LINE).abs() <= NATIVE_BAND_REACH),
+            InkRegion::TextBox => text_box.is_some_and(|fraction| {
+                valid_face_uv(sprite, x, y).is_some_and(|uv| {
+                    (uv[0] - 0.5).abs() <= fraction[0] / 2.0
+                        && (uv[1] - 0.5).abs() <= fraction[1] / 2.0
+                })
+            }),
+        };
+        let mut head = Self::scan(sprite, colors, lighting, in_region);
+        if head.total == 0 {
+            head = Self::scan(sprite, colors, lighting, |x, y| {
+                valid_head_uv(sprite, x, y).is_some() || valid_face_uv(sprite, x, y).is_some()
+            });
+        }
+        if head.total == 0 {
+            let anchor = sprite
+                .face_overlay()
+                .and_then(|face| sprite.pixel(u32::from(face.center_x), u32::from(face.y), 1));
+            if let Some(index) = anchor {
+                head.add(colors.ink(usize::from(index)), index);
+            }
+        }
+        head
+    }
+
+    fn scan(
+        sprite: &Sprite,
+        colors: &Colors,
+        lighting: &crate::lighting::VoxelLighting,
+        include: impl Fn(u32, u32) -> bool,
+    ) -> Self {
+        let mut head = Self {
+            luma: [0; 256],
+            material: [0; 256],
+            total: 0,
+        };
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                if !include(x, y) {
+                    continue;
+                }
+                let Some(index) = sprite.pixel(x, y, 1) else {
+                    continue;
+                };
+                let base = colors.ink(usize::from(index));
+                let seen = match sprite.surface_shading(x, y).filter(|_| lighting.enabled) {
+                    Some((normal, occlusion)) => {
+                        let edge = x
+                            .checked_sub(1)
+                            .and_then(|x| sprite.pixel(x, y, 1))
+                            .is_none()
+                            || sprite.pixel(x + 1, y, 1).is_none()
+                            || y.checked_sub(1)
+                                .and_then(|y| sprite.pixel(x, y, 1))
+                                .is_none()
+                            || sprite.pixel(x, y + 1, 1).is_none();
+                        let brightness = lighting.brightness(normal, occlusion, edge);
+                        shade_terminal_color(lighting, base, brightness)
+                    }
+                    None => base,
+                };
+                head.add(seen, index);
+            }
+        }
+        head
+    }
+
+    fn add(&mut self, seen: Color, index: u8) {
+        // Monochrome has no luma: it never counts toward legibility.
+        if let Some(luma) = luminance(seen) {
+            self.luma[luma.min(255) as usize] += 1;
+        }
+        self.material[usize::from(index)] += 1;
+        self.total += 1;
+    }
+
+    /// Texels on which `candidate` is at least `minimum` luma (and never less
+    /// than one step) away from the head under it.
+    fn legible_on(&self, candidate: Color, minimum: u32) -> u32 {
+        let Some(luma) = luminance(candidate) else {
+            return 0;
+        };
+        let minimum = minimum.max(1);
+        (0..256u32)
+            .filter(|head| head.abs_diff(luma) >= minimum)
+            .map(|head| self.luma[head as usize])
+            .sum()
+    }
+
+    /// The most common palette material, the earlier index on a tie.
+    fn dominant_material(&self) -> Option<u8> {
+        (0..=255u8)
+            .filter(|index| self.material[usize::from(*index)] > 0)
+            .fold(None, |best: Option<u8>, index| match best {
+                Some(most)
+                    if self.material[usize::from(most)] >= self.material[usize::from(index)] =>
+                {
+                    best
+                }
+                _ => Some(index),
+            })
+    }
+}
+
+/// Face strokes use the dark face ink while it reads on at least half of the
+/// head under them as rendered (lit, or flat when lighting is disabled),
+/// measured by the configured outline separation. On a head too dark for it --
+/// a black-bodied species, or shading that darkens a mid-tone body toward the
+/// ink -- the candidate legible on the most texels wins, the earlier on a tie:
+/// the ink, the dominant head material's own brightest/darkest lit rims
+/// (lighting enabled only), then the palette's materials. Monochrome has no
+/// luma and keeps the ink; only test-built Colors without lighting parameters
+/// keep it unconditionally. Bounded: one sprite scan into fixed histograms.
+fn face_ink(sprite: &Sprite, colors: &Colors, region: InkRegion) -> Color {
     let ink = colors.ink(0);
-    let Some(lighting) = colors.lighting.as_ref().filter(|light| light.enabled) else {
+    let Some(lighting) = colors.lighting.as_ref() else {
         return ink;
     };
-    let head = face_anchor(sprite)
-        .and_then(|(x, y)| sprite.pixel(x as u32, y as u32, 1))
-        .or_else(|| {
-            let face = sprite.face_overlay()?;
-            sprite.pixel(u32::from(face.center_x), u32::from(face.y), 1)
-        });
-    head.map_or(ink, |index| {
-        let head = colors.ink(usize::from(index));
-        silhouette_color(lighting, colors, ink, head, head)
-    })
+    let head = HeadHistogram::of(sprite, colors, lighting, region);
+    let minimum = outline_separation(lighting);
+    if head.legible_on(ink, minimum) * 2 >= head.total {
+        return ink;
+    }
+    let rims = head
+        .dominant_material()
+        .filter(|_| lighting.enabled)
+        .map(|index| {
+            let base = colors.ink(usize::from(index));
+            [
+                shade_terminal_color(lighting, base, 180),
+                shade_terminal_color(lighting, base, 0),
+            ]
+        })
+        .into_iter()
+        .flatten();
+    std::iter::once(ink)
+        .chain(rims)
+        .chain(colors.palette.iter().copied())
+        .fold((ink, 0), |(best, most), candidate| {
+            let count = head.legible_on(candidate, minimum);
+            if count > most {
+                (candidate, count)
+            } else {
+                (best, most)
+            }
+        })
+        .0
 }
 
 fn paint_face_character(
@@ -893,7 +1062,7 @@ fn draw_front_face(
     {
         return false;
     }
-    let ink = face_ink(sprite, colors);
+    let ink = face_ink(sprite, colors, InkRegion::NativeBand);
     for (offset, glyph) in face.text.chars().enumerate() {
         if let Some(cell) = buf.cell_mut(((start + offset as i32) as u16, row as u16)) {
             paint_face_character(cell, colors, ink, glyph);
@@ -1266,7 +1435,7 @@ fn native_glyph_candidates(
                 continue;
             }
             let du = (uv[0] - target_u) / horizontal_tolerance.max(width * 0.55);
-            let dv = (uv[1] - band) / 0.16;
+            let dv = (uv[1] - band) / NATIVE_BAND_REACH;
             let distance = du * du + dv * dv;
             if du.abs() <= 1.0 && dv.abs() <= 1.0 && distance < best_distance {
                 best = Some(pos);
@@ -1324,7 +1493,7 @@ fn native_micro_candidates(
                     complete = false;
                     break;
                 }
-                score += (uv[0] - target_u).powi(2) + (uv[1] - 0.35).powi(2);
+                score += (uv[0] - target_u).powi(2) + (uv[1] - NATIVE_EYE_LINE).powi(2);
                 previous = Some(uv);
                 candidates[index] = Some(((column, start.1), texture.text.as_bytes()[index]));
             }
@@ -1509,7 +1678,7 @@ fn native_run_candidates(
             continue;
         }
         let centre = run[middle].1;
-        let score = (centre[0] - 0.5).powi(2) + (centre[1] - 0.35).powi(2);
+        let score = (centre[0] - 0.5).powi(2) + (centre[1] - NATIVE_EYE_LINE).powi(2);
         if best.as_ref().is_none_or(|(previous, _)| score < *previous) {
             let cells = run
                 .iter()
@@ -1537,7 +1706,7 @@ fn draw_surface_glyphs(
     let Some(texture) = FaceTexture::new(sprite) else {
         return false;
     };
-    let ink = face_ink(sprite, colors);
+    let ink = face_ink(sprite, colors, InkRegion::NativeBand);
     let (dx, dy) = renderer.packing();
     let mut visible = Vec::new();
     for row in area.y..area.bottom() {
@@ -1593,14 +1762,18 @@ fn draw_surface_glyphs(
     // Start with the upper face. A broad beak can consume a whole terminal
     // cell there, so derive alternate rows from actual legal mouth cells.
     // Every fallback row still belongs to the nearest visible mapped head.
-    let mut bands = vec![0.35];
+    let mut bands = vec![NATIVE_EYE_LINE];
     bands.extend(
         visible
             .iter()
             .filter(|(_, uv, width)| (uv[0] - 0.5).abs() <= horizontal_tolerance.max(width * 0.55))
             .map(|(_, uv, _)| uv[1]),
     );
-    bands.sort_by(|a, b| (a - 0.35).abs().total_cmp(&(b - 0.35).abs()));
+    bands.sort_by(|a, b| {
+        (a - NATIVE_EYE_LINE)
+            .abs()
+            .total_cmp(&(b - NATIVE_EYE_LINE).abs())
+    });
     bands.dedup_by(|a, b| (*a - *b).abs() < 0.001);
     let mut compact = None;
     for band in bands {
@@ -1685,7 +1858,7 @@ fn draw_camera_face(
     // One pixel per cell has no sub-cell atlas to switch to, and half-block
     // atlas ink is a flat palette pixel: a head that needs a substitute ink
     // (see face_ink) keeps the shaded strokes, whose glyphs carry it.
-    let stroke_color = face_ink(sprite, colors);
+    let stroke_color = face_ink(sprite, colors, InkRegion::TextBox);
     let pixel_atlas = renderer.packing() != (1, 1)
         && !(renderer == Renderer::HalfBlock && stroke_color != colors.ink(0));
     match face_lod(texture, columns, rows, pixel_atlas) {
@@ -2763,7 +2936,10 @@ mod voxel_lighting_tests {
                         if !area.contains((x, y).into()) {
                             assert_eq!(after[(x, y)], outside[(x, y)]);
                         } else if after[(x, y)] != before[(x, y)] {
-                            assert_eq!(after[(x, y)].fg, face_ink(&sprite, &colors));
+                            assert_eq!(
+                                after[(x, y)].fg,
+                                face_ink(&sprite, &colors, InkRegion::NativeBand)
+                            );
                             assert_eq!(after[(x, y)].bg, before[(x, y)].bg);
                             face_cells += 1;
                         }
@@ -6262,53 +6438,183 @@ mod kaomoji_scale_tests {
     }
 
     #[test]
-    fn face_ink_separates_from_the_head_of_every_species() {
-        let config = Config::sample().unwrap();
-        let mut substituted = 0;
-        for depth in [Depth::Ansi, Depth::Indexed, Depth::Rgb] {
-            let colors = Colors::from_config(&config, depth).unwrap();
-            let lighting = colors.lighting.clone().unwrap();
-            let minimum = u32::from(lighting.outline_percent.min(100)) * 255 / 100;
-            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
-                for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
-                    for shape in 0..16u8 {
-                        let sprite = Sprite::voxel_with_appearance(
-                            stage,
-                            Expression::Happy,
-                            style,
-                            0,
-                            0,
-                            false,
-                            Appearance {
-                                shape,
-                                body: shape,
-                                accent: (shape + 5) % 16,
-                            },
-                        );
-                        let (x, y) = face_anchor(&sprite).unwrap();
-                        let head =
-                            colors.ink(usize::from(sprite.pixel(x as u32, y as u32, 1).unwrap()));
-                        let ink = face_ink(&sprite, &colors);
-                        let separation =
-                            |color| luminance(color).unwrap().abs_diff(luminance(head).unwrap());
-                        assert!(
-                            separation(ink) >= minimum,
-                            "{depth:?} {stage:?} {style:?} shape {shape}: face ink {ink:?} on head {head:?}"
-                        );
-                        // The dark ink stays wherever it already reads.
-                        if separation(colors.ink(0)) >= minimum {
-                            assert_eq!(ink, colors.ink(0), "{depth:?} shape {shape}");
-                        } else {
-                            substituted += 1;
+    fn face_ink_separates_from_the_head_under_its_strokes_lit_or_unlit() {
+        let mut substituted = [0usize; 2];
+        for (lit, enabled) in [(0, true), (1, false)] {
+            let mut config = Config::sample().unwrap();
+            config.voxel_lighting.enabled = enabled;
+            for depth in [Depth::Ansi, Depth::Indexed, Depth::Rgb] {
+                let colors = Colors::from_config(&config, depth).unwrap();
+                let lighting = colors.lighting.clone().unwrap();
+                assert_eq!(lighting.enabled, enabled);
+                let minimum = outline_separation(&lighting);
+                for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                    for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                        for shape in 0..16u8 {
+                            let sprite = Sprite::voxel_with_appearance(
+                                stage,
+                                Expression::Happy,
+                                style,
+                                0,
+                                0,
+                                false,
+                                Appearance {
+                                    shape,
+                                    body: shape,
+                                    accent: (shape + 5) % 16,
+                                },
+                            );
+                            for region in [InkRegion::NativeBand, InkRegion::TextBox] {
+                                let head = HeadHistogram::of(&sprite, &colors, &lighting, region);
+                                assert!(head.total > 0, "{stage:?} {style:?} shape {shape}");
+                                let legible_on =
+                                    |candidate: Color| head.legible_on(candidate, minimum);
+                                let ink = face_ink(&sprite, &colors, region);
+                                let label = format!(
+                                    "lit={enabled} {depth:?} {stage:?} {style:?} shape {shape} {region:?}"
+                                );
+                                let best = colors
+                                    .palette
+                                    .iter()
+                                    .map(|candidate| legible_on(*candidate))
+                                    .max()
+                                    .unwrap();
+                                assert!(
+                                    legible_on(ink) * 2 >= head.total || legible_on(ink) >= best,
+                                    "{label}: {ink:?} reads on {}/{} texels, a palette ink on {best}",
+                                    legible_on(ink),
+                                    head.total
+                                );
+                                // The dark ink stays wherever it already reads.
+                                if legible_on(colors.ink(0)) * 2 >= head.total {
+                                    assert_eq!(ink, colors.ink(0), "{label}");
+                                } else {
+                                    substituted[lit] += 1;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         assert!(
-            substituted > 0,
-            "a dark-bodied species must exercise the substitute ink"
+            substituted.iter().all(|n| *n > 0),
+            "lit and unlit heads must both exercise the substitute ink: {substituted:?}"
         );
+    }
+
+    #[test]
+    fn rendered_face_cells_read_against_the_head_they_are_drawn_on() {
+        // Measures the actual buffer: each face-glyph cell's ink against what is
+        // under it (the half-block cell's body background, the ASCII body
+        // glyph's colour), with lighting enabled and disabled.
+        let named = [
+            (false, Depth::Ansi, Stage::Baby, SpriteStyle::EightBit, 0),
+            (true, Depth::Indexed, Stage::Baby, SpriteStyle::EightBit, 6),
+            (true, Depth::Rgb, Stage::Baby, SpriteStyle::EightBit, 10),
+            (
+                false,
+                Depth::Indexed,
+                Stage::Baby,
+                SpriteStyle::EightBit,
+                10,
+            ),
+        ];
+        let mut named_seen = [false; 4];
+        for enabled in [true, false] {
+            let mut config = Config::sample().unwrap();
+            config.voxel_lighting.enabled = enabled;
+            for depth in [Depth::Ansi, Depth::Indexed, Depth::Rgb] {
+                let colors = Colors::from_config(&config, depth).unwrap();
+                let minimum = outline_separation(colors.lighting.as_ref().unwrap());
+                let (mut cells, mut legible) = (0usize, 0usize);
+                for stage in [Stage::Baby, Stage::Adult] {
+                    for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                        for shape in 0..16u8 {
+                            let sprite = Sprite::voxel_with_appearance(
+                                stage,
+                                Expression::Happy,
+                                style,
+                                0,
+                                0,
+                                false,
+                                Appearance {
+                                    shape,
+                                    body: shape,
+                                    accent: (shape + 5) % 16,
+                                },
+                            );
+                            let (mut case_cells, mut case_legible) = (0usize, 0usize);
+                            for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                                for zoom_percent in [100, 150, 200, 300] {
+                                    let area = Rect::new(0, 0, 40, 19);
+                                    let projection = Projection::camera(
+                                        &sprite,
+                                        SolidBounds::of(&sprite).unwrap(),
+                                        area,
+                                        renderer,
+                                        0,
+                                        (500, 500),
+                                        Camera {
+                                            orbit_degrees: 0,
+                                            view: CameraView::Face,
+                                            from_view: CameraView::Face,
+                                            zoom_percent,
+                                            transition_percent: 100,
+                                        },
+                                    );
+                                    let mut body = Buffer::empty(area);
+                                    draw_projection(
+                                        &sprite, renderer, &colors, projection, area, &mut body,
+                                    );
+                                    let mut face = body.clone();
+                                    draw_camera_face(
+                                        &sprite, renderer, &colors, projection, area, &mut face,
+                                    );
+                                    for (before, after) in body.content.iter().zip(&face.content) {
+                                        let packed_pixels = matches!(
+                                            after.symbol(),
+                                            "\u{2580}" | "\u{2584}" | "\u{2588}" | " "
+                                        );
+                                        if before == after || packed_pixels {
+                                            continue;
+                                        }
+                                        let under = if renderer == Renderer::HalfBlock {
+                                            before.bg
+                                        } else {
+                                            before.fg
+                                        };
+                                        let (Some(ink), Some(under)) =
+                                            (luminance(after.fg), luminance(under))
+                                        else {
+                                            continue;
+                                        };
+                                        case_cells += 1;
+                                        case_legible += usize::from(ink.abs_diff(under) >= minimum);
+                                    }
+                                }
+                            }
+                            cells += case_cells;
+                            legible += case_legible;
+                            for (i, case) in named.iter().enumerate() {
+                                if *case == (enabled, depth, stage, style, shape) {
+                                    named_seen[i] = true;
+                                    assert!(
+                                        case_cells > 0 && case_legible * 2 >= case_cells,
+                                        "lit={enabled} {depth:?} {stage:?} {style:?} shape {shape}: {case_legible}/{case_cells} legible face cells"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    legible * 100 >= cells * 95,
+                    "lit={enabled} {depth:?}: only {legible}/{cells} face cells reach the outline separation"
+                );
+            }
+        }
+        assert!(named_seen.iter().all(|seen| *seen));
     }
 
     #[test]
@@ -6453,7 +6759,7 @@ mod kaomoji_scale_tests {
                                         );
                                         assert_eq!(
                                             cell.fg,
-                                            face_ink(&front, &colors),
+                                            face_ink(&front, &colors, InkRegion::TextBox),
                                             "{label}: stroke ink at {x},{y}"
                                         );
                                         for sy in 0..dy {
