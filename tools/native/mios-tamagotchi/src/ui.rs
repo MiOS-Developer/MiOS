@@ -122,6 +122,9 @@ pub struct Ui {
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
     menu_footer: Cell<Rect>,
+    /// Footer rect of the last `draw_information`; read by its regression test.
+    #[cfg_attr(not(test), allow(dead_code))]
+    info_footer: Cell<Rect>,
     pub sprite_style: SpriteStyle,
     presentation: Option<crate::hud::DetailRules>,
     effective_style: Cell<SpriteStyle>,
@@ -140,7 +143,10 @@ pub struct Ui {
     camera_subject: Cell<Option<SceneSubject>>,
     camera_subject_cut: Cell<bool>,
     pet_generation: u64,
-    camera_resize: Cell<Option<(CameraView, CameraView, usize)>>,
+    /// Source Room/Pet/Face mix in per-mille, target view and start frame.
+    camera_resize: Cell<Option<([u16; 3], CameraView, usize)>>,
+    /// Mix a manual blend starts from; None keeps the one-hot `camera_from_view`.
+    camera_from_weights: Option<[u16; 3]>,
     position: (u16, u16),
     destination: (u16, u16),
     yaw: u16,
@@ -212,6 +218,7 @@ impl Ui {
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
             menu_footer: Cell::new(Rect::default()),
+            info_footer: Cell::new(Rect::default()),
             sprite_style: SpriteStyle::EightBit,
             presentation: None,
             effective_style: Cell::new(SpriteStyle::EightBit),
@@ -231,6 +238,7 @@ impl Ui {
             camera_subject_cut: Cell::new(false),
             pet_generation: 0,
             camera_resize: Cell::new(None),
+            camera_from_weights: None,
             position: (500, 700),
             destination: (500, 700),
             yaw: 0,
@@ -521,10 +529,14 @@ impl Ui {
         );
     }
     fn set_scene_for_stage(&self, area: Rect, stage: Option<Stage>, subject: SceneSubject) {
+        // Capture exactly what the previous frame showed before the viewport
+        // and stage change: a re-registration starts from the drawn mix.
+        let current = self.camera_mix();
+        let old_target = self.camera().view;
         self.pet_area.set(area);
         let dimensions = (area.width, area.height);
         let previous = self.camera_viewport.replace(dimensions);
-        let previous_stage = self.camera_stage.replace(stage);
+        self.camera_stage.set(stage);
         if self.camera_subject.replace(Some(subject)) != Some(subject) {
             // Previews and replacement pets are different subjects. Their first
             // frame must not inherit a hatch, resize or manual-view blend.
@@ -533,27 +545,42 @@ impl Ui {
             return;
         }
         if previous != (u16::MAX, u16::MAX) {
-            let from = Self::view_for_stage(self.camera_view, previous, previous_stage);
-            let to = Self::view_for_stage(self.camera_view, dimensions, stage);
-            if from != to {
-                self.camera_resize.set(Some((from, to, self.frame)));
+            let target = Self::view_for_stage(self.camera_view, dimensions, stage);
+            // An unchanged target keeps the blend already in flight untouched.
+            if target != old_target {
+                self.camera_resize.set(Some((current, target, self.frame)));
             }
         }
+    }
+    /// The Room/Pet/Face mix `camera()` draws now, in per-mille summing to 1000.
+    fn camera_mix(&self) -> [u16; 3] {
+        let camera = self.camera();
+        let source = camera
+            .from_weights
+            .unwrap_or_else(|| camera.from_view.one_hot());
+        camera.view.blend_from(source, camera.transition_percent)
+    }
+    fn camera_resize_in_flight(&self) -> Option<CameraView> {
+        let (_, to, started) = self.camera_resize.get()?;
+        (self.camera_progress(started) < 100).then_some(to)
+    }
+    fn camera_progress(&self, started: usize) -> u32 {
+        self.frame
+            .saturating_sub(started)
+            .saturating_mul(100)
+            .checked_div(self.camera_transition_frames.max(1))
+            .unwrap_or(100)
+            .min(100) as u32
     }
     fn camera(&self) -> Camera {
         let (w, h) = self.camera_viewport.get();
         let effective = |view| self.effective_view(view, (w, h));
-        if let Some((from, to, started)) = self.camera_resize.get() {
-            let t = self
-                .frame
-                .saturating_sub(started)
-                .saturating_mul(100)
-                .checked_div(self.camera_transition_frames.max(1))
-                .unwrap_or(100)
-                .min(100) as u32;
+        if let Some((source, to, started)) = self.camera_resize.get() {
+            let t = self.camera_progress(started);
             if t < 100 {
                 return Camera {
-                    from_view: from,
+                    from_view: CameraView::dominant(source),
+                    from_weights: Some(source),
                     view: to,
                     zoom_percent: self.zoom_percent,
                     orbit_degrees: self.orbit_degrees,
@@ -561,23 +588,31 @@ impl Ui {
                 };
             }
         }
+        let view = effective(self.camera_view);
+        let cut = self.camera_subject_cut.get();
+        let (from_view, from_weights) = match self.camera_from_weights {
+            _ if cut => (view, None),
+            Some(weights) => (CameraView::dominant(weights), Some(weights)),
+            None => (effective(self.camera_from_view), None),
+        };
         Camera {
-            view: effective(self.camera_view),
+            view,
             zoom_percent: self.zoom_percent,
             orbit_degrees: self.orbit_degrees,
-            from_view: if self.camera_subject_cut.get() {
-                effective(self.camera_view)
-            } else {
-                effective(self.camera_from_view)
-            },
-            transition_percent: if self.camera_subject_cut.get() {
-                100
-            } else {
-                self.camera_blend
-            },
+            from_view,
+            from_weights,
+            transition_percent: if cut { 100 } else { self.camera_blend },
         }
     }
     fn change_camera(&mut self, view: CameraView, zoom: u16) {
+        // A new manual blend starts from the mix drawn now (task3755a).
+        let mix = self.camera_mix();
+        self.camera_from_weights = Some(match self.camera_resize_in_flight() {
+            // Same view during a resize: the resize keeps carrying the view
+            // blend, so the manual blend must not replay its source afterwards.
+            Some(target) if view == self.camera_view => target.one_hot(),
+            _ => mix,
+        });
         self.camera_subject_cut.set(false);
         if view != self.camera_view {
             self.camera_resize.set(None);
@@ -2317,6 +2352,7 @@ impl Ui {
         self.control_targets.borrow_mut().clear();
         self.menu_number_count.set(0);
         self.menu_footer.set(Rect::default());
+        self.info_footer.set(Rect::default());
         let heading = self.room_heading(area.width, &config.game);
         let compact = self.hud_mode == HudMode::Minimal
             || area.width < config.hud_minimal_width
@@ -2381,6 +2417,7 @@ impl Ui {
                     || area.height < config.hud_minimal_height))
         {
             self.draw_minimal(screen, config, renderer, colors, frame, inner);
+            self.redraw_heading(screen, config, colors, ascii);
             if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
                 self.draw_menu(screen, menu, config, colors, renderer);
             }
@@ -2482,6 +2519,7 @@ impl Ui {
         let room_inner = border.inner(room);
         screen.render_widget(border, room);
         self.set_scene(room_inner);
+        self.redraw_heading(screen, config, colors, ascii);
         let sprite = self.pet_sprite(&config.game, frame);
         screen.render_widget(
             RoomWidget {
@@ -2627,6 +2665,16 @@ impl Ui {
         self.draw_reset(screen, colors, ascii);
         self.draw_menu_navigation(screen, colors);
         self.suspend_native_targets();
+    }
+    /// The frame heading names the view registered by this frame's scene, not
+    /// the previous size's (task3755b). Only the top border row is repainted.
+    fn redraw_heading(&self, screen: &mut Frame, config: &Config, colors: &Colors, ascii: bool) {
+        let area = screen.area();
+        let heading = self.room_heading(area.width, &config.game);
+        screen.render_widget(
+            panel(&heading, colors, ascii).borders(Borders::TOP | Borders::LEFT | Borders::RIGHT),
+            Rect::new(area.x, area.y, area.width, 1.min(area.height)),
+        );
     }
     fn draw_minimal(
         &self,
@@ -3052,10 +3100,14 @@ impl Ui {
                 "+/- 0 Z / L".into(),
             ]
         };
+        // The footer is Clear-ed with the rest of `info`; paint the configured
+        // background so no terminal default (light or dark) shows through.
         screen.render_widget(
-            Paragraph::new(hint_lines.join("\n")).style(Style::default().fg(colors.ink(7))),
+            Paragraph::new(hint_lines.join("\n"))
+                .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
             footer,
         );
+        self.info_footer.set(footer);
         let action_row = if narrow_controls {
             4
         } else if expanded_controls {
@@ -8720,5 +8772,225 @@ mod console_shell_regressions {
         }
         assert!(checked >= 8);
         assert_eq!(ui.game, game);
+    }
+}
+
+// task3755 mid-blend continuity, same-frame heading and the information
+// footer background. Presentation only: no case may touch the pet.
+#[cfg(test)]
+mod camera_continuity_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
+
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let mut ui = Ui::configured(game, &config);
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        ui.camera_transition_frames = 8;
+        (config, ui)
+    }
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16) -> Vec<String> {
+        let colors = Colors::from_config(config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, Renderer::Ascii, &colors, ui.frame, false))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect()
+    }
+    /// Register a scene and prove the drawn mix does not jump across it.
+    fn rescene(ui: &mut Ui, frame: usize, area: Rect) -> [u16; 3] {
+        ui.frame = frame;
+        let before = ui.camera_mix();
+        ui.set_scene(area);
+        assert_eq!(ui.camera_mix(), before, "frame {frame}: {area:?}");
+        before
+    }
+
+    #[test]
+    fn resize_back_mid_blend_starts_from_the_interpolated_mix() {
+        let (_, mut ui) = fixture();
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        rescene(&mut ui, 0, Rect::new(0, 0, 40, 20));
+        assert_eq!(ui.camera().view, CameraView::Room);
+        rescene(&mut ui, 16, Rect::new(0, 0, 20, 8));
+        assert_eq!(ui.camera().view, CameraView::Face);
+        assert_eq!(
+            ui.camera_resize.get(),
+            Some(([1000, 0, 0], CameraView::Face, 16))
+        );
+        // Frame 20 is eased 50 percent of the Room -> Face resize.
+        let mix = rescene(&mut ui, 20, Rect::new(0, 0, 40, 20));
+        assert_eq!(mix, [500, 0, 500]);
+        assert_eq!(
+            ui.camera_resize.get(),
+            Some(([500, 0, 500], CameraView::Room, 20))
+        );
+        let camera = ui.camera();
+        assert_eq!(camera.view, CameraView::Room);
+        assert_eq!(camera.from_weights, Some([500, 0, 500]));
+        assert_eq!(camera.transition_percent, 0);
+        ui.frame = 28;
+        assert_eq!(ui.camera_mix(), [1000, 0, 0]);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn third_size_mid_blend_and_manual_change_mid_resize_are_continuous() {
+        let (config, mut ui) = fixture();
+        let game = ui.game.clone();
+        rescene(&mut ui, 0, Rect::new(0, 0, 40, 20));
+        rescene(&mut ui, 8, Rect::new(0, 0, 20, 8));
+        // A third size mid-blend: the new source is the mix drawn at frame 12.
+        let mix = rescene(&mut ui, 12, Rect::new(0, 0, 60, 30));
+        assert_eq!(mix, [500, 0, 500]);
+        assert_eq!(ui.camera_resize.get(), Some((mix, CameraView::Room, 12)));
+        // Z mid-resize: the manual blend starts from the mix at frame 14.
+        ui.frame = 14;
+        let before = ui.camera_mix();
+        assert!(before[0] > 500 && before[0] < 1000, "{before:?}");
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.camera_view, CameraView::Pet);
+        assert!(ui.camera_resize.get().is_none());
+        assert_eq!(ui.camera_mix(), before);
+        assert_eq!(ui.camera().from_weights, Some(before));
+        // The manual blend then eases monotonically to the Pet view.
+        let mut previous = before[1];
+        for frame in 15..=22 {
+            ui.animate(frame);
+            let pet = ui.camera_mix()[1];
+            assert!(pet >= previous, "frame {frame}: {pet} < {previous}");
+            previous = pet;
+        }
+        assert_eq!(ui.camera_mix(), [0, 1000, 0]);
+        // A zoom during a resize keeps the resize carrying the view blend.
+        rescene(&mut ui, 30, Rect::new(0, 0, 20, 8));
+        ui.frame = 32;
+        let before = ui.camera_mix();
+        ui.zoom_by(true);
+        assert_eq!(ui.camera_mix(), before);
+        ui.animate(40);
+        assert_eq!(ui.camera_mix(), [0, 0, 1000]);
+        ui.animate(44);
+        assert_eq!(ui.camera_mix(), [0, 0, 1000]);
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn same_target_reregistration_keeps_the_blend_in_flight() {
+        let (_, mut ui) = fixture();
+        rescene(&mut ui, 0, Rect::new(0, 0, 40, 20));
+        rescene(&mut ui, 8, Rect::new(0, 0, 20, 8));
+        let registered = ui.camera_resize.get();
+        assert_eq!(registered, Some(([1000, 0, 0], CameraView::Face, 8)));
+        // Another size with the same Face target must not restart the blend.
+        rescene(&mut ui, 10, Rect::new(0, 0, 18, 7));
+        rescene(&mut ui, 11, Rect::new(0, 0, 20, 8));
+        assert_eq!(ui.camera_resize.get(), registered);
+    }
+
+    #[test]
+    fn room_heading_names_the_view_drawn_in_the_same_frame() {
+        let (config, base) = fixture();
+        let mut found = None;
+        'search: for height in 10..=18 {
+            for width in (40..=86).step_by(2) {
+                let mut ui = Ui::configured(base.game.clone(), &config);
+                ui.camera_view = CameraView::Room;
+                ui.camera_from_view = CameraView::Room;
+                let wide = draw(&ui, &config, 120, 40);
+                assert_eq!(ui.camera().view, CameraView::Room);
+                assert!(
+                    wide[0].contains(&format!("Room {}%", ui.zoom_percent)),
+                    "{}",
+                    wide[0]
+                );
+                ui.frame += 1;
+                let lines = draw(&ui, &config, width, height);
+                if ui.camera().view != CameraView::Face {
+                    continue;
+                }
+                // The first draw after the resize already names the new view.
+                let label = format!("{:?} {}%", ui.camera().view, ui.zoom_percent);
+                assert!(
+                    !lines[0].contains("Room "),
+                    "{width}x{height}: {}",
+                    lines[0]
+                );
+                if lines[0].contains(&label) {
+                    found = Some((width, height));
+                    break 'search;
+                }
+            }
+        }
+        assert!(
+            found.is_some(),
+            "no scene under 28x10 printed its own view in the heading"
+        );
+    }
+
+    #[test]
+    fn information_footer_paints_the_configured_background_80x24_auto() {
+        let vendor = Config::sample().unwrap();
+        assert!(
+            80 < vendor.hud_minimal_width,
+            "80x24 must be the minimal HUD"
+        );
+        let light = {
+            let mut config = vendor.clone();
+            config.background = "#F4F1E8".into();
+            config.palette = ["#1B1B22", "#2B3A55", "#3E2C23", "#14213D"]
+                .map(String::from)
+                .to_vec();
+            config
+        };
+        for config in [vendor, light] {
+            for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi] {
+                let colors = Colors::from_config(&config, depth).unwrap();
+                let (_, base) = fixture();
+                let mut ui = Ui::configured(base.game, &config);
+                ui.hud_mode = HudMode::Auto;
+                let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+                terminal
+                    .draw(|frame| ui.draw(frame, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                let footer = ui.info_footer.get();
+                assert!(
+                    footer.width > 0 && footer.height > 0,
+                    "{depth:?}: draw_information did not run"
+                );
+                let buffer = terminal.backend().buffer();
+                for y in footer.y..footer.bottom() {
+                    for x in footer.x..footer.right() {
+                        let bg = buffer[(x, y)].bg;
+                        assert_ne!(
+                            bg,
+                            Color::Reset,
+                            "{} {depth:?} ({x},{y})",
+                            config.background
+                        );
+                        assert_eq!(
+                            bg, colors.background,
+                            "{} {depth:?} ({x},{y})",
+                            config.background
+                        );
+                    }
+                }
+            }
+        }
     }
 }
