@@ -834,142 +834,156 @@ enum InkRegion {
     TextBox,
 }
 
-impl InkRegion {
-    fn contains(self, sprite: &Sprite, x: u32, y: u32) -> bool {
-        match self {
+/// The head under a face tier's strokes as the viewer sees it, held in fixed
+/// histograms so a frame allocates nothing: the luma of each texel's rendered
+/// color (its material lit by the body's own model when lighting is enabled,
+/// flat palette material when it is not) and its palette material.
+struct HeadHistogram {
+    luma: [u32; 256],
+    material: [u32; 256],
+    total: u32,
+}
+
+impl HeadHistogram {
+    /// A region the sprite does not map falls back to the whole mapped head,
+    /// then to a legacy face's anchor.
+    fn of(
+        sprite: &Sprite,
+        colors: &Colors,
+        lighting: &crate::lighting::VoxelLighting,
+        region: InkRegion,
+    ) -> Self {
+        let text_box = FaceTexture::new(sprite).map(|texture| texture.text_fraction());
+        let in_region = |x, y| match region {
             InkRegion::NativeBand => valid_head_uv(sprite, x, y)
                 .is_some_and(|uv| (uv[1] - NATIVE_EYE_LINE).abs() <= NATIVE_BAND_REACH),
-            InkRegion::TextBox => {
-                let Some(texture) = FaceTexture::new(sprite) else {
-                    return false;
-                };
-                let fraction = texture.text_fraction();
+            InkRegion::TextBox => text_box.is_some_and(|fraction| {
                 valid_face_uv(sprite, x, y).is_some_and(|uv| {
                     (uv[0] - 0.5).abs() <= fraction[0] / 2.0
                         && (uv[1] - 0.5).abs() <= fraction[1] / 2.0
                 })
+            }),
+        };
+        let mut head = Self::scan(sprite, colors, lighting, in_region);
+        if head.total == 0 {
+            head = Self::scan(sprite, colors, lighting, |x, y| {
+                valid_head_uv(sprite, x, y).is_some() || valid_face_uv(sprite, x, y).is_some()
+            });
+        }
+        if head.total == 0 {
+            let anchor = sprite
+                .face_overlay()
+                .and_then(|face| sprite.pixel(u32::from(face.center_x), u32::from(face.y), 1));
+            if let Some(index) = anchor {
+                head.add(colors.ink(usize::from(index)), index);
             }
         }
+        head
     }
-}
 
-/// The head under a face tier's strokes as the viewer sees it: each texel's
-/// material lit by the same model the body uses when lighting is enabled,
-/// flat palette material when it is not. A region the sprite does not map
-/// falls back to the whole mapped head, then to a legacy face's anchor.
-fn face_head_colors(
-    sprite: &Sprite,
-    colors: &Colors,
-    lighting: &crate::lighting::VoxelLighting,
-    region: InkRegion,
-) -> Vec<(Color, Color)> {
-    let mut head = head_colors(sprite, colors, lighting, |x, y| {
-        region.contains(sprite, x, y)
-    });
-    if head.is_empty() {
-        head = head_colors(sprite, colors, lighting, |x, y| {
-            valid_head_uv(sprite, x, y).is_some() || valid_face_uv(sprite, x, y).is_some()
-        });
-    }
-    if head.is_empty() {
-        let anchor = sprite
-            .face_overlay()
-            .and_then(|face| sprite.pixel(u32::from(face.center_x), u32::from(face.y), 1));
-        head.extend(anchor.map(|index| {
-            let base = colors.ink(usize::from(index));
-            (base, base)
-        }));
-    }
-    head
-}
-
-fn head_colors(
-    sprite: &Sprite,
-    colors: &Colors,
-    lighting: &crate::lighting::VoxelLighting,
-    include: impl Fn(u32, u32) -> bool,
-) -> Vec<(Color, Color)> {
-    let mut head = Vec::new();
-    for y in 0..u32::from(sprite.height()) {
-        for x in 0..u32::from(sprite.width()) {
-            if !include(x, y) {
-                continue;
-            }
-            let Some(index) = sprite.pixel(x, y, 1) else {
-                continue;
-            };
-            let base = colors.ink(usize::from(index));
-            let seen = match sprite.surface_shading(x, y).filter(|_| lighting.enabled) {
-                Some((normal, occlusion)) => {
-                    let edge = x
-                        .checked_sub(1)
-                        .and_then(|x| sprite.pixel(x, y, 1))
-                        .is_none()
-                        || sprite.pixel(x + 1, y, 1).is_none()
-                        || y.checked_sub(1)
-                            .and_then(|y| sprite.pixel(x, y, 1))
-                            .is_none()
-                        || sprite.pixel(x, y + 1, 1).is_none();
-                    let brightness = lighting.brightness(normal, occlusion, edge);
-                    shade_terminal_color(lighting, base, brightness)
+    fn scan(
+        sprite: &Sprite,
+        colors: &Colors,
+        lighting: &crate::lighting::VoxelLighting,
+        include: impl Fn(u32, u32) -> bool,
+    ) -> Self {
+        let mut head = Self {
+            luma: [0; 256],
+            material: [0; 256],
+            total: 0,
+        };
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                if !include(x, y) {
+                    continue;
                 }
-                None => base,
-            };
-            head.push((seen, base));
+                let Some(index) = sprite.pixel(x, y, 1) else {
+                    continue;
+                };
+                let base = colors.ink(usize::from(index));
+                let seen = match sprite.surface_shading(x, y).filter(|_| lighting.enabled) {
+                    Some((normal, occlusion)) => {
+                        let edge = x
+                            .checked_sub(1)
+                            .and_then(|x| sprite.pixel(x, y, 1))
+                            .is_none()
+                            || sprite.pixel(x + 1, y, 1).is_none()
+                            || y.checked_sub(1)
+                                .and_then(|y| sprite.pixel(x, y, 1))
+                                .is_none()
+                            || sprite.pixel(x, y + 1, 1).is_none();
+                        let brightness = lighting.brightness(normal, occlusion, edge);
+                        shade_terminal_color(lighting, base, brightness)
+                    }
+                    None => base,
+                };
+                head.add(seen, index);
+            }
         }
+        head
     }
-    head
+
+    fn add(&mut self, seen: Color, index: u8) {
+        // Monochrome has no luma: it never counts toward legibility.
+        if let Some(luma) = luminance(seen) {
+            self.luma[luma.min(255) as usize] += 1;
+        }
+        self.material[usize::from(index)] += 1;
+        self.total += 1;
+    }
+
+    /// Texels on which `candidate` is at least `minimum` luma (and never less
+    /// than one step) away from the head under it.
+    fn legible_on(&self, candidate: Color, minimum: u32) -> u32 {
+        let Some(luma) = luminance(candidate) else {
+            return 0;
+        };
+        let minimum = minimum.max(1);
+        (0..256u32)
+            .filter(|head| head.abs_diff(luma) >= minimum)
+            .map(|head| self.luma[head as usize])
+            .sum()
+    }
+
+    /// The most common palette material, the earlier index on a tie.
+    fn dominant_material(&self) -> Option<u8> {
+        (0..=255u8)
+            .filter(|index| self.material[usize::from(*index)] > 0)
+            .fold(None, |best: Option<u8>, index| match best {
+                Some(most)
+                    if self.material[usize::from(most)] >= self.material[usize::from(index)] =>
+                {
+                    best
+                }
+                _ => Some(index),
+            })
+    }
 }
 
-/// Face strokes use the dark face ink while it reads on most of the head as
-/// rendered (lit, or flat when lighting is disabled), measured by the
-/// configured outline separation. On a head too dark for it -- a black-bodied
-/// species, or shading that darkens a mid-tone body toward the ink -- the
-/// candidate legible on the most face texels wins, the earlier on a tie: the
-/// ink, the head material's own brightest/darkest lit rims (lighting enabled
-/// only), then the palette's materials. Monochrome has no luma and keeps the
-/// ink; only test-built Colors carry no lighting parameters at all.
+/// Face strokes use the dark face ink while it reads on at least half of the
+/// head under them as rendered (lit, or flat when lighting is disabled),
+/// measured by the configured outline separation. On a head too dark for it --
+/// a black-bodied species, or shading that darkens a mid-tone body toward the
+/// ink -- the candidate legible on the most texels wins, the earlier on a tie:
+/// the ink, the dominant head material's own brightest/darkest lit rims
+/// (lighting enabled only), then the palette's materials. Monochrome has no
+/// luma and keeps the ink; only test-built Colors without lighting parameters
+/// keep it unconditionally. Bounded: one sprite scan into fixed histograms.
 fn face_ink(sprite: &Sprite, colors: &Colors, region: InkRegion) -> Color {
     let ink = colors.ink(0);
     let Some(lighting) = colors.lighting.as_ref() else {
         return ink;
     };
-    let head = face_head_colors(sprite, colors, lighting, region);
+    let head = HeadHistogram::of(sprite, colors, lighting, region);
     let minimum = outline_separation(lighting);
-    let legible_on = |candidate: Color| {
-        let Some(luma) = luminance(candidate) else {
-            return 0;
-        };
-        head.iter()
-            .filter(|(seen, _)| {
-                *seen != candidate
-                    && luminance(*seen).is_some_and(|head| head.abs_diff(luma) >= minimum)
-            })
-            .count()
-    };
-    if legible_on(ink) * 2 >= head.len() {
+    if head.legible_on(ink, minimum) * 2 >= head.total {
         return ink;
     }
-    let mut materials: Vec<(Color, usize)> = Vec::new();
-    for (_, base) in &head {
-        match materials.iter_mut().find(|(color, _)| color == base) {
-            Some((_, count)) => *count += 1,
-            None => materials.push((*base, 1)),
-        }
-    }
-    let dominant = materials
-        .iter()
-        .fold(
-            None,
-            |best: Option<(Color, usize)>, &(color, count)| match best {
-                Some((_, most)) if most >= count => best,
-                _ => Some((color, count)),
-            },
-        )
-        .map(|(color, _)| color);
-    let rims = dominant
+    let rims = head
+        .dominant_material()
         .filter(|_| lighting.enabled)
-        .map(|base| {
+        .map(|index| {
+            let base = colors.ink(usize::from(index));
             [
                 shade_terminal_color(lighting, base, 180),
                 shade_terminal_color(lighting, base, 0),
@@ -981,7 +995,7 @@ fn face_ink(sprite: &Sprite, colors: &Colors, region: InkRegion) -> Color {
         .chain(rims)
         .chain(colors.palette.iter().copied())
         .fold((ink, 0), |(best, most), candidate| {
-            let count = legible_on(candidate);
+            let count = head.legible_on(candidate, minimum);
             if count > most {
                 (candidate, count)
             } else {
@@ -6451,19 +6465,10 @@ mod kaomoji_scale_tests {
                                 },
                             );
                             for region in [InkRegion::NativeBand, InkRegion::TextBox] {
-                                let head = face_head_colors(&sprite, &colors, &lighting, region);
-                                assert!(!head.is_empty(), "{stage:?} {style:?} shape {shape}");
-                                let legible_on = |candidate: Color| {
-                                    head.iter()
-                                        .filter(|(seen, _)| {
-                                            *seen != candidate
-                                                && luminance(*seen)
-                                                    .unwrap()
-                                                    .abs_diff(luminance(candidate).unwrap())
-                                                    >= minimum
-                                        })
-                                        .count()
-                                };
+                                let head = HeadHistogram::of(&sprite, &colors, &lighting, region);
+                                assert!(head.total > 0, "{stage:?} {style:?} shape {shape}");
+                                let legible_on =
+                                    |candidate: Color| head.legible_on(candidate, minimum);
                                 let ink = face_ink(&sprite, &colors, region);
                                 let label = format!(
                                     "lit={enabled} {depth:?} {stage:?} {style:?} shape {shape} {region:?}"
@@ -6475,13 +6480,13 @@ mod kaomoji_scale_tests {
                                     .max()
                                     .unwrap();
                                 assert!(
-                                    legible_on(ink) * 2 >= head.len() || legible_on(ink) >= best,
+                                    legible_on(ink) * 2 >= head.total || legible_on(ink) >= best,
                                     "{label}: {ink:?} reads on {}/{} texels, a palette ink on {best}",
                                     legible_on(ink),
-                                    head.len()
+                                    head.total
                                 );
                                 // The dark ink stays wherever it already reads.
-                                if legible_on(colors.ink(0)) * 2 >= head.len() {
+                                if legible_on(colors.ink(0)) * 2 >= head.total {
                                     assert_eq!(ink, colors.ink(0), "{label}");
                                 } else {
                                     substituted[lit] += 1;
