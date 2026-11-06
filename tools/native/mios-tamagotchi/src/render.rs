@@ -1522,13 +1522,15 @@ enum FaceLod {
 
 /// Cells per glyph and rows the letterboxed text box needs for each tier.
 /// Below the shaded minimum a glyph cannot be drawn legibly across several
-/// cells, so native characters stay. Packed-pixel renderers keep the original
-/// 5-cell/4.5-row atlas switch; one-pixel-per-cell ASCII would only stamp
-/// binary marks there and keeps the shading at every larger size.
+/// cells, so native characters stay. Every in-between size draws the kaomoji
+/// as multi-cell ASCII shading; packed-pixel renderers switch to the pixel
+/// atlas only for large close-ups, at twice the shaded minimum in both axes.
+/// One-pixel-per-cell ASCII would only stamp binary marks there and keeps the
+/// shading at every larger size.
 const SHADED_MIN_CELLS_PER_GLYPH: f64 = 4.0;
 const SHADED_MIN_ROWS: f64 = 4.0;
-const ATLAS_MIN_CELLS_PER_GLYPH: f64 = 5.0;
-const ATLAS_MIN_ROWS: f64 = 4.5;
+const ATLAS_MIN_CELLS_PER_GLYPH: f64 = 2.0 * SHADED_MIN_CELLS_PER_GLYPH;
+const ATLAS_MIN_ROWS: f64 = 2.0 * SHADED_MIN_ROWS;
 /// A cell shows face ink only when its glyph coverage reaches this share.
 const SHADED_MIN_INK: f64 = 0.15;
 
@@ -6618,7 +6620,7 @@ mod kaomoji_scale_tests {
     }
 
     #[test]
-    fn face_lod_tiers_are_ordered_and_keep_the_legacy_atlas_switch() {
+    fn face_lod_tiers_are_ordered_and_take_the_atlas_only_for_large_faces() {
         for text in ["(o_O)", "(^_^)", "T_T"] {
             for aspect in [None, Some(0.8), Some(1.6), Some(4.0)] {
                 let texture = FaceTexture { text, aspect };
@@ -6639,8 +6641,18 @@ mod kaomoji_scale_tests {
                         );
                         previous = rank(lod);
                         if aspect.is_none() {
-                            let legacy = columns >= text.len() as f64 * 5.0 && rows >= 4.5;
-                            assert_eq!(lod == FaceLod::Atlas, legacy, "{text} {columns}x{rows}");
+                            // Unfitted texture: the text box is the face box.
+                            let per_glyph = columns / text.len() as f64;
+                            let native = per_glyph < 4.0 || rows < 4.0;
+                            let atlas = per_glyph >= 8.0 && rows >= 8.0;
+                            let expected = if native {
+                                FaceLod::Native
+                            } else if atlas {
+                                FaceLod::Atlas
+                            } else {
+                                FaceLod::Shaded
+                            };
+                            assert_eq!(lod, expected, "{text} {columns}x{rows}");
                         }
                         // One pixel per cell shades wherever packed pixels would
                         // shade or take the atlas, and never takes the atlas.
