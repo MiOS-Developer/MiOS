@@ -339,15 +339,23 @@ Face zoom eases toward the visible face-plane centre, preserving actual zoom.
 It does not shrink the model to fit: high zoom in a small viewport can crop the
 outer parentheses and eyes. The actual material/depth mask still occludes
 species noses, oblique edges and rear faces. Face ink uses the existing outline
-contrast setting to remain distinct from dark head material.
+contrast setting against the head material as actually rendered, including its
+lighting. Disabling lighting keeps contrast against the unlit material. This
+uses fixed histograms without per-frame heap allocation.
 
 Tiny scenes, legacy pixel sprites and read-only snapshots retain literal facial
 text. Compact HUDs keep a separate mood caption. The same clipped projection is
 used for half-block, quadrant, braille and plain ASCII output. Tiny Roster and
 Sprite Studio previews frame the displayed life stage; egg previews retain
 whole-pet framing even when the live pet has hatched. Hatching and resizing
-transition from the previously displayed stage. Selected menu text retains the
-high-contrast palette pair, with reverse selection on monochrome terminals.
+transition from the previously displayed stage of the same pet or preview.
+Switching between the live pet, Roster and Studio clears inherited framing and
+voxel-yaw blends; a replacement pet begins with its own framing. Explicit zoom
+and orbit remain global presentation settings and continue easing. Selected menu text
+retains the high-contrast palette pair, with reverse selection on monochrome
+terminals. Unselected care-dock buttons use the inverse pair so four-colour
+palettes keep every label visible. Navigation hints use the bright foreground
+so reduced palettes do not alias the hint ink to a low-contrast shade.
 
 Each new pet receives a cosmetic room seed and initial theme derived from its
 creation seed, independently of the saved memory-game RNG. Eight vendor themes

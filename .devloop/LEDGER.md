@@ -4515,3 +4515,64 @@ lighting-disabled face-contrast follow-up and independent09a review precede the
 next publication. Physical mobile clients, a controller assigned to this seat,
 VT0/tty0, ARM64 and other Blades remain unverified. Native ttyd Bash on
 http://localhost:8310 is used; no PowerShell/container deployment is claimed.
+
+
+### MiOS-Mon reviewed face release, 2026-11-06
+
+Final executable source0c6900b45c7f70ea8aba8c46cdd232d243ba93bd incorporates
+root UI0d8d8bbc0 and0c6900b45 plus the exact renderer9f20004d749b5cc3a76ac2d3f2f0d076b4f9e074
+adopted by5ba14c4e9. The independent09a review's cross-subject interpolation
+defect is fixed: Live(pet generation), Roster and Studio have distinct camera
+contexts; reset, adopt and seed import share generation advancement. Framing
+and voxel yaw both cut on a subject change. Same-subject hatching, Studio stage
+changes and explicit camera requests still ease. Roster cursor movement retains
+its camera. Four-colour selected/unselected dock text and navigation hints are
+readable. The independent0d8 review approved its bounded change with nits;
+root addressed its yaw, Roster-key and Tab-test findings in0c.
+
+Renderer contrast now measures actual lit or unlit material under each face tier.
+Two fixed256-bin stack histograms replace per-frame head-colour allocations.
+Current source has fresh empty-target rootless MiOS-DEV proof:324 unit plus13 CLI
+tests (337 total), warning-fatal Clippy, crate/native-workspace formatting,
+release and static-artifact validation all exit0; source clean before/after.
+SHA-256 fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea.
+MiOS-DEV image e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf,
+UID1000,4CPU/4GiB, Rust1.99.1, locked x86_64-unknown-linux-musl static PIE.
+Proof: /home/mios/.local/state/mios/mios-mons-input-completion/mios-face-handoff-verify.
+
+Root planted controls retain the new assertions: d3a04bf5d has18 selected passes
+and4 intended failures (subject entry/return, reset, manual blend, dock).
+12cab17c0 has22 selected passes and2 intended failures (yaw and hint contrast).
+Both fresh-target wrappers exit0 with cargo101. The first yaw fixture0e3c1ff3f
+changed a hint branch outside the exercised geometry:23 passes/1 yaw failure,
+wrapper1; its raw logs remain preserved in mios-yaw-negative, not claimed green.
+The corrected fixture adds the exercised compact hint branch in
+mios-yaw-hints-negative. Renderer fresh310unit/13CLI proof and both planted
+lit/unlit contrast failures on9f20004 are independently recorded in
+mios-kaomoji-scale-revision-result.json.
+
+Actual final-binary QA is automated in still-open PiP mios-mons-console:
+production localhost browser watch157+portrait146+landscape146=449 touch actions,
+normal hatch and first preview entry/return,20x8 headless ASCII/mono with terminal
+restoration, isolated unlit ANSI16-entry Roster and four-colour dock/hints,
+settled Face100/150/200/300/400, relative orbit0/45/90/135/180, and different
+unpaused Room frames followed by pause. No age/need/coin/RNG edits, no saves.
+Consolidated source/hash/session/capture and limitation receipt:
+ /home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json.
+The guarded publication helper verifies unchanged build-input Git objects and
+checksums, then immediately installs the user-local executable after main pushes.
+Runtime publication and installation receipts land in that same directory.
+
+Four broader gate stdout AND stderr streams match the actualf472 baseline.
+Template conformance has7 pre-existing findings (handoff6 was not the current
+baseline). Global CI is not asserted clean. Source workspace formatting from the
+original six-CI-fix fresh proof remains applicable: src/mios-rs is unchanged;
+current tools/native formatting passes. The additional eight non-game fixes and
+chrony work remain in their separate owned branches.
+
+Tasks3750/3753/3754 close only their bounded software scope. Existing rapid
+same-subject resize mid-blend discontinuity and a one-frame stale heading are
+tracked in3755. At high zoom in small PiP the outer facial expression crops.
+Physical mobile/Smartwatch clients, a controller assigned to this seat, VT0/tty0,
+ARM64 and other Blades remain unverified. Task3708 remains partial. Current
+localhost transport is native user-local ttyd Bash, not a PowerShell/container.
