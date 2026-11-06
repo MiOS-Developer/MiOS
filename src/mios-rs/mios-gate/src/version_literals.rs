@@ -390,11 +390,20 @@ mod tests {
         let source = tmp.path().join("automation/address.sh");
         std::fs::write(&source, "curl http://127.0.0.2:19090/health\n").unwrap();
         for args in [vec!["init", "-q"], vec!["add", "."]] {
-            assert!(Command::new("git").arg("-C").arg(tmp.path())
-                .args(args).status().unwrap().success());
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
         }
         let report = check(tmp.path());
-        assert!(report.ok, "a valid IPv4 address is not a version: {:?}", report.findings);
+        assert!(
+            report.ok,
+            "a valid IPv4 address is not a version: {:?}",
+            report.findings
+        );
         std::fs::write(&source, "curl http://127.0.0.2:19090/v0.9.9\n").unwrap();
         let report = check(tmp.path());
         assert!(!report.ok);

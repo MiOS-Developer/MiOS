@@ -3715,7 +3715,9 @@ pub fn normalize_input(s: &str) -> Result<(String, Option<String>), String> {
         if ["key", "mouse", "pad"].contains(&k) && !s.ends_with(':') {
             return Ok((s.to_owned(), None));
         }
-        return Err(format!("{s:?} is not a supported input id (key:, mouse:, pad:)"));
+        return Err(format!(
+            "{s:?} is not a supported input id (key:, mouse:, pad:)"
+        ));
     }
     if s.starts_with("BTN_") {
         return Ok((format!("pad:{s}"), None));

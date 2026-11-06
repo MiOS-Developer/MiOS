@@ -1155,7 +1155,11 @@ pub fn controller_audit(
         }
         if profile == "vpad" {
             if ctx == CONSOLE || ctx == "shell" {
-                let owner = if ctx == CONSOLE { "the console" } else { "shell" };
+                let owner = if ctx == CONSOLE {
+                    "the console"
+                } else {
+                    "shell"
+                };
                 out.push(format!("controller.nav.contexts.{ctx}: {owner} has no virtual-pad consumer; give it a profile"));
             }
             continue;
@@ -2038,7 +2042,10 @@ RS_LEFT = "none"
 RS_RIGHT = "none"
 "#;
         assert!(audit(&shell).is_empty(), "{:?}", audit(&shell));
-        let bad_shell = shell.replace("BTN_NORTH = \"key:COMPOSE\"", "BTN_NORTH = \"hypr:killactive\"");
+        let bad_shell = shell.replace(
+            "BTN_NORTH = \"key:COMPOSE\"",
+            "BTN_NORTH = \"hypr:killactive\"",
+        );
         assert!(audit(&bad_shell)
             .iter()
             .any(|x| x.contains("shell navigation uses key: or none")));
