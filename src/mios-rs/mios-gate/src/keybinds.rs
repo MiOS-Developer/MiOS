@@ -849,7 +849,7 @@ const NAV_SETTINGS: &[&str] = &[
     "contexts",
     "repeat",
     "tmux_sockets",
-    "apps",
+    "apps-control",
     "app_poll_ms",
     "app_query_timeout_ms",
 ];
