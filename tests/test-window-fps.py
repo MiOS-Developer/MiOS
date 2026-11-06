@@ -26,7 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACING = ROOT / "usr/share/mios/hyprland/plugins/mios-pacing"
 QS = ROOT / "usr/share/mios/quickshell"
-BASE = os.environ.get("MIOS_WINDOW_FPS_BASE", "main")  # the pre-change revision for the negative controls
+# The pre-change revision for the negative controls: the parent of 74e283d2e (feat(topbar): focused-window FPS beside
+# the host FPS). Never a branch name: once the meter landed, `main` IS the change (on a push CI checks out main at the
+# pushed commit), so a "main" base turned every negative control into a failure.
+BASE = os.environ.get("MIOS_WINDOW_FPS_BASE", "b794f3802691c2cea8cdd8eb505b523afdc7727a")
 BASE_TREE = os.environ.get("MIOS_WINDOW_FPS_BASE_TREE", "")  # or an exported copy of it (a build container has no git)
 
 
