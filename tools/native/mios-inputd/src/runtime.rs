@@ -5160,12 +5160,30 @@ mod tests {
             drained(fresh);
             PrivateServer::wait(|| server.bytes("output") == b"a");
         }
-        /// The P1 app layer whose system exe is `exe` (a root-owned binary a private pane can run).
+        /// The P1 app layer with `exe` registered as the per-user candidate (user_exe), as the operator registers
+        /// ~/.local/bin/mios-tamagotchi-sample in the user tier.
         fn mon_config(exe: &Path) -> GlobalConfig {
             let (mut cfg, _) = crate::config::tests::fixture_mon();
-            cfg.controller.nav.apps.get_mut("mon").unwrap().exe =
+            cfg.controller.nav.apps.get_mut("mon").unwrap().user_exe =
                 vec![exe.to_string_lossy().into_owned()];
             cfg
+        }
+        /// A private, self-owned copy of sleep (named sleep, so a multi-call coreutils still dispatches) that a pane
+        /// can run: the stand-in for a per-user Mon build.
+        fn private_binary() -> (tempfile::TempDir, PathBuf) {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::Builder::new()
+                .prefix("mios-app-")
+                .tempdir()
+                .unwrap();
+            let bin = dir.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let exe = bin.join("sleep");
+            std::fs::copy("/usr/bin/sleep", &exe).unwrap();
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let exe = std::fs::canonicalize(&exe).unwrap();
+            (dir, exe)
         }
         fn new_pane(server: &PrivateServer, session: &str, argv: &[&str]) -> String {
             let mut args = vec![
@@ -5191,8 +5209,8 @@ mod tests {
         #[test]
         fn route_verifiers_select_the_app_only_for_their_own_pane() {
             let server = PrivateServer::new();
-            let sleep = std::fs::canonicalize("/usr/bin/sleep").unwrap();
-            let a = new_pane(&server, "alpha", &["/usr/bin/sleep", "60"]);
+            let (_keep, sleep) = private_binary();
+            let a = new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
             let file = server.dir.path().join("beta");
             let shell = format!("stty raw -echo; cat > '{}'; :", file.display());
             let b = new_pane(&server, "beta", &["/bin/sh", "-c", &shell]);
@@ -5239,8 +5257,8 @@ mod tests {
         #[test]
         fn a_tmux_client_pane_is_verified_bounded_and_bound_to_its_window() {
             let mut server = PrivateServer::new();
-            let sleep = std::fs::canonicalize("/usr/bin/sleep").unwrap();
-            new_pane(&server, "alpha", &["/usr/bin/sleep", "60"]);
+            let (_keep, sleep) = private_binary();
+            new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
             let client = PrivateClient::attach(&server, "alpha");
             let mut cfg = mon_config(&sleep);
             cfg.controller.nav.tmux_sockets.push("tmux".into());
@@ -5583,18 +5601,40 @@ mod app_detection {
         assert_eq!(app_of_pid(&t.proc_root, 99, &registered, me, &lstat), None);
     }
     #[test]
-    fn a_root_owned_system_binary_matches_through_the_real_filesystem() {
+    fn a_root_owned_system_binary_matches_and_an_unmapped_owner_fails_closed() {
         let t = Tree::new();
-        let tmux = std::fs::canonicalize("/usr/bin/tmux").unwrap();
-        entry(&t.proc_root, 20, 1, 20, 20, &tmux, None);
+        let me = uid();
+        let lstat = t.lstat();
+        // The vendor `exe` is root-owned: the private file seen as root's (its dev/ino stay the real ones).
+        let as_root = |p: &Path| {
+            lstat(p).map(|mut f| {
+                if p == t.sample {
+                    f.uid = 0;
+                }
+                f
+            })
+        };
+        entry(&t.proc_root, 20, 1, 20, 20, &t.sample, None);
         assert_eq!(
-            app_of_pid(&t.proc_root, 20, &apps(&[&tmux], &[]), uid(), &lstat_facts).as_deref(),
+            app_of_pid(&t.proc_root, 20, &apps(&[&t.sample], &[]), me, &as_root).as_deref(),
             Some("mon")
         );
         assert_eq!(
-            app_of_pid(&t.proc_root, 20, &apps(&[], &[&tmux]), uid(), &lstat_facts),
+            app_of_pid(&t.proc_root, 20, &apps(&[], &[&t.sample]), me, &as_root),
             None,
             "a root-owned binary is no per-user candidate"
+        );
+        // The real filesystem: /usr/bin/tmux matches as a system exe exactly when its whole path really is
+        // root-owned. A user namespace that shows host root as the overflow uid (a rootless build container) must
+        // fail closed, never trust an owner it cannot see.
+        let tmux = std::fs::canonicalize("/usr/bin/tmux").unwrap();
+        entry(&t.proc_root, 21, 1, 21, 21, &tmux, None);
+        let rooted = tmux
+            .ancestors()
+            .all(|p| lstat_facts(p).is_some_and(|f| f.uid == 0 && f.mode & 0o022 == 0));
+        assert_eq!(
+            app_of_pid(&t.proc_root, 21, &apps(&[&tmux], &[]), me, &lstat_facts).is_some(),
+            rooted
         );
     }
     #[test]
