@@ -456,9 +456,10 @@ fn luminance(color: Color) -> Option<u32> {
 /// Keep a silhouette sample distinct from the scene behind it. Bounded: only
 /// screen-edge samples reach here, and their lit color changes only when it
 /// would quantize too close to the background. The required separation is the
-/// configured outline strength; candidates stay within the lighting model's
-/// own 0..180% range (outline ink, brightest rim, darkest rim), first adequate
-/// one wins, else the most separated.
+/// configured outline strength. Candidates: outline ink, the lighting model's
+/// own brightest/darkest rims, then the Mon's own palette (a 16-color console
+/// can collapse a dark body and every rim of it to the scene's black); first
+/// adequate one wins, else the most separated.
 fn silhouette_color(
     lighting: &crate::lighting::VoxelLighting,
     colors: &Colors,
@@ -475,17 +476,17 @@ fn silhouette_color(
     if adequate(lit) {
         return lit;
     }
-    let candidates = [
+    let rims = [
         colors.ink(0),
         shade_terminal_color(lighting, base, 180),
         shade_terminal_color(lighting, base, 0),
     ];
-    candidates
-        .into_iter()
+    let candidates = || rims.into_iter().chain(colors.palette.iter().copied());
+    candidates()
         .find(|color| adequate(*color))
         .or_else(|| {
             std::iter::once(lit)
-                .chain(candidates)
+                .chain(candidates())
                 .max_by_key(|color| separation(*color))
         })
         .unwrap_or(lit)
