@@ -229,10 +229,14 @@ struct SessionJob {
     queued: Instant,
     action: String,
 }
+/// P3/P8: an explicit route's verified foreground app (its current pane only) and when it was verified.
+type RouteApp = std::sync::Arc<std::sync::Mutex<(Option<String>, Option<Instant>)>>;
 struct SessionWorker {
     jobs: Option<std::sync::mpsc::SyncSender<SessionJob>>,
     worker: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<AtomicBool>,
+    app: RouteApp,
+    verifier: Option<std::thread::JoinHandle<()>>,
 }
 impl SessionWorker {
     fn spawn(route: crate::sessions::SessionRoute, cfg: GlobalConfig) -> Result<Self, String> {
@@ -247,6 +251,24 @@ impl SessionWorker {
         let (jobs, inbox) = std::sync::mpsc::sync_channel::<SessionJob>(16);
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let cancelled = stop.clone();
+        let app: RouteApp = std::sync::Arc::new(std::sync::Mutex::new((None, None)));
+        let current = std::sync::Arc::new(std::sync::Mutex::new(route.clone()));
+        // P3: only an explicit local route verifies its pane; a captured terminal's app comes from the focus snapshot.
+        let verifier = if client.is_none()
+            && route.ssh_host.is_none()
+            && !cfg.controller.nav.apps.is_empty()
+        {
+            Some(Self::spawn_verifier(
+                &route.name,
+                cfg.clone(),
+                current.clone(),
+                app.clone(),
+                stop.clone(),
+            )?)
+        } else {
+            None
+        };
+        let (moved, pane_app) = (current, app.clone());
         let worker=std::thread::Builder::new().name(format!("mios-pad-{}",route.name)).spawn(move || {
             let timeout=Duration::from_millis(cfg.controller.context_stale_ms);
             let mut route=route;
@@ -294,6 +316,11 @@ impl SessionWorker {
                         let next_identity=session_identity(&next,&run(crate::sessions::inspect_argv(&next)?)?)?;
                         if next_identity!=current { return Err("focus target left the assigned session/window".into()); }
                         run(crate::sessions::select_argv(&next)?)?;
+                        if next.pane!=route.pane {
+                            // P8: an app verified for the previous pane never applies to the next one.
+                            *pane_app.lock().unwrap()=(None,None);
+                            *moved.lock().unwrap()=next.clone();
+                        }
                         route=next;
                     }
                     Ok(())
@@ -306,7 +333,49 @@ impl SessionWorker {
             jobs: Some(jobs),
             worker: Some(worker),
             stop,
+            app,
+            verifier,
         })
+    }
+    /// P3 for an explicit local route: every app_poll_ms, the foreground group leader of the route's current pane. A
+    /// result whose pane changed while it was verified is discarded; any error is no app.
+    fn spawn_verifier(
+        name: &str,
+        cfg: GlobalConfig,
+        current: std::sync::Arc<std::sync::Mutex<crate::sessions::SessionRoute>>,
+        app: RouteApp,
+        stop: std::sync::Arc<AtomicBool>,
+    ) -> Result<std::thread::JoinHandle<()>, String> {
+        let uid = unsafe { libc::getuid() };
+        std::thread::Builder::new()
+            .name(format!("mios-pad-app-{name}"))
+            .spawn(move || {
+                let nav = &cfg.controller.nav;
+                let timeout = Duration::from_millis(nav.app_query_timeout_ms);
+                while !stop.load(Ordering::Relaxed) {
+                    let route = current.lock().unwrap().clone();
+                    let found = crate::sessions::pane_pid_argv(&route)
+                        .and_then(|argv| run_bounded_cancel(&argv, timeout, Some(&stop)))
+                        .ok()
+                        .and_then(|reply| reply.trim().parse::<u32>().ok())
+                        .and_then(|pid| {
+                            pane_app(Path::new("/proc"), pid, &nav.apps, uid, &lstat_facts)
+                        });
+                    if *current.lock().unwrap() == route {
+                        *app.lock().unwrap() = (found, Some(Instant::now()));
+                    }
+                    let until = Instant::now() + Duration::from_millis(nav.app_poll_ms);
+                    while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())
+    }
+    /// The route's fresh verified app (older than `stale_ms`, or not verified yet: none).
+    fn app(&self, stale_ms: u64) -> Option<String> {
+        let (app, at) = self.app.lock().ok()?.clone();
+        app.filter(|_| at.is_some_and(|t| t.elapsed() < Duration::from_millis(stale_ms)))
     }
     fn submit(&self, action: String) -> bool {
         self.jobs.as_ref().is_some_and(|tx| {
@@ -325,6 +394,7 @@ impl Drop for SessionWorker {
         self.jobs = None;
         // Cancellation kills the dedicated command process group. The forwarding thread never joins a remote job.
         self.worker.take();
+        self.verifier.take();
     }
 }
 /// The exact target identity is checked before dispatch; no "current session" or ambient TMUX context participates.
@@ -594,6 +664,11 @@ pub struct ContextSnapshot {
     /// C-17: the VT of this user's graphical session (the console's TOGGLE_CHORD switches to it).
     pub graphical_vt: Option<u32>,
     pub shell_overlay: bool,
+    /// P3: the verified foreground app of the focused terminal or VT, the target it was verified for (the router
+    /// applies it only to that target, P8) and when (older than context_stale_ms counts as none).
+    pub app: Option<String>,
+    pub app_target: Option<(String, u64)>,
+    pub app_at: Option<Instant>,
 }
 impl ContextSnapshot {
     fn new(name: &str) -> Self {
@@ -609,7 +684,17 @@ impl ContextSnapshot {
             suspended: None,
             graphical_vt: None,
             shell_overlay: false,
+            app: None,
+            app_target: None,
+            app_at: None,
         }
+    }
+    /// The verified app while it is fresh (P3): an unverified or stale result selects nothing.
+    pub fn fresh_app(&self, stale_ms: u64) -> Option<&str> {
+        self.app.as_deref().filter(|_| {
+            self.app_at
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(stale_ms))
+        })
     }
 }
 /// A tmux client found under the focused window's process tree, by /proc alone (no spawn per focus change).
@@ -771,6 +856,9 @@ fn snapshot(cfg: &GlobalConfig, v: &serde_json::Value) -> ContextSnapshot {
         suspended: None,
         graphical_vt: None,
         shell_overlay: false,
+        app: None,
+        app_target: None,
+        app_at: None,
     }
 }
 /// C-09 on a VT: the MiOS tmux client attached to `tty` (directly, or below a process on that tty such as the console
@@ -822,6 +910,357 @@ pub fn tmux_client_on_tty(
     on_tty
         .iter()
         .find_map(|pid| tmux_client_under(proc_root, *pid, sockets, uid))
+}
+/// What a trust decision needs from one path, from lstat (a symlink is reported as such, never followed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileFacts {
+    pub uid: u32,
+    pub mode: u32,
+    pub dev: u64,
+    pub ino: u64,
+    pub kind: FileKind,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    Dir,
+    File,
+    Other,
+}
+pub fn lstat_facts(path: &Path) -> Option<FileFacts> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(path).ok()?;
+    let t = m.file_type();
+    Some(FileFacts {
+        uid: m.uid(),
+        mode: m.mode(),
+        dev: m.dev(),
+        ino: m.ino(),
+        kind: if t.is_dir() {
+            FileKind::Dir
+        } else if t.is_file() {
+            FileKind::File
+        } else {
+            FileKind::Other
+        },
+    })
+}
+/// P3 and the root ruling: an exe candidate counts only when it is exactly canonical (no symlink anywhere on its path,
+/// so a link can never stand for an unlisted target), a regular file owned by `owner` (root for `exe`, the bridge's
+/// uid for `user_exe`) that is neither group- nor world-writable, and every ancestor directory is owned by root or
+/// `uid` and not group/world-writable (a root-owned sticky directory such as /tmp lets nobody else replace an entry).
+/// Returns the file's facts, whose (dev, ino) must also be the running image. Never a basename or pattern match.
+pub fn trusted_candidate(
+    path: &Path,
+    owner: u32,
+    uid: u32,
+    lstat: &dyn Fn(&Path) -> Option<FileFacts>,
+) -> Option<FileFacts> {
+    if !path.is_absolute()
+        || path.components().any(|c| {
+            !matches!(
+                c,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            )
+        })
+    {
+        return None;
+    }
+    let mut dir = PathBuf::new();
+    let mut parts = path.components().peekable();
+    while let Some(part) = parts.next() {
+        dir.push(part);
+        let f = lstat(&dir)?;
+        if parts.peek().is_none() {
+            return (f.kind == FileKind::File && f.uid == owner && f.mode & 0o022 == 0)
+                .then_some(f);
+        }
+        let sticky_root = f.uid == 0 && f.mode & 0o1000 != 0;
+        if f.kind != FileKind::Dir
+            || !(f.uid == 0 || f.uid == uid)
+            || (f.mode & 0o022 != 0 && !sticky_root)
+        {
+            return None;
+        }
+    }
+    None
+}
+/// P3: the app whose registered candidate is exactly the running image of `pid`: /proc/<pid> owned by `uid`, its exe
+/// link naming a listed path verbatim (a `(deleted)` image never does), the candidate trusted, and the same inode.
+pub fn app_of_pid(
+    proc_root: &Path,
+    pid: u32,
+    apps: &BTreeMap<String, crate::nav::NavApp>,
+    uid: u32,
+    lstat: &dyn Fn(&Path) -> Option<FileFacts>,
+) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    if pid == 0 {
+        return None;
+    }
+    let dir = proc_root.join(pid.to_string());
+    if std::fs::metadata(&dir).ok()?.uid() != uid {
+        return None;
+    }
+    let target = std::fs::read_link(dir.join("exe")).ok()?;
+    let running = std::fs::metadata(dir.join("exe")).ok()?;
+    for (name, app) in apps {
+        for (list, owner) in [(&app.exe, 0), (&app.user_exe, uid)] {
+            for candidate in list {
+                if Path::new(candidate) != target {
+                    continue;
+                }
+                if trusted_candidate(Path::new(candidate), owner, uid, lstat)
+                    .is_some_and(|f| (f.dev, f.ino) == (running.dev(), running.ino()))
+                {
+                    return Some(name.clone());
+                }
+            }
+        }
+    }
+    None
+}
+/// /proc/<pid>/stat: (pgrp, tpgid), the process group and its tty's foreground process group.
+fn proc_groups(proc_root: &Path, pid: u32) -> Option<(u32, u32)> {
+    let stat = std::fs::read_to_string(proc_root.join(pid.to_string()).join("stat")).ok()?;
+    let mut f = stat[stat.rfind(')')? + 1..].split_whitespace();
+    let pgrp = f.nth(2)?.parse().ok()?;
+    let tpgid: i64 = f.nth(2)?.parse().ok()?;
+    Some((pgrp, u32::try_from(tpgid).ok().filter(|t| *t > 0)?))
+}
+/// P3: the foreground app among `pids`: a process that leads its tty's foreground group (pgrp == tpgid), checked by
+/// app_of_pid. The plain terminal passes the focused window's process tree, a VT the processes on its tty.
+pub fn foreground_app_among(
+    proc_root: &Path,
+    pids: &[u32],
+    apps: &BTreeMap<String, crate::nav::NavApp>,
+    uid: u32,
+    lstat: &dyn Fn(&Path) -> Option<FileFacts>,
+) -> Option<String> {
+    pids.iter().find_map(|pid| {
+        proc_groups(proc_root, *pid)
+            .filter(|(pgrp, tpgid)| pgrp == tpgid && pgrp == pid)
+            .and_then(|_| app_of_pid(proc_root, *pid, apps, uid, lstat))
+    })
+}
+/// P3 tmux: the foreground group leader of a pane (`pane_pid`'s tpgid) checked by app_of_pid.
+pub fn pane_app(
+    proc_root: &Path,
+    pane_pid: u32,
+    apps: &BTreeMap<String, crate::nav::NavApp>,
+    uid: u32,
+    lstat: &dyn Fn(&Path) -> Option<FileFacts>,
+) -> Option<String> {
+    let (_, tpgid) = proc_groups(proc_root, pane_pid)?;
+    app_of_pid(proc_root, tpgid, apps, uid, lstat)
+}
+/// `#{pane_pid}` of the client's active pane, bounded by app_query_timeout_ms.
+fn client_pane_pid(client: &TmuxClient, timeout: Duration) -> Result<u32, String> {
+    let argv = vec![
+        "/usr/bin/tmux".into(),
+        "-S".into(),
+        client.socket.to_string_lossy().into_owned(),
+        "display-message".into(),
+        "-p".into(),
+        "-c".into(),
+        client.tty.clone(),
+        "#{pane_pid}".into(),
+    ];
+    run_bounded(&argv, timeout)?
+        .trim()
+        .parse()
+        .map_err(|_| "tmux reported no pane pid".to_string())
+}
+/// The processes below `pid` (breadth first, depth 8, at most 4096 nodes), as tmux_client_under walks them.
+fn descendants(proc_root: &Path, pid: u32) -> Vec<u32> {
+    let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for entry in std::fs::read_dir(proc_root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        let Some(child) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(parent) = std::fs::read_to_string(entry.path().join("stat"))
+            .ok()
+            .as_deref()
+            .and_then(proc_parent)
+        {
+            children.entry(parent).or_default().push(child);
+        }
+    }
+    let mut out = vec![];
+    let mut queue = std::collections::VecDeque::from([(pid, 0u8)]);
+    while let Some((p, depth)) = queue.pop_front() {
+        if out.len() >= 4096 {
+            break;
+        }
+        if p != pid {
+            out.push(p);
+        }
+        if depth < 8 {
+            for c in children.get(&p).into_iter().flatten() {
+                queue.push_back((*c, depth + 1));
+            }
+        }
+    }
+    out
+}
+/// The processes whose stdin is `tty` (or a /dev/tty, /dev/console alias on that VT), as tmux_client_on_tty reads them.
+fn on_tty(proc_root: &Path, tty: &Path) -> Vec<u32> {
+    let mut out: Vec<u32> = vec![];
+    let vt = tty
+        .to_str()
+        .and_then(|p| p.strip_prefix("/dev/tty"))
+        .and_then(|n| n.parse::<u32>().ok())
+        .filter(|n| (1..=63).contains(n));
+    for entry in std::fs::read_dir(proc_root)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+    {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let stdin = std::fs::read_link(entry.path().join("fd/0")).ok();
+        let on_alias = stdin
+            .as_deref()
+            .is_some_and(|p| p == Path::new("/dev/tty") || p == Path::new("/dev/console"))
+            && vt.is_some_and(|vt| {
+                std::fs::read_to_string(entry.path().join("stat"))
+                    .ok()
+                    .and_then(|s| crate::console::vt_from_proc_stat(&s))
+                    == Some(vt)
+            });
+        if stdin.as_deref() == Some(tty) || on_alias {
+            out.push(pid);
+        }
+        if out.len() > 256 {
+            break;
+        }
+    }
+    out.sort_unstable();
+    out
+}
+/// Where the focused context's foreground app is verified (P3): the identity the result is bound to (P8).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppProbe {
+    /// A tmux client (under the focused terminal, or on the active VT): its active pane.
+    Tmux {
+        target: Option<(String, u64)>,
+        client: TmuxClient,
+    },
+    /// A terminal without a MiOS tmux client: the focused window's process tree.
+    Plain { target: (String, u64), pid: u32 },
+    /// A bare VT: the processes on its tty.
+    Vt { tty: PathBuf },
+}
+impl AppProbe {
+    /// The window target the result is verified for (None on a VT).
+    pub fn target(&self) -> Option<(String, u64)> {
+        match self {
+            Self::Tmux { target, .. } => target.clone(),
+            Self::Plain { target, .. } => Some(target.clone()),
+            Self::Vt { .. } => None,
+        }
+    }
+    fn verify(&self, cfg: &GlobalConfig, uid: u32) -> Option<String> {
+        let nav = &cfg.controller.nav;
+        let proc_root = Path::new("/proc");
+        match self {
+            Self::Tmux { client, .. } => {
+                let pane = client_pane_pid(client, Duration::from_millis(nav.app_query_timeout_ms))
+                    .ok()?;
+                pane_app(proc_root, pane, &nav.apps, uid, &lstat_facts)
+            }
+            Self::Plain { pid, .. } => {
+                let pids = descendants(proc_root, *pid);
+                foreground_app_among(proc_root, &pids, &nav.apps, uid, &lstat_facts)
+            }
+            Self::Vt { tty } => {
+                let pids = on_tty(proc_root, tty);
+                foreground_app_among(proc_root, &pids, &nav.apps, uid, &lstat_facts)
+            }
+        }
+    }
+}
+/// P3: one verified result per probe identity. A focus, pid or tmux-client change is a new identity and verifies at
+/// once; the same identity re-verifies at most every app_poll_ms. A result is never reused for another identity.
+#[derive(Default)]
+pub struct AppCache {
+    last: Option<(AppProbe, Instant, Option<String>)>,
+}
+impl AppCache {
+    pub fn get(
+        &mut self,
+        probe: AppProbe,
+        poll: Duration,
+        verify: impl FnOnce(&AppProbe) -> Option<String>,
+    ) -> (Option<String>, Instant) {
+        if let Some((p, at, app)) = &self.last {
+            if *p == probe && at.elapsed() < poll {
+                return (app.clone(), *at);
+            }
+        }
+        let app = verify(&probe);
+        let at = Instant::now();
+        self.last = Some((probe, at, app.clone()));
+        (app, at)
+    }
+}
+/// Whether a context can select an app (P0, P3): nav and an app layer are configured for its base context.
+fn wants_app(cfg: &GlobalConfig, context: &str) -> bool {
+    let nav = &cfg.controller.nav;
+    nav.profile_name(context, false).is_some()
+        && nav.apps.values().any(|a| a.contexts.contains_key(context))
+}
+/// Fill `snapshot.app` for the focused terminal or VT (the context worker; never the forwarding loop).
+fn verify_app(
+    cfg: &GlobalConfig,
+    snapshot: &mut ContextSnapshot,
+    nav_context: &str,
+    console_tty: Option<&Path>,
+    cache: &mut AppCache,
+    uid: u32,
+) {
+    snapshot.app = None;
+    snapshot.app_target = None;
+    snapshot.app_at = None;
+    if !wants_app(cfg, nav_context) {
+        return;
+    }
+    let target = snapshot.address.clone().zip(snapshot.pid);
+    let probe = match (&snapshot.tmux_client, console_tty) {
+        (Some(client), _) => AppProbe::Tmux {
+            target: target.clone(),
+            client: client.clone(),
+        },
+        (None, Some(tty)) => AppProbe::Vt { tty: tty.into() },
+        (None, None) => match (&target, snapshot.pid.and_then(|p| u32::try_from(p).ok())) {
+            (Some(t), Some(pid)) => AppProbe::Plain {
+                target: t.clone(),
+                pid,
+            },
+            _ => return,
+        },
+    };
+    let bound = probe.target();
+    let (app, at) = cache.get(
+        probe,
+        Duration::from_millis(cfg.controller.nav.app_poll_ms),
+        |p| p.verify(cfg, uid),
+    );
+    snapshot.app = app;
+    snapshot.app_target = bound;
+    snapshot.app_at = Some(at);
 }
 /// Whether this context's nav mapping chooses between `<name>_tmux` and `<name>_plain`, so discovery is worth a scan.
 fn wants_tmux(cfg: &GlobalConfig, context: &str) -> bool {
@@ -941,6 +1380,48 @@ fn shell_overlay_open(runtime: &Path, cfg: &GlobalConfig) -> bool {
 }
 pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot, String> {
     context_query(cfg, &context_lua(cfg))
+}
+/// `mios-inputd context` (P9): the focused window, plus the tmux client, the verified foreground app (one bounded
+/// query, app_query_timeout_ms) and the nav profile a router selects for exactly that snapshot.
+pub fn context_report(
+    cfg: &GlobalConfig,
+    legacy: &LegacyConfig,
+) -> Result<serde_json::Value, String> {
+    let mut c = context(cfg)?;
+    let uid = unsafe { libc::getuid() };
+    c.shell_overlay = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .is_some_and(|r| shell_overlay_open(&r, cfg));
+    let nav_context =
+        capture_navigation_context(cfg, c.class.as_deref()).unwrap_or_else(|| c.name.clone());
+    if let (Some(pid), true) = (c.pid, wants_tmux(cfg, &nav_context)) {
+        c.tmux_client = u32::try_from(pid).ok().and_then(|p| {
+            tmux_client_under(Path::new("/proc"), p, &cfg.controller.nav.tmux_sockets, uid)
+        });
+    }
+    if !c.shell_overlay && c.name != "desktop-3d" {
+        verify_app(
+            cfg,
+            &mut c,
+            &nav_context,
+            None,
+            &mut AppCache::default(),
+            uid,
+        );
+    }
+    let mut router = Router::new(cfg.clone(), legacy.clone(), BTreeMap::new());
+    router.set_shell_overlay(c.shell_overlay);
+    router.set_capture_navigation_context(
+        capture_navigation_context(cfg, c.class.as_deref()).as_deref(),
+    );
+    router.set_tmux(c.tmux_client.is_some());
+    router.set_focus(&c.name, c.address.clone().zip(c.pid), c.room_capture);
+    router.set_app(c.app.as_deref(), c.app_target.as_ref());
+    Ok(
+        serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,
+        "released":c.released,"controller_owner":if Router::owns_controller(&c.name) {"app"} else {"mios"},
+        "tmux":c.tmux_client.is_some(),"app":router.app(),"nav_profile":router.nav_profile(),"camera":router.camera()}),
+    )
 }
 fn context_query(cfg: &GlobalConfig, lua: &str) -> Result<ContextSnapshot, String> {
     let reply = ipc(&format!("/eval {lua}"))?;
@@ -2207,6 +2688,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             );
         }
     }
+    if let Some(e) = &global.controller.nav.app_error {
+        // Backward compatibility: the base navigation runs; only the app layer is off.
+        eprintln!("{}", serde_json::json!({"nav_apps":"disabled","error":e}));
+    }
     if opt.fixture_only && opt.devices.is_empty() && opt.nested.is_none() {
         return Err("fixture mode requires one explicit owned device".into());
     }
@@ -2317,6 +2802,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             let uid = unsafe { libc::getuid() };
             let mut tmux_cache: Option<(u64, Instant, Option<TmuxClient>)> = None;
             let mut vt_cache: Option<(PathBuf, Instant, Option<TmuxClient>)> = None;
+            let mut app_cache = AppCache::default();
             let mut last_rediscover = Instant::now() - Duration::from_secs(1);
             let mut compositor_lost: Option<Instant> = None;
             let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
@@ -2417,6 +2903,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         vt_cache = Some((tty.clone(), Instant::now(), found));
                     }
                     snap.tmux_client = vt_cache.as_ref().and_then(|(_, _, c)| c.clone());
+                    verify_app(&cfg, &mut snap, "console", Some(&tty), &mut app_cache, uid);
                     if reported.as_deref() != Some("console") {
                         eprintln!("{}", serde_json::json!({"seat":"console","tty":tty}));
                         reported = Some("console".into());
@@ -2459,6 +2946,10 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                             tmux_cache = Some((pid, Instant::now(), found));
                         }
                         snapshot.tmux_client = tmux_cache.as_ref().and_then(|(_, _, c)| c.clone());
+                    }
+                    // P3: the foreground app of exactly this snapshot's window (never the shell overlay or the room).
+                    if !snapshot.shell_overlay && snapshot.name != "desktop-3d" {
+                        verify_app(&cfg, &mut snapshot, &nav_context, None, &mut app_cache, uid);
                     }
                     *cache.lock().unwrap() = snapshot;
                 } else {
@@ -2675,6 +3166,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 global = next;
                                 legacy = next_legacy;
                                 eprintln!("input policy reloaded from layered SSOT");
+                                if let Some(e) = &global.controller.nav.app_error {
+                                    eprintln!(
+                                        "{}",
+                                        serde_json::json!({"nav_apps":"disabled","error":e})
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -2815,6 +3312,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 focus.name = "app-capture".into();
                 focus.room_capture = false;
                 focus.shell_overlay = false;
+                focus.app = None;
             }
             ctx = focus.name.clone();
             // Ownership is per session: a capture/release requested by one pad applies to every pad (INV-7).
@@ -2896,6 +3394,21 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     dev.router
                         .set_focus(&focus.name, target, focus.room_capture),
                 );
+                // P4/P8: an explicit route verifies its own pane; the host bridge takes the snapshot's app, bound to the
+                // window it was verified for (a result for a window that lost focus selects nothing).
+                let (app, verified_for) = match (&dev.session, &dev.session_worker) {
+                    (Some(_), Some(worker)) => {
+                        (worker.app(global.controller.context_stale_ms), None)
+                    }
+                    (Some(_), None) => (None, None),
+                    _ => (
+                        focus
+                            .fresh_app(global.controller.context_stale_ms)
+                            .map(str::to_owned),
+                        focus.app_target.clone(),
+                    ),
+                };
+                transition.extend(dev.router.set_app(app.as_deref(), verified_for.as_ref()));
                 emit(transition, dev, &mut sinks, focus)?;
                 let mismatch = dev.capture.as_ref().is_some_and(|b| {
                     focus.address.as_deref() != Some(b.address.as_str())
@@ -4647,5 +5160,621 @@ mod tests {
             drained(fresh);
             PrivateServer::wait(|| server.bytes("output") == b"a");
         }
+        /// The P1 app layer with `exe` registered as the per-user candidate (user_exe), as the operator registers
+        /// ~/.local/bin/mios-tamagotchi-sample in the user tier.
+        fn mon_config(exe: &Path) -> GlobalConfig {
+            let (mut cfg, _) = crate::config::tests::fixture_mon();
+            cfg.controller.nav.apps.get_mut("mon").unwrap().user_exe =
+                vec![exe.to_string_lossy().into_owned()];
+            cfg
+        }
+        /// A private, self-owned copy of sleep (named sleep, so a multi-call coreutils still dispatches) that a pane
+        /// can run: the stand-in for a per-user Mon build.
+        fn private_binary() -> (tempfile::TempDir, PathBuf) {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::Builder::new()
+                .prefix("mios-app-")
+                .tempdir()
+                .unwrap();
+            let bin = dir.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let exe = bin.join("sleep");
+            std::fs::copy("/usr/bin/sleep", &exe).unwrap();
+            std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let exe = std::fs::canonicalize(&exe).unwrap();
+            (dir, exe)
+        }
+        fn new_pane(server: &PrivateServer, session: &str, argv: &[&str]) -> String {
+            let mut args = vec![
+                "new-session",
+                "-d",
+                "-x",
+                "100",
+                "-y",
+                "30",
+                "-s",
+                session,
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "--",
+            ];
+            args.extend_from_slice(argv);
+            server.tmux(&args)
+        }
+        /// INPUTD spec tests 10-12 (routes): each route verifies only its own pane; route B (a shell) never selects
+        /// the camera profile while route A runs the app; M-4 and M-- reach exactly B's pane; an ssh route never
+        /// verifies.
+        #[test]
+        fn route_verifiers_select_the_app_only_for_their_own_pane() {
+            let server = PrivateServer::new();
+            let (_keep, sleep) = private_binary();
+            let a = new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
+            let file = server.dir.path().join("beta");
+            let shell = format!("stty raw -echo; cat > '{}'; :", file.display());
+            let b = new_pane(&server, "beta", &["/bin/sh", "-c", &shell]);
+            PrivateServer::wait(|| file.exists());
+            let cfg = mon_config(&sleep);
+            let stale = cfg.controller.context_stale_ms;
+            let wa = SessionWorker::spawn(server.route("alpha", &a), cfg.clone()).unwrap();
+            let wb = SessionWorker::spawn(server.route("beta", &b), cfg.clone()).unwrap();
+            PrivateServer::wait(|| wa.app(stale).as_deref() == Some("mon"));
+            PrivateServer::wait(|| wb.app.lock().unwrap().1.is_some());
+            assert_eq!(wb.app(stale), None, "a shell pane selects no app");
+            assert_eq!(
+                wa.app(0),
+                None,
+                "a result older than context_stale_ms is none"
+            );
+            let (_, legacy) = crate::config::tests::fixture_mon();
+            let route_router = |app: Option<String>| {
+                let mut r =
+                    crate::router::Router::new(cfg.clone(), legacy.clone(), BTreeMap::new());
+                r.set_context("console");
+                r.set_tmux(true);
+                r.set_app(app.as_deref(), None);
+                r
+            };
+            let ra = route_router(wa.app(stale));
+            let rb = route_router(wb.app(stale));
+            assert_eq!(ra.nav_profile().as_deref(), Some("mon_console_tmux"));
+            assert!(ra.camera());
+            assert_eq!(rb.nav_profile().as_deref(), Some("console_tmux"));
+            assert!(!rb.camera());
+            // Session tmux_key: ALT+4 = M-4, ALT+MINUS = M-- (ESC-prefixed bytes in the pane).
+            assert!(wb.submit("key:ALT+4".into()));
+            assert!(wb.submit("key:ALT+MINUS".into()));
+            drained(wb);
+            PrivateServer::wait(|| server.bytes("beta") == b"\x1b4\x1b-");
+            let mut ssh = server.route("alpha", &a);
+            ssh.ssh_host = Some("blade-two".into());
+            assert!(crate::sessions::pane_pid_argv(&ssh).is_err());
+            assert!(crate::sessions::pane_pid_argv(&server.route("alpha", &a)).is_ok());
+        }
+        /// INPUTD spec test 10 (tmux): the focused terminal's client, its active pane's foreground leader, and a
+        /// stalled server timing out within app_query_timeout_ms (never on the input loop).
+        #[test]
+        fn a_tmux_client_pane_is_verified_bounded_and_bound_to_its_window() {
+            let mut server = PrivateServer::new();
+            let (_keep, sleep) = private_binary();
+            new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
+            let client = PrivateClient::attach(&server, "alpha");
+            let mut cfg = mon_config(&sleep);
+            cfg.controller.nav.tmux_sockets.push("tmux".into());
+            let uid = unsafe { libc::getuid() };
+            let found = tmux_client_under(
+                Path::new("/proc"),
+                client.process.id(),
+                &cfg.controller.nav.tmux_sockets,
+                uid,
+            )
+            .unwrap();
+            let probe = AppProbe::Tmux {
+                target: Some(("0xterm".into(), 7)),
+                client: found.clone(),
+            };
+            assert_eq!(probe.verify(&cfg, uid).as_deref(), Some("mon"));
+            let tmux = std::fs::canonicalize("/usr/bin/tmux").unwrap();
+            assert_eq!(probe.verify(&mon_config(&tmux), uid), None, "another exe");
+            let mut snap = ContextSnapshot::new("terminal");
+            snap.address = Some("0xterm".into());
+            snap.pid = Some(7);
+            snap.tmux_client = Some(found);
+            verify_app(
+                &cfg,
+                &mut snap,
+                "terminal",
+                None,
+                &mut AppCache::default(),
+                uid,
+            );
+            assert_eq!(snap.app.as_deref(), Some("mon"));
+            assert_eq!(
+                snap.app_target,
+                Some(("0xterm".into(), 7)),
+                "bound to this window"
+            );
+            verify_app(
+                &cfg,
+                &mut snap,
+                "desktop-2d",
+                None,
+                &mut AppCache::default(),
+                uid,
+            );
+            assert!(snap.app.is_none(), "a context no app refines never queries");
+            server.stop();
+            let started = Instant::now();
+            assert_eq!(probe.verify(&cfg, uid), None, "a stalled server is no app");
+            assert!(
+                started.elapsed()
+                    < Duration::from_millis(cfg.controller.nav.app_query_timeout_ms + 400),
+                "bounded by app_query_timeout_ms"
+            );
+            server.resume();
+        }
+    }
+}
+
+#[cfg(test)]
+mod app_detection {
+    //! P3 verified foreground detection and the root ruling on per-user candidates: exact, canonical,
+    //! ownership-checked matching only. Fake /proc trees point at real candidate files in a private directory.
+    use super::*;
+    use crate::nav::NavApp;
+    use std::os::unix::fs::PermissionsExt;
+    fn apps(exe: &[&Path], user_exe: &[&Path]) -> BTreeMap<String, NavApp> {
+        let s = |v: &[&Path]| v.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        BTreeMap::from([(
+            "mon".to_owned(),
+            NavApp {
+                exe: s(exe),
+                user_exe: s(user_exe),
+                camera: true,
+                contexts: BTreeMap::from([("terminal".into(), "mon".into())]),
+                repeat: BTreeMap::new(),
+            },
+        )])
+    }
+    /// A /proc/<pid> entry: stat with pgrp and the tty's foreground group, an exe link and an optional stdin tty.
+    fn entry(
+        proc_root: &Path,
+        pid: u32,
+        ppid: u32,
+        pgrp: u32,
+        tpgid: u32,
+        exe: &Path,
+        tty: Option<&str>,
+    ) {
+        let d = proc_root.join(pid.to_string());
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("fd")).unwrap();
+        std::fs::write(
+            d.join("stat"),
+            format!("{pid} (proc {pid}) S {ppid} {pgrp} {pgrp} 1027 {tpgid} 4194304"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(exe, d.join("exe")).unwrap();
+        if let Some(t) = tty {
+            std::os::unix::fs::symlink(t, d.join("fd/0")).unwrap();
+        }
+    }
+    struct Tree {
+        dir: tempfile::TempDir,
+        proc_root: PathBuf,
+        sample: PathBuf,
+        elsewhere: PathBuf,
+    }
+    impl Tree {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let bin = dir.path().join("home/.local/bin");
+            let other = dir.path().join("opt/bin");
+            for d in [&bin, &other] {
+                std::fs::create_dir_all(d).unwrap();
+            }
+            for d in [
+                dir.path().join("home"),
+                dir.path().join("home/.local"),
+                bin.clone(),
+                dir.path().join("opt"),
+                other.clone(),
+            ] {
+                std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let sample = bin.join("mios-tamagotchi-sample");
+            let elsewhere = other.join("mios-tamagotchi-sample");
+            for f in [&sample, &elsewhere] {
+                std::fs::write(f, b"\x7fELF fixture").unwrap();
+                std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let proc_root = dir.path().join("proc");
+            std::fs::create_dir_all(&proc_root).unwrap();
+            Self {
+                dir,
+                proc_root,
+                sample,
+                elsewhere,
+            }
+        }
+        /// Real lstat inside the private tree; its ancestors (the build host's tmp) stand in for root-owned 0755.
+        fn lstat(&self) -> impl Fn(&Path) -> Option<FileFacts> + '_ {
+            move |p: &Path| {
+                if self.dir.path().starts_with(p) && p != self.dir.path() {
+                    Some(FileFacts {
+                        uid: 0,
+                        mode: 0o40755,
+                        dev: 0,
+                        ino: 0,
+                        kind: FileKind::Dir,
+                    })
+                } else {
+                    lstat_facts(p)
+                }
+            }
+        }
+    }
+    fn uid() -> u32 {
+        unsafe { libc::getuid() }
+    }
+    #[test]
+    fn trust_rules_are_canonical_owned_and_not_writable_by_others() {
+        let me = uid();
+        let fs = |over: &[(&str, u32, u32, FileKind)]| {
+            let mut m: BTreeMap<PathBuf, FileFacts> = BTreeMap::new();
+            for (p, u, mode, kind) in [
+                ("/", 0, 0o755, FileKind::Dir),
+                ("/home", 0, 0o755, FileKind::Dir),
+                ("/home/mios", me, 0o700, FileKind::Dir),
+                ("/home/mios/.local", me, 0o755, FileKind::Dir),
+                ("/home/mios/.local/bin", me, 0o755, FileKind::Dir),
+                (
+                    "/home/mios/.local/bin/mios-tamagotchi-sample",
+                    me,
+                    0o755,
+                    FileKind::File,
+                ),
+                ("/tmp", 0, 0o1777, FileKind::Dir),
+                ("/tmp/x", me, 0o700, FileKind::Dir),
+                ("/tmp/x/mon", me, 0o755, FileKind::File),
+            ]
+            .into_iter()
+            .chain(over.iter().copied())
+            {
+                m.insert(
+                    p.into(),
+                    FileFacts {
+                        uid: u,
+                        mode,
+                        dev: 1,
+                        ino: 2,
+                        kind,
+                    },
+                );
+            }
+            move |p: &Path| m.get(p).copied()
+        };
+        let sample = Path::new("/home/mios/.local/bin/mios-tamagotchi-sample");
+        let ok = |over: &[(&str, u32, u32, FileKind)], path: &Path, owner: u32| {
+            trusted_candidate(path, owner, me, &fs(over)).is_some()
+        };
+        assert!(ok(&[], sample, me), "the registered per-user binary");
+        assert!(
+            ok(&[], Path::new("/tmp/x/mon"), me),
+            "a root-owned sticky ancestor"
+        );
+        let file = "/home/mios/.local/bin/mios-tamagotchi-sample";
+        for (why, over, owner) in [
+            (
+                "owned by another uid",
+                vec![(file, 4242, 0o755, FileKind::File)],
+                me,
+            ),
+            (
+                "group-writable",
+                vec![(file, me, 0o775, FileKind::File)],
+                me,
+            ),
+            (
+                "world-writable",
+                vec![(file, me, 0o757, FileKind::File)],
+                me,
+            ),
+            ("a symlink", vec![(file, me, 0o777, FileKind::Other)], me),
+            (
+                "a world-writable directory",
+                vec![("/home/mios/.local/bin", me, 0o777, FileKind::Dir)],
+                me,
+            ),
+            (
+                "a foreign directory",
+                vec![("/home/mios/.local", 4242, 0o755, FileKind::Dir)],
+                me,
+            ),
+            (
+                "a symlinked directory",
+                vec![("/home/mios/.local", me, 0o777, FileKind::Other)],
+                me,
+            ),
+            ("a system exe must be root-owned", vec![], 0),
+        ] {
+            assert!(!ok(&over, sample, owner), "{why}");
+        }
+        assert!(
+            !ok(
+                &[("/tmp", 4242, 0o1777, FileKind::Dir)],
+                Path::new("/tmp/x/mon"),
+                me
+            ),
+            "a sticky directory another user owns"
+        );
+        for path in [
+            "relative/mon",
+            "/home/mios/../mios/.local/bin/mios-tamagotchi-sample",
+            "/home/mios/.local/bin/missing",
+        ] {
+            assert!(!ok(&[], Path::new(path), me), "{path}");
+        }
+    }
+    #[test]
+    fn exe_matching_is_exact_canonical_owned_and_live() {
+        let t = Tree::new();
+        let me = uid();
+        let lstat = t.lstat();
+        let registered = apps(&[], &[&t.sample]);
+        entry(&t.proc_root, 10, 1, 10, 10, &t.sample, None);
+        assert_eq!(
+            app_of_pid(&t.proc_root, 10, &registered, me, &lstat).as_deref(),
+            Some("mon"),
+            "the per-user candidate, registered explicitly"
+        );
+        // A same-basename binary elsewhere never matches (no basename matching).
+        entry(&t.proc_root, 11, 1, 11, 11, &t.elsewhere, None);
+        assert_eq!(app_of_pid(&t.proc_root, 11, &registered, me, &lstat), None);
+        // /proc/<pid> owned by another uid.
+        assert_eq!(
+            app_of_pid(&t.proc_root, 10, &registered, me + 1, &lstat),
+            None
+        );
+        // A candidate owned by another uid (lstat says so), or listed as a root-owned system exe.
+        let foreign = |p: &Path| {
+            lstat(p).map(|mut f| {
+                if p == t.sample {
+                    f.uid = 4242;
+                }
+                f
+            })
+        };
+        assert_eq!(
+            app_of_pid(&t.proc_root, 10, &registered, me, &foreign),
+            None
+        );
+        assert_eq!(
+            app_of_pid(&t.proc_root, 10, &apps(&[&t.sample], &[]), me, &lstat),
+            None,
+            "a user-owned file is no system exe"
+        );
+        // Group- or world-writable candidate, or a world-writable directory.
+        for (path, mode) in [
+            (&t.sample, 0o775),
+            (&t.sample, 0o757),
+            (&t.sample.parent().unwrap().to_path_buf(), 0o777),
+        ] {
+            let before = std::fs::metadata(path).unwrap().permissions();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert_eq!(
+                app_of_pid(&t.proc_root, 10, &registered, me, &lstat),
+                None,
+                "{mode:o}"
+            );
+            std::fs::set_permissions(path, before).unwrap();
+        }
+        assert!(app_of_pid(&t.proc_root, 10, &registered, me, &lstat).is_some());
+        // A registered symlink never matches: not when the kernel names its target, not when it names the link, and
+        // not when the link resolves to a target nobody listed.
+        let link = t.sample.with_file_name("mios-tamagotchi-link");
+        std::os::unix::fs::symlink(&t.sample, &link).unwrap();
+        let via_link = apps(&[], &[&link]);
+        assert_eq!(app_of_pid(&t.proc_root, 10, &via_link, me, &lstat), None);
+        entry(&t.proc_root, 12, 1, 12, 12, &link, None);
+        assert_eq!(app_of_pid(&t.proc_root, 12, &via_link, me, &lstat), None);
+        let stray = t.sample.with_file_name("mios-tamagotchi-stray");
+        std::os::unix::fs::symlink(&t.elsewhere, &stray).unwrap();
+        entry(&t.proc_root, 13, 1, 13, 13, &t.elsewhere, None);
+        assert_eq!(
+            app_of_pid(&t.proc_root, 13, &apps(&[], &[&stray]), me, &lstat),
+            None
+        );
+        // A deleted image: the kernel's "(deleted)" name, or a candidate removed under a running process.
+        let deleted = PathBuf::from(format!("{} (deleted)", t.sample.display()));
+        entry(&t.proc_root, 14, 1, 14, 14, &deleted, None);
+        assert_eq!(app_of_pid(&t.proc_root, 14, &registered, me, &lstat), None);
+        let gone = t.sample.with_file_name("mios-tamagotchi-gone");
+        std::fs::copy(&t.sample, &gone).unwrap();
+        entry(&t.proc_root, 15, 1, 15, 15, &gone, None);
+        let gone_app = apps(&[], &[&gone]);
+        assert!(app_of_pid(&t.proc_root, 15, &gone_app, me, &lstat).is_some());
+        std::fs::remove_file(&gone).unwrap();
+        assert_eq!(app_of_pid(&t.proc_root, 15, &gone_app, me, &lstat), None);
+        // A missing process.
+        assert_eq!(app_of_pid(&t.proc_root, 99, &registered, me, &lstat), None);
+    }
+    #[test]
+    fn a_root_owned_system_binary_matches_and_an_unmapped_owner_fails_closed() {
+        let t = Tree::new();
+        let me = uid();
+        let lstat = t.lstat();
+        // The vendor `exe` is root-owned: the private file seen as root's (its dev/ino stay the real ones).
+        let as_root = |p: &Path| {
+            lstat(p).map(|mut f| {
+                if p == t.sample {
+                    f.uid = 0;
+                }
+                f
+            })
+        };
+        entry(&t.proc_root, 20, 1, 20, 20, &t.sample, None);
+        assert_eq!(
+            app_of_pid(&t.proc_root, 20, &apps(&[&t.sample], &[]), me, &as_root).as_deref(),
+            Some("mon")
+        );
+        assert_eq!(
+            app_of_pid(&t.proc_root, 20, &apps(&[], &[&t.sample]), me, &as_root),
+            None,
+            "a root-owned binary is no per-user candidate"
+        );
+        // The real filesystem: /usr/bin/tmux matches as a system exe exactly when its whole path really is
+        // root-owned. A user namespace that shows host root as the overflow uid (a rootless build container) must
+        // fail closed, never trust an owner it cannot see.
+        let tmux = std::fs::canonicalize("/usr/bin/tmux").unwrap();
+        entry(&t.proc_root, 21, 1, 21, 21, &tmux, None);
+        let rooted = tmux
+            .ancestors()
+            .all(|p| lstat_facts(p).is_some_and(|f| f.uid == 0 && f.mode & 0o022 == 0));
+        assert_eq!(
+            app_of_pid(&t.proc_root, 21, &apps(&[&tmux], &[]), me, &lstat_facts).is_some(),
+            rooted
+        );
+    }
+    #[test]
+    fn only_the_foreground_group_leader_counts() {
+        let t = Tree::new();
+        let me = uid();
+        let lstat = t.lstat();
+        let registered = apps(&[], &[&t.sample]);
+        let shell = Path::new("/usr/bin/bash");
+        // Plain terminal 100: bash 101 started the Mon 102 in the foreground of its tty.
+        entry(&t.proc_root, 100, 1, 100, 0, shell, None);
+        entry(&t.proc_root, 101, 100, 101, 102, shell, Some("/dev/pts/4"));
+        entry(
+            &t.proc_root,
+            102,
+            101,
+            102,
+            102,
+            &t.sample,
+            Some("/dev/pts/4"),
+        );
+        let tree = descendants(&t.proc_root, 100);
+        assert_eq!(tree, [101, 102]);
+        assert_eq!(
+            foreground_app_among(&t.proc_root, &tree, &registered, me, &lstat).as_deref(),
+            Some("mon")
+        );
+        // Terminal 200: the Mon 202 runs in the background; bash 201 owns the tty.
+        entry(&t.proc_root, 200, 1, 200, 0, shell, None);
+        entry(&t.proc_root, 201, 200, 201, 201, shell, Some("/dev/pts/5"));
+        entry(
+            &t.proc_root,
+            202,
+            201,
+            202,
+            201,
+            &t.sample,
+            Some("/dev/pts/5"),
+        );
+        let tree = descendants(&t.proc_root, 200);
+        assert_eq!(
+            foreground_app_among(&t.proc_root, &tree, &registered, me, &lstat),
+            None
+        );
+        // A Mon child of a foreground group it does not lead (pgrp != pid).
+        entry(
+            &t.proc_root,
+            203,
+            201,
+            201,
+            201,
+            &t.sample,
+            Some("/dev/pts/5"),
+        );
+        let tree = descendants(&t.proc_root, 200);
+        assert_eq!(
+            foreground_app_among(&t.proc_root, &tree, &registered, me, &lstat),
+            None
+        );
+        // A bare VT: the processes on /dev/tty3.
+        entry(&t.proc_root, 300, 1, 300, 301, shell, Some("/dev/tty3"));
+        entry(
+            &t.proc_root,
+            301,
+            300,
+            301,
+            301,
+            &t.sample,
+            Some("/dev/tty3"),
+        );
+        assert_eq!(on_tty(&t.proc_root, Path::new("/dev/tty3")), [300, 301]);
+        let vt = on_tty(&t.proc_root, Path::new("/dev/tty3"));
+        assert_eq!(
+            foreground_app_among(&t.proc_root, &vt, &registered, me, &lstat).as_deref(),
+            Some("mon")
+        );
+        assert!(on_tty(&t.proc_root, Path::new("/dev/tty4")).is_empty());
+        // A tmux pane: the pane process 400's tty is led by 401.
+        entry(&t.proc_root, 400, 1, 400, 401, shell, None);
+        entry(&t.proc_root, 401, 400, 401, 401, &t.sample, None);
+        assert_eq!(
+            pane_app(&t.proc_root, 400, &registered, me, &lstat).as_deref(),
+            Some("mon")
+        );
+        entry(&t.proc_root, 402, 1, 402, 402, shell, None);
+        assert_eq!(pane_app(&t.proc_root, 402, &registered, me, &lstat), None);
+    }
+    #[test]
+    fn a_result_is_bound_to_its_probe_identity_and_expires() {
+        let calls = std::cell::Cell::new(0);
+        let a = AppProbe::Plain {
+            target: ("0xa".into(), 1),
+            pid: 1,
+        };
+        let b = AppProbe::Plain {
+            target: ("0xb".into(), 2),
+            pid: 2,
+        };
+        let hour = Duration::from_secs(3600);
+        let mut cache = AppCache::default();
+        let mon = |_: &AppProbe| {
+            calls.set(calls.get() + 1);
+            Some("mon".to_owned())
+        };
+        let none = |_: &AppProbe| {
+            calls.set(calls.get() + 1);
+            None
+        };
+        assert_eq!(cache.get(a.clone(), hour, mon).0.as_deref(), Some("mon"));
+        assert_eq!(cache.get(a.clone(), hour, mon).0.as_deref(), Some("mon"));
+        assert_eq!(
+            calls.get(),
+            1,
+            "the same identity re-verifies at most every app_poll_ms"
+        );
+        assert_eq!(
+            cache.get(b.clone(), hour, none).0,
+            None,
+            "a new focus verifies at once and never reuses another window's result"
+        );
+        assert_eq!(calls.get(), 2);
+        cache.get(b, Duration::ZERO, none);
+        assert_eq!(calls.get(), 3, "after app_poll_ms");
+        assert_eq!(a.target(), Some(("0xa".into(), 1)));
+        assert_eq!(
+            AppProbe::Vt {
+                tty: "/dev/tty3".into()
+            }
+            .target(),
+            None
+        );
+        let mut snap = ContextSnapshot::new("terminal");
+        snap.app = Some("mon".into());
+        snap.app_at = Instant::now().checked_sub(Duration::from_millis(1500));
+        assert_eq!(snap.fresh_app(1000), None, "older than context_stale_ms");
+        snap.app_at = Some(Instant::now());
+        assert_eq!(snap.fresh_app(1000), Some("mon"));
+        // P8: a route's focus never carries the host window's app, and a foreign seat suspends it.
+        snap.suspended = Some("another session is active".into());
+        let routed = session_focus(&snap, true, None);
+        assert!(routed.app.is_none() && routed.app_target.is_none() && routed.suspended.is_some());
     }
 }
