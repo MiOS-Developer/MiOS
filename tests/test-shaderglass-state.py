@@ -26,6 +26,10 @@ SSOT = Path(os.environ.get("MIOS_VENDOR_TOML_UNDER_TEST") or ROOT / "usr/share/m
 GLUE = ROOT / "usr/bin/mios-shaderglass"
 PATCH = ROOT / "usr/share/mios/shaderglass/patches/winecap-mios-portal.patch"
 SG_SRC = Path(os.environ.get("MIOS_SHADERGLASS_SRC") or "/home/mios/mios-desktop-work-1/shaderglass-src")
+# The pre-change revision the Source negative controls read: the parent of 826619791 (fix(shaderglass): per-session
+# state ..., mobile tile rule), which brought the nested-room glue and the mobile tile rule. Never a branch name: on a
+# push CI checks out main at the pushed commit, so a "main" base already holds the change being proven.
+BASE_REF = os.environ.get("MIOS_SHADERGLASS_BASE_REF", "772c94edbf31bb1c0dd207bc5332016e4c936110")
 
 
 def run(cmd, env=None, timeout=60, cwd=None):
@@ -212,7 +216,7 @@ class Source(unittest.TestCase):
         self.assertEqual(self._glue(GLUE, "setup"), ["shaderglass setup"])
         self.assertEqual(self._glue(GLUE, "off"), ["shaderglass stop"])
         # Negative control: the glue before this change turned "cycle" into setup mode.
-        base = os.environ.get("MIOS_SHADERGLASS_BASE_REF", "main")
+        base = BASE_REF
         old = run(["git", "-C", ROOT, "show", f"{base}:usr/bin/mios-shaderglass"])
         if old.returncode != 0:
             self.skipTest(f"no {base} glue to compare")
@@ -265,7 +269,7 @@ class Source(unittest.TestCase):
         self.assertTrue(to_2d(got) and not to_room(got), got)
         # Negative control: the glue before this change never saw a nested room (it read the primary's file or
         # gave up in every nested session).
-        base = os.environ.get("MIOS_SHADERGLASS_BASE_REF", "main")
+        base = BASE_REF
         old = run(["git", "-C", ROOT, "show", f"{base}:usr/bin/mios-shaderglass"])
         if old.returncode != 0:
             self.skipTest(f"no {base} glue to compare")
@@ -285,7 +289,7 @@ class Source(unittest.TestCase):
         cls = self.sg["window"]["class"].replace("\\", "\\\\")
         self.assertIn(f'class = "negative:{cls}"', m.group(1))
         # Negative control: the projection before this change tiled every non-floating window, the pane included.
-        base = os.environ.get("MIOS_SHADERGLASS_BASE_REF", "main")
+        base = BASE_REF
         old = run(["git", "-C", ROOT, "show", f"{base}:usr/share/mios/hyprland/hyprland.lua"])
         if old.returncode != 0:
             self.skipTest(f"no {base} projection")
