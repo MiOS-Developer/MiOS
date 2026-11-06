@@ -244,6 +244,80 @@ class TestAgyAgentPipeline(unittest.TestCase):
             self.assertIn("MIOS_AI_ENDPOINT is unset", res.stderr)
             self.assertFalse(marker.exists(), "agy was executed without a resolved endpoint")
 
+    def test_mios_llm_resolves_install_env_and_sends_only_the_ssot_request(self):
+        """Drives the staged mios-llm against a mock curl: the endpoint and model come from
+        install.env (a caller's export wins), the request body carries no sampling literal
+        such as a temperature, and with neither source the wrapper fails before any request."""
+        installer_path = REPO_ROOT / "install-mios-agents.sh"
+        bash_bin = shutil.which("bash") or "bash"
+        jq_bin = shutil.which("jq")
+        self.assertIsNotNone(jq_bin, "jq is required: mios-llm builds its request body with it")
+        with tempfile.TemporaryDirectory(prefix="mios-llm-stage-") as tmpdir:
+            stage = Path(tmpdir) / "root"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(DESTDIR=str(stage), MIOS_AGREEMENT_BANNER="off")
+            res = subprocess.run([bash_bin, installer_path.as_posix()], capture_output=True,
+                                 text=True, env=env, cwd=tmpdir)
+            self.assertEqual(res.returncode, 0, f"installer failed: {res.stdout}\n{res.stderr}")
+            llm = stage / "usr" / "local" / "bin" / "mios-llm"
+
+            # The mock records its argv NUL-separated and answers like /v1/chat/completions.
+            mock_dir = Path(tmpdir) / "bin"
+            mock_dir.mkdir()
+            calls = Path(tmpdir) / "curl-argv"
+            mock = mock_dir / "curl"
+            mock.write_text("#!/bin/sh\n"
+                            f"printf '%s\\0' \"$@\" > '{calls.as_posix()}'\n"
+                            "printf '%s\\n' '{\"choices\":[{\"message\":{\"content\":\"mock-reply\"}}]}'\n",
+                            encoding="utf-8")
+            os.chmod(mock, 0o755)
+            etc_fixture = Path(tmpdir) / "etc-mios"
+            etc_fixture.mkdir()
+            (etc_fixture / "install.env").write_text(
+                "MIOS_AI_ENDPOINT=http://ssot.invalid/v1\nMIOS_AI_MODEL=ssot-model\n", encoding="utf-8")
+            etc_empty = Path(tmpdir) / "etc-empty"
+            etc_empty.mkdir()
+            run_env = {k: v for k, v in env.items() if k != "DESTDIR"}
+            run_env["PATH"] = f"{mock_dir}{os.pathsep}{env.get('PATH', '')}"
+            cmd = [bash_bin, llm.as_posix(), "which", "law?"]
+
+            def request(extra):
+                if calls.exists():
+                    calls.unlink()
+                res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT,
+                                     env={**run_env, **extra})
+                self.assertEqual(res.returncode, 0, f"mios-llm failed: {res.stderr}")
+                self.assertEqual(res.stdout, "mock-reply\n")
+                found = re.search(r"prompt: (.+)$", res.stderr.strip())
+                self.assertIsNotNone(found, f"mios-llm named no prompt file: {res.stderr}")
+                argv = calls.read_bytes().decode("utf-8").split("\0")[:-1]
+                self.assertEqual(argv[:5], ["-sS", argv[1], "-H", "Content-Type: application/json", "-d"])
+                self.assertEqual(len(argv), 6, f"unexpected curl argv: {argv[:5]}")
+                return argv[1], json.loads(argv[5]), Path(found.group(1)).read_text(encoding="utf-8")
+
+            def body(model, system):
+                return {"model": model,
+                        "messages": [{"role": "system", "content": system},
+                                     {"role": "user", "content": "which law?"}],
+                        "stream": False}
+
+            url, sent, system = request({"MIOS_ETC_DIR": str(etc_fixture)})
+            self.assertEqual(url, "http://ssot.invalid/v1/chat/completions")
+            self.assertEqual(sent, body("ssot-model", system.rstrip("\n")))
+
+            url, sent, system = request({"MIOS_ETC_DIR": str(etc_fixture),
+                                         "MIOS_AI_ENDPOINT": "http://caller.invalid/v1",
+                                         "MIOS_AI_MODEL": "caller-model"})
+            self.assertEqual(url, "http://caller.invalid/v1/chat/completions")
+            self.assertEqual(sent, body("caller-model", system.rstrip("\n")))
+
+            calls.unlink()
+            res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_empty)})
+            self.assertNotEqual(res.returncode, 0, "mios-llm ran with no resolvable endpoint")
+            self.assertIn("MIOS_AI_ENDPOINT is unset", res.stderr)
+            self.assertFalse(calls.exists(), "mios-llm sent a request without a resolved endpoint")
+
     def test_agents_command_definitions(self):
         """Verifies canonical commands/antigravity/agents.toml and agents workflow."""
         antigravity_agents = REPO_ROOT / "commands" / "antigravity" / "agents.toml"
