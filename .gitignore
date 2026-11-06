@@ -367,6 +367,8 @@ etc/fapolicyd/*
 
 !/etc/xdg/
 etc/xdg/*
+# System-wide default applications, rendered by mios-gen render-desktop from [desktop.default_applications].
+!/etc/xdg/mimeapps.list
 !/etc/xdg/xdg-desktop-portal/
 etc/xdg/xdg-desktop-portal/*
 !/etc/xdg/xdg-desktop-portal/portals.conf

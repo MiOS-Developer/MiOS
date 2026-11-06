@@ -1,0 +1,14 @@
+# GENERATED IN FULL from usr/share/mios/mios.toml [desktop.default_applications] by mios-gen render-desktop; DO NOT EDIT -- re-run the renderer.
+# AI-hint: System-wide default applications (freedesktop mime-apps spec). As a $XDG_CONFIG_DIRS list it outranks the distribution's /usr/share/applications/mimeapps.list and gnome-mimeapps.list and the associations exported Flatpaks declare; ~/.config/mimeapps.list still overrides it per user.
+# AI-related: usr/share/mios/mios.toml [desktop.default_applications] [desktop.launchers], usr/share/applications/, tools/native/mios-gen/src/render.rs
+[Default Applications]
+application/pdf=mios-portal.desktop;
+application/rdf+xml=mios-portal.desktop;
+application/rss+xml=mios-portal.desktop;
+application/xhtml+xml=mios-portal.desktop;
+application/xml=mios-portal.desktop;
+text/html=mios-portal.desktop;
+text/xml=mios-portal.desktop;
+x-scheme-handler/http=mios-portal.desktop;
+x-scheme-handler/https=mios-portal.desktop;
+x-scheme-handler/mailto=mios-portal.desktop;

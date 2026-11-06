@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AI-hint: Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures. The default browser is MiOS-Portal (native Gecko, not a Flatpak): the SSOT names it in every default-browser key, no [[desktop.apps]] browser carries default=true, and the real resolvers (mios-app-type, mios-launch, mios-open-url) dispatch to it.
-# AI-related: automation/61-flatpak-bake.sh, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
+# AI-hint: Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures. The default browser is MiOS-Portal (native Gecko, not a Flatpak): the SSOT names it in every default-browser key, no [[desktop.apps]] browser carries default=true, and the real resolvers (mios-app-type, mios-launch, mios-open-url) dispatch to it. The freedesktop layer agrees: gio and xdg-mime, in isolated XDG dirs holding exported Zen/Epiphany/Firefox Flatpaks and Fedora's vendor mimeapps lists, resolve http/https/html to mios-portal.desktop through the projected etc/xdg/mimeapps.list, and six planted regressions each fail that guard.
+# AI-related: automation/61-flatpak-bake.sh, etc/xdg/mimeapps.list, usr/share/applications/mios-portal.desktop, usr/libexec/mios/mios-hermes-browser, usr/libexec/mios/mios-app-type, usr/libexec/mios/mios-launch, usr/libexec/mios/mios-open-url, usr/share/mios/mios.toml
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
@@ -139,3 +139,148 @@ PATH="$OPEN_BIN:$PATH" bash "$ROOT/usr/libexec/mios/mios-open-url" https://examp
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["target"] == "mios-portal" and d["navigation_verified"] is False, d' "$TMP/open.json"
 [ "$(cat "$TMP/gui-argv")" = "$(printf 'mios-portal\n--new-tab\nhttps://example.invalid/default-browser')" ]
 echo 'PASS mios-app-type, mios-launch and mios-open-url resolve the default browser to MiOS-Portal'
+
+# The freedesktop layer: what xdg-open, gio open and the OpenURI portal pick. Every MiOS key above
+# can name MiOS-Portal and a session still opens Zen, because exported Flatpaks declare their own
+# http/https/html associations and Fedora ships mimeapps.list and gnome-mimeapps.list defaults.
+python3 - "$ROOT" <<'PY'
+import copy, os, sys, tomllib
+root = sys.argv[1]
+with open(os.path.join(root, 'usr/share/mios/mios.toml'), 'rb') as source:
+    shipped = tomllib.load(source)['desktop']
+BROWSER = {'text/html', 'application/xhtml+xml', 'x-scheme-handler/http', 'x-scheme-handler/https'}
+def check(desktop):
+    portal = desktop['portal']['launcher']
+    launchers = desktop['launchers']
+    types = lambda name: {t.strip() for t in launchers[name].get('mime_type', '').split(';') if t.strip()}
+    assert BROWSER <= types(portal), types(portal)
+    assert '%u' in launchers[portal]['exec_cmd'].split(), launchers[portal]['exec_cmd']
+    assert desktop['default_applications']['launchers'][0] == portal, desktop['default_applications']
+    assert 'mios-zen' in launchers and 'mime_type' not in launchers['mios-zen'], launchers['mios-zen']
+    rivals = {n: sorted(types(n) & types(portal)) for n in launchers if n != portal and types(n) & types(portal)}
+    assert not rivals, rivals
+check(shipped)
+print('PASS SSOT gives the browser MIME types and %u to MiOS-Portal alone and names it in [desktop.default_applications]')
+def zen_first(d): d['default_applications']['launchers'] = ['mios-zen'] + d['default_applications']['launchers']
+def zen_mime(d): d['launchers']['mios-zen']['mime_type'] = 'x-scheme-handler/http;x-scheme-handler/https;'
+def portal_no_url(d): d['launchers'][d['portal']['launcher']]['exec_cmd'] = '/usr/bin/mios-portal'
+def portal_no_https(d):
+    entry = d['launchers'][d['portal']['launcher']]
+    entry['mime_type'] = entry['mime_type'].replace('x-scheme-handler/https;', '')
+def rival_html(d): d['launchers']['mios-terminal']['mime_type'] = 'text/html;'
+for plant in (zen_first, zen_mime, portal_no_url, portal_no_https, rival_html):
+    planted = copy.deepcopy(shipped)
+    plant(planted)
+    try:
+        check(planted)
+    except AssertionError:
+        print(f'PASS planted SSOT {plant.__name__} fails the check')
+    else:
+        raise SystemExit(f'FAIL planted SSOT {plant.__name__} passed the check')
+PY
+for tool in gio xdg-mime update-desktop-database; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "FAIL $tool is not installed, so the freedesktop default cannot be resolved" >&2; exit 77; }
+done
+FD_PATH="$(dirname "$(command -v gio)"):$(dirname "$(command -v xdg-mime)"):/usr/bin:/bin"
+FD_TYPES='x-scheme-handler/http x-scheme-handler/https text/html application/xhtml+xml'
+# fd_fixture <dir> <applications dir> [etc/xdg dir]: a session's XDG dirs. Data dirs are in Fedora's
+# flatpak profile order (user exports, system exports, /usr/share); the system dir also holds the
+# two vendor lists Fedora's RPMs put next to MiOS's launchers.
+fd_fixture() {
+    local r="$1" app
+    mkdir -p "$r/home" "$r/config" "$r/data" "$r/etc-xdg" "$r/user-flatpak/share/applications" \
+        "$r/flatpak/share/applications" "$r/usr/share/applications"
+    cp "$2"/*.desktop "$r/usr/share/applications/"
+    [ -z "${3:-}" ] || cp -R "$3/." "$r/etc-xdg/"
+    for app in app.zen_browser.zen org.gnome.Epiphany org.mozilla.firefox; do
+        printf '[Desktop Entry]\nType=Application\nName=%s\nExec=/usr/bin/flatpak run %s @@u %%u @@\nMimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;\nX-Flatpak=%s\n' \
+            "$app" "$app" "$app" > "$r/flatpak/share/applications/$app.desktop"
+    done
+    printf '[Default Applications]\n' > "$r/usr/share/applications/mimeapps.list"
+    printf '[Default Applications]\n' > "$r/usr/share/applications/gnome-mimeapps.list"
+    for type in $FD_TYPES; do
+        printf '%s=org.mozilla.firefox.desktop\n' "$type" >> "$r/usr/share/applications/mimeapps.list"
+        printf '%s=org.gnome.Epiphany.desktop\n' "$type" >> "$r/usr/share/applications/gnome-mimeapps.list"
+    done
+    update-desktop-database -q "$r/flatpak/share/applications"
+    update-desktop-database -q "$r/usr/share/applications"
+}
+# fd_default <dir> <XDG_CURRENT_DESKTOP or ""> <gio|xdg-mime> <type>: the desktop ID that tool picks.
+fd_default() {
+    local r="$1" line
+    local -a session=(HOME="$r/home" PATH="$FD_PATH" LANG=C.UTF-8 XDG_CONFIG_HOME="$r/config"
+        XDG_DATA_HOME="$r/data" XDG_CONFIG_DIRS="$r/etc-xdg"
+        XDG_DATA_DIRS="$r/user-flatpak/share:$r/flatpak/share:$r/usr/share")
+    [ -z "$2" ] || session+=(XDG_CURRENT_DESKTOP="$2")
+    if [ "$3" = gio ]; then
+        line="$(env -i "${session[@]}" gio mime "$4" 2>/dev/null | head -n 1)"
+        case "$line" in "Default application for "*": "*) printf '%s\n' "${line##*: }" ;; esac
+    else
+        env -i "${session[@]}" xdg-mime query default "$4" 2>/dev/null || true
+    fi
+}
+# fd_guard <dir>: 0 only when the shipped entries and lists make MiOS-Portal the default everywhere.
+fd_guard() {
+    local r="$1" apps="$1/usr/share/applications" entry de tool type got
+    entry="$apps/mios-portal.desktop"
+    [ -f "$entry" ] || { echo "guard: mios-portal.desktop is not shipped"; return 1; }
+    grep -Eq '^Exec=[^ ]+( .*)? %u( |$)' "$entry" || { echo "guard: mios-portal.desktop Exec has no %u"; return 1; }
+    for type in $FD_TYPES; do
+        grep -E '^MimeType=' "$entry" | tr ';=' '\n\n' | grep -Fxq "$type" \
+            || { echo "guard: mios-portal.desktop does not declare $type"; return 1; }
+        if grep -E '^MimeType=' "$apps/mios-zen.desktop" | tr ';=' '\n\n' | grep -Fxq "$type"; then
+            echo "guard: mios-zen.desktop declares $type"; return 1
+        fi
+    done
+    [ -f "$r/etc-xdg/mimeapps.list" ] || { echo "guard: etc/xdg/mimeapps.list is not shipped"; return 1; }
+    for de in '' GNOME Hyprland; do
+        for tool in gio xdg-mime; do
+            for type in $FD_TYPES; do
+                got="$(fd_default "$r" "$de" "$tool" "$type")"
+                [ "$got" = mios-portal.desktop ] \
+                    || { echo "guard: $tool picks '${got:-nothing}' for $type (XDG_CURRENT_DESKTOP='$de')"; return 1; }
+            done
+        done
+    done
+}
+FDT="$TMP/freedesktop"
+fd_fixture "$FDT/shipped" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
+fd_guard "$FDT/shipped" || { echo 'FAIL the shipped freedesktop layer does not make MiOS-Portal the default browser' >&2; exit 1; }
+echo 'PASS gio and xdg-mime resolve http, https and html to mios-portal.desktop over exported Flatpaks and the Fedora lists (GNOME, Hyprland, none)'
+# Planted: each one alone must make the guard fail.
+# fd_plant <name> <expected guard finding>: plant_<name> mutates a copy of the shipped layer.
+fd_plant() {
+    local name="$1" expect="$2" out
+    rm -rf "$FDT/$name"
+    fd_fixture "$FDT/$name" "$ROOT/usr/share/applications" "$ROOT/etc/xdg"
+    "plant_$name" "$FDT/$name"
+    if out="$(fd_guard "$FDT/$name")"; then
+        echo "FAIL planted $name still passed the freedesktop guard" >&2; exit 1
+    fi
+    case "$out" in *"$expect"*) ;; *) echo "FAIL planted $name failed for another reason: $out" >&2; exit 1 ;; esac
+    echo "PASS planted $name fails the freedesktop guard ($out)"
+}
+plant_zen_flatpak_default() { sed -i -E 's|^(x-scheme-handler/https?)=.*|\1=app.zen_browser.zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
+plant_zen_launcher_default() { sed -i 's|^text/html=.*|text/html=mios-zen.desktop;|' "$1/etc-xdg/mimeapps.list"; }
+plant_no_default_list() { rm -f "$1/etc-xdg/mimeapps.list"; }
+plant_zen_launcher_mime() {
+    printf 'MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' >> "$1/usr/share/applications/mios-zen.desktop"
+    update-desktop-database -q "$1/usr/share/applications"
+}
+plant_portal_without_url() { sed -i 's|^Exec=\(.*\) %u$|Exec=\1|' "$1/usr/share/applications/mios-portal.desktop"; }
+plant_portal_without_mime() {
+    sed -i '/^MimeType=/d' "$1/usr/share/applications/mios-portal.desktop"
+    update-desktop-database -q "$1/usr/share/applications"
+}
+fd_plant zen_flatpak_default "gio picks 'app.zen_browser.zen.desktop' for x-scheme-handler/http "
+fd_plant zen_launcher_default "gio picks 'mios-zen.desktop' for text/html "
+fd_plant no_default_list 'etc/xdg/mimeapps.list is not shipped'
+fd_plant zen_launcher_mime 'mios-zen.desktop declares x-scheme-handler/http'
+fd_plant portal_without_url 'mios-portal.desktop Exec has no %u'
+fd_plant portal_without_mime 'mios-portal.desktop does not declare x-scheme-handler/http'
+# Without the projected list a session opens an exported Flatpak, never MiOS-Portal.
+for de in '' GNOME; do
+    got="$(fd_default "$FDT/no_default_list" "$de" gio x-scheme-handler/https)"
+    [ -n "$got" ] && [ "$got" != mios-portal.desktop ] || { echo "FAIL without etc/xdg/mimeapps.list gio picked '${got:-nothing}'" >&2; exit 1; }
+    echo "PASS without etc/xdg/mimeapps.list gio picks $got (XDG_CURRENT_DESKTOP='$de'), which is why the list ships"
+done

@@ -1,15 +1,16 @@
-# AI-hint: Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:8700/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal].
-# AI-related: /usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, mios.toml [desktop.portal], http://localhost:{port}/
+# AI-hint: Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:8700/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for every mime_type listed here (etc/xdg/mimeapps.list from [desktop.default_applications]); the window class is startup_wm_class, the size and glass come from [desktop.portal].
+# AI-related: /usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, /etc/xdg/mimeapps.list, mios.toml [desktop.portal], [desktop.default_applications], http://localhost:{port}/
 [Desktop Entry]
 Type=Application
 Version=1.0
 Name=MiOS Portal
-GenericName=Agent Portal
-Comment=The MiOS Portal (agents, services, settings) in a native glass window
-Exec=/usr/bin/mios-portal
+GenericName=Web Browser
+Comment=The MiOS web browser, with the agent Portal, services and settings, in a native glass window
+Exec=/usr/bin/mios-portal %u
 Icon=/usr/share/mios/portal/icon-192.png
-Categories=Network;System;Utility;
-Keywords=mios;portal;agent;ai;services;dashboard;
+Categories=Network;WebBrowser;System;Utility;
+Keywords=mios;portal;agent;ai;services;dashboard;web;browser;internet;
 Terminal=false
 StartupNotify=true
 StartupWMClass=mios-portal
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;

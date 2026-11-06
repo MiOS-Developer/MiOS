@@ -2731,6 +2731,7 @@ surfaces = [
   { generator = "usr/libexec/mios/mios-manual", check = "check_comment_landing", output = "usr/share/doc/mios/ (harvested passages + mios-src anchors)" },
   { generator = "usr/libexec/mios/mios-manual", check = "check_docs_ratchet_monotone", output = "usr/share/mios/reference/doc-ratchet-floor.tsv" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "usr/share/applications/*.desktop" },
+  { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "etc/xdg/mimeapps.list (from [desktop.default_applications])" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_ai_manifests_fresh", output = "automation/manifest.json" },
   { generator = "tools/native/mios-gen/src/ai_metadata.rs", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_blade_dropins", output = "usr/share/mios/dropins/" },
@@ -17734,19 +17735,23 @@ trailing_comments = [
 ]
 
 [desktop.launchers.mios-portal]
-exec_cmd = "/usr/bin/mios-portal"
+# %u: the default browser receives the URL it is opened for (xdg-open, gio open, the portal's OpenURI).
+exec_cmd = "/usr/bin/mios-portal %u"
 title = "MiOS Portal"
-generic_name = "Agent Portal"
-comment = "The MiOS Portal (agents, services, settings) in a native glass window"
+generic_name = "Web Browser"
+comment = "The MiOS web browser, with the agent Portal, services and settings, in a native glass window"
 icon = "/usr/share/mios/portal/icon-192.png"
-categories = "Network;System;Utility;"
-keywords = "mios;portal;agent;ai;services;dashboard;"
+categories = "Network;WebBrowser;System;Utility;"
+keywords = "mios;portal;agent;ai;services;dashboard;web;browser;internet;"
 startup_wm_class = "mios-portal"
+# The browser types the default browser handles. [desktop.default_applications] names this launcher,
+# so every type here is its [Default Applications] entry in etc/xdg/mimeapps.list.
+mime_type = "text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;"
 port_key = "agent_pipe"
 scheme = "http"
 path = "/"
-ai_hint = "Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:{port}/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal]."
-ai_related = "/usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, mios.toml [desktop.portal], http://localhost:{port}/"
+ai_hint = "Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:{port}/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for every mime_type listed here (etc/xdg/mimeapps.list from [desktop.default_applications]); the window class is startup_wm_class, the size and glass come from [desktop.portal]."
+ai_related = "/usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, /etc/xdg/mimeapps.list, mios.toml [desktop.portal], [desktop.default_applications], http://localhost:{port}/"
 
 [desktop.launchers.mios-xbox]
 exec_cmd = "/usr/libexec/mios/vfio/setup-looking-glass.py --launch"
@@ -17817,18 +17822,33 @@ flatpak_app_id = "app.zen_browser.zen"
 exec_cmd = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding app.zen_browser.zen @@u %u @@"
 title = "Zen Browser"
 generic_name = "Web Browser"
-comment = "MiOS web browser with SSOT theme and window glass"
+comment = "Secondary MiOS web browser with SSOT theme and window glass"
 icon = "app.zen_browser.zen"
 categories = "Network;WebBrowser;"
 keywords = "web;browser;internet;zen;"
 startup_wm_class = "zen"
-mime_type = "text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;"
+# No mime_type: MiOS-Portal ([desktop.launchers.mios-portal]) is the default browser. Zen stays
+# launchable, and its Exec still takes %u for a URL it is asked to open by name.
 actions = [
   { id = "new-window", name = "New Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --new-window" },
   { id = "new-private-window", name = "New Private Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --private-window" },
 ]
 ai_hint = "Zen, a secondary MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it."
 ai_related = "/usr/libexec/mios/mios-flatpak-run, /usr/libexec/mios/mios-theme-render (apply_web)"
+
+# System-wide default applications (freedesktop mime-apps spec). mios-gen render-desktop writes
+# etc/xdg/mimeapps.list from this table, and check_desktop_launchers diffs it (Law 8). Each launcher
+# named here is the [Default Applications] handler for every type its [desktop.launchers.<name>]
+# mime_type declares; a type that two named launchers declare lists both, in this order. A named
+# launcher must exist, declare a mime_type and take a %u/%U/%f/%F argument, or the render fails.
+# Why /etc/xdg and not /usr (Law 1): $XDG_CONFIG_DIRS outranks every $XDG_DATA_DIRS/applications
+# list, so these defaults beat Fedora's /usr/share/applications/mimeapps.list (shared-mime-info),
+# its gnome-mimeapps.list (gnome-session; read because usr/lib/environment.d/50-mios.conf sets
+# XDG_CURRENT_DESKTOP=GNOME) and the bare associations exported Flatpaks declare (Zen, Epiphany).
+# The spec has no /usr location above those lists, and both data-dir files belong to RPMs.
+# ~/.config/mimeapps.list still overrides it per user.
+[desktop.default_applications]
+launchers = ["mios-portal"]         # MiOS-Portal, the default browser ([aliases].browser)
 
 # Native MiOS Portal window (usr/bin/mios-portal -> usr/share/mios/portal/Host.qml in the qml runtime;
 # never inside Quickshell). Name, app id (startup_wm_class), URL scheme/port_key/path come from the
@@ -18330,10 +18350,13 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # Desktop resilience runs real offscreen QML/lint and a non-activating GObject D-Bus fixture.
 # The MiOS-Xbox gates build a real offline image: regf hives filled by hivexregedit (perl-hivex) and captured
 # with wimlib-imagex (wimlib-utils).
+# test-flatpak-bake resolves the default browser the way a session does: gio (glib2) and xdg-mime
+# (xdg-utils) over isolated XDG dirs whose association caches update-desktop-database
+# (desktop-file-utils) builds.
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
             "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
-            "perl-hivex", "wimlib-utils"]
+            "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.
