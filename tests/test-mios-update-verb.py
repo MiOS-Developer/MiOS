@@ -32,10 +32,11 @@ def test_known_verbs_update():
     )
 
 def test_profile_verbs_update():
-    profile_script = os.path.join(_ROOT, "etc/profile.d/mios-verbs.sh")
+    # The profile.d consolidation (ADR-0030) folded mios-verbs.sh into 50-mios.sh.
+    profile_script = os.path.join(_ROOT, "etc/profile.d/50-mios.sh")
     with open(profile_script, "r", encoding="utf-8") as f:
         content = f.read()
-    assert "mios-update" in content, "mios-update missing in etc/profile.d/mios-verbs.sh"
+    assert "mios-update" in content, "mios-update missing in etc/profile.d/50-mios.sh"
 
 def main() -> int:
     print("[test-mios-update-verb] Running mios update verb verification...")
