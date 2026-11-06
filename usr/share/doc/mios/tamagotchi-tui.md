@@ -327,12 +327,27 @@ foreshortens and rotates with the model. Species noses, ears and props remain
 solid geometry and occlude the texture through the same depth buffer. Atlas
 gaps preserve the actual species/head material. No second
 set of voxel eyes or mouth competes with the expression. Side/rear views cannot
-paint a floating frontal badge. A thin, spaced atlas supplies larger heads. Underresolved heads use individual
-terminal glyphs anchored to visible head-local UVs; each complete glyph cell must
-still pass the actual material/depth mask. Tiny scenes, legacy pixel sprites and
-read-only snapshots retain literal facial text. Compact HUDs keep a separate
-mood caption. The same clipped projection is used for
-half-block, quadrant, braille and plain ASCII output.
+paint a floating frontal badge. Underresolved heads use individual terminal
+glyphs anchored to visible head-local UVs; each complete glyph cell must still
+pass the actual material/depth mask. Intermediate sizes draw the same expression
+as multi-cell ASCII shading using the configured character ramp. Packed-pixel
+renderers switch to the stroke atlas when each glyph has enough visible cells;
+plain ASCII retains character shading at larger sizes. Expression spacing and
+aspect follow the text box rather than stretching one character into a rectangle.
+
+Face zoom eases toward the visible face-plane centre, preserving actual zoom.
+It does not shrink the model to fit: high zoom in a small viewport can crop the
+outer parentheses and eyes. The actual material/depth mask still occludes
+species noses, oblique edges and rear faces. Face ink uses the existing outline
+contrast setting to remain distinct from dark head material.
+
+Tiny scenes, legacy pixel sprites and read-only snapshots retain literal facial
+text. Compact HUDs keep a separate mood caption. The same clipped projection is
+used for half-block, quadrant, braille and plain ASCII output. Tiny Roster and
+Sprite Studio previews frame the displayed life stage; egg previews retain
+whole-pet framing even when the live pet has hatched. Hatching and resizing
+transition from the previously displayed stage. Selected menu text retains the
+high-contrast palette pair, with reverse selection on monochrome terminals.
 
 Each new pet receives a cosmetic room seed and initial theme derived from its
 creation seed, independently of the saved memory-game RNG. Eight vendor themes

@@ -4469,3 +4469,49 @@ Receipts:
  /home/mios/.local/state/mios/mios-mons-face-live/mios-adult-status-receipt.json
  /home/mios/.local/state/mios/mios-mons-input-completion/mios-hud-negative-receipt.json
  /home/mios/.local/state/mios/mios-mons-input-completion/mios-ci-six-fresh-result.json
+
+
+### MiOS-Mon face and preview follow-up, 2026-11-06
+
+Source 09a6a08e0fec7c401c6d0c75f4b0d9aa8b1e215a adopts the renderer's
+reviewed 52ed108d5 cutoff through2814bdc03 and fixes the independent UI review's
+three cases: preview framing follows the displayed stage, hatch/resize animation
+begins at the previously drawn stage, and selected colored menu text retains
+the high-contrast palette pair. Monochrome reverse selection remains.
+
+Fresh isolated rootless MiOS-DEV verification processed317 unit and13 CLI tests,
+warning-fatal Clippy, crate/full-native-workspace formatting, release and static
+artifact checks with exit0. Artifact SHA-256:
+bd7e08f3fd53500d4b41e4089167f8a64e7ea56451298c2bca2c017ec7cf7549.
+The planted pre-fix preview/transition/contrast control processed18 selected
+tests:15 pass and the three intended assertions fail, cargo101 and wrapper0.
+Receipt paths are under
+/home/mios/.local/state/mios/mios-mons-input-completion/mios-face-preview-verify
+and mios-preview-negative. Renderer positive and planted UV/contrast/pivot
+receipts are mios-kaomoji-scale-revision-result.json in the same parent.
+
+The actual mios x86_64 guest, MiOS0.3.0, renders this preview in still-open PiP
+seat mios-mons-console, parent window0x55b22d56eb40, WAYLAND-1, nested tmux
+window@7/pane%7. Normal UI hatch, pause, adult Roster preview while liveEgg,
+and StudioEgg preview while liveBaby were exercised. Production localhost8310
+browser watch/top157, portrait/top146 and landscape/top146 touch actions pass
+without test CSS injection. Actual active-client geometry sets pane sizing.
+A separate20x8 TERM=linux ASCII/mono fixture with graphical and tmux identity
+unset passed raw cursor/SGR menus, release filtering, retained birth code,
+honest unverified-Inputd fallback and equal terminal attributes after quit.
+
+Actual nested captures cover settled Face100/150/200/300/400, three frames
+each; relative orbit0/45/90/135/180; and an unpaused Room pair with different
+frame hashes before repausing. Root inspected the native screenshots, and a
+parent desktop capture confirms the visible PiP beside the head. Small views
+show native facial characters; larger views show enlarged packed expressions.
+At300/400 percent the small PiP intentionally crops outer parentheses/eyes:
+zoom is not silently refitted. Full preview receipt:
+ /home/mios/.local/state/mios/mios-mons-face-preview-live/mios-preview-acceptance-summary.json.
+
+This is automated preview evidence, not an additional installed/main artifact.
+Main0275b6388 still has the verified installed EADF artifact. A bounded
+lighting-disabled face-contrast follow-up and independent09a review precede the
+next publication. Physical mobile clients, a controller assigned to this seat,
+VT0/tty0, ARM64 and other Blades remain unverified. Native ttyd Bash on
+http://localhost:8310 is used; no PowerShell/container deployment is claimed.
