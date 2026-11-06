@@ -154,13 +154,19 @@ struct Held {
     /// A thumbstick click resolves on release (it may still become part of the toggle chord).
     deferred: bool,
 }
-/// Per-device nav state (INV-6: flushed on any context, profile, owner or target change, a Guide press and SYN_DROPPED).
+/// Per-device nav state (INV-6: flushed on any context, profile, app, owner or target change, a cursor-mode toggle, a
+/// Guide press and SYN_DROPPED).
 #[derive(Clone, Debug, Default)]
 struct NavState {
     held: BTreeMap<Input, Held>,
     profile: Option<String>,
+    /// P4: the verified foreground app whose layer selected `profile` (None: the base profile applies).
+    app: Option<String>,
     armed: [bool; 2],
     stick_dir: [Option<Dir>; 2],
+    /// P5: camera profiles treat each stick's x and y as separate half-axes: [stick][axis] armed and held direction.
+    axis_armed: [[bool; 2]; 2],
+    axis_dir: [[Option<Dir>; 2]; 2],
     hat: (i32, i32),
     triggers: [bool; 2],
     thumbs_cancelled: bool,
@@ -262,6 +268,9 @@ pub struct Router {
     nav: NavState,
     /// A MiOS tmux client runs under the focused terminal (C-09): selects `<profile>_tmux` over `<profile>_plain`.
     pub tmux: bool,
+    /// P3/P4: the verified foreground app of the focused terminal (or this route's pane), a key of [nav.apps]. It is
+    /// bound to the target it was verified for: a focus change clears it until the new target is verified.
+    app: Option<String>,
     /// The pad reports analog triggers only (no BTN_TL2/TR2, e.g. xpad): nav synthesizes their digital edges.
     pub analog_triggers: bool,
     /// Kernel-truth repair is releasing buttons: a repaired release never fires a tap.
@@ -321,9 +330,11 @@ impl Router {
             fraction_hwheel: 0.0,
             nav: NavState {
                 armed: [true; 2],
+                axis_armed: [[true; 2]; 2],
                 ..NavState::default()
             },
             tmux: false,
+            app: None,
             analog_triggers: false,
             repairing: false,
             guide_tap: None,
@@ -480,6 +491,8 @@ impl Router {
             self.escape_fired = false;
             self.guide_clean = None;
             self.guide_single = None;
+            // P8: an app verified for the previous window never applies to the next one.
+            self.app = None;
         }
         if self.capture_override == Some(true) {
             let pending = matches!(
@@ -532,6 +545,42 @@ impl Router {
         }
         self.tmux = tmux;
         self.nav_sync()
+    }
+    /// P4: the verified foreground app (a key of [nav.apps]; anything else counts as none) and the target it was
+    /// verified for (the focused window's address and pid; None on a VT or an explicit route). A result for another
+    /// target than the current one is stale (focus moved while it was verified) and selects nothing. Any change flushes
+    /// held nav input, then the profile follows (an app layer applies only to a base context it refines).
+    pub fn set_app(&mut self, app: Option<&str>, verified_for: Option<&(String, u64)>) -> Output {
+        let app = app
+            .filter(|a| self.global.controller.nav.apps.contains_key(*a))
+            .filter(|_| verified_for == self.capture_target.as_ref())
+            .map(str::to_owned);
+        let mut out = Output::default();
+        if self.app != app {
+            self.guide_clean = None;
+            self.guide_single = None;
+            self.app = app;
+            out.extend(self.nav_flush());
+        }
+        out.extend(self.nav_sync());
+        out
+    }
+    pub fn app(&self) -> Option<&str> {
+        self.app.as_deref()
+    }
+    /// The focused window this router follows (address, pid); None on a VT or an explicit route.
+    pub fn target(&self) -> Option<&(String, u64)> {
+        self.capture_target.as_ref()
+    }
+    /// P5-P7: the active profile was selected by a camera app (axis-separable, repeating stick flicks).
+    pub fn camera(&self) -> bool {
+        self.nav.profile.is_some()
+            && self
+                .nav
+                .app
+                .as_ref()
+                .and_then(|a| self.global.controller.nav.apps.get(a))
+                .is_some_and(|a| a.camera)
     }
     pub fn set_context(&mut self, context: &str) -> Output {
         let (owned, room) = (self.app_owned(), self.room());
@@ -644,12 +693,15 @@ impl Router {
         }
     }
     pub fn resync(&mut self, keys: BTreeSet<u16>, axes: BTreeMap<u16, Axis>) -> Output {
-        let o = self.reset();
+        let mut o = self.reset();
         self.pressed = keys.clone();
         self.blocked = keys.clone();
         self.suppressed = keys;
         self.axes = axes;
         self.dropping = false;
+        // P5: re-arm from the kernel's axes, not the neutralized ones: a stick still deflected fires only after it
+        // falls below flick_off.
+        o.extend(self.nav_flush());
         o
     }
     /// Kernel truth may repair missed releases; it never invents a press or an
@@ -767,6 +819,9 @@ impl Router {
         self.pad.neutralize();
         self.suppressed.extend(&self.pressed);
         let mut out = out;
+        // INV-6: an owner change flushes held nav input even when a captured terminal keeps its profile, so a held
+        // camera stick never repeats across a North capture or a release.
+        out.extend(self.nav_flush());
         out.extend(self.nav_sync());
         out
     }
@@ -904,6 +959,8 @@ impl Router {
                 o.extend(self.release_outputs());
                 self.suppressed.extend(&self.pressed);
                 self.cursor = !self.cursor;
+                // P7: a held nav direction (a camera stick, a console LS arrow) stops at the toggle.
+                o.extend(self.nav_flush());
                 o.actions.push(format!(
                     "input:cursor {}",
                     if self.cursor { "on" } else { "off" }
@@ -1130,9 +1187,7 @@ impl Router {
                         && toggle.contains(&e.code)
                         && toggle.iter().all(|code| self.pressed.contains(code))
                     {
-                        for code in &toggle {
-                            self.nav.held.remove(&Input::Button(*code));
-                        }
+                        o.extend(self.nav_flush());
                         self.suppressed.extend(toggle);
                         if let Some(Value::Press(action)) = self.nav_value(Input::ToggleChord) {
                             self.fire(&action, &mut o);
@@ -1169,9 +1224,8 @@ impl Router {
                 && toggle_codes.iter().all(|c| self.pressed.contains(c))
             {
                 self.nav.thumbs_cancelled = true;
-                for c in &toggle_codes {
-                    self.nav.held.remove(&Input::Button(*c));
-                }
+                // R-23 and the chord ruling: any L3+R3 overlap cancels both singles and every held nav direction.
+                o.extend(self.nav_flush());
                 if self.guide_thumb.is_some() {
                     self.guide_thumb = None;
                     self.guide_thumb_cancel = true;
@@ -1230,6 +1284,7 @@ impl Router {
                 self.suppressed.insert(e.code);
                 self.pending_guide = false;
                 self.cursor = false;
+                o.extend(self.nav_flush());
                 o.actions.push("input:cursor off".into());
                 return o;
             }
@@ -1250,6 +1305,7 @@ impl Router {
                     self.suppressed.extend(&escape);
                     self.pending_guide = false;
                     self.cursor = !self.cursor;
+                    o.extend(self.nav_flush());
                     o.actions.push(format!(
                         "input:cursor {}",
                         if self.cursor { "on" } else { "off" }
@@ -1386,6 +1442,7 @@ impl Router {
                     {
                         o.extend(self.release_outputs());
                         self.cursor = !self.cursor;
+                        o.extend(self.nav_flush());
                         if self.room() {
                             self.pad.increment(1);
                         } else {
@@ -1830,18 +1887,32 @@ impl Router {
     }
     /// The shell surface, captured navigation consumer or ordinary window's profile; None for raw app/room input.
     pub fn nav_profile(&self) -> Option<String> {
+        self.nav_target().0
+    }
+    /// P4: (profile, the app whose layer selected it). The shell overlay and the room keep their own rules; otherwise a
+    /// verified app refines the base context (the captured terminal's navigation context, or the window's own).
+    fn nav_target(&self) -> (Option<String>, Option<String>) {
+        let nav = &self.global.controller.nav;
         if self.shell_overlay {
-            return self.global.controller.nav.profile_name("shell", false);
+            return (nav.profile_name("shell", false), None);
         }
         if self.room() {
-            return None;
+            return (None, None);
         }
-        let context = if self.app_owned() {
-            self.capture_navigation_context.as_deref()?
+        let base = if self.app_owned() {
+            match self.capture_navigation_context.as_deref() {
+                Some(c) => c,
+                None => return (None, None),
+            }
         } else {
             &self.context
         };
-        self.global.controller.nav.profile_name(context, self.tmux)
+        if let Some(app) = &self.app {
+            if let Some(p) = nav.app_profile(app, base, self.tmux) {
+                return (Some(p), Some(app.clone()));
+            }
+        }
+        (nav.profile_name(base, self.tmux), None)
     }
     pub fn nav_active(&self) -> bool {
         self.nav.profile.is_some()
@@ -1886,12 +1957,15 @@ impl Router {
             let mag = x.hypot(y);
             if mag < off {
                 self.nav.armed[i] = true;
+                self.nav.axis_armed[i] = [true; 2];
                 continue;
             }
             if !self.nav.armed[i] || mag < on {
                 continue;
             }
             self.nav.armed[i] = false;
+            // A layer flick also disarms a camera profile's half-axes: releasing Guide never turns it into a pan.
+            self.nav.axis_armed[i] = [false; 2];
             let dir = if x.abs() >= y.abs() {
                 if x > 0.0 {
                     3
@@ -1920,6 +1994,8 @@ impl Router {
             // virtual pointer (the gpm pointer on a VT), RT/LT click, every other button keeps its nav meaning.
             o.extend(self.release_outputs());
             self.cursor = !self.cursor;
+            // P7: toggling cursor mode stops every held nav direction (the sticks become the pointer, or come back).
+            o.extend(self.nav_flush());
             o.actions.push(format!(
                 "input:cursor {}",
                 if self.cursor { "on" } else { "off" }
@@ -1929,10 +2005,12 @@ impl Router {
         o.actions.push(action.to_owned());
     }
     /// INV-6: cancel every tap/hold timer and auto-repeat, and forget held nav inputs (their release fires nothing).
-    /// Key output is atomic strokes, so no virtual key is ever left down.
+    /// Key output is atomic strokes, so no virtual key is ever left down. A stick (in a camera profile: each of its
+    /// half-axes) still at or past flick_off must fall below it before it can fire again.
     fn nav_flush(&mut self) -> Output {
         self.nav.held.clear();
         self.nav.stick_dir = [None; 2];
+        self.nav.axis_dir = [[None; 2]; 2];
         self.nav.wheel = 0.0;
         self.nav.hwheel = 0.0;
         let (lx, ly) = self.stick(0, 1, self.global.controller.stick_deadzone, 1.0);
@@ -1940,12 +2018,16 @@ impl Router {
         let (rx, ry) = self.stick(rx, ry, self.global.controller.stick_deadzone, 1.0);
         let off = self.global.controller.nav.flick_off;
         self.nav.armed = [lx.hypot(ly) < off, rx.hypot(ry) < off];
+        self.nav.axis_armed = [
+            [lx.abs() < off, ly.abs() < off],
+            [rx.abs() < off, ry.abs() < off],
+        ];
         Output::default()
     }
     /// Follow the current profile; a change flushes nav state, and moving between vpad and nav releases the pad.
     fn nav_sync(&mut self) -> Output {
-        let want = self.nav_profile();
-        if want == self.nav.profile {
+        let (want, app) = self.nav_target();
+        if want == self.nav.profile && app == self.nav.app {
             return Output::default();
         }
         let crossing = want.is_some() != self.nav.profile.is_some();
@@ -1966,7 +2048,24 @@ impl Router {
             o.app.extend(app);
         }
         self.nav.profile = want;
+        self.nav.app = app;
         o
+    }
+    /// P5: a camera app's own repeat row (the only place a right-stick flick repeats), else [nav.repeat].
+    fn repeat_for(&self, input: Input) -> Option<(u64, u64)> {
+        let nav = &self.global.controller.nav;
+        if let Some(app) = self
+            .nav
+            .app
+            .as_ref()
+            .and_then(|a| nav.apps.get(a))
+            .filter(|a| a.camera)
+        {
+            if let Some(r) = app.repeat.get(&input) {
+                return Some(*r);
+            }
+        }
+        nav.repeat.get(&input).copied()
     }
     fn nav_press(&mut self, input: Input, o: &mut Output) {
         let thumb = matches!(input, Input::Button(0x13d | 0x13e));
@@ -1980,7 +2079,7 @@ impl Router {
             Value::Press(a) if !thumb => {
                 let a = a.clone();
                 self.fire(&a, o);
-                self.global.controller.nav.repeat.get(&input).copied()
+                self.repeat_for(input)
             }
             _ => None,
         };
@@ -2121,8 +2220,61 @@ impl Router {
     fn is_pointer(&self, input: Input) -> bool {
         matches!(self.nav_value(input), Some(Value::Press(a)) if a.starts_with("pointer:"))
     }
+    /// P5: a camera profile's sticks. After radial() (stick_deadzone), each stick's x and y are independent half-axes:
+    /// a component at or past flick_on presses Right/Down (positive) or Left/Up (negative) and fires at once, it
+    /// repeats while held (repeat_for), and falling below flick_off releases it, firing nothing. Both axes may be held
+    /// (a diagonal), and rolling the stick releases one direction and presses the next without centring. P7: only a
+    /// stick routed to navigation projects camera keys; a stick the pointer owns (cursor mode) holds nothing and
+    /// re-arms only below flick_off.
+    fn camera_flicks(&mut self, o: &mut Output) {
+        let (on, off) = (
+            self.global.controller.nav.flick_on,
+            self.global.controller.nav.flick_off,
+        );
+        for (i, right) in [(0usize, false), (1, true)] {
+            let (xa, ya) = self.stick_axes(right);
+            let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
+            let routed = self.axis_sink(xa) == Sink::Nav;
+            for (j, v) in [x, y].into_iter().enumerate() {
+                if !routed {
+                    if let Some(dir) = self.nav.axis_dir[i][j].take() {
+                        self.nav.held.remove(&Input::Stick { right, dir });
+                    }
+                    self.nav.axis_armed[i][j] = v.abs() < off;
+                    continue;
+                }
+                let dir = match (j, v > 0.0) {
+                    (0, true) => Dir::Right,
+                    (0, false) => Dir::Left,
+                    (_, true) => Dir::Down,
+                    (_, false) => Dir::Up,
+                };
+                // Each half-axis is its own input: a sign change between two samples (the other half was below
+                // flick_off) releases the held direction and may press the opposite one at once.
+                let flipped = self.nav.axis_dir[i][j].is_some_and(|d| d != dir);
+                if v.abs() < off || flipped {
+                    if let Some(held) = self.nav.axis_dir[i][j].take() {
+                        self.nav_release(Input::Stick { right, dir: held }, o);
+                    }
+                    self.nav.axis_armed[i][j] = true;
+                    if v.abs() < off {
+                        continue;
+                    }
+                }
+                if self.nav.axis_dir[i][j].is_some() || !self.nav.axis_armed[i][j] || v.abs() < on {
+                    continue;
+                }
+                self.nav.axis_armed[i][j] = false;
+                self.nav.axis_dir[i][j] = Some(dir);
+                self.nav_press(Input::Stick { right, dir }, o);
+            }
+        }
+    }
     /// Discrete stick directions: one flick per deflection past flick_on; the stick re-arms below flick_off.
     fn nav_flicks(&mut self, o: &mut Output) {
+        if self.camera() {
+            return self.camera_flicks(o);
+        }
         let (on, off) = (
             self.global.controller.nav.flick_on,
             self.global.controller.nav.flick_off,
@@ -2229,7 +2381,12 @@ impl Router {
             }
         }
         for a in fire {
+            let cursor = a == crate::nav::CURSOR;
             self.fire(&a, o);
+            if cursor {
+                // P7: the toggle flushed every held input; nothing else of this tick fires after it.
+                break;
+            }
         }
     }
 }
@@ -5270,5 +5427,499 @@ mod guide_dock_contract {
         assert_eq!(tap(&mut router, GUIDE, 100).actions, ["tmux:menu"]);
         assert_eq!(tap(&mut router, GUIDE, 200).actions, ["tmux:menu"]);
         assert!(wait(&mut router, 400).actions.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod camera_contract {
+    //! Protocol P4-P7 (camera profiles) and the root rulings: delayed focus, key release, chord flush, editor
+    //! isolation. Fixtures inject the P1 tables (config::tests::fixture_mon); the vendor SSOT does not carry them yet.
+    use super::*;
+    const NORTH: u16 = 0x133;
+    const TL2: u16 = 0x138;
+    const TR2: u16 = 0x139;
+    const START: u16 = 0x13b;
+    const GUIDE: u16 = 0x13c;
+    const L3: u16 = 0x13d;
+    const R3: u16 = 0x13e;
+    fn axes() -> BTreeMap<u16, Axis> {
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] {
+            axes.insert(
+                c,
+                Axis {
+                    min: -32768,
+                    max: 32767,
+                    value: 0,
+                },
+            );
+        }
+        for c in [2, 5] {
+            axes.insert(
+                c,
+                Axis {
+                    min: 0,
+                    max: 255,
+                    value: 0,
+                },
+            );
+        }
+        for c in [16, 17] {
+            axes.insert(
+                c,
+                Axis {
+                    min: -1,
+                    max: 1,
+                    value: 0,
+                },
+            );
+        }
+        axes
+    }
+    /// A terminal (tmux client) whose verified foreground app is `app`.
+    fn mon(app: Option<&str>) -> Router {
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        r.set_tmux(true);
+        r.set_app(app, None);
+        r
+    }
+    fn key(r: &mut Router, c: u16, v: i32) -> Output {
+        r.event(Event::new(EV_KEY, c, v), 0)
+    }
+    /// The raw centered value whose post-radial component (stick_deadzone 0.12) is `x` with the other at `o`.
+    fn raw(x: f64, o: f64) -> i32 {
+        let post = x.hypot(o);
+        if post == 0.0 {
+            return 0;
+        }
+        let dz = 0.12;
+        let c = x * (post * (1.0 - dz) + dz) / post;
+        (((c + 1.0) * 65535.0 / 2.0) - 32768.0).round() as i32
+    }
+    /// One stick sample (x, y in post-radial units), then SYN.
+    fn stick(r: &mut Router, right: bool, x: f64, y: f64) -> Output {
+        let (xa, ya) = if right { (3, 4) } else { (0, 1) };
+        let mut o = r.event(Event::new(EV_ABS, xa, raw(x, y)), 0);
+        o.extend(r.event(Event::new(EV_ABS, ya, raw(y, x)), 0));
+        o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0));
+        o
+    }
+    fn wait(r: &mut Router, ms: u64) -> Output {
+        let mut o = Output::default();
+        for _ in 0..ms / 10 {
+            o.extend(r.tick(0.01));
+        }
+        o
+    }
+    fn count(o: &Output, action: &str) -> usize {
+        o.actions.iter().filter(|a| *a == action).count()
+    }
+    fn camera_keys(o: &Output) -> Vec<String> {
+        o.actions
+            .iter()
+            .filter(|a| a.starts_with("key:ALT+"))
+            .cloned()
+            .collect()
+    }
+    #[test]
+    fn camera_profile_follows_the_verified_app_only_where_it_refines_the_base() {
+        let mut r = mon(Some("mon"));
+        assert_eq!(r.nav_profile().as_deref(), Some("mon_tmux"));
+        assert!(r.camera() && r.app() == Some("mon"));
+        r.set_tmux(false);
+        assert_eq!(r.nav_profile().as_deref(), Some("mon_plain"));
+        r.set_app(None, None);
+        assert_eq!(r.nav_profile().as_deref(), Some("terminal_plain"));
+        assert!(!r.camera());
+        r.set_app(Some("unknown"), None);
+        assert!(r.app().is_none(), "only a [nav.apps] name selects anything");
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut vt = Router::with_context(c, l, axes(), "console");
+        vt.set_app(Some("mon"), None);
+        assert_eq!(vt.nav_profile().as_deref(), Some("mon_console_plain"));
+        vt.set_tmux(true);
+        assert_eq!(vt.nav_profile().as_deref(), Some("mon_console_tmux"));
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut desk = Router::with_context(c, l, axes(), "desktop-2d");
+        desk.set_app(Some("mon"), None);
+        assert_eq!(
+            desk.nav_profile().as_deref(),
+            Some("desktop"),
+            "an app refines only terminal and console"
+        );
+        assert!(!desk.camera());
+    }
+    /// Root ruling (backward compatibility): with an invalid app row the router keeps the base profile.
+    #[test]
+    fn an_invalid_app_layer_leaves_the_base_profile_live() {
+        let (c, l) = crate::config::tests::try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["app_poll_ms"] = 49.into();
+        })
+        .unwrap();
+        assert!(c.controller.nav.app_error.is_some());
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        r.set_tmux(true);
+        r.set_app(Some("mon"), None);
+        assert_eq!(r.nav_profile().as_deref(), Some("terminal_tmux"));
+        assert!(!r.camera() && r.app().is_none());
+        assert_eq!(stick(&mut r, true, 0.8, 0.0).actions, ["tmux:focus right"]);
+    }
+    /// INPUTD spec test 2 (negative: repeat_for ignoring the app table gives [500, 250], 4 fires).
+    #[test]
+    fn camera_axis_separable_flicks() {
+        let mut r = mon(Some("mon"));
+        let mut o = stick(&mut r, false, 0.8, 0.0);
+        assert_eq!(o.actions, ["key:ALT+6"], "fires at once");
+        o.extend(wait(&mut r, 1000));
+        assert_eq!(
+            count(&o, "key:ALT+6"),
+            1 + 1 + (1000 - 200) / 70,
+            "[200, 70]: {:?}",
+            o.actions
+        );
+        assert_eq!(o.actions.len(), 13);
+        let o = stick(&mut r, false, 0.2, 0.0);
+        assert!(o.actions.is_empty(), "the release fires nothing");
+        assert!(wait(&mut r, 1000).actions.is_empty());
+    }
+    /// INPUTD spec test 3 (negative: the dominant-direction path gives one direction on a diagonal).
+    #[test]
+    fn camera_diagonal_and_roll() {
+        let mut r = mon(Some("mon"));
+        let o = stick(&mut r, false, 0.7, -0.7);
+        assert_eq!(o.actions, ["key:ALT+6", "key:ALT+8"], "both half-axes");
+        let o = wait(&mut r, 270);
+        assert_eq!(
+            (count(&o, "key:ALT+6"), count(&o, "key:ALT+8")),
+            (2, 2),
+            "both repeat"
+        );
+        stick(&mut r, false, 0.0, 0.0);
+        let o = stick(&mut r, false, 0.8, 0.0);
+        assert_eq!(o.actions, ["key:ALT+6"]);
+        let o = stick(&mut r, false, 0.2, -0.8);
+        assert_eq!(
+            o.actions,
+            ["key:ALT+8"],
+            "rolling releases right and presses up without centring"
+        );
+        let o = wait(&mut r, 300);
+        assert!(count(&o, "key:ALT+8") > 0 && count(&o, "key:ALT+6") == 0);
+        stick(&mut r, false, 0.0, 0.0);
+        stick(&mut r, false, 0.8, 0.0);
+        let o = stick(&mut r, false, -0.8, 0.0);
+        assert_eq!(o.actions, ["key:ALT+4"], "a sign flip between two samples");
+        let o = wait(&mut r, 300);
+        assert!(count(&o, "key:ALT+4") > 0 && count(&o, "key:ALT+6") == 0);
+        // The right stick: orbit on x, tilt on y (RS_UP = Alt+3, RS_DOWN = Alt+1).
+        let o = stick(&mut r, true, -0.7, 0.7);
+        assert_eq!(o.actions, ["key:ALT+7", "key:ALT+1"]);
+    }
+    /// INPUTD spec test 4 (negatives: RS in [nav.repeat] is a load error; an ungated app repeat repeats tmux:focus).
+    #[test]
+    fn rs_repeats_only_in_camera_apps() {
+        let mut r = mon(None);
+        assert_eq!(r.nav_profile().as_deref(), Some("terminal_tmux"));
+        let mut o = stick(&mut r, true, 0.8, 0.0);
+        o.extend(wait(&mut r, 2000));
+        o.extend(stick(&mut r, true, 0.75, 0.0));
+        assert_eq!(o.actions, ["tmux:focus right"], "one flick, never a repeat");
+        let mut r = mon(Some("mon"));
+        let mut o = stick(&mut r, true, 0.8, 0.0);
+        o.extend(wait(&mut r, 2000));
+        assert_eq!(count(&o, "key:ALT+9"), 1 + 1 + (2000 - 200) / 70);
+    }
+    /// INPUTD spec test 5 (negative: releasing below flick_on instead of flick_off stops the 0.4 repeat).
+    #[test]
+    fn camera_deadzone_and_hysteresis() {
+        let mut r = mon(Some("mon"));
+        let o = r.event(Event::new(EV_ABS, 0, (0.11 * 32767.0) as i32), 0);
+        assert!(o.actions.is_empty());
+        let mut o = r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0);
+        o.extend(wait(&mut r, 300));
+        assert!(
+            o.actions.is_empty(),
+            "raw 0.11 is inside stick_deadzone 0.12"
+        );
+        let mut o = stick(&mut r, false, 0.55, 0.0);
+        o.extend(wait(&mut r, 300));
+        assert!(o.actions.is_empty(), "0.55 is below flick_on");
+        assert_eq!(stick(&mut r, false, 0.65, 0.0).actions, ["key:ALT+6"]);
+        let mut o = stick(&mut r, false, 0.4, 0.0);
+        o.extend(wait(&mut r, 300));
+        assert!(count(&o, "key:ALT+6") > 0, "0.4 is above flick_off: held");
+        let mut o = stick(&mut r, false, 0.25, 0.0);
+        o.extend(wait(&mut r, 300));
+        assert!(o.actions.is_empty(), "0.25 releases");
+    }
+    /// INPUTD spec test 6: every flush stops the repeat, the release fires nothing, and a still-deflected stick
+    /// re-arms only below flick_off (negative: drop the START cursor-toggle flush in legacy_action).
+    #[test]
+    fn camera_flush_cases() {
+        type Case = fn(&mut Router) -> Output;
+        let cases: [(&str, Case); 9] = [
+            ("set_app(None)", |r| r.set_app(None, None)),
+            ("focus target change", |r| {
+                r.set_focus("terminal", Some(("0xother".into(), 9)), false)
+            }),
+            ("tmux toggle", |r| r.set_tmux(false)),
+            ("Guide press", |r| {
+                let mut o = key(r, GUIDE, 1);
+                o.extend(key(r, GUIDE, 0));
+                o
+            }),
+            ("shell overlay", |r| r.set_shell_overlay(true)),
+            ("SYN_DROPPED + resync", |r| {
+                let mut o = r.event(Event::new(EV_SYN, SYN_DROPPED, 0), 0);
+                let mut axes = axes();
+                axes.get_mut(&0).unwrap().value = raw(0.8, 0.0);
+                o.extend(r.resync(BTreeSet::new(), axes));
+                o
+            }),
+            ("North capture", |r| {
+                let mut o = key(r, NORTH, 1);
+                o.extend(key(r, NORTH, 0));
+                o
+            }),
+            ("START cursor toggle", |r| key(r, START, 1)),
+            ("L3+R3 chord", |r| {
+                let mut o = key(r, L3, 1);
+                o.extend(key(r, R3, 1));
+                o
+            }),
+        ];
+        for (name, case) in cases {
+            let mut r = mon(Some("mon"));
+            r.set_capture_navigation_context(Some("terminal"));
+            assert_eq!(
+                stick(&mut r, false, 0.8, 0.0).actions,
+                ["key:ALT+6"],
+                "{name}"
+            );
+            wait(&mut r, 250);
+            let mut o = case(&mut r);
+            o.extend(wait(&mut r, 600));
+            assert!(
+                camera_keys(&o).is_empty(),
+                "{name}: no held direction survives the flush: {:?}",
+                o.actions
+            );
+            if name == "START cursor toggle" {
+                key(&mut r, START, 0);
+                key(&mut r, START, 1);
+                key(&mut r, START, 0);
+            }
+            if name == "L3+R3 chord" {
+                key(&mut r, L3, 0);
+                key(&mut r, R3, 0);
+            }
+            let o = stick(&mut r, false, 0.8, 0.0);
+            assert!(
+                camera_keys(&o).is_empty(),
+                "{name}: a still-deflected stick stays disarmed: {:?}",
+                o.actions
+            );
+            if r.camera() {
+                stick(&mut r, false, 0.2, 0.0);
+                assert_eq!(
+                    stick(&mut r, false, 0.8, 0.0).actions,
+                    ["key:ALT+6"],
+                    "{name}: re-armed below flick_off"
+                );
+            }
+        }
+    }
+    /// INPUTD spec test 7: cursor mode owns both sticks and the triggers; no camera key is projected there.
+    #[test]
+    fn cursor_mode_owns_sticks_and_triggers() {
+        let mut r = mon(Some("mon"));
+        assert_eq!(key(&mut r, START, 1).actions, ["input:cursor on"]);
+        key(&mut r, START, 0);
+        let mut o = stick(&mut r, false, 0.9, 0.0);
+        o.extend(stick(&mut r, true, 0.0, -0.9));
+        o.extend(wait(&mut r, 500));
+        assert!(o.actions.is_empty(), "{:?}", o.actions);
+        assert!(o.pointer.iter().any(|e| e.kind == EV_REL && e.code == 1));
+        assert!(o.pointer.iter().any(|e| e.kind == EV_REL && e.code == 6));
+        let o = key(&mut r, TR2, 1);
+        assert!(o.pointer.contains(&Event::new(EV_KEY, 0x110, 1)) && o.actions.is_empty());
+        key(&mut r, TR2, 0);
+        assert_eq!(key(&mut r, START, 1).actions, ["input:cursor off"]);
+        key(&mut r, START, 0);
+        assert!(camera_keys(&stick(&mut r, false, 0.9, 0.0)).is_empty());
+        stick(&mut r, false, 0.0, 0.0);
+        assert_eq!(stick(&mut r, false, 0.9, 0.0).actions, ["key:ALT+6"]);
+    }
+    /// INPUTD spec test 8 and the chord ruling (negative: drop the L3+R3 overlap flush; Alt+6 keeps repeating).
+    #[test]
+    fn camera_triggers_and_thumbs() {
+        let mut r = mon(Some("mon"));
+        let mut o = key(&mut r, TR2, 1);
+        o.extend(wait(&mut r, 1000));
+        key(&mut r, TR2, 0);
+        assert_eq!(count(&o, "key:ALT+EQUAL"), 1 + 1 + (1000 - 250) / 90);
+        let mut a = mon(Some("mon"));
+        a.analog_triggers = true;
+        let mut o = a.event(Event::new(EV_ABS, 2, 200), 0);
+        o.extend(wait(&mut a, 1000));
+        assert_eq!(count(&o, "key:ALT+MINUS"), 1 + 1 + (1000 - 250) / 90);
+        assert!(a.event(Event::new(EV_ABS, 2, 0), 0).actions.is_empty());
+        assert!(
+            key(&mut r, R3, 1).actions.is_empty(),
+            "R3 resolves on release"
+        );
+        let o = wait(&mut r, 1000);
+        assert!(o.actions.is_empty(), "thumbs never repeat");
+        assert_eq!(key(&mut r, R3, 0).actions, ["key:ALT+5"]);
+        let mut o = key(&mut r, L3, 1);
+        o.extend(key(&mut r, L3, 0));
+        assert_eq!(o.actions, ["key:ALT+z"]);
+        stick(&mut r, true, 0.5, 0.0);
+        let mut o = key(&mut r, R3, 1);
+        o.extend(key(&mut r, R3, 0));
+        assert!(o.actions.is_empty(), "R-23: R3 with its stick deflected");
+        stick(&mut r, true, 0.0, 0.0);
+        // L3+R3: the toggle chord, neither single, and every held camera direction stops.
+        let mut r = mon(Some("mon"));
+        stick(&mut r, true, 0.8, 0.0);
+        let mut o = r.event(Event::new(EV_KEY, L3, 1), 1000);
+        o.extend(r.event(Event::new(EV_KEY, R3, 1), 1050));
+        o.extend(wait(&mut r, 800));
+        o.extend(key(&mut r, L3, 0));
+        o.extend(key(&mut r, R3, 0));
+        assert_eq!(o.actions, ["mios:hyprland-3d-toggle"], "{:?}", o.actions);
+    }
+    /// INPUTD spec test 9: the room, the shell overlay and a captured non-terminal own their input even with app mon.
+    #[test]
+    fn camera_never_in_room_shell_or_captured_app() {
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut r = Router::with_context(c, l, axes(), "desktop-3d");
+        r.set_app(Some("mon"), None);
+        assert_eq!(r.axis_sink(0), Sink::Room);
+        assert!(r.nav_profile().is_none() && !r.camera());
+        let mut r = mon(Some("mon"));
+        r.set_shell_overlay(true);
+        assert_eq!(r.nav_profile().as_deref(), Some("shell"));
+        assert!(!r.camera());
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut r = Router::with_context(c, l, axes(), "app-capture");
+        r.set_app(Some("mon"), None);
+        assert_eq!(r.axis_sink(0), Sink::App);
+        assert!(!r.camera());
+        let o = stick(&mut r, false, 0.9, 0.0);
+        assert!(o.actions.is_empty() && !o.app.is_empty(), "raw to the app");
+    }
+    /// Root ruling (delayed focus): a verification that resolves after a focus change never applies to the new
+    /// window (negative: drop the verified_for filter in set_app).
+    #[test]
+    fn a_delayed_app_result_never_applies_to_the_next_window() {
+        let mut r = mon(None);
+        let a = ("0xmon".to_owned(), 41u64);
+        let b = ("0xshell".to_owned(), 42u64);
+        r.set_focus("terminal", Some(a.clone()), false);
+        r.set_app(Some("mon"), Some(&a));
+        assert!(r.camera());
+        stick(&mut r, false, 0.8, 0.0);
+        r.set_focus("terminal", Some(b.clone()), false);
+        assert!(
+            r.app().is_none() && !r.camera(),
+            "the focus change clears it"
+        );
+        let mut o = r.set_app(Some("mon"), Some(&a));
+        o.extend(wait(&mut r, 500));
+        assert!(
+            r.app().is_none() && camera_keys(&o).is_empty(),
+            "the result verified for the old window is stale"
+        );
+        r.set_app(Some("mon"), Some(&b));
+        assert!(r.camera(), "a result verified for the new window applies");
+        r.set_app(Some("mon"), None);
+        assert!(!r.camera(), "an unbound result never applies to a window");
+    }
+    /// Root rulings (editor isolation, no care or locomotion effect): with no verified app no stick, trigger or
+    /// thumb ever projects an Alt camera form, and in the camera profile they project only atomic Alt strokes, never a
+    /// plain key that could type into the seed editor, a raw pad event or a pointer event (negative: let the app layer
+    /// apply without a verified app).
+    #[test]
+    fn camera_forms_only_reach_a_verified_app_and_are_atomic_alt_strokes() {
+        let inputs: [(u16, u16, i32); 10] = [
+            (EV_ABS, 0, 30000),
+            (EV_ABS, 0, -30000),
+            (EV_ABS, 1, 30000),
+            (EV_ABS, 1, -30000),
+            (EV_ABS, 3, 30000),
+            (EV_ABS, 4, -30000),
+            (EV_KEY, TL2, 1),
+            (EV_KEY, TR2, 1),
+            (EV_KEY, L3, 1),
+            (EV_KEY, R3, 1),
+        ];
+        let mut g = 7u64;
+        let mut next = || {
+            g = g
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            g >> 33
+        };
+        for (context, tmux) in [
+            ("terminal", true),
+            ("terminal", false),
+            ("console", true),
+            ("console", false),
+        ] {
+            for app in [None, Some("mon")] {
+                let (c, l) = crate::config::tests::fixture_mon();
+                let mut r = Router::with_context(c, l, axes(), context);
+                r.set_tmux(tmux);
+                r.set_app(app, None);
+                let mut out = Output::default();
+                for _ in 0..400 {
+                    let (kind, code, v) = inputs[(next() % 10) as usize];
+                    let v = if next() % 2 == 0 { 0 } else { v };
+                    out.extend(r.event(Event::new(kind, code, v), 0));
+                    out.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0));
+                    out.extend(r.tick(0.03));
+                }
+                let alt: Vec<_> = camera_keys(&out);
+                if app.is_none() {
+                    assert!(alt.is_empty(), "{context} tmux={tmux}: {alt:?}");
+                    continue;
+                }
+                assert!(!alt.is_empty(), "{context}: the camera profile projects");
+                // The L3+R3 overlap stays the contract's toggle chord (the room toggle, or the graphical VT).
+                let chord = ["mios:hyprland-3d-toggle", "mios:graphical-vt"];
+                assert!(
+                    out.actions
+                        .iter()
+                        .all(|a| a.starts_with("key:ALT+") || chord.contains(&a.as_str())),
+                    "{context} tmux={tmux}: only Alt forms: {:?}",
+                    out.actions
+                );
+                assert!(
+                    out.app
+                        .iter()
+                        .all(|e| e.kind != EV_KEY && (e.kind != EV_ABS || e.value == 0)),
+                    "no pad input reaches the terminal, only rest values"
+                );
+                assert!(out.pointer.is_empty());
+                for a in out.actions.iter().filter(|a| a.starts_with("key:")) {
+                    let chord = crate::nav::parse_key_chord(&a[4..]).unwrap();
+                    assert_eq!(chord.mods, [56], "{a}: exactly Alt");
+                    let mut held = BTreeSet::new();
+                    for e in crate::nav::stroke(&chord)
+                        .iter()
+                        .filter(|e| e.kind == EV_KEY)
+                    {
+                        if e.value == 1 {
+                            held.insert(e.code);
+                        } else {
+                            held.remove(&e.code);
+                        }
+                    }
+                    assert!(held.is_empty(), "{a}: nothing stays held across a change");
+                }
+            }
+        }
     }
 }
