@@ -40,4 +40,4 @@ RDE supports six execution providers:
 - `blade`: Remote execution dispatched over SSH to a MiOS-Metal Blade (`[rde.blade]` target_host, target_port 8100, user, and Ed25519 identity key).
 - `docker`, `ssh`, `kubernetes`: Standard compatibility providers.
 
-Forwarded ports are synchronized from `[ports]` in `mios.toml`, including `devpod_agent` (8100), IDE ports (8900, 8910), and agent communication buses (8700, 8500, 8600).
+`miosd rde` forwards `code_server`, `devpod_agent`, `agent_pipe`, `llm_light` and `pgvector` (8900, 8910, 8700, 8500, 8600 by default). The DevPod agent port is resolved from `[ports].devpod_agent`: `rde status` and `rde up` report the resolved value as `devpod_agent_port`, and an overlay that moves it moves the forward instead of adding a second one. The devcontainer files' `forwardPorts` are a separate projection (`[dotfiles.devcontainer].forward_port_keys`) and do not include the agent port.

@@ -33,6 +33,25 @@ pub struct DevpodConfig {
     pub docker_credentials_sync: bool,
     pub devcontainer_path: String,
     pub forward_ports: Vec<u16>,
+    /// The DevPod agent transport port: [ports].devpod_agent once the SSOT
+    /// resolves, and always one of `forward_ports`.
+    pub agent_port: u16,
+}
+
+impl DevpodConfig {
+    /// Forward `port` as the agent transport. It takes the old agent port's
+    /// place in `forward_ports`, so a moved port is never forwarded twice.
+    fn set_agent_port(&mut self, port: u16) {
+        let old = self.agent_port;
+        match self.forward_ports.iter().position(|p| *p == old) {
+            Some(i) => self.forward_ports[i] = port,
+            None => self.forward_ports.push(port),
+        }
+        let mut kept = false;
+        self.forward_ports
+            .retain(|p| *p != port || !std::mem::replace(&mut kept, true));
+        self.agent_port = port;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +90,7 @@ impl Default for RdeConfig {
                 docker_credentials_sync: true,
                 devcontainer_path: ".devcontainer/devcontainer.json".to_string(),
                 forward_ports: vec![8900, 8910, 8700, 8500, 8600],
+                agent_port: 8910,
             },
             opentofu: OpenTofuConfig {
                 binary_path: "/usr/local/bin/tofu".to_string(),
@@ -188,18 +208,25 @@ impl RdeConfig {
                 }
             }
 
-            // Sync devpod_agent port from SSOT [ports] if present
-            if let Some(ports_tab) = doc.get("ports").and_then(|v| v.as_table()) {
-                if let Some(p) = ports_tab.get("devpod_agent").and_then(|v| v.as_integer()) {
-                    let agent_port = p as u16;
-                    if !cfg.devpod.forward_ports.contains(&agent_port) {
-                        cfg.devpod.forward_ports.push(agent_port);
-                    }
-                }
-            }
+            cfg.apply_ports(&doc)?;
         }
 
         Ok(cfg)
+    }
+
+    /// [ports].devpod_agent is the agent transport this engine forwards and
+    /// reports; the SSOT value replaces the compiled fallback.
+    fn apply_ports(&mut self, doc: &toml::Value) -> Result<(), String> {
+        if let Some(ports_tab) = doc.get("ports").and_then(|v| v.as_table()) {
+            if let Some(p) = ports_tab.get("devpod_agent").and_then(|v| v.as_integer()) {
+                let agent_port = u16::try_from(p)
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or_else(|| format!("[ports].devpod_agent = {p} is not a TCP port"))?;
+                self.devpod.set_agent_port(agent_port);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -253,6 +280,7 @@ pub struct ProvisioningPlan {
     pub ide: String,
     pub socket_path: String,
     pub forward_ports: Vec<u16>,
+    pub devpod_agent_port: u16,
     pub command: Vec<String>,
     pub env: HashMap<String, String>,
     pub license_audit: LicenseAuditReport,
@@ -511,6 +539,7 @@ pub fn plan_workspace(
         ide,
         socket_path: config.socket_path,
         forward_ports: config.devpod.forward_ports,
+        devpod_agent_port: config.devpod.agent_port,
         command: cmd,
         env,
         license_audit: audit,
@@ -559,8 +588,8 @@ pub async fn run_up(
     println!("Container Engine: {}", plan.engine);
     println!("Socket Path:      {}", plan.socket_path);
     println!(
-        "Forwarded Ports:  {:?} (devpod_agent = 8910)",
-        plan.forward_ports
+        "Forwarded Ports:  {:?} (devpod_agent = {})",
+        plan.forward_ports, plan.devpod_agent_port
     );
     println!(
         "License Taint:    0 AGPL / 0 BSL (Compliant: {})",
@@ -690,7 +719,7 @@ pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Res
             "orchestrator": config.orchestrator,
             "engine": config.engine,
             "ide": config.ide,
-            "devpod_agent_port": 8910,
+            "devpod_agent_port": config.devpod.agent_port,
             "forward_ports": config.devpod.forward_ports,
             "zero_agpl_compliant": audit.compliant,
         });
@@ -706,7 +735,7 @@ pub async fn run_status(workspace: &str, json: bool, root: Option<&Path>) -> Res
     println!("  Orchestrator: {} (DevPod MPL-2.0)", config.orchestrator);
     println!("  Engine:       {}", config.engine);
     println!("  IDE:          {}", config.ide);
-    println!("  Agent Port:   8910 (forwarded)");
+    println!("  Agent Port:   {} (forwarded)", config.devpod.agent_port);
     println!("  Compliant:    {} (0 AGPL / 0 BSL)", audit.compliant);
     Ok(0)
 }
@@ -857,6 +886,71 @@ mod tests {
             "code_server port 8900 must be included"
         );
         assert!(!config.telemetry);
+    }
+
+    fn ports_doc(body: &str) -> toml::Value {
+        toml::from_str(body).expect("fixture TOML parses")
+    }
+
+    #[test]
+    fn test_ssot_agent_port_replaces_the_fallback_in_place() {
+        let mut config = RdeConfig::default();
+        config
+            .apply_ports(&ports_doc("[ports]\ndevpod_agent = 19910\n"))
+            .expect("a valid port resolves");
+        assert_eq!(config.devpod.agent_port, 19910);
+        assert_eq!(
+            config.devpod.forward_ports,
+            vec![8900, 19910, 8700, 8500, 8600],
+            "the moved agent port takes the fallback's slot"
+        );
+        // Negative control: the compiled fallback is no longer forwarded.
+        assert!(!config.devpod.forward_ports.contains(&8910));
+    }
+
+    #[test]
+    fn test_ssot_agent_port_equal_to_the_fallback_changes_nothing() {
+        let mut config = RdeConfig::default();
+        config
+            .apply_ports(&ports_doc("[ports]\ndevpod_agent = 8910\n"))
+            .unwrap();
+        assert_eq!(config.devpod.agent_port, 8910);
+        assert_eq!(
+            config.devpod.forward_ports,
+            RdeConfig::default().devpod.forward_ports
+        );
+    }
+
+    #[test]
+    fn test_ssot_agent_port_on_a_forwarded_port_is_forwarded_once() {
+        let mut config = RdeConfig::default();
+        config
+            .apply_ports(&ports_doc("[ports]\ndevpod_agent = 8700\n"))
+            .unwrap();
+        assert_eq!(config.devpod.agent_port, 8700);
+        assert_eq!(config.devpod.forward_ports, vec![8900, 8700, 8500, 8600]);
+    }
+
+    #[test]
+    fn test_no_ssot_agent_port_keeps_the_fallback() {
+        let mut config = RdeConfig::default();
+        config
+            .apply_ports(&ports_doc("[ports]\ncode_server = 8900\n"))
+            .unwrap();
+        assert_eq!(config.devpod.agent_port, 8910);
+        assert!(config.devpod.forward_ports.contains(&8910));
+    }
+
+    #[test]
+    fn test_ssot_agent_port_outside_the_tcp_range_is_rejected() {
+        for bad in ["0", "65536", "-1"] {
+            let mut config = RdeConfig::default();
+            let err = config
+                .apply_ports(&ports_doc(&format!("[ports]\ndevpod_agent = {bad}\n")))
+                .expect_err("an impossible port must not wrap into a real one");
+            assert!(err.contains("[ports].devpod_agent"), "{err}");
+            assert_eq!(config.devpod.agent_port, 8910, "nothing was applied");
+        }
     }
 
     #[test]
