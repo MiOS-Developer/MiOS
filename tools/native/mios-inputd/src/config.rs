@@ -553,6 +553,16 @@ impl GlobalConfig {
                 deadzone: cfg.controller.stick_deadzone,
             },
         )?;
+        // P3: a healthy context worker refreshes a verified app before context_stale_ms expires it, so a held camera
+        // profile never flickers back to the base profile between two verifications.
+        let nav = &cfg.controller.nav;
+        let budget = nav.app_poll_ms + nav.app_query_timeout_ms;
+        if !nav.apps.is_empty() && budget >= cfg.controller.context_stale_ms {
+            let stale = cfg.controller.context_stale_ms;
+            cfg.controller.nav.app_failed(format!(
+                "nav.app_poll_ms + nav.app_query_timeout_ms ({budget} ms) must stay below controller.context_stale_ms ({stale} ms)"
+            ));
+        }
         let legacy: LegacyConfig = v
             .get("desktop")
             .and_then(|v| v.get("hyprland"))
@@ -1266,6 +1276,10 @@ BTN_TR="hypr:workspace e+1"
     pub fn try_fixture_nav_with(
         edit: impl FnOnce(&mut toml::Value),
     ) -> Result<(GlobalConfig, LegacyConfig), String> {
+        GlobalConfig::from_value(&fixture_nav_value(edit))
+    }
+    /// The merged SSOT value behind fixture_nav (before GlobalConfig parses it).
+    pub fn fixture_nav_value(edit: impl FnOnce(&mut toml::Value)) -> toml::Value {
         let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
             .parse()
             .unwrap();
@@ -1294,7 +1308,176 @@ BTN_TR="hypr:workspace e+1"
             .unwrap()
             .insert("global".into(), global);
         edit(&mut v);
-        GlobalConfig::from_value(&v)
+        v
+    }
+    /// The twelve camera rows every `mon_*` profile restates (protocol P1).
+    const MON_ROWS: &str = r#"LS_LEFT = "key:ALT+4"
+LS_RIGHT = "key:ALT+6"
+LS_UP = "key:ALT+8"
+LS_DOWN = "key:ALT+2"
+RS_LEFT = "key:ALT+7"
+RS_RIGHT = "key:ALT+9"
+RS_UP = "key:ALT+3"
+RS_DOWN = "key:ALT+1"
+BTN_TL2 = "key:ALT+MINUS"
+BTN_TR2 = "key:ALT+EQUAL"
+BTN_THUMBL = "key:ALT+z"
+BTN_THUMBR = "key:ALT+5"
+"#;
+    /// Protocol P1's tables, verbatim, as the GAME lane lands them under [keybindings.global.controller.nav] (G2).
+    pub fn mon_nav_tables() -> toml::Value {
+        let mut text = r#"app_poll_ms = 250
+app_query_timeout_ms = 150
+[apps.mon]
+exe = ["/usr/bin/mios-tamagotchi"]
+camera = true
+contexts = { terminal = "mon", console = "mon_console" }
+repeat = { LS_UP = [200, 70], LS_DOWN = [200, 70], LS_LEFT = [200, 70], LS_RIGHT = [200, 70],
+           RS_UP = [200, 70], RS_DOWN = [200, 70], RS_LEFT = [200, 70], RS_RIGHT = [200, 70],
+           BTN_TL2 = [250, 90], BTN_TR2 = [250, 90] }
+"#
+        .to_owned();
+        for (profile, base) in [
+            ("mon_tmux", "terminal_tmux"),
+            ("mon_plain", "terminal_plain"),
+            ("mon_console_tmux", "console_tmux"),
+            ("mon_console_plain", "console_plain"),
+        ] {
+            text += &format!("[{profile}]\ninherits = \"{base}\"\n{MON_ROWS}");
+        }
+        text.parse().unwrap()
+    }
+    /// The vendor nav fixture plus the P1 app layer, then `edit`.
+    pub fn try_fixture_mon_with(
+        edit: impl FnOnce(&mut toml::Value),
+    ) -> Result<(GlobalConfig, LegacyConfig), String> {
+        try_fixture_nav_with(|v| {
+            let nav = v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap();
+            for (k, t) in mon_nav_tables().as_table().unwrap() {
+                nav.insert(k.clone(), t.clone());
+            }
+            edit(v);
+        })
+    }
+    pub fn fixture_mon() -> (GlobalConfig, LegacyConfig) {
+        try_fixture_mon_with(|_| {}).unwrap()
+    }
+    /// Root ruling: the per-user candidate is an explicit registration in the user tier of the layered TOML. A sparse
+    /// user file adds `user_exe` and inherits the vendor app (exe, contexts, repeat), through the resolver's merge.
+    #[test]
+    fn user_exe_is_an_explicit_layered_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let (vendor, user) = (dir.path().join("vendor.toml"), dir.path().join("user.toml"));
+        let value = fixture_nav_value(|v| {
+            let nav = v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap();
+            for (k, t) in mon_nav_tables().as_table().unwrap() {
+                nav.insert(k.clone(), t.clone());
+            }
+        });
+        std::fs::write(&vendor, toml::to_string(&value).unwrap()).unwrap();
+        let sample = "/home/mios/.local/bin/mios-tamagotchi-sample";
+        std::fs::write(
+            &user,
+            format!("[keybindings.global.controller.nav.apps.mon]\nuser_exe = [\"{sample}\"]\n"),
+        )
+        .unwrap();
+        let merged = mios_resolver::layers::merge_layer_files(&[&vendor, &user]).unwrap();
+        let (cfg, _) = GlobalConfig::from_value(&merged).unwrap();
+        let mon = &cfg.controller.nav.apps["mon"];
+        assert_eq!(mon.user_exe, [sample]);
+        assert_eq!(
+            mon.exe,
+            ["/usr/bin/mios-tamagotchi"],
+            "the vendor list is kept"
+        );
+        assert!(mon.camera && mon.contexts.contains_key("terminal") && !mon.repeat.is_empty());
+        let (vendor_only, _) = GlobalConfig::from_value(
+            &mios_resolver::layers::merge_layer_files(&[&vendor]).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            vendor_only.controller.nav.apps["mon"].user_exe.is_empty(),
+            "absent = none"
+        );
+        // An invalid registration (relative, a basename) is reported and drops only the app layer.
+        for bad in [
+            "mios-tamagotchi-sample",
+            "~/.local/bin/mios-tamagotchi-sample",
+            "/a/../b",
+        ] {
+            std::fs::write(
+                &user,
+                format!("[keybindings.global.controller.nav.apps.mon]\nuser_exe = [\"{bad}\"]\n"),
+            )
+            .unwrap();
+            let merged = mios_resolver::layers::merge_layer_files(&[&vendor, &user]).unwrap();
+            let (cfg, _) = GlobalConfig::from_value(&merged).unwrap();
+            let nav = &cfg.controller.nav;
+            assert!(
+                nav.apps.is_empty()
+                    && nav
+                        .app_error
+                        .as_deref()
+                        .is_some_and(|e| e.contains("user_exe")),
+                "{bad}: {:?}",
+                nav.app_error
+            );
+            assert_eq!(
+                nav.profile_name("terminal", true).as_deref(),
+                Some("terminal_tmux"),
+                "base navigation keeps working"
+            );
+        }
+    }
+    /// Root ruling (backward compatibility): an invalid apps/app_* row is rejected and reported WITHOUT disabling the
+    /// base navigation (negative: make the app layer's error fatal again in NavConfig::from_value).
+    #[test]
+    fn an_invalid_app_layer_never_disables_base_navigation() {
+        for edit in [
+            |v: &mut toml::Value| {
+                v["keybindings"]["global"]["controller"]["nav"]["app_poll_ms"] = 49.into()
+            },
+            |v: &mut toml::Value| {
+                v["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"]["exe"] =
+                    toml::Value::Array(vec!["relative/x".into()])
+            },
+            |v: &mut toml::Value| {
+                v["keybindings"]["global"]["controller"]["nav"]["mon_tmux"]["RS_UP"] =
+                    "tmux:focus up".into()
+            },
+            |v: &mut toml::Value| {
+                v["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"]["contexts"]
+                    ["terminal"] = "missing".into()
+            },
+        ] {
+            let (cfg, legacy) = try_fixture_mon_with(edit).expect("the policy still loads");
+            let nav = &cfg.controller.nav;
+            assert!(nav.apps.is_empty() && nav.app_error.is_some(), "reported");
+            assert_eq!(
+                nav.profile_name("terminal", true).as_deref(),
+                Some("terminal_tmux")
+            );
+            assert_eq!(
+                nav.profile_name("desktop-2d", false).as_deref(),
+                Some("desktop")
+            );
+            assert_eq!(
+                nav.app_profile("mon", "terminal", true),
+                None,
+                "no camera layer"
+            );
+            assert!(legacy.validate().is_ok());
+        }
+        // A base-navigation row stays a load error, as before.
+        assert!(try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["repeat"]["RS_UP"] =
+                toml::Value::Array(vec![200.into(), 70.into()]);
+        })
+        .is_err());
     }
     fn vendor_with_room(extra: &str) -> Result<(GlobalConfig, LegacyConfig), String> {
         let mut v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
