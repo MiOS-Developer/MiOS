@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
-| in_progress | 86 |
-| completed | 1889 |
+| pending | 1749 |
+| in_progress | 85 |
+| completed | 1890 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3763 |
+| total | 3764 |
 
 0 record(s) carry at least one override.
 
@@ -2658,6 +2658,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3761` Bound MiOS-Mon per-instance idle cost and controller context polling -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3762` Design and implement authoritative local and remote MiOS-Mon multiplayer hosting -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3763` Keep essential pet needs visible in compact portrait HUDs -- pending · owner mios-claude-continuation · P1 · size M
+- `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
 
 ## WS-MIOSSYS
 
@@ -4493,7 +4494,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- in_progress · owner mios-claude-continuation · P2 · size M
 - `task_3757` Widen shaded voxel faces and preserve expressions at oblique and profile views -- in_progress · owner mios-claude-continuation · P1 · size M
 - `task_3758` Add a shared camera rig across live pet and preview views -- in_progress · owner mios-claude-continuation · P1 · size L
-- `task_3759` Route focused pet camera input through verified Inputd app profiles -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3759` Route focused pet camera input through verified Inputd app profiles -- completed · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size L
 - `task_3760` Make voxel faces and surface details readable across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L
 
 ## terminal
