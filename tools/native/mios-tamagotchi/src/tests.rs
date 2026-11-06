@@ -2,10 +2,10 @@
 // AI-related: capabilities.rs, config.rs, input.rs, render.rs, sprite.rs
 use crate::{
     capabilities::{ColorMode, Depth, Probe, Renderer},
-    config::{Config, parse_rgb},
-    input::{Action, action},
-    render::{Colors, SpriteWidget, braille, quadrant, quantize, snapshot},
-    sprite::{Sprite, cell_size, fit_scale},
+    config::{parse_rgb, Config},
+    input::{action, Action},
+    render::{braille, quadrant, quantize, snapshot, Colors, SpriteWidget},
+    sprite::{cell_size, fit_scale, Sprite},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
@@ -366,11 +366,9 @@ fn canonical_menu_entry_is_a_portable_native_tui_not_a_preview_launcher() {
     assert!(game.vt_ok);
     assert_eq!(game.argv, ["/usr/bin/mios-tamagotchi"]);
     assert_eq!(game.argv_for(true), game.argv_for(false));
-    assert!(
-        value["build"]["native"]["categories"]["apps"]["binaries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|name| name.as_str() == Some("mios-tamagotchi"))
-    );
+    assert!(value["build"]["native"]["categories"]["apps"]["binaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|name| name.as_str() == Some("mios-tamagotchi")));
 }

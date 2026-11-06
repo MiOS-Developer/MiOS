@@ -2,8 +2,8 @@
 // AI-related: game.rs, save.rs, ui.rs
 use crate::{
     config::Config,
-    game::{Care, Direction, Game, MAX_COINS, Stage},
-    save::{Store, load},
+    game::{Care, Direction, Game, Stage, MAX_COINS},
+    save::{load, Store},
     ui::{Effect, Ui},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -194,12 +194,10 @@ fn invalid_writes_preserve_previous_save_and_bad_reads_never_reset_it() {
     let mut envelope: serde_json::Value = serde_json::from_slice(&original).unwrap();
     envelope["schema"] = 999.into();
     std::fs::write(&path, serde_json::to_vec(&envelope).unwrap()).unwrap();
-    assert!(
-        store
-            .load()
-            .unwrap_err()
-            .contains("unsupported save schema")
-    );
+    assert!(store
+        .load()
+        .unwrap_err()
+        .contains("unsupported save schema"));
 }
 
 #[test]

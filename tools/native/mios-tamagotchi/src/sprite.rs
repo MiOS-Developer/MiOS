@@ -2108,11 +2108,9 @@ mod body_face_tests {
                     "(x_x)"
                 );
             }
-            assert!(
-                Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
-                    .face_overlay()
-                    .is_none()
-            );
+            assert!(Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
+                .face_overlay()
+                .is_none());
         }
     }
 
@@ -2142,7 +2140,11 @@ mod body_face_tests {
                 // Clear air between two feet proves that the lower half is not
                 // a stretched, continuously filled head silhouette.
                 let feet_y = if style == SpriteStyle::EightBit {
-                    if stage == Stage::Adult { 15 } else { 14 }
+                    if stage == Stage::Adult {
+                        15
+                    } else {
+                        14
+                    }
                 } else if stage == Stage::Adult {
                     30
                 } else {
@@ -2298,19 +2300,17 @@ mod body_face_tests {
                     assert_eq!(anchor.text, Expression::Happy.kaomoji(usize::MAX));
                     assert!(anchor.center_x < front.width && anchor.y < front.height);
                     for yaw in [90, 135, 180, 225, 270] {
-                        assert!(
-                            Sprite::voxel_with_appearance(
-                                stage,
-                                Expression::Happy,
-                                style,
-                                usize::MAX,
-                                yaw,
-                                false,
-                                appearance
-                            )
-                            .face_overlay()
-                            .is_none()
-                        );
+                        assert!(Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            usize::MAX,
+                            yaw,
+                            false,
+                            appearance
+                        )
+                        .face_overlay()
+                        .is_none());
                     }
                 }
             }
@@ -2318,19 +2318,15 @@ mod body_face_tests {
         let mut model = VoxelModel::default();
         model.ellipsoid([0.0; 3], [3.0; 3], 1);
         model.face = Some(([0.0, 0.0, 3.5], "(o_o)"));
-        assert!(
-            model
-                .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
-                .face_overlay()
-                .is_some()
-        );
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
+            .face_overlay()
+            .is_some());
         model.ellipsoid([0.0, 0.0, 8.0], [3.0; 3], 8);
-        assert!(
-            model
-                .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
-                .face_overlay()
-                .is_none()
-        );
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false, 0.32)
+            .face_overlay()
+            .is_none());
     }
 
     #[test]
@@ -2362,12 +2358,10 @@ mod body_face_tests {
                 assert!(s.downsample_to_fit(0, 5).face_overlay().is_none());
             }
         }
-        assert!(
-            Sprite::new(1, 1, vec![Some(1)])
-                .unwrap()
-                .face_overlay()
-                .is_none()
-        );
+        assert!(Sprite::new(1, 1, vec![Some(1)])
+            .unwrap()
+            .face_overlay()
+            .is_none());
     }
 
     #[test]
@@ -2438,11 +2432,9 @@ mod animation_tests {
             );
         }
         for index in [16, 17, u8::MAX] {
-            assert!(
-                Sprite::new(1, 1, vec![Some(index)])
-                    .unwrap_err()
-                    .contains("palette")
-            );
+            assert!(Sprite::new(1, 1, vec![Some(index)])
+                .unwrap_err()
+                .contains("palette"));
         }
         assert!(Sprite::new(256, 256, vec![Some(15); 65536]).is_ok());
         for (width, height) in [(0, 1), (1, 0), (257, 1), (1, 257), (u16::MAX, u16::MAX)] {
@@ -3159,13 +3151,12 @@ mod appearance_tests {
                     }
                 }
             }
-            assert!(
-                s.recolored(255, 254)
-                    .pixels
-                    .iter()
-                    .flatten()
-                    .all(|&c| c < 16)
-            );
+            assert!(s
+                .recolored(255, 254)
+                .pixels
+                .iter()
+                .flatten()
+                .all(|&c| c < 16));
             assert_eq!(s.pixels, before);
         }
     }
@@ -3480,10 +3471,9 @@ mod species_detail_tests {
                         .unwrap_or_else(|| panic!("{stage:?} {shape} {mood:?} lost its face"));
                     assert_eq!(face.text, mood.kaomoji(0));
                     // The anchor sits on an opaque head pixel in the upper body.
-                    assert!(
-                        s.pixel(u32::from(face.center_x), u32::from(face.y), 1)
-                            .is_some()
-                    );
+                    assert!(s
+                        .pixel(u32::from(face.center_x), u32::from(face.y), 1)
+                        .is_some());
                     if stage != Stage::Baby {
                         assert!(face.y < s.height / 2);
                     }
@@ -3832,12 +3822,10 @@ mod native_head_surface_tests {
                 }
             }
         }
-        assert!(
-            Sprite::new(1, 1, vec![Some(9)])
-                .unwrap()
-                .head_uv(0, 0)
-                .is_none()
-        );
+        assert!(Sprite::new(1, 1, vec![Some(9)])
+            .unwrap()
+            .head_uv(0, 0)
+            .is_none());
     }
 }
 

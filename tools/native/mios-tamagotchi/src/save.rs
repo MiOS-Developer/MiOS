@@ -504,11 +504,10 @@ mod supplied_legacy_progression_review {
         }
         game.train(0, &config.game).unwrap();
         game.progress.last_train_tick = Some(game.age_ticks + 1);
-        assert!(
-            game.validate_habitat(&config.habitat)
-                .unwrap_err()
-                .contains("future training tick")
-        );
+        assert!(game
+            .validate_habitat(&config.habitat)
+            .unwrap_err()
+            .contains("future training tick"));
         for schema in 1..=4 {
             let bytes =
                 serde_json::to_vec(&serde_json::json!({"schema":schema,"game":game})).unwrap();

@@ -6,14 +6,14 @@ use clap::ValueEnum;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Layout},
     style::{Modifier, Style},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    Terminal,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,9 +26,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, Sender},
+        Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -929,15 +929,13 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         assert_eq!(output.stdout, value.as_bytes());
-        assert!(
-            callback(
-                Path::new("/own helper/'$`#(job)"),
-                Path::new("/reply ' $`"),
-                Choice::Feed
-            )
-            .unwrap()
-            .contains("####(job)")
-        );
+        assert!(callback(
+            Path::new("/own helper/'$`#(job)"),
+            Path::new("/reply ' $`"),
+            Choice::Feed
+        )
+        .unwrap()
+        .contains("####(job)"));
         assert!(callback(Path::new("/bad\nhelper"), Path::new("/reply"), Choice::Feed).is_err());
     }
     #[test]

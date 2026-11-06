@@ -534,9 +534,7 @@ fn code_named_progress_loads_only_matching_birth_without_changing_bytes() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains(&format!("{} says: {}", profile.name, expected))
-    );
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains(&format!("{} says: {}", profile.name, expected)));
 }

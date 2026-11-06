@@ -1022,11 +1022,9 @@ mod tests {
             enabled: false,
             ..rules
         };
-        assert!(
-            WorldFrame::render(&disabled, None, c, (10, 10))
-                .pixels
-                .iter()
-                .all(Option::is_none)
-        );
+        assert!(WorldFrame::render(&disabled, None, c, (10, 10))
+            .pixels
+            .iter()
+            .all(Option::is_none));
     }
 }

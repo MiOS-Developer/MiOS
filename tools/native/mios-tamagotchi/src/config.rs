@@ -247,12 +247,10 @@ mod training_palette_validation_tests {
         assert!(config.validate().is_ok());
         let archetype = config.characters[0].archetype.clone();
         config.game.training.personality_colors.remove(&archetype);
-        assert!(
-            config
-                .validate()
-                .unwrap_err()
-                .contains("tamagotchi.game.training")
-        );
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("tamagotchi.game.training"));
     }
 }
 
