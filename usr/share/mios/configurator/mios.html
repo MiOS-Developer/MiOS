@@ -6277,6 +6277,10 @@ function gatherFromForm() {
       const n = parseFloat(el.value);
       DATA[sec][key] = Number.isFinite(n) ? n : el.value;
     }
+    else if (el.dataset.type === "bool") {
+      if (el.value !== "true" && el.value !== "false") throw new Error("Boolean setting requires true or false: " + el.dataset.key);
+      DATA[sec][key] = el.value === "true";
+    }
     else if (el.tagName === "SELECT" && el.value !== "__custom__") DATA[sec][key] = el.value;
     else if (el.tagName === "SELECT" && el.value === "__custom__") {
       const custom = document.querySelector(`[data-custom-of="${el.id}"]`);

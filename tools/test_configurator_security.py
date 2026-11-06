@@ -120,6 +120,15 @@ class TestConfiguratorSecurity(unittest.TestCase):
         # is the client's job; gatherFromForm owns that coercion.)
         flag = by_key["tamagotchi.camera.preview_orbit_pauses_turntable"]
         self.assertEqual((flag["tagName"], flag["dataset"].get("type")), ("SELECT", "bool"))
+        for value, expected in [("true", True), ("false", False)]:
+            flag["value"] = value
+            typed = tomllib.loads(gather({})["toml"])["tamagotchi"]["camera"]
+            self.assertIs(typed["preview_orbit_pauses_turntable"], expected)
+        flag["value"] = "not-a-bool"
+        with self.assertRaises(subprocess.CalledProcessError) as invalid:
+            gather({})
+        self.assertIn("Boolean setting requires true or false", invalid.exception.stderr)
+        flag["value"] = ""
         for key in ["pan_step_permille", "pan_max_permille", "pan_margin_permille",
                     "tilt_step_degrees", "tilt_min_degrees", "tilt_max_degrees",
                     "orbit_fine_step_degrees", "max_lead_steps"]:

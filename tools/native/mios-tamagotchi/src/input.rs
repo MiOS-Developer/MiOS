@@ -93,6 +93,59 @@ pub fn action(key: KeyEvent) -> Option<Action> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CameraCommand {
+    Pan(i16, i16),
+    Tilt(i16),
+    Orbit(i16),
+    Zoom(bool),
+    Cycle,
+    Reset,
+}
+pub fn camera_action(key: KeyEvent, numbers: bool) -> Option<CameraCommand> {
+    use CameraCommand::*;
+    if key.kind != KeyEventKind::Press
+        || key.modifiers.intersects(
+            KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
+        )
+    {
+        return None;
+    }
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    if key.modifiers == KeyModifiers::SHIFT {
+        match key.code {
+            KeyCode::Left => return Some(Pan(-1, 0)),
+            KeyCode::Right => return Some(Pan(1, 0)),
+            KeyCode::Up => return Some(Pan(0, -1)),
+            KeyCode::Down => return Some(Pan(0, 1)),
+            _ => {}
+        }
+    }
+    match key.code {
+        KeyCode::Char('{') if !alt => return Some(Tilt(-1)),
+        KeyCode::Char('}') if !alt => return Some(Tilt(1)),
+        _ => {}
+    }
+    if !alt && !numbers {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('4') => Some(Pan(-1, 0)),
+        KeyCode::Char('6') => Some(Pan(1, 0)),
+        KeyCode::Char('8') => Some(Pan(0, -1)),
+        KeyCode::Char('2') => Some(Pan(0, 1)),
+        KeyCode::Char('7') => Some(Orbit(-1)),
+        KeyCode::Char('9') => Some(Orbit(1)),
+        KeyCode::Char('1') => Some(Tilt(-1)),
+        KeyCode::Char('3') => Some(Tilt(1)),
+        KeyCode::Char('5') => Some(Reset),
+        KeyCode::Char('z' | 'Z') if alt => Some(Cycle),
+        KeyCode::Char('-') if alt => Some(Zoom(false)),
+        KeyCode::Char('=' | '+') if alt => Some(Zoom(true)),
+        _ => None,
+    }
+}
+
 // Controller queries run off the render thread. Only these read-only native
 // contracts are consumed: inputd context/map, gen nested-session --list-devices,
 // tmux list-clients and the caller's own nested descriptor/registry.

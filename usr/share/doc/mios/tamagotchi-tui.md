@@ -817,8 +817,9 @@ their own actual device/session acceptance.
 ### Three camera perspectives
 
 **Z** cycles Room, Mon and Face close-up. Graphics exposes the same choices.
-**+/-** zoom, **0** resets zoom, and **[ / ]** orbit. Room uses the locked
-30-degree isometric elevation and follows autonomous Mon movement. Mon frames
+**+/-** zoom, **0** resets zoom, and **[ / ]** orbit. Room starts at the configured
+30-degree isometric elevation and follows autonomous Mon movement. Camera tilt
+is an optional offset; resetting the camera restores its resting angle. Mon frames
 the body. Face close-up fits the actual visible mapped head, keeping ears
 without letting a wide tail or long torso shrink the face.
 
@@ -861,3 +862,39 @@ hide the face surface symmetrically at both 90 and 270 degrees; small floating
 point differences must not make one profile show a stray eye. Ears, muzzle,
 species nose, tail and body remain voxel geometry. Face and camera rendering
 does not alter the Mon's seed, life stage, needs or statistics.
+
+## Shared camera controls and automatic scene budget
+
+The camera operates independently of the pet. In the live scene, 4/6/8/2 or
+Shift+arrows pan, 7/9 orbit in fine steps, 1/3 or braces tilt, and 5 resets the
+pose and zoom. The existing Z, +/-, 0 and square brackets keep their view, zoom
+and coarse-orbit roles. Numbered menu choices retain their own navigation.
+Graphics also exposes pan, tilt and camera reset as ordinary paged menu
+choices, including on a 20x8 terminal. Wheel input over a painted scene zooms;
+Shift+wheel tilts and horizontal wheel input orbits. Other menu scrolling keeps
+its existing behavior.
+
+Inputd's isolated Alt camera aliases work only in an eligible live scene,
+Roster or Sprite studio. They are ignored in code editors, confirmations,
+memory challenges and unrelated menus. Releases and explicit repeat events do
+not leak into care or menu selection. Compatible Inputd application profiles
+require their own verified deployment; implementing these client aliases does
+not certify physical controller routing.
+
+Pan is bounded by the layered camera rules and clears when the displayed
+subject changes. Tilt, orbit and zoom are shared across views. Manual preview
+inspection can hold the automatic turntable. Interrupted changes start from
+the actual drawn yaw, pitch and framing mix, rather than an earlier target.
+Camera state is presentation-only and is never written into pet progress.
+
+Auto HUD measures the full layout's available scene rows against the configured
+MiOS golden ratio. A short, wide terminal uses the informative compact layout
+when the boxes would starve the scene. Explicit Full remains available. This
+keeps needs, identity, controls and menus while giving the voxel face more
+space; it does not change the pet, renderer capability or terminal font.
+
+Enlarged shaded expressions use structural ASCII curves and strokes, rather
+than density marks as eyes and mouths. Cropped close-ups fit the expression
+within the visible part of its actual face plane. Species noses and other
+occluders retain depth ownership. Exact side and rear views retain normal
+occlusion; a readable caption remains available when facial strokes cannot fit.

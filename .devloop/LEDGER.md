@@ -4630,3 +4630,57 @@ VT fonts, ARM64, other Blades and image integration remain unverified.
 Publication and immediate user-local installation are the next release steps.
 Hosted main e1da4f053 still reports the previously observed48 behavioral suite
 failures. Task3756 is active; global CI is not claimed clean.
+
+## Full rendering/camera continuation and parallel input review
+
+The local coding participant stopped at quota with clean source cutoffs.
+Root preserved those branches and adopted camera framing6cf7a38ad/24a319495,
+camera rules69758e124, fieldsetba32022c0 and structural-facee9decf048 into2a9cfd2f3.
+No main push occurred at that checkpoint. Root now owns game/HUD/renderer
+completion; task3759 is separately assigned to the ServerBox SSH reviewer,
+whose actual relay registration must be recorded before a participant is claimed.
+
+Root's fresh MiOS-DEV audit58d188281 proved the proposed camera cutoff still
+snapped actual yaw90 to0 on a half-finished Face transition. The identical
+regression now passes, including actual voxel-sprite equality at interruption.
+Yaw and pitch begin from the drawn pose. Shared pan/tilt/fine orbit/reset
+operate on live, Roster and Studio scenes, with bounded targets, subject-local
+pan, preview turntable hold, paged touch/menu commands and scoped Alt aliases.
+Releases/repeats cannot leak those camera controls into a menu or code editor.
+Default world geometry remains identical at zero camera offsets. The camera
+never changes pet state, visual RNG or saved progress.
+
+Auto HUD now keeps the configured golden vertical scene share rather than
+starving short-wide viewports with boxes; explicit Full remains available.
+Structural ASCII parens cannot become density marks in colored close-ups.
+The new fitted strokes eliminate the old census's native-fallback cases;
+the per-case no-false-face invariant and caption fallback remain enforced,
+and separate native-LOD eye/mouth tests retain coverage. Information-footer
+test bookkeeping is now compiled only in tests. The real configurator bool
+selects emit booleans, reject invalid values and retain empty-field inheritance.
+
+Pre-release source verification in rootless MiOS-DEV passes342unit+13CLI
+and4 real-JavaScript configurator tests, plus fatal Clippy and formatting.
+Proof /home/mios/.local/state/mios/mios-mons-input-completion/mios-camera-compile.
+Earlier attempts and genuine failures remain in the owned attempt folders;
+they are not certified passes. Immutable release/static checks, planted
+controls and full updated-binary live visual acceptance are still required.
+
+The earlier phone attached59x30 but its operator explicitly did not fully
+test, preferring to await the complete rendering update. Phone acceptance is
+unverified. That interactive session subsequently exited; root preserved its
+receipts and restored a bare native development terminal in the same live
+mios-mons-graphics PiP. Automated native care and six observed memory wins
+then reached a thriving adult in125.18seconds, age67, coins33, needs98/84/98/98,
+health100. It remains paused for preservation. There were no pet/RNG edits,
+save writes or gameplay timing overrides. Real source/hash/session captures:
+ /home/mios/.local/state/mios/mios-mons-shaded-live/mios-live-natural-play-receipt.json.
+This is the earlier4a2047a7 binary, not certification of the pending release.
+
+Root independently applied48 CI source commits throughd3adf1b6c onto4196e0180
+in a separate review worktree and regenerated inside MiOS-DEV. Seven focused
+suites pass; full MCP83/83 passes in the deployed agents Python3.13 runtime
+inside MiOS-DEV (the MCP-only interpreter first lacked FastAPI). Source was
+read-only for that corrected run and its diff was unchanged. Notification
+live cases remain skipped. This is not hosted/global CI certification.
+ /home/mios/.local/state/mios/mios-ci-source-review/mios-independent-result.json.

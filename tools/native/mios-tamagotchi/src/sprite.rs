@@ -429,12 +429,49 @@ impl Sprite {
         Self::voxel_with_view(stage, expression, style, frame, camera, walking, appearance)
     }
 
+    /// Shared presentation pose, with pitch in radians and no simulation writes.
+    pub fn voxel_with_pose(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        camera: (u16, f32),
+        walking: bool,
+        appearance: Appearance,
+    ) -> Self {
+        Self::voxel_with_pitch(stage, expression, style, frame, camera, walking, appearance)
+    }
+
     fn voxel_with_view(
         stage: crate::game::Stage,
         expression: Expression,
         style: SpriteStyle,
         frame: usize,
         camera: [u16; 2],
+        walking: bool,
+        appearance: Appearance,
+    ) -> Self {
+        let pitch = if camera[1] == 0 {
+            0.32
+        } else {
+            f32::from(camera[1].clamp(1, 89)).to_radians()
+        };
+        Self::voxel_with_pitch(
+            stage,
+            expression,
+            style,
+            frame,
+            (camera[0], pitch),
+            walking,
+            appearance,
+        )
+    }
+    fn voxel_with_pitch(
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+        camera: (u16, f32),
         walking: bool,
         appearance: Appearance,
     ) -> Self {
@@ -453,12 +490,12 @@ impl Sprite {
         model.attach_face(stage, expression, style, frame);
         model.rasterize(
             style,
-            camera[0],
+            camera.0,
             expression == Expression::Sleeping,
-            if camera[1] == 0 {
-                0.32
+            if camera.1.is_finite() {
+                camera.1.clamp(0.01, 89_f32.to_radians())
             } else {
-                f32::from(camera[1].clamp(1, 89)).to_radians()
+                0.32
             },
         )
     }

@@ -118,6 +118,30 @@ pub fn split(area: Rect, ratio: f64, columns: u16, portrait_percent: u16) -> Hud
         }
     }
 }
+/// Existing full HUD panels, shared with Auto scene admission.
+pub fn full_layout(area: Rect, dialogue_rows: u16) -> [Rect; 4] {
+    use ratatui::layout::{Constraint, Layout};
+    Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(1),
+        Constraint::Length(dialogue_rows),
+        Constraint::Length(6),
+    ])
+    .areas(area)
+}
+/// Prefer the informative compact layout when boxes starve the golden scene share.
+pub fn scene_starved(scene: Rect, available: Rect, ratio: f64) -> bool {
+    if available.is_empty() {
+        return false;
+    }
+    let ratio = if ratio.is_finite() && ratio > 1.0 {
+        ratio
+    } else {
+        2.0
+    };
+    f64::from(scene.height.saturating_sub(2)) * ratio < f64::from(available.height)
+}
+
 /// A visible numbered window. Selection and every row remain inside the
 /// painted viewport after traversal or resize; numbers address only this page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

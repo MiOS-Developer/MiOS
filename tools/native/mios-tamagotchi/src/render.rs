@@ -188,6 +188,8 @@ pub struct Camera {
     /// Per-mille Room/Pet/Face framing mix the transition starts from. None
     /// means `from_view` alone, so an interrupted blend never jumps.
     pub from_weights: Option<[u16; 3]>,
+    pub pan_permille: (i16, i16),
+    pub elevation_radians: Option<f32>,
 }
 
 impl Default for Camera {
@@ -199,6 +201,8 @@ impl Default for Camera {
             from_view: CameraView::Pet,
             transition_percent: 100,
             from_weights: None,
+            pan_permille: (0, 0),
+            elevation_radians: None,
         }
     }
 }
@@ -438,8 +442,16 @@ impl Projection {
         let to = mode(camera.view);
         let blend = f64::from(camera.transition_percent.min(100)) / 100.0;
         Self {
-            left: from.left + (to.left - from.left) * blend,
-            top: from.top + (to.top - from.top) * blend,
+            left: from.left + (to.left - from.left) * blend
+                - f64::from(area.width)
+                    * f64::from(renderer.packing().0)
+                    * f64::from(camera.pan_permille.0.clamp(-400, 400))
+                    / 1000.0,
+            top: from.top + (to.top - from.top) * blend
+                - f64::from(area.height)
+                    * f64::from(renderer.packing().1)
+                    * f64::from(camera.pan_permille.1.clamp(-400, 400))
+                    / 1000.0,
             scale: from.scale + (to.scale - from.scale) * blend,
             scale_y: from.scale_y + (to.scale_y - from.scale_y) * blend,
         }
@@ -1848,9 +1860,10 @@ const STROKE_GLYPHS: [(char, u16); 32] = [
     ('#', stroke_mask([7, 7, 7])),
 ];
 
-fn stroke_glyph(mask: u16) -> char {
+fn stroke_glyph(mask: u16, source: u8) -> char {
     STROKE_GLYPHS
         .iter()
+        .filter(|(glyph, _)| !matches!(source, b'(' | b')') || "/\\\\|()'.-_".contains(*glyph))
         .min_by_key(|(_, shape)| (shape ^ mask).count_ones())
         .map_or('#', |(glyph, _)| *glyph)
 }
@@ -2023,7 +2036,7 @@ fn draw_shaded_face(
             }
         } else {
             for c in members {
-                cells[c].glyph = Some(stroke_glyph(cells[c].mask));
+                cells[c].glyph = Some(stroke_glyph(cells[c].mask, glyph));
             }
         }
     }
@@ -2680,6 +2693,8 @@ impl RoomWidget<'_> {
                 position: self.position,
                 pixel_aspect: aspect as f32,
                 detail: self.detail,
+                pan_permille: self.camera.pan_permille,
+                elevation_radians: self.camera.elevation_radians,
             },
             (
                 viewport.width.saturating_mul(dx),
@@ -7245,11 +7260,12 @@ mod kaomoji_scale_tests {
             }
         }
         assert!(shaded > 0, "steep turns must exercise the shaded tier");
-        // Both outcomes of a stroke-less overlay occur (e.g. Baby 8-bit Happy
-        // shape 6 at yaw 60 in ASCII): native glyphs, and a caption-only face.
+        // Structural strokes now cover the formerly native-fallback cases.
+        // Refused overlays must still exercise the caption path. Native LOD's
+        // connected eye/mouth contract is independently covered below.
         assert!(
-            native > 0 && captioned > 0,
-            "stroke-less overlays must exercise both fallbacks: native {native}, caption {captioned} of {shaded}"
+            captioned > 0,
+            "stroke-less overlays must retain caption fallback: native {native}, caption {captioned} of {shaded}"
         );
     }
 
@@ -7616,6 +7632,7 @@ mod live_face_tests {
             from_view: CameraView::Face,
             zoom_percent,
             transition_percent: 100,
+            ..Camera::default()
         }
     }
 
@@ -7829,12 +7846,12 @@ mod live_face_tests {
     #[test]
     fn stroke_alphabet_matches_its_own_shapes_and_prefers_simple_strokes() {
         for (glyph, shape) in STROKE_GLYPHS {
-            assert_eq!(stroke_glyph(shape), glyph, "{shape:09b}");
+            assert_eq!(stroke_glyph(shape, glyph as u8), glyph, "{shape:09b}");
         }
-        assert_eq!(stroke_glyph(stroke_mask([2, 2, 0])), '|');
-        assert_eq!(stroke_glyph(stroke_mask([0, 3, 0])), '-');
-        assert_eq!(stroke_glyph(stroke_mask([0, 0, 3])), '_');
-        assert_eq!(stroke_glyph(stroke_mask([7, 7, 7])), '#');
+        assert_eq!(stroke_glyph(stroke_mask([2, 2, 0]), b'o'), '|');
+        assert_eq!(stroke_glyph(stroke_mask([0, 3, 0]), b'o'), '-');
+        assert_eq!(stroke_glyph(stroke_mask([0, 0, 3]), b'o'), '_');
+        assert_eq!(stroke_glyph(stroke_mask([7, 7, 7]), b'o'), '#');
         // No stroke shape is a pure shading density.
         assert!(STROKE_GLYPHS
             .iter()
@@ -7844,7 +7861,7 @@ mod live_face_tests {
     #[test]
     fn faces_fit_the_visible_plane_and_stay_whole_when_unclipped() {
         let config = Config::sample().unwrap();
-        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let _colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let sprite = Sprite::voxel_with_appearance(
             Stage::Baby,
             Expression::Idle,

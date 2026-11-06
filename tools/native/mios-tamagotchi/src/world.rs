@@ -65,6 +65,8 @@ pub struct WorldCamera {
     /// Packed pixel width divided by packed pixel height.
     pub pixel_aspect: f32,
     pub detail: SpriteStyle,
+    pub pan_permille: (i16, i16),
+    pub elevation_radians: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,7 +121,10 @@ impl WorldFrame {
             1.0
         };
         let zoom = f32::from(camera.zoom_percent.clamp(25, 800)) / 100.0;
-        let view = View::new(camera.yaw_degrees, aspect);
+        let mut view = View::new(camera.yaw_degrees, aspect);
+        if let Some(pitch) = camera.elevation_radians.filter(|p| p.is_finite()) {
+            view.elevation = pitch.clamp(0.01, 89_f32.to_radians());
+        }
         let pet = [
             0.65 + f32::from(camera.position.0.min(1000)) / 1000.0 * (w - 1.3),
             0.035,
@@ -154,15 +159,19 @@ impl WorldFrame {
             view,
             scale: frame.scale,
             offset: [
-                f32::from(width) * 0.5 - target[0] * frame.scale,
-                f32::from(height) * 0.62 - target[1] * frame.scale,
+                f32::from(width)
+                    * (0.5 - f32::from(camera.pan_permille.0.clamp(-400, 400)) / 1000.0)
+                    - target[0] * frame.scale,
+                f32::from(height)
+                    * (0.62 - f32::from(camera.pan_permille.1.clamp(-400, 400)) / 1000.0)
+                    - target[1] * frame.scale,
             ],
         };
         frame.pet_anchor = projection.point(pet);
         // The Mon and room share world units. A viewport-relative pet size
         // would make the same Mon grow when the room becomes wider or rotates.
         frame.pet_height_pixels = h * f32::from(rules.pet_height_percent.clamp(10, 150)) / 100.0
-            * 30.0_f32.to_radians().cos()
+            * view.elevation.cos()
             * frame.scale
             * aspect;
         if !rules.enabled {
@@ -265,16 +274,22 @@ struct View {
     sin: f32,
     cos: f32,
     aspect: f32,
+    elevation: f32,
 }
 impl View {
     fn new(yaw: u16, aspect: f32) -> Self {
         let (sin, cos) = f32::from(yaw % 360).to_radians().sin_cos();
-        Self { sin, cos, aspect }
+        Self {
+            sin,
+            cos,
+            aspect,
+            elevation: 30.0_f32.to_radians(),
+        }
     }
     fn rotate(self, [x, y, z]: [f32; 3]) -> [f32; 3] {
         let rx = self.cos * x + self.sin * z;
         let rz = -self.sin * x + self.cos * z;
-        let (sp, cp) = 30.0_f32.to_radians().sin_cos();
+        let (sp, cp) = self.elevation.sin_cos();
         [rx, cp * y - sp * rz, sp * y + cp * rz]
     }
 }
@@ -729,6 +744,8 @@ mod tests {
             position: (500, 500),
             pixel_aspect: 1.,
             detail: SpriteStyle::SixteenBit,
+            pan_permille: (0, 0),
+            elevation_radians: None,
         }
     }
     fn fixture() -> HabitatRules {
@@ -1026,5 +1043,59 @@ mod tests {
             .pixels
             .iter()
             .all(Option::is_none));
+    }
+}
+
+#[cfg(test)]
+mod camera_pose_regressions {
+    use super::*;
+    #[test]
+    fn actual_room_pan_tilt_and_reset_preserve_default_geometry() {
+        let rules = crate::config::Config::sample().unwrap().world;
+        let camera = WorldCamera {
+            yaw_degrees: 45,
+            zoom_percent: 100,
+            position: (500, 500),
+            pixel_aspect: 1.0,
+            detail: SpriteStyle::SixteenBit,
+            pan_permille: (0, 0),
+            elevation_radians: None,
+        };
+        let base = WorldFrame::render(&rules, None, camera, (120, 80));
+        let same = WorldFrame::render(
+            &rules,
+            None,
+            WorldCamera {
+                elevation_radians: Some(30_f32.to_radians()),
+                ..camera
+            },
+            (120, 80),
+        );
+        assert_eq!(base.pixels, same.pixels);
+        assert_eq!(base.pet_anchor, same.pet_anchor);
+        let pan = WorldFrame::render(
+            &rules,
+            None,
+            WorldCamera {
+                pan_permille: (100, -50),
+                ..camera
+            },
+            (120, 80),
+        );
+        assert_ne!(base.pixels, pan.pixels);
+        assert!((pan.pet_anchor[0] - base.pet_anchor[0] + 12.0).abs() < 0.001);
+        let tilt = WorldFrame::render(
+            &rules,
+            None,
+            WorldCamera {
+                elevation_radians: Some(42_f32.to_radians()),
+                ..camera
+            },
+            (120, 80),
+        );
+        assert_ne!(base.pixels, tilt.pixels);
+        assert_ne!(base.pet_height_pixels, tilt.pet_height_pixels);
+        let reset = WorldFrame::render(&rules, None, camera, (120, 80));
+        assert_eq!(base.pixels, reset.pixels);
     }
 }

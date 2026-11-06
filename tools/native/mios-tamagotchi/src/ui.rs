@@ -123,7 +123,7 @@ pub struct Ui {
     menu_number_count: Cell<usize>,
     menu_footer: Cell<Rect>,
     /// Footer rect of the last `draw_information`; read by its regression test.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     info_footer: Cell<Rect>,
     pub sprite_style: SpriteStyle,
     presentation: Option<crate::hud::DetailRules>,
@@ -147,6 +147,17 @@ pub struct Ui {
     camera_resize: Cell<Option<([u16; 3], CameraView, usize)>>,
     /// Mix a manual blend starts from; None keeps the one-hot `camera_from_view`.
     camera_from_weights: Option<[u16; 3]>,
+    camera_yaw_origin: Option<u16>,
+    camera_pitch_origin: Option<f32>,
+    camera_rules: crate::config::CameraRules,
+    camera_pan: Cell<(i16, i16)>,
+    camera_pan_from: Cell<(i16, i16)>,
+    camera_pan_target: Cell<(i16, i16)>,
+    camera_axes_started: Cell<usize>,
+    camera_tilt: i16,
+    camera_tilt_from: i16,
+    camera_tilt_target: i16,
+    preview_angle: Cell<Option<u16>>,
     position: (u16, u16),
     destination: (u16, u16),
     yaw: u16,
@@ -218,6 +229,7 @@ impl Ui {
             menu_number_start: Cell::new(0),
             menu_number_count: Cell::new(0),
             menu_footer: Cell::new(Rect::default()),
+            #[cfg(test)]
             info_footer: Cell::new(Rect::default()),
             sprite_style: SpriteStyle::EightBit,
             presentation: None,
@@ -239,6 +251,17 @@ impl Ui {
             pet_generation: 0,
             camera_resize: Cell::new(None),
             camera_from_weights: None,
+            camera_yaw_origin: None,
+            camera_pitch_origin: None,
+            camera_rules: crate::config::CameraRules::INERT,
+            camera_pan: Cell::new((0, 0)),
+            camera_pan_from: Cell::new((0, 0)),
+            camera_pan_target: Cell::new((0, 0)),
+            camera_axes_started: Cell::new(0),
+            camera_tilt: 0,
+            camera_tilt_from: 0,
+            camera_tilt_target: 0,
+            preview_angle: Cell::new(None),
             position: (500, 700),
             destination: (500, 700),
             yaw: 0,
@@ -273,6 +296,7 @@ impl Ui {
         ui.sprite_style = config.sprite_style;
         ui.presentation = Some(config.presentation.clone());
         ui.effective_style.set(config.sprite_style);
+        ui.camera_rules = config.camera;
         ui.camera_view = config.camera_view;
         ui.camera_from_view = config.camera_view;
         ui.zoom_percent = config.zoom_percent;
@@ -360,6 +384,21 @@ impl Ui {
         let turn = (i32::from(self.orbit_target) - i32::from(self.orbit_origin) + 540) % 360 - 180;
         self.orbit_degrees =
             (i32::from(self.orbit_origin) + turn * eased / 100).rem_euclid(360) as u16;
+        let t = frame
+            .saturating_sub(self.camera_axes_started.get())
+            .saturating_mul(100)
+            .checked_div(self.camera_transition_frames.max(1))
+            .unwrap_or(100)
+            .min(100) as i32;
+        let eased = t * t * (300 - 2 * t) / 10000;
+        let lerp = |from: i16, to: i16| {
+            (i32::from(from) + (i32::from(to) - i32::from(from)) * eased / 100) as i16
+        };
+        let from = self.camera_pan_from.get();
+        let to = self.camera_pan_target.get();
+        self.camera_pan
+            .set((lerp(from.0, to.0), lerp(from.1, to.1)));
+        self.camera_tilt = lerp(self.camera_tilt_from, self.camera_tilt_target);
         self.frame = frame;
     }
     pub fn effective_style(&self) -> SpriteStyle {
@@ -541,6 +580,10 @@ impl Ui {
             // Previews and replacement pets are different subjects. Their first
             // frame must not inherit a hatch, resize or manual-view blend.
             self.camera_resize.set(None);
+            self.camera_pan.set((0, 0));
+            self.camera_pan_from.set((0, 0));
+            self.camera_pan_target.set((0, 0));
+            self.preview_angle.set(None);
             self.camera_subject_cut.set(true);
             return;
         }
@@ -585,6 +628,8 @@ impl Ui {
                     zoom_percent: self.zoom_percent,
                     orbit_degrees: self.orbit_degrees,
                     transition_percent: (t * t * (300 - 2 * t) / 10000) as u16,
+                    pan_permille: self.camera_pan.get(),
+                    elevation_radians: Some(self.camera_pitch()),
                 };
             }
         }
@@ -602,11 +647,21 @@ impl Ui {
             from_view,
             from_weights,
             transition_percent: if cut { 100 } else { self.camera_blend },
+            pan_permille: self.camera_pan.get(),
+            elevation_radians: Some(self.camera_pitch()),
         }
     }
     fn change_camera(&mut self, view: CameraView, zoom: u16) {
         // A new manual blend starts from the mix drawn now (task3755a).
         let mix = self.camera_mix();
+        self.camera_yaw_origin = Some(self.camera_yaw(self.subject_yaw()));
+        self.camera_pitch_origin = Some(self.camera_pitch());
+        if view != self.camera_view {
+            self.camera_pan_from.set(self.camera_pan.get());
+            self.camera_pan_target.set((0, 0));
+            self.camera_axes_started.set(self.frame);
+            self.camera_tilt_from = self.camera_tilt;
+        }
         self.camera_from_weights = Some(match self.camera_resize_in_flight() {
             // Same view during a resize: the resize keeps carrying the view
             // blend, so the manual blend must not replay its source afterwards.
@@ -659,6 +714,12 @@ impl Ui {
         );
     }
     fn orbit_by(&mut self, clockwise: bool) {
+        if self.camera_rules.preview_orbit_pauses_turntable
+            && matches!(self.menu, Some(Menu::Roster | Menu::Gallery))
+            && self.preview_angle.get().is_none()
+        {
+            self.preview_angle.set(Some(self.preview_yaw()));
+        }
         let delta = i32::from(self.orbit_step % 360);
         self.change_orbit(
             (i32::from(self.orbit_target) + if clockwise { delta } else { -delta }).rem_euclid(360)
@@ -672,11 +733,13 @@ impl Ui {
         let world_yaw = (u32::from(yaw) + u32::from(self.orbit_degrees)) % 360;
         let face_yaw =
             (i32::from(self.orbit_degrees) - i32::from(self.face_orbit_reference)).rem_euclid(360);
-        let from = if self.camera_from_view == CameraView::Face {
-            face_yaw
-        } else {
-            world_yaw as i32
-        };
+        let from = self.camera_yaw_origin.map(i32::from).unwrap_or_else(|| {
+            if self.camera_from_view == CameraView::Face {
+                face_yaw
+            } else {
+                world_yaw as i32
+            }
+        });
         let to = if self.camera_view == CameraView::Face {
             face_yaw
         } else {
@@ -687,6 +750,116 @@ impl Ui {
         }
         let turn = (to - from + 540) % 360 - 180;
         (from + turn * i32::from(self.camera_blend) / 100).rem_euclid(360) as u16
+    }
+    fn subject_yaw(&self) -> u16 {
+        match self.camera_subject.get() {
+            Some(SceneSubject::Roster | SceneSubject::Studio) => self.preview_yaw(),
+            _ => self.yaw,
+        }
+    }
+    fn preview_yaw(&self) -> u16 {
+        self.preview_angle
+            .get()
+            .unwrap_or(((self.frame * 3) % 360) as u16)
+    }
+    fn camera_pitch(&self) -> f32 {
+        let base = |view| {
+            if view == CameraView::Room && self.world_enabled {
+                f32::from(self.world_elevation).to_radians()
+            } else {
+                0.32
+            }
+        };
+        let to = base(self.camera_view) + f32::from(self.camera_tilt).to_radians();
+        if self.camera_subject_cut.get() {
+            return to;
+        }
+        let from = self
+            .camera_pitch_origin
+            .unwrap_or(base(self.camera_from_view));
+        from + (to - from) * f32::from(self.camera_blend) / 100.0
+    }
+    fn camera_scope(&self) -> bool {
+        !self.confirm_reset
+            && !self.native_modal
+            && self.game.challenge.is_none()
+            && matches!(self.menu, None | Some(Menu::Roster | Menu::Gallery))
+    }
+    fn camera_command(&mut self, command: crate::input::CameraCommand) {
+        use crate::input::CameraCommand::*;
+        if self.camera_rules.max_lead_steps == 0 {
+            return;
+        }
+        if self.camera_rules.preview_orbit_pauses_turntable
+            && matches!(self.menu, Some(Menu::Roster | Menu::Gallery))
+            && self.preview_angle.get().is_none()
+        {
+            self.preview_angle.set(Some(self.preview_yaw()));
+        }
+        let rules = self.camera_rules;
+        let lead = i32::from(rules.max_lead_steps);
+        self.camera_pan_from.set(self.camera_pan.get());
+        self.camera_tilt_from = self.camera_tilt;
+        self.camera_axes_started.set(self.frame);
+        match command {
+            Pan(x, y) => {
+                let current = self.camera_pan.get();
+                let target = self.camera_pan_target.get();
+                let step = i32::from(rules.pan_step_permille);
+                let bound = i32::from(rules.pan_max_permille)
+                    .min(500 - i32::from(rules.pan_margin_permille));
+                let axis = |at: i16, to: i16, direction: i16| {
+                    (i32::from(to) + i32::from(direction) * step)
+                        .clamp(i32::from(at) - step * lead, i32::from(at) + step * lead)
+                        .clamp(-bound, bound) as i16
+                };
+                self.camera_pan_target
+                    .set((axis(current.0, target.0, x), axis(current.1, target.1, y)));
+            }
+            Tilt(direction) => {
+                let step = i32::from(rules.tilt_step_degrees);
+                self.camera_tilt_target = (i32::from(self.camera_tilt_target)
+                    + i32::from(direction) * step)
+                    .clamp(
+                        i32::from(self.camera_tilt) - step * lead,
+                        i32::from(self.camera_tilt) + step * lead,
+                    )
+                    .clamp(
+                        i32::from(rules.tilt_min_degrees),
+                        i32::from(rules.tilt_max_degrees),
+                    ) as i16;
+                if self.camera_blend == 100 {
+                    self.camera_pitch_origin = None;
+                }
+            }
+            Orbit(direction) => {
+                let step = i32::from(rules.orbit_fine_step_degrees);
+                let desired =
+                    (i32::from(self.orbit_target) + i32::from(direction) * step).rem_euclid(360);
+                let delta = (desired - i32::from(self.orbit_degrees) + 540) % 360 - 180;
+                let limit = (step * lead).min(179);
+                self.change_orbit(
+                    (i32::from(self.orbit_degrees) + delta.clamp(-limit, limit)).rem_euclid(360)
+                        as u16,
+                );
+            }
+            Zoom(inward) => self.zoom_by(inward),
+            Cycle => self.cycle_camera(),
+            Reset => {
+                let drawn_yaw = self.camera_yaw(self.subject_yaw());
+                let drawn_pitch = self.camera_pitch();
+                self.face_orbit_reference = self.orbit_default;
+                self.camera_pan_target.set((0, 0));
+                self.camera_tilt_target = 0;
+                self.camera_pitch_origin = None;
+                self.preview_angle.set(None);
+                self.change_orbit(self.orbit_default);
+                self.change_camera(self.camera_view, 100);
+                self.camera_yaw_origin = Some(drawn_yaw);
+                self.camera_pitch_origin = Some(drawn_pitch);
+            }
+        }
+        self.notice = "Camera: Shift+arrows or 4/6/8/2 pan; 7/9 orbit; 1/3 tilt; 5 reset. Graphics has touch controls.".into();
     }
     fn can_move(&self) -> bool {
         self.mobile_stage
@@ -766,22 +939,22 @@ impl Ui {
             )
             .recolored(self.appearance().body, self.appearance().accent),
             ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
-                Sprite::voxel_with_camera(
+                Sprite::voxel_with_pose(
                     self.game.stage(rules),
                     expression,
                     self.effective_style(),
                     pose,
-                    [self.camera_yaw(self.yaw), self.world_elevation],
+                    (self.camera_yaw(self.yaw), self.camera_pitch()),
                     self.walking(),
                     self.appearance(),
                 )
             }
-            ViewMode::Voxel => Sprite::voxel_with_appearance(
+            ViewMode::Voxel => Sprite::voxel_with_pose(
                 self.game.stage(rules),
                 expression,
                 self.effective_style(),
                 pose,
-                self.camera_yaw(self.yaw),
+                (self.camera_yaw(self.yaw), self.camera_pitch()),
                 self.walking(),
                 self.appearance(),
             ),
@@ -848,7 +1021,7 @@ impl Ui {
                 );
                 if matches!(kind, NativeKind::Context) {
                     format!(
-                        "{words}\nCamera: [ / ] orbit; Graphics resets orbit. 0 resets zoom only."
+                        "{words}\nCamera: Shift+arrows or 4/6/8/2 pan; 7/9 fine orbit; 1/3 or {{ }} tilt; 5 reset. Wheel zooms, Shift+wheel tilts. Graphics has touch controls."
                     )
                 } else {
                     words
@@ -993,7 +1166,7 @@ impl Ui {
             Menu::Home => 14,
             Menu::Care => 5,
             Menu::Games => 2,
-            Menu::Graphics => 23,
+            Menu::Graphics => 30,
             Menu::Training => 6,
             Menu::Status | Menu::Help | Menu::Identity | Menu::Seed => 1,
             Menu::Gallery => 16,
@@ -1663,6 +1836,17 @@ impl Ui {
     }
 
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
+        let mut camera_key = key;
+        camera_key.kind = KeyEventKind::Press;
+        if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none()) {
+            if key.kind == KeyEventKind::Press && self.camera_scope() {
+                self.camera_command(command);
+            }
+            return Effect::Continue;
+        }
+        if key.modifiers.contains(crossterm::event::KeyModifiers::ALT) {
+            return Effect::Continue;
+        }
         if self.native_modal {
             // The external dialog owns menu/care input until its choice or
             // inline fallback arrives. Preserve the universal quit shortcut.
@@ -2203,6 +2387,13 @@ impl Ui {
                     20 => self.orbit_by(false),
                     21 => self.orbit_by(true),
                     22 => self.change_orbit(self.orbit_default),
+                    23 => self.camera_command(crate::input::CameraCommand::Pan(-1, 0)),
+                    24 => self.camera_command(crate::input::CameraCommand::Pan(1, 0)),
+                    25 => self.camera_command(crate::input::CameraCommand::Pan(0, -1)),
+                    26 => self.camera_command(crate::input::CameraCommand::Pan(0, 1)),
+                    27 => self.camera_command(crate::input::CameraCommand::Tilt(1)),
+                    28 => self.camera_command(crate::input::CameraCommand::Tilt(-1)),
+                    29 => self.camera_command(crate::input::CameraCommand::Reset),
                     _ => self.back(),
                 },
                 Menu::Training => {
@@ -2352,6 +2543,7 @@ impl Ui {
         self.control_targets.borrow_mut().clear();
         self.menu_number_count.set(0);
         self.menu_footer.set(Rect::default());
+        #[cfg(test)]
         self.info_footer.set(Rect::default());
         let heading = self.room_heading(area.width, &config.game);
         let compact = self.hud_mode == HudMode::Minimal
@@ -2409,12 +2601,15 @@ impl Ui {
             self.draw_reset(screen, colors, ascii);
             return;
         }
+        let [header, content, dialogue, dock] =
+            crate::hud::full_layout(inner, config.inline_dialog_rows);
         if self.hud_mode == HudMode::Minimal
             || inner.width < 34
             || inner.height < 12
             || (self.hud_mode == HudMode::Auto
                 && (area.width < config.hud_minimal_width
-                    || area.height < config.hud_minimal_height))
+                    || area.height < config.hud_minimal_height
+                    || crate::hud::scene_starved(content, inner, config.hud_golden_ratio)))
         {
             self.draw_minimal(screen, config, renderer, colors, frame, inner);
             self.redraw_heading(screen, config, colors, ascii);
@@ -2426,13 +2621,7 @@ impl Ui {
             self.suspend_native_targets();
             return;
         }
-        let [header, content, dialogue, dock] = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(1),
-            Constraint::Length(config.inline_dialog_rows),
-            Constraint::Length(6),
-        ])
-        .areas(inner);
+
         let clock = if self.game.paused {
             "PAUSED"
         } else if self.overlay_open() {
@@ -3107,6 +3296,7 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
             footer,
         );
+        #[cfg(test)]
         self.info_footer.set(footer);
         let action_row = if narrow_controls {
             4
@@ -3754,25 +3944,22 @@ impl Ui {
             )
             .recolored(character.body, character.accent),
             ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
-                Sprite::voxel_with_camera(
+                Sprite::voxel_with_pose(
                     crate::game::Stage::Adult,
                     expression,
                     self.effective_style(),
                     self.frame,
-                    [
-                        self.camera_yaw(((self.frame * 3) % 360) as u16),
-                        self.world_elevation,
-                    ],
+                    (self.camera_yaw(self.preview_yaw()), self.camera_pitch()),
                     false,
                     appearance,
                 )
             }
-            ViewMode::Voxel => Sprite::voxel_with_appearance(
+            ViewMode::Voxel => Sprite::voxel_with_pose(
                 crate::game::Stage::Adult,
                 expression,
                 self.effective_style(),
                 self.frame,
-                self.camera_yaw(((self.frame * 3) % 360) as u16),
+                (self.camera_yaw(self.preview_yaw()), self.camera_pitch()),
                 false,
                 appearance,
             ),
@@ -4365,25 +4552,22 @@ impl Ui {
                         .recolored(self.appearance().body, self.appearance().accent)
                 }
                 ViewMode::Voxel if self.world_enabled && self.camera_view == CameraView::Room => {
-                    Sprite::voxel_with_camera(
+                    Sprite::voxel_with_pose(
                         stage,
                         expression,
                         self.effective_style(),
                         self.frame,
-                        [
-                            self.camera_yaw(((self.frame * 3) % 360) as u16),
-                            self.world_elevation,
-                        ],
+                        (self.camera_yaw(self.preview_yaw()), self.camera_pitch()),
                         false,
                         self.appearance(),
                     )
                 }
-                ViewMode::Voxel => Sprite::voxel_with_appearance(
+                ViewMode::Voxel => Sprite::voxel_with_pose(
                     stage,
                     expression,
                     self.effective_style(),
                     self.frame,
-                    self.camera_yaw(((self.frame * 3) % 360) as u16),
+                    (self.camera_yaw(self.preview_yaw()), self.camera_pitch()),
                     false,
                     self.appearance(),
                 ),
@@ -4493,6 +4677,13 @@ impl Ui {
                     "Orbit left ([)",
                     "Orbit right (])",
                     "Reset orbit / default azimuth",
+                    "Pan camera left",
+                    "Pan camera right",
+                    "Pan camera up",
+                    "Pan camera down",
+                    "Tilt camera up",
+                    "Tilt camera down",
+                    "Reset camera pose",
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
@@ -4936,6 +5127,13 @@ fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
             "Orbit left",
             "Orbit right",
             "Reset orbit",
+            "Pan left",
+            "Pan right",
+            "Pan up",
+            "Pan down",
+            "Tilt up",
+            "Tilt down",
+            "Reset camera",
         ]
         .get(index)
         .copied(),
@@ -5166,6 +5364,44 @@ pub fn run(
                 Event::Key(key) => ui.handle(key, &config.game),
                 Event::Paste(text) => {
                     ui.paste_seed(&text);
+                    Effect::Continue
+                }
+                Event::Mouse(mouse)
+                    if ui.camera_scope()
+                        && mouse.column >= ui.pet_area.get().x
+                        && mouse.column < ui.pet_area.get().right()
+                        && mouse.row >= ui.pet_area.get().y
+                        && mouse.row < ui.pet_area.get().bottom()
+                        && matches!(
+                            mouse.kind,
+                            MouseEventKind::ScrollUp
+                                | MouseEventKind::ScrollDown
+                                | MouseEventKind::ScrollLeft
+                                | MouseEventKind::ScrollRight
+                        ) =>
+                {
+                    use crate::input::CameraCommand;
+                    let command = match mouse.kind {
+                        MouseEventKind::ScrollLeft => CameraCommand::Orbit(-1),
+                        MouseEventKind::ScrollRight => CameraCommand::Orbit(1),
+                        MouseEventKind::ScrollUp
+                            if mouse
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::SHIFT) =>
+                        {
+                            CameraCommand::Tilt(1)
+                        }
+                        MouseEventKind::ScrollDown
+                            if mouse
+                                .modifiers
+                                .contains(crossterm::event::KeyModifiers::SHIFT) =>
+                        {
+                            CameraCommand::Tilt(-1)
+                        }
+                        MouseEventKind::ScrollUp => CameraCommand::Zoom(true),
+                        _ => CameraCommand::Zoom(false),
+                    };
+                    ui.camera_command(command);
                     Effect::Continue
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => {
@@ -7752,9 +7988,9 @@ mod seed_import_ui_regressions {
         ui.handle(key(KeyCode::PageDown), &config.game);
         assert_eq!(ui.menu_selected, page);
         ui.handle(key(KeyCode::End), &config.game);
-        assert_eq!(ui.menu_selected, 22);
+        assert_eq!(ui.menu_selected, ui.menu_len(Menu::Graphics) - 1);
         ui.handle(key(KeyCode::PageUp), &config.game);
-        assert_eq!(ui.menu_selected, 22 - page);
+        assert_eq!(ui.menu_selected, ui.menu_len(Menu::Graphics) - 1 - page);
         ui.handle(key(KeyCode::Home), &config.game);
         assert_eq!(ui.menu_selected, 0);
         for kind in [KeyEventKind::Release, KeyEventKind::Press] {
@@ -9008,5 +9244,237 @@ mod camera_continuity_regressions {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod interrupted_yaw_audit {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn interrupted_manual_view_preserves_drawn_yaw_and_sprite() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let mut ui = Ui::configured(game, &config);
+        ui.world_enabled = false;
+        ui.camera_transition_frames = 8;
+        ui.camera_view = CameraView::Pet;
+        ui.camera_from_view = CameraView::Pet;
+        ui.yaw = 135;
+        ui.target_yaw = 135;
+        ui.set_scene(Rect::new(0, 0, 120, 40));
+        let game_before = ui.game.clone();
+        let rng_before = ui.visual_rng;
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.camera_view, CameraView::Face);
+        ui.animate(4);
+        let before_yaw = ui.camera_yaw(ui.yaw);
+        let before_sprite = ui.pet_sprite(&config.game, ui.frame);
+        let before_mix = ui.camera_mix();
+        assert!(ui.camera_blend > 0 && ui.camera_blend < 100);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.camera_view, CameraView::Room);
+        assert_eq!(ui.camera_mix(), before_mix);
+        assert_eq!(
+            ui.camera_yaw(ui.yaw),
+            before_yaw,
+            "An interrupted switch must start from the currently drawn yaw"
+        );
+        assert_eq!(
+            ui.pet_sprite(&config.game, ui.frame),
+            before_sprite,
+            "The actual projected voxel subject must not jump on that frame"
+        );
+        assert_eq!(ui.game, game_before);
+        assert_eq!(ui.visual_rng, rng_before);
+    }
+}
+
+#[cfg(test)]
+mod camera_rig_regressions {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+    use ratatui::{backend::TestBackend, Terminal};
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let ui = Ui::configured(game, &config);
+        (config, ui)
+    }
+    #[test]
+    fn camera_keys_are_bounded_and_cannot_edit_seed_menu_or_game() {
+        let (config, mut ui) = fixture();
+        ui.set_scene(Rect::new(0, 0, 120, 40));
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        for _ in 0..100 {
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT),
+                &config.game,
+            );
+        }
+        assert!(ui.camera_pan_target.get().0 > 0);
+        assert!(
+            ui.camera_pan_target.get().0
+                <= (ui.camera_rules.pan_step_permille * u16::from(ui.camera_rules.max_lead_steps))
+                    as i16
+        );
+        ui.animate(100);
+        let pan = ui.camera_pan.get();
+        assert!(pan.0 > 0 && pan.0 <= ui.camera_rules.pan_max_permille as i16);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            &config.game,
+        );
+        ui.animate(200);
+        assert!(ui.camera_tilt > 0);
+        for _ in 0..100 {
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('9'), KeyModifiers::ALT),
+                &config.game,
+            );
+        }
+        let turn = (i32::from(ui.orbit_target) - i32::from(ui.orbit_degrees) + 540) % 360 - 180;
+        assert!(
+            turn.abs()
+                <= i32::from(ui.camera_rules.orbit_fine_step_degrees)
+                    * i32::from(ui.camera_rules.max_lead_steps)
+        );
+        ui.animate(300);
+        assert_ne!(ui.orbit_degrees, ui.orbit_default);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('5'), KeyModifiers::ALT),
+            &config.game,
+        );
+        ui.animate(400);
+        assert_eq!(ui.camera_pan.get(), (0, 0));
+        assert_eq!(ui.camera_tilt, 0);
+        assert_eq!(ui.orbit_degrees, ui.orbit_default);
+        assert_eq!(ui.zoom_percent, 100);
+        ui.change_orbit(120);
+        ui.animate(500);
+        ui.change_camera(CameraView::Face, 100);
+        ui.animate(600);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0);
+        ui.camera_command(crate::input::CameraCommand::Reset);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0);
+        ui.animate(700);
+        assert_eq!(ui.camera_yaw(ui.yaw), 0);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+        ui.open(Menu::Home);
+        let selection = ui.menu_selected;
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT),
+            &config.game,
+        );
+        assert_eq!(ui.menu_selected, selection);
+        assert_eq!(ui.camera_pan_target.get(), (0, 0));
+        ui.open_seed();
+        let seed_before = format!("{:?}", ui.seed_entry);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT),
+            &config.game,
+        );
+        assert_eq!(format!("{:?}", ui.seed_entry), seed_before);
+        assert_eq!(ui.game, game);
+    }
+    #[test]
+    fn camera_release_repeat_and_foreign_modifiers_are_inert() {
+        let (config, mut ui) = fixture();
+        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
+            let mut key = KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT);
+            key.kind = kind;
+            ui.handle(key, &config.game);
+        }
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('6'), KeyModifiers::CONTROL),
+            &config.game,
+        );
+        assert_eq!(ui.camera_pan_target.get(), (0, 0));
+    }
+    #[test]
+    fn previews_share_the_rig_but_subject_changes_clear_only_pan() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Roster);
+        ui.set_scene_for_stage(
+            Rect::new(0, 0, 80, 30),
+            Some(Stage::Adult),
+            SceneSubject::Roster,
+        );
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('9'), KeyModifiers::ALT),
+            &config.game,
+        );
+        let held = ui.preview_yaw();
+        ui.animate(40);
+        assert_eq!(ui.preview_yaw(), held);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT),
+            &config.game,
+        );
+        ui.animate(80);
+        assert!(ui.camera_pan.get().0 > 0);
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            &config.game,
+        );
+        ui.animate(120);
+        let tilt = ui.camera_tilt;
+        ui.set_scene_for_stage(
+            Rect::new(0, 0, 80, 30),
+            Some(Stage::Child),
+            SceneSubject::Studio,
+        );
+        assert_eq!(ui.camera_pan.get(), (0, 0));
+        assert_eq!(ui.camera_tilt, tilt);
+        assert!(ui.preview_angle.get().is_none());
+    }
+    #[test]
+    fn auto_hud_keeps_scene_space_on_short_wide_and_phone_frames() {
+        let (config, mut ui) = fixture();
+        let colors = Colors::from_config(&config, crate::capabilities::Depth::Mono).unwrap();
+        let game = ui.game.clone();
+        for (width, height) in [(130, 28), (100, 24), (59, 49), (20, 8)] {
+            ui.hud_mode = HudMode::Auto;
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, ui.frame, false))
+                .unwrap();
+            let scene = ui.pet_area.get();
+            assert!(
+                scene.height >= if height >= 12 { height / 2 } else { 1 },
+                "{width}x{height}: {scene:?}"
+            );
+            let lines = (0..height)
+                .map(|y| {
+                    (0..width)
+                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(lines.contains("Menu"), "{lines}");
+        }
+        ui.hud_mode = HudMode::Full;
+        let mut terminal = Terminal::new(TestBackend::new(130, 28)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, ui.frame, false))
+            .unwrap();
+        assert!(ui.pet_area.get().height < 14);
+        assert_eq!(ui.game, game);
     }
 }
