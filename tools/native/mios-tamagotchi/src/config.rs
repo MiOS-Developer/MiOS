@@ -42,6 +42,7 @@ pub struct Config {
     pub voxel_lighting: crate::lighting::VoxelLighting,
     pub camera_view: crate::render::CameraView,
     pub world: crate::world::WorldRules,
+    pub camera: CameraRules,
     pub genetics: crate::genetics::GeneticsRules,
     pub zoom_percent: u16,
     pub zoom_step_percent: u16,
@@ -141,6 +142,7 @@ impl Config {
         self.voxel_lighting.validate()?;
         self.presentation.validate()?;
         self.world.validate()?;
+        self.camera.validate()?;
         self.genetics.validate()?;
         self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
@@ -224,6 +226,84 @@ impl Config {
             parse_rgb(color)?;
         }
         Ok(())
+    }
+}
+
+/// Interactive camera tunables, `[tamagotchi.camera]`. Presentation only: the
+/// camera is never saved and never steers the Mon. No private defaults: the
+/// vendor SSOT supplies every key; `INERT` is the config-less constructor's rig.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CameraRules {
+    pub pan_step_permille: u16,
+    pub pan_max_permille: u16,
+    pub pan_margin_permille: u16,
+    pub tilt_step_degrees: u8,
+    pub tilt_min_degrees: i16,
+    pub tilt_max_degrees: i16,
+    pub orbit_fine_step_degrees: u16,
+    pub max_lead_steps: u8,
+    pub preview_orbit_pauses_turntable: bool,
+}
+
+impl CameraRules {
+    /// Every step and range is zero, so camera-cluster input changes nothing.
+    pub const INERT: Self = Self {
+        pan_step_permille: 0,
+        pan_max_permille: 0,
+        pan_margin_permille: 0,
+        tilt_step_degrees: 0,
+        tilt_min_degrees: 0,
+        tilt_max_degrees: 0,
+        orbit_fine_step_degrees: 0,
+        max_lead_steps: 0,
+        preview_orbit_pauses_turntable: false,
+    };
+
+    pub fn validate(&self) -> Result<(), String> {
+        let rule = |ok: bool, message: &str| {
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("tamagotchi.camera: {message}"))
+            }
+        };
+        rule(
+            (5..=200).contains(&self.pan_step_permille),
+            "pan_step_permille must be 5..=200",
+        )?;
+        rule(
+            self.pan_max_permille <= 400,
+            "pan_max_permille must be 0..=400",
+        )?;
+        rule(
+            self.pan_margin_permille <= 250,
+            "pan_margin_permille must be 0..=250",
+        )?;
+        rule(
+            self.pan_max_permille + self.pan_margin_permille <= 500,
+            "pan_max_permille + pan_margin_permille must be <= 500",
+        )?;
+        rule(
+            (1..=30).contains(&self.tilt_step_degrees),
+            "tilt_step_degrees must be 1..=30",
+        )?;
+        rule(
+            (-17..=0).contains(&self.tilt_min_degrees),
+            "tilt_min_degrees must be -17..=0",
+        )?;
+        rule(
+            (0..=55).contains(&self.tilt_max_degrees),
+            "tilt_max_degrees must be 0..=55",
+        )?;
+        rule(
+            (1..=90).contains(&self.orbit_fine_step_degrees),
+            "orbit_fine_step_degrees must be 1..=90",
+        )?;
+        rule(
+            (1..=10).contains(&self.max_lead_steps),
+            "max_lead_steps must be 1..=10",
+        )
     }
 }
 
@@ -335,6 +415,54 @@ mod presentation_validation_tests {
                 .parse::<toml::Value>()
                 .unwrap();
             assert!(Config::from_value(&value).is_err(), "{setting}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod camera_rules_validation_tests {
+    use super::{CameraRules, Config};
+
+    #[test]
+    fn camera_rules_inherit_vendor_and_validate_layered_overrides() {
+        let vendor = Config::sample().unwrap().camera;
+        assert_ne!(vendor, CameraRules::INERT);
+        let sparse = "[tamagotchi.camera]\npan_step_permille = 50\n"
+            .parse::<toml::Value>()
+            .unwrap();
+        let resolved = Config::from_value(&sparse).unwrap().camera;
+        assert_eq!(resolved.pan_step_permille, 50);
+        // The other eight keys inherit the vendor tier unchanged.
+        assert_eq!(
+            CameraRules {
+                pan_step_permille: vendor.pan_step_permille,
+                ..resolved
+            },
+            vendor
+        );
+        for (setting, rule) in [
+            ("pan_step_permille = 4", "pan_step_permille"),
+            ("pan_step_permille = 201", "pan_step_permille"),
+            ("pan_max_permille = 401", "pan_max_permille must"),
+            ("pan_margin_permille = 251", "pan_margin_permille must"),
+            (
+                "pan_max_permille = 300\npan_margin_permille = 201",
+                "pan_max_permille + pan_margin_permille",
+            ),
+            ("tilt_min_degrees = -18", "tilt_min_degrees"),
+            ("tilt_min_degrees = 1", "tilt_min_degrees"),
+            ("tilt_max_degrees = 56", "tilt_max_degrees"),
+            ("tilt_max_degrees = -1", "tilt_max_degrees"),
+            ("tilt_step_degrees = 0", "tilt_step_degrees"),
+            ("orbit_fine_step_degrees = 91", "orbit_fine_step_degrees"),
+            ("max_lead_steps = 0", "max_lead_steps"),
+            ("unknown = 1", "unknown"),
+        ] {
+            let overlay = format!("[tamagotchi.camera]\n{setting}\n")
+                .parse::<toml::Value>()
+                .unwrap();
+            let error = Config::from_value(&overlay).unwrap_err();
+            assert!(error.contains(rule), "{setting}: {error}");
         }
     }
 }

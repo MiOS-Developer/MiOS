@@ -86,7 +86,9 @@ class TestConfiguratorSecurity(unittest.TestCase):
         self.assertEqual(len(by_key), len(parser.controls), "no duplicate inheritance controls")
         for key in ["tamagotchi.camera_view", "tamagotchi.zoom_percent",
                     "tamagotchi.game.training.name_starts", "tamagotchi.game.training.species_colors",
-                    "tamagotchi.game.training.personality_colors.cozy"]:
+                    "tamagotchi.game.training.personality_colors.cozy",
+                    "tamagotchi.camera.pan_step_permille",
+                    "tamagotchi.camera.preview_orbit_pauses_turntable"]:
             self.assertIn(key, by_key)
         def gather(initial):
             result = subprocess.run(["node", "-e", MON_FORM_NODE],
@@ -101,7 +103,8 @@ class TestConfiguratorSecurity(unittest.TestCase):
         changes = {"tamagotchi.camera_view": "face", "tamagotchi.zoom_percent": "175",
             "tamagotchi.game.training.name_starts": "Yu, Ko",
             "tamagotchi.game.training.species_colors": "4,8,14,15,14,11,7,1",
-            "tamagotchi.game.training.personality_colors.cozy": "3"}
+            "tamagotchi.game.training.personality_colors.cozy": "3",
+            "tamagotchi.camera.pan_step_permille": "50"}
         for key, value in changes.items():
             by_key[key]["value"] = value
         output = gather({})
@@ -111,6 +114,16 @@ class TestConfiguratorSecurity(unittest.TestCase):
         self.assertEqual(parsed["game"]["training"]["name_starts"], ["Yu", "Ko"])
         self.assertEqual(parsed["game"]["training"]["species_colors"], [4,8,14,15,14,11,7,1])
         self.assertEqual(parsed["game"]["training"]["personality_colors"]["cozy"], 3)
+        self.assertEqual(parsed["camera"]["pan_step_permille"], 50)
+        self.assertNotIn("preview_orbit_pauses_turntable", parsed["camera"])
+        # The camera flag is a typed, inheritable bool select. (Bool emission
+        # is the client's job; gatherFromForm owns that coercion.)
+        flag = by_key["tamagotchi.camera.preview_orbit_pauses_turntable"]
+        self.assertEqual((flag["tagName"], flag["dataset"].get("type")), ("SELECT", "bool"))
+        for key in ["pan_step_permille", "pan_max_permille", "pan_margin_permille",
+                    "tilt_step_degrees", "tilt_min_degrees", "tilt_max_degrees",
+                    "orbit_fine_step_degrees", "max_lead_steps"]:
+            self.assertEqual(by_key["tamagotchi.camera." + key]["dataset"].get("type"), "int", key)
         # Choosing Inherit for an existing key removes that override only.
         for control in parser.controls:
             control["value"] = ""
