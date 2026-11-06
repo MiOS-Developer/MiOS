@@ -15934,6 +15934,7 @@ miosd                          = ["service-plane"]   # supervises the AI plane
 mios-webtools-firecrawl-api    = ["service-plane"]
 mios-webtools-firecrawl-worker = ["service-plane"]
 mios-webtools-redis            = ["service-plane"]
+mios-enforcer                  = ["service-plane"]   # Tetragon egress quarantine of the agent namespaces, which only a blade runs
 # Native (non-Quadlet) long-running units. Same rule: a seat offloads them.
 hermes-worker                  = ["service-plane"]
 mios-searxng                   = ["service-plane"]
