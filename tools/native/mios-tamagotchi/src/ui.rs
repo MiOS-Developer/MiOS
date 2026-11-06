@@ -18,11 +18,12 @@ use crossterm::event::{
     Event, KeyEvent, KeyEventKind, MouseButton, MouseEventKind,
 };
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    backend::Backend,
+    layout::{Constraint, Layout, Rect, Size},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    DefaultTerminal, Frame,
+    DefaultTerminal, Frame, Terminal,
 };
 use std::{
     cell::{Cell, RefCell},
@@ -4833,6 +4834,25 @@ fn apply_effect(
     }
     Ok(false)
 }
+/// Hit-test a left click against the frame at the terminal's current size.
+/// Click targets belong to the last drawn frame, but tmux (`window-size
+/// latest`) resizes the window to the clicking client before writing the
+/// click, and the click can be read ahead of the Resize event. Without a
+/// repaint the click lands on the previous size's layout and is lost.
+fn click_at_current_size<B: Backend>(
+    terminal: &mut Terminal<B>,
+    drawn: &mut Size,
+    ui: &mut Ui,
+    (column, row): (u16, u16),
+    paint: impl FnOnce(&Ui, &mut Frame),
+    rules: &Rules,
+) -> Result<Effect, B::Error> {
+    if terminal.size()? != *drawn {
+        *drawn = terminal.draw(|screen| paint(ui, screen))?.area.as_size();
+    }
+    Ok(ui.click(column, row, rules))
+}
+
 pub fn run(
     terminal: &mut DefaultTerminal,
     config: &Config,
@@ -4885,8 +4905,10 @@ pub fn run(
         ui.animate(frame);
         ui.controller = controller.poll();
         ui.controller_status = controller.status().to_owned();
-        terminal
-            .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?;
+        let mut drawn = terminal
+            .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?
+            .area
+            .as_size();
         if event::poll(Duration::from_millis(
             config.tick_ms.min(config.animation_frame_ms),
         ))? {
@@ -4929,7 +4951,16 @@ pub fn run(
                     Effect::Continue
                 }
                 Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
-                    ui.click(mouse.column, mouse.row, &config.game)
+                    click_at_current_size(
+                        terminal,
+                        &mut drawn,
+                        &mut ui,
+                        (mouse.column, mouse.row),
+                        |ui, screen| {
+                            ui.draw(screen, config, renderer, colors, frame, store.is_some())
+                        },
+                        &config.game,
+                    )?
                 }
                 _ => Effect::Continue,
             };
@@ -6146,6 +6177,82 @@ mod direct_navigation_regressions {
             .map(|cell| cell.symbol())
             .collect()
     }
+    /// Care open, painted at `stolen` (the client that sized the window last),
+    /// and the Back cell as the tapping client sees it at `tapping`.
+    fn care_with_back_cell(tapping: (u16, u16)) -> (Config, Ui, (u16, u16)) {
+        let (config, mut ui) = pet();
+        ui.open(Menu::Home);
+        ui.handle(key(KeyCode::Char('1')), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Care));
+        let text = draw(&ui, &config, tapping.0, tapping.1);
+        let lines: Vec<String> = text
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(usize::from(tapping.0))
+            .map(|line| line.iter().collect())
+            .collect();
+        let (row, line) = lines
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, line)| line.contains("Esc: Back"))
+            .unwrap_or_else(|| panic!("no Back hint at {tapping:?}: {text}"));
+        let byte = line.find("Esc: Back").unwrap();
+        let column = line[..byte].chars().count();
+        // The middle of "Esc", where a finger lands.
+        (config, ui, (column as u16 + 1, row as u16))
+    }
+
+    #[test]
+    fn a_tap_read_before_its_resize_hits_the_frame_at_the_current_size() {
+        for (stolen, tapping) in [
+            ((80, 14), (20, 9)),
+            ((123, 30), (20, 9)),
+            ((20, 9), (80, 14)),
+        ] {
+            let (config, mut ui, cell) = care_with_back_cell(tapping);
+            let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+            let paint = |ui: &Ui, screen: &mut Frame| {
+                ui.draw(screen, &config, Renderer::Ascii, &colors, 0, false)
+            };
+            let mut terminal = Terminal::new(TestBackend::new(stolen.0, stolen.1)).unwrap();
+            let mut drawn = terminal
+                .draw(|screen| paint(&ui, screen))
+                .unwrap()
+                .area
+                .as_size();
+            // tmux resizes the window to the tapping client, then writes the tap.
+            terminal.backend_mut().resize(tapping.0, tapping.1);
+            let before = ui.game.clone();
+            let effect = click_at_current_size(
+                &mut terminal,
+                &mut drawn,
+                &mut ui,
+                cell,
+                paint,
+                &config.game,
+            )
+            .unwrap();
+            assert_eq!(effect, Effect::Continue);
+            assert_eq!(
+                ui.menu,
+                Some(Menu::Home),
+                "{stolen:?} -> {tapping:?} at {cell:?}"
+            );
+            assert_eq!(drawn, Size::new(tapping.0, tapping.1));
+            assert_eq!(ui.game, before, "menu navigation must not change the pet");
+        }
+    }
+
+    #[test]
+    fn stale_click_targets_lose_the_tap_without_a_repaint() {
+        // The defect the repaint fixes: hit-testing the frame of the previous size.
+        let (config, mut ui, cell) = care_with_back_cell((20, 9));
+        draw(&ui, &config, 80, 14);
+        ui.click(cell.0, cell.1, &config.game);
+        assert_eq!(ui.menu, Some(Menu::Care));
+    }
+
     #[test]
     fn back_never_quits_and_nested_back_returns_parent_without_changing_pet() {
         for (width, height) in [(12, 6), (61, 26), (62, 30), (61, 45), (4, 2)] {
