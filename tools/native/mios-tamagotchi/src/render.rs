@@ -1114,14 +1114,17 @@ fn projected_head_uv(
     projected_surface_uv(sprite, projection, x, y, valid_head_uv, 0.25, false)
 }
 
-/// Largest texel-to-texel face UV step still treated as one continuous plane.
-/// An eight-bit face plane is three or four texels tall, so one step reaches
-/// 0.45; a tighter limit drops the derivative and every cell row inside a texel
-/// samples the same glyph band. The orthographic face map has no seams
-/// (occluders are holes, not jumps), so half the UV square stays safe. Being a
-/// plane, it also has one gradient: an edge texel with no face neighbour above
-/// or below (where the parentheses sit) borrows the adjacent texel's.
-const FACE_UV_MAX_STEP: f64 = 0.5;
+/// Face-map continuity is authority, not a step size. The face map is an
+/// orthographic projection of one plane: occluders, noses and rear views are
+/// holes (no authorized UV), never jumps, and every authorized UV lies in the
+/// unit square, so a limit of 1.0 accepts every authorized neighbour. Coarse
+/// faces need it -- an eight-bit face is three or four texels tall (steps up
+/// to 0.45) and a two-texel face steps past 0.5; a tighter cutoff dropped the
+/// derivative and every cell row inside a texel sampled one glyph band. Being
+/// a plane it also has one gradient: an edge texel with no face neighbour
+/// above or below (where the parentheses sit) borrows the adjacent texel's,
+/// which stays zero on a genuinely grazing facet.
+const FACE_UV_MAX_STEP: f64 = 1.0;
 
 /// The same nearest material sample authorizes every interpolated UV.
 /// Derivatives refine ink within that pixel, never its depth/visibility mask.
@@ -6001,12 +6004,60 @@ mod kaomoji_scale_tests {
     }
 
     #[test]
+    fn authorized_face_planes_interpolate_monotonically_whatever_their_texel_step() {
+        // A coarse but fully authorized plane must interpolate inside every
+        // texel whatever its UV step, including steps past 0.5 on a two-texel
+        // face: continuity comes from authority, not from a step cutoff.
+        for (rows, step) in [(3, 0.3), (3, 0.45), (2, 0.6), (2, 0.8)] {
+            let columns = 12;
+            let sprite = Sprite::synthetic_face_plane(
+                columns,
+                rows,
+                [1.0 / f32::from(columns), step],
+                1,
+                "(o_o)",
+            );
+            let magnify = 8.0;
+            let projection = Projection {
+                left: 0.0,
+                top: 0.0,
+                scale: magnify,
+                scale_y: magnify,
+            };
+            let x = (f64::from(columns / 2) + 1.5) * magnify;
+            let rows_on_face = (u32::from(rows) * magnify as u32) as usize;
+            let v: Vec<f64> = (0..rows_on_face)
+                .map(|i| {
+                    let y = magnify as u32 + i as u32;
+                    projected_face_uv(&sprite, projection, x as u32, y)
+                        .expect("every face pixel is authorized")
+                        .0[1]
+                })
+                .collect();
+            let per_pixel = f64::from(step) / magnify;
+            for (i, pair) in v.windows(2).enumerate() {
+                let rise = pair[1] - pair[0];
+                assert!(rise >= -1e-9, "step {step}: v falls at row {i}: {pair:?}");
+                let interior = pair.iter().all(|v| *v > 1e-9 && *v < 1.0 - 1e-9);
+                if interior {
+                    assert!(
+                        (rise - per_pixel).abs() <= per_pixel * 0.25 + 1e-6,
+                        "step {step}: row {i} rises {rise:.4}, the plane rises {per_pixel:.4} per pixel"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn eight_bit_faces_interpolate_uv_across_the_cell_rows_of_one_texel() {
         // Eight-bit sprites are 24x24, so a face texel spans several cell rows
-        // at face zoom. Rows inside one texel must still sample distinct glyph
-        // bands, or every intermediate face smears into vertical bars; edge
-        // texels without a face neighbour above or below (the parentheses)
-        // included.
+        // at face zoom. Wherever the real sprite measures a vertical UV slope
+        // (on the texel or an authorized neighbour beside it), rows inside one
+        // texel must sample distinct glyph bands, or every intermediate face
+        // smears into vertical bars. A genuinely grazing facet (no measured
+        // slope) is not required to move.
+        let mut eligible_total = 0;
         for shape in 0..16u8 {
             let appearance = Appearance {
                 shape,
@@ -6044,36 +6095,67 @@ mod kaomoji_scale_tests {
                     projection.scale_y >= 2.0,
                     "shape {shape} yaw {yaw}: texel spans rows"
                 );
-                let (mut pairs, mut distinct) = (0, 0);
+                let vertical_slope = |sx: u32, sy: u32| {
+                    let here = valid_face_uv(&sprite, sx, sy)?;
+                    [sy.checked_sub(1), Some(sy + 1)]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|y| valid_face_uv(&sprite, sx, y))
+                        .map(|next| (next[1] - here[1]).abs())
+                        .reduce(f64::max)
+                };
+                // The texel's own vertical slope where it has a vertical face neighbour
+                // (zero on a grazing facet), else the adjacent texel's: the planar borrow.
+                let measured = |(sx, sy): (u32, u32)| {
+                    std::iter::once(sx)
+                        .chain(
+                            [Some(sx + 1), sx.checked_sub(1)]
+                                .into_iter()
+                                .flatten()
+                                .filter(|x| valid_face_uv(&sprite, *x, sy).is_some()),
+                        )
+                        .find_map(|x| vertical_slope(x, sy))
+                        .is_some_and(|slope| slope > 1e-6)
+                };
+                let (mut eligible, mut moving) = (0, 0);
                 for row in 0..u32::from(area.height) - 1 {
                     for col in 0..u32::from(area.width) {
-                        let same_texel = projection.source_pixel(&sprite, col, row)
-                            == projection.source_pixel(&sprite, col, row + 1);
-                        if let (true, Some(a), Some(b)) = (
-                            same_texel,
+                        let texel = projection.source_pixel(&sprite, col, row);
+                        if texel.is_none()
+                            || texel != projection.source_pixel(&sprite, col, row + 1)
+                        {
+                            continue;
+                        }
+                        let (Some(a), Some(b)) = (
                             projected_face_uv(&sprite, projection, col, row),
                             projected_face_uv(&sprite, projection, col, row + 1),
-                        ) {
-                            // Clamped to the UV border lies outside every glyph.
-                            let border = |v: f64| v <= 0.0 || v >= 1.0;
-                            if border(a.0[1]) || border(b.0[1]) {
-                                continue;
-                            }
-                            pairs += 1;
-                            distinct += usize::from((b.0[1] - a.0[1]).abs() > 1e-6);
+                        ) else {
+                            continue;
+                        };
+                        // Clamped to the UV border lies outside every glyph.
+                        let border = |v: f64| v <= 0.0 || v >= 1.0;
+                        if border(a.0[1]) || border(b.0[1]) || !measured(texel.unwrap()) {
+                            continue;
                         }
+                        eligible += 1;
+                        moving += usize::from((b.0[1] - a.0[1]).abs() > 1e-6);
                     }
                 }
                 assert!(
-                    pairs > 0,
-                    "shape {shape} yaw {yaw}: no face texel spans two rows"
+                    eligible > 0,
+                    "shape {shape} yaw {yaw}: no texel with a measured slope"
                 );
                 assert_eq!(
-                    distinct, pairs,
-                    "shape {shape} yaw {yaw}: rows inside one texel that keep their v"
+                    moving, eligible,
+                    "shape {shape} yaw {yaw}: rows inside one sloped texel that keep their v"
                 );
+                eligible_total += eligible;
             }
         }
+        assert!(
+            eligible_total > 1000,
+            "only {eligible_total} eligible row pairs"
+        );
     }
 
     #[test]
