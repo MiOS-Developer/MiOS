@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1749 |
-| in_progress | 78 |
+| pending | 1748 |
+| in_progress | 80 |
 | completed | 1889 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3756 |
+| total | 3757 |
 
 0 record(s) carry at least one override.
 
@@ -4421,7 +4421,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3698` Publish machine OS mirror under the current repository organization -- completed · owner mios-ci-registry · P0 · size M
 - `task_3700` Repair remaining source CI fitness failures without relaxing shrink-only budgets -- in_progress · owner mios-controller-repair · P0 · size L
 - `task_3701` Fail closed when image signature evidence is unavailable -- completed · owner mios-signature-fail-closed · P0 · size M
-- `task_3756` Triage the hosted main behavioral suite failures independently of the Mon release -- pending · owner mios-claude-continuation · P1 · size L
+- `task_3756` Triage the hosted main behavioral suite failures independently of the Mon release -- in_progress · owner mios-claude-continuation · P1 · size L
 
 ## input
 
@@ -4482,7 +4482,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3752` Improve Mon silhouettes and voxel texture shading across terminal scales -- completed · owner mios-claude-continuation · P1 · size L
 - `task_3753` Condense HUD headers and expose contextual menu descriptions -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3754` Keep tracked Kaomoji eyes and mouths legible across face zoom and detail modes -- completed · owner mios-claude-continuation · P1 · size L
-- `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- pending · owner mios-tamagotchi-live-coordinator · P2 · size M
+- `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- in_progress · owner mios-claude-continuation · P2 · size M
+- `task_3757` Widen shaded voxel faces and preserve expressions at oblique and profile views -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## terminal
 

@@ -1522,13 +1522,15 @@ enum FaceLod {
 
 /// Cells per glyph and rows the letterboxed text box needs for each tier.
 /// Below the shaded minimum a glyph cannot be drawn legibly across several
-/// cells, so native characters stay. Packed-pixel renderers keep the original
-/// 5-cell/4.5-row atlas switch; one-pixel-per-cell ASCII would only stamp
-/// binary marks there and keeps the shading at every larger size.
+/// cells, so native characters stay. Every in-between size draws the kaomoji
+/// as multi-cell ASCII shading; packed-pixel renderers switch to the pixel
+/// atlas only for large close-ups, at twice the shaded minimum in both axes.
+/// One-pixel-per-cell ASCII would only stamp binary marks there and keeps the
+/// shading at every larger size.
 const SHADED_MIN_CELLS_PER_GLYPH: f64 = 4.0;
 const SHADED_MIN_ROWS: f64 = 4.0;
-const ATLAS_MIN_CELLS_PER_GLYPH: f64 = 5.0;
-const ATLAS_MIN_ROWS: f64 = 4.5;
+const ATLAS_MIN_CELLS_PER_GLYPH: f64 = 2.0 * SHADED_MIN_CELLS_PER_GLYPH;
+const ATLAS_MIN_ROWS: f64 = 2.0 * SHADED_MIN_ROWS;
 /// A cell shows face ink only when its glyph coverage reaches this share.
 const SHADED_MIN_INK: f64 = 0.15;
 
@@ -1553,6 +1555,7 @@ fn face_lod(texture: FaceTexture, columns: f64, rows: f64, pixel_atlas: bool) ->
 /// their surface. One-plane ASCII restores the lit body exactly first, as the
 /// atlas does, so stale marks never survive in stroke gaps; packed cells keep
 /// their pixels as the background behind the stroke's glyph and face ink.
+/// Returns whether any stroke was laid; restoring the body alone draws no face.
 fn draw_shaded_face(
     sprite: &Sprite,
     renderer: Renderer,
@@ -1600,7 +1603,7 @@ fn draw_shaded_face(
     // A packed cell's background already holds body pixels, so relighting it
     // would not reproduce the body; ASCII's background is the room's.
     let restore = (dx, dy) == (1, 1);
-    let mut painted = false;
+    let mut stroked = false;
     for (col, row, ink, original, surface) in cells {
         let Some(cell) = buf.cell_mut((col, row)) else {
             continue;
@@ -1609,7 +1612,6 @@ fn draw_shaded_face(
             let background = cell.bg;
             paint_lit_pixels(renderer, colors, original, surface, [false; 8], cell);
             cell.set_bg(background);
-            painted = true;
         }
         let Some(ink) = ink else {
             continue;
@@ -1631,9 +1633,9 @@ fn draw_shaded_face(
             glyph
         };
         cell.set_char(glyph).set_fg(stroke_color);
-        painted = true;
+        stroked = true;
     }
-    painted
+    stroked
 }
 
 /// A head with room for the whole expression on one row draws it as one
@@ -1867,6 +1869,9 @@ fn draw_camera_face(
                 && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
         }
         FaceLod::Shaded => {
+            // A face plane turned nearly edge-on leaves no cell wholly on it,
+            // so the overlay lays no stroke: show native glyphs on the visible
+            // head instead, or report no face so the caption carries it.
             return draw_shaded_face(
                 sprite,
                 renderer,
@@ -1875,7 +1880,8 @@ fn draw_camera_face(
                 area,
                 buf,
                 (texture, [left, top, right, bottom], stroke_color),
-            );
+            ) || (native_fits
+                && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf));
         }
         FaceLod::Atlas => {}
     }
@@ -6618,7 +6624,119 @@ mod kaomoji_scale_tests {
     }
 
     #[test]
-    fn face_lod_tiers_are_ordered_and_keep_the_legacy_atlas_switch() {
+    fn edge_on_faces_never_claim_a_face_they_did_not_draw() {
+        // A steeply turned head (e.g. yaw 60 at high zoom) can leave no cell
+        // wholly on the face plane, so the shaded overlay lays no stroke. The
+        // face pass must then fall back to native glyphs or report nothing,
+        // so the caption carries the expression -- never a silent blank head.
+        // (Exact 90/270 profiles map no face at all: profile_symmetry_tests.)
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let area = Rect::new(0, 0, 62, 30);
+        let (mut shaded, mut native, mut captioned) = (0, 0, 0);
+        for stage in [Stage::Baby, Stage::Adult] {
+            for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+                for shape in 0..16u8 {
+                    for yaw in [0, 60, 120, 240, 300] {
+                        let sprite = Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            0,
+                            yaw,
+                            false,
+                            Appearance {
+                                shape,
+                                body: shape,
+                                accent: (shape + 5) % 16,
+                            },
+                        );
+                        let (Some(texture), Some(bounds)) =
+                            (FaceTexture::new(&sprite), FaceTexture::bounds(&sprite))
+                        else {
+                            continue;
+                        };
+                        let stroke = face_ink(&sprite, &colors, InkRegion::TextBox);
+                        for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                            let pixel_atlas = renderer.packing() != (1, 1)
+                                && !(renderer == Renderer::HalfBlock && stroke != colors.ink(0));
+                            for view in [CameraView::Pet, CameraView::Face] {
+                                for zoom_percent in (100..=400).step_by(50) {
+                                    let projection = Projection::camera(
+                                        &sprite,
+                                        SolidBounds::of(&sprite).unwrap(),
+                                        area,
+                                        renderer,
+                                        0,
+                                        (500, 500),
+                                        Camera {
+                                            orbit_degrees: yaw,
+                                            view,
+                                            from_view: view,
+                                            zoom_percent,
+                                            transition_percent: 100,
+                                        },
+                                    );
+                                    let (l, t) = projection.cell(bounds.left, bounds.top, renderer);
+                                    let (r, b) =
+                                        projection.cell(bounds.right, bounds.bottom, renderer);
+                                    if face_lod(texture, r - l, b - t, pixel_atlas)
+                                        != FaceLod::Shaded
+                                    {
+                                        continue;
+                                    }
+                                    shaded += 1;
+                                    let mut body = Buffer::empty(area);
+                                    draw_projection(
+                                        &sprite, renderer, &colors, projection, area, &mut body,
+                                    );
+                                    let mut face = body.clone();
+                                    let drew = draw_camera_face(
+                                        &sprite, renderer, &colors, projection, area, &mut face,
+                                    );
+                                    let strokes = body
+                                        .content
+                                        .iter()
+                                        .zip(&face.content)
+                                        .filter(|(a, b)| a != b)
+                                        .count();
+                                    assert!(
+                                        !drew || strokes >= 3,
+                                        "{stage:?} {style:?} shape {shape} yaw {yaw} {renderer:?} {view:?} @{zoom_percent}: claimed a face, drew {strokes} cells"
+                                    );
+                                    // The overlay on its own: did it lay any stroke here?
+                                    let mut overlay = body.clone();
+                                    let stroked = draw_shaded_face(
+                                        &sprite,
+                                        renderer,
+                                        &colors,
+                                        projection,
+                                        area,
+                                        &mut overlay,
+                                        (texture, [l, t, r, b], stroke),
+                                    );
+                                    if !stroked {
+                                        native += usize::from(drew);
+                                        captioned += usize::from(!drew);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(shaded > 0, "steep turns must exercise the shaded tier");
+        // Both outcomes of a stroke-less overlay occur (e.g. Baby 8-bit Happy
+        // shape 6 at yaw 60 in ASCII): native glyphs, and a caption-only face.
+        assert!(
+            native > 0 && captioned > 0,
+            "stroke-less overlays must exercise both fallbacks: native {native}, caption {captioned} of {shaded}"
+        );
+    }
+
+    #[test]
+    fn face_lod_tiers_are_ordered_and_take_the_atlas_only_for_large_faces() {
         for text in ["(o_O)", "(^_^)", "T_T"] {
             for aspect in [None, Some(0.8), Some(1.6), Some(4.0)] {
                 let texture = FaceTexture { text, aspect };
@@ -6639,8 +6757,18 @@ mod kaomoji_scale_tests {
                         );
                         previous = rank(lod);
                         if aspect.is_none() {
-                            let legacy = columns >= text.len() as f64 * 5.0 && rows >= 4.5;
-                            assert_eq!(lod == FaceLod::Atlas, legacy, "{text} {columns}x{rows}");
+                            // Unfitted texture: the text box is the face box.
+                            let per_glyph = columns / text.len() as f64;
+                            let native = per_glyph < 4.0 || rows < 4.0;
+                            let atlas = per_glyph >= 8.0 && rows >= 8.0;
+                            let expected = if native {
+                                FaceLod::Native
+                            } else if atlas {
+                                FaceLod::Atlas
+                            } else {
+                                FaceLod::Shaded
+                            };
+                            assert_eq!(lod, expected, "{text} {columns}x{rows}");
                         }
                         // One pixel per cell shades wherever packed pixels would
                         // shade or take the atlas, and never takes the atlas.
