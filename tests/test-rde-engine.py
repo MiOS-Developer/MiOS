@@ -15,6 +15,7 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
 _SSOT_PATH = os.path.join(_ROOT, "usr", "share", "mios", "mios.toml")
+_DEVCONTAINER_PATH = os.path.join(_ROOT, ".devcontainer", "devcontainer.json")
 _USR_BIN_MIOS = os.path.join(_ROOT, "usr", "bin", "mios")
 _MIOS_RS_DIR = os.path.join(_ROOT, "src", "mios-rs")
 
@@ -90,24 +91,27 @@ class TestRdeEngine(unittest.TestCase):
             json.dump({"name": "Test Workspace"}, f)
         return self.temp_dir
 
-    def _assert_forwarded(self, agent):
-        """rde's forward contract for agent port `agent`: status and the up plan
-        report it, forward it exactly once, and the devpod command opens every
-        forwarded port."""
-        status = self._rde_json("status")
+    def _assert_forwarded(self, agent, host_toml=None):
+        """rde's forward contract for agent port `agent`: every surface that names
+        the agent port -- status JSON and text, the up plan JSON and its text --
+        names `agent`, the port is forwarded exactly once, and the devpod command
+        opens every forwarded port."""
+        status = self._rde_json("status", host_toml=host_toml)
         self.assertEqual(status.get("devpod_agent_port"), agent)
         self.assertEqual(status["forward_ports"].count(agent), 1, status["forward_ports"])
-        plan = self._rde_json("up", self._workspace(), "--dry-run")
+        plan = self._rde_json("up", self._workspace(), "--dry-run", host_toml=host_toml)
         self.assertEqual(plan.get("devpod_agent_port"), agent)
         self.assertEqual(plan.get("forward_ports"), status["forward_ports"])
         opened = [plan["command"][i + 1] for i, a in enumerate(plan["command"]) if a == "--open"]
         self.assertEqual(opened, [f"localhost:{p}" for p in plan["forward_ports"]])
         # The human-readable surfaces print the same resolved port, never a literal.
-        text = self._rde("status")
-        self.assertIn(f"Agent Port:   {agent} (forwarded)", text.stdout)
-        text = self._rde("up", self._workspace(), "--dry-run")
+        text = self._rde("status", host_toml=host_toml)
         self.assertEqual(text.returncode, 0, text.stderr)
-        self.assertIn(f"(devpod_agent = {agent})", text.stdout)
+        self.assertIn(f"Agent Port:   {agent} (forwarded)", text.stdout)
+        text = self._rde("up", self._workspace(), "--dry-run", host_toml=host_toml)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertIn(f"Forwarded Ports:  {plan['forward_ports']} (devpod_agent = {agent})",
+                      text.stdout)
         return status
 
     # -------------------------------------------------------------------------
@@ -139,11 +143,24 @@ class TestRdeEngine(unittest.TestCase):
         status = self._assert_forwarded(ports["devpod_agent"])
         self.assertIn(ports["code_server"], status["forward_ports"])
 
+    def test_devcontainer_forwards_the_code_server_port(self):
+        """Positive Control: .devcontainer/devcontainer.json forwards the SSOT
+        [ports].code_server (the code-server workbench), resolved, not a literal."""
+        with open(_DEVCONTAINER_PATH, "r", encoding="utf-8") as f:
+            forward_ports = json.load(f).get("forwardPorts", [])
+        code_server = _ssot_ports()["code_server"]
+        self.assertIn(code_server, forward_ports,
+                      f"[ports].code_server = {code_server} (code-server) must be in forwardPorts")
+
     def test_rde_forward_ports_follow_an_ssot_overlay(self):
-        """Negative Control: a host overlay that moves the agent port moves what rde
-        forwards and reports, and the vendor port is no longer forwarded."""
+        """Negative Control: a host overlay that moves [ports].devpod_agent moves
+        every surface rde reports it on (status JSON and text, the up plan JSON and
+        its text). The moved port REPLACES the vendor port in the vendor port's
+        slot of forward_ports -- it is not appended -- so the vendor port is no
+        longer forwarded and the moved one is forwarded exactly once."""
         ssot = _ssot_tree()
         vendor = ssot["ports"]["devpod_agent"]
+        vendor_forwarded = self._rde_json("status")["forward_ports"]
         moved = vendor + 10000 if vendor + 10000 <= 65535 else vendor - 1000
         # [ports] is re-derived from [ports.categories] after the merge, so an
         # overlay moves a category member through its category.
@@ -154,15 +171,19 @@ class TestRdeEngine(unittest.TestCase):
         host = os.path.join(self.temp_dir, "host.toml")
         with open(host, "w", encoding="utf-8") as f:
             f.write(overlay)
-        status = self._rde_json("status", host_toml=host)
-        self.assertEqual(status.get("devpod_agent_port"), moved)
-        self.assertIn(moved, status["forward_ports"])
+        status = self._assert_forwarded(moved, host_toml=host)
         self.assertNotIn(vendor, status["forward_ports"], "the vendor agent port must not stay forwarded")
+        self.assertEqual(status["forward_ports"],
+                         [moved if p == vendor else p for p in vendor_forwarded],
+                         "the moved agent port takes the vendor port's slot")
         plan = self._rde_json("up", self._workspace(), "--dry-run", host_toml=host)
+        self.assertEqual(plan["devpod_agent_port"], moved)
         self.assertIn(f"localhost:{moved}", plan["command"])
         self.assertNotIn(f"localhost:{vendor}", plan["command"])
-        text = self._rde("status", host_toml=host)
-        self.assertIn(f"Agent Port:   {moved} (forwarded)", text.stdout)
+        text = self._rde("up", self._workspace(), "--dry-run", host_toml=host)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertIn(f"(devpod_agent = {moved})", text.stdout)
+        self.assertNotIn(f"(devpod_agent = {vendor})", text.stdout)
 
     def test_rde_audit_zero_taint(self):
         """Positive Control: Verify automated license audit confirms 0 copyleft taint."""
