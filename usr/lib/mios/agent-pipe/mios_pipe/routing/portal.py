@@ -1271,7 +1271,7 @@ def run_db_reseed_bg():
 
 @portal_router.get("/portal/config")
 async def get_portal_config(request: Request):
-    """GET /portal/config -> return the live layered mios.toml as text/plain."""
+    """GET /portal/config -> the layered mios.toml, redacted like miosd's GET."""
     if not _portal_authed(request):
         return JSONResponse({"error": "auth required"}, status_code=401)
 
@@ -1279,11 +1279,11 @@ async def get_portal_config(request: Request):
     if "/usr/lib/mios" not in sys.path:
         sys.path.insert(0, "/usr/lib/mios")
     import mios_toml
-    from mios_pipe.kernel.config import to_toml
+    from mios_pipe.kernel.config import redact_secrets, to_toml
 
     try:
         merged_config = mios_toml.load_merged()
-        toml_text = to_toml(merged_config)
+        toml_text = to_toml(redact_secrets(merged_config))
         return Response(content=toml_text, media_type="text/plain")
     except Exception as e:
         log.error("Failed to load/serialize layered config: %s", e)
@@ -1296,8 +1296,10 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
     if not _portal_authed(request):
         return JSONResponse({"error": "auth required"}, status_code=401)
 
-    body_bytes = await request.body()
-    toml_text = body_bytes.decode("utf-8")
+    from mios_pipe.kernel.config import UNRESOLVED_REFUSAL, TiersUnresolved, portal_post_toml, validate_config, write_user_config
+    toml_text = portal_post_toml(request.headers.get("content-type", ""), await request.body())
+    if toml_text is None:
+        return JSONResponse({"error": 'Invalid JSON envelope: expected {"toml": "<text>"}'}, status_code=400)
 
     try:
         import tomllib as _toml
@@ -1309,8 +1311,6 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
     except Exception as e:
         log.warning("Invalid TOML posted to /portal/config: %s", e)
         return JSONResponse({"error": "Invalid TOML syntax"}, status_code=400)
-
-    from mios_pipe.kernel.config import write_user_config, validate_config
 
     live_config = None
     try:
@@ -1329,14 +1329,14 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
                             status_code=422)
 
     try:
-        write_user_config(parsed_config)
+        write_user_config(parsed_config, live_config=live_config)
 
         background_tasks.add_task(run_db_reseed_bg)
 
         return JSONResponse({"status": "ok"})
-    except Exception as e:
+    except Exception as e:  # TiersUnresolved: refused, nothing was written
         log.error("Failed to save config: %s", e)
-        return JSONResponse({"error": "Unable to save configuration"}, status_code=500)
+        return JSONResponse({"error": UNRESOLVED_REFUSAL if isinstance(e, TiersUnresolved) else "Unable to save configuration"}, status_code=500)
 
 _THEME_RENDER_BIN = os.environ.get(
     "MIOS_THEME_RENDER", "/usr/libexec/mios/mios-dotfiles-render")
