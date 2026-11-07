@@ -527,11 +527,12 @@ def _hermetic(cmd: list[str], test: unittest.TestCase) -> list[str]:
 
 def windows_helper(test: unittest.TestCase, mode: str, vendor: str | None = None,
                    user: str = "", common: bool = True, preload: bool = False,
-                   **env_extra: str) -> dict:
+                   common_text: str | None = None, **env_extra: str) -> dict:
     """A helper's lifted port map in a scratch repo tree: mios-common.ps1 at
     installation/ unless `common` is false, `vendor` and `user` as its vendor
-    and Windows user layers, `env_extra` as the resolver's exports. The
-    defaults are the shipped layout."""
+    and Windows user layers, `env_extra` as the resolver's exports,
+    `common_text` a stand-in for mios-common.ps1. The defaults are the
+    shipped layout."""
     pwsh = test.need(tool("pwsh"), "pwsh")
     tmp = tempfile.mkdtemp(prefix="mios-searxng-win-")
     test.addCleanup(shutil.rmtree, tmp, True)
@@ -546,6 +547,9 @@ def windows_helper(test: unittest.TestCase, mode: str, vendor: str | None = None
     if common:
         os.makedirs(os.path.dirname(common_path))
         shutil.copyfile(os.path.join(_ROOT, _COMMON_PS1), common_path)
+        if common_text is not None:
+            with open(common_path, "w", encoding="utf-8") as fh:
+                fh.write(common_text)
     home = os.path.join(tmp, "home")
     os.makedirs(os.path.join(home, ".config", "mios"))
     if user:
@@ -1113,6 +1117,18 @@ class TestDefaultConsumers(Base):
                 for key in ("map", "warnings", "hosts", "proxies", "deleted", "probed", "served"):
                     self.assertEqual(base.get(key), again.get(key), key)
 
+    def test_a_reader_that_fails_to_load_changes_nothing_else(self):
+        # Loading the reader for SearXNG cannot stop the rest of the helper.
+        for mode in ("heal", "tailscale"):
+            with self.subTest(helper=mode):
+                base = windows_helper(self, mode)
+                got = windows_helper(self, mode, common_text="throw 'mios-common.ps1 failed to load'\n")
+                self.assertEqual([x for x in base["map"] if x[0] != "searxng"], got["map"])
+                self.assertEqual([], unsupported_notes(got))
+                self.assertTrue(any("[ports].searxng does not resolve" in w for w in got["warnings"]),
+                                got["warnings"])
+                self.assertFalse(got["reader"])
+
     def test_lan_status(self):
         s = self.stack()
         r, got = lan_status(s, install_env(s), (self.P, 8400))
@@ -1602,8 +1618,11 @@ class TestScanner(Base):
                     found = [p for p in re.split(r"<!-- mios-src:|\n---\n", fh.read()) if passage in p]
                 self.assertEqual(1, len(found), passage)
                 text = found[0].replace("`", "")
-                for part in ("SearXNG", "loopback-only", "[ports].searxng", "unsupported"):
-                    self.assertIn(part, text)
+                self.assertIn("[ports].searxng", text)
+                self.assertRegex(text, r"one listener is\s+loopback-only|loopback-only,\s+one listener")
+                self.assertRegex(text, r"(?i)(?:direct\s+(?:Windows\s+)?LAN\s+forwarding|tailnet\s+serving)"
+                                       r"[^.]*?\s(?:is|are)\s+unsupported")
+                self.assertNotRegex(text, r"SearXNG\s+(?:is|gets)\s+(?:forwarded|served)\b")
 
     def test_clean_forms_pass(self):
         for line in ('"GRANIAN_PORT=${MIOS_PORTS_SEARXNG}"', '"mios-searxng",',

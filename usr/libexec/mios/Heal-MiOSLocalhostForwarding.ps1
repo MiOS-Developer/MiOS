@@ -46,7 +46,7 @@ foreach ($pk in $portKeys) {
 $v = & {
     if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
         $c = Join-Path $PSScriptRoot '..\..\..\installation\mios-common.ps1'
-        if (Test-Path $c) { . $c }
+        if (Test-Path $c) { try { . $c } catch {} }
     }
     if (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) { [string](Get-MiosSsotValue -Section 'ports' -Key 'searxng') }
 }

@@ -85,7 +85,7 @@ $cephPort      = Get-PortFromSsot 'MIOS_PORTS_CEPH_DASHBOARD' 'ceph_dashboard' 8
 $searxngPort   = & {
     if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
         $c = Join-Path $PSScriptRoot '..\..\..\..\installation\mios-common.ps1'
-        if (Test-Path $c) { . $c }
+        if (Test-Path $c) { try { . $c } catch {} }
     }
     Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng'
 }
