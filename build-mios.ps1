@@ -4303,9 +4303,14 @@ function Set-MiosLanFirewallRules {
     foreach ($k in $_defaultPorts.Keys) {
         $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
     }
-    # SearXNG: the one [ports].searxng key, with no vendor literal.
+    # SearXNG gets no LAN rule: its one listener is loopback-only (mios.toml
+    # [ports].searxng), so direct LAN forwarding to it is unsupported. The rule
+    # an earlier run created is removed.
     $_searxngPort = Get-MiosSsotPort -Key 'searxng'
-    if ($_searxngPort) { $_ports['searxng'] = $_searxngPort }
+    if ($_searxngPort) {
+        Remove-NetFirewallRule -DisplayName "MiOS - searxng ($_searxngPort/tcp)" -ErrorAction SilentlyContinue
+        Log-Info "Firewall: no SearXNG LAN rule -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
+    }
     else { Log-Warn "Firewall: mios.toml [ports].searxng does not resolve from any layer; no SearXNG LAN rule" }
 
     # Which profiles + which services to expose (operator-editable).
@@ -4381,9 +4386,14 @@ function Set-MiosLanPortProxy {
     foreach ($k in $_defaultPorts.Keys) {
         $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
     }
-    # SearXNG: the one [ports].searxng key, with no vendor literal.
+    # SearXNG is not forwarded: its one listener is loopback-only (mios.toml
+    # [ports].searxng), which the VM's eth0 IP never reaches, so direct LAN
+    # forwarding to it is unsupported. The mapping an earlier run added is removed.
     $_searxngPort = Get-MiosSsotPort -Key 'searxng'
-    if ($_searxngPort) { $_ports['searxng'] = $_searxngPort }
+    if ($_searxngPort) {
+        & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$_searxngPort 2>&1 | Out-Null
+        Log-Info "portproxy: SearXNG is not forwarded -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
+    }
     else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
     $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_ports.Keys))
     if ($_expose.Count -eq 0) { $_expose = @($_ports.Keys) }

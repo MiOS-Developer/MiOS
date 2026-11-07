@@ -26,22 +26,12 @@ function _MiosPort([string]$EnvName, [int]$Default) {
     if ($v) { [int]$v } else { $Default }
 }
 
-# SearXNG has no literal: the one [ports].searxng as the resolver exports it
-# (MIOS_PORTS_SEARXNG), or $null. With no default the helper's [int] stays 0,
-# never a port, so 0 means unresolved and SearXNG is left out by name.
-$searxngPort = _MiosPort 'MIOS_PORTS_SEARXNG'
-if ($searxngPort -lt 1 -or $searxngPort -gt 65535) {
-    $searxngPort = $null
-    Write-Warning 'mios.toml [ports].searxng does not resolve (MIOS_PORTS_SEARXNG is unset); SearXNG is not forwarded'
-}
-
 $portMap = @(
     @{ Port = (_MiosPort 'MIOS_PORTS_FORGE_HTTP'       8400); Name = 'forge'       }
     @{ Port = (_MiosPort 'MIOS_PORTS_OPEN_WEBUI'       8200); Name = 'open-webui'  }
     @{ Port = (_MiosPort 'MIOS_PORTS_CODE_SERVER'      8900); Name = 'code-server' }
     @{ Port = (_MiosPort 'MIOS_PORTS_COCKPIT'          8110); Name = 'cockpit'     }
     @{ Port = (_MiosPort 'MIOS_PORTS_LLM_LIGHT'        8500); Name = 'llm-light'   }
-    if ($null -ne $searxngPort) { @{ Port = $searxngPort; Name = 'searxng' } }
     @{ Port = (_MiosPort 'MIOS_PORTS_HERMES'           8720); Name = 'hermes'      }
     @{ Port = (_MiosPort 'MIOS_PORTS_HERMES_DASHBOARD' 8210); Name = 'dash-ai'     }
     @{ Port = (_MiosPort 'MIOS_PORT_GUACAMOLE_WEB'    8220); Name = 'guacamole'   }
@@ -83,6 +73,9 @@ foreach ($p in $portMap) {
         Write-Host ("  [!] portproxy add for {0} failed" -f $port) -ForegroundColor Red
     }
 }
+# SearXNG is not forwarded: its one listener is loopback-only, at mios.toml
+# [ports].searxng, and direct LAN forwarding to it is unsupported.
+Write-Host '  [-] searxng: not forwarded -- direct LAN forwarding is unsupported (loopback-only listener, mios.toml [ports].searxng)' -ForegroundColor DarkYellow
 
 # 2b. AI-Node Tailscale v4tov6 bridge if requested
 if ($AiNode) {
