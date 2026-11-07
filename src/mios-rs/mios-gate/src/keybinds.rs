@@ -852,6 +852,7 @@ const NAV_SETTINGS: &[&str] = &[
     "apps",
     "app_poll_ms",
     "app_query_timeout_ms",
+    "focus_gesture",
 ];
 /// The base contexts a foreground app may refine (mios-inputd nav.rs APP_CONTEXTS).
 const APP_CONTEXTS: &[&str] = &["terminal", "console"];
@@ -1149,6 +1150,10 @@ pub fn controller_audit(
         }
     }
     for (name, t) in nav {
+        if name.as_str() == "focus_gesture" {
+            focus_gesture_audit(v, out);
+            continue;
+        }
         if NAV_SETTINGS.contains(&name.as_str()) {
             continue;
         }
@@ -1257,6 +1262,72 @@ pub fn controller_audit(
     }
     app_audit(nav, &check_value, &mut out);
     out
+}
+
+/// mios-inputd's right-stick focus-gesture table (task3773, nav.rs): all seven fields
+/// required together, with the same ranges the native parser enforces. The table is
+/// optional; an absent table is the legacy magnitude-flick policy and audits clean.
+fn focus_gesture_audit(v: &toml::Value, out: &mut Vec<String>) {
+    let Some(t) = v.as_table() else {
+        out.push("controller.nav.focus_gesture: must be a table".into());
+        return;
+    };
+    let pct = |k: &str, out: &mut Vec<String>| -> Option<f64> {
+        let v = t.get(k)?;
+        let n = v
+            .as_float()
+            .or_else(|| v.as_integer().map(f64::from));
+        if n.is_none() {
+            out.push(format!("controller.nav.focus_gesture.{k}: a percentage 0 < x <= 1 is required"));
+        }
+        n
+    };
+    let ms = |k: &str, out: &mut Vec<String>| -> Option<i64> {
+        let n = t.get(k).and_then(toml::Value::as_integer);
+        if n.is_none() {
+            out.push(format!("controller.nav.focus_gesture.{k}: a whole number of milliseconds is required"));
+        }
+        n
+    };
+    let neutral = pct("neutral_pct", out);
+    let rise = pct("rise_pct", out);
+    let neutral_ms = ms("neutral_ms", out);
+    let rise_ms = ms("rise_ms", out);
+    let direction = ms("direction_deg", out);
+    let ret = ms("return_ms", out);
+    let cooldown = ms("cooldown_ms", out);
+    for k in ["neutral_pct", "neutral_ms", "rise_pct", "rise_ms", "direction_deg", "return_ms", "cooldown_ms"] {
+        if !t.contains_key(k) {
+            out.push(format!(
+                "controller.nav.focus_gesture.{k}: required together with the rest of the table"
+            ));
+        }
+    }
+    if let (Some(n), Some(r)) = (neutral, rise) {
+        if !(n > 0.0 && n <= 0.5) {
+            out.push("controller.nav.focus_gesture.neutral_pct: 0 < x <= 0.5".into());
+        }
+        if !(r > n && r <= 1.0) {
+            out.push("controller.nav.focus_gesture.rise_pct: neutral_pct < x <= 1".into());
+        }
+    }
+    for (k, n) in [("neutral_ms", neutral_ms), ("rise_ms", rise_ms), ("return_ms", ret)] {
+        if let Some(n) = n {
+            if !(1..=2000).contains(&n) {
+                out.push(format!("controller.nav.focus_gesture.{k}: 1..=2000 ms"));
+            }
+        }
+    }
+    if let Some(d) = direction {
+        if !(1..=45).contains(&d) {
+            out.push("controller.nav.focus_gesture.direction_deg: 1..=45 degrees".into());
+        }
+    }
+    if let Some(c) = cooldown {
+        if !(0..=5000).contains(&c) {
+            out.push("controller.nav.focus_gesture.cooldown_ms: 0..=5000 ms".into());
+        }
+    }
 }
 
 /// mios-inputd's verified foreground-app layer (protocol P1/P2, nav.rs load_apps): `app_poll_ms` and
@@ -2301,6 +2372,44 @@ BTN_TL2 = [250, 90]
         let f = audit(&ok);
         assert!(f.is_empty(), "{f:#?}");
         assert!(!f.iter().any(|x| x.contains("unknown controller input mon")));
+    }
+
+    /// task3773: the gate mirrors the native focus_gesture grammar -- the vendor-shaped
+    /// table audits clean, every range/type violation is a finding, a partial table is
+    /// refused, and an absent table (the legacy policy) produces no focus_gesture finding.
+    #[test]
+    fn inputd_focus_gesture_mirror_matches_the_native_grammar() {
+        let table = "\n[keybindings.global.controller.nav.focus_gesture]\n\
+neutral_pct = 0.15\nneutral_ms = 80\nrise_pct = 0.9\nrise_ms = 120\n\
+direction_deg = 20\nreturn_ms = 250\ncooldown_ms = 400\n";
+        let ok = with_mon(&format!("{NAV}{table}"));
+        let f = audit(&ok);
+        assert!(f.is_empty(), "vendor-shaped table: {f:#?}");
+        for (from, to, why) in [
+            ("neutral_pct = 0.15", "neutral_pct = 0.6", "neutral_pct: 0 < x <= 0.5"),
+            ("rise_pct = 0.9", "rise_pct = 0.1", "rise_pct: neutral_pct < x <= 1"),
+            ("neutral_ms = 80", "neutral_ms = 0", "neutral_ms: 1..=2000 ms"),
+            ("rise_ms = 120", "rise_ms = 2001", "rise_ms: 1..=2000 ms"),
+            ("direction_deg = 20", "direction_deg = 46", "direction_deg: 1..=45 degrees"),
+            ("return_ms = 250", "return_ms = 0", "return_ms: 1..=2000 ms"),
+            ("cooldown_ms = 400", "cooldown_ms = 5001", "cooldown_ms: 0..=5000 ms"),
+            ("neutral_ms = 80", "neutral_ms = \"slow\"", "a whole number of milliseconds"),
+        ] {
+            let bad = with_mon(&format!("{NAV}{table}").replacen(from, to, 1));
+            let f = audit(&bad);
+            assert!(
+                f.iter().any(|x| x.contains(why)),
+                "{from} -> {to}: {f:#?}"
+            );
+        }
+        let partial = with_mon(&format!("{NAV}{table}".replacen("cooldown_ms = 400\n", "", 1)));
+        let f = audit(&partial);
+        assert!(f.iter().any(|x| x.contains("required together")));
+        let base = with_mon(NAV);
+        assert!(
+            !audit(&base).iter().any(|x| x.contains("focus_gesture")),
+            "absent table is the legacy policy"
+        );
     }
 
     /// INPUTD spec test 14: the gate rejects the same P2 cases mios-inputd drops (mios-inputd keeps base navigation;
