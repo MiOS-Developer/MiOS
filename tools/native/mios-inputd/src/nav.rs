@@ -523,9 +523,7 @@ impl NavConfig {
                         None => break,
                         Some(p) if !raw.contains_key(p) => {
                             if let Some(error) = dropped.get(p) {
-                                return Err(format!(
-                                    "nav.{cur}.inherits: {p} is invalid: {error}"
-                                ));
+                                return Err(format!("nav.{cur}.inherits: {p} is invalid: {error}"));
                             }
                             return Err(format!("nav.{cur}.inherits: unknown profile {p}"));
                         }
@@ -667,10 +665,7 @@ impl NavConfig {
             for (input, value) in profile {
                 for action in value.actions() {
                     if !supported(action) {
-                        return Some(format!(
-                            "nav.{name}.{}: {action} unresolved",
-                            input.name()
-                        ));
+                        return Some(format!("nav.{name}.{}: {action} unresolved", input.name()));
                     }
                 }
             }
@@ -1584,20 +1579,25 @@ mod tests {
         for shared in [false, true] {
             let result = crate::config::tests::try_fixture_mon_with(|v| {
                 let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
-                nav.as_table_mut().unwrap().insert(
-                    "mon_lib".into(),
-                    "LS_UP='key:HYPER+a'".parse().unwrap(),
-                );
+                nav.as_table_mut()
+                    .unwrap()
+                    .insert("mon_lib".into(), "LS_UP='key:HYPER+a'".parse().unwrap());
                 nav[if shared { "terminal_tmux" } else { "mon_tmux" }]["inherits"] =
                     "mon_lib".into();
             });
             if shared {
                 let error = result.unwrap_err();
-                assert!(error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"), "{error}");
+                assert!(
+                    error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"),
+                    "{error}"
+                );
             } else {
                 let (cfg, _) = result.unwrap();
                 let error = cfg.controller.nav.app_error.as_deref().unwrap();
-                assert!(error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"), "{error}");
+                assert!(
+                    error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"),
+                    "{error}"
+                );
                 assert!(cfg.controller.nav.profiles.contains_key("terminal_tmux"));
                 assert!(!cfg.controller.nav.profiles.contains_key("mon_lib"));
             }
@@ -1609,13 +1609,15 @@ mod tests {
         let error = crate::config::tests::try_fixture_mon_with(|v| {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
             nav["mon_tmux"]["LS_UP"] = "key:HYPER+a".into();
-            nav.as_table_mut().unwrap().insert(
-                "mon_extra".into(),
-                "inherits='mon_tmux'".parse().unwrap(),
-            );
+            nav.as_table_mut()
+                .unwrap()
+                .insert("mon_extra".into(), "inherits='mon_tmux'".parse().unwrap());
         })
         .unwrap_err();
-        assert!(error.contains("mon_tmux is invalid") && error.contains("HYPER"), "{error}");
+        assert!(
+            error.contains("mon_tmux is invalid") && error.contains("HYPER"),
+            "{error}"
+        );
         assert!(!error.contains("unknown profile mon_tmux"), "{error}");
     }
 
@@ -1625,8 +1627,12 @@ mod tests {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
             let plain = nav["terminal_plain"].clone();
             let tmux = nav["terminal_tmux"].clone();
-            nav.as_table_mut().unwrap().insert("repeat_plain".into(), plain);
-            nav.as_table_mut().unwrap().insert("repeat_tmux".into(), tmux);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("repeat_plain".into(), plain);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("repeat_tmux".into(), tmux);
             nav["contexts"]["terminal"] = "repeat".into();
             nav["apps"]["mon"]["contexts"]["terminal"] = "repeat_tmux".into();
             nav["mon_console_plain"]["LS_UP"] = "key:HYPER+a".into();
@@ -1636,8 +1642,14 @@ mod tests {
         assert!(nav.apps.is_empty() && nav.app_error.is_some());
         assert!(nav.profiles.contains_key("repeat_tmux"));
         assert!(nav.profiles.contains_key("repeat_plain"));
-        assert_eq!(nav.profile_name("terminal", true).as_deref(), Some("repeat_tmux"));
-        assert_eq!(nav.profile_name("terminal", false).as_deref(), Some("repeat_plain"));
+        assert_eq!(
+            nav.profile_name("terminal", true).as_deref(),
+            Some("repeat_tmux")
+        );
+        assert_eq!(
+            nav.profile_name("terminal", false).as_deref(),
+            Some("repeat_plain")
+        );
     }
 
     #[test]
@@ -1646,12 +1658,19 @@ mod tests {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
             let mut other = nav["apps"]["mon"].clone();
             other["contexts"]["terminal"] = "other".into();
-            nav["apps"].as_table_mut().unwrap().insert("other".into(), other);
+            nav["apps"]
+                .as_table_mut()
+                .unwrap()
+                .insert("other".into(), other);
             let mut broken = nav["mon_tmux"].clone();
             broken["LS_UP"] = "key:HYPER+a".into();
             let plain = nav["mon_plain"].clone();
-            nav.as_table_mut().unwrap().insert("other_tmux".into(), broken);
-            nav.as_table_mut().unwrap().insert("other_plain".into(), plain);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("other_tmux".into(), broken);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("other_plain".into(), plain);
         })
         .unwrap();
         let nav = cfg.controller.nav;

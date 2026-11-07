@@ -3729,7 +3729,10 @@ pub(crate) fn action_supported(global: &GlobalConfig, action: &str) -> bool {
         tty: "/dev/pts/0".into(),
         socket: PathBuf::from("/tmp/probe"),
     };
-    match action.split_once(':').map_or("", |(namespace, _)| namespace) {
+    match action
+        .split_once(':')
+        .map_or("", |(namespace, _)| namespace)
+    {
         _ if action == "none" => true,
         "key" => crate::nav::parse_key_chord(&action[4..]).is_ok(),
         "pointer" => true,

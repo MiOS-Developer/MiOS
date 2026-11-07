@@ -2159,7 +2159,11 @@ mod action_tests {
         })
         .unwrap();
         let nav = &cfg.controller.nav;
-        assert!(nav.app_error.as_deref().unwrap().contains("context_stale_ms"));
+        assert!(nav
+            .app_error
+            .as_deref()
+            .unwrap()
+            .contains("context_stale_ms"));
         assert!(nav.apps.is_empty());
         assert!(!nav.profiles.contains_key("mon_tmux"));
         assert!(nav.profiles.contains_key("terminal_tmux"));
@@ -2180,5 +2184,4 @@ mod action_tests {
             "a base action must never be silently discarded as an app-only failure"
         );
     }
-
 }
