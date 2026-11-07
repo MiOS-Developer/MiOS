@@ -1285,8 +1285,8 @@ async def get_portal_config(request: Request):
         merged_config = mios_toml.load_merged()
         toml_text = to_toml(redact_secrets(merged_config))
         return Response(content=toml_text, media_type="text/plain")
-    except Exception:
-        log.error("Failed to load/serialize layered config")
+    except Exception as e:
+        log.error("Failed to load/serialize layered config: %s", e)
         return Response(content="Unable to load configuration", status_code=500, media_type="text/plain")
 
 @portal_router.post("/portal/config")
