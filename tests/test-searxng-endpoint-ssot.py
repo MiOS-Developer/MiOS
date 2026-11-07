@@ -1397,6 +1397,7 @@ class TestWindowsEntryPoints(Base):
                 self.assertEqual([], [s for s in got["strict"] if s < pb["offset"]])
         # Setup in particular declares -AiNode before it turns StrictMode on.
         setup = parsed["setup"]
+        self.assertIsNotNone(setup["param_block"], "Setup has no param block: param() follows a statement")
         self.assertTrue(setup["strict"])
         self.assertLess(setup["param_block"]["offset"], min(setup["strict"]))
 
