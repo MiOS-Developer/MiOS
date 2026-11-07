@@ -9378,7 +9378,7 @@ mod voxel_overlay_tests {
                                 let same = |a: &Faces, b: &Faces| {
                                     a.iter()
                                         .zip(b)
-                                        .all(|(m, n)| m[0] * n[0] + m[1] * n[1] + m[2] * n[2] > 0.9)
+                                        .all(|(m, n)| m == n)
                                 };
                                 match entries.iter_mut().find(|(known, _)| same(known, &faces)) {
                                     Some((_, tally)) => *tally.entry(glyph).or_default() += 1,
@@ -9419,7 +9419,7 @@ mod voxel_overlay_tests {
                                 known
                                     .iter()
                                     .zip(faces)
-                                    .all(|(m, n)| m[0] * n[0] + m[1] * n[1] + m[2] * n[2] > 0.9)
+                                    .all(|(m, n)| m == n)
                             });
                             if let Some((known, previous)) = earlier {
                                 shared += 1;
