@@ -1260,8 +1260,8 @@ def run_db_reseed_bg():
         seeder_path = os.environ.get("MIOS_SEED_DB_CONFIG", "/usr/libexec/mios/seed-db-config.py")
 
         subprocess.run([sys.executable, seeder_path], env=env, check=True)
-    except Exception as e:
-        log.error("Failed to run background db-config re-seed: %s", e)
+    except Exception:
+        log.error("Failed to run background db-config re-seed")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
@@ -1285,8 +1285,8 @@ async def get_portal_config(request: Request):
         merged_config = mios_toml.load_merged()
         toml_text = to_toml(redact_secrets(merged_config))
         return Response(content=toml_text, media_type="text/plain")
-    except Exception as e:
-        log.error("Failed to load/serialize layered config: %s", e)
+    except Exception:
+        log.error("Failed to load/serialize layered config")
         return Response(content="Unable to load configuration", status_code=500, media_type="text/plain")
 
 @portal_router.post("/portal/config")
@@ -1296,7 +1296,9 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
     if not _portal_authed(request):
         return JSONResponse({"error": "auth required"}, status_code=401)
 
-    from mios_pipe.kernel.config import UNRESOLVED_REFUSAL, TiersUnresolved, portal_post_toml, validate_config, write_user_config
+    from mios_pipe.kernel.config import (REDACTED_ARRAY_REFUSAL, UNRESOLVED_REFUSAL,
+                                         AmbiguousRedactedArray, TiersUnresolved,
+                                         portal_post_toml, validate_config, write_user_config)
     toml_text = portal_post_toml(request.headers.get("content-type", ""), await request.body())
     if toml_text is None:
         return JSONResponse({"error": 'Invalid JSON envelope: expected {"toml": "<text>"}'}, status_code=400)
@@ -1308,8 +1310,8 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
 
     try:
         parsed_config = _toml.loads(toml_text)
-    except Exception as e:
-        log.warning("Invalid TOML posted to /portal/config: %s", e)
+    except Exception:
+        log.warning("Invalid TOML posted to /portal/config")
         return JSONResponse({"error": "Invalid TOML syntax"}, status_code=400)
 
     live_config = None
@@ -1319,12 +1321,12 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
             sys.path.insert(0, "/usr/lib/mios")
         import mios_toml
         live_config = mios_toml.load_merged()
-    except Exception as e:
-        log.warning("validate_config: could not load live config for drop-check: %s", e)
+    except Exception:
+        log.warning("validate_config: could not load live config for drop-check")
 
     ok, errors = validate_config(toml_text, live_config)
     if not ok:
-        log.warning("Rejected unsafe config POST (422): %s", errors)
+        log.warning("Rejected unsafe config POST (422): %d checks failed", len(errors))
         return JSONResponse({"error": "validation failed", "errors": errors},
                             status_code=422)
 
@@ -1334,8 +1336,11 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
         background_tasks.add_task(run_db_reseed_bg)
 
         return JSONResponse({"status": "ok"})
+    except AmbiguousRedactedArray:
+        log.warning("Refused ambiguous redacted array edit")
+        return JSONResponse({"error": REDACTED_ARRAY_REFUSAL}, status_code=409)
     except Exception as e:  # TiersUnresolved: refused, nothing was written
-        log.error("Failed to save config: %s", e)
+        log.error("Failed to save configuration")
         return JSONResponse({"error": UNRESOLVED_REFUSAL if isinstance(e, TiersUnresolved) else "Unable to save configuration"}, status_code=500)
 
 _THEME_RENDER_BIN = os.environ.get(

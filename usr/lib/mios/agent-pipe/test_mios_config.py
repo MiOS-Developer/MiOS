@@ -110,23 +110,12 @@ except ImportError:
     psycopg = None
     dict_row = None
 
-def setUpModule():
-    if psycopg is None:
-        raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
-    conn_str = f"postgresql://mios:mios@localhost:{port}/mios"
-    try:
-        with psycopg.connect(conn_str, connect_timeout=1):
-            pass
-    except Exception:
-        raise unittest.SkipTest("no live pgvector -- integration test")
-
 class TestMiosConfigAudit(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # The folded runner constructs TestSuites directly, so it bypasses
-        # setUpModule. Probe the same endpoint this class actually tests.
+        # The database fixture belongs only to this integration class.
+        # Hermetic Portal/config tests must also run without a live database.
         if psycopg is None:
             raise unittest.SkipTest("pgvector audit integration dependency absent")
         cls.conn_str = "postgresql://mios:mios@localhost:8432/mios"
@@ -925,7 +914,7 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
     def test_an_orphan_marker_is_dropped(self):
         orphan = (self.redacted_echo()
                   + '\n[deep.unknown.other]\ngithub_token = "<redacted>"\nnote = "new"\n'
-                  + '\n[orphan]\napi_key = "<redacted>"\nlist = ["<redacted>", "kept"]\n')
+                  + '\n[orphan]\napi_key = "<redacted>"\nlist = ["kept"]\n')
         response = self.post(json.dumps({"toml": orphan}), "application/json")
         self.assertEqual(response.status_code, 200, response.text)
         text = self.tier()
@@ -952,6 +941,235 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
         live = mios_toml.load_merged()
         self.assertEqual((live["portal"]["password"], live["portal"]["secret"]),
                          ("user-d-portal-pw", "user-d-cookie-secret"))
+
+
+    def _post_config_value(self, value):
+        from mios_pipe.kernel.config import to_toml
+        return self.post(json.dumps({"toml": to_toml(value)}), "application/json")
+
+    def _assert_opaque_refusal(self, value):
+        before = self.tier()
+        with self.assertLogs("mios-agent-pipe", level="WARNING") as captured:
+            response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn("nothing was written", response.json()["error"])
+        self.assertEqual(self.tier(), before)
+        self.assertFalse(os.path.exists(self.user + ".tmp"))
+        for token in self.SECRETS + ("second-array-token", "nested-array-token",
+                                     "own-array-token", "user-d-array-token"):
+            self.assertNotIn(token, response.text + "\n".join(captured.output))
+
+    def _array_echo(self):
+        self.plant_user_tier()
+        with open(os.path.join(self.tmp, "vendor.toml"), "a", encoding="utf-8") as fh:
+            fh.write('\n[[remotes]]\nname = "second"\nGITHUB_TOKEN = "second-array-token"\n'
+                     'enabled = true\n\n[matrix]\n'
+                     'rows = [[{name = "north", GITHUB_TOKEN = "nested-array-token"}]]\n')
+        mios_toml.clear_cache()
+        return tl.loads(self.redacted_echo())
+
+    def test_redacted_arrays_unchanged_inheritance_and_nested_echo_stay_below_user(self):
+        value = self._array_echo()
+        value["identity"]["username"] = "array-op"
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = tl.loads(self.tier())
+        self.assertNotIn("remotes", saved)
+        self.assertNotIn("matrix", saved)
+        self.assertEqual(saved["identity"], {"username": "array-op"})
+        self.assertNotIn("array-token", self.tier())
+
+    def test_redacted_arrays_refuse_edits_reorders_insertions_and_nested_changes(self):
+        import copy
+        original = self._array_echo()
+        variants = {}
+        changed = copy.deepcopy(original)
+        changed["remotes"][0]["name"] = "renamed"
+        variants["edit"] = changed
+        changed = copy.deepcopy(original)
+        changed["remotes"].reverse()
+        variants["reorder"] = changed
+        changed = copy.deepcopy(original)
+        changed["remotes"].insert(0, {"name": "new", "GITHUB_TOKEN": "explicit-new"})
+        variants["insert"] = changed
+        changed = copy.deepcopy(original)
+        changed["remotes"].pop(0)
+        variants["remove"] = changed
+        changed = copy.deepcopy(original)
+        changed["matrix"]["rows"][0][0]["name"] = "south"
+        variants["nested"] = changed
+        changed = copy.deepcopy(original)
+        changed["remotes"][1]["enabled"] = 1
+        variants["bool-to-int"] = changed
+        for name, value in variants.items():
+            with self.subTest(name=name):
+                self._assert_opaque_refusal(value)
+
+    def test_redacted_arrays_orphan_markers_refuse_instead_of_dropping_elements(self):
+        value = tl.loads(self.redacted_echo())
+        value["orphan"] = {"list": ["<redacted>", "kept"]}
+        self._assert_opaque_refusal(value)
+
+    def test_redacted_arrays_explicit_new_credentials_are_normal_edits(self):
+        value = self._array_echo()
+        value["remotes"] = [{"name": "new", "GITHUB_TOKEN": "explicit-replacement"}]
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(tl.loads(self.tier())["remotes"], value["remotes"])
+        self.assertNotIn("vendor-array-token", self.tier())
+        self.assertNotIn("second-array-token", self.tier())
+
+
+    def test_redacted_arrays_explicit_values_keep_toml_types_in_the_delta(self):
+        value = self._array_echo()
+        value["remotes"] = [
+            {"name": "origin", "GITHUB_TOKEN": "vendor-array-token"},
+            {"name": "second", "GITHUB_TOKEN": "second-array-token", "enabled": 1},
+        ]
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = tl.loads(self.tier())
+        self.assertIn("remotes", saved)
+        self.assertIs(type(saved["remotes"][1]["enabled"]), int)
+        self.assertEqual(saved["remotes"][1]["enabled"], 1)
+        self.assertIs(type(mios_toml.load_merged()["remotes"][1]["enabled"]), int)
+
+    def test_redacted_arrays_explicit_base_values_remove_a_stale_user_array(self):
+        self.plant_user_tier()
+        with open(self.user, "a", encoding="utf-8") as fh:
+            fh.write('\n[[remotes]]\nname = "mine"\nGITHUB_TOKEN = "own-array-token"\n')
+        mios_toml.clear_cache()
+        value = tl.loads(self.redacted_echo())
+        value["remotes"] = [{"name": "origin", "GITHUB_TOKEN": "vendor-array-token"}]
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("remotes", tl.loads(self.tier()))
+        self.assertNotIn("own-array-token", self.tier())
+        self.assertEqual(mios_toml.load_merged()["remotes"], value["remotes"])
+
+    def test_redacted_arrays_unchanged_user_owned_values_remain_user_owned(self):
+        self.plant_user_tier()
+        with open(self.user, "a", encoding="utf-8") as fh:
+            fh.write('\n[[remotes]]\nname = "mine"\nGITHUB_TOKEN = "own-array-token"\n')
+        mios_toml.clear_cache()
+        value = tl.loads(self.redacted_echo())
+        value["identity"]["username"] = "own-array-op"
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(tl.loads(self.tier())["remotes"],
+                         [{"name": "mine", "GITHUB_TOKEN": "own-array-token"}])
+        self.assertNotIn("vendor-array-token", self.tier())
+
+    def test_redacted_arrays_user_d_cannot_materialize_into_the_destination(self):
+        self.plant_user_tier()
+        frag = os.path.join(self.tmp, "user.d", "20-array.toml")
+        os.makedirs(os.path.dirname(frag), exist_ok=True)
+        high = '[[remotes]]\nname = "higher"\nGITHUB_TOKEN = "user-d-array-token"\n'
+        with open(frag, "w", encoding="utf-8") as fh:
+            fh.write(high)
+        mios_toml.clear_cache()
+        self._assert_opaque_refusal(tl.loads(self.redacted_echo()))
+        with open(frag, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), high)
+
+    def test_redacted_arrays_same_shape_user_d_echo_keeps_its_secret_above_user(self):
+        self.plant_user_tier()
+        frag = os.path.join(self.tmp, "user.d", "20-array.toml")
+        os.makedirs(os.path.dirname(frag), exist_ok=True)
+        with open(frag, "w", encoding="utf-8") as fh:
+            fh.write('[[remotes]]\nname = "origin"\nGITHUB_TOKEN = "user-d-array-token"\n')
+        mios_toml.clear_cache()
+        value = tl.loads(self.redacted_echo())
+        value["identity"]["username"] = "same-shape-op"
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("remotes", tl.loads(self.tier()))
+        self.assertNotIn("user-d-array-token", self.tier())
+        self.assertEqual(mios_toml.load_merged()["remotes"][0]["GITHUB_TOKEN"],
+                         "user-d-array-token")
+
+    def test_redacted_arrays_direct_writer_guards_opaque_changes_without_mutation(self):
+        import copy
+        from mios_pipe.kernel.config import AmbiguousRedactedArray, write_user_config
+        value = self._array_echo()
+        live = mios_toml.load_merged()
+        value["remotes"][0]["name"] = "direct-edit"
+        original = copy.deepcopy(value)
+        before = self.tier()
+        with self.assertRaises(AmbiguousRedactedArray):
+            write_user_config(value, dest_path=self.user, live_config=live)
+        self.assertEqual(value, original)
+        self.assertEqual(self.tier(), before)
+        self.assertFalse(os.path.exists(self.user + ".tmp"))
+
+    def test_private_errors_do_not_echo_resolver_parser_or_writer_values(self):
+        sentinel = "fixture-private-diagnostic-value"
+        self.plant_user_tier()
+        before = self.tier()
+        cases = [
+            ("get-resolver", "mios_toml.load_merged",
+             lambda: self.client.get("/portal/config")),
+            ("posted-parser", "tomllib.loads",
+             lambda: self.post('[identity]\nusername = "new"', "application/toml")),
+            ("validation-cap", "mios_pipe.kernel.config._validate_max_bytes",
+             lambda: self.post('[identity]\nusername = "new"', "application/toml")),
+            ("writer", "mios_pipe.kernel.config.write_user_config",
+             lambda: self.post('[identity]\nusername = "new"\n[ports]\nagent_pipe = 8640',
+                               "application/toml")),
+        ]
+        for name, target, request in cases:
+            with self.subTest(name=name):
+                with patch(target, side_effect=RuntimeError(sentinel)):
+                    with self.assertLogs("mios-agent-pipe", level="WARNING") as captured:
+                        response = request()
+                self.assertGreaterEqual(response.status_code, 400)
+                self.assertNotIn(sentinel, response.text + "\n".join(captured.output))
+                self.assertEqual(self.tier(), before)
+                self.assertFalse(os.path.exists(self.user + ".tmp"))
+
+    def test_private_errors_malformed_user_and_user_d_preserve_bytes(self):
+        self.plant_user_tier()
+        body = json.dumps({"toml": self.redacted_echo()})
+        malformed = '[portal]\npassword = "fixture-private-unclosed\n'
+        for name in ("user", "user.d"):
+            with self.subTest(name=name):
+                self.plant_user_tier()
+                frag = (self.user if name == "user"
+                        else os.path.join(self.tmp, "user.d", "10-broken.toml"))
+                os.makedirs(os.path.dirname(frag), exist_ok=True)
+                with open(frag, "w", encoding="utf-8") as fh:
+                    fh.write(malformed)
+                mios_toml.clear_cache()
+                before = self.tier()
+                with self.assertLogs("mios-agent-pipe", level="WARNING") as captured:
+                    response = self.post(body, "application/json")
+                self.assertEqual(response.status_code, 500, response.text)
+                self.assertEqual(self.tier(), before)
+                with open(frag, encoding="utf-8") as fh:
+                    self.assertEqual(fh.read(), malformed)
+                self.assertNotIn("fixture-private-unclosed",
+                                 response.text + "\n".join(captured.output))
+                self.assertFalse(os.path.exists(self.user + ".tmp"))
+                if name == "user.d":
+                    os.remove(frag)
+
+    def test_private_errors_bad_lower_tier_refuses_even_without_markers(self):
+        self.plant_user_tier()
+        host = os.path.join(self.tmp, "host.toml")
+        malformed = '[portal]\nsecret = "fixture-lower-unclosed\n'
+        with open(host, "w", encoding="utf-8") as fh:
+            fh.write(malformed)
+        mios_toml.clear_cache()
+        before = self.tier()
+        body = '[identity]\nmios_user = "vendor-user"\nusername = "new"\n[ports]\nagent_pipe = 8640\n'
+        with self.assertLogs("mios-agent-pipe", level="WARNING") as captured:
+            response = self.post(body, "application/toml")
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(self.tier(), before)
+        with open(host, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), malformed)
+        self.assertNotIn("fixture-lower-unclosed", response.text + "\n".join(captured.output))
+        self.assertFalse(os.path.exists(self.user + ".tmp"))
 
     def test_the_default_destination_is_the_resolved_user_tier(self):
         from mios_pipe.kernel.config import write_user_config
