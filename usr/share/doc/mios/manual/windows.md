@@ -312,6 +312,11 @@ a port (e.g. http.sys holds :8443, so a Windows probe "sees" it but it forwards 
 nothing real). We count only ports the VM binds on 0.0.0.0 / * / [::] (loopback-
 only VM ports aren't WSL-forwarded to Windows, so Tailscale can't reach them).
 
+SearXNG is named, never served: its one listener is loopback-only, at
+mios.toml [ports].searxng, and serving a loopback-only VM socket to the
+tailnet is unverified, so tailnet serving it is unsupported. Direct LAN
+forwarding to it (the Windows LAN rule and the portproxy) is unsupported too.
+
 <!-- mios-src:fbe05fbcd2d8 from usr/share/mios/windows/mios-tailscale-serve.ps1:101-105 -->
 ### resolve the WSL distro generatively from the registry...
 
