@@ -2127,7 +2127,7 @@ mod action_tests {
     #[test]
     fn unresolved_app_verbs_are_disabled_before_startup_and_reload() {
         for action in ["quickshell:drawer-togle", "hypr:movefocu left"] {
-            let (cfg, _) = try_fixture_mon_with(|v| {
+            let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
                 v["keybindings"]["global"]["controller"]["nav"]["mon_tmux"]
                     .as_table_mut()
                     .unwrap()
@@ -2149,7 +2149,7 @@ mod action_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn app_budget_failure_removes_every_app_only_action() {
-        let (cfg, _) = try_fixture_mon_with(|v| {
+        let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
             nav["app_poll_ms"] = 900.into();
             nav["mon_tmux"]
@@ -2173,7 +2173,7 @@ mod action_tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn unresolved_shared_base_verbs_remain_a_startup_failure() {
-        let (cfg, _) = try_fixture_mon_with(|v| {
+        let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
             v["keybindings"]["global"]["controller"]["nav"]["terminal_tmux"]["BTN_MODE"] =
                 "quickshell:drawer-togle".into();
         })
