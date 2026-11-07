@@ -49,8 +49,10 @@ echo "[mios-firewall] Firewall configured"
 EOFW
 chmod +x /usr/libexec/mios-firewall-init
 
+# Only a missing isolate is optional. A present one that cannot resolve a
+# declared container_matrix port_key exits 78 naming it, and the bake fails.
 if [ -x /usr/libexec/mios/mios-firewall-isolate ]; then
-    /usr/libexec/mios/mios-firewall-isolate --apply --dry-run 2>/dev/null || true
+    /usr/libexec/mios/mios-firewall-isolate --apply --dry-run || exit $?
 fi
 
 mios_ok "Firewall init script and declarative nftables isolation installed"
