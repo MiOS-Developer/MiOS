@@ -623,7 +623,6 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
         own = {}
         for p in paths + [dest_path]:
             mios_toml.deep_merge(own, mios_toml._load_one(p))
-        validate_redacted_arrays(cfg, redact_secrets(own))
         cfg = restore_redacted(cfg, own)
 
     def _dict_diff(new_dict: dict, base_dict: dict) -> dict:
