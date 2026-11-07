@@ -325,40 +325,37 @@ impl Sprite {
     /// Winning visible surface normal in view space and contact occlusion0..100.
     /// Pixel sprites have no 3D light sample. Transparent pixels never shade.
     pub fn surface_shading(&self, x: u32, y: u32) -> Option<([f32; 3], u8)> {
-        self.pixel(x, y, 1)?;
-        let sample = *self
-            .surface_shading
-            .as_ref()?
-            .get(y as usize * usize::from(self.width) + x as usize)?;
-        if sample[..3].iter().all(|v| *v == 0) {
-            return None;
-        }
+        let (_, sample) = self.shading_entry(x, y)?;
         Some((
             [sample[0], sample[1], sample[2]].map(|v| f32::from(v) / 127.0),
             sample[3].clamp(0, 100) as u8,
         ))
     }
 
+    /// The raw winning-surface entry of an opaque pixel that shades, with its
+    /// index: the gate `surface_shading`, `surface_voxel` and `surface_facet`
+    /// share.
+    fn shading_entry(&self, x: u32, y: u32) -> Option<(usize, [i8; 4])> {
+        self.pixel(x, y, 1)?;
+        let index = y as usize * usize::from(self.width) + x as usize;
+        let sample = *self.surface_shading.as_ref()?.get(index)?;
+        (!sample[..3].iter().all(|v| *v == 0)).then_some((index, sample))
+    }
+
     /// Stable model-lattice identity of the winning visible voxel. This
     /// follows the depth winner through orbit, occlusion and downsampling.
     /// Legacy pixels and transparent/untagged samples have no voxel identity.
     pub fn surface_voxel(&self, x: u32, y: u32) -> Option<[i32; 3]> {
-        self.surface_shading(x, y)?;
-        self.surface_voxels
-            .as_ref()?
-            .get(y as usize * usize::from(self.width) + x as usize)
-            .copied()
+        let (index, _) = self.shading_entry(x, y)?;
+        self.surface_voxels.as_ref()?.get(index).copied()
     }
 
     /// One exposed cube face: the winning voxel and its quantized view
     /// normal. Every pixel of one face carries the same integer normal, so
     /// facet equality is exact. Gated exactly like `surface_voxel`.
     pub fn surface_facet(&self, x: u32, y: u32) -> Option<([i32; 3], [i8; 3])> {
-        let voxel = self.surface_voxel(x, y)?;
-        let sample = self
-            .surface_shading
-            .as_ref()?
-            .get(y as usize * usize::from(self.width) + x as usize)?;
+        let (index, sample) = self.shading_entry(x, y)?;
+        let voxel = self.surface_voxels.as_ref()?.get(index).copied()?;
         Some((voxel, [sample[0], sample[1], sample[2]]))
     }
 

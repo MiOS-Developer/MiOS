@@ -247,7 +247,7 @@ impl SolidBounds {
 
 /// Signed origin and scale in packed screen pixels. Nothing proportional to
 /// the zoomed sprite is allocated: only visible terminal samples are visited.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Projection {
     left: f64,
     top: f64,
@@ -458,15 +458,22 @@ impl Projection {
     }
 
     fn source_pixel(self, sprite: &Sprite, x: u32, y: u32) -> Option<(u32, u32)> {
-        let x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor();
-        let y = ((f64::from(y) + 0.5 - self.top) / self.scale_y).floor();
-        if x < 0.0 || y < 0.0 || x >= f64::from(sprite.width()) || y >= f64::from(sprite.height()) {
-            None
-        } else {
-            Some((x as u32, y as u32))
-        }
+        Some((self.source_column(sprite, x)?, self.source_row(sprite, y)?))
     }
 
+    /// The source column packed column `x` shows: the mapping is separable,
+    /// so a column depends on `x` alone (and a row on `y` alone).
+    fn source_column(self, sprite: &Sprite, x: u32) -> Option<u32> {
+        let x = ((f64::from(x) + 0.5 - self.left) / self.scale).floor();
+        (!(x < 0.0 || x >= f64::from(sprite.width()))).then_some(x as u32)
+    }
+
+    fn source_row(self, sprite: &Sprite, y: u32) -> Option<u32> {
+        let y = ((f64::from(y) + 0.5 - self.top) / self.scale_y).floor();
+        (!(y < 0.0 || y >= f64::from(sprite.height()))).then_some(y as u32)
+    }
+
+    #[cfg(test)]
     fn sample(self, sprite: &Sprite, x: u32, y: u32) -> Option<u8> {
         let (x, y) = self.source_pixel(sprite, x, y)?;
         sprite.pixel(x, y, 1)
@@ -522,7 +529,7 @@ fn paint_pixels(
 }
 
 /// Shading belongs to the exact winning surface sampled by the camera.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct SurfaceLight {
     normal: [f32; 3],
     occlusion: u8,
@@ -614,7 +621,7 @@ struct OverlaySample {
 /// What one frame's overlay samples share: the kaomoji texture and its fit
 /// to the viewport (the quiet zone; without one the whole face plane is
 /// quiet) and the Mon's visible depth range (the depth tiers).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct FaceClearance {
     kaomoji: Option<(FaceTexture, FaceFit)>,
     /// Farthest and nearest visible source depth.
@@ -678,16 +685,22 @@ fn face_clearance(
 }
 
 /// A face-plane sample within the halo of the fitted kaomoji's ink.
+#[cfg(test)]
 fn near_kaomoji(
     sprite: &Sprite,
     projection: Projection,
     (x, y): (u32, u32),
     face: FaceClearance,
 ) -> bool {
+    sampled_near_kaomoji(&Sampler::direct(sprite, projection), (x, y), face)
+}
+
+/// `near_kaomoji` through `sampler`.
+fn sampled_near_kaomoji(sampler: &Sampler<'_>, (x, y): (u32, u32), face: FaceClearance) -> bool {
     let Some((texture, fit)) = face.kaomoji else {
         return true;
     };
-    let Some((uv, footprint)) = projected_face_uv(sprite, projection, x, y) else {
+    let Some((uv, footprint)) = sampler.face_uv(x, y) else {
         return true;
     };
     let reach = texture.glyph_reach();
@@ -696,35 +709,254 @@ fn near_kaomoji(
         2.0 * FACE_HALO_GRID * reach[1] / 11.0,
     ];
     let footprint = fit.footprint(footprint);
-    texture.coverage(
+    texture.touches_ink(
         fit.map(uv),
         [footprint[0] + halo[0], footprint[1] + halo[1]],
-        f64::INFINITY,
-    ) > 0.0
+    )
 }
 
 /// A screen neighbour's source pixel and the voxel it shows.
 type NeighbourSource = ((u32, u32), [i32; 3]);
 
-fn overlay_sample(
-    sprite: &Sprite,
+/// A source pixel's `surface_slopes`: depth gradient and concave fold.
+type Slopes = ([f32; 2], [f32; 2]);
+
+/// The levels a sampler last solved: for this voxel pitch and packing.
+type LevelsMemo = (f64, (u32, u32), FrameLevels);
+
+/// One cell's packed samples as a body pass kept them (`count` of each).
+type KeptSamples<'a> = (&'a [Option<u8>], &'a [Option<SurfaceLight>]);
+
+/// How packed screen samples reach the sprite: the projection itself, or, for
+/// one frame's passes over a viewport, the same mapping tabulated once (it is
+/// separable: a source column depends on the packed column alone and a row on
+/// the packed row alone), with what depends on one source pixel alone (its
+/// surface slopes and face-UV frame) solved once and kept for every sample
+/// that shows it or borders it, and the frame's contour levels solved once.
+/// Every lookup returns exactly what the projection, `surface_slopes`,
+/// `projected_face_uv` and `FrameLevels::of` return; the tables only spare
+/// repeating them for each sample's screen neighbourhood.
+struct Sampler<'a> {
+    sprite: &'a Sprite,
     projection: Projection,
+    /// Packed columns from `origin.0` and rows from `origin.1`: the source
+    /// column or row each shows (None off the sprite).
+    columns: Vec<Option<u32>>,
+    rows: Vec<Option<u32>>,
+    origin: (u32, u32),
+    /// Per source pixel (row-major), its slopes once solved. A pixel's slopes
+    /// depend on that pixel alone (its own winning voxel and the sprite's
+    /// voxel pitch), so the first sample to ask solves them for all.
+    slopes: Vec<std::cell::Cell<Option<Slopes>>>,
+    /// The frame's levels for the last voxel pitch and packing asked.
+    levels: std::cell::Cell<Option<LevelsMemo>>,
+    /// Per source pixel of the face plane's bounds (row-major from
+    /// `face_origin`, `face_width` wide), its face-UV texel frame once
+    /// solved (`texel_frame` of `valid_face_uv`).
+    face_frames: Vec<std::cell::Cell<Option<Option<TexelFrame>>>>,
+    face_origin: (u32, u32),
+    face_width: u32,
+}
+
+/// What every overlay sample of one frame shares: the voxel pitch on screen
+/// and the contour levels it sets (see `overlay_sample`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FrameLevels {
+    /// Packed screen pixels per lattice cell along x and y.
+    span: [f64; 2],
+    /// Lattice cells one packed step may cross on one continuous surface.
+    tolerance: [i32; 2],
+    /// `contour_levels`.
+    spacing: f64,
+    fine_share: f32,
+}
+
+impl FrameLevels {
+    fn of(projection: Projection, extent: f64, packing: (u32, u32)) -> Self {
+        let span = [projection.scale * extent, projection.scale_y * extent];
+        // Lattice cells one packed step may cross on one continuous surface: a
+        // minified camera skips voxels between neighbouring samples.
+        let tolerance = span.map(|s| 1 + (1.0 / s.max(1.0e-3)).ceil() as i32);
+        let cells_per_voxel =
+            (span[0] / f64::from(packing.0)).min(span[1] / f64::from(packing.1)) as f32;
+        let (spacing, fine_share) = contour_levels(extent, cells_per_voxel);
+        Self {
+            span,
+            tolerance,
+            spacing,
+            fine_share,
+        }
+    }
+}
+
+/// Packed samples beyond a viewport that its samples' screen neighbourhoods
+/// reach (a neighbour's own neighbours, for the silhouette ring).
+const SAMPLER_REACH: u32 = 2;
+
+impl<'a> Sampler<'a> {
+    /// The projection alone: every lookup is computed where it is asked.
+    fn direct(sprite: &'a Sprite, projection: Projection) -> Self {
+        Self {
+            sprite,
+            projection,
+            columns: Vec::new(),
+            rows: Vec::new(),
+            origin: (0, 0),
+            slopes: Vec::new(),
+            levels: std::cell::Cell::new(None),
+            face_frames: Vec::new(),
+            face_origin: (0, 0),
+            face_width: 0,
+        }
+    }
+
+    /// One frame's sampler over the cells of `area`.
+    fn frame(sprite: &'a Sprite, projection: Projection, renderer: Renderer, area: Rect) -> Self {
+        let (dx, dy) = renderer.packing();
+        let (dx, dy) = (u32::from(dx), u32::from(dy));
+        let x0 = (u32::from(area.x) * dx).saturating_sub(SAMPLER_REACH);
+        let y0 = (u32::from(area.y) * dy).saturating_sub(SAMPLER_REACH);
+        let x1 = u32::from(area.right()) * dx + SAMPLER_REACH;
+        let y1 = u32::from(area.bottom()) * dy + SAMPLER_REACH;
+        Self {
+            sprite,
+            projection,
+            columns: (x0..x1)
+                .map(|x| projection.source_column(sprite, x))
+                .collect(),
+            rows: (y0..y1).map(|y| projection.source_row(sprite, y)).collect(),
+            origin: (x0, y0),
+            slopes: vec![
+                std::cell::Cell::new(None);
+                usize::from(sprite.width()) * usize::from(sprite.height())
+            ],
+            levels: std::cell::Cell::new(None),
+            ..Self::faced(sprite, projection)
+        }
+    }
+
+    /// A direct sampler with a face-UV frame memo over the face plane's
+    /// source bounds (outside them no source pixel maps a face UV).
+    fn faced(sprite: &'a Sprite, projection: Projection) -> Self {
+        let Some(bounds) = FaceTexture::bounds(sprite) else {
+            return Self::direct(sprite, projection);
+        };
+        let (left, top) = (bounds.left as u32, bounds.top as u32);
+        let (right, bottom) = (bounds.right as u32, bounds.bottom as u32);
+        Self {
+            face_frames: vec![
+                std::cell::Cell::new(None);
+                ((right - left) * (bottom - top)) as usize
+            ],
+            face_origin: (left, top),
+            face_width: right - left,
+            ..Self::direct(sprite, projection)
+        }
+    }
+
+    /// `projected_face_uv` of packed pixel `(x, y)`.
+    fn face_uv(&self, x: u32, y: u32) -> Option<([f64; 2], [f64; 2])> {
+        let (sx, sy) = self.source_pixel(x, y)?;
+        let frame = self.face_frame((sx, sy))?;
+        let (uv, per_x, per_y) = refine_frame(self.projection, (x, y), (sx, sy), frame);
+        let footprint = std::array::from_fn(|i| per_x[i].abs() + per_y[i].abs());
+        Some((uv, footprint))
+    }
+
+    /// `projected_face_frame` of packed pixel `(x, y)`.
+    fn face_frame_at(&self, x: u32, y: u32) -> Option<([f64; 2], [f64; 2], [f64; 2])> {
+        let (sx, sy) = self.source_pixel(x, y)?;
+        let frame = self.face_frame((sx, sy))?;
+        Some(refine_frame(self.projection, (x, y), (sx, sy), frame))
+    }
+
+    /// The face-UV texel frame of source pixel `(sx, sy)`.
+    fn face_frame(&self, (sx, sy): (u32, u32)) -> Option<TexelFrame> {
+        let solve = || texel_frame(self.sprite, valid_face_uv, FACE_UV_MAX_STEP, true, (sx, sy));
+        let (ox, oy) = self.face_origin;
+        let memo = (sx >= ox && sy >= oy && sx - ox < self.face_width)
+            .then(|| {
+                self.face_frames
+                    .get(((sy - oy) * self.face_width + (sx - ox)) as usize)
+            })
+            .flatten();
+        let Some(memo) = memo else {
+            return solve();
+        };
+        if let Some(frame) = memo.get() {
+            return frame;
+        }
+        let frame = solve();
+        memo.set(Some(frame));
+        frame
+    }
+
+    /// `FrameLevels::of` this sampler's projection.
+    fn levels(&self, extent: f64, packing: (u32, u32)) -> FrameLevels {
+        if let Some((pitch, packed, levels)) = self.levels.get() {
+            if pitch.to_bits() == extent.to_bits() && packed == packing {
+                return levels;
+            }
+        }
+        let levels = FrameLevels::of(self.projection, extent, packing);
+        self.levels.set(Some((extent, packing, levels)));
+        levels
+    }
+
+    /// `Projection::source_pixel`.
+    fn source_pixel(&self, x: u32, y: u32) -> Option<(u32, u32)> {
+        let column = x
+            .checked_sub(self.origin.0)
+            .and_then(|i| self.columns.get(i as usize));
+        let row = y
+            .checked_sub(self.origin.1)
+            .and_then(|j| self.rows.get(j as usize));
+        match (column, row) {
+            (Some(column), Some(row)) => Some(((*column)?, (*row)?)),
+            _ => self.projection.source_pixel(self.sprite, x, y),
+        }
+    }
+
+    /// `Projection::sample`.
+    fn sample(&self, x: u32, y: u32) -> Option<u8> {
+        let (sx, sy) = self.source_pixel(x, y)?;
+        self.sprite.pixel(sx, sy, 1)
+    }
+
+    /// `surface_slopes` of source pixel `(sx, sy)`, whose winning voxel is
+    /// `voxel`, at the sprite's voxel pitch `extent`.
+    fn slopes(&self, (sx, sy): (u32, u32), voxel: [i32; 3], extent: f64) -> Slopes {
+        let index = sy as usize * usize::from(self.sprite.width()) + sx as usize;
+        let Some(memo) = self.slopes.get(index) else {
+            return surface_slopes(self.sprite, (sx, sy), voxel, extent);
+        };
+        if let Some(slopes) = memo.get() {
+            return slopes;
+        }
+        let slopes = surface_slopes(self.sprite, (sx, sy), voxel, extent);
+        memo.set(Some(slopes));
+        slopes
+    }
+}
+
+fn overlay_sample(
+    sampler: &Sampler<'_>,
     (x, y): (u32, u32),
     (sx, sy): (u32, u32),
     face: FaceClearance,
 ) -> Option<OverlaySample> {
+    let sprite = sampler.sprite;
     let (voxel, facet) = sprite.surface_facet(sx, sy)?;
     let extent = sprite.voxel_extent_pixels()?;
     let material = sprite.pixel(sx, sy, 1)?;
     let depth = sprite.depth_pixels(sx, sy)?;
-    let span = [projection.scale * extent, projection.scale_y * extent];
-    // Lattice cells one packed step may cross on one continuous surface: a
-    // minified camera skips voxels between neighbouring samples.
-    let tolerance = span.map(|s| 1 + (1.0 / s.max(1.0e-3)).ceil() as i32);
-    let cells_per_voxel =
-        (span[0] / f64::from(face.packing.0)).min(span[1] / f64::from(face.packing.1)) as f32;
-    let (spacing, fine_share) = contour_levels(extent, cells_per_voxel);
-    let (gradient, fold) = surface_slopes(sprite, (sx, sy), voxel, extent);
+    let FrameLevels {
+        span,
+        tolerance,
+        spacing,
+        fine_share,
+    } = sampler.levels(extent, face.packing);
+    let (gradient, fold) = sampler.slopes((sx, sy), voxel, extent);
     let mut sample = OverlaySample {
         voxel,
         facet,
@@ -738,7 +970,7 @@ fn overlay_sample(
         seam: 0,
         neighbours: [(facet, material); 4],
         face_plane: valid_face_uv(sprite, sx, sy).is_some()
-            && near_kaomoji(sprite, projection, (x, y), face),
+            && sampled_near_kaomoji(sampler, (x, y), face),
         iso: 0,
         gradient,
         tier: face
@@ -751,15 +983,24 @@ fn overlay_sample(
     let fine_drawn = voxel_hash(voxel) < fine_share;
     // The N/E/S/W screen neighbours' source pixels and voxels (Mon only).
     let mut beside: [Option<NeighbourSource>; 4] = [None; 4];
+    // This sample's own coarse and fine iso-depth levels, once asked.
+    let mut own_levels: Option<(f64, f64)> = None;
     for (side, (ox, oy, bit)) in NEIGHBOUR_STEPS.into_iter().enumerate() {
         // Screen neighbours before the buffer origin are cropped, not empty.
         let (Some(nx), Some(ny)) = (x.checked_add_signed(ox), y.checked_add_signed(oy)) else {
             continue;
         };
-        let Some((nsx, nsy)) = projection.source_pixel(sprite, nx, ny) else {
+        let Some((nsx, nsy)) = sampler.source_pixel(nx, ny) else {
             sample.outside |= bit;
             continue;
         };
+        if (nsx, nsy) == (sx, sy) {
+            // This sample's own source pixel: Mon, the same voxel.
+            if side < 4 {
+                beside[side] = Some(((sx, sy), voxel));
+            }
+            continue;
+        }
         let Some(other_material) = sprite.pixel(nsx, nsy, 1) else {
             sample.outside |= bit;
             continue;
@@ -771,9 +1012,6 @@ fn overlay_sample(
             continue;
         };
         beside[side] = Some(((nsx, nsy), other_voxel));
-        if (nsx, nsy) == (sx, sy) {
-            continue;
-        }
         sample.neighbours[side] = (other_facet, other_material);
         let axis = usize::from(ox == 0);
         let lattice = (0..3)
@@ -797,8 +1035,10 @@ fn overlay_sample(
         // sample carries the contour, so it is drawn once.
         if depth > other_depth {
             let level = |d: f64, step: f64| (d / step).floor();
-            let coarse = level(depth, 2.0 * spacing) != level(other_depth, 2.0 * spacing);
-            let fine = level(depth, spacing) != level(other_depth, spacing);
+            let (own_coarse, own_fine) = *own_levels
+                .get_or_insert_with(|| (level(depth, 2.0 * spacing), level(depth, spacing)));
+            let coarse = own_coarse != level(other_depth, 2.0 * spacing);
+            let fine = own_fine != level(other_depth, spacing);
             if coarse || (fine && fine_drawn) {
                 sample.iso |= bit;
             }
@@ -814,7 +1054,7 @@ fn overlay_sample(
     let ring_at = |(px, py): (u32, u32)| {
         NEIGHBOUR_STEPS[..4].iter().any(|&(ox, oy, _)| {
             match (px.checked_add_signed(ox), py.checked_add_signed(oy)) {
-                (Some(nx), Some(ny)) => projection.sample(sprite, nx, ny).is_none(),
+                (Some(nx), Some(ny)) => sampler.sample(nx, ny).is_none(),
                 _ => false,
             }
         })
@@ -849,16 +1089,18 @@ fn overlay_sample(
             beside[side].map(|(source, voxel)| {
                 (
                     source == (sx, sy),
-                    surface_slopes(sprite, source, voxel, extent).1[axis],
+                    sampler.slopes(source, voxel, extent).1[axis],
                 )
             })
         };
-        let first = fold_of(minus).is_none_or(|(same, other)| !same && own > other);
-        let peak = fold_of(plus).is_none_or(|(same, other)| same || own >= other);
-        let alongside = [minus, plus]
-            .into_iter()
-            .any(|side| screen(side).is_some_and(ring_at));
-        if first && peak && !alongside {
+        let first = || fold_of(minus).is_none_or(|(same, other)| !same && own > other);
+        let peak = || fold_of(plus).is_none_or(|(same, other)| same || own >= other);
+        let alongside = || {
+            [minus, plus]
+                .into_iter()
+                .any(|side| screen(side).is_some_and(ring_at))
+        };
+        if first() && peak() && !alongside() {
             sample.fold = bits;
             best = own;
         }
@@ -944,13 +1186,24 @@ fn surface_slopes(
     )
 }
 
+#[cfg(test)]
 fn projected_surface_light(
     sprite: &Sprite,
     projection: Projection,
     (x, y): (u32, u32),
     face: FaceClearance,
 ) -> Option<SurfaceLight> {
-    let (sx, sy) = projection.source_pixel(sprite, x, y)?;
+    sampled_surface_light(&Sampler::direct(sprite, projection), (x, y), face)
+}
+
+/// `projected_surface_light` through `sampler`.
+fn sampled_surface_light(
+    sampler: &Sampler<'_>,
+    (x, y): (u32, u32),
+    face: FaceClearance,
+) -> Option<SurfaceLight> {
+    let sprite = sampler.sprite;
+    let (sx, sy) = sampler.source_pixel(x, y)?;
     let (normal, occlusion) = sprite.surface_shading(sx, sy)?;
     let edge = sx
         .checked_sub(1)
@@ -965,7 +1218,7 @@ fn projected_surface_light(
     // Screen neighbours before the buffer origin are cropped, not empty.
     let empty_on_screen = |px: Option<u32>, py: Option<u32>| {
         px.zip(py)
-            .is_some_and(|(px, py)| projection.sample(sprite, px, py).is_none())
+            .is_some_and(|(px, py)| sampler.sample(px, py).is_none())
     };
     let screen_edge = empty_on_screen(x.checked_sub(1), Some(y))
         || empty_on_screen(x.checked_add(1), Some(y))
@@ -976,7 +1229,7 @@ fn projected_surface_light(
         occlusion,
         edge: edge || screen_edge,
         screen_edge,
-        overlay: overlay_sample(sprite, projection, (x, y), (sx, sy), face),
+        overlay: overlay_sample(sampler, (x, y), (sx, sy), face),
     })
 }
 
@@ -1076,10 +1329,24 @@ fn shading_ramp(lighting: &crate::lighting::VoxelLighting) -> ([u8; 16], usize) 
         }
         len
     };
-    if fill(&|b| b.is_ascii_graphic() && !LINE_GLYPHS.contains(&b)) < 2 {
+    if fill(&|b| b.is_ascii_graphic() && !is_line_glyph(b)) < 2 {
         fill(&|b| b.is_ascii_graphic());
     }
     (ramp, len)
+}
+
+/// `LINE_GLYPHS.contains(&byte)`, by table.
+fn is_line_glyph(byte: u8) -> bool {
+    const TABLE: [bool; 256] = {
+        let mut table = [false; 256];
+        let mut i = 0;
+        while i < LINE_GLYPHS.len() {
+            table[LINE_GLYPHS[i] as usize] = true;
+            i += 1;
+        }
+        table
+    };
+    TABLE[usize::from(byte)]
 }
 
 /// Brightness normalized over the configured light range, never the frame's:
@@ -1093,8 +1360,18 @@ fn light_level(lighting: &crate::lighting::VoxelLighting, brightness: u16) -> f3
 
 /// The shading band of a brightness over the configured light range: one
 /// per ramp glyph, darkest first in colour (brightest first in monochrome).
+#[cfg(test)]
 fn light_band(lighting: &crate::lighting::VoxelLighting, mono: bool, brightness: u16) -> usize {
-    let (_, len) = shading_ramp(lighting);
+    light_band_of(shading_ramp(lighting).1, lighting, mono, brightness)
+}
+
+/// `light_band` over a shading ramp of `len` glyphs.
+fn light_band_of(
+    len: usize,
+    lighting: &crate::lighting::VoxelLighting,
+    mono: bool,
+    brightness: u16,
+) -> usize {
     let level = light_level(lighting, brightness);
     let tone = if mono { level } else { 1.0 - level };
     (tone * len.saturating_sub(1) as f32)
@@ -1118,7 +1395,7 @@ fn texture_index(
 ) -> Option<usize> {
     let (_, len) = shading_ramp(lighting);
     let top = i32::try_from(len).ok()?.checked_sub(1)?;
-    let band = light_band(lighting, mono, brightness) as i32;
+    let band = light_band_of(len, lighting, mono, brightness) as i32;
     let checker = (voxel[0] + voxel[1] + voxel[2]).rem_euclid(2) ^ i32::from(material & 1);
     let toward = if band * 2 < top { 1 } else { -1 };
     Some((band + checker * toward + i32::from(tier)).clamp(0, top) as usize)
@@ -1217,6 +1494,32 @@ fn from_hsl([h, s, l]: [f32; 3]) -> [u8; 3] {
     [r, g, b].map(|v| ((v + m).clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+/// `lighting.brightness`, solved once per frame for each distinct light
+/// (`FrameMemo`): a frame's samples share a few facet normals and contact
+/// levels.
+fn lit_brightness(
+    lighting: &crate::lighting::VoxelLighting,
+    normal: [f32; 3],
+    occlusion: u8,
+    edge: bool,
+) -> u16 {
+    let [x, y, z] = lighting.light_direction.map(|v| u128::from(v as u16));
+    let model = u128::from(lighting.enabled)
+        | u128::from(lighting.ambient_percent) << 1
+        | u128::from(lighting.diffuse_percent) << 17
+        | u128::from(lighting.occlusion_percent) << 33
+        | u128::from(lighting.outline_percent) << 49
+        | x << 65
+        | y << 81
+        | z << 97;
+    let key = (
+        model,
+        normal.map(f32::to_bits),
+        u16::from(occlusion) << 1 | u16::from(edge),
+    );
+    FrameMemo::light(key, || lighting.brightness(normal, occlusion, edge))
+}
+
 /// Glyph ink: a shade of the voxel's own hue (`base`, saturation kept at
 /// least `INK_SATURATION`) at the lightness whose WCAG contrast with the cell
 /// background `bg` is `target`: darker ink on a lit face, lighter ink on a
@@ -1224,7 +1527,186 @@ fn from_hsl([h, s, l]: [f32; 3]) -> [u8; 3] {
 /// whose luminance gives black the better contrast). The ink is quantized
 /// to the background's colour depth, choosing the nearest palette shade that
 /// still keeps `MIN_CONTRAST` (a chromatic one when the voxel has a hue).
+///
+/// A pure function of its arguments, which repeat across a frame's cells (one
+/// pair per material and lit colour): each distinct ink is solved once per
+/// frame (`FrameMemo`).
 fn glyph_ink(base: Color, bg: Color, target: f32) -> Color {
+    let key = (
+        u64::from(colour_code(base)) << 32 | u64::from(colour_code(bg)),
+        target.to_bits(),
+    );
+    FrameMemo::ink(key, || glyph_ink_exact(base, bg, target))
+}
+
+/// A distinct code for every terminal colour (the memo's key).
+fn colour_code(colour: Color) -> u32 {
+    match colour {
+        Color::Rgb(r, g, b) => 1 << 24 | u32::from(r) << 16 | u32::from(g) << 8 | u32::from(b),
+        Color::Indexed(index) => 2 << 24 | u32::from(index),
+        Color::Reset => 3 << 24,
+        Color::Black => 4 << 24,
+        Color::Red => 4 << 24 | 1,
+        Color::Green => 4 << 24 | 2,
+        Color::Yellow => 4 << 24 | 3,
+        Color::Blue => 4 << 24 | 4,
+        Color::Magenta => 4 << 24 | 5,
+        Color::Cyan => 4 << 24 | 6,
+        Color::Gray => 4 << 24 | 7,
+        Color::DarkGray => 4 << 24 | 8,
+        Color::LightRed => 4 << 24 | 9,
+        Color::LightGreen => 4 << 24 | 10,
+        Color::LightYellow => 4 << 24 | 11,
+        Color::LightBlue => 4 << 24 | 12,
+        Color::LightMagenta => 4 << 24 | 13,
+        Color::LightCyan => 4 << 24 | 14,
+        Color::White => 4 << 24 | 15,
+    }
+}
+
+/// Memo of the pure solves the overlay repeats across one frame's cells
+/// (`glyph_ink`, `outline_grey`, `lit_brightness`). It holds no state from
+/// one frame to the next: every widget frame starts a new generation
+/// (`FrameMemo::begin`) and an entry of an earlier generation is never read,
+/// so a frame's cost never depends on the frames drawn before it. Fixed slot
+/// tables keep it bounded; a slot another solve takes is solved again.
+/// Results are bit-identical to solving every call.
+struct FrameMemo {
+    generation: u32,
+    inks: Vec<Option<InkSlot>>,
+    lights: Vec<Option<(u32, LightKey, u16)>>,
+    grey: Option<(u32, Color, Color)>,
+}
+
+/// A `lit_brightness` key: the lighting model's parameters, the normal's
+/// bits, and occlusion with the edge flag.
+type LightKey = (u128, [u32; 3], u16);
+
+/// One memo slot: its generation, the `glyph_ink` arguments (the base and
+/// background colour codes, the target's bits) and the ink.
+type InkSlot = (u32, InkKey, Color);
+type InkKey = (u64, u32);
+
+/// Slots in the frame memo's ink table (a power of two).
+const FRAME_MEMO_SLOTS: usize = 1024;
+
+thread_local! {
+    static FRAME_MEMO: std::cell::RefCell<FrameMemo> = const {
+        std::cell::RefCell::new(FrameMemo {
+            generation: 0,
+            inks: Vec::new(),
+            lights: Vec::new(),
+            grey: None,
+        })
+    };
+}
+
+impl FrameMemo {
+    /// Starts a widget frame: no solve of an earlier frame is read again.
+    fn begin() {
+        FRAME_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            memo.generation = memo.generation.wrapping_add(1);
+            if memo.generation == 0 {
+                // A wrapped generation could meet a stale slot: start over.
+                memo.inks.clear();
+                memo.lights.clear();
+                memo.generation = 1;
+            }
+            memo.grey = None;
+        });
+    }
+
+    fn slot((colours, target): InkKey) -> usize {
+        let mut h = (colours as u32).wrapping_mul(0x9E37_79B1)
+            ^ ((colours >> 32) as u32).wrapping_mul(0x85EB_CA77)
+            ^ target.wrapping_mul(0xC2B2_AE3D);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2C1B_3C6D);
+        h ^= h >> 12;
+        h as usize & (FRAME_MEMO_SLOTS - 1)
+    }
+
+    fn ink(key: InkKey, solve: impl FnOnce() -> Color) -> Color {
+        let slot = Self::slot(key);
+        let found = FRAME_MEMO.with(|memo| {
+            let memo = memo.borrow();
+            match memo.inks.get(slot).copied().flatten() {
+                Some((generation, k, ink)) if generation == memo.generation && k == key => {
+                    Some(ink)
+                }
+                _ => None,
+            }
+        });
+        if let Some(ink) = found {
+            return ink;
+        }
+        let ink = solve();
+        FRAME_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.inks.len() < FRAME_MEMO_SLOTS {
+                memo.inks.resize(FRAME_MEMO_SLOTS, None);
+            }
+            let generation = memo.generation;
+            memo.inks[slot] = Some((generation, key, ink));
+        });
+        ink
+    }
+
+    fn light(key: LightKey, solve: impl FnOnce() -> u16) -> u16 {
+        let (model, [x, y, z], contact) = key;
+        let mut h = x.wrapping_mul(0x9E37_79B1)
+            ^ y.wrapping_mul(0x85EB_CA77)
+            ^ z.wrapping_mul(0xC2B2_AE3D)
+            ^ (u32::from(contact) ^ model as u32).wrapping_mul(0x2545_F491);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2C1B_3C6D);
+        h ^= h >> 12;
+        let slot = h as usize & (FRAME_MEMO_SLOTS - 1);
+        let found = FRAME_MEMO.with(|memo| {
+            let memo = memo.borrow();
+            match memo.lights.get(slot).copied().flatten() {
+                Some((generation, k, light)) if generation == memo.generation && k == key => {
+                    Some(light)
+                }
+                _ => None,
+            }
+        });
+        if let Some(light) = found {
+            return light;
+        }
+        let light = solve();
+        FRAME_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            if memo.lights.len() < FRAME_MEMO_SLOTS {
+                memo.lights.resize(FRAME_MEMO_SLOTS, None);
+            }
+            let generation = memo.generation;
+            memo.lights[slot] = Some((generation, key, light));
+        });
+        light
+    }
+
+    fn grey(black: Color, solve: impl FnOnce() -> Color) -> Color {
+        let found = FRAME_MEMO.with(|memo| {
+            let memo = memo.borrow();
+            memo.grey
+                .filter(|(generation, key, _)| *generation == memo.generation && *key == black)
+                .map(|(_, _, grey)| grey)
+        });
+        if let Some(grey) = found {
+            return grey;
+        }
+        let grey = solve();
+        FRAME_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            memo.grey = Some((memo.generation, black, grey));
+        });
+        grey
+    }
+}
+
+fn glyph_ink_exact(base: Color, bg: Color, target: f32) -> Color {
     let (Some(base_rgb), Some(bg_rgb)) = (terminal_rgb(base), terminal_rgb(bg)) else {
         return base;
     };
@@ -1334,8 +1816,13 @@ fn outline_black(colors: &Colors) -> Color {
 
 /// The ASCII outline's glyph ink on its black cell: the dimmest grey of the
 /// outline's colour depth that still keeps `MIN_CONTRAST` with it, so the
-/// outline reads as a black, ASCII-textured line.
+/// outline reads as a black, ASCII-textured line. Solved once per frame
+/// (`FrameMemo`).
 fn outline_grey(black: Color) -> Color {
+    FrameMemo::grey(black, || outline_grey_exact(black))
+}
+
+fn outline_grey_exact(black: Color) -> Color {
     let Some(rgb) = terminal_rgb(black) else {
         return black;
     };
@@ -1391,7 +1878,7 @@ fn outline_glyph(sides: u8, diagonal_mon: [bool; 4]) -> Option<char> {
 /// Boundaries on the cell border use the D-table.
 fn boundary_glyph(
     marks: &[u8; 8],
-    mon: &[Option<OverlaySample>; 8],
+    mon: &[Option<&OverlaySample>; 8],
     (dx, dy): (usize, usize),
 ) -> Option<char> {
     let count = dx * dy;
@@ -1546,7 +2033,7 @@ fn block_glyph(renderer: Renderer, mask: u8) -> char {
 }
 
 /// One cell's packed samples: palette pixels and surfaces.
-type CellSamples = ([Option<u8>; 8], [Option<SurfaceLight>; 8]);
+type CellSamples<'a> = (&'a [Option<u8>; 8], &'a [Option<SurfaceLight>; 8]);
 
 /// The bold voxel ASCII overlay for one terminal cell: every Mon cell that is
 /// not the face's or the black outline's carries an ASCII glyph, in every
@@ -1577,59 +2064,61 @@ type CellSamples = ([Option<u8>; 8], [Option<SurfaceLight>; 8]);
 /// Every glyph but the outline is a coloured shade of the voxel's own hue
 /// over the lit voxel (`glyph_ink`); monochrome draws glyphs only. A `quiet`
 /// cell (beside a native face character) is plain body colour inside the
-/// silhouette ring.
-fn paint_overlay_cell(
+/// silhouette ring. Returns the paint (None leaves the legacy packing), which
+/// `paint_lit_cell` applies.
+fn overlay_paint(
     style: (Renderer, &Colors, &crate::lighting::VoxelLighting),
-    (pixels, surface): CellSamples,
+    (pixels, surface): CellSamples<'_>,
     (scene, quiet): (Color, bool),
-    cell: &mut ratatui::buffer::Cell,
-) {
+) -> Option<OverlayPaint> {
     let (renderer, colors, lighting) = style;
     let (dx, dy) = renderer.packing();
     let (dx, dy) = (usize::from(dx), usize::from(dy));
     let count = dx * dy;
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
-    let mon: [Option<OverlaySample>; 8] = std::array::from_fn(|i| {
+    let mon: [Option<&OverlaySample>; 8] = std::array::from_fn(|i| {
         if i < count && pixels[i].is_some() {
-            surface[i].and_then(|s| s.overlay)
+            surface[i].as_ref().and_then(|s| s.overlay.as_ref())
         } else {
             None
         }
     });
-    let Some(first) = (0..count).find(|&i| mon[i].is_some()) else {
-        return;
-    };
+    let first = (0..count).find(|&i| mon[i].is_some())?;
     let base = |i: usize| colors.ink(usize::from(pixels[i].unwrap_or(0)));
     // Outline darkening is not applied: the outline glyph replaces it.
-    let brightness: [u16; 8] = std::array::from_fn(|i| {
-        surface[i].map_or(100, |s| lighting.brightness(s.normal, s.occlusion, false))
-    });
-    let lit: [Color; 8] =
-        std::array::from_fn(|i| shade_terminal_color(lighting, base(i), brightness[i]));
+    // (Only the cell's `count` samples are ever read.)
+    let mut brightness = [100u16; 8];
+    let mut lit = [Color::Reset; 8];
+    for i in 0..count {
+        brightness[i] = surface[i].as_ref().map_or(100, |s| {
+            lit_brightness(lighting, s.normal, s.occlusion, false)
+        });
+        lit[i] = shade_terminal_color(lighting, base(i), brightness[i]);
+    }
     // The scene behind a mixed cell is the world surface sharing it (the
     // floor or wall behind the pet), its most frequent lit colour.
-    let mut scene = scene;
-    let mut best = 0;
-    for i in 0..count {
-        if pixels[i].is_none() || mon[i].is_some() {
-            continue;
-        }
-        let world = |j: usize| {
-            surface[j].map_or(base(j), |s| {
+    let mut world = [None; 8];
+    for j in 0..count {
+        if pixels[j].is_some() && mon[j].is_none() {
+            world[j] = Some(surface[j].as_ref().map_or(base(j), |s| {
                 shade_terminal_color(
                     lighting,
                     base(j),
-                    lighting.brightness(s.normal, s.occlusion, s.edge),
+                    lit_brightness(lighting, s.normal, s.occlusion, s.edge),
                 )
-            })
-        };
-        let colour = world(i);
-        let n = (0..count)
-            .filter(|&j| pixels[j].is_some() && mon[j].is_none() && world(j) == colour)
+            }));
+        }
+    }
+    let mut scene = scene;
+    let mut best = 0;
+    for colour in world.iter().take(count).flatten() {
+        let n = world[..count]
+            .iter()
+            .filter(|w| **w == Some(*colour))
             .count();
         if n > best {
             best = n;
-            scene = colour;
+            scene = *colour;
         }
     }
     let mask = (0..count)
@@ -1657,12 +2146,7 @@ fn paint_overlay_cell(
     let cells_per_voxel = mon[first].map_or(1.0, |o| {
         (o.voxel_span[0] / dx as f32).min(o.voxel_span[1] / dy as f32)
     });
-    let mut paint = |glyph: char, fg: Color, bg: Color| {
-        cell.set_char(glyph);
-        if !mono {
-            cell.set_fg(fg).set_bg(bg);
-        }
-    };
+    let paint = |glyph: char, fg: Color, bg: Color| Some(OverlayPaint { glyph, fg, bg });
     // A line glyph on voxel sample `i` over the background `bg`: a strong
     // shade of its own hue.
     let line_ink = |i: usize, bg: Color| glyph_ink(base(i), bg, LINE_CONTRAST);
@@ -1718,12 +2202,11 @@ fn paint_overlay_cell(
         if partial {
             // The outline's samples over the scene; a Mon sample behind a
             // foreground world object (no ring there) keeps its exact block.
-            if black == 0 {
-                paint(block_glyph(renderer, mask), lit[dominant], scene);
+            return if black == 0 {
+                paint(block_glyph(renderer, mask), lit[dominant], scene)
             } else {
-                paint(block_glyph(renderer, black), ink, scene);
-            }
-            return;
+                paint(block_glyph(renderer, black), ink, scene)
+            };
         }
         if black != 0 {
             if count == 1 {
@@ -1735,12 +2218,10 @@ fn paint_overlay_cell(
                 } else {
                     outline_glyph(lines[0], [false; 4])
                 };
-                paint(glyph.unwrap_or('.'), outline_grey(ink), ink);
-            } else {
-                let rest = dominant_of(&|i| lines[i] == 0).map_or(ink, |i| lit[i]);
-                paint(block_glyph(renderer, black), ink, rest);
+                return paint(glyph.unwrap_or('.'), outline_grey(ink), ink);
             }
-            return;
+            let rest = dominant_of(&|i| lines[i] == 0).map_or(ink, |i| lit[i]);
+            return paint(block_glyph(renderer, black), ink, rest);
         }
     }
 
@@ -1752,8 +2233,7 @@ fn paint_overlay_cell(
         } else {
             partial_glyph(renderer, mask)
         };
-        paint(glyph, scene, scene);
-        return;
+        return paint(glyph, scene, scene);
     }
     // Beside a native face character: plain body colour.
     if quiet && !mono {
@@ -1762,20 +2242,17 @@ fn paint_overlay_cell(
         } else {
             ' '
         };
-        paint(glyph, lit[dominant], lit[dominant]);
-        return;
+        return paint(glyph, lit[dominant], lit[dominant]);
     }
     if mono {
         // 3. Rim (mono): the D-table outline.
         if let Some(glyph) = outline_glyph(rim, corners) {
-            paint(glyph, scene, scene);
-            return;
+            return paint(glyph, scene, scene);
         }
         // 4. A nearer part over a farther one (mono): a boundary line.
         if (0..count).any(|i| contours[i] != 0) {
             if let Some(glyph) = boundary_glyph(&contours, &mon, (dx, dy)) {
-                paint(glyph, scene, scene);
-                return;
+                return paint(glyph, scene, scene);
             }
         }
     }
@@ -1791,15 +2268,14 @@ fn paint_overlay_cell(
     // full pattern over the voxel's lit colour; ASCII the plain lit voxel.
     if (0..count).any(|i| mon[i].is_some_and(|o| o.face_plane)) {
         if mono || renderer == Renderer::HalfBlock {
-            return;
+            return None;
         }
         let glyph = if count > 1 {
             block_glyph(renderer, mask)
         } else {
             ' '
         };
-        paint(glyph, lit[dominant], lit[dominant]);
-        return;
+        return paint(glyph, lit[dominant], lit[dominant]);
     }
 
     // 6. Crease (orientation change) on the darker face; seam (material
@@ -1818,8 +2294,9 @@ fn paint_overlay_cell(
             let bit = 1u8 << side;
             let (facet, material) = o.neighbours[side];
             if o.crease & bit != 0 {
-                let light =
-                    |n: [i8; 3]| lighting.brightness(n.map(|v| f32::from(v) / 127.0), 0, false);
+                let light = |n: [i8; 3]| {
+                    lit_brightness(lighting, n.map(|v| f32::from(v) / 127.0), 0, false)
+                };
                 let (own, other) = (light(o.facet), light(facet));
                 if own < other || (own == other && o.facet < facet) {
                     lines[i] |= bit;
@@ -1835,8 +2312,7 @@ fn paint_overlay_cell(
     }
     if let Some(i) = (0..count).find(|&i| lines[i] != 0) {
         if let Some(glyph) = boundary_glyph(&lines, &mon, (dx, dy)) {
-            paint(glyph, line_ink(i, lit[dominant]), lit[dominant]);
-            return;
+            return paint(glyph, line_ink(i, lit[dominant]), lit[dominant]);
         }
     }
 
@@ -1852,15 +2328,12 @@ fn paint_overlay_cell(
         if let Some(glyph) =
             contour_glyph(gradient).or_else(|| boundary_glyph(&iso, &mon, (dx, dy)))
         {
-            paint(glyph, line_ink(near, lit[near]), lit[near]);
-            return;
+            return paint(glyph, line_ink(near, lit[near]), lit[near]);
         }
     }
 
     // 8. Shading texture over the full configured light range.
-    let Some(o) = mon[dominant] else {
-        return;
-    };
+    let o = mon[dominant]?;
     let (ramp, len) = shading_ramp(lighting);
     if let Some(index) = texture_index(
         lighting,
@@ -1871,8 +2344,9 @@ fn paint_overlay_cell(
     ) {
         let glyph = char::from(ramp[index.min(len - 1)]);
         let bg = lit[dominant];
-        paint(glyph, glyph_ink(base(dominant), bg, TEXTURE_CONTRAST), bg);
+        return paint(glyph, glyph_ink(base(dominant), bg, TEXTURE_CONTRAST), bg);
     }
+    None
 }
 
 /// Canonical terminal palette decoding; shade RGB without swapping skin hues.
@@ -1962,7 +2436,7 @@ fn paint_lit_pixels(
     flat_ink: [bool; 8],
     cell: &mut ratatui::buffer::Cell,
 ) {
-    paint_lit_cell((renderer, colors), pixels, surface, flat_ink, false, cell);
+    paint_lit_cell((renderer, colors), pixels, &surface, flat_ink, false, cell);
 }
 
 /// `paint_lit_pixels`; a `quiet` cell (beside a native face character) is
@@ -1970,7 +2444,7 @@ fn paint_lit_pixels(
 fn paint_lit_cell(
     (renderer, colors): (Renderer, &Colors),
     pixels: [Option<u8>; 8],
-    surface: [Option<SurfaceLight>; 8],
+    surface: &[Option<SurfaceLight>; 8],
     flat_ink: [bool; 8],
     quiet: bool,
     cell: &mut ratatui::buffer::Cell,
@@ -1981,6 +2455,27 @@ fn paint_lit_cell(
     } else {
         cell.bg
     };
+    // Lighting disabled draws the overlay over flat colour: outlines,
+    // creases, contours and texture still mark every voxel. The overlay
+    // reads only the samples and the scene, never the cell.
+    let overlay = colors
+        .lighting
+        .as_ref()
+        .filter(|_| !flat_ink.iter().any(|ink| *ink))
+        .and_then(|lighting| {
+            overlay_paint(
+                (renderer, colors, lighting),
+                (&pixels, surface),
+                (scene, quiet),
+            )
+        });
+    let mono = colors.palette.iter().all(|c| *c == Color::Reset);
+    if let Some(paint) = overlay.filter(|_| !mono) {
+        // In colour the overlay sets the glyph and both colour planes, all
+        // the legacy packing below would set: it would only be overwritten.
+        cell.set_char(paint.glyph).set_fg(paint.fg).set_bg(paint.bg);
+        return;
+    }
     paint_pixels(renderer, colors, pixels, cell);
     let Some(lighting) = colors.lighting.as_ref() else {
         return;
@@ -1993,24 +2488,26 @@ fn paint_lit_cell(
             cell,
         );
     }
-    if flat_ink.iter().any(|ink| *ink) {
-        return;
+    // Monochrome has glyphs only: the overlay's glyph over the packing.
+    if let Some(paint) = overlay {
+        cell.set_char(paint.glyph);
     }
-    // Lighting disabled draws the overlay over flat colour: outlines,
-    // creases, contours and texture still mark every voxel.
-    paint_overlay_cell(
-        (renderer, colors, lighting),
-        (pixels, surface),
-        (scene, quiet),
-        cell,
-    );
+}
+
+/// The overlay's paint for one cell: its glyph, and the ink and background
+/// colour depths draw it with (monochrome takes the glyph alone).
+#[derive(Clone, Copy, Debug)]
+struct OverlayPaint {
+    glyph: char,
+    fg: Color,
+    bg: Color,
 }
 
 /// The legacy lit packing (the exact pre-overlay renderer): shaded colour
 /// planes, silhouette ink, monochrome ramp glyphs.
 fn paint_lit_packing(
     (renderer, colors, lighting): (Renderer, &Colors, &crate::lighting::VoxelLighting),
-    (pixels, surface, flat_ink): ([Option<u8>; 8], [Option<SurfaceLight>; 8], [bool; 8]),
+    (pixels, surface, flat_ink): ([Option<u8>; 8], &[Option<SurfaceLight>; 8], [bool; 8]),
     scene: Color,
     cell: &mut ratatui::buffer::Cell,
 ) {
@@ -2018,7 +2515,7 @@ fn paint_lit_packing(
         return;
     };
     let brightness: [Option<u16>; 8] = std::array::from_fn(|i| {
-        surface[i].map(|s| lighting.brightness(s.normal, s.occlusion, s.edge))
+        surface[i].map(|s| lit_brightness(lighting, s.normal, s.occlusion, s.edge))
     });
     let shaded: [Option<Color>; 8] = std::array::from_fn(|i| {
         pixels[i].map(|index| {
@@ -2095,37 +2592,186 @@ fn draw_projection(
 
 /// `draw_projection` before a live face pass with the memory `remembered`
 /// (the plain ring around a native face follows the tier it heads for).
-fn draw_projection_with(
-    sprite: &Sprite,
+fn draw_projection_with<'a>(
+    sprite: &'a Sprite,
     renderer: Renderer,
-    colors: &Colors,
+    colors: &'a Colors,
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
     remembered: Remembered,
-) {
+) -> BodyPass<'a> {
     let area = area.intersection(buf.area);
     let (dx, dy) = renderer.packing();
     let face = face_clearance(sprite, renderer, projection, area);
     let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, remembered);
+    let sampler = Sampler::frame(sprite, projection, renderer, area);
+    let mut body = BodyPass::new(
+        (sprite, colors, renderer),
+        (projection, area, remembered),
+        face,
+        quiet,
+    );
+    // Every cell sets its own packed samples; the rest stay empty.
+    let mut pixels = [None; 8];
+    let mut surface = [None; 8];
     for row in area.y..area.bottom() {
         for col in area.x..area.right() {
-            let mut pixels = [None; 8];
-            let mut surface = [None; 8];
             for y in 0..dy {
                 for x in 0..dx {
                     let i = usize::from(y * dx + x);
                     let px = u32::from(col) * u32::from(dx) + u32::from(x);
                     let py = u32::from(row) * u32::from(dy) + u32::from(y);
-                    pixels[i] = projection.sample(sprite, px, py);
-                    surface[i] = projected_surface_light(sprite, projection, (px, py), face);
+                    pixels[i] = sampler.sample(px, py);
+                    surface[i] = sampled_surface_light(&sampler, (px, py), face);
                 }
             }
+            body.keep((col, row), &pixels, &surface);
             if let Some(cell) = buf.cell_mut((col, row)) {
-                let plain = quiet.binary_search(&(col, row)).is_ok();
-                paint_lit_cell((renderer, colors), pixels, surface, [false; 8], plain, cell);
+                let plain = body.quiet.binary_search(&(col, row)).is_ok();
+                paint_lit_cell(
+                    (renderer, colors),
+                    pixels,
+                    &surface,
+                    [false; 8],
+                    plain,
+                    cell,
+                );
             }
         }
+    }
+    body.sampler = Some(sampler);
+    body
+}
+
+/// The cells of a face plane whose projected cell rectangle is `plane`
+/// (left, top, right, bottom) within `area`: the cells a face pass visits.
+fn face_plane_cells([left, top, right, bottom]: [f64; 4], area: Rect) -> Rect {
+    let rows = (top.floor() as i32).max(i32::from(area.y))
+        ..(bottom.ceil() as i32).min(i32::from(area.bottom()));
+    let columns = (left.floor() as i32).max(i32::from(area.x))
+        ..(right.ceil() as i32).min(i32::from(area.right()));
+    if rows.is_empty() || columns.is_empty() {
+        return Rect::default();
+    }
+    Rect::new(
+        columns.start as u16,
+        rows.start as u16,
+        (columns.end - columns.start) as u16,
+        (rows.end - rows.start) as u16,
+    )
+}
+
+/// What a frame's body pass computed that its face pass needs again: the
+/// plain cells around a native face (`native_quiet_cells`) and the packed
+/// samples of the cells on the face plane, which a face pass repaints the
+/// body of. A face pass over the very same sprite, colours, renderer,
+/// projection and viewport reads them instead of sampling again; anything
+/// else (another sprite, memory or clearance) samples afresh.
+struct BodyPass<'a> {
+    sprite: &'a Sprite,
+    colors: &'a Colors,
+    renderer: Renderer,
+    projection: Projection,
+    area: Rect,
+    remembered: Remembered,
+    clearance: FaceClearance,
+    /// Sorted, as `native_quiet_cells` returns them.
+    quiet: Vec<(u16, u16)>,
+    /// The face plane's cells, row-major, with their samples in packing order.
+    cells: Rect,
+    pixels: Vec<Option<u8>>,
+    surface: Vec<Option<SurfaceLight>>,
+    /// The frame's sampler (its tables and per-source-pixel memos), once the
+    /// body is drawn.
+    sampler: Option<Sampler<'a>>,
+}
+
+impl<'a> BodyPass<'a> {
+    fn new(
+        (sprite, colors, renderer): (&'a Sprite, &'a Colors, Renderer),
+        (projection, area, remembered): (Projection, Rect, Remembered),
+        clearance: FaceClearance,
+        quiet: Vec<(u16, u16)>,
+    ) -> Self {
+        let cells = FaceTexture::bounds(sprite).map_or_else(Rect::default, |bounds| {
+            let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
+            let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
+            face_plane_cells([left, top, right, bottom], area)
+        });
+        let (dx, dy) = renderer.packing();
+        let total = usize::from(cells.width) * usize::from(cells.height) * usize::from(dx * dy);
+        Self {
+            sprite,
+            colors,
+            renderer,
+            projection,
+            area,
+            remembered,
+            clearance,
+            quiet,
+            cells,
+            pixels: Vec::with_capacity(total),
+            surface: Vec::with_capacity(total),
+            sampler: None,
+        }
+    }
+
+    fn count(&self) -> usize {
+        let (dx, dy) = self.renderer.packing();
+        usize::from(dx * dy)
+    }
+
+    /// Keeps one cell's samples when it lies on the face plane (cells arrive
+    /// in row-major order).
+    fn keep(
+        &mut self,
+        (col, row): (u16, u16),
+        pixels: &[Option<u8>; 8],
+        surface: &[Option<SurfaceLight>; 8],
+    ) {
+        if self.cells.contains((col, row).into()) {
+            let count = self.count();
+            self.pixels.extend_from_slice(&pixels[..count]);
+            self.surface.extend_from_slice(&surface[..count]);
+        }
+    }
+
+    /// Whether this pass drew `sprite` with `colors` through `projection`
+    /// into `area` (`renderer` packing).
+    fn drew(
+        &self,
+        (sprite, colors, renderer): (&Sprite, &Colors, Renderer),
+        projection: Projection,
+        area: Rect,
+    ) -> bool {
+        std::ptr::eq(self.sprite, sprite)
+            && std::ptr::eq(self.colors, colors)
+            && self.renderer == renderer
+            && self.projection == projection
+            && self.area == area
+    }
+
+    /// The plain native ring, when the face pass starts from the memory the
+    /// body pass saw.
+    fn quiet_for(&self, remembered: Remembered) -> Option<&[(u16, u16)]> {
+        (self.remembered == remembered).then_some(self.quiet.as_slice())
+    }
+
+    /// A face-plane cell's packed samples, when the face pass classifies them
+    /// with the body pass's own clearance.
+    fn samples(&self, clearance: FaceClearance, (col, row): (u16, u16)) -> Option<KeptSamples<'_>> {
+        if self.clearance != clearance || !self.cells.contains((col, row).into()) {
+            return None;
+        }
+        let count = self.count();
+        let start = (usize::from(row - self.cells.y) * usize::from(self.cells.width)
+            + usize::from(col - self.cells.x))
+            * count;
+        Some((
+            self.pixels.get(start..start + count)?,
+            self.surface.get(start..start + count)?,
+        ))
     }
 }
 
@@ -2660,13 +3306,13 @@ fn face_light(
                 .source_pixel(sprite, px, py)
                 .and_then(|(sx, sy)| sprite.surface_shading(sx, sy));
             if let Some((normal, occlusion)) = shading {
-                sum += light_level(lighting, lighting.brightness(normal, occlusion, false));
+                sum += light_level(lighting, lit_brightness(lighting, normal, occlusion, false));
                 count += 1;
             }
         }
     }
     if count == 0 {
-        light_level(lighting, lighting.brightness([0.0; 3], 0, false))
+        light_level(lighting, lit_brightness(lighting, [0.0; 3], 0, false))
     } else {
         sum / f32::from(count)
     }
@@ -2779,7 +3425,7 @@ fn face_background_kept(
     after.bg == before.bg || plate || shape
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct FaceTexture {
     text: &'static str,
     /// Physical width/height of the face plane. None keeps the legacy mapping
@@ -2916,13 +3562,73 @@ impl FaceTexture {
         self.filtered(uv, footprint, max_radius, |x, y| self.sclera_bit(x, y))
     }
 
-    fn filtered(
+    /// Whether `coverage(uv, footprint, f64::INFINITY)` is positive, without
+    /// summing it: the box filter's sum is positive exactly when some ink bit
+    /// overlaps the filter box with positive length on both axes (every term
+    /// is a product of two non-negative overlaps).
+    fn touches_ink(self, uv: [f64; 2], footprint: [f64; 2]) -> bool {
+        let (grid, radius) = self.filter_box(uv, footprint, f64::INFINITY);
+        if !grid.iter().chain(&radius).all(|v| v.is_finite()) {
+            return self.coverage(uv, footprint, f64::INFINITY) > 0.0;
+        }
+        // The grid units `filtered` visits whose overlap is positive: all
+        // but possibly the first and the last (an inner unit overlaps fully).
+        let positive = |centre: f64, radius: f64| {
+            let overlap = |start: i32| {
+                ((centre + radius).min(f64::from(start) + 1.0)
+                    - (centre - radius).max(f64::from(start)))
+                .max(0.0)
+            };
+            let mut low = (centre - radius).floor() as i32;
+            let mut high = (centre + radius).floor() as i32;
+            if low <= high && overlap(low) <= 0.0 {
+                low += 1;
+            }
+            if low <= high && overlap(high) <= 0.0 {
+                high -= 1;
+            }
+            (low, high)
+        };
+        let (left, right) = positive(grid[0], radius[0]);
+        let (top, bottom) = positive(grid[1], radius[1]);
+        (top.max(0)..=bottom.min(8)).any(|y| self.row_ink(y, left, right))
+    }
+
+    /// Whether any `bit(x, y)` holds for `x` in `low..=high`.
+    fn row_ink(self, y: i32, low: i32, high: i32) -> bool {
+        if !(0..9).contains(&y) {
+            return false;
+        }
+        let low = low.max(0);
+        let high = high.min(self.text.len() as i32 * 8 - 1);
+        if low > high {
+            return false;
+        }
+        (low / 8..=high / 8).any(|glyph| {
+            let first = (low - 8 * glyph).max(0);
+            let last = (high - 8 * glyph).min(4);
+            first <= last
+                && self
+                    .text
+                    .as_bytes()
+                    .get(glyph as usize)
+                    .and_then(|b| face_glyph(*b))
+                    .is_some_and(|rows| {
+                        // Columns first..=last are bits (4 - last)..=(4 - first).
+                        let columns = (1u16 << (5 - first)) - (1u16 << (4 - last));
+                        u16::from(rows[y as usize]) & columns != 0
+                    })
+        })
+    }
+
+    /// The filter box `filtered` sums over: its centre in grid units and its
+    /// half extent.
+    fn filter_box(
         self,
         uv: [f64; 2],
         footprint: [f64; 2],
         max_radius: f64,
-        bit: impl Fn(i32, i32) -> bool,
-    ) -> f64 {
+    ) -> ([f64; 2], [f64; 2]) {
         let size = self.grid_box();
         let scale = self.grid_per_uv();
         let grid = if self.aspect.is_some() {
@@ -2940,6 +3646,17 @@ impl FaceTexture {
             (scale[0] * footprint[0].abs() / 2.0).clamp(0.025, max_radius),
             (scale[1] * footprint[1].abs() / 2.0).clamp(0.025, max_radius),
         ];
+        (grid, radius)
+    }
+
+    fn filtered(
+        self,
+        uv: [f64; 2],
+        footprint: [f64; 2],
+        max_radius: f64,
+        bit: impl Fn(i32, i32) -> bool,
+    ) -> f64 {
+        let (grid, radius) = self.filter_box(uv, footprint, max_radius);
         let left = (grid[0] - radius[0]).floor() as i32;
         let right = (grid[0] + radius[0]).floor() as i32;
         let top = (grid[1] - radius[1]).floor() as i32;
@@ -3061,6 +3778,7 @@ fn projected_face_uv(
     )
 }
 
+#[cfg(test)]
 fn projected_face_frame(
     sprite: &Sprite,
     projection: Projection,
@@ -3143,6 +3861,22 @@ fn projected_surface_frame(
     planar: bool,
 ) -> Option<([f64; 2], [f64; 2], [f64; 2])> {
     let (sx, sy) = projection.source_pixel(sprite, x, y)?;
+    let frame = texel_frame(sprite, lookup, max_step, planar, (sx, sy))?;
+    Some(refine_frame(projection, (x, y), (sx, sy), frame))
+}
+
+/// A texel's UV and its change per source pixel along x and y: the plane's
+/// local frame at source pixel `(sx, sy)`, before the camera.
+type TexelFrame = ([f64; 2], [f64; 2], [f64; 2]);
+
+/// `projected_surface_frame`'s source-pixel part.
+fn texel_frame(
+    sprite: &Sprite,
+    lookup: fn(&Sprite, u32, u32) -> Option<[f64; 2]>,
+    max_step: f64,
+    planar: bool,
+    (sx, sy): (u32, u32),
+) -> Option<TexelFrame> {
     let (uv, horizontal, vertical) = texel_derivatives(sprite, lookup, max_step, (sx, sy))?;
     // A planar map has one gradient, so an axis without a neighbour borrows
     // it from the adjacent texel on the same continuous surface.
@@ -3177,6 +3911,18 @@ fn projected_surface_frame(
                 .flatten()
         })
         .unwrap_or([0.0; 2]);
+    Some((uv, horizontal, vertical))
+}
+
+/// `projected_surface_frame` of packed pixel `(x, y)` showing source pixel
+/// `(sx, sy)`, whose texel frame is `frame`: the UV at the packed pixel's
+/// centre and its change per packed screen pixel.
+fn refine_frame(
+    projection: Projection,
+    (x, y): (u32, u32),
+    (sx, sy): (u32, u32),
+    (uv, horizontal, vertical): TexelFrame,
+) -> ([f64; 2], [f64; 2], [f64; 2]) {
     let offset = [
         (f64::from(x) + 0.5 - projection.left) / projection.scale - f64::from(sx) - 0.5,
         (f64::from(y) + 0.5 - projection.top) / projection.scale_y - f64::from(sy) - 0.5,
@@ -3184,11 +3930,11 @@ fn projected_surface_frame(
     let refined = std::array::from_fn(|i| {
         (uv[i] + horizontal[i] * offset[0] + vertical[i] * offset[1]).clamp(0.0, 1.0)
     });
-    Some((
+    (
         refined,
         horizontal.map(|d| d / projection.scale),
         vertical.map(|d| d / projection.scale_y),
-    ))
+    )
 }
 
 type NativeHeadCell = ((u16, u16), [f64; 2], f64);
@@ -3855,6 +4601,7 @@ fn draw_shaded_face(
 
 /// `draw_shaded_face` for a face pass that started from the memory
 /// `remembered`: restored body cells keep the body pass's plain native ring.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn draw_shaded_face_with(
     sprite: &Sprite,
@@ -3866,6 +4613,32 @@ fn draw_shaded_face_with(
     face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet, GlyphSet),
     remembered: Remembered,
 ) -> bool {
+    draw_shaded_face_after(
+        sprite,
+        renderer,
+        colors,
+        projection,
+        area,
+        buf,
+        face,
+        (remembered, None),
+    )
+}
+
+/// `draw_shaded_face_with` after the frame's body pass `body` (drawn with the
+/// same sprite, colours, renderer, projection and viewport), whose samples
+/// and plain native ring it reuses where they apply.
+#[allow(clippy::too_many_arguments)]
+fn draw_shaded_face_after(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet, GlyphSet),
+    (remembered, body): (Remembered, Option<&BodyPass<'_>>),
+) -> bool {
     struct ShadedCell {
         pos: (u16, u16),
         centre: [f64; 2],
@@ -3875,14 +4648,27 @@ fn draw_shaded_face_with(
         source: Option<usize>,
         /// Mean sclera-plate coverage of the cell's packed pixels.
         sclera: f64,
-        original: [Option<u8>; 8],
-        surface: [Option<SurfaceLight>; 8],
+        /// The body sample a restored (one-sample ASCII) cell repaints.
+        restored: (Option<u8>, Option<SurfaceLight>),
     }
     // `glyphs` are drawn; `collapsed` ones as their own single character.
     let (texture, [left, top, right, bottom], _stroke, fit, glyphs, collapsed) = face;
     let (dx, dy) = renderer.packing();
     let count = f64::from(dx * dy);
     let clearance = FaceClearance::of(sprite, renderer, Some((texture, fit)));
+    // The frame's sampler: the body pass's, else a fresh one.
+    let fresh;
+    let sampler = match body.and_then(|body| body.sampler.as_ref()) {
+        Some(sampler) => sampler,
+        None => {
+            fresh = Sampler::faced(sprite, projection);
+            &fresh
+        }
+    };
+    // A packed cell's background already holds body pixels, so relighting it
+    // would not reproduce the body; ASCII's background is the room's. The
+    // restored body keeps the body pass's plain ring around a native face.
+    let restore = (dx, dy) == (1, 1);
     let mut cells = Vec::new();
     for row in (top.floor() as i32).max(i32::from(area.y))
         ..(bottom.ceil() as i32).min(i32::from(area.bottom()))
@@ -3890,21 +4676,16 @@ fn draw_shaded_face_with(
         for col in (left.floor() as i32).max(i32::from(area.x))
             ..(right.ceil() as i32).min(i32::from(area.right()))
         {
-            let mut original = [None; 8];
-            let mut surface = [None; 8];
             let mut ink = 0.0;
             let mut sclera = 0.0;
             let mut centre = [0.0; 2];
             let mut covered = 0;
             for y in 0..dy {
                 for x in 0..dx {
-                    let i = usize::from(y * dx + x);
                     let px = col as u32 * u32::from(dx) + u32::from(x);
                     let py = row as u32 * u32::from(dy) + u32::from(y);
-                    original[i] = projection.sample(sprite, px, py);
-                    surface[i] = projected_surface_light(sprite, projection, (px, py), clearance);
                     // Each packed pixel filters its own footprint; the cell is their mean.
-                    if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
+                    if let Some((uv, footprint)) = sampler.face_uv(px, py) {
                         covered += 1;
                         let uv = fit.map(uv);
                         let footprint = fit.footprint(footprint);
@@ -3918,25 +4699,35 @@ fn draw_shaded_face_with(
             }
             if covered == dx * dy {
                 let mask = if ink >= SHADED_MIN_INK {
-                    face_stroke_mask(
-                        sprite,
-                        projection,
-                        (texture, fit),
-                        (col as u32, row as u32),
-                        (dx, dy),
-                    )
+                    face_stroke_mask(sampler, (texture, fit), (col as u32, row as u32), (dx, dy))
                 } else {
                     0
                 };
+                // The one sample a restored ASCII cell repaints (packed
+                // cells keep their body as it is).
+                let pos = (col as u16, row as u16);
+                let restored = if restore {
+                    match body.and_then(|body| body.samples(clearance, pos)) {
+                        Some((pixels, surface)) => (pixels[0], surface[0]),
+                        None => {
+                            let (px, py) = (col as u32, row as u32);
+                            (
+                                sampler.sample(px, py),
+                                sampled_surface_light(sampler, (px, py), clearance),
+                            )
+                        }
+                    }
+                } else {
+                    (None, None)
+                };
                 cells.push(ShadedCell {
-                    pos: (col as u16, row as u16),
+                    pos,
                     centre,
                     mask,
                     glyph: None,
                     source: None,
                     sclera,
-                    original,
-                    surface,
+                    restored,
                 });
             }
         }
@@ -4019,14 +4810,10 @@ fn draw_shaded_face_with(
     if cells.iter().filter(|cell| cell.glyph.is_some()).count() < 3 {
         return false;
     }
-    // A packed cell's background already holds body pixels, so relighting it
-    // would not reproduce the body; ASCII's background is the room's. The
-    // restored body keeps the body pass's plain ring around a native face.
-    let restore = (dx, dy) == (1, 1);
-    let quiet = if restore {
-        native_quiet_cells(sprite, renderer, colors, projection, area, remembered)
-    } else {
-        Vec::new()
+    let quiet = match body.and_then(|body| body.quiet_for(remembered)) {
+        _ if !restore => Vec::new(),
+        Some(quiet) => quiet.to_vec(),
+        None => native_quiet_cells(sprite, renderer, colors, projection, area, remembered),
     };
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let sclera = Sclera::of(colors);
@@ -4051,10 +4838,15 @@ fn draw_shaded_face_with(
         };
         if restore {
             let background = target.bg;
+            let (pixel, light) = cell.restored;
+            let mut original = [None; 8];
+            let mut surface = [None; 8];
+            original[0] = pixel;
+            surface[0] = light;
             paint_lit_cell(
                 (renderer, colors),
-                cell.original,
-                cell.surface,
+                original,
+                &surface,
                 [false; 8],
                 quiet.binary_search(&cell.pos).is_ok(),
                 target,
@@ -4103,14 +4895,12 @@ fn draw_shaded_face_with(
 /// passed the ink threshold but whose sub-samples all miss a thin stroke keeps
 /// its strongest sub-sample, so it never draws an empty shape.
 fn face_stroke_mask(
-    sprite: &Sprite,
-    projection: Projection,
+    sampler: &Sampler<'_>,
     (texture, fit): (FaceTexture, FaceFit),
     (col, row): (u32, u32),
     (dx, dy): (u16, u16),
 ) -> u16 {
-    let Some((uv, per_x, per_y)) =
-        projected_face_frame(sprite, projection, col * u32::from(dx), row * u32::from(dy))
+    let Some((uv, per_x, per_y)) = sampler.face_frame_at(col * u32::from(dx), row * u32::from(dy))
     else {
         return 1 << 4;
     };
@@ -4555,7 +5345,26 @@ fn draw_camera_face_with(
     buf: &mut Buffer,
     detail: FaceDetail<'_>,
 ) -> bool {
+    draw_camera_face_after(
+        sprite, renderer, colors, projection, area, buf, detail, None,
+    )
+}
+
+/// `draw_camera_face_with` after the body pass `body` of the same frame,
+/// whose samples and plain native ring it reuses where they apply.
+#[allow(clippy::too_many_arguments)]
+fn draw_camera_face_after(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    detail: FaceDetail<'_>,
+    body: Option<&BodyPass<'_>>,
+) -> bool {
     let area = area.intersection(buf.area);
+    let body = body.filter(|body| body.drew((sprite, colors, renderer), projection, area));
     let Some(texture) = FaceTexture::new(sprite) else {
         // Mapped voxels never bypass depth authority, even in a tiny viewport.
         return sprite.face_text().is_none()
@@ -4611,7 +5420,7 @@ fn draw_camera_face_with(
             // so the overlay lays no stroke: show native glyphs on the visible
             // head instead, or report no face so the caption carries it.
             FaceLod::Shaded => {
-                draw_shaded_face_with(
+                draw_shaded_face_after(
                     sprite,
                     renderer,
                     colors,
@@ -4619,7 +5428,7 @@ fn draw_camera_face_with(
                     area,
                     buf,
                     (face.0, face.1, face.2, face.3, glyphs, 0),
-                    remembered,
+                    (remembered, body),
                 ) || native(buf)
             }
             FaceLod::Atlas => draw_atlas_face(
@@ -4630,7 +5439,7 @@ fn draw_camera_face_with(
                 area,
                 buf,
                 (face, glyphs),
-                remembered,
+                (remembered, body),
             ),
         }
     };
@@ -4646,7 +5455,7 @@ fn draw_camera_face_with(
         // on the face plane (as glyphs too small for strokes do), so the
         // expression grows stroke by stroke in place. A separate native run
         // would sit on the eye line apart from the strokes.
-        return draw_shaded_face_with(
+        return draw_shaded_face_after(
             sprite,
             renderer,
             colors,
@@ -4654,7 +5463,7 @@ fn draw_camera_face_with(
             area,
             buf,
             (texture, rect, stroke_color, fit, ALL_GLYPHS, !upper),
-            remembered,
+            (remembered, body),
         ) || tier(low, ALL_GLYPHS, buf);
     }
     // Strokes and atlas: each tier draws its own glyphs on its own copy; a cell takes
@@ -4691,7 +5500,7 @@ fn draw_atlas_face(
     area: Rect,
     buf: &mut Buffer,
     face: ((FaceTexture, [f64; 4], Color, FaceFit), GlyphSet),
-    remembered: Remembered,
+    (remembered, body): (Remembered, Option<&BodyPass<'_>>),
 ) -> bool {
     let ((texture, [left, top, right, bottom], _stroke, fit), glyphs) = face;
     let (dx, dy) = renderer.packing();
@@ -4699,18 +5508,36 @@ fn draw_atlas_face(
     let sclera = Sclera::of(colors);
     let shapes = FaceShapes::of(colors);
     let clearance = FaceClearance::of(sprite, renderer, Some((texture, fit)));
+    // The frame's sampler: the body pass's, else a fresh one.
+    let fresh;
+    let sampler = match body.and_then(|body| body.sampler.as_ref()) {
+        Some(sampler) => sampler,
+        None => {
+            fresh = Sampler::faced(sprite, projection);
+            &fresh
+        }
+    };
     // Restored body cells keep the body pass's plain ring around a native face.
-    let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, remembered);
+    let quiet = match body.and_then(|body| body.quiet_for(remembered)) {
+        Some(quiet) => quiet.to_vec(),
+        None => native_quiet_cells(sprite, renderer, colors, projection, area, remembered),
+    };
     let mut painted = false;
+    // Every cell sets its own packed samples; the rest stay empty.
+    let mut original = [None; 8];
+    let mut surface = [None; 8];
     for row in (top.floor() as i32).max(i32::from(area.y))
         ..(bottom.ceil() as i32).min(i32::from(area.bottom()))
     {
         for col in (left.floor() as i32).max(i32::from(area.x))
             ..(right.ceil() as i32).min(i32::from(area.right()))
         {
+            let kept = body.and_then(|body| body.samples(clearance, (col as u16, row as u16)));
+            if let Some((pixels, light)) = kept {
+                original[..pixels.len()].copy_from_slice(pixels);
+                surface[..light.len()].copy_from_slice(light);
+            }
             let mut pixels = [None; 8];
-            let mut original = [None; 8];
-            let mut surface = [None; 8];
             let mut ink = [false; 8];
             // On an open eye's sclera plate (its ink included): the same
             // depth-tested face UV authorizes the plate and the stroke.
@@ -4721,10 +5548,12 @@ fn draw_atlas_face(
                     let i = usize::from(y * dx + x);
                     let px = col as u32 * u32::from(dx) + u32::from(x);
                     let py = row as u32 * u32::from(dy) + u32::from(y);
-                    pixels[i] = projection.sample(sprite, px, py);
-                    original[i] = pixels[i];
-                    surface[i] = projected_surface_light(sprite, projection, (px, py), clearance);
-                    if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
+                    if kept.is_none() {
+                        original[i] = sampler.sample(px, py);
+                        surface[i] = sampled_surface_light(sampler, (px, py), clearance);
+                    }
+                    pixels[i] = original[i];
+                    if let Some((uv, footprint)) = sampler.face_uv(px, py) {
                         covered[i] = true;
                         let (uv, footprint) = (fit.map(uv), fit.footprint(footprint));
                         let own = draws_glyph(glyphs, texture.glyph_at(uv));
@@ -4770,7 +5599,7 @@ fn draw_atlas_face(
                     paint_lit_cell(
                         (renderer, colors),
                         original,
-                        surface,
+                        &surface,
                         [false; 8],
                         plain,
                         cell,
@@ -4798,7 +5627,7 @@ fn draw_atlas_face(
                     paint_lit_cell(
                         (renderer, colors),
                         original,
-                        surface,
+                        &surface,
                         [false; 8],
                         plain,
                         cell,
@@ -4814,7 +5643,7 @@ fn draw_atlas_face(
                 Renderer::HalfBlock => {
                     // Plate pixels are flat palette pixels, like ink.
                     let flat = std::array::from_fn(|i| ink[i] || plate[i]);
-                    paint_lit_cell((renderer, colors), pixels, surface, flat, plain, cell);
+                    paint_lit_cell((renderer, colors), pixels, &surface, flat, plain, cell);
                     if any_ink {
                         let kept = half_block_pixels(cell);
                         paint_shape_pixels((renderer, shapes), (ink, covered, kept), level, cell);
@@ -4829,7 +5658,7 @@ fn draw_atlas_face(
                     paint_lit_cell(
                         (renderer, colors),
                         original,
-                        surface,
+                        &surface,
                         [false; 8],
                         plain,
                         cell,
@@ -4925,6 +5754,7 @@ pub struct SpriteWidget<'a> {
 
 impl Widget for SpriteWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        FrameMemo::begin();
         let area = area.intersection(buf.area);
         let Some(scale) = fit_scale(
             self.sprite.width(),
@@ -5183,16 +6013,20 @@ impl RoomWidget<'_> {
             viewport,
             self.face_detail.map(|(memo, clock)| (memo.get(), clock)),
         );
+        let sampler = Sampler::frame(self.sprite, projection, self.renderer, viewport);
+        // Every cell sets its own packed samples; the rest stay empty.
+        let mut pixels = [None; 8];
+        let mut surface = [None; 8];
         for row in viewport.y..viewport.bottom() {
             for col in viewport.x..viewport.right() {
                 let mut all_pet = true;
-                let mut pixels = [None; 8];
-                let mut surface = [None; 8];
                 for y in 0..dy {
                     for x in 0..dx {
                         let i = usize::from(y * dx + x);
                         let px = u32::from(col) * u32::from(dx) + u32::from(x);
                         let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                        pixels[i] = None;
+                        surface[i] = None;
                         let world = sample(px, py);
                         let mut pet_wins = false;
                         if let Some(w) = world {
@@ -5205,19 +6039,14 @@ impl RoomWidget<'_> {
                                 overlay: None,
                             });
                         }
-                        if let Some((sx, sy)) = projection.source_pixel(self.sprite, px, py) {
+                        if let Some((sx, sy)) = sampler.source_pixel(px, py) {
                             if let Some(index) = self.sprite.pixel(sx, sy, 1) {
                                 if world
                                     .is_none_or(|w| f64::from(w.depth) <= depth_at(sx, sy) + 0.0001)
                                 {
                                     pet_wins = true;
                                     pixels[i] = Some(index);
-                                    surface[i] = projected_surface_light(
-                                        self.sprite,
-                                        projection,
-                                        (px, py),
-                                        face,
-                                    );
+                                    surface[i] = sampled_surface_light(&sampler, (px, py), face);
                                 }
                             }
                         }
@@ -5231,7 +6060,7 @@ impl RoomWidget<'_> {
                     paint_lit_cell(
                         (self.renderer, self.colors),
                         pixels,
-                        surface,
+                        &surface,
                         [false; 8],
                         plain,
                         cell,
@@ -5292,6 +6121,7 @@ impl RoomWidget<'_> {
 impl Widget for RoomWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use crate::sprite::Expression;
+        FrameMemo::begin();
         let area = area.intersection(buf.area);
         if area.width == 0 || area.height == 0 {
             return;
@@ -5490,7 +6320,7 @@ impl Widget for RoomWidget<'_> {
                 }
             }
         }
-        draw_projection_with(
+        let body = draw_projection_with(
             self.sprite,
             self.renderer,
             self.colors,
@@ -5499,7 +6329,7 @@ impl Widget for RoomWidget<'_> {
             buf,
             self.face_detail.map(|(memo, clock)| (memo.get(), clock)),
         );
-        let face_painted = draw_camera_face_with(
+        let face_painted = draw_camera_face_after(
             self.sprite,
             self.renderer,
             self.colors,
@@ -5507,6 +6337,7 @@ impl Widget for RoomWidget<'_> {
             viewport,
             buf,
             self.face_detail,
+            Some(&body),
         );
         // Restricted views keep an explicit inline row below the cropped
         // sprite when no complete depth-authorized facial text can fit.
@@ -16437,6 +17268,347 @@ mod render_cost_tests {
         assert_eq!(
             actual, GOLDEN_PIXEL,
             "pixel view {actual:#018x} differs from the golden {GOLDEN_PIXEL:#018x}"
+        );
+    }
+
+    /// The frame matrix the equivalence tests sweep: species, stages,
+    /// styles, yaws and pitches, every renderer, the three camera roles at
+    /// several zooms, and sizes from the watch to the wide console.
+    fn equivalence_cases() -> Vec<(Sprite, Renderer, Camera, (u16, u16))> {
+        let mut cases = Vec::new();
+        let mut rng = Rng(0x5DEE_CE66_D1CE_4E5B);
+        for k in 0..36u64 {
+            let stage = [Stage::Baby, Stage::Child, Stage::Adult][(k % 3) as usize];
+            let style = if k % 5 == 0 {
+                SpriteStyle::EightBit
+            } else {
+                SpriteStyle::SixteenBit
+            };
+            let appearance = Appearance {
+                shape: rng.below(16) as u8,
+                body: rng.below(16) as u8,
+                accent: rng.below(16) as u8,
+            };
+            let yaw = rng.pick(&[0, 20, 45, 90, 135, 180, 315]);
+            let pitch = rng.pick(&[0, 0, 30]);
+            let expression = rng.pick(&[
+                Expression::Idle,
+                Expression::Happy,
+                Expression::Surprised,
+                Expression::Sleeping,
+            ]);
+            let sprite = Sprite::voxel_with_camera(
+                stage,
+                expression,
+                style,
+                rng.below(8) as usize,
+                [yaw, pitch],
+                false,
+                appearance,
+            );
+            let renderer = RENDERERS[(k % 4) as usize];
+            let view = CameraView::ALL[(k / 4 % 3) as usize];
+            let zoom = rng.pick(&[50, 100, 160, 250, 400]);
+            let size = rng.pick(&[(130, 29), (59, 49), (24, 10), (40, 16), (12, 6)]);
+            cases.push((sprite, renderer, camera(view, zoom, yaw), size));
+        }
+        cases
+    }
+
+    /// A frame's sampler returns exactly what the projection, the surface
+    /// slopes and the face UV map return, for every packed sample of the
+    /// viewport and beyond its tables (before the origin too).
+    #[test]
+    fn frame_sampler_matches_the_projection_everywhere() {
+        let (mut mon, mut faces) = (0usize, 0usize);
+        for (sprite, renderer, camera, (w, h)) in equivalence_cases() {
+            let Some(bounds) = SolidBounds::of(&sprite) else {
+                continue;
+            };
+            let viewport = Rect::new(1, 1, w - 2, h - 2);
+            let projection =
+                Projection::camera(&sprite, bounds, viewport, renderer, 0, (500, 700), camera);
+            let sampler = Sampler::frame(&sprite, projection, renderer, viewport);
+            let face = face_clearance(&sprite, renderer, projection, viewport);
+            let (dx, dy) = renderer.packing();
+            let reach = SAMPLER_REACH + 2;
+            let xs = (u32::from(viewport.x) * u32::from(dx)).saturating_sub(reach)
+                ..u32::from(viewport.right()) * u32::from(dx) + reach;
+            let ys = (u32::from(viewport.y) * u32::from(dy)).saturating_sub(reach)
+                ..u32::from(viewport.bottom()) * u32::from(dy) + reach;
+            for y in ys {
+                for x in xs.clone() {
+                    let source = projection.source_pixel(&sprite, x, y);
+                    assert_eq!(sampler.source_pixel(x, y), source, "source of ({x}, {y})");
+                    assert_eq!(sampler.sample(x, y), projection.sample(&sprite, x, y));
+                    let face_uv = projected_face_uv(&sprite, projection, x, y);
+                    assert_eq!(sampler.face_uv(x, y), face_uv, "face uv of ({x}, {y})");
+                    assert_eq!(
+                        sampler.face_frame_at(x, y),
+                        projected_face_frame(&sprite, projection, x, y)
+                    );
+                    let direct = projected_surface_light(&sprite, projection, (x, y), face);
+                    // Twice: the second read comes from the memos.
+                    for _ in 0..2 {
+                        assert_eq!(
+                            sampled_surface_light(&sampler, (x, y), face),
+                            direct,
+                            "surface of ({x}, {y}) {renderer:?} {camera:?}"
+                        );
+                    }
+                    if let (Some((sx, sy)), Some(extent)) = (source, sprite.voxel_extent_pixels()) {
+                        if let Some(voxel) = sprite.surface_voxel(sx, sy) {
+                            let slopes = surface_slopes(&sprite, (sx, sy), voxel, extent);
+                            assert_eq!(sampler.slopes((sx, sy), voxel, extent), slopes);
+                        }
+                    }
+                    mon += usize::from(direct.is_some_and(|s| s.overlay.is_some()));
+                    faces += usize::from(face_uv.is_some());
+                }
+            }
+        }
+        println!("sampler census: {mon} overlay samples, {faces} face samples");
+        assert!(
+            mon > 10_000 && faces > 1_000,
+            "the sweep must cover overlay and face samples: {mon} overlay, {faces} face"
+        );
+    }
+
+    /// The exact ink-proximity test agrees with the box filter's sum being
+    /// positive, for every kaomoji, on and off the grid lines.
+    #[test]
+    fn ink_proximity_matches_positive_coverage() {
+        let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+        let (mut near, mut far) = (0usize, 0usize);
+        let expressions = [
+            Expression::Idle,
+            Expression::Happy,
+            Expression::Sad,
+            Expression::Angry,
+            Expression::Surprised,
+            Expression::Sleeping,
+            Expression::Sick,
+            Expression::Excited,
+            Expression::Dead,
+        ];
+        for expression in expressions {
+            for text in expression.kaomoji_cycle() {
+                for aspect in [None, Some(0.6), Some(1.0), Some(2.3)] {
+                    let texture = FaceTexture { text, aspect };
+                    let scale = texture.grid_per_uv();
+                    for k in 0..4000u64 {
+                        let uv = if k % 3 == 0 {
+                            // On a grid line: the filter box edge lands on a unit.
+                            let grid = [(rng.below(70) as f64) - 6.0, (rng.below(24) as f64) - 6.0];
+                            texture.grid_uv(grid)
+                        } else {
+                            [
+                                rng.below(1400) as f64 / 1000.0 - 0.2,
+                                rng.below(1400) as f64 / 1000.0 - 0.2,
+                            ]
+                        };
+                        let footprint = match k % 4 {
+                            0 => [0.0, 0.0],
+                            // Whole grid units: the box spans exact units.
+                            1 => [
+                                2.0 * rng.below(5) as f64 / scale[0],
+                                2.0 * rng.below(5) as f64 / scale[1],
+                            ],
+                            _ => [
+                                rng.below(900) as f64 / 1000.0,
+                                rng.below(900) as f64 / 1000.0,
+                            ],
+                        };
+                        let exact = texture.coverage(uv, footprint, f64::INFINITY) > 0.0;
+                        assert_eq!(
+                            texture.touches_ink(uv, footprint),
+                            exact,
+                            "{text} {aspect:?} uv {uv:?} footprint {footprint:?}"
+                        );
+                        if exact {
+                            near += 1;
+                        } else {
+                            far += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!("ink census: {near} near, {far} far");
+        assert!(
+            near > 10_000 && far > 10_000,
+            "both outcomes: {near} near, {far} far"
+        );
+    }
+
+    /// Every memoized solve returns the exact solve's value, within a frame,
+    /// across frames, and with several lighting models in one frame.
+    #[test]
+    fn memoized_solves_match_the_exact_solves() {
+        let mut lightings = Vec::new();
+        for variant in 0..5 {
+            lightings.push(lighting_variant(variant).voxel_lighting);
+        }
+        let mut solved = 0usize;
+        for frame in 0..3 {
+            if frame > 0 {
+                FrameMemo::begin();
+            }
+            for depth in DEPTHS {
+                let config = Config::sample().unwrap();
+                let colors = Colors::from_config(&config, depth).unwrap();
+                let black = outline_black(&colors);
+                assert_eq!(outline_grey(black), outline_grey_exact(black));
+                for lighting in &lightings {
+                    for normal in [
+                        [0.0, 0.0, 1.0],
+                        [0.6, -0.3, 0.74],
+                        [-1.0, 0.0, 0.0],
+                        [0.0; 3],
+                    ] {
+                        for occlusion in [0u8, 17, 60, 100] {
+                            for edge in [false, true] {
+                                let exact = lighting.brightness(normal, occlusion, edge);
+                                assert_eq!(
+                                    lit_brightness(lighting, normal, occlusion, edge),
+                                    exact
+                                );
+                                for index in 0..colors.palette.len() {
+                                    let base = colors.ink(index);
+                                    let bg = shade_terminal_color(lighting, base, exact);
+                                    for target in [TEXTURE_CONTRAST, LINE_CONTRAST] {
+                                        assert_eq!(
+                                            glyph_ink(base, bg, target),
+                                            glyph_ink_exact(base, bg, target),
+                                            "{depth:?} {base:?} on {bg:?} at {target}"
+                                        );
+                                        solved += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("memo census: {solved} ink solves");
+        assert!(solved > 1_000, "{solved} solves");
+    }
+
+    /// The colour cell painter draws the overlay alone where it paints every
+    /// plane; the result equals the layered order (legacy packing, then the
+    /// overlay over it), whatever the cell held before.
+    #[test]
+    fn overlay_first_painting_matches_the_layered_order() {
+        fn layered(
+            (renderer, colors): (Renderer, &Colors),
+            pixels: [Option<u8>; 8],
+            surface: &[Option<SurfaceLight>; 8],
+            (flat_ink, quiet): ([bool; 8], bool),
+            cell: &mut ratatui::buffer::Cell,
+        ) {
+            let scene = if cell.bg == Color::Reset {
+                colors.background
+            } else {
+                cell.bg
+            };
+            paint_pixels(renderer, colors, pixels, cell);
+            let Some(lighting) = colors.lighting.as_ref() else {
+                return;
+            };
+            if lighting.enabled {
+                paint_lit_packing(
+                    (renderer, colors, lighting),
+                    (pixels, surface, flat_ink),
+                    scene,
+                    cell,
+                );
+            }
+            if flat_ink.iter().any(|ink| *ink) {
+                return;
+            }
+            if let Some(paint) = overlay_paint(
+                (renderer, colors, lighting),
+                (&pixels, surface),
+                (scene, quiet),
+            ) {
+                cell.set_char(paint.glyph);
+                if !colors.palette.iter().all(|c| *c == Color::Reset) {
+                    cell.set_fg(paint.fg).set_bg(paint.bg);
+                }
+            }
+        }
+        let mut rng = Rng(0x9E6C_63D0_676A_9A99);
+        let (mut overlay, mut compared) = (0usize, 0usize);
+        for (k, (sprite, renderer, camera, (w, h))) in equivalence_cases().into_iter().enumerate() {
+            let Some(bounds) = SolidBounds::of(&sprite) else {
+                continue;
+            };
+            let config = lighting_variant(k as u64 % 5);
+            let depth = DEPTHS[k % 4];
+            let colors = Colors::from_config(&config, depth).unwrap();
+            let viewport = Rect::new(1, 1, w - 2, h - 2);
+            let projection =
+                Projection::camera(&sprite, bounds, viewport, renderer, 0, (500, 700), camera);
+            let face = face_clearance(&sprite, renderer, projection, viewport);
+            let (dx, dy) = renderer.packing();
+            for row in viewport.y..viewport.bottom() {
+                for col in viewport.x..viewport.right() {
+                    let mut pixels = [None; 8];
+                    let mut surface = [None; 8];
+                    for y in 0..dy {
+                        for x in 0..dx {
+                            let i = usize::from(y * dx + x);
+                            let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                            let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                            pixels[i] = projection.sample(&sprite, px, py);
+                            surface[i] =
+                                projected_surface_light(&sprite, projection, (px, py), face);
+                        }
+                    }
+                    if pixels.iter().all(Option::is_none) {
+                        continue;
+                    }
+                    let mut start = ratatui::buffer::Cell::default();
+                    if rng.below(2) == 0 {
+                        start
+                            .set_char(['x', ' ', '#'][rng.below(3) as usize])
+                            .set_bg(colors.ink(rng.below(16) as usize))
+                            .set_fg(colors.ink(rng.below(16) as usize));
+                        start.modifier = ratatui::style::Modifier::BOLD;
+                    }
+                    let flat: [bool; 8] = std::array::from_fn(|i| rng.below(9) == 0 && i < 2);
+                    let quiet = rng.below(5) == 0;
+                    let (mut ours, mut theirs) = (start.clone(), start.clone());
+                    paint_lit_cell(
+                        (renderer, &colors),
+                        pixels,
+                        &surface,
+                        flat,
+                        quiet,
+                        &mut ours,
+                    );
+                    layered(
+                        (renderer, &colors),
+                        pixels,
+                        &surface,
+                        (flat, quiet),
+                        &mut theirs,
+                    );
+                    assert_eq!(
+                        format!("{ours:?}"),
+                        format!("{theirs:?}"),
+                        "{renderer:?} {depth:?} cell ({col}, {row})"
+                    );
+                    compared += 1;
+                    overlay += usize::from(surface.iter().flatten().any(|s| s.overlay.is_some()));
+                }
+            }
+        }
+        println!("paint census: {compared} cells, {overlay} with overlay samples");
+        assert!(
+            compared > 5_000 && overlay > 2_000,
+            "{compared} cells, {overlay} with overlay samples"
         );
     }
 
