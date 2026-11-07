@@ -263,7 +263,7 @@ impl WorldFrame {
         let (sp, cp) = p.view.elevation.sin_cos();
         let extent = [
             pitch * p.scale * horizontal,
-            pitch * p.scale * p.view.aspect * (cp.abs() + sp.abs() * horizontal),
+            pitch * p.scale * p.view.aspect * (cp.abs() + sp.abs()),
         ];
         extent.iter().all(|v| v.is_finite()).then_some(extent)
     }
