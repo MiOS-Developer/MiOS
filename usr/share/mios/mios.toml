@@ -17049,7 +17049,7 @@ bands = [
 python = "python3"
 shellcheck = "shellcheck"
 shell_severity = "error"
-shell_directories = ["", "automation", "automation/tests", "automation/support", "automation/lib", "tools", "tools/lib", "installation", "tests", "usr/lib/mios", "usr/libexec/mios"]
+shell_directories = ["", "automation", "automation/tests", "automation/support", "automation/lib", "tools", "tools/lib", "installation", "tests", "usr/lib/mios", "usr/libexec/mios", "usr/lib/greenboot/check/required.d", "usr/lib/greenboot/check/wanted.d"]
 shell_exclude = ["automation/lib/globals.sh"]
 # Files changed since the first ratchet base that resolves (MIOS_RATCHET_BASE wins) are
 # also held to this severity: new shell meets the stricter bar, the backlog does not block.
