@@ -603,6 +603,36 @@ expression strokes. Native characters clear the shading on the head cells beside
 and between them. Facial flat ink is never overpainted, and outline glyphs never
 use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
 
+Open eyes have eye whites, so an expression stays noticeable at small sizes and
+matches at large ones:
+
+- Which eyes: the two eye glyphs either side of the mouth, when they are open
+  (`o` `O` `@` `Q` `*` `+` `.`). Closed, squinting, crying and tick eyes (`-`
+  `=` `^` `u` `~` `>` `<` `T` `;` `x`, the backtick and `'`) never get a plate,
+  so a blink stays readable and a wink whitens only its open eye. Mouths and
+  parentheses are never whitened.
+- Shape: the plate comes from the eye glyph itself, with its enclosed counters
+  filled and grown by one glyph unit. It never reaches the mouth or a parenthesis.
+- Every face tier: a native character is its own one-cell plate, including the
+  smallest faces. A shaded face whitens the cells on the eye's plate and draws
+  that eye's strokes on them. The pixel atlas whitens the plate's own pixels
+  around the pupil.
+- Visibility: the plate is sampled through the same depth-tested face map as the
+  strokes. It turns, foreshortens and hides with the face: noses and occluders
+  keep their cells, an oblique view shows only the visible eye, and profiles and
+  rear views show none.
+- Colours: the plate is the palette's "eyes" entry (index 2) and the pupil is the
+  outline ink (index 0). If a custom palette's entry 2 does not clear the outline
+  ink by the configured outline separation, the brightest palette entry is the
+  plate; if the outline ink does not clear the plate, the first palette entry
+  that does is the pupil. The head-based face ink is never used on a plate.
+- Monochrome eye cells use reverse video: a dark stroke on a light block.
+- Plates draw whether lighting is enabled or not.
+- Quadrant and braille atlas strokes are face ink over the head's own colour, never
+  holes through to the room. Native and stroke characters on those renderers keep
+  the head colour behind them.
+- Unchanged: the classic pixel view, and the separate caption shown when no face fits.
+
 Room cells that hold only world surfaces keep their own rendering, and a cell the
 pet shares with the world keeps the world surface as its background. The world
 itself has no voxel identity yet and carries no overlay. With lighting disabled,
