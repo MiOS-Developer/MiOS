@@ -79,6 +79,47 @@ pub struct WorldPixel {
     pub depth: f32,
 }
 
+/// Model-space geometry at the exact visible depth-buffer winner.
+/// Coordinates use room tiles, independent of zoom, pan and camera rotation.
+/// This is continuous surface metadata, not a claim that the room mesh is voxelized.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldSurface {
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+impl WorldSurface {
+    /// Pick the lattice cell inside this surface, rather than a neighbouring
+    /// outside cell. Values within 1e-4 lattice cells of an integer snap to that
+    /// edge; positive model-normal components then select its lower cell.
+    /// Identical frames are bit-deterministic. This edge rule also tolerates
+    /// small inverse-projection errors, without promising cross-camera bit
+    /// equality for continuous floating coordinates.
+    pub fn lattice_cell(&self, pitch: f32) -> Option<[i32; 3]> {
+        if !pitch.is_finite() || pitch <= 0.0 {
+            return None;
+        }
+        let mut cell = [0; 3];
+        for (axis, out) in cell.iter_mut().enumerate() {
+            let q = f64::from(self.position[axis]) / f64::from(pitch);
+            if !q.is_finite() || !self.normal[axis].is_finite() {
+                return None;
+            }
+            let edge = q.round();
+            let inside = if (q - edge).abs() <= 1e-4 {
+                edge - f64::from(u8::from(self.normal[axis] > 0.0))
+            } else {
+                q.floor()
+            };
+            if inside < f64::from(i32::MIN) || inside > f64::from(i32::MAX) {
+                return None;
+            }
+            *out = inside as i32;
+        }
+        Some(cell)
+    }
+}
+
 #[derive(Debug)]
 pub struct WorldFrame {
     pub width: u16,
@@ -89,6 +130,7 @@ pub struct WorldFrame {
     /// Horizontal packed pixels per world tile.
     pub scale: f32,
     pub pet_height_pixels: f32,
+    projection: Option<SurfaceProjection>,
 }
 impl WorldFrame {
     /// All storage is bounded by the visible packed viewport, independently of zoom.
@@ -108,6 +150,7 @@ impl WorldFrame {
             pet_anchor: [0.0; 3],
             scale: 0.0,
             pet_height_pixels: 0.0,
+            projection: None,
         };
         if width == 0 || height == 0 {
             return frame;
@@ -167,6 +210,7 @@ impl WorldFrame {
                     - target[1] * frame.scale,
             ],
         };
+        frame.projection = Some(SurfaceProjection::new(projection));
         frame.pet_anchor = projection.point(pet);
         // The Mon and room share world units. A viewport-relative pet size
         // would make the same Mon grow when the room becomes wider or rotates.
@@ -175,6 +219,7 @@ impl WorldFrame {
             * frame.scale
             * aspect;
         if !rules.enabled {
+            frame.projection = None;
             return frame;
         }
         let scene = room(w, d, h, camera.detail, habitat, view);
@@ -189,6 +234,38 @@ impl WorldFrame {
             return None;
         }
         self.pixels[usize::try_from(y).ok()? * usize::from(self.width) + usize::try_from(x).ok()?]
+    }
+
+    /// Unproject the winning packed pixel centre into model space lazily.
+    /// No viewport-sized metadata allocation or per-triangle work is required.
+    /// Floating point reconstruction is approximate; callers should use a chosen
+    /// model-space lattice, rather than hash raw coordinates or view normals.
+    pub fn sample_surface(&self, x: u32, y: u32) -> Option<WorldSurface> {
+        let pixel = self.sample(x, y)?;
+        let projection = self.projection?;
+        let position = projection.unproject([x as f32 + 0.5, y as f32 + 0.5, pixel.depth]);
+        let normal = projection.unrotate(pixel.normal);
+        if !position.iter().chain(normal.iter()).all(|v| v.is_finite()) {
+            return None;
+        }
+        Some(WorldSurface { position, normal })
+    }
+
+    /// Packed-pixel bounding extent of a model-aligned cube with this tile pitch.
+    /// The caller chooses its lattice pitch; no new room/detail setting is implied.
+    /// Returns None for empty/disabled frames or invalid (non-positive) pitches.
+    pub fn lattice_extent_pixels(&self, pitch: f32) -> Option<[f32; 2]> {
+        if !pitch.is_finite() || pitch <= 0.0 {
+            return None;
+        }
+        let p = self.projection?.projection;
+        let horizontal = p.view.cos.abs() + p.view.sin.abs();
+        let (sp, cp) = p.view.elevation.sin_cos();
+        let extent = [
+            pitch * p.scale * horizontal,
+            pitch * p.scale * p.view.aspect * (cp.abs() + sp.abs() * horizontal),
+        ];
+        extent.iter().all(|v| v.is_finite()).then_some(extent)
     }
 
     fn triangle(&mut self, triangle: Triangle, projection: Projection) {
@@ -269,7 +346,7 @@ fn wins(new: WorldPixel, old: WorldPixel) -> bool {
 fn edge(a: [f32; 3], b: [f32; 3], p: [f32; 3]) -> f32 {
     (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct View {
     sin: f32,
     cos: f32,
@@ -292,8 +369,19 @@ impl View {
         let (sp, cp) = self.elevation.sin_cos();
         [rx, cp * y - sp * rz, sp * y + cp * rz]
     }
+
+    fn unrotate(self, [x, y, z]: [f32; 3]) -> [f32; 3] {
+        let (sp, cp) = self.elevation.sin_cos();
+        let ry = cp * y + sp * z;
+        let rz = -sp * y + cp * z;
+        [
+            self.cos * x - self.sin * rz,
+            ry,
+            self.sin * x + self.cos * rz,
+        ]
+    }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Projection {
     view: View,
     scale: f32,
@@ -307,6 +395,39 @@ impl Projection {
             self.offset[1] - p[1] * self.scale * self.view.aspect,
             p[2],
         ]
+    }
+}
+/// One inverse basis per frame; per-pixel queries use multiply/add operations
+/// and do not allocate or compute trigonometric functions.
+#[derive(Clone, Copy, Debug)]
+struct SurfaceProjection {
+    projection: Projection,
+    inverse: [[f32; 3]; 3],
+}
+impl SurfaceProjection {
+    fn new(projection: Projection) -> Self {
+        Self {
+            projection,
+            inverse: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
+                .map(|axis| projection.view.unrotate(axis)),
+        }
+    }
+
+    fn unrotate(self, point: [f32; 3]) -> [f32; 3] {
+        std::array::from_fn(|axis| {
+            self.inverse[0][axis] * point[0]
+                + self.inverse[1][axis] * point[1]
+                + self.inverse[2][axis] * point[2]
+        })
+    }
+
+    fn unproject(self, [x, y, depth]: [f32; 3]) -> [f32; 3] {
+        let p = self.projection;
+        self.unrotate([
+            (x - p.offset[0]) / p.scale,
+            (p.offset[1] - y) / (p.scale * p.view.aspect),
+            depth,
+        ])
     }
 }
 #[derive(Clone, Copy)]
@@ -787,8 +908,240 @@ mod tests {
             pet_anchor: [0.; 3],
             scale: 1.,
             pet_height_pixels: 1.,
+            projection: None,
         }
     }
+    fn close3(actual: [f32; 3], expected: [f32; 3]) {
+        for (a, e) in actual.into_iter().zip(expected) {
+            assert!((a - e).abs() < 0.0001, "{actual:?} != {expected:?}");
+        }
+    }
+
+    #[test]
+    fn surface_metadata_tracks_the_depth_winner_and_coincident_tie() {
+        let mut projection = Projection {
+            view: View::new(45, 1.),
+            scale: 8.,
+            offset: [0., 0.],
+        };
+        let point = [0., 1., 0.];
+        let screen = projection.point(point);
+        projection.offset = [16.5 - screen[0], 16.5 - screen[1]];
+        let floor = Triangle {
+            points: [[-1., 1., -1.], [1., 1., -1.], [0., 1., 1.]],
+            normal: [0., 1., 0.],
+            palette: 3,
+            occlusion: 0,
+        };
+        // A different face intersects at the sampled centre; equal depth is
+        // resolved by the existing palette ordering, independently of submission.
+        let front = Triangle {
+            points: [[-1., 0., 0.], [1., 0., 0.], [0., 2., 0.]],
+            normal: [0., 0., 1.],
+            palette: 9,
+            occlusion: 0,
+        };
+        let near = Triangle {
+            points: floor.points.map(|[x, y, z]| [x, y + 0.5, z]),
+            ..floor
+        };
+        for triangles in [[floor, front], [front, floor]] {
+            let mut f = blank();
+            f.projection = Some(SurfaceProjection::new(projection));
+            for t in triangles {
+                f.triangle(t, projection);
+            }
+            assert_eq!(f.sample(16, 16).unwrap().palette, 9);
+            let surface = f.sample_surface(16, 16).unwrap();
+            close3(surface.position, point);
+            close3(surface.normal, front.normal);
+            f.triangle(near, projection);
+            let surface = f.sample_surface(16, 16).unwrap();
+            assert_eq!(f.sample(16, 16).unwrap().palette, 3);
+            assert!(surface.position[1] > 1.4);
+            close3(surface.normal, floor.normal);
+        }
+    }
+
+    #[test]
+    fn surface_coordinates_remain_model_space_across_camera_transforms() {
+        let mut eligible = 0;
+        for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
+            for aspect in [0.5, 1., 2.] {
+                for scale in [3., 11., 27.] {
+                    let mut projection = Projection {
+                        view: View::new(yaw, aspect),
+                        scale,
+                        offset: [0., 0.],
+                    };
+                    // Arbitrary tilt exercises the same inverse used during camera
+                    // transitions. Pixel centres hit the same physical floor point.
+                    projection.view.elevation = 48_f32.to_radians();
+                    let point = [2.25, 1.25, 3.25];
+                    let screen = projection.point(point);
+                    projection.offset = [14.5 - screen[0], 17.5 - screen[1]];
+                    let t = Triangle {
+                        points: [[1., 1.25, 2.], [4., 1.25, 2.], [2.5, 1.25, 5.]],
+                        normal: [0., 1., 0.],
+                        palette: 3,
+                        occlusion: 0,
+                    };
+                    let mut f = blank();
+                    f.projection = Some(SurfaceProjection::new(projection));
+                    f.triangle(t, projection);
+                    let surface = f.sample_surface(14, 17).expect("non-vacuous surface");
+                    close3(surface.position, point);
+                    close3(surface.normal, [0., 1., 0.]);
+                    assert_eq!(surface.position.map(|v| v.floor() as i32), [2, 1, 3]);
+                    eligible += 1;
+                }
+            }
+        }
+        assert_eq!(eligible, 72);
+    }
+
+    #[test]
+    fn lattice_extent_is_the_projected_model_cube_not_view_normal_or_viewport() {
+        for yaw in [0, 45, 90, 135, 225, 315] {
+            let projection = Projection {
+                view: View::new(yaw, 1.7),
+                scale: 9.,
+                offset: [-35., 20.],
+            };
+            let mut f = blank();
+            f.projection = Some(SurfaceProjection::new(projection));
+            let mut lo = [f32::INFINITY; 2];
+            let mut hi = [f32::NEG_INFINITY; 2];
+            for x in [0., 0.25] {
+                for y in [0., 0.25] {
+                    for z in [0., 0.25] {
+                        let p = projection.point([x, y, z]);
+                        for axis in 0..2 {
+                            lo[axis] = lo[axis].min(p[axis]);
+                            hi[axis] = hi[axis].max(p[axis]);
+                        }
+                    }
+                }
+            }
+            let extent = f.lattice_extent_pixels(0.25).unwrap();
+            for axis in 0..2 {
+                assert!((extent[axis] - (hi[axis] - lo[axis])).abs() < 0.0001);
+            }
+            let double = f.lattice_extent_pixels(0.5).unwrap();
+            assert_eq!(double, extent.map(|v| v * 2.));
+        }
+    }
+
+    #[test]
+    fn surface_lattice_edges_choose_the_inside_cell_with_bounded_tolerance() {
+        for error in [-0.00005, 0., 0.00005] {
+            for normal in [[1., 0., 0.], [-1., 0., 0.], [0., 1., 0.]] {
+                let surface = WorldSurface {
+                    position: [2. + error, -1. + error, 3.25],
+                    normal,
+                };
+                let expected = if normal[0] > 0. {
+                    [1, -1, 3]
+                } else if normal[1] > 0. {
+                    [2, -2, 3]
+                } else {
+                    [2, -1, 3]
+                };
+                assert_eq!(surface.lattice_cell(1.), Some(expected));
+                let scaled = WorldSurface {
+                    position: surface.position.map(|v| v * 0.25),
+                    ..surface
+                };
+                assert_eq!(scaled.lattice_cell(0.25), Some(expected));
+            }
+        }
+        let mut surface = WorldSurface {
+            position: [0.25, -0.25, 1.25],
+            normal: [0., 1., 0.],
+        };
+        assert_eq!(surface.lattice_cell(0.5), Some([0, -1, 2]));
+        for pitch in [0., -1., f32::NAN, f32::INFINITY, f32::MIN_POSITIVE] {
+            assert_eq!(surface.lattice_cell(pitch), None);
+        }
+        surface.position[0] = f32::INFINITY;
+        assert_eq!(surface.lattice_cell(1.), None);
+        surface.position[0] = 0.;
+        surface.normal[2] = f32::NAN;
+        assert_eq!(surface.lattice_cell(1.), None);
+    }
+
+    #[test]
+    #[ignore = "explicit release-mode cost measurement, not a timing gate"]
+    fn surface_accessor_cost_measurement() {
+        use std::{hint::black_box, time::Instant};
+        let f = WorldFrame::render(&WorldRules::default(), None, camera(45), (256, 128));
+        let visible = f.pixels.iter().flatten().count();
+        assert!(visible > 100);
+        for trial in 0..3 {
+            let start = Instant::now();
+            for _ in 0..32 {
+                for y in 0..u32::from(f.height) {
+                    for x in 0..u32::from(f.width) {
+                        black_box(f.sample(black_box(x), black_box(y)));
+                    }
+                }
+            }
+            let plain = start.elapsed();
+            let start = Instant::now();
+            for _ in 0..32 {
+                for y in 0..u32::from(f.height) {
+                    for x in 0..u32::from(f.width) {
+                        black_box(f.sample_surface(black_box(x), black_box(y)));
+                    }
+                }
+            }
+            let surface = start.elapsed();
+            let samples = 32. * f64::from(f.width) * f64::from(f.height);
+            println!("trial={trial} pixels={} visible={visible} plain_ns_per_query={:.2} surface_ns_per_query={:.2} surface_ms_per_frame={:.3}",
+                f.pixels.len(), plain.as_nanos() as f64 / samples,
+                surface.as_nanos() as f64 / samples, surface.as_secs_f64() * 1000. / 32.);
+        }
+    }
+
+    #[test]
+    fn surface_metadata_empty_disabled_out_of_bounds_and_bad_pitch_are_safe() {
+        let rules = WorldRules::default();
+        for size in [(0, 0), (0, 20), (20, 0)] {
+            let f = WorldFrame::render(&rules, None, camera(45), size);
+            assert_eq!(f.sample_surface(0, 0), None);
+            assert_eq!(f.lattice_extent_pixels(1.), None);
+        }
+        let disabled = WorldRules {
+            enabled: false,
+            ..rules
+        };
+        let f = WorldFrame::render(&disabled, None, camera(45), (32, 32));
+        assert_eq!(f.sample_surface(16, 16), None);
+        assert_eq!(f.lattice_extent_pixels(1.), None);
+        let f = WorldFrame::render(&rules, None, camera(45), (100, 80));
+        assert_eq!(f.sample_surface(u32::MAX, u32::MAX), None);
+        assert_eq!(f.sample_surface(100, 0), None);
+        assert_eq!(f.sample_surface(0, 80), None);
+        for pitch in [
+            0.,
+            -1.,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::MAX,
+        ] {
+            assert_eq!(f.lattice_extent_pixels(pitch), None);
+        }
+        let mut visible = 0;
+        for y in 0..u32::from(f.height) {
+            for x in 0..u32::from(f.width) {
+                assert_eq!(f.sample_surface(x, y).is_some(), f.sample(x, y).is_some());
+                visible += usize::from(f.sample_surface(x, y).is_some());
+            }
+        }
+        assert!(visible > 100, "metadata must not pass on an empty frame");
+    }
+
     #[test]
     fn rules_reject_unknown_and_invalid_values() {
         assert!(WorldRules::default().validate().is_ok());
