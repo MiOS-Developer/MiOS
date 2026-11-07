@@ -635,7 +635,7 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
                 sub_diff = _dict_diff(v, base_dict[k])
                 if sub_diff:
                     diff[k] = sub_diff
-            elif v != base_dict[k]:
+            elif not _same_config_value(v, base_dict[k]):
                 diff[k] = v
         return diff
 

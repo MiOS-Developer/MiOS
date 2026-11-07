@@ -1019,6 +1019,34 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
         self.assertNotIn("vendor-array-token", self.tier())
         self.assertNotIn("second-array-token", self.tier())
 
+
+    def test_redacted_arrays_explicit_values_keep_toml_types_in_the_delta(self):
+        value = self._array_echo()
+        value["remotes"] = [
+            {"name": "origin", "GITHUB_TOKEN": "vendor-array-token"},
+            {"name": "second", "GITHUB_TOKEN": "second-array-token", "enabled": 1},
+        ]
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        saved = tl.loads(self.tier())
+        self.assertIn("remotes", saved)
+        self.assertIs(type(saved["remotes"][1]["enabled"]), int)
+        self.assertEqual(saved["remotes"][1]["enabled"], 1)
+        self.assertIs(type(mios_toml.load_merged()["remotes"][1]["enabled"]), int)
+
+    def test_redacted_arrays_explicit_base_values_remove_a_stale_user_array(self):
+        self.plant_user_tier()
+        with open(self.user, "a", encoding="utf-8") as fh:
+            fh.write('\n[[remotes]]\nname = "mine"\nGITHUB_TOKEN = "own-array-token"\n')
+        mios_toml.clear_cache()
+        value = tl.loads(self.redacted_echo())
+        value["remotes"] = [{"name": "origin", "GITHUB_TOKEN": "vendor-array-token"}]
+        response = self._post_config_value(value)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("remotes", tl.loads(self.tier()))
+        self.assertNotIn("own-array-token", self.tier())
+        self.assertEqual(mios_toml.load_merged()["remotes"], value["remotes"])
+
     def test_redacted_arrays_unchanged_user_owned_values_remain_user_owned(self):
         self.plant_user_tier()
         with open(self.user, "a", encoding="utf-8") as fh:
