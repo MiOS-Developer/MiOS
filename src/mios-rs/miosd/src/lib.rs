@@ -1181,16 +1181,48 @@ pub mod server {
                 }
                 match v.as_integer() {
                     Some(p) if (1..=65535).contains(&p) => {}
-                    Some(p) => errors.push(format!(
-                        "[ports].{k} is out of the valid 1-65535 range."
-                    )),
-                    None => {
-                        errors.push(format!("[ports].{k} must be an integer 1-65535."))
+                    Some(_) => {
+                        errors.push(format!("[ports].{k} is out of the valid 1-65535 range."))
                     }
+                    None => errors.push(format!("[ports].{k} must be an integer 1-65535.")),
                 }
             }
         }
         errors
+    }
+
+    /// Synchronize the complete semantic delta, retaining formatting on surviving
+    /// values/tables. Keys absent from the delta must be removed, including a
+    /// former user override that was explicitly reset to a vendor value.
+    fn sync_user_delta(existing: &mut toml_edit::Table, desired: &toml_edit::Table) {
+        let removed: Vec<String> = existing
+            .iter()
+            .filter(|(key, _)| !desired.contains_key(key))
+            .map(|(key, _)| key.to_string())
+            .collect();
+        for key in removed {
+            existing.remove(&key);
+        }
+        for (key, value) in desired.iter() {
+            if let (Some(table), Some(old)) = (
+                value.as_table(),
+                existing
+                    .get_mut(key)
+                    .and_then(toml_edit::Item::as_table_mut),
+            ) {
+                sync_user_delta(old, table);
+                continue;
+            }
+            let decor = existing
+                .get(key)
+                .and_then(toml_edit::Item::as_value)
+                .map(|value| value.decor().clone());
+            let mut next = value.clone();
+            if let (Some(decor), Some(value)) = (decor, next.as_value_mut()) {
+                *value.decor_mut() = decor;
+            }
+            existing.insert(key, next);
+        }
     }
 
     /// Persist a configurator save into the user tier: only what differs from
@@ -1229,31 +1261,36 @@ pub mod server {
             .unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
         let dest = &config.user_toml_path;
         if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {e}"))?;
+            fs::create_dir_all(parent)
+                .map_err(|_| "Unable to create the configuration directory".to_string())?;
         }
 
-        // Round-trip through toml_edit to preserve comments and formatting if user file exists (task_3500)
+        let serialized =
+            toml::to_string(&delta).map_err(|_| "the delta did not serialize".to_string())?;
+        // Preserve surviving comments without retaining stale overrides. A
+        // per-key insertion loop left old arrays behind when a reset-to-base
+        // removed them from the semantic delta.
         let text = if dest.exists() {
-            let existing = fs::read_to_string(dest).unwrap_or_default();
+            let existing = fs::read_to_string(dest)
+                .map_err(|_| "Unable to read the destination configuration".to_string())?;
             if let Ok(mut doc) = existing.parse::<toml_edit::DocumentMut>() {
-                if let toml::Value::Table(delta_tbl) = &delta {
-                    for (k, v) in delta_tbl {
-                        if let Ok(item) = v.to_string().parse::<toml_edit::Item>() {
-                            doc[k] = item;
-                        }
-                    }
-                }
+                let desired = serialized
+                    .parse::<toml_edit::DocumentMut>()
+                    .map_err(|_| "the delta did not serialize".to_string())?;
+                sync_user_delta(doc.as_table_mut(), desired.as_table());
                 doc.to_string()
             } else {
-                toml::to_string(&delta).map_err(|_| "the delta did not serialize".to_string())?
+                serialized
             }
         } else {
-            toml::to_string(&delta).map_err(|_| "the delta did not serialize".to_string())?
+            serialized
         };
 
         let tmp_path = dest.with_extension("toml.tmp");
-        fs::write(&tmp_path, &text).map_err(|e| format!("Failed to write temporary file: {e}"))?;
-        fs::rename(&tmp_path, dest).map_err(|e| format!("Failed to persist config: {e}"))?;
+        fs::write(&tmp_path, &text)
+            .map_err(|_| "Unable to write the configuration temporary file".to_string())?;
+        fs::rename(&tmp_path, dest)
+            .map_err(|_| "Unable to persist the configuration".to_string())?;
         Ok((dest.clone(), text.len()))
     }
 
@@ -1383,13 +1420,10 @@ pub mod server {
                     }
                 };
                 if !validate_origin(origin, host_hdr, &config.allowlist_hosts) {
-                    return sec_resp(
-                        HttpResponse::new(403, "Forbidden").with_body(
-                            "text/plain",
-                            format!("Forbidden: Cross-origin request from '{origin}' rejected")
-                                .into_bytes(),
-                        ),
-                    );
+                    return sec_resp(HttpResponse::new(403, "Forbidden").with_body(
+                        "text/plain",
+                        b"Forbidden: Cross-origin request rejected".to_vec(),
+                    ));
                 }
 
                 let content_type =
@@ -1429,12 +1463,11 @@ pub mod server {
 
                 let json_val: serde_json::Value = match serde_json::from_str(body_str) {
                     Ok(v) => v,
-                    Err(e) => {
+                    Err(_) => {
                         return sec_resp(HttpResponse::json(
                             422,
                             "Unprocessable Entity",
-                            serde_json::json!({ "errors": [format!("Invalid JSON: {e}")] })
-                                .to_string(),
+                            serde_json::json!({ "errors": ["Invalid JSON payload"] }).to_string(),
                         ));
                     }
                 };
@@ -1447,11 +1480,11 @@ pub mod server {
                     } else {
                         match toml::to_string(c) {
                             Ok(s) => s,
-                            Err(e) => {
+                            Err(_) => {
                                 return sec_resp(HttpResponse::json(
                                     422,
                                     "Unprocessable Entity",
-                                    serde_json::json!({ "errors": [format!("Failed to convert config to TOML: {e}")] }).to_string(),
+                                    serde_json::json!({ "errors": ["Failed to convert config to TOML"] }).to_string(),
                                 ));
                             }
                         }
@@ -1459,7 +1492,7 @@ pub mod server {
                 } else {
                     match toml::to_string(&json_val) {
                         Ok(s) => s,
-                        Err(e) => {
+                        Err(_) => {
                             return sec_resp(HttpResponse::json(
                                 422,
                                 "Unprocessable Entity",
@@ -1496,9 +1529,7 @@ pub mod server {
                         // fix; neither echoes resolver or TOML internals.
                         let status = if e == UNRESOLVED_REFUSAL {
                             409
-                        } else if e == AMBIGUOUS_ARRAY_REFUSAL
-                            || e.starts_with("Invalid TOML")
-                        {
+                        } else if e == AMBIGUOUS_ARRAY_REFUSAL || e.starts_with("Invalid TOML") {
                             422
                         } else {
                             500
@@ -1508,10 +1539,15 @@ pub mod server {
                             422 => "Unprocessable Entity",
                             _ => "Internal Server Error",
                         };
+                        let message = if status == 500 {
+                            "Unable to save user configuration".to_string()
+                        } else {
+                            e
+                        };
                         sec_resp(HttpResponse::json(
                             status,
                             reason,
-                            serde_json::json!({ "errors": [e] }).to_string(),
+                            serde_json::json!({ "errors": [message] }).to_string(),
                         ))
                     }
                 }
@@ -2196,7 +2232,7 @@ list = ["x"]
             redact_secrets(&mut expected);
 
             // An unchanged echo of the whole redacted array validates.
-            let mut echo = expected.clone();
+            let echo = expected.clone();
             assert_eq!(validate_marker_arrays(&echo, &expected), Ok(()));
 
             // Edited, reordered, inserted and orphan arrays all refuse before
@@ -2233,9 +2269,7 @@ api_key = "<redacted>"
 endpoint = "e"
 "#,
             ] {
-                let mut posted: toml::Value = bad
-                    .parse()
-                    .unwrap_or_else(|e| panic!("{e}"));
+                let mut posted: toml::Value = bad.parse().unwrap_or_else(|e| panic!("{e}"));
                 let verdict = validate_marker_arrays(&posted, &expected);
                 if bad.starts_with("[ai]") {
                     assert_eq!(verdict, Ok(()), "scalar markers keep take-or-drop");
@@ -2254,12 +2288,11 @@ endpoint = "e"
             // The raw helper itself keeps take-or-drop for validated callers;
             // the list below (two markers against a one-element live array)
             // would only ever reach it after the preflight above refused.
-            let mut helper: toml::Value =
-                r#"[env]
+            let mut helper: toml::Value = r#"[env]
 list = ["<redacted>", "<redacted>", "kept"]
 "#
-                .parse()
-                .unwrap_or_else(|e| panic!("{e}"));
+            .parse()
+            .unwrap_or_else(|e| panic!("{e}"));
             restore_redacted(&mut helper, &live);
             let list: Vec<&str> = helper["env"]["list"]
                 .as_array()
@@ -2270,6 +2303,7 @@ list = ["<redacted>", "<redacted>", "kept"]
             assert_eq!(list, ["x", "kept"]);
         }
 
+        #[test]
         fn restore_redacted_takes_the_live_value_or_drops_the_marker() {
             let live: toml::Value = r#"
 [portal]
@@ -2441,6 +2475,442 @@ a = 1
                 ),
                 config,
             )
+        }
+
+        fn redacted_fixture(root: &Path, arrays: bool) -> ConfigServerConfig {
+            plant_echo_tiers(root);
+            let user = child_user_tier(root);
+            fs::create_dir_all(user.parent().unwrap_or_else(|| panic!("missing parent")))
+                .unwrap_or_else(|e| panic!("{e}"));
+            if arrays {
+                let vendor = root.join("usr/share/mios/mios.toml");
+                let mut text = fs::read_to_string(&vendor).unwrap_or_else(|e| panic!("{e}"));
+                text.push_str(REDACTED_VENDOR_ARRAY);
+                fs::write(vendor, text).unwrap_or_else(|e| panic!("{e}"));
+            }
+            gated_config(root, user, true)
+        }
+
+        const REDACTED_VENDOR_ARRAY: &str = r#"
+[[remotes]]
+name = "alpha"
+github_token = "fixture-vendor-array-a"
+rank = 1
+[[remotes]]
+name = "beta"
+github_token = "fixture-vendor-array-b"
+rank = 2
+[limits]
+width = 10
+"#;
+        const REDACTED_OWN_ARRAY: &str = r#"
+[[remotes]]
+name = "alpha"
+github_token = "fixture-own-array-a"
+rank = 1
+[[remotes]]
+name = "beta"
+github_token = "fixture-own-array-b"
+rank = 2
+"#;
+
+        fn redacted_posted(config: &ConfigServerConfig) -> toml::Value {
+            get_config(config).parse().unwrap_or_else(|e| panic!("{e}"))
+        }
+
+        fn redacted_entries(posted: &mut toml::Value) -> &mut Vec<toml::Value> {
+            posted
+                .get_mut("remotes")
+                .and_then(toml::Value::as_array_mut)
+                .unwrap_or_else(|| panic!("missing fixture array"))
+        }
+
+        fn redacted_response(config: &ConfigServerConfig, posted: &toml::Value) -> HttpResponse {
+            post_toml(
+                config,
+                &toml::to_string(posted).unwrap_or_else(|e| panic!("{e}")),
+            )
+        }
+
+        fn redacted_user(config: &ConfigServerConfig) -> toml::Value {
+            fs::read_to_string(&config.user_toml_path)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .parse()
+                .unwrap_or_else(|e| panic!("{e}"))
+        }
+
+        #[test]
+        fn config_server_redacted_arrays_unchanged_lower_and_own_keep_their_layers() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_arrays_unchanged_lower_and_own_keep_their_layers",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            let posted = redacted_posted(&config);
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            assert!(redacted_user(&config).get("remotes").is_none());
+            let text = fs::read_to_string(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            assert!(!text.contains("fixture-vendor-array"));
+            fs::write(&config.user_toml_path, REDACTED_OWN_ARRAY).unwrap_or_else(|e| panic!("{e}"));
+            let posted = redacted_posted(&config);
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            let saved = redacted_user(&config);
+            assert_eq!(
+                saved["remotes"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("array"))[0]["github_token"]
+                    .as_str(),
+                Some("fixture-own-array-a")
+            );
+            assert!(!fs::read_to_string(&config.user_toml_path)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .contains(REDACTED));
+        }
+
+        #[test]
+        fn config_server_redacted_arrays_ambiguous_requests_and_direct_writers_refuse() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_arrays_ambiguous_requests_and_direct_writers_refuse",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            fs::write(&config.user_toml_path, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            let before = fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            let served = redacted_posted(&config);
+            for case in 0..7 {
+                let mut posted = served.clone();
+                let entries = redacted_entries(&mut posted);
+                match case {
+                    0 => {
+                        entries[0]["name"] = toml::Value::String("changed".into());
+                    }
+                    1 => entries.reverse(),
+                    2 => entries.push(entries[0].clone()),
+                    3 => {
+                        entries.pop();
+                    }
+                    4 => {
+                        entries[0]
+                            .as_table_mut()
+                            .unwrap_or_else(|| panic!("table"))
+                            .insert(
+                                "hints".into(),
+                                toml::Value::Array(vec![toml::Value::Array(vec![
+                                    toml::Value::String(REDACTED.into()),
+                                ])]),
+                            );
+                    }
+                    5 => {
+                        entries[0]["rank"] = toml::Value::Boolean(true);
+                    }
+                    _ => {
+                        posted
+                            .as_table_mut()
+                            .unwrap_or_else(|| panic!("table"))
+                            .insert(
+                                "fresh".into(),
+                                toml::Value::Array(vec![
+                                    toml::Value::String(REDACTED.into()),
+                                    toml::Value::String("kept".into()),
+                                ]),
+                            );
+                    }
+                }
+                assert_eq!(
+                    redacted_response(&config, &posted).status_code,
+                    422,
+                    "case {case}"
+                );
+                let body = toml::to_string(&posted).unwrap_or_else(|e| panic!("{e}"));
+                assert_eq!(
+                    save_user_tier(&config, &body).err().as_deref(),
+                    Some(AMBIGUOUS_ARRAY_REFUSAL),
+                    "direct case {case}"
+                );
+                assert_eq!(
+                    fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}")),
+                    before
+                );
+                assert!(!config.user_toml_path.with_extension("toml.tmp").exists());
+            }
+        }
+
+        #[test]
+        fn config_server_redacted_arrays_user_d_never_supplies_destination_secrets() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_arrays_user_d_never_supplies_destination_secrets",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            fs::write(&config.user_toml_path, REDACTED_OWN_ARRAY).unwrap_or_else(|e| panic!("{e}"));
+            let directory = config.user_toml_path.with_file_name("mios.d");
+            fs::create_dir_all(&directory).unwrap_or_else(|e| panic!("{e}"));
+            let fragment = directory.join("upper.toml");
+            let upper = REDACTED_OWN_ARRAY.replace("fixture-own-array", "fixture-upper-array");
+            fs::write(&fragment, &upper).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(
+                redacted_response(&config, &redacted_posted(&config)).status_code,
+                200
+            );
+            let saved =
+                fs::read_to_string(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            assert!(saved.contains("fixture-own-array-a"));
+            assert!(!saved.contains("fixture-upper-array"));
+            assert_eq!(
+                fs::read_to_string(&fragment).unwrap_or_else(|e| panic!("{e}")),
+                upper
+            );
+            let changed =
+                "[[remotes]]\nname=\"only-upper\"\ngithub_token=\"fixture-upper-only\"\nrank=9\n";
+            fs::write(&fragment, changed).unwrap_or_else(|e| panic!("{e}"));
+            let before = fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(
+                redacted_response(&config, &redacted_posted(&config)).status_code,
+                422
+            );
+            assert_eq!(
+                fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}")),
+                before
+            );
+            assert_eq!(
+                fs::read_to_string(fragment).unwrap_or_else(|e| panic!("{e}")),
+                changed
+            );
+        }
+
+        #[test]
+        fn config_server_redacted_arrays_only_user_d_cannot_materialize() {
+            let Some(root) =
+                user_tier_child("config_server_redacted_arrays_only_user_d_cannot_materialize")
+            else {
+                return;
+            };
+            let config = redacted_fixture(&root, false);
+            let directory = config.user_toml_path.with_file_name("mios.d");
+            fs::create_dir_all(&directory).unwrap_or_else(|e| panic!("{e}"));
+            let fragment = directory.join("upper.toml");
+            fs::write(&fragment, REDACTED_OWN_ARRAY).unwrap_or_else(|e| panic!("{e}"));
+            let posted = redacted_posted(&config);
+            assert_eq!(redacted_response(&config, &posted).status_code, 422);
+            assert_eq!(
+                save_user_tier(
+                    &config,
+                    &toml::to_string(&posted).unwrap_or_else(|e| panic!("{e}"))
+                )
+                .err()
+                .as_deref(),
+                Some(AMBIGUOUS_ARRAY_REFUSAL)
+            );
+            assert!(!config.user_toml_path.exists());
+            assert!(!config.user_toml_path.with_extension("toml.tmp").exists());
+            assert_eq!(
+                fs::read_to_string(fragment).unwrap_or_else(|e| panic!("{e}")),
+                REDACTED_OWN_ARRAY
+            );
+        }
+
+        #[test]
+        fn config_server_redacted_arrays_explicit_values_retain_types_and_reset_base() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_arrays_explicit_values_retain_types_and_reset_base",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            let own = format!("{REDACTED_OWN_ARRAY}\n[ui]\nscale=2 # ui-scale-comment\n[limits]\nwidth=20\nextra=7 # extra-comment\n");
+            fs::write(&config.user_toml_path, own).unwrap_or_else(|e| panic!("{e}"));
+            let base =
+                mios_resolver::resolve_below_user(Some(&root)).unwrap_or_else(|e| panic!("{e}"));
+            let mut posted = redacted_posted(&config);
+            posted["remotes"] = base["remotes"].clone();
+            redacted_entries(&mut posted)[0]["rank"] = toml::Value::Boolean(true);
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            assert_eq!(
+                redacted_user(&config)["remotes"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("array"))[0]["rank"]
+                    .as_bool(),
+                Some(true)
+            );
+            let mut posted = redacted_posted(&config);
+            posted["remotes"] = base["remotes"].clone();
+            posted["limits"]["width"] = toml::Value::Integer(10);
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            let saved = redacted_user(&config);
+            assert!(
+                saved.get("remotes").is_none(),
+                "reset must remove the stale user array"
+            );
+            assert!(
+                saved["limits"].get("width").is_none(),
+                "nested reset must remove the stale override"
+            );
+            assert_eq!(saved["limits"]["extra"].as_integer(), Some(7));
+            assert_eq!(saved["ui"]["scale"].as_integer(), Some(2));
+            let text = fs::read_to_string(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            assert!(text.contains("ui-scale-comment"));
+            assert!(text.contains("extra-comment"));
+        }
+
+        const PRIVATE_SENTINEL: &str = "fixture-private-diagnostic-value";
+
+        #[test]
+        fn config_server_redacted_private_source_failures_preserve_files() {
+            let Some(root) =
+                user_tier_child("config_server_redacted_private_source_failures_preserve_files")
+            else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            fs::write(&config.user_toml_path, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            let vendor = root.join("usr/share/mios/mios.toml");
+            let directory = config.user_toml_path.with_file_name("mios.d");
+            fs::create_dir_all(&directory).unwrap_or_else(|e| panic!("{e}"));
+            let fragment = directory.join("broken.toml");
+            let malformed = format!("token = \"{PRIVATE_SENTINEL}\" trailing\n");
+            for path in [&vendor, &config.user_toml_path, &fragment] {
+                let posted = get_config(&config);
+                let original = fs::read(path).ok();
+                fs::write(path, &malformed).unwrap_or_else(|e| panic!("{e}"));
+                let before_user =
+                    fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+                let get = handle_request(
+                    &request(
+                        "GET",
+                        "/portal/config",
+                        None,
+                        &[
+                            ("host", "localhost:8700"),
+                            ("cookie", "mios_portal=gate-token-7f3a"),
+                        ],
+                        &[],
+                    ),
+                    &config,
+                );
+                assert_eq!(get.status_code, 500);
+                assert!(!String::from_utf8_lossy(&get.body).contains(PRIVATE_SENTINEL));
+                assert!(!read_layered_toml(&config)
+                    .err()
+                    .unwrap_or_else(|| panic!("must refuse"))
+                    .contains(PRIVATE_SENTINEL));
+                let response = post_toml(&config, &posted);
+                assert_eq!(response.status_code, 409);
+                assert!(!String::from_utf8_lossy(&response.body).contains(PRIVATE_SENTINEL));
+                assert_eq!(
+                    save_user_tier(&config, &posted).err().as_deref(),
+                    Some(UNRESOLVED_REFUSAL)
+                );
+                if path == &vendor {
+                    let plain = "[identity]\nmios_user=\"echo-user\"\n[ports]\na=1\n";
+                    let response = post_toml(&config, plain);
+                    assert_eq!(response.status_code, 500);
+                    assert!(!String::from_utf8_lossy(&response.body).contains(PRIVATE_SENTINEL));
+                    assert!(!save_user_tier(&config, plain)
+                        .err()
+                        .unwrap_or_else(|| panic!("must refuse"))
+                        .contains(PRIVATE_SENTINEL));
+                }
+                assert_eq!(
+                    fs::read_to_string(path).unwrap_or_else(|e| panic!("{e}")),
+                    malformed
+                );
+                assert_eq!(
+                    fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}")),
+                    before_user
+                );
+                assert!(!config.user_toml_path.with_extension("toml.tmp").exists());
+                match original {
+                    Some(bytes) => fs::write(path, bytes).unwrap_or_else(|e| panic!("{e}")),
+                    None => fs::remove_file(path).unwrap_or_else(|e| panic!("{e}")),
+                }
+            }
+        }
+
+        #[test]
+        fn config_server_redacted_private_post_validation_never_echoes_values() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_private_post_validation_never_echoes_values",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            fs::write(&config.user_toml_path, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            let before = fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            let malformed = format!("token = \"{PRIVATE_SENTINEL}\" trailing\n");
+            let response = post_toml(&config, &malformed);
+            assert_eq!(response.status_code, 422);
+            assert!(!String::from_utf8_lossy(&response.body).contains(PRIVATE_SENTINEL));
+            assert!(!save_user_tier(&config, &malformed)
+                .err()
+                .unwrap_or_else(|| panic!("must refuse"))
+                .contains(PRIVATE_SENTINEL));
+            for (bad, hidden) in [
+                (format!("a=\"{PRIVATE_SENTINEL}\""), PRIVATE_SENTINEL),
+                ("a=987654321".to_string(), "987654321"),
+            ] {
+                let body = format!("[identity]\nmios_user=\"echo-user\"\n[ports]\n{bad}\n");
+                let response = post_toml(&config, &body);
+                assert_eq!(response.status_code, 422);
+                assert!(!String::from_utf8_lossy(&response.body).contains(hidden));
+                assert!(validate_portal_save(&body, &config)
+                    .iter()
+                    .all(|error| !error.contains(hidden)));
+            }
+            assert_eq!(
+                fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}")),
+                before
+            );
+            assert!(!config.user_toml_path.with_extension("toml.tmp").exists());
+        }
+
+        #[test]
+        fn config_server_redacted_scalar_orphans_keep_take_or_drop_compatibility() {
+            let Some(root) = user_tier_child(
+                "config_server_redacted_scalar_orphans_keep_take_or_drop_compatibility",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            let mut posted = redacted_posted(&config);
+            let mut orphan = toml::Table::new();
+            orphan.insert("github_token".into(), toml::Value::String(REDACTED.into()));
+            orphan.insert("note".into(), toml::Value::String("kept".into()));
+            posted
+                .as_table_mut()
+                .unwrap_or_else(|| panic!("table"))
+                .insert("orphan".into(), toml::Value::Table(orphan));
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            let saved = redacted_user(&config);
+            assert!(saved["orphan"].get("github_token").is_none());
+            assert_eq!(saved["orphan"]["note"].as_str(), Some("kept"));
+        }
+
+        #[test]
+        fn config_server_redacted_writer_failure_diagnostics_are_private() {
+            let Some(root) =
+                user_tier_child("config_server_redacted_writer_failure_diagnostics_are_private")
+            else {
+                return;
+            };
+            let mut config = redacted_fixture(&root, false);
+            let blocked = root.join(PRIVATE_SENTINEL);
+            fs::write(&blocked, "retained").unwrap_or_else(|e| panic!("{e}"));
+            config.user_toml_path = blocked.join("mios.toml");
+            let body = "[identity]\nmios_user=\"echo-user\"\n[ports]\na=1\n";
+            let error = save_user_tier(&config, body)
+                .err()
+                .unwrap_or_else(|| panic!("must refuse"));
+            assert!(!error.contains(PRIVATE_SENTINEL));
+            let response = post_toml(&config, body);
+            assert_eq!(response.status_code, 500);
+            assert!(!String::from_utf8_lossy(&response.body).contains(PRIVATE_SENTINEL));
+            assert_eq!(
+                fs::read_to_string(blocked).unwrap_or_else(|e| panic!("{e}")),
+                "retained"
+            );
         }
 
         #[test]
