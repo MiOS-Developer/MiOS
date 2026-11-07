@@ -42,6 +42,13 @@ def handlers(path, names, **injected):
     return scope
 
 
+def constant(path, name):
+    for node in ast.parse((ROOT / path).read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and [getattr(t, "id", None) for t in node.targets] == [name]:
+            return ast.literal_eval(node.value)
+    raise AssertionError((path, name))
+
+
 class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
     def assert_redacted(self, result, status):
         self.assertEqual(result.status_code, status)
@@ -93,7 +100,10 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
 
     async def test_portal_configuration_failures_and_success(self):
         config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])),
-                                 TiersUnresolved=type("TiersUnresolved", (RuntimeError,), {}))
+                                 TiersUnresolved=type("TiersUnresolved", (RuntimeError,), {}),
+                                 redact_secrets=Mock(side_effect=lambda merged: {"redacted": merged}),
+                                 UNRESOLVED_REFUSAL=constant(CONFIG, "UNRESOLVED_REFUSAL"),
+                                 portal_post_toml=handlers(CONFIG, ["portal_post_toml"])["portal_post_toml"])
         toml = SimpleNamespace(load_merged=Mock(return_value={}))
         scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None)
         request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"), headers={})
@@ -103,6 +113,7 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
             config.to_toml.side_effect = None
             config.to_toml.return_value = "resolved TOML"
             self.assertEqual((await scope["get_portal_config"](request)).content, "resolved TOML")
+            config.to_toml.assert_called_with({"redacted": {}})  # serialized only after redaction
             request.body.return_value = ("invalid = " + MARKER).encode()
             self.assert_redacted(await scope["post_portal_config"](request, background), 400)
             request.headers = {"content-type": "application/json"}

@@ -535,6 +535,16 @@ class TestDeltaConfigWrite(unittest.TestCase):
                     os.environ[k] = v
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def test_to_toml_round_trips_nested_arrays_and_the_shipped_ssot(self):
+        from mios_pipe.kernel.config import to_toml
+        nested = {"a": {"rows": [[1, 2], ["x", {"k": "v", "n": [1]}]], "q": 'a"b\\c\nd'}}
+        self.assertEqual(tl.loads(to_toml(nested)), nested)
+        vendor = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..",
+                              "share", "mios", "mios.toml")
+        with open(vendor, "rb") as fh:
+            shipped = tl.load(fh)
+        self.assertEqual(tl.loads(to_toml(shipped)), shipped, "GET /portal/config cannot serve the SSOT")
+
     def test_to_toml_datetime_and_unsupported(self):
         import datetime
         from mios_pipe.kernel.config import to_toml
@@ -649,6 +659,34 @@ class TestRestoreRedacted(unittest.TestCase):
         self.assertEqual(posted["portal"]["password"], REDACTED, "the input is not mutated")
 
 
+class TestRedactSecrets(unittest.TestCase):
+    """redact_secrets mirrors miosd's redact_secrets (ruling 3)."""
+
+    def test_fixed_and_secret_keys_paths_at_any_depth(self):
+        from mios_pipe.kernel.config import REDACTED, redact_secrets
+        merged = {"portal": {"password": "", "secret": "s", "user": "op"},
+                  "ai": {"api_key": "k", "endpoint": "e"},
+                  "security": {"secret_keys": {"keys": ["MIOS_GITHUB_TOKEN", "Webhook_Secret", 7]}},
+                  "a": {"b": {"c": {"github_token": "t1", "GitHub_Token": "t2", "mios_github_token": "n"}}},
+                  "remotes": [{"name": "o", "GITHUB_TOKEN": "t3"}, [{"webhook_secret": "t4"}]],
+                  "svc": {"webhook_secret": {"nested": "whole-table"}, "keys": ["github_token"]},
+                  "list": ["github_token"]}
+        out = redact_secrets(merged)
+        self.assertEqual(out, {
+            "portal": {"password": REDACTED, "secret": REDACTED, "user": "op"},
+            "ai": {"api_key": REDACTED, "endpoint": "e"},
+            "security": {"secret_keys": {"keys": ["MIOS_GITHUB_TOKEN", "Webhook_Secret", 7]}},
+            "a": {"b": {"c": {"github_token": REDACTED, "GitHub_Token": REDACTED,
+                              "mios_github_token": REDACTED}}},
+            "remotes": [{"name": "o", "GITHUB_TOKEN": REDACTED}, [{"webhook_secret": REDACTED}]],
+            "svc": {"webhook_secret": REDACTED, "keys": ["github_token"]},
+            "list": ["github_token"]})
+        self.assertEqual(merged["portal"]["secret"], "s", "the input is not mutated")
+        self.assertEqual(redact_secrets({"x": {"github_token": "t"}, "ai": {"endpoint": "e"}}),
+                         {"x": {"github_token": "t"}, "ai": {"endpoint": "e"}},
+                         "without [security.secret_keys] only the fixed paths are secrets")
+
+
 class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
     """POST /portal/config end to end on temp vendor/host/user tiers: the lossless
     {"toml": ...} JSON envelope, raw TOML, and an echoed redaction marker (C3).
@@ -658,7 +696,18 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
     VENDOR = ('[identity]\nmios_user = "vendor-user"\nusername = "user"\n\n'
               '[ports]\nagent_pipe = 8640\n\n'
               '[portal]\nconfig_max_body_bytes = 2097152\npassword = ""\nsecret = ""\n\n'
-              '[ai]\napi_key = ""\nendpoint = "vendor"\n')
+              '[ai]\napi_key = ""\nendpoint = "vendor"\n\n'
+              '[security.secret_keys]\nkeys = ["MIOS_GITHUB_TOKEN", "Webhook_Secret"]\n\n'
+              '[deep.unknown.nested]\ngithub_token = "vendor-deep-token"\nlabel = "kept"\n'
+              'curve = [[0, 30], [80, {at = 100}]]\n\n'
+              '[svc.webhook_secret]\nvalue = "vendor-table-secret"\n\n'
+              '[[remotes]]\nname = "origin"\nGITHUB_TOKEN = "vendor-array-token"\n')
+    # Every path the native portal serves as <redacted> for VENDOR + HOST.
+    SECRET_PATHS = {("portal", "password"), ("portal", "secret"), ("ai", "api_key"),
+                    ("deep", "unknown", "nested", "github_token"), ("svc", "webhook_secret"),
+                    ("remotes", 0, "GITHUB_TOKEN")}
+    SECRETS = ("host-tier-cookie-secret", "user-tier-portal-pw", "user-tier-api-key",
+               "vendor-deep-token", "vendor-table-secret", "vendor-array-token")
     HOST = '[portal]\nsecret = "host-tier-cookie-secret"\n'
     USER = '[portal]\npassword = "user-tier-portal-pw"\n\n[ai]\napi_key = "user-tier-api-key"\n'
     BROKEN = '[portal\npassword = \n'
@@ -715,12 +764,10 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
         return response.text
 
     def redacted_echo(self):
-        """What a save echoing miosd's redacted GET carries."""
-        from mios_pipe.kernel.config import REDACTED, to_toml
-        echo = tl.loads(self.served())
-        echo["portal"].update(password=REDACTED, secret=REDACTED)
-        echo["ai"]["api_key"] = REDACTED
-        return to_toml(echo)
+        """The redacted GET itself: what a configurator save echoes."""
+        served = self.served()
+        self.assertIn('"<redacted>"', served)
+        return served
 
     def post(self, body, content_type):
         return self.client.post("/portal/config", content=body,
@@ -837,6 +884,84 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
                                                  "portal": {"password": "user-tier-portal-pw"},
                                                  "ai": {"api_key": "user-tier-api-key"}})
 
+    def marker_paths(self, value, at=()):
+        """Each path whose value is the redaction marker, and every other leaf."""
+        from mios_pipe.kernel.config import REDACTED
+        if value == REDACTED:
+            return {at}, {}
+        items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else None
+        if items is None:
+            return set(), {at: value}
+        marks, leaves = set(), {}
+        for k, v in items:
+            m, lv = self.marker_paths(v, at + (k,))
+            marks |= m
+            leaves.update(lv)
+        return marks, leaves
+
+    def test_get_requires_auth_and_redacts_like_the_native_portal(self):
+        self.plant_user_tier()
+        with patch("mios_pipe.routing.portal._portal_authed", return_value=False):
+            denied = self.client.get("/portal/config")
+        self.assertEqual(denied.status_code, 401)
+        self.assertNotIn("[identity]", denied.text)
+        served = self.served()
+        for secret in self.SECRETS:
+            self.assertNotIn(secret, served, "an authenticated GET is still not a reveal")
+        marks, leaves = self.marker_paths(tl.loads(served))
+        self.assertEqual(marks, self.SECRET_PATHS)
+        # Schema: every non-secret leaf is served unchanged, and no other is added or lost.
+        live_marks, live_leaves = self.marker_paths(mios_toml.load_merged())
+        self.assertEqual(live_marks, set())
+        hidden = {p for p in live_leaves if any(p[:len(s)] == s for s in self.SECRET_PATHS)}
+        self.assertEqual(leaves, {p: v for p, v in live_leaves.items() if p not in hidden})
+        for path, value in ((("identity", "mios_user"), "vendor-user"), (("ports", "agent_pipe"), 8640),
+                            (("portal", "config_max_body_bytes"), 2097152), (("ai", "endpoint"), "vendor"),
+                            (("deep", "unknown", "nested", "label"), "kept"), (("remotes", 0, "name"), "origin"),
+                            (("deep", "unknown", "nested", "curve", 1, 1, "at"), 100),
+                            (("security", "secret_keys", "keys", 0), "MIOS_GITHUB_TOKEN")):
+            self.assertEqual(leaves.get(path), value, path)
+
+    def test_an_orphan_marker_is_dropped(self):
+        orphan = (self.redacted_echo()
+                  + '\n[deep.unknown.other]\ngithub_token = "<redacted>"\nnote = "new"\n'
+                  + '\n[orphan]\napi_key = "<redacted>"\nlist = ["<redacted>", "kept"]\n')
+        response = self.post(json.dumps({"toml": orphan}), "application/json")
+        self.assertEqual(response.status_code, 200, response.text)
+        text = self.tier()
+        self.assertNotIn("<redacted>", text)
+        for secret in self.SECRETS:
+            self.assertNotIn(secret, text, "a lower-tier secret was copied up")
+        self.assertEqual(tl.loads(text), {"deep": {"unknown": {"other": {"note": "new"}}},
+                                          "orphan": {"list": ["kept"]}})
+
+    def test_an_echo_keeps_each_secret_in_its_own_layer(self):
+        self.plant_user_tier()
+        frag = os.path.join(self.tmp, "user.d", "20-own.toml")
+        os.makedirs(os.path.dirname(frag), exist_ok=True)
+        with open(frag, "w", encoding="utf-8") as fh:
+            fh.write('[portal]\npassword = "user-d-portal-pw"\nsecret = "user-d-cookie-secret"\n')
+        mios_toml.clear_cache()
+        edited = self.redacted_echo().replace('username = "user"', 'username = "echo-op"')
+        response = self.post(json.dumps({"toml": edited}), "application/json")
+        self.assertEqual(response.status_code, 200, response.text)
+        text = self.tier()
+        for foreign in ("user-d-portal-pw", "user-d-cookie-secret", "<redacted>") + self.SECRETS[:1]:
+            self.assertNotIn(foreign, text, "user.d and lower-tier secrets stay in their own layers")
+        self.assert_saved_and_kept(response)
+        live = mios_toml.load_merged()
+        self.assertEqual((live["portal"]["password"], live["portal"]["secret"]),
+                         ("user-d-portal-pw", "user-d-cookie-secret"))
+
+    def test_the_default_destination_is_the_resolved_user_tier(self):
+        from mios_pipe.kernel.config import write_user_config
+        elsewhere = os.path.join(self.tmp, "elsewhere", "mios.toml")
+        with patch.dict(os.environ, {"MIOS_USER_TOML": elsewhere}):
+            write_user_config({"identity": {"username": "moved-op"}}, live_config={})
+        self.assertIsNone(self.tier(), "the write went to ~/.config, not the resolved user tier")
+        with open(elsewhere, encoding="utf-8") as fh:
+            self.assertEqual(tl.loads(fh.read()), {"identity": {"username": "moved-op"}})
+
     def test_a_no_edit_echo_writes_nothing_beyond_what_changed(self):
         for content_type in ("application/json", "application/toml"):
             echo = self.redacted_echo()
@@ -848,7 +973,7 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
 
 def _run_extra_config_write():
     return _run_cases(TestDeltaConfigWrite, TestConfigWrite, TestRestoreRedacted,
-                      TestPortalConfigEnvelopeAndRedaction)
+                      TestRedactSecrets, TestPortalConfigEnvelopeAndRedaction)
 
 
 
