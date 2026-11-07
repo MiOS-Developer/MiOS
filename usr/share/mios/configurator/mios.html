@@ -3722,8 +3722,8 @@
         <details>
           <summary>Focused MiOS-Mon controls</summary>
           <p class="hint">Inputd verifies the foreground executable in the focused terminal or console. These bindings navigate menus and the camera; the pet moves autonomously. Blank fields inherit the vendor policy. User-local samples require their exact absolute executable paths in the user configuration. Install a compatible Inputd daemon and command before applying these profiles.</p>
-          <label>Foreground app poll interval (ms) <input data-key="keybindings.global.controller.nav.app_poll_ms" data-inherit="true" data-type="int" type="number" min="1" max="10000"></label>
-          <label>Foreground app query timeout (ms) <input data-key="keybindings.global.controller.nav.app_query_timeout_ms" data-inherit="true" data-type="int" type="number" min="1" max="10000"></label>
+          <label>Foreground app poll interval (ms) <input data-key="keybindings.global.controller.nav.app_poll_ms" data-inherit="true" data-type="int" type="number" min="50" max="2000"></label>
+          <label>Foreground app query timeout (ms) <input data-key="keybindings.global.controller.nav.app_query_timeout_ms" data-inherit="true" data-type="int" type="number" min="20" max="1000"></label>
           <label>MiOS-Mon system executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.exe" data-inherit="true" data-array="csv" type="text"></label>
           <label>MiOS-Mon user executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.user_exe" data-inherit="true" data-array="csv" type="text"></label>
           <label>Terminal app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.terminal" data-inherit="true" type="text"></label>
@@ -6344,13 +6344,29 @@ function gatherFromForm() {
       DATA[sec][key] = el.value.split(",").map(s => s.trim()).filter(Boolean);
     }
     else if (el.dataset.array === "csv-int") {
-      DATA[sec][key] = el.value.split(",")
-        .map(s => s.trim()).filter(Boolean)
-        .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      const parts = el.value.split(",").map(s => s.trim());
+      if (el.dataset.key.startsWith("keybindings.global.controller.nav.apps.") && el.dataset.key.includes(".repeat.")) {
+        const pair = parts.map(Number);
+        if (parts.length !== 2 || parts.some(s => !/^[0-9]+$/.test(s)) || pair.some(n => !Number.isSafeInteger(n)) || pair[0] < 50 || pair[0] > 5000 || pair[1] < 16 || pair[1] > 5000) throw new Error("Controller repeat requires delay 50..5000 and interval 16..5000 ms: " + el.dataset.key);
+        DATA[sec][key] = pair;
+      } else {
+        DATA[sec][key] = parts.filter(Boolean)
+          .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      }
     }
     else if (el.dataset.type === "int") {
-      const n = parseInt(el.value, 10);
-      DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      const timing = {
+        "keybindings.global.controller.nav.app_poll_ms": [50, 2000],
+        "keybindings.global.controller.nav.app_query_timeout_ms": [20, 1000]
+      }[el.dataset.key];
+      if (timing) {
+        const n = Number(el.value);
+        if (!/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n) || n < timing[0] || n > timing[1]) throw new Error("Controller timing outside supported range: " + el.dataset.key);
+        DATA[sec][key] = n;
+      } else {
+        const n = parseInt(el.value, 10);
+        DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      }
     }
     else if (el.dataset.type === "float") {
       const n = parseFloat(el.value);
@@ -6367,6 +6383,8 @@ function gatherFromForm() {
     }
     else DATA[sec][key] = el.value;
   });
+  const nav = DATA["keybindings.global.controller.nav"];
+  if (nav && Number.isInteger(nav.app_poll_ms) && Number.isInteger(nav.app_query_timeout_ms) && nav.app_query_timeout_ms > nav.app_poll_ms) throw new Error("Controller app query timeout must not exceed poll interval");
 }
 
 function renderRaw() {

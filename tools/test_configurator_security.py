@@ -299,6 +299,71 @@ class TestConfiguratorSecurity(unittest.TestCase):
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn("Global bindings require an array of binding objects", rejected.stderr)
 
+    def test_controller_timing_bounds_and_repeat_pairs_use_the_real_form(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        prefix = "keybindings.global.controller.nav."
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.by_key = {}
+                self.bounds = {}
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                key = a.get("data-key", "")
+                if tag == "input" and key.startswith(prefix) and (
+                        key in (prefix + "app_poll_ms", prefix + "app_query_timeout_ms")
+                        or key.startswith(prefix + "apps.mon.repeat.")):
+                    self.bounds[key] = (a.get("min"), a.get("max"))
+                    self.by_key[key] = {"tagName": "INPUT", "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": key, "inherit": "true",
+                            **({"type": a["data-type"]} if "data-type" in a else {}),
+                            **({"array": a["data-array"]} if "data-array" in a else {})}}
+        parser = Controls()
+        parser.feed(html.read_text())
+        poll, query = prefix + "app_poll_ms", prefix + "app_query_timeout_ms"
+        self.assertEqual(parser.bounds[poll], ("50", "2000"))
+        self.assertEqual(parser.bounds[query], ("20", "1000"))
+        self.assertEqual(len(parser.by_key), 12)
+        def gather():
+            return subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": list(parser.by_key.values()), "initial": {}}),
+                capture_output=True, text=True, timeout=15)
+        def reject(key, value, error):
+            with self.subTest(key=key, value=value):
+                old = parser.by_key[key]["value"]
+                parser.by_key[key]["value"] = value
+                result = gather()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+                parser.by_key[key]["value"] = old
+        for key, values in [(poll, ["49", "2001", "50.5", "50ms", "-1", "NaN"]),
+                            (query, ["19", "1001", "20.5", "20ms", "-1", "Infinity"])]:
+            for value in values:
+                reject(key, value, "Controller timing outside supported range")
+        for key in parser.by_key:
+            if ".repeat." not in key:
+                continue
+            for value in ["49,16", "5001,16", "50,15", "50,5001", "50.5,16", "50ms,16",
+                          "50", "50,16,20", "50,,16", "50,-16"]:
+                reject(key, value, "Controller repeat requires delay")
+            for value in ["50,16", "5000,5000"]:
+                parser.by_key[key]["value"] = value
+                result = gather()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                emitted = tomllib.loads(json.loads(result.stdout)["toml"])
+                self.assertEqual(emitted["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"]["repeat"][key.rsplit(".", 1)[1]],
+                                 [int(v) for v in value.split(",")])
+            parser.by_key[key]["value"] = ""
+        for p, q in [("50", "20"), ("2000", "1000")]:
+            parser.by_key[poll]["value"], parser.by_key[query]["value"] = p, q
+            result = gather()
+            self.assertEqual(result.returncode, 0, result.stderr)
+        parser.by_key[poll]["value"] = "50"
+        reject(query, "51", "query timeout must not exceed poll interval")
+        for control in parser.by_key.values():
+            control["value"] = ""
+        self.assertEqual(json.loads(gather().stdout)["data"], {})
+
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {
             "repos.external.nvidia-container-toolkit": {
