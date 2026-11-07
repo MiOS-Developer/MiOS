@@ -1,12 +1,12 @@
 # AI-hint: Configures Windows Firewall and netsh portproxy rules to map physical NIC ports to local WSL containers, enabling LAN-wide access to MiOS services ...
 # AI-doc: usr/share/doc/mios/manual/mios.md
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
 param(
     [switch]$AiNode
 )
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
 # Self-elevate if not admin.
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
