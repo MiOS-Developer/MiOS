@@ -3721,12 +3721,26 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
         .map(Ok)
         .unwrap_or_else(|| command_for(action))
 }
-pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
+/// Check the same action grammar for configuration loading, reload and bridge startup.
+/// This resolves argv only; it never executes an action or queries a live terminal.
+pub(crate) fn action_supported(global: &GlobalConfig, action: &str) -> bool {
     let probe = TmuxClient {
         pid: 0,
         tty: "/dev/pts/0".into(),
         socket: PathBuf::from("/tmp/probe"),
     };
+    match action
+        .split_once(':')
+        .map_or("", |(namespace, _)| namespace)
+    {
+        _ if action == "none" => true,
+        "key" => crate::nav::parse_key_chord(&action[4..]).is_ok(),
+        "pointer" => true,
+        "tmux" => tmux_argv(global, &probe, &action[5..]).is_ok(),
+        _ => configured_command(action, global).is_ok(),
+    }
+}
+pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
     let nav = global.controller.nav.actions();
     let room: Vec<String> = global
         .controller
@@ -3751,13 +3765,7 @@ pub fn unsupported_actions(global: &GlobalConfig) -> Vec<String> {
         )
         .chain(nav.iter())
         .chain(room.iter())
-        .filter(|a| match a.split_once(':').map_or("", |(n, _)| n) {
-            _ if a.as_str() == "none" => false,
-            "key" => crate::nav::parse_key_chord(&a[4..]).is_err(),
-            "pointer" => false,
-            "tmux" => tmux_argv(global, &probe, &a[5..]).is_err(),
-            _ => configured_command(a, global).is_err(),
-        })
+        .filter(|action| !action_supported(global, action))
         .cloned()
         .collect()
 }
