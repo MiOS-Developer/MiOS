@@ -1503,8 +1503,14 @@ mod tests {
             let nav = cfg.controller.nav;
             assert!(nav.apps.is_empty());
             assert!(nav.app_error.is_some());
-            assert_eq!(nav.profile_name("terminal", true).as_deref(), Some("terminal_tmux"));
-            assert_eq!(nav.profile_name("desktop-2d", false).as_deref(), Some("desktop"));
+            assert_eq!(
+                nav.profile_name("terminal", true).as_deref(),
+                Some("terminal_tmux")
+            );
+            assert_eq!(
+                nav.profile_name("desktop-2d", false).as_deref(),
+                Some("desktop")
+            );
             assert!(nav.profiles.contains_key("terminal_tmux"));
             assert!(!nav.profiles.contains_key("mon_tmux"));
             assert!(nav.actions().iter().all(|a| !a.contains("HYPER")));
@@ -1523,13 +1529,19 @@ mod tests {
                     nav.as_table_mut().unwrap().remove("apps");
                 }
             });
-            assert!(result.is_err(), "base or unreferenced invalid profiles must stay fatal");
+            assert!(
+                result.is_err(),
+                "base or unreferenced invalid profiles must stay fatal"
+            );
         }
         let result = crate::config::tests::try_fixture_mon_with(|v| {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
             nav["terminal_tmux"]["BTN_SOUTH"] = "key:HYPER+a".into();
         });
-        assert!(result.is_err(), "an inherited base defect is never swallowed as an app error");
+        assert!(
+            result.is_err(),
+            "an inherited base defect is never swallowed as an app error"
+        );
     }
 
     #[test]
