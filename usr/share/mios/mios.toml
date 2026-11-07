@@ -20281,6 +20281,15 @@ tilt_max_degrees = 40         # highest elevation offset,0..55
 orbit_fine_step_degrees = 5   # numpad 7/9, Alt+7/9, right stick and horizontal wheel,1..90
 max_lead_steps = 4            # held camera input never runs a target more than this many steps ahead of the view,1..10
 preview_orbit_pauses_turntable = true # explicit orbit in Roster/Studio holds that preview's turntable until it closes
+# Smooth camera targets; only the camera redraw cadence changes during motion.
+follow_half_life_ms = 90
+motion_frame_ms = 33
+orbit_rate_deg_s = 180
+tilt_rate_deg_s = 90
+pan_rate_permille_s = 600
+zoom_rate_percent_s = 300
+reset_glide_ms = 350
+rest_epsilon_permille = 2
 
 [tamagotchi.presentation]
 automatic = true
