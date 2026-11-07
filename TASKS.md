@@ -16,9 +16,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1751 |
-| in_progress | 87 |
-| completed | 1898 |
+| pending | 1749 |
+| in_progress | 90 |
+| completed | 1897 |
 | incomplete | 20 |
 | cancelled | 21 |
 | total | 3777 |
@@ -2664,10 +2664,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3763` Keep essential pet needs visible in compact portrait HUDs -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
 - `task_3771` Preserve typed controller arrays through the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
-- `task_3773` Require deliberate short stick gestures for desktop focus changes -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3773` Require deliberate short stick gestures for desktop focus changes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## WS-MIOSSYS
