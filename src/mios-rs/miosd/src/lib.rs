@@ -941,10 +941,9 @@ pub mod server {
         }
     }
 
-    /// Each [`REDACTED`] marker takes back the `live` value at its path (a
-    /// user-tier secret stays, a lower-tier one leaves the delta) and is dropped
-    /// where `live` has none. `live` is a resolved config: [`save_user_tier`]
-    /// refuses a save whose tiers did not resolve, never treating them as empty.
+    /// Each [`REDACTED`] marker takes back the `live` value at its path, or is
+    /// dropped where `live` has none. [`save_user_tier`] passes vendor..host.d
+    /// plus the user tier it writes, so each secret stays in its own layer.
     pub fn restore_redacted(posted: &mut toml::Value, live: &toml::Value) {
         restore_at(posted, Some(live));
     }
@@ -1161,11 +1160,15 @@ pub mod server {
             .parse::<toml::Value>()
             .map_err(|e| format!("Invalid TOML: {e}"))?;
         if contains_redacted(&posted) {
-            // A marker stands for a live value. Tiers that do not resolve leave
-            // that value unknown, so the save is refused and the user tier kept.
-            let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false)
-                .map_err(|e| format!("{UNRESOLVED_REFUSAL} ({e})"))?;
-            restore_redacted(&mut posted, &live);
+            // Unresolved tiers leave a marker's value unknown: refuse, keep the tier.
+            let root = config.ssot_root.as_deref();
+            let refuse =
+                |e: mios_resolver::error::ResolverError| format!("{UNRESOLVED_REFUSAL} ({e})");
+            mios_resolver::resolve_merged(root, false).map_err(refuse)?;
+            let mut own = mios_resolver::layers::resolve_layer_paths_below_user(root);
+            own.push(config.user_toml_path.clone());
+            let own = mios_resolver::layers::merge_layer_files(&own).map_err(refuse)?;
+            restore_redacted(&mut posted, &own);
         }
         let base = mios_resolver::resolve_below_user(config.ssot_root.as_deref())
             .map_err(|e| format!("the lower tiers did not resolve: {e}"))?;
@@ -2359,6 +2362,66 @@ a = 1
             );
             assert_eq!(tier["ai"]["api_key"].as_str(), Some("user-tier-api-key"));
             assert!(tier["portal"].get("secret").is_none(), "{text}");
+        }
+
+        #[test]
+        fn config_server_echo_restores_each_secret_from_its_own_layer() {
+            let Some(root) =
+                user_tier_child("config_server_echo_restores_each_secret_from_its_own_layer")
+            else {
+                return;
+            };
+            plant_echo_tiers(&root);
+            let user = child_user_tier(&root);
+            let user_d = user.with_file_name("mios.d");
+            fs::create_dir_all(&user_d).unwrap_or_else(|e| panic!("{e}"));
+            fs::write(&user, ECHO_USER_TIER).unwrap_or_else(|e| panic!("{e}"));
+            // user.d outranks the user tier: the GET serves its secrets, but a save
+            // writes the user tier, which must keep its own and never copy user.d's.
+            fs::write(
+                user_d.join("20-own.toml"),
+                "[portal]\npassword = \"user-d-portal-pw\"\nsecret = \"user-d-cookie-secret\"\n",
+            )
+            .unwrap_or_else(|e| panic!("{e}"));
+            let config = gated_config(&root, user.clone(), true);
+            let edited = get_config(&config).replace("session_ttl = 604800", "session_ttl = 3600");
+            assert!(edited.contains("session_ttl = 3600"), "{edited}");
+            let saved = post_toml(&config, &edited);
+            assert_eq!(
+                saved.status_code,
+                200,
+                "{}",
+                String::from_utf8_lossy(&saved.body)
+            );
+            let text = fs::read_to_string(&user).unwrap_or_else(|e| panic!("{e}"));
+            for foreign in [
+                "user-d-portal-pw",
+                "user-d-cookie-secret",
+                "host-tier-cookie-secret",
+                REDACTED,
+            ] {
+                assert!(
+                    !text.contains(foreign),
+                    "{foreign} reached the user tier: {text}"
+                );
+            }
+            let tier: toml::Value = text.parse().unwrap_or_else(|e| panic!("{e}: {text}"));
+            assert_eq!(tier["portal"]["session_ttl"].as_integer(), Some(3600));
+            assert_eq!(
+                tier["portal"]["password"].as_str(),
+                Some("user-tier-portal-pw"),
+                "{text}"
+            );
+            let live = mios_resolver::resolve_merged(Some(root.as_path()), false)
+                .unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(
+                live["portal"]["password"].as_str(),
+                Some("user-d-portal-pw")
+            );
+            assert_eq!(
+                live["portal"]["secret"].as_str(),
+                Some("user-d-cookie-secret")
+            );
         }
 
         #[test]
