@@ -579,6 +579,25 @@ class tpb_TestRustLookups(unittest.TestCase):
         src = 'ports_tab.get("devpod_agent");\nlet Some(ports_tab) = doc.get("ports");\n'
         self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
 
+    def test_a_lookup_only_in_a_comment_binds_nothing(self):
+        # NEGATIVE: a commented-out read is not a consumer, whatever the comment form.
+        line = "".join("// " + l + "\n" for l in self.BOUND.splitlines())
+        doc = "".join("/// " + l + "\n" for l in self.BOUND.splitlines())
+        for src in (line, doc, "/* " + self.BOUND + " */",
+                    "/* outer /* nested */ " + self.BOUND + " */",
+                    'let x = 1; // merged.get("ports").and_then(|p| p.get("redis"))\n'):
+            self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set(), src)
+
+    def test_code_beside_comments_and_comment_like_literals_still_counts(self):
+        # A "//" or "/*" inside a string, a raw string or a '"' char opens no
+        # comment, and code after a closed block comment is code.
+        src = ('let q = \'"\'; let url = "http://h/*x"; let raw = r#"// "no" comment"#;\n'
+               + self.BOUND)
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), {"devpod_agent"})
+        src = '/* note */ merged.get("ports").and_then(|p| p.get("redis"))\n'
+        self.assertEqual(tpb_mod.pb_rust_port_lookups(src), {"redis"})
+        self.assertEqual(len(tpb_mod.pb_rust_code(src)), len(src), "blanking keeps offsets")
+
     def test_a_lookup_only_in_the_test_module_binds_nothing(self):
         src = 'fn main() {}\n#[cfg(test)]\nmod tests {\n' + self.BOUND + '}\n'
         self.assertEqual(tpb_mod.pb_rust_port_lookups(src), set())
@@ -639,6 +658,8 @@ class tpb_TestShippedTree(unittest.TestCase):
         # leave the port bound by nothing, and the gate must then fail.
         moved = rde.replace('.get("ports")', '.get("rde_ports")')
         self.assertNotIn("devpod_agent", tpb_mod.pb_rust_port_lookups(moved))
+        commented = "".join("// " + l + "\n" for l in rde.splitlines())
+        self.assertNotIn("devpod_agent", tpb_mod.pb_rust_port_lookups(commented))
         ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
         self.assertTrue(any("'devpod_agent'" in v for v in tpb_mod.pb_classify(
             self.real, ref - {"devpod_agent"})))

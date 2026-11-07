@@ -633,16 +633,59 @@ def pb__tracked_files(root: str) -> list:
 # by a string literal (`let Some(t) = doc.get("ports")...; t.get("key")`), and
 # a chain that indexes it in the same expression
 # (`.get("ports").and_then(|p| p.get("key"))`). A key read from any other
-# table, or only inside the #[cfg(test)] module, binds nothing.
+# table, only inside the #[cfg(test)] module, or only in a comment binds
+# nothing.
 pb__RS_TABLE = re.compile(
     r"\blet\s+(?:Some\(\s*)?(\w+)\s*\)?\s*=\s*\w+\s*\.get\(\s*\"ports\"\s*\)")
 pb__RS_CHAIN = re.compile(
     r"\.get\(\s*\"ports\"\s*\)\s*\.and_then\(\s*\|(\w+)\|\s*\1\s*"
     r"\.get\(\s*\"([a-z0-9_]+)\"\s*\)")
 
+# One Rust token the comment blanker must step over whole: a line comment, the
+# start of a (nestable) block comment, a raw string, a string, or a char
+# literal -- so a "//" inside a string or a '"' char is not mistaken for one.
+pb__RS_LEX = re.compile(
+    r'(?P<line>//[^\n]*)|(?P<block>/\*)'
+    r'|(?<![A-Za-z0-9_])b?r(?P<hashes>#*)"'
+    r'|"(?:\\.|[^"\\])*"'
+    r"|'(?:\\'|\\[^']+|[^\\'\n])'", re.S)
+pb__RS_BLOCK = re.compile(r"/\*|\*/")
+
+def pb_rust_code(body: str) -> str:
+    """`body` with every Rust comment blanked to spaces, line breaks and length
+    kept; string and char literals are copied unchanged."""
+    out, pos = [], 0
+    while True:
+        m = pb__RS_LEX.search(body, pos)
+        if not m:
+            out.append(body[pos:])
+            return "".join(out)
+        out.append(body[pos:m.start()])
+        end = m.end()
+        if m.group("line") is not None:
+            out.append(" " * (end - m.start()))
+        elif m.group("block") is not None:
+            depth = 1
+            while depth:
+                t = pb__RS_BLOCK.search(body, end)
+                if not t:
+                    end = len(body)
+                    break
+                depth += 1 if t.group() == "/*" else -1
+                end = t.end()
+            out.append(re.sub(r"[^\n]", " ", body[m.start():end]))
+        elif m.group("hashes") is not None:
+            close = body.find('"' + m.group("hashes"), end)
+            end = len(body) if close < 0 else close + 1 + len(m.group("hashes"))
+            out.append(body[m.start():end])
+        else:
+            out.append(m.group(0))
+        pos = end
+
 def pb_rust_port_lookups(body: str) -> set:
-    """[ports] keys a Rust source reads by name outside its test module."""
-    body = body.split("#[cfg(test)]", 1)[0]
+    """[ports] keys a Rust source reads by name outside its test module and
+    outside comments."""
+    body = pb_rust_code(body).split("#[cfg(test)]", 1)[0]
     found = {m.group(2) for m in pb__RS_CHAIN.finditer(body)}
     for m in pb__RS_TABLE.finditer(body):
         lookup = re.compile(r"\b%s\s*\.get\(\s*\"([a-z0-9_]+)\"\s*\)" % re.escape(m.group(1)))
