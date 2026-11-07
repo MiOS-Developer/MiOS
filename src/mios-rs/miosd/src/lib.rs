@@ -1290,7 +1290,7 @@ pub mod server {
 
         let tmp_path = dest.with_extension("toml.tmp");
         let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
+        options.write(true).create(true).truncate(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
