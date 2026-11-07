@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,12 +32,28 @@ class TestNftablesFirewallIsolate(unittest.TestCase):
         self.assertIn("WantedBy=multi-user.target", content)
 
     def test_ruleset_generation_and_policy(self):
-        res = subprocess.run(
-            [_FW_BIN, "--toml", _TOML_PATH, "--check", "--json"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        # A port_key rule resolves through the layered SSOT: pin every layer to
+        # this tree's vendor file and empty host/user layers, so no live /etc
+        # layer is read.
+        with tempfile.TemporaryDirectory(prefix="mios-fw-isolate-") as tmp:
+            empty, frags = os.path.join(tmp, "empty.toml"), os.path.join(tmp, "mios.d")
+            open(empty, "w", encoding="utf-8").close()
+            os.mkdir(frags)
+            env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
+                "HOME": tmp, "XDG_CONFIG_HOME": tmp,
+                "MIOS_VENDOR_TOML": _TOML_PATH, "MIOS_VENDOR_TOML_D": frags,
+                "MIOS_HOST_TOML": empty, "MIOS_HOST_TOML_D": frags,
+                "MIOS_USER_TOML": empty, "MIOS_USER_TOML_D": frags,
+                "MIOS_RESOLVER_NATIVE": "0", "MIOS_DB_AUTHORITATIVE": "0",
+            }
+            res = subprocess.run(
+                [_FW_BIN, "--toml", _TOML_PATH, "--check", "--json"],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+            )
         data = json.loads(res.stdout)
         self.assertEqual(data.get("status"), "valid")
         self.assertEqual(data.get("default_policy"), "drop")

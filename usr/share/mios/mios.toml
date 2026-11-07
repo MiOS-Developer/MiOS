@@ -2384,6 +2384,8 @@ allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
 
 # Declarative nftables container micro-segmentation matrix (task_423)
+# A rule names its port with port_key = "<[ports] key>", which mios-firewall-isolate resolves
+# through the layered SSOT exactly as install.env renders it, or with a literal port.
 [network.firewall.container_matrix]
 default_policy = "drop"
 rules = [
@@ -2391,7 +2393,7 @@ rules = [
     { source = "agent_pipe", destination = "hermes", port = 8720, protocol = "tcp" },
     { source = "agent_pipe", destination = "pgvector", port = 5432, protocol = "tcp" },
     { source = "agent_pipe", destination = "llm_light", port = 8500, protocol = "tcp" },
-    { source = "hermes", destination = "searxng", port = 8800, protocol = "tcp" },
+    { source = "hermes", destination = "searxng", port_key = "searxng", protocol = "tcp" },
     { source = "hermes", destination = "pgvector", port = 5432, protocol = "tcp" },
     { source = "forge_runner", destination = "forge", port = 8400, protocol = "tcp" },
 ]
