@@ -189,8 +189,8 @@ class MonProfiles(Base):
                 ('exe = ["/usr/bin/mios-tamagotchi"]', 'exe = ["sample"]', 'absolute paths'),
                 ('contexts = { terminal = "mon", console = "mon_console" }',
                  'contexts = { terminal = "missing", console = "mon_console" }', 'missing'),
-                ('[keybindings.global.controller.nav.mon_tmux]\\ninherits = "terminal_tmux"',
-                 '[keybindings.global.controller.nav.mon_tmux]\\ninherits = "terminal_plain"', 'inherits'),
+                ('[keybindings.global.controller.nav.mon_tmux]\ninherits = "terminal_tmux"',
+                 '[keybindings.global.controller.nav.mon_tmux]\ninherits = "terminal_plain"', 'inherits'),
             ]:
                 with self.subTest(why=why):
                     self.assertEqual(original.count(old), 1)
