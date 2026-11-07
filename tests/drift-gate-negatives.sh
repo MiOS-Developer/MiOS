@@ -4943,6 +4943,16 @@ test_desktop_launchers() {
     _neg_gate check_desktop_launchers && die "check_desktop_launchers passed despite a drifted rendered launcher"
     cp "$bak" "$f"; rm -f "$bak"
     _neg_gate check_desktop_launchers || die "check_desktop_launchers failed after restoration"
+    # The same gate diffs etc/xdg/mimeapps.list ([desktop.default_applications]): a hand edit
+    # that makes Zen the https default must read as drift.
+    local m="${ROOT}/etc/xdg/mimeapps.list"
+    [ -f "$m" ] || die "etc/xdg/mimeapps.list is not shipped, so the default-browser projection is unguarded"
+    cp "$m" "$bak"
+    sed -i 's|^x-scheme-handler/https=.*|x-scheme-handler/https=app.zen_browser.zen.desktop;|' "$m"
+    cmp -s "$m" "$bak" && die "the mimeapps.list plant changed nothing"
+    _neg_gate check_desktop_launchers && die "check_desktop_launchers passed despite a Zen-default mimeapps.list"
+    cp "$bak" "$m"; rm -f "$bak"
+    _neg_gate check_desktop_launchers || die "check_desktop_launchers failed after restoring mimeapps.list"
     log "check_desktop_launchers negative test passed"
 }
 
