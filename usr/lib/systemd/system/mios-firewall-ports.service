@@ -25,7 +25,7 @@ ConditionPathExists=/usr/bin/firewall-cmd
 Type=oneshot
 RemainAfterExit=yes
 # Ports: 3000=Forge, 3030=OWUI, 8080=code-server, 8642=Hermes-Agent,
-#        8888=SearXNG, 9090=Cockpit, 9119=Hermes-Dashboard,
+#        SearXNG=[ports].searxng, 9090=Cockpit, 9119=Hermes-Dashboard,
 #        11450=LLM-Light, 5432=pgvector, 19090=Cockpit-link, 3053=AdGuard UI, 53=AdGuard DNS.
 # (crawl4ai :11235 removed 2026-05-24: the crawl engine is now a LOOPBACK-only
 #  venv service -- mios-crawl4ai.service binds 127.0.0.1, never LAN-exposed.)
@@ -38,7 +38,7 @@ ExecStart=/bin/bash -c '\
         "8200" \
         "8900" \
         "8720" \
-        "8800" \
+        "${MIOS_PORTS_SEARXNG}" \
         "8110" \
         "8210" \
         "8500" \

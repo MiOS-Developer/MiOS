@@ -120,10 +120,36 @@ def _native_resolver_json():
     return None
 
 _LOAD_MERGED_CACHE = None
+_RESOLVED_EXPORTS_CACHE = None
 
 def clear_cache():
-    global _LOAD_MERGED_CACHE
+    global _LOAD_MERGED_CACHE, _RESOLVED_EXPORTS_CACHE
     _LOAD_MERGED_CACHE = None
+    _RESOLVED_EXPORTS_CACHE = None
+
+def resolved_export(name: str) -> str:
+    """One MIOS_* value exactly as the resolver renders it into install.env.
+
+    The layered SSOT (layer_paths(): vendor < host < user, each tier with its
+    mios.d fragments, plus the DB overlay when authoritative), the
+    [ports.categories] derivation, the [ports].stack_id offset, non-empty
+    MIOS_* process inputs (overlay_inputs) and ${MIOS_*} cross-references --
+    the path `python3 mios_toml.py` prints, cached per process beside
+    load_merged() and dropped by clear_cache().
+
+    Raises KeyError when NAME is absent, empty or still names an unresolved
+    ${...}: a consumer fails on a missing setting instead of substituting a
+    literal of its own."""
+    global _RESOLVED_EXPORTS_CACHE
+    if _RESOLVED_EXPORTS_CACHE is None:
+        import copy
+        data = copy.deepcopy(load_merged())
+        overlay_inputs(data)
+        _RESOLVED_EXPORTS_CACHE = emit_exports(data)
+    value = _RESOLVED_EXPORTS_CACHE.get(name, "")
+    if not value or "${" in value:
+        raise KeyError(f"{name} does not resolve from the layered mios.toml SSOT")
+    return value
 
 def derive_ports(merged):
     """Allocate every [ports] value from the [ports.categories] schema, IN PLACE.

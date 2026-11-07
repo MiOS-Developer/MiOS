@@ -2,8 +2,8 @@
 # AI-hint: Configures Open WebUI's web-search feature by updating the webui.db SQLite database to enable search augmentation and point the search engine to the local SearXNG instance on the `searxng` port.
 # AI-related: mios-searxng, mios-owui-apply-system-prompt
 """mios-owui-apply-websearch -- enable Open WebUI's built-in web-search
-augmentation + point it at the local SearXNG (mios-searxng container
-on :8800).
+augmentation + point it at the local SearXNG (the `searxng` port key,
+through [search].endpoint).
 
 OWUI's web-search feature is OFF by default in upstream. When enabled,
 every chat turn can be augmented by retrieving + injecting web results
@@ -25,20 +25,40 @@ from pathlib import Path
 
 DB = Path(os.environ.get("MIOS_OWUI_DB", "/var/lib/mios/open-webui/webui.db"))
 
-SEARXNG_QUERY = os.environ.get(
-    "MIOS_OWUI_SEARXNG_QUERY",
-    "http://host.containers.internal:8800/search?q=<query>",
-)
+_LIB = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
 
-DESIRED = {
-    "enable": True,
-    "engine": "searxng",
-    "searxng_query_url": SEARXNG_QUERY,
-    "result_count": 5,
-    "concurrent_requests": 10,
-    "bypass_embedding_and_retrieval": True,
-    "trust_env": True,
-}
+
+def searxng_query_url() -> str:
+    """The query URL Open WebUI's backend calls.
+
+    mios-open-webui is a member of the host-network mios-ai pod, so it shares
+    the host's loopback with the 127.0.0.1-bound SearXNG listener: localhost is
+    its route. (On a host network host.containers.internal names a non-loopback
+    host address, which a loopback bind refuses.) A non-empty
+    MIOS_OWUI_SEARXNG_QUERY is an explicit override; otherwise the URL derives
+    from the resolved [search].endpoint. No literal stands in for a missing
+    setting (KeyError)."""
+    override = os.environ.get("MIOS_OWUI_SEARXNG_QUERY", "").strip()
+    if override:
+        return override
+    if _LIB not in sys.path:
+        sys.path.insert(0, _LIB)
+    import mios_toml
+    endpoint = mios_toml.resolved_export("MIOS_SEARCH_ENDPOINT")
+    return endpoint.rstrip("/") + "/search?q=<query>"
+
+
+def desired() -> dict:
+    return {
+        "enable": True,
+        "engine": "searxng",
+        "searxng_query_url": searxng_query_url(),
+        "result_count": 5,
+        "concurrent_requests": 10,
+        "bypass_embedding_and_retrieval": True,
+        "trust_env": True,
+    }
 
 
 def _log(msg: str) -> None:
@@ -61,6 +81,11 @@ def main() -> int:
         if not rows:
             _log("config table empty -- OWUI not initialised yet; skipping")
             return 0
+        try:
+            wanted = desired()
+        except KeyError as e:
+            _log(f"SearXNG endpoint unresolved: {e}")
+            return 1
         for cid, blob in rows:
             try:
                 cfg = json.loads(blob) if isinstance(blob, str) else (blob or {})
@@ -69,7 +94,7 @@ def main() -> int:
                 continue
             search = cfg.setdefault("rag", {}).setdefault("web", {}).setdefault("search", {})
             applied = []
-            for k, v in DESIRED.items():
+            for k, v in wanted.items():
                 if search.get(k) != v:
                     search[k] = v
                     applied.append(f"{k}={v}")
