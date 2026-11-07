@@ -17,8 +17,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 89 |
-| completed | 1891 |
+| in_progress | 88 |
+| completed | 1892 |
 | incomplete | 19 |
 | cancelled | 21 |
 | total | 3768 |
@@ -2673,7 +2673,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3768` Expose camera-independent room surface metadata for voxel texture tracking -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3768` Expose camera-independent room surface metadata for voxel texture tracking -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## WS-NAME
 
