@@ -5004,6 +5004,19 @@ app_query_timeout_ms = 150          # a failed/late query restores the ordinary 
 # tmux servers (-L names) whose clients select a *_tmux profile; the verbs reach exactly that client and server.
 tmux_sockets = ["mios-human", "mios-nested"]
 
+
+# task3773: a deliberate short out-and-return RIGHT-stick gesture is the only way to move
+# window/pane focus (tmux:focus on tmux profiles, hypr:movefocus on plain desktop terminals).
+# Magnitudes are fractions of full post-deadzone travel (the flick_on scale); times are ms.
+# Absent table = legacy magnitude flicks. All seven fields are required together.
+[keybindings.global.controller.nav.focus_gesture]
+neutral_pct = 0.15   # below this counts as neutral
+neutral_ms = 80      # continuous neutral dwell before a gesture may start
+rise_pct = 0.9       # peak the gesture must reach
+rise_ms = 120        # neutral -> peak window
+direction_deg = 20   # cone around a cardinal axis
+return_ms = 250      # peak -> back-at-neutral window
+cooldown_ms = 400    # after one focus fires, before the next gesture may arm
 # Context -> profile. A table merges per key, so a higher tier changes one context without restating the rest.
 # "vpad" forwards the pad to the virtual gamepad instead (the behaviour before nav; operator decision O-1).
 # Every uncaptured window navigates alike: a game or VM class decides nothing about the controller (North captures).
