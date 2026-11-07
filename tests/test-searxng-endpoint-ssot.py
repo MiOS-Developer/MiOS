@@ -40,6 +40,13 @@ recording stubs. The default-path assertions run them as shipped: no
 preload, no injected environment. mios-common.ps1's reader ends its candidates with
 /usr/share/mios/mios.toml, so where that exists the harness runs in a private
 user+mount namespace with the directory hidden.
+
+Their entry points also run whole, as shipped: each helper is invoked by its
+own path in such a tree, with elevation answered by stub types for the
+WindowsPrincipal / WindowsIdentity / WindowsBuiltInRole literals and every
+Windows side effect (netsh, the firewall and service cmdlets, Start-Process,
+tailscale.exe, wsl.exe) a recording stub, so parameter binding and the
+StrictMode preamble are proven here and nothing on this host is touched.
 """
 from __future__ import annotations
 
@@ -74,6 +81,17 @@ WIN_HELPERS = {
     "setup": "usr/libexec/mios/Setup-MiOSLanPortProxy.ps1",
     "heal": "usr/libexec/mios/Heal-MiOSLocalhostForwarding.ps1",
     "tailscale": "usr/share/mios/windows/mios-tailscale-serve.ps1",
+}
+# Every Windows entry point the lane touched, by repo path, with the
+# parameters it declares first as (name, type, default); [] declares none,
+# None too many to pin here (its AST and the binder must still agree).
+WIN_ENTRIES = {
+    "setup": (WIN_HELPERS["setup"], [("AiNode", "SwitchParameter", None)]),
+    "setup-shim": ("usr/share/mios/windows/Setup-MiOSLanPortProxy.ps1", []),
+    "heal": (WIN_HELPERS["heal"], []),
+    "tailscale": (WIN_HELPERS["tailscale"], [("Method", "String", "'tcp'"), ("DryRun", "SwitchParameter", None),
+                                            ("Off", "SwitchParameter", None)]),
+    "build-mios": ("build-mios.ps1", None),
 }
 _COMMON_PS1 = "installation/mios-common.ps1"
 _REQUIRE_TOOLS = os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS") == "1"
@@ -568,6 +586,163 @@ def windows_helper(test: unittest.TestCase, mode: str, vendor: str | None = None
     test.assertEqual(0, r.returncode, r.stdout + r.stderr)
     out = json.loads(r.stdout.strip().splitlines()[-1])
     out["map"] = [tuple(x) for x in out["map"]]
+    return out
+
+
+# Each entry point's parse: its param block (offset and declared parameters),
+# every call to a command named `param` (what a param() after any statement
+# parses as), the top-level Set-StrictMode offsets, and the binder's view
+# (Get-Command .Parameters, which reads the file and runs none of it).
+_PS_ENTRY_AST = r"""
+param([string]$Srcs)
+$ErrorActionPreference = 'Stop'
+$common = [System.Management.Automation.PSCmdlet]::CommonParameters + [System.Management.Automation.PSCmdlet]::OptionalCommonParameters
+$out = [ordered]@{}
+foreach ($src in @($Srcs | ConvertFrom-Json)) {
+    $errs = $null; $toks = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($src, [ref]$toks, [ref]$errs)
+    $calls = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'param' }, $true))
+    $strict = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Set-StrictMode' }, $false))
+    $pb = $null
+    if ($ast.ParamBlock) {
+        $pb = [ordered]@{ offset = $ast.ParamBlock.Extent.StartOffset; params = @($ast.ParamBlock.Parameters | ForEach-Object {
+            [ordered]@{ name = $_.Name.VariablePath.UserPath; type = $_.StaticType.Name
+                        default = $(if ($_.DefaultValue) { $_.DefaultValue.Extent.Text } else { $null }) } }) }
+    }
+    $binder = @((Get-Command -Name $src).Parameters.Values | Where-Object { $common -notcontains $_.Name } |
+        ForEach-Object { ,@($_.Name, $_.ParameterType.Name) })
+    $out[$src] = [ordered]@{ errors = @($errs | ForEach-Object Message); param_block = $pb
+        param_calls = @($calls | ForEach-Object { $_.Extent.StartLineNumber })
+        strict = @($strict | ForEach-Object { $_.Extent.StartOffset }); binder = $binder }
+}
+$out | ConvertTo-Json -Depth 8 -Compress
+"""
+
+
+def windows_entry_ast(test: unittest.TestCase) -> dict[str, dict]:
+    """The parse of every WIN_ENTRIES file, by entry name, in one pwsh run."""
+    pwsh = test.need(tool("pwsh"), "pwsh")
+    tmp = tempfile.mkdtemp(prefix="mios-searxng-ast-")
+    test.addCleanup(shutil.rmtree, tmp, True)
+    script = os.path.join(tmp, "ast.ps1")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(_PS_ENTRY_AST)
+    paths = {name: os.path.join(_ROOT, rel) for name, (rel, _want) in WIN_ENTRIES.items()}
+    r = run([pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-Srcs", json.dumps(list(paths.values()))],
+            {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": tmp}, cwd=tmp)
+    test.assertEqual(0, r.returncode, r.stdout + r.stderr)
+    got = json.loads(r.stdout.strip().splitlines()[-1])
+    return {name: got[path] for name, path in paths.items()}
+
+
+# One helper's whole entry point, invoked by its own path with -Params bound
+# by name. Elevation is answered by stub types: the helpers' WindowsPrincipal /
+# WindowsIdentity / WindowsBuiltInRole literals resolve through these type
+# accelerators, so IsInRole says what -Admin says, on any host. Start-Process,
+# netsh, the firewall and service cmdlets, Get-NetIPAddress (a LAN address, as
+# on a host with one) and Invoke-WebRequest are recording functions; the
+# external tailscale.exe and wsl.exe are the PATH stubs below.
+_PS_ENTRY = r"""
+param([string]$Helper, [string]$Params, [string]$Admin)
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+namespace MiosEntryStub {
+    public enum Role { Administrator }
+    public sealed class Identity { public static Identity GetCurrent() { return new Identity(); } }
+    public sealed class Principal {
+        public static bool Admin;
+        public Principal(Identity identity) {}
+        public bool IsInRole(Role role) { return Admin; }
+    }
+}
+'@
+[MiosEntryStub.Principal]::Admin = ($Admin -eq '1')
+$acc = [psobject].Assembly.GetType('System.Management.Automation.TypeAccelerators')
+$acc::Add('Security.Principal.WindowsPrincipal', [MiosEntryStub.Principal])
+$acc::Add('Security.Principal.WindowsIdentity', [MiosEntryStub.Identity])
+$acc::Add('Security.Principal.WindowsBuiltInRole', [MiosEntryStub.Role])
+$global:calls = [System.Collections.Generic.List[string]]::new()
+$global:hosts = [System.Collections.Generic.List[string]]::new()
+$global:warnings = [System.Collections.Generic.List[string]]::new()
+function global:Rec([string]$Name, [object[]]$A) {
+    $global:calls.Add((@($Name) + @($A | ForEach-Object { if ($_ -is [array]) { $_ -join ',' } else { [string]$_ } })) -join ' ')
+}
+foreach ($n in 'Start-Process', 'Get-NetFirewallRule', 'New-NetFirewallRule', 'Set-NetFirewallRule', 'Remove-NetFirewallRule',
+               'Get-NetFirewallPortFilter', 'Set-NetFirewallPortFilter', 'Set-Service', 'Start-Service') {
+    Set-Item "function:global:$n" ([scriptblock]::Create("Rec '$n' `$args"))
+}
+function global:netsh { Rec 'netsh' $args; $global:LASTEXITCODE = 0 }
+function global:Get-Service { Rec 'Get-Service' $args; [pscustomobject]@{ Status = 'Running' } }
+function global:Get-NetIPAddress { Rec 'Get-NetIPAddress' $args; [pscustomobject]@{ IPAddress = '192.168.0.10'; InterfaceAlias = 'Ethernet' } }
+function global:Invoke-WebRequest { Rec 'Invoke-WebRequest' $args; [pscustomobject]@{ StatusCode = 200 } }
+function global:Write-Host { param([Parameter(Position = 0)]$Object, $ForegroundColor, [switch]$NoNewline) $global:hosts.Add([string]$Object) }
+function global:Write-Warning { param([Parameter(Position = 0)][string]$Message) $global:warnings.Add($Message) }
+$bind = @{}
+foreach ($p in @(($Params | ConvertFrom-Json).PSObject.Properties)) { $bind[$p.Name] = $p.Value }
+$err = ''; $line = 0; $file = ''
+try { & $Helper @bind } catch { $err = [string]$_; $line = $_.InvocationInfo.ScriptLineNumber; $file = [string]$_.InvocationInfo.ScriptName }
+[ordered]@{ calls = @($global:calls); hosts = @($global:hosts); warnings = @($global:warnings)
+    err = $err; line = $line; file = $file } | ConvertTo-Json -Depth 4 -Compress
+"""
+
+# tailscale.exe and wsl.exe (and netsh / pwsh.exe, should a shadow ever be
+# bypassed) log every call. wsl.exe reports only port 1 bound in the VM, so
+# tailscale-serve's Test-Port turns every service down without one TCP probe
+# of this host.
+_ENTRY_STUB = r"""#!/bin/sh
+n=${0##*/}
+printf '%s %s\n' "$n" "$*" >> "$MIOS_ENTRY_LOG"
+case "$n $*" in
+  "tailscale.exe status --json") echo '{"Self":{"DNSName":"node.example.invalid."}}' ;;
+  "tailscale.exe status") echo '100.64.0.1 node user linux -' ;;
+  wsl.exe*) echo 'LISTEN 0 4096 0.0.0.0:1 0.0.0.0:*' ;;
+esac
+exit 0
+"""
+_ENTRY_TREE = (*WIN_HELPERS.values(), WIN_ENTRIES["setup-shim"][0], _COMMON_PS1)
+
+
+def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None, admin: bool = False) -> dict:
+    """`rel` run whole as shipped: invoked by its own path in a scratch tree
+    shaped like the repo (every Windows helper, the Setup shim,
+    installation/mios-common.ps1 and the vendor SSOT at their repo paths),
+    `params` bound by name, elevation answering `admin`. Returns the recorded
+    calls, console and warning lines, what the PATH stubs saw (`external`),
+    and the error that ended the run, if any, with its file and line."""
+    pwsh = test.need(tool("pwsh"), "pwsh")
+    tmp = tempfile.mkdtemp(prefix="mios-searxng-entry-")
+    test.addCleanup(shutil.rmtree, tmp, True)
+    tree = os.path.join(tmp, "tree")
+    for path in _ENTRY_TREE:
+        os.makedirs(os.path.join(tree, os.path.dirname(path)), exist_ok=True)
+        shutil.copyfile(os.path.join(_ROOT, path), os.path.join(tree, path))
+    with open(os.path.join(tree, "usr", "share", "mios", "mios.toml"), "w", encoding="utf-8") as fh:
+        fh.write(_vendor_text())
+    stubs = os.path.join(tmp, "bin")
+    os.makedirs(stubs)
+    for name in ("tailscale.exe", "wsl.exe", "netsh", "netsh.exe", "pwsh.exe"):
+        with open(os.path.join(stubs, name), "w", encoding="utf-8") as fh:
+            fh.write(_ENTRY_STUB)
+        os.chmod(os.path.join(stubs, name), 0o755)
+    log = os.path.join(tmp, "external.log")
+    open(log, "w", encoding="utf-8").close()
+    home = os.path.join(tmp, "home")
+    os.makedirs(os.path.join(home, ".config", "mios"))
+    script = os.path.join(tmp, "entry.ps1")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(_PS_ENTRY)
+    env = {"PATH": stubs + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
+           "HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+           "MIOS_NO_COLOR": "1", "MIOS_ENTRY_LOG": log}
+    helper = os.path.join(tree, rel)
+    cmd = [pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-Helper", helper,
+           "-Params", json.dumps(params or {}), "-Admin", "1" if admin else "0"]
+    r = run(_hermetic(cmd, test), env, cwd=tmp, stdin=subprocess.DEVNULL)
+    test.assertEqual(0, r.returncode, r.stdout + r.stderr)
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    with open(log, encoding="utf-8") as fh:
+        out["external"] = fh.read().splitlines()
+    out["helper"], out["tree"] = helper, tree
     return out
 
 
@@ -1168,6 +1343,125 @@ class TestDefaultConsumers(Base):
         # Each port map reads the key through Get-MiosSsotPort, never a literal.
         self.assertEqual(3, ps.count("Get-MiosSsotPort -Key 'searxng'"))
         self.assertIn("$_port = Get-MiosSsotPort -Key $_w.Key", ps)
+
+
+class TestWindowsEntryPoints(Base):
+    """Every Windows entry point the lane touched enters parameter binding as
+    shipped. A param() that follows any statement is no param block but a
+    call to a command named `param`: under Set-StrictMode its unset variable
+    throws before a line of the helper runs (Setup's did, at line 8), and
+    without StrictMode the call itself fails."""
+
+    P = DEFAULT_LISTENER
+    RELAUNCH = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+
+    def relaunch(self, got: dict) -> list[str]:
+        """The argv a helper that is not elevated hands its UAC re-launch;
+        that re-launch is all it does."""
+        self.assertEqual("", got["err"], got)
+        self.assertEqual(1, len(got["calls"]), got["calls"])
+        m = re.fullmatch(r"Start-Process -FilePath pwsh\.exe -ArgumentList (.+) -Verb RunAs", got["calls"][0])
+        self.assertIsNotNone(m, got["calls"][0])
+        self.assertEqual([], got["external"])
+        return m.group(1).split(",")
+
+    def ran_to_the_key_wait(self, got: dict) -> None:
+        """Elevated, the body runs to its closing key wait, which a redirected
+        console cannot serve; no earlier statement may fail."""
+        with open(got["helper"], encoding="utf-8") as fh:
+            waits = [i + 1 for i, ln in enumerate(fh.read().splitlines()) if "ReadKey" in ln]
+        self.assertEqual(1, len(waits), got["helper"])
+        self.assertEqual((got["helper"], waits[0]), (got["file"], got["line"]), got["err"])
+        self.assertIn("ReadKey", got["err"])
+        self.assertEqual([], [c for c in got["calls"] if c.startswith("Start-Process")])
+        self.assertEqual([], got["external"])
+
+    def test_param_blocks_come_first(self):
+        parsed = windows_entry_ast(self)
+        for name, (rel, want) in WIN_ENTRIES.items():
+            with self.subTest(entry=rel):
+                got = parsed[name]
+                self.assertEqual([], got["errors"])
+                self.assertEqual([], got["param_calls"], "a param() after a statement is a call, not a param block")
+                pb = got["param_block"]
+                if want == []:
+                    self.assertIsNone(pb)
+                    self.assertEqual([], got["binder"])
+                    continue
+                self.assertIsNotNone(pb)
+                declared = [(p["name"], p["type"], p["default"]) for p in pb["params"]]
+                self.assertTrue(declared)
+                if want is not None:
+                    self.assertEqual(want, declared)
+                self.assertEqual(sorted((n, t) for n, t, _d in declared), sorted(tuple(x) for x in got["binder"]))
+                self.assertEqual([], [s for s in got["strict"] if s < pb["offset"]])
+        # Setup in particular declares -AiNode before it turns StrictMode on.
+        setup = parsed["setup"]
+        self.assertTrue(setup["strict"])
+        self.assertLess(setup["param_block"]["offset"], min(setup["strict"]))
+
+    def test_setup_binds_and_runs_as_shipped(self):
+        rel = WIN_ENTRIES["setup"][0]
+        # Not elevated, it re-launches itself, carrying -AiNode exactly when bound.
+        for params in ({"AiNode": True}, {}):
+            with self.subTest(elevated=False, **params):
+                got = windows_entry(self, rel, params)
+                self.assertEqual([*self.RELAUNCH, got["helper"], *(["-AiNode"] if params else [])],
+                                 self.relaunch(got))
+        # The shim hands -AiNode to the canonical helper it ships beside.
+        got = windows_entry(self, WIN_ENTRIES["setup-shim"][0])
+        self.assertEqual([*self.RELAUNCH, os.path.join(got["tree"], rel), "-AiNode"], self.relaunch(got))
+        # Elevated, the whole body runs under StrictMode: every mapped port is
+        # forwarded and opened, -AiNode adds the tailnet bridge, and SearXNG
+        # is named, never forwarded.
+        ports = [port for _name, port in windows_helper(self, "setup")["map"]]
+        self.assertTrue(ports)
+        self.assertNotIn(self.P, ports)
+        for params in ({"AiNode": True}, {}):
+            with self.subTest(elevated=True, **params):
+                got = windows_entry(self, rel, params, admin=True)
+                self.ran_to_the_key_wait(got)
+                calls = "\n".join(got["calls"])
+                self.assertEqual(ports, [int(p) for p in re.findall(
+                    r"^netsh interface portproxy add v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+) ", calls, re.M)])
+                self.assertEqual(ports, [int(p) for p in re.findall(
+                    r"^New-NetFirewallRule -DisplayName MiOS - \S+ \((\d+)/tcp\) ", calls, re.M)])
+                self.assertEqual(bool(params), "netsh interface portproxy add v4tov6 " in calls)
+                self.assertEqual([None], unsupported_notes(got))
+                self.assertEqual([], [c for c in got["calls"] if re.search(rf"searx|\b{self.P}\b", c, re.I)])
+                self.assertEqual([], got["warnings"])
+
+    def test_heal_and_tailscale_enter_as_shipped(self):
+        rel = WIN_ENTRIES["heal"][0]
+        got = windows_entry(self, rel)
+        self.assertEqual([*self.RELAUNCH, got["helper"]], self.relaunch(got))
+        # Elevated, Heal removes and probes the stale 0.0.0.0:<searxng> entry.
+        got = windows_entry(self, rel, admin=True)
+        self.ran_to_the_key_wait(got)
+        calls = "\n".join(got["calls"])
+        self.assertIn(self.P, [int(p) for p in re.findall(
+            r"^netsh interface portproxy delete v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+)$", calls, re.M)])
+        self.assertIn(f"Invoke-WebRequest -Uri http://localhost:{self.P}/ ", calls)
+        self.assertEqual([], got["warnings"])
+        # tailscale-serve: -DryRun binds and holds every change back; unbound,
+        # the reset reaches tailscale.exe; a -Method outside its set never
+        # gets past binding.
+        rel = WIN_ENTRIES["tailscale"][0]
+        dry = windows_entry(self, rel, {"DryRun": True})
+        self.assertEqual("", dry["err"], dry)
+        self.assertEqual([self.P], unsupported_notes(dry))
+        self.assertEqual(["tailscale.exe serve status"],
+                         [x for x in dry["external"] if x.startswith("tailscale.exe serve")])
+        live = windows_entry(self, rel)
+        self.assertEqual("", live["err"], live)
+        self.assertIn("tailscale.exe serve reset", live["external"])
+        bad = windows_entry(self, rel, {"Method": "bogus"})
+        self.assertRegex(bad["err"], r"parameter 'Method'.*ValidateSet")
+        self.assertEqual([], bad["external"])
+        for got in (dry, live, bad):
+            self.assertEqual([], got["calls"])
+            self.assertEqual([], [x for x in got["external"] if "--bg" in x
+                                  or not x.startswith(("tailscale.exe ", "wsl.exe "))])
 
 
 class TestLayeredOverrides(Base):
