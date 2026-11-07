@@ -1151,7 +1151,7 @@ pub mod server {
     pub fn validate_portal_save(body: &str, config: &ConfigServerConfig) -> Vec<String> {
         let posted = match body.parse::<toml::Value>() {
             Ok(v) => v,
-            Err(_) => return vec![INVALID_POSTED_TOML.to_string()],
+            Err(error) => return vec![format!("Invalid TOML: {error}")],
         };
         let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false).ok();
         let mut errors = Vec::new();
