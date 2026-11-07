@@ -11,15 +11,16 @@ there is no port mapping and no internal key. These controls hold that:
   layer merge beats a flat [ports] value, and [ports].stack_id offsets it;
 * every default consumer (the Quadlet listener and labels, the bake-rendered
   units, the install.env exports, the gateway agent, mios-web-search, the
-  portal port injection, the Open WebUI applier, mios-show-image, mios-launch
-  and mios-apps) carries the resolved value, and only host-context clients
+  portal port injection, the Open WebUI applier, mios-show-image, mios-launch,
+  mios-apps, the container-matrix firewall rule and the Windows bootstrap
+  build-mios.ps1) carries the resolved value, and only host-context clients
   address it as localhost;
 * layered overrides move every derived default, a non-empty higher-layer
   endpoint survives verbatim, and an empty one does not override;
 * a missing setting fails by name instead of falling back;
-* plants for the retired key, port fallbacks, stale container hostnames and
-  the false "host maps" comment are caught by the same scanner that passes
-  the tree.
+* plants for the retired key, port fallbacks and literals, stale container
+  hostnames and the false "host maps" comment are caught by the same scanner
+  that passes the tree, repo-root files included.
 
 Every resolver run here is hermetic: vendor/host/user layers point into a
 temp dir, MIOS_RESOLVER_NATIVE=0 keeps the Python resolver on this tree, and no
@@ -51,6 +52,8 @@ _LIBEXEC = os.path.join(_ROOT, "usr", "libexec", "mios")
 _UNITS = os.path.join(_ROOT, "usr", "lib", "systemd", "system")
 _QUADLETS = os.path.join(_ROOT, "usr", "share", "containers", "systemd")
 _GATEWAY = os.path.join(_LIB, "gateway-agent", "tool_registry.py")
+_ISOLATE = os.path.join(_LIBEXEC, "mios-firewall-isolate")
+_BUILD_MIOS = os.path.join(_ROOT, "build-mios.ps1")
 _REQUIRE_TOOLS = os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS") == "1"
 _RENDER_BIN_ARG = ""
 
@@ -292,6 +295,68 @@ def show_image(stack: Stack, env_file: str) -> subprocess.CompletedProcess:
     return run(["bash", os.path.join(_LIBEXEC, "mios-show-image"), "probe"], env)
 
 
+def isolate(stack: Stack, **extra) -> tuple[subprocess.CompletedProcess, dict | None]:
+    """mios-firewall-isolate over this stack: the matrix from its vendor layer,
+    every port_key through the same layered resolver."""
+    r = run([sys.executable, _ISOLATE, "--toml", stack.vendor, "--check", "--json"], stack.env(**extra))
+    return r, (json.loads(r.stdout) if r.returncode == 0 else None)
+
+
+def matrix_dport(out: dict) -> list[int]:
+    """The ports the rendered ruleset accepts for hermes -> searxng."""
+    return [int(m) for m in re.findall(r'tcp dport (\d+) accept comment "hermes->searxng"', out["ruleset"])]
+
+
+# build-mios.ps1's own SSOT reader and its LAN firewall step, lifted out by the
+# PowerShell AST and run against a scratch SystemDrive whose vendor layer is
+# this stack's (no GitHub fallback: the vendor file always exists). The
+# Windows firewall cmdlets are recording stubs.
+_PS_HARNESS = r"""
+param([string]$Src)
+$ErrorActionPreference = 'Stop'
+$errs = $null; $toks = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Src, [ref]$toks, [ref]$errs)
+if ($errs.Count) { throw ("build-mios.ps1 does not parse: " + $errs[0].Message) }
+$want = 'Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosSsotPort', 'Set-MiosLanFirewallRules'
+$fns = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $false))
+if ($fns.Count -ne $want.Count) { throw ("expected " + ($want -join ', ') + "; found " + (($fns | ForEach-Object Name) -join ', ')) }
+$script:_MiosTomlCache = @{}
+foreach ($f in $fns) { . ([scriptblock]::Create($f.Extent.Text)) }
+$script:rules = @(); $script:warnings = @()
+function Write-Log { param($T, $L) }
+function Log-Ok { param($T) }
+function Log-Warn { param($T) $script:warnings += $T }
+function Get-NetFirewallRule { param($DisplayName, $ErrorAction) $null }
+function New-NetFirewallRule { param($DisplayName, $Description, $Direction, $Action, $Protocol, $LocalPort, $Profile, $ErrorAction)
+    $script:rules += [pscustomobject]@{ Name = $DisplayName; Port = [int]$LocalPort } }
+$port = Get-MiosSsotPort -Key 'searxng'
+Set-MiosLanFirewallRules
+[pscustomobject]@{ port = $port; rules = @($script:rules); warnings = @($script:warnings) } | ConvertTo-Json -Depth 4 -Compress
+"""
+
+
+def windows_bootstrap(test: unittest.TestCase, vendor: str) -> dict:
+    pwsh = test.need(tool("pwsh"), "pwsh")
+    tmp = tempfile.mkdtemp(prefix="mios-searxng-ps-")
+    test.addCleanup(shutil.rmtree, tmp, True)
+    sysdrive = os.path.join(tmp, "sys")
+    os.makedirs(os.path.join(sysdrive, "usr", "share", "mios"))
+    for d in ("home", "appdata"):
+        os.makedirs(os.path.join(tmp, d))
+    with open(os.path.join(sysdrive, "usr", "share", "mios", "mios.toml"), "w", encoding="utf-8") as fh:
+        fh.write(vendor)
+    script = os.path.join(tmp, "harness.ps1")
+    with open(script, "w", encoding="utf-8") as fh:
+        fh.write(_PS_HARNESS)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
+           "HOME": os.path.join(tmp, "home"), "USERPROFILE": os.path.join(tmp, "home"),
+           "APPDATA": os.path.join(tmp, "appdata"), "SystemDrive": sysdrive,
+           "XDG_CONFIG_HOME": os.path.join(tmp, "home"), "MIOS_AGREEMENT_BANNER": "quiet"}
+    r = run([pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-Src", _BUILD_MIOS], env, cwd=tmp)
+    test.assertEqual(0, r.returncode, r.stdout + r.stderr)
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
 def _snippet(path: str, start: str, end: str, exact_end: bool = False) -> str:
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().splitlines()
@@ -381,6 +446,13 @@ STALE_HOST = re.compile(r"mios-searxng:\d|//mios-searxng\b")
 BRIDGE_ROUTE = re.compile(r"host\.containers\.internal")
 HOST_MAPS = re.compile(r"host maps\s*\d+\s*->\s*\d+", re.I)
 STALE_PORT = re.compile(r"\b(?:8888|8899)\b")
+# A SearXNG port written as a number: `searxng = N` in a port map, or a rule
+# whose `port = N` sits on a SearXNG line. The one exemption is the flat
+# [ports] table of the SSOT itself, the projection test_flat_value_is_the_
+# category_projection holds to the derivation.
+PORT_LITERAL = re.compile(r"""\b(?:searxng|port)["']?\s*=\s*\d{2,5}\b""")
+FLAT_PROJECTION = ("usr/share/mios/mios.toml", "ports")
+_TOML_HEADER = re.compile(r"^\s*\[\[?\s*([^\[\]]+?)\s*\]\]?\s*(?:#.*)?$")
 _SEARX_LINE = re.compile(r"searx", re.I)
 
 SCAN_PREFIXES = (
@@ -390,6 +462,11 @@ SCAN_PREFIXES = (
     "usr/share/doc/mios/manual/ch25-local-search-engine-and-searxng.md",
     "etc/", "automation/", "tools/", "src/",
 )
+# Every tracked repo-root file is scanned too (build-mios.ps1, Get-MiOS.ps1,
+# Containerfile, Justfile, ...), except these, which hold no consumer.
+NOT_CONSUMERS = {
+    "tasks.jsonl": "the task ledger: history that quotes retired endpoints on purpose; nothing reads one from it",
+}
 # Projections `mios-gen sync` rewrites from the SSOT; Law 8's regenerate-and-
 # diff gates own them, and they lag a source change until the next sync.
 REGENERATED = frozenset({
@@ -399,22 +476,28 @@ REGENERATED = frozenset({
 _TEST_PATH = re.compile(r"(^|/)tests?/|(^|/)test[_-][^/]*$|_test\.rs$")
 
 # Shrink-only: consumers this ruling did not convert, each with the exact text
-# that still reproduces. A fixed entry fails as loudly as a new violation.
+# that still reproduces, a follow-up id and the reason. A fixed entry fails as
+# loudly as a new violation.
 FOLLOW_UP = {
     ("usr/libexec/mios/Setup-MiOSLanPortProxy.ps1", "_MiosPort 'MIOS_PORTS_SEARXNG'"):
-        "Windows LAN portproxy: env -> literal helper shared by every forwarded port",
+        ("searxng-fu-1", "Windows LAN portproxy: env -> literal helper shared by every forwarded port"),
     ("usr/libexec/mios/Heal-MiOSLocalhostForwarding.ps1", "Key = 'searxng'; Default = 8800"):
-        "Windows localhost forwarding: Get-MiosSsotValue default held by check_ps_port_fallback_ssot",
+        ("searxng-fu-2", "Windows localhost forwarding: Get-MiosSsotValue default held by check_ps_port_fallback_ssot"),
     ("usr/share/mios/windows/mios-tailscale-serve.ps1",
      "Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng' 8800"):
-        "Windows tailscale serve: env -> Get-MiosSsotValue -> literal, shared by every served port",
+        ("searxng-fu-3", "Windows tailscale serve: env -> Get-MiosSsotValue -> literal, shared by every served port"),
 }
+_FOLLOW_UP_ID = re.compile(r"^searxng-fu-\d+$")
 
 
 def scan_text(path: str, text: str) -> list[tuple[str, int, str, str]]:
     """(path, line, rule, text) for every stale SearXNG endpoint claim."""
     found = []
+    section = ""
+    toml = path.endswith(".toml")
     for n, line in enumerate(text.splitlines(), 1):
+        if toml and (header := _TOML_HEADER.match(line)):
+            section = header.group(1)
         rules = []
         if RETIRED_KEY.search(line):
             rules.append("retired-key")
@@ -429,6 +512,8 @@ def scan_text(path: str, text: str) -> list[tuple[str, int, str, str]]:
                 rules.append("host-maps")
             if STALE_PORT.search(line):
                 rules.append("retired-port")
+            if PORT_LITERAL.search(line) and (path, section) != FLAT_PROJECTION:
+                rules.append("port-literal")
         found.extend((path, n, rule, line.strip()) for rule in rules)
     return found
 
@@ -441,7 +526,8 @@ def scanned_paths(root: str) -> list[str]:
     for rel in r.stdout.decode().split("\0"):
         if not rel or rel in REGENERATED or _TEST_PATH.search(rel):
             continue
-        if any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in SCAN_PREFIXES):
+        if ("/" not in rel and rel not in NOT_CONSUMERS) or any(
+                rel == p or (p.endswith("/") and rel.startswith(p)) for p in SCAN_PREFIXES):
             out.append(rel)
     return out
 
@@ -681,6 +767,43 @@ class TestDefaultConsumers(Base):
         self.assertEqual("searxng", entry["port_key"])
         self.assertNotRegex(entry["ai_hint"], r"\b\d{4,5}\b")
 
+    def test_container_matrix_firewall(self):
+        # The rule's destination is the host-netns listener above, so its port
+        # is the listener's: the matrix names the key, never a number.
+        rows = [r for r in _vendor()["network"]["firewall"]["container_matrix"]["rules"]
+                if r.get("destination") == "searxng"]
+        self.assertEqual([{"source": "hermes", "destination": "searxng", "port_key": "searxng",
+                           "protocol": "tcp"}], rows)
+        r, out = isolate(self.stack())
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual([self.P], matrix_dport(out))
+        self.assertEqual([self.P], [x["port"] for x in out["rules"] if x["destination"] == "searxng"])
+
+    def test_windows_bootstrap(self):
+        # build-mios.ps1's layered reader, and the Windows LAN rule it opens
+        # for the Windows host's own localhost/LAN clients.
+        got = windows_bootstrap(self, _vendor_text())
+        self.assertEqual(self.P, got["port"])
+        self.assertIn({"Name": f"MiOS - searxng ({self.P}/tcp)", "Port": self.P}, got["rules"])
+        self.assertEqual([], [w for w in got["warnings"] if "searxng" in w])
+
+    def test_dev_vm_overlay_adds_no_listener(self):
+        with open(_BUILD_MIOS, encoding="utf-8") as fh:
+            ps = fh.read()
+        # One listener: no drop-in re-binds mios-searxng (a member of the
+        # Network=host mios-webtools pod), and a stale one is removed.
+        self.assertNotRegex(ps, r"GRANIAN_(?:HOST|PORT)=|BIND_ADDRESS=")
+        loop = ps.split("for svc_pair in \\\n", 1)[1].split("; do\n", 1)[0]
+        self.assertNotIn("mios-searxng", loop)
+        self.assertIn("rm -f /etc/containers/systemd/mios-searxng.container.d/"
+                      "10-mios-dev-host-network.conf", ps)
+        # Hermes reaches SearXNG through SEARXNG_URL, not a local override.
+        local = ps.split("<<'CFGLOCAL'\n", 1)[1].split("\nCFGLOCAL\n", 1)[0]
+        self.assertNotRegex(local, r"(?m)^\s*(?:tools|web_search):")
+        # Each port map reads the key through Get-MiosSsotPort, never a literal.
+        self.assertEqual(3, ps.count("Get-MiosSsotPort -Key 'searxng'"))
+        self.assertIn("$_port = Get-MiosSsotPort -Key $_w.Key", ps)
+
 
 class TestLayeredOverrides(Base):
     """A layer moves every derived default; explicit endpoints survive."""
@@ -731,6 +854,20 @@ class TestLayeredOverrides(Base):
                                  got["hermes-worker.service"], binary)
                 self.assertEqual(f'"{want}" \\', got["mios-firewall-ports.service"].strip(), binary)
 
+    def test_the_firewall_matrix_follows_the_resolved_port(self):
+        cases = (
+            ("[ports.categories.webtools]\nbase = 18830\n", 18830),
+            ("[ports]\nsearxng = 18831\n", DEFAULT_LISTENER),
+            ("[ports]\nstack_id = 1\n", derived_searxng(_vendor(), stack_id=1)),
+        )
+        for i, (host, want) in enumerate(cases):
+            with self.subTest(host=host):
+                s = self.stack(f"f{i}", host=host)
+                self.assertEqual(str(want), resolved(s)["MIOS_PORTS_SEARXNG"])
+                r, out = isolate(s)
+                self.assertEqual(0, r.returncode, r.stderr)
+                self.assertEqual([want], matrix_dport(out))
+
     def test_explicit_endpoints_survive_verbatim(self):
         user = ('[gateway]\nsearxng_url = "http://search.example.internal:9443"\n'
                 '[urls]\nsearxng = "http://search.example.internal:9444"\n'
@@ -766,7 +903,8 @@ class TestMissingSettings(Base):
 
     def setUp(self):
         super().setUp()
-        self.s = self.stack(vendor=without_searxng(_vendor_text()))
+        self.s_vendor = without_searxng(_vendor_text())
+        self.s = self.stack(vendor=self.s_vendor)
 
     def test_resolver(self):
         self.assertEqual({n: None for n in RESOLVED_NAMES}, resolved(self.s))
@@ -816,6 +954,20 @@ class TestMissingSettings(Base):
         self.assertEqual(78, r.returncode, r.stdout + r.stderr)
         self.assertIn("MIOS_URLS_SEARXNG is unresolved", r.stderr)
 
+    def test_firewall_matrix(self):
+        r, _ = isolate(self.s)
+        self.assertEqual(78, r.returncode, r.stdout + r.stderr)
+        self.assertEqual("", r.stdout)
+        self.assertIn("rule hermes->searxng: port_key 'searxng'", r.stderr)
+        self.assertIn("MIOS_PORTS_SEARXNG does not resolve", r.stderr)
+
+    def test_windows_bootstrap(self):
+        got = windows_bootstrap(self, self.s_vendor)
+        self.assertIsNone(got["port"])
+        self.assertEqual([], [x for x in got["rules"] if "searxng" in x["Name"]])
+        self.assertTrue(any("[ports].searxng does not resolve" in w for w in got["warnings"]),
+                        got["warnings"])
+
 
 class TestScanner(Base):
     """The tree is clean; planted regressions are caught."""
@@ -823,10 +975,10 @@ class TestScanner(Base):
     def test_the_tree_carries_no_stale_endpoint(self):
         found = scan_tree(_ROOT)
         self.assertEqual([], unregistered(found))
-        for (path, needle), why in FOLLOW_UP.items():
+        for (path, needle), (fu, why) in FOLLOW_UP.items():
             with self.subTest(path=path):
                 self.assertTrue(any(f[0] == path and needle in f[3] for f in found),
-                                f"{path} no longer reproduces ({why}) -- drop it from FOLLOW_UP")
+                                f"{path} no longer reproduces ({fu}: {why}) -- drop it from FOLLOW_UP")
 
     def test_the_scan_covers_every_consumer(self):
         paths = set(scanned_paths(_ROOT))
@@ -838,8 +990,16 @@ class TestScanner(Base):
                     "usr/lib/systemd/system/mios-firewall-ports.service",
                     "usr/share/containers/systemd/mios-searxng.container",
                     "usr/share/mios/searxng/settings.yml", "usr/share/mios/hermes/config.yaml",
-                    "automation/72-hermes-agent.sh", "src/mios-rs/miosd/src/drift/ports.rs"):
+                    "automation/72-hermes-agent.sh", "src/mios-rs/miosd/src/drift/ports.rs",
+                    "usr/libexec/mios/mios-firewall-isolate", "build-mios.ps1"):
             self.assertIn(rel, paths)
+
+    def test_the_scan_covers_every_repo_root_file(self):
+        r = subprocess.run(["git", "-C", _ROOT, "ls-files", "-z"], capture_output=True, timeout=60)
+        self.assertEqual(0, r.returncode, r.stderr)
+        top = {rel for rel in r.stdout.decode().split("\0") if rel and "/" not in rel}
+        self.assertTrue(set(NOT_CONSUMERS) <= top, NOT_CONSUMERS)
+        self.assertEqual(top - set(NOT_CONSUMERS), {p for p in scanned_paths(_ROOT) if "/" not in p})
 
     def plant(self, rel: str, old: str, new: str) -> set[str]:
         with open(os.path.join(_ROOT, rel), encoding="utf-8") as fh:
@@ -898,8 +1058,36 @@ class TestScanner(Base):
             with self.subTest(rel=rel):
                 self.assertIn(rule, self.plant(rel, old, new))
 
+    def test_plant_port_literals(self):
+        for rel, old, new in (
+            ("usr/share/mios/mios.toml", 'destination = "searxng", port_key = "searxng"',
+             'destination = "searxng", port = 8801'),
+            ("build-mios.ps1", "            ceph_dashboard   = 8444\n            cockpit          = 8090\n",
+             "            ceph_dashboard   = 8444\n            searxng          = 8800\n"
+             "            cockpit          = 8090\n"),
+        ):
+            with self.subTest(rel=rel):
+                self.assertIn("port-literal", self.plant(rel, old, new))
+        # Only the SSOT's own flat [ports] table is the projection.
+        self.assertEqual([], scan_text("usr/share/mios/mios.toml", "[ports]\nsearxng = 8800\n"))
+        for path, text in (("usr/share/mios/mios.toml", "[network]\nsearxng = 8800\n"),
+                           ("other.toml", "[ports]\nsearxng = 8800\n")):
+            with self.subTest(path=path, text=text):
+                self.assertIn("port-literal", {f[2] for f in scan_text(path, text)})
+
+    def test_plant_at_the_repo_root(self):
+        planted = "    base_url: http://mios-searxng:${MIOS_PORTS_SEARXNG:-8888}\n"
+        for rel, anchor in (("build-mios.ps1", "function Get-MiosSsotPort {\n"),
+                            ("Get-MiOS.ps1", "function Get-MiosTomlValue {\n")):
+            with self.subTest(rel=rel):
+                got = self.plant(rel, anchor, planted + anchor)
+                self.assertTrue({"stale-hostname", "port-fallback", "retired-port"} <= got, got)
+                self.assertIn(rel, scanned_paths(_ROOT))
+
     def test_clean_forms_pass(self):
         for line in ('"GRANIAN_PORT=${MIOS_PORTS_SEARXNG}"', '"mios-searxng",',
+                     '{ source = "hermes", destination = "searxng", port_key = "searxng", protocol = "tcp" },',
+                     "$_searxngPort = Get-MiosSsotPort -Key 'searxng'",
                      'ContainerName=mios-searxng', '[ -n "${MIOS_URLS_SEARXNG:-}" ]',
                      'Environment=SEARXNG_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_SEARXNG}'):
             with self.subTest(line=line):
@@ -908,6 +1096,13 @@ class TestScanner(Base):
     def test_follow_up_entries_are_real_files(self):
         for path, _needle in FOLLOW_UP:
             self.assertTrue(os.path.isfile(os.path.join(_ROOT, path)), path)
+
+    def test_follow_up_entries_carry_an_id(self):
+        ids = [fu for fu, _why in FOLLOW_UP.values()]
+        self.assertEqual(len(ids), len(set(ids)), ids)
+        for fu, why in FOLLOW_UP.values():
+            self.assertRegex(fu, _FOLLOW_UP_ID)
+            self.assertTrue(why.strip(), fu)
 
 
 def main() -> int:
