@@ -599,69 +599,70 @@ uncolored output. Facial ink stays separate from body illumination.
 Silhouettes use visible screen edges as well as model edges, retaining contrast
 against the room at larger zooms.
 
-The ASCII renderers overlay the voxels themselves, in every lit voxel view
-(ASCII, half-block, quadrant and braille; Room, Pet and Face; every size). The
-packed renderers keep their packed geometry, which carries the Mon's detail, and
-shade over it:
+The ASCII renderers overlay the voxels themselves with a bold ASCII layer, in
+every voxel view (ASCII, half-block, quadrant and braille; Room, Pet and Face;
+every size and zoom). Every visible Mon cell that is not the face's carries an
+ASCII glyph: in half-block, quadrant and braille the glyph replaces the block,
+quadrant or braille geometry. Each cell takes the first of:
 
-- Packed geometry: in half-block, quadrant and braille, every cell whose
-  sub-pixels differ in shaded colour or face orientation keeps its legacy
-  packing (half-block keeps its two colour planes; braille draws its two colours
-  as dots over the more frequent one; a quadrant interior keeps its solid block).
-  ASCII shading goes only on cells whose sub-pixels show one face orientation of
-  one material in one shaded colour, over that colour.
-- Silhouettes: the packed renderers keep the legacy silhouette: the Mon's
-  sub-pixels on the silhouette keep their lit colour where it stands out from
-  the scene behind (the floor or wall actually behind the pet), and the navy
-  outline ink where it would merge with it, on their exact blocks. Half-block
-  and quadrant never trade a silhouette block for a thin glyph. Braille, whose
-  dots are strokes already, may draw an ASCII line glyph instead when the
-  glyph's ink lies only on Mon dots and matches them within one dot (for
-  example `_` `.` `-` `|` `/` `\` `(` `)`). Plain ASCII draws an outline glyph
-  oriented to the silhouette on a cell with a whole exposed side: `-` `_` `|`
-  `/` `\` `^` `v`, and `(` `)` for a tip to the side (never `<` `>`, which read
-  as arrows). No outline glyph is ever drawn in a cell without a Mon sample.
-- Contours: where a nearer part overlaps a farther one (a paw over the body, an
-  ear over the head, a nose over the face), plain ASCII draws a line on the near
-  part in its own shadow tint. A minified Mon keeps only contours with a depth
-  jump of at least three voxels. Shallower contours fade in voxel by voxel
-  between 0.35 and 0.65 cells per voxel, so zooming never adds or drops them all
-  at once.
-- Creases and seams (plain ASCII): where the surface turns at a cube edge, the
-  darker face carries a line, fading in voxel by voxel between 0.8 and 1.6 cells
-  per voxel, so minified Mons are not covered in lines. Where two materials meet,
-  the lighter one carries a line only where the two colours do not already
-  separate; a colour change is its own seam.
-- Interior shading: the configured ramp minus the line glyphs (`-` `_` `|` `/`
-  `\` `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads
-  as stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left
-  with fewer than two glyphs is used unchanged. The glyph's band spans the
-  configured light range, from fully occluded ambient light to ambient plus full
-  diffuse light, not the frame's own range, and density only rises with
-  darkness: the brightest band takes `.`, and colour hatching stops one short
-  of the densest glyph (in the vendor ramp `@`, a ring that clusters into
-  speckle and reads as an eye), so the darkest light carries its weight in the
-  colour itself. In colour the glyph is drawn in the
-  voxel's own material a few shade steps off its light (ink of about 15 to 25
-  luma), so it modulates the colour instead of dominating it; in monochrome,
-  denser is brighter. By its lattice parities each voxel takes its band's
-  glyph, one lighter, one heavier (never in the brightest band) or two lighter,
-  so the four voxels of any 2x2 patch of a face differ and the texture belongs
-  to the voxels. In plain ASCII colour a Mon cell's background is the voxel's
-  lit colour. Where one voxel spans six or
-  more cells of a row with one glyph, its centre cell and every third cell from
-  it (never its end cells) take the next lighter glyph, so a magnified voxel
-  never draws a long row of one glyph. Rows of four or five identical glyphs can
-  still occur inside a four- or five-cell voxel, or where neighbouring voxels
-  share a glyph; breaking those makes glyphs flicker as the camera turns, since
-  where such a row starts and ends moves with the neighbouring voxels.
-- Facial features: the muzzle, nose, mask and other materials on or inside the
-  head's own surface shade only with the two faintest glyphs (`.` and `:`).
+- Silhouette, partial cells (the Mon and the scene share the cell): an outline
+  stroke shaped like the cell's Mon sub-pixels, in the navy outline ink over the
+  scene actually behind the pet (the floor or wall when there is one): a corner
+  tick (`` ` `` `'` `,` `.`) for one sub-pixel, `_` along a bottom half, `"` along a
+  top quarter, `-` along a top half, `|` along a column, `/` or `\` across a
+  diagonal.
+- Silhouette, full cells beside the scene: an outline oriented to the silhouette
+  over the lit voxel: `-` `_` `|` `/` `\` `^` `v`, and `(` `)` for a tip to the side
+  (never `<` `>`, which read as arrows). Where navy would not reach a 3:1
+  contrast with what is behind it, the outline is a contrasting shade of the
+  Mon's own hue. No outline glyph is ever drawn in a cell without a Mon sample.
+- Overlaps: where a nearer part overlaps a farther one (a paw over the body, an
+  ear over the head, a nose over the face), a line on the near part. A minified
+  Mon keeps only overlaps with a depth jump of at least three voxels. Shallower
+  ones fade in voxel by voxel between 0.35 and 0.65 cells per voxel, so zooming
+  never adds or drops them all at once.
+- Creases and seams: where the surface turns at a cube edge, the darker face
+  carries a line; where two materials meet, the lighter one does. Both fade in
+  voxel by voxel between 0.8 and 1.6 cells per voxel, so minified Mons are not
+  covered in lines.
+- Depth contours: iso-depth contour lines where the Mon's continuous surface
+  crosses a depth level. The levels are spaced by the voxel pitch and double each
+  time the Mon halves on screen, so neighbouring lines stay about five cells apart
+  on a surface turned 45 degrees from the view at every size; across each
+  doubling the in-between lines fade out voxel by voxel, so a zoom never adds or
+  drops half of them at once. A contour runs along the surface, across its depth
+  gradient: `-` across a vertical gradient, `(` or `)` across a horizontal one
+  (open toward the nearer surface), `/` and `\` across the diagonals. Contours
+  belong to the view: they slide over the surface as the camera orbits and hold
+  still on a still frame. Outlines stay in outline ink, contours in a shade of
+  their voxel, so the two never read as one.
+- Shading texture: the configured ramp minus the line glyphs (`-` `_` `|` `/` `\`
+  `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads as
+  stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left with
+  fewer than two glyphs is used unchanged. The glyph's band spans the configured
+  light range, from fully occluded ambient light to ambient plus full diffuse
+  light, not the frame's own range, over the whole ramp: in colour denser is
+  darker, in monochrome denser is brighter. On alternate voxels of a 3D checker
+  (keyed with the material) the glyph moves one step toward the middle of the
+  ramp, so lattice neighbours along any axis shade differently, the brightest and
+  darkest bands keep a texture, and the texture belongs to the voxels. Nearer
+  surfaces read heavier: the Mon's near third of depth (by coarse contour level)
+  shades one glyph denser, its far third one lighter.
+
+Every glyph but the outline is a coloured shade of its voxel's own hue (keeping
+at least 55% saturation) over the voxel's lit colour, at a WCAG contrast of about
+3.6:1 for texture and 4.6:1 for lines: darker glyphs on lit faces, lighter glyphs
+on shadowed ones. The contrast eases toward 3:1, never below it while any shade
+reaches it, only where a shade near black or white would lose its hue. The
+256-colour and 16-colour palettes take the nearest palette shade that keeps 3:1
+(a chromatic one for a voxel with a hue); monochrome draws glyphs only. In plain
+ASCII colour a Mon cell's background is the voxel's lit colour.
 
 Every glyph decision depends only on the voxel a sample shows (its model-lattice
 identity, face orientation, material and depth) and on the voxels its
-neighbouring samples show. A glyph therefore stays on its voxel through orbit,
-zoom, occlusion and resampling, and never follows a fixed screen pattern.
+neighbouring samples show. Texture, creases, seams and outlines therefore stay
+on their voxels through orbit, zoom, occlusion and resampling, and never follow a
+fixed screen pattern; depth contours and depth tiers follow the view's depth.
 
 The overlay never obscures the expression. Within a halo around the kaomoji, as
 fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
@@ -705,9 +706,11 @@ matches at large ones:
 
 Room cells that hold only world surfaces keep their own rendering, and a cell the
 pet shares with the world keeps the world surface as its background. The world
-itself has no voxel identity yet and carries no overlay. With lighting disabled,
-or without a lighting model, and for classic pixel sprites, the renderers keep
-their exact legacy packing.
+itself has no voxel identity yet and carries no overlay. With lighting disabled
+the overlay still marks every voxel over its flat palette colour: outlines,
+creases, contours and the voxel texture, in one light band. Without a lighting
+model, and for classic pixel sprites, the renderers keep their exact legacy
+packing.
 
 The layered [tamagotchi.voxel_lighting] table and MiOS configurator control the
 ambient and directional light, contact shade, silhouette edge shade, view-space
