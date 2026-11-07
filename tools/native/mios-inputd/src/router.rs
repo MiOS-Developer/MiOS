@@ -2283,6 +2283,14 @@ impl Router {
             let (xa, ya) = self.stick_axes(right);
             let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
             let mag = x.hypot(y);
+            if self.axis_sink(xa) != Sink::Nav {
+                // Cursor/half-capture owns this stick: pointer motion cannot also focus a window.
+                if let Some(dir) = self.nav.stick_dir[i].take() {
+                    self.nav.held.remove(&Input::Stick { right, dir });
+                }
+                self.nav.armed[i] = mag < off;
+                continue;
+            }
             if mag < off {
                 if let Some(d) = self.nav.stick_dir[i].take() {
                     self.nav_release(Input::Stick { right, dir: d }, o);
@@ -4253,6 +4261,51 @@ mod nav_contract {
             "small reverse deflection is no flick"
         );
     }
+    #[test]
+    fn cursor_owned_right_stick_moves_without_window_or_pane_focus() {
+        for (context, tmux) in [
+            ("desktop-2d", false),
+            ("game", false),
+            ("vm-passthrough", false),
+            ("terminal", false),
+            ("terminal", true),
+        ] {
+            let mut r = nav(context);
+            r.set_tmux(tmux);
+            tap(&mut r, START, 10);
+            assert!(r.cursor, "{context}");
+            assert_eq!(r.axis_sink(3), Sink::Pointer);
+            let mut output = Output::default();
+            for (axis, value) in [(3, 30000), (3, -30000), (3, 0), (4, 30000), (4, -30000)] {
+                output.extend(abs(&mut r, axis, value));
+                output.extend(wait(&mut r, 100));
+            }
+            assert!(
+                output.actions.is_empty(),
+                "{context} tmux={tmux}: pointer motion also navigated: {:?}",
+                output.actions
+            );
+            assert!(
+                output.pointer.iter().any(|e| e.kind == EV_REL && e.value != 0),
+                "{context}: this must exercise actual pointer output"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_stick_does_not_focus_when_pointer_mode_ends_until_centered() {
+        let mut r = nav("desktop-2d");
+        tap(&mut r, START, 10);
+        assert!(abs(&mut r, 3, 30000).actions.is_empty());
+        wait(&mut r, 100);
+        let toggle = tap(&mut r, START, 10);
+        assert_eq!(toggle.actions, vec!["input:cursor off"]);
+        assert!(abs(&mut r, 3, 30000).actions.is_empty());
+        assert!(wait(&mut r, 200).actions.is_empty());
+        assert!(abs(&mut r, 3, 0).actions.is_empty());
+        assert_eq!(abs(&mut r, 3, 30000).actions, vec!["hypr:movefocus right"]);
+    }
+
     #[test]
     fn left_stick_scrolls_both_wheels_analog() {
         let mut r = nav("desktop-2d");
