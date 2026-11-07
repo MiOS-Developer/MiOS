@@ -97,10 +97,10 @@ QS.PanelWindow {
     GlassSurface {
         id: box
         anchors.fill: parent
-        radius: Glass.radius
-        color: searchWindow.theme.withAlpha(Glass.fillHex, searchWindow.theme.panelOpacity)
-        hairline: true
-        borderColor: searchWindow.theme.outlineColor
+        // the island's glass: GlassSurface's own Glass.corner rule and its default Glass.fill, no radius, alpha
+        // or outline of its own (hyprglass draws the rim) -- tests/test-gui-shell-unify.py search_glass_errors
+        color: Glass.fill
+        clip: true
         Column {
             anchors.fill: parent
             anchors.margins: Glass.panelPad
