@@ -9303,6 +9303,7 @@ mod voxel_overlay_tests {
         let (mut kept_total, mut shared_total) = (0u32, 0u32);
         let mut worst = 1.0f64;
         for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant] {
+            let (mut vertical_kept, mut vertical_shared) = (0u32, 0u32);
             for (shape, framing) in [
                 (0, (CameraView::Pet, 200)),
                 (1, (CameraView::Pet, 200)),
@@ -9420,9 +9421,18 @@ mod voxel_overlay_tests {
                                     .zip(faces)
                                     .all(|(m, n)| m[0] * n[0] + m[1] * n[1] + m[2] * n[2] > 0.9)
                             });
-                            if let Some((_, previous)) = earlier {
+                            if let Some((known, previous)) = earlier {
                                 shared += 1;
                                 kept += u32::from(previous == glyph);
+                                // The fixture's 0.32-radian elevation puts
+                                // vertical normals below 0.32 on Y and top
+                                // normals above 0.94. Top faces retain the
+                                // same view normal during yaw and cannot
+                                // alone prove tracking.
+                                if known.iter().chain(faces).all(|n| n[1].abs() < 0.5) {
+                                    vertical_shared += 1;
+                                    vertical_kept += u32::from(previous == glyph);
+                                }
                             }
                         }
                     }
@@ -9440,6 +9450,17 @@ mod voxel_overlay_tests {
                     }
                 }
             }
+            println!(
+                "A4 {renderer:?} vertical glyph persistence: {vertical_kept}/{vertical_shared}"
+            );
+            assert!(
+                vertical_shared >= 50,
+                "{renderer:?}: the orbit must compare rotating vertical faces, not only invariant top faces ({vertical_shared})"
+            );
+            assert!(
+                vertical_kept * 10 >= vertical_shared * 9,
+                "{renderer:?}: only {vertical_kept}/{vertical_shared} rotating vertical faces kept their glyph"
+            );
         }
         println!("A4 glyph persistence: {kept_total}/{shared_total}; worst step {worst:.3}");
         assert!(
