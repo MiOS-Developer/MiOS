@@ -10725,6 +10725,7 @@ mod eye_plate_tests {
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
         let sclera = Sclera::of(&colors);
         let open = mon(Expression::Idle, 0, 0, 0.32);
+        let stroke = face_ink(&open, &colors, InkRegion::TextBox);
         let mut atlas = 0;
         for renderer in [Renderer::Quadrant, Renderer::Braille] {
             for zoom in [100, 200, 300, 400] {
@@ -10755,6 +10756,19 @@ mod eye_plate_tests {
                             a.bg != colors.ink(13),
                             "{renderer:?} @{zoom}: room shows through the face at {pos:?}"
                         );
+                        // Atlas strokes are drawn in face ink (pupil ink and
+                        // eye white on a plate), never carved from the body.
+                        if teal.lod == FaceLod::Atlas && teal.before[pos] != *a {
+                            let inks = if a.fg == sclera.white || a.bg == sclera.white {
+                                [sclera.white, sclera.ink]
+                            } else {
+                                [stroke, stroke]
+                            };
+                            assert!(
+                                inks.contains(&a.fg) || inks.contains(&a.bg),
+                                "{renderer:?} @{zoom}: atlas stroke without face ink at {pos:?}: {a:?}"
+                            );
+                        }
                     }
                 }
             }
