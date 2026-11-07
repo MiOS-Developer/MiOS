@@ -68,6 +68,15 @@ def _agent_overlay_text(port) -> str:
             if category else f"[ports]\ndevpod_agent = {port}\n")
 
 
+def _flat_overlay_text(value) -> str:
+    """A tier that writes the flat [ports].devpod_agent; derivation writes over it."""
+    return f"[ports]\ndevpod_agent = {value}\n"
+
+
+# A devpod_agent value of each non-integer TOML type, as written and as named.
+_NOT_INTEGERS = ('"abc"', '"20000"', "20000.0", "1.5", "true", "[20000]", "{ port = 20000 }")
+
+
 def _spare_ports(taken, count=2) -> list:
     """`count` distinct valid TCP ports outside `taken`, to move the agent to."""
     return [p for p in range(20000, 65536, 1111) if p not in taken][:count]
@@ -161,10 +170,26 @@ class TestRdeEngine(unittest.TestCase):
 
     def _tier(self, name, port):
         """Write a tier file that moves the agent port to `port`; returns its path."""
+        return self._write(name, _agent_overlay_text(port))
+
+    def _write(self, name, text):
         path = os.path.join(self.temp_dir, name)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(_agent_overlay_text(port))
+            f.write(text)
         return path
+
+    def _assert_refused(self, shown, host_toml=None, user_toml=None):
+        """Every rde verb exits 1 with the error naming `shown`, and prints no
+        plan or status."""
+        ws = self._workspace()
+        for args in (("status", "--json"), ("status",), ("up", ws, "--dry-run", "--json"),
+                     ("up", ws, "--dry-run"), ("down", ws, "--dry-run", "--json"),
+                     ("audit", "--json")):
+            with self.subTest(value=shown, verb=" ".join(args)):
+                res = self._rde(*args, host_toml=host_toml, user_toml=user_toml)
+                self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+                self.assertIn(f"[ports].devpod_agent = {shown} is not a TCP port", res.stderr)
+                self.assertEqual(res.stdout, "", "a refused port must not print a plan or status")
 
     # -------------------------------------------------------------------------
     # POSITIVE CONTROLS
@@ -311,6 +336,52 @@ class TestRdeEngine(unittest.TestCase):
                 status = self._assert_forwarded(port, host_toml=self._tier("host.toml", port))
                 self.assertEqual(status["forward_ports"],
                                  [port if p == vendor else p for p in baseline])
+
+    def test_a_non_integer_agent_port_fails_closed(self):
+        """Negative Control: a string, numeric string, float, integral float, bool,
+        array or table as the agent port, pinned or flat, stops every rde verb
+        with the error naming the value as written."""
+        for value in _NOT_INTEGERS:
+            self._assert_refused(value, host_toml=self._tier("host.toml", value))
+            self._assert_refused(value, host_toml=self._write("host.toml", _flat_overlay_text(value)))
+
+    def test_a_mistyped_user_pin_over_a_host_pin_fails_closed(self):
+        """Negative Control: the host pins a valid port and the user pins "x"; the
+        merged pin is "x", so every verb fails and neither port is forwarded."""
+        baseline = self._rde_json("status")["forward_ports"]
+        (port,) = _spare_ports(baseline, 1)
+        self._assert_refused('"x"', host_toml=self._tier("host.toml", port),
+                             user_toml=self._tier("user.toml", '"x"'))
+        # A mistyped flat value fails though a valid user pin would win.
+        self._assert_refused('"x"', host_toml=self._write("host.toml", _flat_overlay_text('"x"')),
+                             user_toml=self._tier("user.toml", port))
+
+    def test_a_valid_user_pin_over_a_mistyped_host_pin_is_accepted(self):
+        """Positive Control: a valid user pin replaces a mistyped host pin in the
+        merge, so the user port is forwarded once in the vendor slot."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        (port,) = _spare_ports(baseline, 1)
+        status = self._assert_forwarded(port, host_toml=self._tier("host.toml", '"x"'),
+                                        user_toml=self._tier("user.toml", port))
+        self.assertEqual(status["forward_ports"], [port if p == vendor else p for p in baseline])
+
+    def test_a_flat_agent_port_outside_the_tcp_range_fails_closed(self):
+        """Negative Control: a flat [ports].devpod_agent of 0, 65536 or -1 stops
+        every verb, although [ports.categories] derives the port over it."""
+        for bad in (0, 65536, -1):
+            self._assert_refused(str(bad), host_toml=self._write("host.toml", _flat_overlay_text(bad)))
+
+    def test_an_empty_agent_pin_sets_nothing(self):
+        """Positive Control: an empty string never overrides a lower tier, so an
+        empty user pin leaves the vendor port alone and a host pin in place."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        status = self._assert_forwarded(vendor, user_toml=self._tier("user.toml", '""'))
+        self.assertEqual(status["forward_ports"], baseline)
+        (port,) = _spare_ports(baseline, 1)
+        self._assert_forwarded(port, host_toml=self._tier("host.toml", port),
+                               user_toml=self._tier("user.toml", '""'))
 
     def test_rde_audit_zero_taint(self):
         """Positive Control: Verify automated license audit confirms 0 copyleft taint."""
