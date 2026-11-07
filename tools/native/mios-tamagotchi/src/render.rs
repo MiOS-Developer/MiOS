@@ -9424,11 +9424,12 @@ mod voxel_overlay_tests {
                             if let Some((known, previous)) = earlier {
                                 shared += 1;
                                 kept += u32::from(previous == glyph);
-                                // With the zero-pitch fixture, side/front/back
-                                // normals have no vertical component. Top
-                                // faces retain the exact same view normal
-                                // during yaw and cannot alone prove tracking.
-                                if known.iter().chain(faces).all(|n| n[1].abs() < 0.01) {
+                                // The fixture's 0.32-radian elevation puts
+                                // vertical normals below 0.32 on Y and top
+                                // normals above 0.94. Top faces retain the
+                                // same view normal during yaw and cannot
+                                // alone prove tracking.
+                                if known.iter().chain(faces).all(|n| n[1].abs() < 0.5) {
                                     vertical_shared += 1;
                                     vertical_kept += u32::from(previous == glyph);
                                 }
