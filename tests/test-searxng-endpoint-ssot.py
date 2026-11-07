@@ -1589,16 +1589,21 @@ class TestScanner(Base):
                 self.assertIn(rule, self.plant("build-mios.ps1", rm, rm + planted))
 
     def test_the_manual_names_searxng_loopback_only(self):
-        # The pages that document the Windows LAN rule, the portproxy and
-        # tailnet serving say SearXNG is loopback-only and not forwarded.
+        # Each passage that documents the Windows LAN rule, the portproxy,
+        # tailnet serving or the SearXNG setup says it is loopback-only and
+        # that forwarding it is unsupported.
         manual = os.path.join(_ROOT, "usr", "share", "doc", "mios", "manual")
-        for name in ("root.md", "windows.md", "ch25-local-search-engine-and-searxng.md"):
-            with self.subTest(page=name):
+        for name, passage in (("root.md", "Windows Firewall inbound rules so OTHER devices"),
+                              ("root.md", "Windows-side `netsh interface portproxy` mappings so OTHER"),
+                              ("windows.md", "Liveness is checked IN THE VM"),
+                              ("ch25-local-search-engine-and-searxng.md", "## Setup")):
+            with self.subTest(page=name, passage=passage):
                 with open(os.path.join(manual, name), encoding="utf-8") as fh:
-                    paras = [p for p in re.split(r"\n\s*\n", fh.read()) if re.search(r"searx", p, re.I)]
-                said = [p for p in paras if "loopback-only" in p and "unsupported" in p
-                        and "[ports].searxng" in p.replace("`", "")]
-                self.assertTrue(said, name)
+                    found = [p for p in re.split(r"<!-- mios-src:|\n---\n", fh.read()) if passage in p]
+                self.assertEqual(1, len(found), passage)
+                text = found[0].replace("`", "")
+                for part in ("SearXNG", "loopback-only", "[ports].searxng", "unsupported"):
+                    self.assertIn(part, text)
 
     def test_clean_forms_pass(self):
         for line in ('"GRANIAN_PORT=${MIOS_PORTS_SEARXNG}"', '"mios-searxng",',
