@@ -688,7 +688,7 @@ try { & $Helper @bind } catch { $err = [string]$_; $line = $_.InvocationInfo.Scr
 # of this host.
 _ENTRY_STUB = r"""#!/bin/sh
 n=${0##*/}
-printf '%s %s\n' "$n" "$*" >> "$MIOS_ENTRY_LOG"
+printf '%s %s\n' "$n" "$*" >> "$ENTRY_STUB_LOG"
 case "$n $*" in
   "tailscale.exe status --json") echo '{"Self":{"DNSName":"node.example.invalid."}}' ;;
   "tailscale.exe status") echo '100.64.0.1 node user linux -' ;;
@@ -728,7 +728,7 @@ def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None,
         fh.write(_PS_ENTRY)
     env = {"PATH": stubs + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
            "HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"),
-           "MIOS_NO_COLOR": "1", "MIOS_ENTRY_LOG": log}
+           "MIOS_NO_COLOR": "1", "ENTRY_STUB_LOG": log}
     helper = os.path.join(tree, rel)
     cmd = [pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-Helper", helper,
            "-Params", json.dumps(params or {}), "-Admin", "1" if admin else "0"]
