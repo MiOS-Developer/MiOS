@@ -6698,7 +6698,7 @@ function renderSaveErrors(errs) {
   const box = document.getElementById("save-preview-errors");
   if (!box) return;
   if (!errs || !errs.length) { box.style.display = "none"; box.innerHTML = ""; return; }
-  box.innerHTML = "<b>The Portal rejected this config (nothing was written):</b>" +
+  box.innerHTML = "<b>The save was not confirmed:</b>" +
     "<ul>" + errs.map(e => `<li>${escapeHtml(e)}</li>`).join("") + "</ul>";
   box.style.display = "block";
 }
@@ -6735,47 +6735,40 @@ function showSavePreview() {
   if (panel) panel.classList.add("open");
 }
 
-// The actual write. Behaviour is the pre-WS-CONFIG one-click Save, EXCEPT a 422
-// (safety-validation failure) is surfaced inline in the panel and does NOT fall
-// through to a local write -- the operator fixes it and retries. Any other
-// non-2xx / network error still degrades to the FSA / download paths.
+// Embedded saves are authoritative Portal requests. A refusal or uncertain
+// network result stays in the preview; it must never overwrite a local file
+// through an offline fallback. Standalone file:// saves use the paths below.
 async function performSave(toml) {
   const finishSave = () => { LOADED_TOML = toml; hideSavePreview(); };
 
-  // Path 0 (STEP 6): embedded behind the Portal -- POST the serialized TOML to
-  // the live layered config. POST /portal/config (relative to location.origin;
-  // no hardcoded host). A 422 means the server's safety net rejected it (no
-  // write happened) -> show the errors inline and stop. Other non-2xx / network
-  // errors fall THROUGH to the FSA / <a download> paths (graceful degrade).
-  // NEVER attempted under file:// (offline USB fallback, ADR-0008).
+  // The lossless JSON envelope preserves TOML text for both config servers.
+  // Offline saves continue writing the TOML text itself.
   if (MIOS_EMBEDDED) {
     try {
       const resp = await fetch("/portal/config", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/toml" },
-        body: toml
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toml: toml })
       });
       if (resp.ok) {
         finishSave();
         showStatus(`Saved to MiOS — wrote the live mios.toml via the Portal (${toml.length} bytes).`, "ok");
         return;
       }
-      if (resp.status === 422) {
-        let errs = ["The server rejected the config."];
-        try {
-          const data = await resp.json();
-          if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
-          else if (data && data.error) errs = [String(data.error)];
-        } catch (e) { /* non-JSON body -> keep the generic message */ }
-        renderSaveErrors(errs);
-        showStatus("Portal rejected the config — see the validation errors.", "err");
-        return;   // stay open; nothing written
-      }
-      showStatus(`Portal save unavailable (HTTP ${resp.status}) — saving locally instead.`, "info");
+      let errs = [`Portal save was not confirmed (HTTP ${resp.status}).`];
+      try {
+        const data = await resp.json();
+        if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
+        else if (data && data.error) errs = [String(data.error)];
+      } catch (e) { /* non-JSON body -> keep the generic message */ }
+      renderSaveErrors(errs);
+      showStatus("Portal save was not confirmed — see the errors before retrying.", "err");
     } catch (err) {
-      showStatus("Portal save route unreachable — saving locally instead.", "info");
+      renderSaveErrors(["Portal response unavailable. Check the live configuration before retrying."]);
+      showStatus("Portal save result is unknown — check the live configuration.", "err");
     }
+    return; // No bound-file write, picker or download after an embedded failure.
   }
 
   // Path 1: bound file handle -- direct in-place overwrite.

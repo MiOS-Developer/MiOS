@@ -64,6 +64,45 @@ const toml=vm.runInContext('emitToml(DATA)',ctx);
 process.stdout.write(JSON.stringify({data:ctx.DATA,toml}));
 '''
 
+
+SAVE_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const events = {fetch: [], writes: [], errors: [], statuses: [], downloads: 0, pickers: 0, hidden: 0};
+const ctx = {
+  MIOS_EMBEDDED: input.embedded !== false,
+  FILE_HANDLE: input.handle ? {name:'bound.toml'} : null,
+  HAS_FSA: !!input.fsa, LOADED_TOML: 'original', toml: input.toml, Blob,
+  hideSavePreview: () => events.hidden++,
+  renderSaveErrors: errors => events.errors.push(errors),
+  showStatus: (text, level) => events.statuses.push({text, level}),
+  writeFileHandle: async (handle, text) => events.writes.push({name:handle.name, text}),
+  window: {showSaveFilePicker: async () => { events.pickers++; return {name:'chosen.toml'}; }},
+  URL: {createObjectURL: () => 'blob:fixture', revokeObjectURL: () => {}},
+  setTimeout: fn => fn(),
+  document: {createElement: () => ({click: () => events.downloads++})},
+  fetch: async (url, options) => {
+    events.fetch.push({url, options});
+    if (input.networkError) throw new Error('transport interrupted');
+    const status = input.status || 200;
+    return {ok: status >= 200 && status < 300, status,
+      json: async () => {
+        if (input.badJson) throw new Error('bad response JSON');
+        return {errors: ['Synthetic validation refusal']};
+      }};
+  }
+};
+vm.createContext(ctx);
+const match = html.match(/^async function performSave\([^\n]*\n[\s\S]*?^}/m);
+if (!match) throw new Error('Missing performSave');
+vm.runInContext(match[0], ctx);
+(async () => {
+  await vm.runInContext('performSave(toml)', ctx);
+  process.stdout.write(JSON.stringify({events, loaded:ctx.LOADED_TOML}));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+
 class TestConfiguratorSecurity(unittest.TestCase):
 
     def test_mon_controls_preserve_vendor_inheritance_and_typed_nested_overrides(self):
@@ -217,6 +256,65 @@ class TestConfiguratorSecurity(unittest.TestCase):
         self.assertNotIn('img', tags)
         self.assertIn('&lt;img', output['banner'])
         self.assertNotIn(attack, output['banner'])
+
+
+    def _save_case(self, **case):
+        payload = {"path": str(ROOT / "usr/share/mios/configurator/mios.html"),
+                   "toml": '# keep comment\n[custom."unknown.key"]\nvalue = "quoted \\"text\\""\n',
+                   **case}
+        result = subprocess.run(["node", "-e", SAVE_NODE],
+                                input=json.dumps(payload), capture_output=True,
+                                text=True, check=True, timeout=15)
+        return payload, json.loads(result.stdout)
+
+    def test_portal_save_uses_a_lossless_envelope_and_finishes_only_after_success(self):
+        payload, output = self._save_case(handle=True, fsa=True)
+        events = output["events"]
+        self.assertEqual(len(events["fetch"]), 1)
+        request = events["fetch"][0]
+        self.assertEqual(request["url"], "/portal/config")
+        self.assertEqual(request["options"]["credentials"], "same-origin")
+        self.assertEqual(request["options"]["headers"]["Content-Type"], "application/json")
+        self.assertEqual(json.loads(request["options"]["body"]), {"toml": payload["toml"]})
+        self.assertEqual(output["loaded"], payload["toml"])
+        self.assertEqual(events["hidden"], 1)
+        self.assertEqual(events["writes"], [])
+        self.assertEqual(events["pickers"], 0)
+        self.assertEqual(events["downloads"], 0)
+        self.assertEqual(events["errors"], [])
+
+    def test_portal_refusals_and_unknown_transport_never_fall_through_to_local_save(self):
+        cases = [{"status": status} for status in [400, 401, 403, 409, 422, 500, 502, 503]]
+        cases += [{"status": 500, "badJson": True}, {"networkError": True}]
+        for case in cases:
+            with self.subTest(case):
+                _, output = self._save_case(handle=True, fsa=True, **case)
+                events = output["events"]
+                self.assertEqual(events["writes"], [], "a refused Portal save must not overwrite a bound file")
+                self.assertEqual(events["pickers"], 0)
+                self.assertEqual(events["downloads"], 0)
+                self.assertEqual(events["hidden"], 0, "preview stays available for correction")
+                self.assertEqual(output["loaded"], "original")
+                self.assertTrue(events["errors"])
+                self.assertEqual(events["statuses"][-1]["level"], "err")
+
+    def test_standalone_offline_file_picker_and_download_paths_still_save(self):
+        for mode in [{"handle": True}, {"fsa": True}, {}]:
+            with self.subTest(mode):
+                payload, output = self._save_case(embedded=False, **mode)
+                events = output["events"]
+                self.assertEqual(events["fetch"], [])
+                self.assertEqual(output["loaded"], payload["toml"])
+                self.assertEqual(events["hidden"], 1)
+                if mode:
+                    self.assertEqual(len(events["writes"]), 1)
+                    self.assertEqual(events["writes"][0]["text"], payload["toml"])
+                    self.assertEqual(events["pickers"], int(bool(mode.get("fsa"))))
+                    self.assertEqual(events["downloads"], 0)
+                else:
+                    self.assertEqual(events["downloads"], 1)
+                    self.assertEqual(events["writes"], [])
+
 
 if __name__ == '__main__':
     unittest.main()
