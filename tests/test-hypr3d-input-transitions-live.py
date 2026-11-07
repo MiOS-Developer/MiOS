@@ -3,10 +3,16 @@
 # AI-related: usr/share/mios/hyprland/patches/hypr3d-mios-input-transitions.patch, tools/native/mios-gen/src/render.rs (hyprland-3d-toggle), tools/native/mios-inputd/src/runtime.rs (input:window), usr/share/mios/hyprland/patches/hypr3d-mios-pip-theatre.patch (input_capture/input_owner), tools/native/mios-gen/src/nested_session.rs, tests/test-mios-controls-live.py
 # Primary compositor: only the stock launcher's PiP adoption and send_key_state to OUR nested window. Everything else is
 # dispatched to the nested compositor. The operator user tier is hash-checked before/after; nothing is written to it.
-import hashlib, json, os, signal, subprocess, sys, tempfile, time
+import atexit, hashlib, json, os, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-hypr3d-input-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 INPUTD = os.environ.get('MIOS_INPUTD', '/usr/libexec/mios/mios-inputd')
 SSOT = os.environ.get('MIOS_VENDOR_TOML') or str(Path(__file__).resolve().parents[1] / 'usr/share/mios/mios.toml')
@@ -398,7 +404,7 @@ def main():
     passed = sum(1 for r in results if r[1])
     (OUT / 'results.json').write_text(json.dumps({'checks': [{'name': a, 'pass': b, 'detail': c} for a, b, c in results],
                                                   'observed': [{'name': a, 'detail': d} for a, d in observed]}, indent=1))
-    print(f'{passed}/{len(results)} passed  (out: {OUT})')
+    print(f'{passed}/{len(results)} passed  (out: {OUT_NOTE})')
     return 0 if passed == len(results) else 1
 
 

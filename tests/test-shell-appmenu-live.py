@@ -13,8 +13,10 @@
   MIOS_LIVE_NESTED=1 env -u MIOS_TOML python3 tests/test-shell-appmenu-live.py
 Optional: MIOS_QUICKSHELL (default /usr/bin/quickshell), MIOS_MIOSD (default /usr/bin/miosd), MIOS_QS_QML (default this
 tree's Nested.qml), MIOS_QS_OLD_QML (default /usr/share/mios/quickshell/Nested.qml), MIOS_LIVE_OUT (evidence dir)."""
+import atexit
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -27,7 +29,13 @@ if os.environ.get('MIOS_LIVE_NESTED') != '1':
     sys.exit(0)
 
 TREE = Path(__file__).resolve().parents[1]
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-appmenu-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 OUT.mkdir(parents=True, exist_ok=True)
 QS = os.environ.get('MIOS_QUICKSHELL', '/usr/bin/quickshell')
 MIOSD = os.environ.get('MIOS_MIOSD', '/usr/bin/miosd')
@@ -415,7 +423,7 @@ def main():
         except subprocess.TimeoutExpired:
             os.killpg(launcher.pid, signal.SIGTERM)
         (OUT / 'result.json').write_text(json.dumps([{'name': n, 'ok': o, 'detail': t} for n, o, t in results], indent=1))
-        print(f'evidence: {OUT}')
+        print(f'evidence: {OUT_NOTE}')
         print(f"{sum(o for _, o, _ in results)}/{len(results)} passed")
     sys.exit(0 if results and all(o for _, o, _ in results) else 1)
 

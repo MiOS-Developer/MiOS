@@ -4,9 +4,11 @@
 # AI-functions: main, cases
 
 import argparse
+import atexit
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
@@ -59,7 +61,9 @@ def main():
     for value in (args.v4l2_command, args.v4l2_off_command, args.picker_command):
         if value:
             assert isinstance(json.loads(value), list)
+    # Per-case logs are scratch, removed at exit: a failure carries the output and the report is the evidence.
     work = Path(tempfile.mkdtemp(prefix='mios-camera-native-', dir='/var/tmp'))
+    atexit.register(shutil.rmtree, work, True)
     results = []
     for case_name, format_name, cleanup, portrait, transposed, large, v4l2, restarts, obs in cases():
         if args.only and case_name not in args.only:
@@ -124,7 +128,7 @@ def main():
     result = {'passed': True, 'protocol': 'MS-RDPECAM over actual encoded DRDYNVC messages',
               'transport': 'in-process protocol loop, not TCP/TLS or a physical mobile client',
               'pipewire': 'private lab runtime ' + str(runtime), 'physical_camera_recorded': False,
-              'workdir': str(work), 'cases': results}
+              'cases': results}
     with report.open('x') as handle:
         json.dump(result, handle, indent=2)
         handle.write('\n')

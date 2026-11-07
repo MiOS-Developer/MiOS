@@ -88,6 +88,7 @@ def lf_main() -> int:
     return 0
 
 
+import ast
 import os
 import subprocess
 import sys
@@ -98,6 +99,178 @@ tfc_MAKER = "mkdtemp"
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mios_tracked import tracked, GitUnavailable  # noqa: E402
+
+# A file-level cleanup marker proves nothing about any one directory: an rmtree
+# of one says nothing about another. So every mkdtemp() call is also traced on
+# its own, and its directory counts as removed only when
+#   * it is bound to a name or attribute -- through Path()/str()/realpath()/
+#     os.path.join(d, ...) and `x or mkdtemp()` -- that a removal reads: an
+#     rmtree/rmdir call, a registration that passes one (addCleanup,
+#     addClassCleanup or atexit.register with shutil.rmtree), a helper in the
+#     file that removes its own parameter, or a loop that removes each member of
+#     a container the name is added to. A local name must be removed inside the
+#     function that bound it; a module global or an attribute anywhere in the file;
+#   * or it is made inside (dir=) a directory that is itself removed;
+#   * or it is returned, and every call of the returning function in the file
+#     binds and removes the result;
+#   * or the module replaces <tempfile>.mkdtemp with a function of its own that
+#     removes what it makes.
+tfc__WRAPS = frozenset({"Path", "PurePath", "str", "fspath", "realpath", "abspath",
+                        "normpath", "expanduser", "resolve", "absolute", "join"})
+tfc__REMOVERS = frozenset({"rmtree", "rmdir"})
+tfc__FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)
+tfc__SCOPES = tfc__FUNCS + (ast.Lambda,)
+
+
+def tfc__name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def tfc__key(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return "." + node.attr
+    return None
+
+
+def tfc__refs(exprs):
+    """What the expressions read as values: names ("d") and attributes (".tmp").
+    A callee (os.path.dirname) and the object an attribute hangs off (self) are
+    not values of their own."""
+    out, skip = set(), set()
+    for e in exprs:
+        for n in ast.walk(e):
+            if isinstance(n, ast.Call):
+                skip.update(map(id, ast.walk(n.func)))
+            elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name):
+                skip.add(id(n.value))
+        for n in ast.walk(e):
+            key = tfc__key(n)
+            if key and id(n) not in skip:
+                out.add(key)
+    return out
+
+
+def tfc_uncleaned(source):
+    """Line numbers of the mkdtemp() calls in `source` whose directory nothing
+    removes (see the rules above). Raises SyntaxError for unparsable source."""
+    tree = ast.parse(source)
+    parent = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    funcs = [n for n in ast.walk(tree) if isinstance(n, tfc__FUNCS)]
+
+    def within(node, top):
+        while node is not None and node is not top:
+            node = parent.get(node)
+        return node is top
+
+    def scope(node):
+        node = parent.get(node)
+        while node is not None and not isinstance(node, tfc__SCOPES):
+            node = parent.get(node)
+        return tree if node is None else node
+
+    def removals(removers):
+        found = []
+        for n in calls:
+            vals = list(n.args) + [k.value for k in n.keywords]
+            if tfc__name(n.func) in removers:
+                if not vals and isinstance(n.func, ast.Attribute):
+                    vals = [n.func.value]  # Path(d).rmdir()
+                found.append((n, tfc__refs(vals)))
+            elif any(tfc__name(a) in removers for a in n.args if not isinstance(a, ast.Call)):
+                found.append((n, tfc__refs([a for a in vals if tfc__name(a) not in removers])))
+        return found
+
+    # A helper that removes one of its own parameters removes what it is given.
+    removers = set(tfc__REMOVERS)
+    while True:
+        found = removals(removers)
+        more = set()
+        for f in funcs:
+            params = {a.arg for a in f.args.posonlyargs + f.args.args + f.args.kwonlyargs}
+            params = (params | {a.arg for a in (f.args.vararg,) if a}) - {"self", "cls"}
+            if f.name not in removers and any(refs & params and within(r, f) for r, refs in found):
+                more.add(f.name)
+        if not more:
+            break
+        removers |= more
+    # `for d in DIRS: rmtree(d)` removes DIRS's members, and whatever is added to DIRS.
+    containers = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.For, ast.AsyncFor)) and isinstance(n.target, ast.Name) and any(
+                n.target.id in refs and within(r, n) for r, refs in found):
+            members = tfc__refs([n.iter])
+            found.append((n, members))
+            containers |= members
+    for n in calls:
+        if (isinstance(n.func, ast.Attribute) and n.func.attr in ("append", "add", "extend", "insert")
+                and tfc__key(n.func.value) in containers):
+            found.append((n, tfc__refs(n.args)))
+
+    def removed(key, site):
+        if key.startswith("."):
+            return any(key in refs for _, refs in found)
+        top = scope(site)
+        if top is not tree and any(isinstance(g, ast.Global) and key in g.names for g in ast.walk(top)):
+            top = tree
+        return any(key in refs and within(r, top) for r, refs in found)
+
+    wrapped = any(
+        isinstance(n, ast.Assign) and isinstance(n.value, ast.Name)
+        and any(isinstance(t, ast.Attribute) and t.attr == tfc_MAKER for t in n.targets)
+        and any(f.name == n.value.id and any(within(r, f) for r, _ in found) for f in funcs)
+        for n in ast.walk(tree))
+
+    def holder(node):
+        """The statement that keeps `node`'s value, past the transparent wrappers."""
+        while True:
+            up = parent.get(node)
+            if (isinstance(up, ast.Call) and up.args and up.args[0] is node
+                    and tfc__name(up.func) in tfc__WRAPS):
+                node = up
+            elif (isinstance(up, ast.Attribute) and up.attr in tfc__WRAPS
+                  and isinstance(parent.get(up), ast.Call) and parent[up].func is up):
+                node = parent[up]
+            elif isinstance(up, ast.BoolOp) or (isinstance(up, ast.IfExp) and node is not up.test):
+                node = up
+            else:
+                return up
+
+    def cleaned(call, seen):
+        if tfc__name(call.func) == tfc_MAKER:
+            if wrapped and isinstance(call.func, ast.Attribute):
+                return True
+            inside = [k.value for k in call.keywords if k.arg == "dir"] + call.args[2:3]
+            if any(removed(k, call) for k in tfc__refs(inside)):
+                return True
+        up = holder(call)
+        if isinstance(up, ast.Return):
+            return owner_removes(scope(call), seen)
+        targets = up.targets if isinstance(up, ast.Assign) else [up.target] if isinstance(up, ast.AnnAssign) else []
+        keys = {tfc__key(t) for t in targets} - {None}
+        if not keys:
+            return False
+        if any(removed(k, call) for k in keys):
+            return True
+        f = scope(call)
+        return f is not tree and any(
+            isinstance(r, ast.Return) and r.value is not None and scope(r) is f
+            and keys & tfc__refs([r.value]) for r in ast.walk(f)) and owner_removes(f, seen)
+
+    def owner_removes(f, seen):
+        if not isinstance(f, tfc__FUNCS) or f.name in seen:
+            return False
+        sites = [n for n in calls if tfc__name(n.func) == f.name]
+        return bool(sites) and all(cleaned(s, seen | {f.name}) for s in sites)
+
+    return sorted(n.lineno for n in calls
+                  if tfc__name(n.func) == tfc_MAKER and not cleaned(n, frozenset()))
 
 def tfc_main() -> int:
     root = os.environ.get("MIOS_DRIFT_ROOT") or os.getcwd()
@@ -121,6 +294,17 @@ def tfc_main() -> int:
         if not any(m in s for m in tfc_MARKERS):
             viol.append("%s makes a temporary directory and never removes it -- "
                         "one survives every run" % rel)
+            continue
+        try:
+            lines = tfc_uncleaned(s)
+        except SyntaxError as exc:
+            viol.append("%s does not parse (%s), so its temporary directories cannot be "
+                        "traced" % (rel, exc.msg))
+            continue
+        viol.extend("%s:%d makes a temporary directory nothing removes -- a removal of "
+                    "another directory elsewhere in the file does not count; bind it and "
+                    "remove it (rmtree/addCleanup/atexit), or make it inside a removed "
+                    "directory (dir=)" % (rel, n) for n in lines)
     print("\n".join(viol))
     if viol:
         return 1

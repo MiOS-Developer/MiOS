@@ -157,7 +157,11 @@ class TestGamePlacementLive(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default
+        # is removed after tearDownClass (and when setUpClass fails).
         cls.out = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-game-live-'))
+        if not os.environ.get('MIOS_LIVE_OUT'):
+            cls.addClassCleanup(shutil.rmtree, cls.out, True)
         cls.out.mkdir(parents=True, exist_ok=True)
         cls.procs = []
         cls.launcher = subprocess.Popen([MIOS_GEN, 'nested-session', '--layout', 'pip'],

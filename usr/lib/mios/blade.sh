@@ -228,12 +228,21 @@ _auth_posture() {
 
     local gaps=""
     [[ "$require" == "1" ]] || gaps="[security].api_require_auth is off"
-    # Only enforce binds the owner to the authenticated key (the bind-mode owner,
-    # mios_pipe.context.grounding._client_env): verify only logs a mismatch, and
-    # any other value (the vendor "audit" among them) degrades to off there.
-    if [[ "$bind" != "enforce" ]]; then
+    # Only enforce binds the owner to the authenticated key. The bind-mode owner,
+    # mios_pipe.context.grounding._parse_principal_bind_mode, reads "audit" (the
+    # vendor value) as verify, which only logs a mismatch, and rejects any other
+    # value, failing closed to enforce. A rejected value is still a gap: only a
+    # valid enforce arms a seat, never a misspelling.
+    local bind_gap=""
+    case "$bind" in
+        enforce) ;;
+        off|verify) bind_gap="[security].principal_bind_mode is ${bind}, not enforce" ;;
+        audit) bind_gap="[security].principal_bind_mode is audit (an alias of verify), not enforce" ;;
+        *) bind_gap="[security].principal_bind_mode '${bind}' is not a bind mode (off, verify, audit or enforce): the consumer rejects it and fails closed to enforce; set enforce" ;;
+    esac
+    if [[ -n "$bind_gap" ]]; then
         [[ -z "$gaps" ]] || gaps="${gaps}; "
-        gaps="${gaps}[security].principal_bind_mode is ${bind}, not enforce"
+        gaps="${gaps}${bind_gap}"
     fi
     if [[ -z "$gaps" ]]; then
         printf 'armed\t%s\tauth required, principal bound (%s)' "$ep" "$bind"

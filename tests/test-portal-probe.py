@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -236,6 +237,9 @@ class TestLayoutSurfaceChecks(unittest.TestCase):
 class TestLive(unittest.TestCase):
     def probe(self, *argv):
         out = tempfile.mkdtemp(prefix="portal-probe-", dir=os.environ.get("MIOS_PORTAL_PROBE_DIR"))
+        if not os.environ.get("MIOS_PORTAL_PROBE_DIR"):
+            # Evidence is opt-in: only a caller-supplied MIOS_PORTAL_PROBE_DIR keeps the output.
+            self.addCleanup(shutil.rmtree, out, True)
         r = subprocess.run([sys.executable, "-I", PROBE, *argv, "--out", out], capture_output=True, text=True, timeout=600)
         with open(os.path.join(out, "result.json"), encoding="utf-8") as fh:
             return r, json.load(fh)

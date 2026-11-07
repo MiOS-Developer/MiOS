@@ -8,7 +8,7 @@
 # --mouse-rows: app-independent raw SGR translation and painted-cell regression
 # for status off/top/bottom (one, two and five lines) and single/split panes.
 # MIOS_MOUSE_ROWS_RECEIPT_DIR retains client/pane byte traces and JSON evidence.
-import os, pty, select, shutil, subprocess, sys, tempfile, time
+import atexit, os, pty, select, shutil, subprocess, sys, tempfile, time
 import fcntl, json, re, shlex, struct, termios, tty
 from pathlib import Path
 
@@ -319,12 +319,15 @@ def painted_cells(data, width=80, height=24):
 
 
 def mouse_rows_main():
-    """Use private sockets only; retain positive and wrong-client-row traces."""
+    """Use private sockets only; retain positive and wrong-client-row traces in a
+    caller-supplied MIOS_MOUSE_ROWS_RECEIPT_DIR (the temporary default is removed at exit)."""
     if not shutil.which('tmux') or not CONF.is_file():
         print('FAIL mouse rows require tmux and the generated MiOS configuration')
         return 1
     receipt_dir = os.environ.get('MIOS_MOUSE_ROWS_RECEIPT_DIR')
     out = Path(receipt_dir or tempfile.mkdtemp(prefix='mios-mouse-row-receipts-'))
+    if not receipt_dir:
+        atexit.register(shutil.rmtree, out, True)
     out.mkdir(parents=True, exist_ok=True)
     receipt = {'tmux': subprocess.check_output(['tmux', '-V'], text=True).strip(),
                'configuration': str(CONF), 'physical_input_tested': False, 'cases': []}
@@ -417,7 +420,8 @@ def mouse_rows_main():
         receipt['error'] = repr(error)
     receipt.update(checks=len(res), passed_checks=sum(res), passed=bool(res) and all(res))
     (out / 'mios-mouse-rows.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    print(f'{sum(res)}/{len(res)} mouse row checks passed; receipt {out}', flush=True)
+    note = out if receipt_dir else 'removed at exit; set MIOS_MOUSE_ROWS_RECEIPT_DIR=<dir> to keep it'
+    print(f'{sum(res)}/{len(res)} mouse row checks passed; receipt {note}', flush=True)
     return 0 if receipt['passed'] else 1
 
 

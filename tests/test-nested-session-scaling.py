@@ -4,10 +4,16 @@
 # Live test of nested fit scaling and the global session-scale binds, in an owned nested MiOS session (PiP).
 # Primary compositor: only the stock launcher's PiP adoption and key events sent to OUR nested window. No primary
 # output is rescaled; the primary user tier is hash-checked; the verb's own persistence is exercised on a scratch tier.
-import hashlib, json, math, os, re, signal, subprocess, sys, tempfile, time
+import atexit, hashlib, json, math, os, re, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-nested-scaling-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 CAND = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 WT_SSOT = Path(__file__).resolve().parents[1] / 'usr/share/mios/mios.toml'
 TEST_SSOT = OUT / 'vendor-test.toml'
@@ -248,7 +254,7 @@ def main():
     check('operator user tier untouched', sha(USER_TIER) == user_before)
     passed = sum(1 for r in results if r[1])
     (OUT / 'results.json').write_text(json.dumps([{'name': a, 'pass': b, 'detail': c} for a, b, c in results], indent=1))
-    print(f'{passed}/{len(results)} passed')
+    print(f'{passed}/{len(results)} passed; evidence {OUT_NOTE}')
     return 0 if passed == len(results) else 1
 
 
