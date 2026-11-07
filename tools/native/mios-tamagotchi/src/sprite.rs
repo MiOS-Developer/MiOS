@@ -165,6 +165,8 @@ pub struct Sprite {
     face_mapping: Option<FaceMapping>,
     surface_shading: Option<Vec<[i8; 4]>>,
     surface_voxels: Option<Vec<[i32; 3]>>,
+    // Q8 source pixels per model-lattice cell along the projected axes.
+    voxel_pixels: Option<u16>,
     // Q8 packed-pixel camera depth relative to the physical ground anchor.
     voxel_depth: Option<Vec<i32>>,
     voxel_ground: Option<[i32; 2]>,
@@ -216,6 +218,15 @@ mod profile_symmetry_tests {
 
 #[cfg(test)]
 impl Sprite {
+    /// The same sprite without voxel identity: renderers fall back to the
+    /// legacy lit packing, the overlay-off reference for renderer tests.
+    pub(crate) fn without_voxel_identity(&self) -> Self {
+        let mut sprite = self.clone();
+        sprite.surface_voxels = None;
+        sprite.voxel_pixels = None;
+        sprite
+    }
+
     /// A flat, fully authorized face plane of `columns` x `rows` texels in
     /// material `index`, inside a one-texel empty border. Its UV is affine in
     /// the texel grid with the given per-texel `step`, centred on (0.5, 0.5)
@@ -256,6 +267,7 @@ impl Sprite {
             }),
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -336,6 +348,24 @@ impl Sprite {
             .as_ref()?
             .get(y as usize * usize::from(self.width) + x as usize)
             .copied()
+    }
+
+    /// One exposed cube face: the winning voxel and its quantized view
+    /// normal. Every pixel of one face carries the same integer normal, so
+    /// facet equality is exact. Gated exactly like `surface_voxel`.
+    pub fn surface_facet(&self, x: u32, y: u32) -> Option<([i32; 3], [i8; 3])> {
+        let voxel = self.surface_voxel(x, y)?;
+        let sample = self
+            .surface_shading
+            .as_ref()?
+            .get(y as usize * usize::from(self.width) + x as usize)?;
+        Some((voxel, [sample[0], sample[1], sample[2]]))
+    }
+
+    /// Source pixels per model-lattice cell (the voxel pitch on screen
+    /// before camera scaling). Legacy pixel sprites and eggs have none.
+    pub fn voxel_extent_pixels(&self) -> Option<f64> {
+        self.voxel_pixels.map(|pitch| f64::from(pitch) / 256.0)
     }
 
     /// Camera depth in source-pixel units. Transparent and legacy pixel
@@ -547,6 +577,7 @@ impl Sprite {
                 face_mapping: None,
                 surface_shading: None,
                 surface_voxels: None,
+                voxel_pixels: None,
                 voxel_depth: None,
                 voxel_ground: None,
             };
@@ -630,6 +661,10 @@ impl Sprite {
             }
             mapped
         });
+        // The lattice pitch shrinks with the single rational scale.
+        let voxel_pixels = self.voxel_pixels.map(|pitch| {
+            (u32::from(pitch) * u32::from(width) / u32::from(self.width)).clamp(1, 65535) as u16
+        });
         let voxel_ground = self.voxel_ground.map(|[x, y]| {
             [
                 (i64::from(x) * i64::from(width) / i64::from(self.width)) as i32,
@@ -650,6 +685,7 @@ impl Sprite {
             face_mapping,
             surface_shading,
             surface_voxels,
+            voxel_pixels,
             voxel_depth,
             voxel_ground,
         }
@@ -798,6 +834,7 @@ impl Sprite {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
             pixels: rows
@@ -1233,6 +1270,7 @@ impl Sprite {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         })
@@ -1279,6 +1317,7 @@ impl Sprite {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
             face_overlay: Some(FaceOverlay {
@@ -1311,6 +1350,7 @@ impl Sprite {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -1343,6 +1383,7 @@ impl Sprite {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -1801,6 +1842,7 @@ impl VoxelModel {
             face_mapping: None,
             surface_shading: None,
             surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         };
@@ -1856,6 +1898,7 @@ impl VoxelModel {
             // Resolve detailed contours across the actual canvas; do not leave
             // half of a high-resolution sprite unused after chibi limb changes.
             .min(if k > 1 { f32::MAX } else { kf });
+        sprite.voxel_pixels = Some((fit / kf * 256.0).round().clamp(1.0, 65535.0) as u16);
         let project = |v: [f32; 3]| {
             let [x, y, z] = transform(v);
             // Align lattice centers with pixel centers at zero yaw. Otherwise
@@ -4225,6 +4268,65 @@ mod voxel_identity_tests {
         let pixels = Sprite::new(2, 2, vec![Some(1); 4]).unwrap();
         assert!(pixels.surface_voxel(0, 0).is_none());
         assert!(Sprite::egg().surface_voxel(0, 0).is_none());
+    }
+
+    #[test]
+    fn voxel_extent_matches_lattice_pitch_and_scales() {
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            let sprite = adult(style, 0);
+            let extent = sprite
+                .voxel_extent_pixels()
+                .expect("voxel sprites carry their lattice pitch");
+            // Frontal rows: the mean run of one identity is one voxel wide
+            // (a voxel smaller than a pixel still covers a whole pixel).
+            let (mut runs, mut covered) = (0u32, 0u32);
+            for y in 0..u32::from(sprite.height()) {
+                let mut previous = None;
+                for x in 0..u32::from(sprite.width()) {
+                    let id = sprite.surface_voxel(x, y);
+                    if id.is_some() {
+                        covered += 1;
+                        if id != previous {
+                            runs += 1;
+                        }
+                    }
+                    previous = id;
+                }
+            }
+            let measured = f64::from(covered) / f64::from(runs.max(1));
+            let expected = extent.max(1.0);
+            assert!(
+                (measured - expected).abs() <= 0.3 * expected,
+                "{style:?}: measured voxel run {measured:.2} px against pitch {extent:.2} px"
+            );
+            let small = sprite.downsample_to_fit(sprite.width() / 2, sprite.height() / 2);
+            let ratio = f64::from(small.width()) / f64::from(sprite.width());
+            let scaled = small
+                .voxel_extent_pixels()
+                .expect("downsampling keeps the pitch");
+            assert!(
+                (scaled - extent * ratio).abs() <= 0.02 * extent + 1.0 / 256.0,
+                "{style:?}: downsampled pitch {scaled:.3} px, expected {:.3} px",
+                extent * ratio
+            );
+        }
+        let pixels = Sprite::new(2, 2, vec![Some(1); 4]).unwrap();
+        assert!(pixels.voxel_extent_pixels().is_none());
+        assert!(pixels.surface_facet(0, 0).is_none());
+        assert!(Sprite::egg().voxel_extent_pixels().is_none());
+        // A facet is the voxel plus its exact integer view normal.
+        let sprite = adult(SpriteStyle::SixteenBit, 30);
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                let facet = sprite.surface_facet(x, y);
+                assert_eq!(facet.map(|f| f.0), sprite.surface_voxel(x, y));
+                if let (Some((_, normal)), Some((shading, _))) =
+                    (facet, sprite.surface_shading(x, y))
+                {
+                    assert_eq!(normal.map(|v| f32::from(v) / 127.0), shading);
+                }
+            }
+        }
     }
 
     #[test]
