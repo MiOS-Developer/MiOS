@@ -13721,3 +13721,572 @@ mod face_transition_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod render_cost_tests {
+    //! Render cost and byte-identity.
+    //!
+    //! `render_cost_report` (ignored: run it explicitly, in release, in
+    //! MiOS-DEV) times fixed frames of the live fox in each camera role, size
+    //! and renderer, and prints one JSON line per frame with its median
+    //! ns/frame and the frame's digest. The golden tests pin the exact buffers
+    //! a fixed matrix of frames renders (every renderer and colour depth, the
+    //! three camera roles, zooms, orbits, sizes, species, stages, styles,
+    //! lighting variants and live face blends), so a change that is meant to
+    //! be invisible, such as an optimisation, is proved byte-identical. A
+    //! change meant to be seen regenerates them with `print_render_goldens`.
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+    use std::cell::Cell;
+
+    /// Root's live fox (seed 513).
+    const FOX: Appearance = Appearance {
+        shape: 1,
+        body: 8,
+        accent: 3,
+    };
+    const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+
+    fn fnv(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+
+    /// FNV-1a over a frame: its area and every cell (symbol, colours,
+    /// modifiers, diff option).
+    fn digest(hash: &mut u64, buf: &Buffer) {
+        fnv(hash, format!("{:?}", buf.area).as_bytes());
+        for cell in &buf.content {
+            fnv(hash, format!("{cell:?}").as_bytes());
+        }
+    }
+
+    fn camera(view: CameraView, zoom_percent: u16, orbit_degrees: u16) -> Camera {
+        Camera {
+            orbit_degrees,
+            view,
+            from_view: view,
+            zoom_percent,
+            transition_percent: 100,
+            ..Camera::default()
+        }
+    }
+
+    /// One room frame with the world enabled or not, and an optional live face
+    /// memory.
+    fn room(
+        sprite: &Sprite,
+        (config, colors, world): (&Config, &Colors, bool),
+        renderer: Renderer,
+        camera: Camera,
+        (style, expression, pose, position): (SpriteStyle, Expression, usize, (u16, u16)),
+        size: (u16, u16),
+        face_detail: FaceDetail<'_>,
+    ) -> Buffer {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let mut buf = Buffer::empty(area);
+        RoomWidget {
+            world: world.then_some(&config.world),
+            sprite,
+            detail: style,
+            renderer,
+            scale: 0,
+            colors,
+            expression,
+            frame: pose,
+            position,
+            camera,
+            habitat: None,
+            face_detail,
+        }
+        .render(area, &mut buf);
+        buf
+    }
+
+    /// The bench's fixed sprite: the Baby fox, idle, 16-bit, at 45 degrees.
+    fn bench_fox() -> Sprite {
+        Sprite::voxel_with_camera(
+            Stage::Baby,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            [45, 0],
+            false,
+            FOX,
+        )
+    }
+
+    /// Render-cost matrix: the three camera roles at 130x29 and 59x49 in
+    /// ASCII and half-block (the required table), then the large close-up and
+    /// the packed renderers (informational).
+    fn bench_cases() -> Vec<(CameraView, u16, (u16, u16), Renderer)> {
+        let mut cases = Vec::new();
+        for size in [(130, 29), (59, 49)] {
+            for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                for view in CameraView::ALL {
+                    cases.push((view, 100, size, renderer));
+                }
+            }
+        }
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            cases.push((CameraView::Face, 400, (130, 29), renderer));
+            cases.push((CameraView::Pet, 200, (130, 29), renderer));
+        }
+        for renderer in [Renderer::Quadrant, Renderer::Braille] {
+            for view in CameraView::ALL {
+                cases.push((view, 100, (130, 29), renderer));
+            }
+        }
+        cases
+    }
+
+    #[test]
+    #[ignore = "render-cost bench: run explicitly in release"]
+    fn render_cost_report() {
+        let iterations: usize = 200;
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = bench_fox();
+        for (view, zoom, size, renderer) in bench_cases() {
+            let frame = || {
+                room(
+                    &sprite,
+                    (&config, &colors, true),
+                    renderer,
+                    camera(view, zoom, 45),
+                    (SpriteStyle::SixteenBit, Expression::Idle, 0, (500, 700)),
+                    size,
+                    None,
+                )
+            };
+            let mut hash = FNV_OFFSET;
+            digest(&mut hash, &frame());
+            for _ in 0..20 {
+                std::hint::black_box(frame());
+            }
+            let mut times: Vec<u128> = (0..iterations)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let buf = std::hint::black_box(frame());
+                    let elapsed = start.elapsed().as_nanos();
+                    drop(buf);
+                    elapsed
+                })
+                .collect();
+            times.sort_unstable();
+            println!(
+                "{{\"bench\":\"frame\",\"view\":\"{view:?}\",\"zoom\":{zoom},\"size\":\"{}x{}\",\"renderer\":\"{renderer:?}\",\"iterations\":{iterations},\"median_ns\":{},\"p10_ns\":{},\"p90_ns\":{},\"min_ns\":{},\"digest\":\"{hash:016x}\"}}",
+                size.0,
+                size.1,
+                times[iterations / 2],
+                times[iterations / 10],
+                times[iterations * 9 / 10],
+                times[0],
+            );
+        }
+    }
+
+    /// A deterministic xorshift for the golden matrix.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn pick<T: Copy>(&mut self, items: &[T]) -> T {
+            items[(self.next() % items.len() as u64) as usize]
+        }
+
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    const RENDERERS: [Renderer; 4] = [
+        Renderer::Ascii,
+        Renderer::HalfBlock,
+        Renderer::Quadrant,
+        Renderer::Braille,
+    ];
+    const DEPTHS: [Depth; 4] = [Depth::Rgb, Depth::Indexed, Depth::Ansi, Depth::Mono];
+    /// Random frames per renderer and colour depth.
+    const FRAMES_PER_DEPTH: usize = 24;
+
+    /// The vendor lighting, disabled lighting, a dense ramp, a ramp of line
+    /// glyphs only (kept unchanged), and a raking light with strong outlines.
+    fn lighting_variant(variant: u64) -> Config {
+        let mut config = Config::sample().unwrap();
+        let light = &mut config.voxel_lighting;
+        match variant {
+            1 => light.enabled = false,
+            2 => light.ascii_ramp = ".oO@".into(),
+            3 => light.ascii_ramp = "-=".into(),
+            4 => {
+                light.light_direction = [40, -60, 50];
+                light.outline_percent = 45;
+                light.ambient_percent = 35;
+                light.diffuse_percent = 90;
+                light.occlusion_percent = 60;
+            }
+            _ => {}
+        }
+        config.validate().unwrap();
+        config
+    }
+
+    /// One random frame of the golden matrix, digested into `hash`.
+    fn random_frame(rng: &mut Rng, renderer: Renderer, depth: Depth, hash: &mut u64) {
+        let stage = rng.pick(&[
+            Stage::Baby,
+            Stage::Baby,
+            Stage::Child,
+            Stage::Adult,
+            Stage::Adult,
+            Stage::Egg,
+        ]);
+        let expression = rng.pick(&[
+            Expression::Idle,
+            Expression::Happy,
+            Expression::Sad,
+            Expression::Angry,
+            Expression::Surprised,
+            Expression::Sleeping,
+            Expression::Sick,
+            Expression::Hungry,
+            Expression::Playful,
+            Expression::Shy,
+            Expression::Excited,
+            Expression::Eating,
+            Expression::Cleaning,
+            Expression::Healing,
+            Expression::Celebrate,
+            Expression::Dead,
+        ]);
+        let style = rng.pick(&[
+            SpriteStyle::SixteenBit,
+            SpriteStyle::SixteenBit,
+            SpriteStyle::EightBit,
+        ]);
+        let appearance = Appearance {
+            shape: rng.below(16) as u8,
+            body: rng.below(16) as u8,
+            accent: rng.below(16) as u8,
+        };
+        let pose = rng.below(8) as usize;
+        let yaw = rng.pick(&[0, 10, 20, 45, 90, 135, 180, 225, 270, 315, 350]);
+        let pitch = rng.pick(&[0, 0, 15, 30, 60]);
+        let walking = rng.below(4) == 0;
+        let view = rng.pick(&CameraView::ALL);
+        let zoom = rng.pick(&[50, 75, 100, 100, 125, 150, 200, 300, 400]);
+        let size = rng.pick(&[
+            (130, 29),
+            (59, 49),
+            (24, 10),
+            (12, 6),
+            (20, 8),
+            (40, 16),
+            (160, 24),
+            (48, 64),
+            (80, 24),
+            (24, 3),
+            (30, 2),
+        ]);
+        let world = rng.below(8) != 0;
+        let config = lighting_variant(rng.pick(&[0, 0, 0, 0, 0, 1, 2, 3, 4]));
+        let colors = Colors::from_config(&config, depth).unwrap();
+        let mut camera = camera(view, zoom, yaw);
+        if rng.below(6) == 0 {
+            camera.from_view = rng.pick(&CameraView::ALL);
+            camera.transition_percent = rng.below(101) as u16;
+        }
+        if rng.below(6) == 0 {
+            camera.pan_permille = (rng.below(801) as i16 - 400, rng.below(801) as i16 - 400);
+        }
+        let position = if rng.below(3) == 0 {
+            (rng.below(1001) as u16, rng.below(1001) as u16)
+        } else {
+            (500, 700)
+        };
+        let sprite = Sprite::voxel_with_camera(
+            stage,
+            expression,
+            style,
+            pose,
+            [yaw, pitch],
+            walking,
+            appearance,
+        );
+        let buf = room(
+            &sprite,
+            (&config, &colors, world),
+            renderer,
+            camera,
+            (style, expression, pose, position),
+            size,
+            None,
+        );
+        digest(hash, &buf);
+    }
+
+    /// Live faces: a zoom burst into the close-up and back, a Pet zoom across
+    /// the native and stroke tiers, and a resize sequence, each with the face
+    /// memory a live camera keeps.
+    fn live_frames(renderer: Renderer, hash: &mut u64) {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = bench_fox();
+        let ramp = |from: u16, to: u16, k: usize, n: usize| {
+            let t =
+                (k.min(n) as f64 / n as f64).powi(2) * (3.0 - 2.0 * (k.min(n) as f64 / n as f64));
+            (f64::from(from) + (f64::from(to) - f64::from(from)) * t).round() as u16
+        };
+        for (view, size, zooms) in [
+            (CameraView::Face, (59, 49), [100u16, 400, 100]),
+            (CameraView::Pet, (40, 16), [50, 300, 120]),
+        ] {
+            let memo = Cell::new(DetailMemo::default());
+            let mut drawn = zooms[0];
+            for k in 0..30usize {
+                let (from, to, step) = if k < 15 {
+                    (zooms[0], zooms[1], k)
+                } else {
+                    (zooms[1], zooms[2], k - 15)
+                };
+                let target = if k < 15 { zooms[1] } else { zooms[2] };
+                let zoom = ramp(from, to, step, 8);
+                let clock = DetailClock {
+                    frame: k,
+                    frames: 8,
+                    zoom: [drawn, target],
+                };
+                drawn = zoom;
+                let buf = room(
+                    &sprite,
+                    (&config, &colors, true),
+                    renderer,
+                    camera(view, zoom, 45),
+                    (SpriteStyle::SixteenBit, Expression::Idle, 0, (500, 700)),
+                    size,
+                    Some((&memo, clock)),
+                );
+                digest(hash, &buf);
+            }
+        }
+        let memo = Cell::new(DetailMemo::default());
+        for (k, size) in [
+            (110, 26),
+            (110, 26),
+            (90, 22),
+            (90, 22),
+            (90, 22),
+            (70, 18),
+            (70, 18),
+            (50, 16),
+            (50, 16),
+            (50, 16),
+            (130, 29),
+            (130, 29),
+            (130, 29),
+            (130, 29),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let clock = DetailClock {
+                frame: k,
+                frames: 8,
+                zoom: [100, 100],
+            };
+            let buf = room(
+                &sprite,
+                (&config, &colors, true),
+                renderer,
+                camera(CameraView::Face, 100, 45),
+                (SpriteStyle::SixteenBit, Expression::Idle, 0, (500, 700)),
+                size,
+                Some((&memo, clock)),
+            );
+            digest(hash, &buf);
+        }
+    }
+
+    /// One renderer's digests: per colour depth (the bench frames, then the
+    /// random matrix), then the live faces.
+    fn renderer_digests(renderer: Renderer) -> [u64; 5] {
+        let mut digests = [FNV_OFFSET; 5];
+        let index = RENDERERS.iter().position(|r| *r == renderer).unwrap() as u64;
+        for (d, depth) in DEPTHS.into_iter().enumerate() {
+            let config = Config::sample().unwrap();
+            let colors = Colors::from_config(&config, depth).unwrap();
+            let sprite = bench_fox();
+            for (view, zoom, size, bench_renderer) in bench_cases() {
+                if bench_renderer != renderer {
+                    continue;
+                }
+                let buf = room(
+                    &sprite,
+                    (&config, &colors, true),
+                    renderer,
+                    camera(view, zoom, 45),
+                    (SpriteStyle::SixteenBit, Expression::Idle, 0, (500, 700)),
+                    size,
+                    None,
+                );
+                digest(&mut digests[d], &buf);
+            }
+            let mut rng =
+                Rng(0x9E37_79B9_7F4A_7C15 ^ (index << 8 | d as u64).wrapping_mul(0x2545_F491));
+            for _ in 0..FRAMES_PER_DEPTH {
+                random_frame(&mut rng, renderer, depth, &mut digests[d]);
+            }
+        }
+        live_frames(renderer, &mut digests[4]);
+        digests
+    }
+
+    /// The pixel view (legacy pixel sprites and voxel sprites in the sprite
+    /// widget, every renderer and depth) and the plain-text snapshot.
+    fn pixel_digest() -> u64 {
+        let mut hash = FNV_OFFSET;
+        let config = Config::sample().unwrap();
+        for depth in DEPTHS {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            for renderer in RENDERERS {
+                for sprite in [
+                    Sprite::pet(Stage::Baby, 0),
+                    Sprite::pet(Stage::Child, 1),
+                    Sprite::pet(Stage::Adult, 2),
+                    bench_fox(),
+                ] {
+                    for (size, scale) in [((40, 16), 0), ((24, 10), 1), ((130, 29), 0)] {
+                        let area = Rect::new(0, 0, size.0, size.1);
+                        let mut buf = Buffer::empty(area);
+                        SpriteWidget {
+                            sprite: &sprite,
+                            renderer,
+                            scale,
+                            colors: &colors,
+                        }
+                        .render(area, &mut buf);
+                        digest(&mut hash, &buf);
+                    }
+                }
+            }
+        }
+        fnv(
+            &mut hash,
+            snapshot(&bench_fox(), &config).unwrap().as_bytes(),
+        );
+        hash
+    }
+
+    /// Digests the golden frames render to: per renderer, Rgb, Indexed, Ansi
+    /// and Mono frames, then the live faces; then the pixel view.
+    const GOLDEN: [[u64; 5]; 4] = [
+        [
+            0x33f0_aa7f_4aed_76ad,
+            0xddb8_4012_35ff_7ac2,
+            0x6e6b_a39f_75db_70c3,
+            0x7d45_4ae2_c430_294e,
+            0xdc1d_5ac6_9b27_fb8d,
+        ],
+        [
+            0x374f_cc5f_e634_6c09,
+            0xe621_d968_656e_6699,
+            0x803e_df1d_78aa_10a3,
+            0xee4d_2e09_0012_240b,
+            0x91d0_2ed4_4f38_078b,
+        ],
+        [
+            0xb7e0_8a96_6a2f_cec4,
+            0x1fda_05ed_4a03_bf6a,
+            0x3a08_2aa5_32fe_8d9d,
+            0x2066_b8cb_7d59_d90a,
+            0x3859_58d6_12a2_5ab4,
+        ],
+        [
+            0xeb96_4fbf_a6a3_01e4,
+            0x0d26_121f_bac0_9a63,
+            0x1ac7_f44b_c9c7_7832,
+            0xcd87_8eda_3649_85d1,
+            0x7ddb_27ed_d001_703c,
+        ],
+    ];
+    const GOLDEN_PIXEL: u64 = 0x8fe9_3fe1_9912_8222;
+
+    fn assert_golden(renderer: Renderer) {
+        let index = RENDERERS.iter().position(|r| *r == renderer).unwrap();
+        let actual = renderer_digests(renderer);
+        let labels = ["Rgb", "Indexed", "Ansi", "Mono", "live faces"];
+        let differ: Vec<String> = (0..5)
+            .filter(|&i| actual[i] != GOLDEN[index][i])
+            .map(|i| {
+                format!(
+                    "{}: {:#018x} (golden {:#018x})",
+                    labels[i], actual[i], GOLDEN[index][i]
+                )
+            })
+            .collect();
+        assert!(
+            differ.is_empty(),
+            "{renderer:?} frames differ from the golden buffers: {differ:?}"
+        );
+    }
+
+    #[test]
+    fn ascii_frames_match_the_golden_buffers() {
+        assert_golden(Renderer::Ascii);
+    }
+
+    #[test]
+    fn half_block_frames_match_the_golden_buffers() {
+        assert_golden(Renderer::HalfBlock);
+    }
+
+    #[test]
+    fn quadrant_frames_match_the_golden_buffers() {
+        assert_golden(Renderer::Quadrant);
+    }
+
+    #[test]
+    fn braille_frames_match_the_golden_buffers() {
+        assert_golden(Renderer::Braille);
+    }
+
+    #[test]
+    fn pixel_view_and_snapshot_match_the_golden_buffers() {
+        let actual = pixel_digest();
+        assert_eq!(
+            actual, GOLDEN_PIXEL,
+            "pixel view {actual:#018x} differs from the golden {GOLDEN_PIXEL:#018x}"
+        );
+    }
+
+    /// Prints the golden table for a change meant to be seen.
+    #[test]
+    #[ignore = "prints the golden table"]
+    fn print_render_goldens() {
+        for renderer in RENDERERS {
+            let digests = renderer_digests(renderer);
+            println!(
+                "golden {renderer:?}: [{}],",
+                digests.map(|d| format!("{d:#018x}")).join(", ")
+            );
+        }
+        println!("golden pixel: {:#018x}", pixel_digest());
+    }
+}
