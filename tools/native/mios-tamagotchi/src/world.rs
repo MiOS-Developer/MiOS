@@ -108,7 +108,7 @@ impl WorldSurface {
             }
             let edge = q.round();
             let inside = if (q - edge).abs() <= 1e-4 {
-                edge - f64::from(u8::from(f64::from(self.normal[axis]) > 1e-4))
+                edge - f64::from(u8::from(self.normal[axis] > 0.0))
             } else {
                 q.floor()
             };
