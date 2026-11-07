@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 88 |
+| in_progress | 89 |
 | completed | 1891 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3767 |
+| total | 3768 |
 
 0 record(s) carry at least one override.
 
@@ -2668,6 +2668,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_228` task_3193: Collapse the ~18-image sidecar fleet onto the `mios-sys` + `mios-cuda` shared-base lineage -- completed · P1 · size XL
 - `task_1104` Collapse the sidecar fleet onto a shared MiOS-Sys base to shrink the bake -- completed · P1 · size L
+
+## WS-MON
+
+### No epic
+
+- `task_3768` Expose camera-independent room surface metadata for voxel texture tracking -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## WS-NAME
 
