@@ -171,6 +171,38 @@ class MonProfiles(Base):
                 self.assertFalse(result['camera'], 'Mon cannot refine this context')
                 self.assertFalse((result['profile'] or '').startswith('mon'))
 
+    @unittest.skipUnless(os.environ.get('MIOS_GATE_BIN'), 'requires the compatible native gate')
+    def test_mon_malformed_app_policy_is_rejected_by_the_gate(self):
+        vendor = self.root / 'usr/share/mios/mios.toml'
+        original = vendor.read_text()
+        lua = self.root / 'usr/share/mios/hyprland/hyprland.lua'
+        lua.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / 'usr/share/mios/hyprland/hyprland.lua', lua)
+        def audit():
+            return subprocess.run([os.environ['MIOS_GATE_BIN'], 'keybind-collisions',
+                '--root', str(self.root), '--format', 'json'], text=True, capture_output=True,
+                env=self.env, timeout=20)
+        good = audit()
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        try:
+            for old, new, why in [
+                ('exe = ["/usr/bin/mios-tamagotchi"]', 'exe = ["sample"]', 'absolute paths'),
+                ('contexts = { terminal = "mon", console = "mon_console" }',
+                 'contexts = { terminal = "missing", console = "mon_console" }', 'missing'),
+                ('[keybindings.global.controller.nav.mon_tmux]\\ninherits = "terminal_tmux"',
+                 '[keybindings.global.controller.nav.mon_tmux]\\ninherits = "terminal_plain"', 'inherits'),
+            ]:
+                with self.subTest(why=why):
+                    self.assertEqual(original.count(old), 1)
+                    vendor.write_text(original.replace(old, new))
+                    bad = audit()
+                    self.assertNotEqual(bad.returncode, 0)
+                    result = json.loads(bad.stdout)
+                    self.assertNotEqual(result['status'], 'could_not_run', result)
+                    self.assertTrue(any(why in row for row in result['findings']), result)
+        finally:
+            vendor.write_text(original)
+
     def test_mon_release_only_and_explicit_repeat_buttons_do_not_act(self):
         result = self.replay('terminal', [key(SOUTH, 0), key(EAST, 0),
                              key(L3, 0), key(R3, 0), key(LT, 0), key(RT, 0),
@@ -188,8 +220,14 @@ class MonProfiles(Base):
             with self.subTest(body=body):
                 self.host_layer('[keybindings.global.controller.nav.apps.mon]\n' + body + '\n')
                 bad = self.run_bin('check')
-                self.assertNotEqual(bad.returncode, 0)
-                self.assertIn(why, bad.stderr)
+                self.assertEqual(bad.returncode, 0, bad.stderr)
+                checked = json.loads(bad.stdout)
+                self.assertEqual(checked['nav_apps'], [], 'malformed apps never select a profile')
+                self.assertIn(why, checked['nav_app_error'])
+                fallback = self.replay('terminal', tap(SOUTH), app='mon')
+                self.assertFalse(fallback['camera'])
+                self.assertEqual(fallback['profile'], 'terminal_plain')
+                self.assertEqual(fallback['output']['actions'], ['key:ENTER'])
 
 
 class Timing(Base):
