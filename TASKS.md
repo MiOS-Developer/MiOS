@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
-| in_progress | 87 |
-| completed | 1894 |
+| pending | 1753 |
+| in_progress | 88 |
+| completed | 1895 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3770 |
+| total | 3777 |
 
 0 record(s) carry at least one override.
 
@@ -2663,6 +2663,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3762` Design and implement authoritative local and remote MiOS-Mon multiplayer hosting -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3763` Keep essential pet needs visible in compact portrait HUDs -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
+- `task_3771` Preserve typed controller arrays through the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3773` Require deliberate short stick gestures for desktop focus changes -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3777` Validate controller timing bounds in the actual configurator form -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## WS-MIOSSYS
 
@@ -4447,6 +4453,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### No epic
 
 - `task_3731` Verify Inputd controller isolation across concurrent nested seats -- in_progress · owner mios-tamagotchi-live-coordinator · P1
+
+## inputd
+
+### No epic
+
+- `task_3772` Keep cursor-owned stick axes out of window and app focus navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## runtime
 
