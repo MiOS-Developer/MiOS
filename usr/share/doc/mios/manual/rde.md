@@ -44,12 +44,16 @@ RDE supports six execution providers:
 
 ### Agent port contract (intentional correction)
 
-This manual used to say that forwarded ports "are synchronized from `[ports]`". `miosd rde` then appended `[ports].devpod_agent` beside the compiled 8910, so the default stayed forwarded next to the selected port, and it truncated an out-of-range value to 16 bits. Both were defects. The contract is now:
+This manual used to say that forwarded ports "are synchronized from `[ports]`". `miosd rde` then appended `[ports].devpod_agent` beside the compiled 8910, so the default stayed forwarded next to the selected port, it truncated an out-of-range value to 16 bits, and it skipped a value that was not an integer and forwarded 8910 with no error. All three were defects. The contract is now:
 
 - The resolved `[ports].devpod_agent` replaces the previous agent port in the forward list, in the same position. The default 8910 is not forwarded unless it is the selected port. Remove the overlay and the vendor port is forwarded again.
 - The tiers merge before `miosd rde` reads the value, so when the host and user tiers both set the port, the user tier wins and the port is forwarded once.
 - If the selected port is already forwarded under another key, it appears in the list once.
 - The value must be an integer from 1 to 65535. Any other integer (0, 65536, a negative number) stops every `miosd rde` verb with `[ports].devpod_agent = <value> is not a TCP port`. It is never wrapped onto another port.
+- A value that is not an integer stops every verb with the same error, and the error shows the value as written: a string (`"abc"`), a numeric string (`"20000"`), a float (`1.5`, `20000.0`), a boolean, an array or a table. This check covers the flat `[ports].devpod_agent` and a `pinned.devpod_agent` in any `[ports.categories.*]` table.
+- `miosd rde` checks these values after the tiers merge and before `[ports]` is derived. Derivation copies only integers: it drops a non-integer pin and writes the category's port over the flat key. Because the check runs first, a flat value outside 1..65535 also stops every verb, even though derivation would replace it.
+- The check runs on the merged result. If the host tier pins 20000 and the user tier pins `"x"`, the merged pin is `"x"`, and `miosd rde` stops with an error. It does not forward 20000 or 8910. If the host tier pins `"x"` and the user tier pins 20000, the merged pin is 20000, which is valid.
+- An empty string sets nothing, because an empty string never overrides a lower tier. `pinned = { devpod_agent = "" }` leaves the port from the tier below, or 8910 when no lower tier sets one.
 - The other forwards (`code_server`, `agent_pipe`, `llm_light`, `pgvector`) and the devcontainer `forwardPorts` projection do not change.
 
 `[ports]` is derived from `[ports.categories]` after the merge, and `devpod_agent` is a member of `[ports.categories.devtools]`. To move only the agent port, an overlay pins it there: `[ports.categories.devtools]` with `pinned = { devpod_agent = <port> }`.
