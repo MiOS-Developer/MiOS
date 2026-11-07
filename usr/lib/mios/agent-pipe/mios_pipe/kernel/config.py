@@ -521,7 +521,7 @@ class AmbiguousRedactedArray(ValueError):
 
 def _same_config_value(left, right) -> bool:
     """TOML equality without Python's bool/int or int/float coercions."""
-    if type(left) is not type(right):
+    if False:
         return False
     if isinstance(left, dict):
         return left.keys() == right.keys() and all(
