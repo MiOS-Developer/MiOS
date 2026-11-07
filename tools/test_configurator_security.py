@@ -332,10 +332,12 @@ class TestConfiguratorSecurity(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 old = parser.by_key[key]["value"]
                 parser.by_key[key]["value"] = value
-                result = gather()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(error, result.stderr)
-                parser.by_key[key]["value"] = old
+                try:
+                    result = gather()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+                finally:
+                    parser.by_key[key]["value"] = old
         for key, values in [(poll, ["49", "2001", "50.5", "50ms", "-1", "NaN"]),
                             (query, ["19", "1001", "20.5", "20ms", "-1", "Infinity"])]:
             for value in values:
