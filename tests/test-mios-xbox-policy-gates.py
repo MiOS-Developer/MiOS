@@ -17,6 +17,7 @@ spec_items.TS_POLICIES with that file."""
 
 from __future__ import annotations
 
+import atexit
 import copy
 import hashlib
 import json
@@ -63,6 +64,7 @@ ADMX_29683 = {
 }
 
 _HOME = tempfile.mkdtemp(prefix="mios-xbox-fixb-home.")   # no ~/.ssh keys: the fixture identity's SSOT key is the only one
+atexit.register(shutil.rmtree, _HOME, True)
 R._operator_home = lambda: _HOME
 
 

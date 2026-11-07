@@ -591,7 +591,11 @@ class LiveNested(unittest.TestCase):
         cls.old_install = os.environ.get("MIOS_SHADERGLASS_OLD_INSTALL_DIR", "/usr/lib/mios/shaderglass")
         if not cls.new or not cls.install:
             raise unittest.SkipTest("set MIOS_SHADERGLASS_MIOSD and MIOS_SHADERGLASS_INSTALL_DIR (private install with the candidate WineCap)")
+        # Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default
+        # is removed after tearDownClass writes results.json (and when setUpClass fails).
         cls.work = Path(os.environ.get("MIOS_LIVE_OUT") or tempfile.mkdtemp(prefix="mios-sg-state-"))
+        if not os.environ.get("MIOS_LIVE_OUT"):
+            cls.addClassCleanup(shutil.rmtree, cls.work, True)
         cls.work.mkdir(parents=True, exist_ok=True)
         cls.work.chmod(0o700)
         cls.results = []
@@ -1067,6 +1071,9 @@ class LiveMobile(unittest.TestCase):
 
     def run_probe(self, launcher: str, label: str) -> dict:
         work = Path(tempfile.mkdtemp(prefix=f"mios-sg-mobile-{label}-", dir=os.environ.get("MIOS_LIVE_OUT")))
+        if not os.environ.get("MIOS_LIVE_OUT"):
+            # Only a probe made inside a caller-supplied MIOS_LIVE_OUT is kept.
+            self.addCleanup(shutil.rmtree, work, True)
         work.chmod(0o700)
         text = SSOT.read_text()
         text = re.sub(r"(?m)^mobile_short_side_px\s*=\s*\d+", "mobile_short_side_px = 8192", text, count=1)
