@@ -89,10 +89,10 @@ run_tier() {
         XDG_CONFIG_HOME="$d/xdg" XDG_RUNTIME_DIR="$d/run" MIOS_PORTAL_SESSION_TOKEN="$token" \
         "$bin" config-server --port "$port" > "$d/server.log" 2>&1 &
     SERVER_PID=$!
-    python3 - "$label" "$port" "$token" "$d" <<'PY' || rc=$?
-import http.client, json, os, sys, time, tomllib
+    python3 - "$label" "$port" "$token" "$d" "$REPO_ROOT" <<'PY' || rc=$?
+import http.client, json, os, subprocess, sys, time, tomllib
 
-label, port, token, d = sys.argv[1:]
+label, port, token, d, repo = sys.argv[1:]
 origin, user = f"http://127.0.0.1:{port}", os.path.join(d, "user.toml")
 fails = 0
 
@@ -183,6 +183,31 @@ with open(user, "w", encoding="utf-8") as fh:
 st, _, served = call("GET", "/portal/config", headers=auth)
 check(st == 200 and not any(s in served for s in ("user-tier-portal-pw", "user-tier-api-key", "user-tier-gh-token")),
       "GET redacts the planted user-tier secrets")
+
+def marks(value, at=()):
+    if value == "<redacted>":
+        return {at}
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    return set().union(set(), *(marks(v, at + (k,)) for k, v in items))
+
+# Parity: agent-pipe's GET redaction over the same tiers marks exactly the paths miosd marks.
+pipe_env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+pipe_env.update(MIOS_VENDOR_TOML=os.path.join(repo, "usr/share/mios/mios.toml"),
+                MIOS_VENDOR_TOML_D=os.path.join(repo, "usr/lib/mios/mios.d"),
+                MIOS_HOST_TOML=os.path.join(d, "host.toml"), MIOS_HOST_TOML_D=os.path.join(d, "host.d"),
+                MIOS_USER_TOML=user, MIOS_USER_TOML_D=os.path.join(d, "user.d"),
+                MIOS_RESOLVER_NATIVE="0", MIOS_DB_AUTHORITATIVE="0")
+pipe = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.path[:0] = sys.argv[1:3]; import mios_toml; "
+                       "from mios_pipe.kernel.config import redact_secrets, to_toml; "
+                       "print(to_toml(redact_secrets(mios_toml.load_merged())))",
+                       os.path.join(repo, "usr/lib/mios/agent-pipe"), os.path.join(repo, "usr/lib/mios")],
+                      env=pipe_env, capture_output=True, text=True, timeout=60)
+native_marks = marks(tomllib.loads(served))
+pipe_marks = marks(tomllib.loads(pipe.stdout)) if pipe.returncode == 0 else {"<agent-pipe failed>"}
+check(native_marks == pipe_marks and {("portal", "password"), ("git", "github_token")} <= native_marks,
+      f"agent-pipe redacts the same {len(native_marks)} paths as miosd "
+      f"(only miosd: {sorted(native_marks - pipe_marks)[:4]}, only agent-pipe: {sorted(pipe_marks - native_marks)[:4]}, "
+      f"{pipe.stderr.strip()[-160:]!r})")
 edited = edit(served, "identity", "username", '"test-operator"')
 st, _, body = save(edited)
 text = tier_text() or ""
@@ -208,6 +233,23 @@ check(st == 200 and tier.get("portal", {}).get("session_ttl") == ttl
 check(kept(tier), f"the secret beside each edited key keeps its real value ({text[:240]!r})")
 check("<redacted>" not in text and "host-tier-cookie-secret" not in text,
       "the same-table echo writes neither the marker nor a lower-tier secret")
+
+# Same layer: user.d outranks the user tier and the GET serves its secrets, but the save
+# writes the user tier, which keeps its own secret and never copies user.d's.
+own = os.path.join(d, "user.d", "20-own.toml")
+os.makedirs(os.path.dirname(own), exist_ok=True)
+with open(own, "w", encoding="utf-8") as fh:
+    fh.write('[portal]\npassword = "user-d-portal-pw"\nsecret = "user-d-cookie-secret"\n')
+st, _, served = call("GET", "/portal/config", headers=auth)
+ttl_own = tomllib.loads(served)["portal"]["session_ttl"] + 1
+st, _, body = save(edit(served, "portal", "session_ttl", str(ttl_own)))
+text = tier_text() or ""
+tier = tomllib.loads(text)
+check(st == 200 and tier.get("portal", {}).get("session_ttl") == ttl_own and kept(tier),
+      f"with a user.d secret above it, an echo keeps the user tier's own secrets (HTTP {st}: {text[:240]!r})")
+check(not any(s in text for s in ("user-d-portal-pw", "user-d-cookie-secret", "host-tier-cookie-secret", "<redacted>")),
+      "neither user.d's secrets, a lower-tier secret nor the marker reaches the user tier")
+os.remove(own)
 
 # Fail-closed: a user.d override that does not parse leaves the hidden values
 # unknown, so the echo is refused with every byte kept; once it parses, the echo saves.
@@ -271,6 +313,11 @@ if [[ ! -x "$CANDIDATE" ]]; then
     echo "[test-configurator-server] FAIL: MIOS_MIOSD_BIN=$CANDIDATE is not an executable" >&2
     exit 1
 fi
+case "$(readlink -f "$CANDIDATE")" in
+    /usr/*|"$(readlink -f "$INSTALLED" 2>/dev/null || echo /nonexistent)")
+        echo "[test-configurator-server] FAIL: $CANDIDATE is an installed binary, not a tree build of this checkout" >&2
+        exit 1 ;;
+esac
 echo "[test-configurator-server] candidate tier: $CANDIDATE${MIOS_MIOSD_BIN:+ (MIOS_MIOSD_BIN)}"
 run_tier candidate "$CANDIDATE" || status=1
 if [[ "$status" -ne 0 ]]; then
