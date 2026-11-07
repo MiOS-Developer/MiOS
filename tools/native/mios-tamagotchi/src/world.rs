@@ -928,21 +928,22 @@ mod tests {
         let screen = projection.point(point);
         projection.offset = [16.5 - screen[0], 16.5 - screen[1]];
         let floor = Triangle {
-            points: [[-1., 1., -1.], [1., 1., -1.], [0., 1., 1.]],
+            points: [[0., 1., 0.], [1., 1., -1.], [-1., 1., -1.]],
             normal: [0., 1., 0.],
             palette: 3,
             occlusion: 0,
         };
-        // A different face intersects at the sampled centre; equal depth is
-        // resolved by the existing palette ordering, independently of submission.
+        // The sample is the shared first vertex, so its barycentric weight
+        // is exactly one in both triangles. Interior interpolation can differ
+        // by an ULP and must not be mistaken for an exact depth tie.
         let front = Triangle {
-            points: [[-1., 0., 0.], [1., 0., 0.], [0., 2., 0.]],
+            points: [[0., 1., 0.], [-1., 0., 0.], [1., 0., 0.]],
             normal: [0., 0., 1.],
             palette: 9,
             occlusion: 0,
         };
         let near = Triangle {
-            points: floor.points.map(|[x, y, z]| [x, y + 0.5, z]),
+            points: [[-4., 1.5, -4.], [4., 1.5, -4.], [0., 1.5, 4.]],
             ..floor
         };
         for triangles in [[floor, front], [front, floor]] {
