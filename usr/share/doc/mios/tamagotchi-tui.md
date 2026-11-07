@@ -344,15 +344,29 @@ subject's face showed last:
   minimum they need. Strokes switch to the atlas from 8 cells per glyph and 8
   rows, and the atlas returns to strokes only below 7. A zoom that settles on a
   threshold, a turntable or a head bob therefore never makes the face flicker.
-- Blending: a tier change takes one zoom_transition_frames transition per tier,
-  eased like the camera. It goes glyph by glyph: the middle glyph first, then
-  each mirrored pair outwards (the eyes, then the parentheses). Each glyph is
+- Blending: a tier change takes one zoom_transition_frames transition per tier
+  (one transition in all after a resize), eased like the camera. It goes glyph
+  by glyph: the middle glyph first, then each mirrored pair outwards (the eyes,
+  then the parentheses). Each glyph is
   drawn whole by one tier, so the expression stays readable and symmetric on
   every frame. Between native characters and strokes the face keeps the stroke
   layout: a glyph not yet on strokes is its own single character inside its
   glyph box, so the expression grows in place.
-- Zoom, orbit, view changes and terminal resizes all use this path. The first
-  frame after a resize still shows the face as it was drawn; a change that
+- Direction: a zoom or orbit changes the face's tier only the way the face
+  itself moves. While the face shrinks its detail never rises, and while it
+  grows its detail never falls. An explicit zoom counts from the frame it is
+  pressed, before the eased zoom moves. A zoom that reverses during a blend
+  takes that blend back instead of finishing it and changing tier again; while
+  the face is still past the far threshold, the blend holds. Pressing `+`
+  quickly and then `0` therefore stays on strokes instead of passing through
+  the atlas on the way back.
+- Resizes: a terminal resize (any change of the camera viewport) is not
+  jitter. The face takes the new size's exact tier (3 and 8, no hysteresis)
+  and reaches it within one zoom_transition_frames transition, however many
+  tiers it crosses, so a large head never keeps a small head's native
+  characters. The first frame after a resize still shows the face as it was
+  drawn.
+- Zoom, orbit, view changes and resizes all use this path. A change that
   interrupts a blend continues from the face actually drawn.
 - A new pet, a Roster preview or a Studio preview starts fresh, without
   inheriting another subject's blend: its first frame uses the exact thresholds

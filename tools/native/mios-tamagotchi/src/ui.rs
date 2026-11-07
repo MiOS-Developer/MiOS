@@ -2804,6 +2804,7 @@ impl Ui {
                     crate::render::DetailClock {
                         frame: self.frame,
                         frames: self.camera_transition_frames,
+                        zoom: [self.zoom_percent, self.zoom_target],
                     },
                 )),
             },
@@ -2998,6 +2999,7 @@ impl Ui {
                     crate::render::DetailClock {
                         frame: self.frame,
                         frames: self.camera_transition_frames,
+                        zoom: [self.zoom_percent, self.zoom_target],
                     },
                 )),
             },
@@ -4087,6 +4089,7 @@ impl Ui {
                     crate::render::DetailClock {
                         frame: self.frame,
                         frames: self.camera_transition_frames,
+                        zoom: [self.zoom_percent, self.zoom_target],
                     },
                 )),
             },
@@ -4702,6 +4705,7 @@ impl Ui {
                         crate::render::DetailClock {
                             frame: self.frame,
                             frames: self.camera_transition_frames,
+                            zoom: [self.zoom_percent, self.zoom_target],
                         },
                     )),
                 },

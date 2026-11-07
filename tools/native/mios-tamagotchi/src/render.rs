@@ -1955,8 +1955,8 @@ fn draw_projection(
     draw_projection_with(sprite, renderer, colors, projection, area, buf, None);
 }
 
-/// `draw_projection` before a live face pass that remembers its tier
-/// `previous` (the plain ring around a native face follows that tier).
+/// `draw_projection` before a live face pass with the memory `remembered`
+/// (the plain ring around a native face follows the tier it heads for).
 fn draw_projection_with(
     sprite: &Sprite,
     renderer: Renderer,
@@ -1964,12 +1964,12 @@ fn draw_projection_with(
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
-    previous: Option<FaceLod>,
+    remembered: Remembered,
 ) {
     let area = area.intersection(buf.area);
     let (dx, dy) = renderer.packing();
     let face = face_clearance(sprite, renderer, projection, area, colors);
-    let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, previous);
+    let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, remembered);
     for row in area.y..area.bottom() {
         for col in area.x..area.right() {
             let mut pixels = [None; 8];
@@ -3322,21 +3322,79 @@ impl FaceLod {
 /// glyph, so no zoom, orbit, resize or view change swaps a whole face between
 /// native characters, structural strokes and the atlas in one frame, and a
 /// blend interrupted by another change continues from what was drawn.
+///
+/// A zoom or orbit moves the drawn level only the way the face itself moves:
+/// while the face shrinks the level never rises, while it grows the level
+/// never falls. A zoom that reverses during a blend therefore takes that
+/// blend back (or holds it while the face is still past the far threshold)
+/// instead of finishing it first and then changing tier again. A viewport
+/// change is not jitter: the face takes the new size's exact tier, without
+/// hysteresis, and reaches it within one transition however many tiers it
+/// crosses, so a resized head never keeps the old size's face.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DetailMemo {
     tier: Option<FaceLod>,
     from: f32,
     started: usize,
-    /// The last measured `[cells per glyph, rows]` (diagnostics and tests).
+    /// The last measured `[cells per glyph, rows]`: which way the face moves
+    /// from frame to frame (and diagnostics and tests).
     metric: [f32; 2],
+    /// The viewport `(width, height)` of the last live draw; None before one.
+    viewport: Option<(u16, u16)>,
+    /// The level drawn at frame `seen`, the last live draw.
+    drawn: f32,
+    seen: usize,
+    /// The blend follows a viewport change: it takes one transition in all.
+    resized: bool,
+}
+
+/// Whether a face grew (1), shrank (-1) or kept its size (0) between two
+/// `[cells per glyph, rows]` measurements.
+fn face_growth(before: [f32; 2], now: [f32; 2]) -> i8 {
+    let (was, is) = (before[0] * before[1], now[0] * now[1]);
+    if (is - was).abs() <= 1e-5 * was.abs().max(is.abs()) {
+        0
+    } else if is > was {
+        1
+    } else {
+        -1
+    }
+}
+
+/// A live face's memory as this frame's passes find it, before the face pass
+/// steps it (None renders without one). The body pass and the face pass both
+/// take the face's tier from it, so the plain ring around a native face
+/// always matches the tier the face pass heads for.
+type Remembered = Option<(DetailMemo, DetailClock)>;
+
+/// One live frame of a remembered face in `area`: the next memory and the
+/// level to draw.
+fn live_face_step(
+    (memo, clock): (DetailMemo, DetailClock),
+    area: Rect,
+    layout: &FaceLayout,
+) -> (DetailMemo, f32) {
+    let FaceLayout {
+        metric,
+        pixel_atlas,
+        ..
+    } = *layout;
+    memo.step(clock, (area.width, area.height), metric, |previous| {
+        face_tier(metric, pixel_atlas, previous)
+    })
 }
 
 /// The UI clock a face blend runs on: the animation frame and the configured
-/// `zoom_transition_frames`.
+/// `zoom_transition_frames`, and the camera zoom drawn this frame with the
+/// zoom it eases to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DetailClock {
     pub frame: usize,
     pub frames: usize,
+    /// `[drawn, target]` zoom percent. An explicit zoom tells the face which
+    /// way it moves from the frame it is pressed, before the eased zoom (and
+    /// so the measured face) has changed; without one the measured face does.
+    pub zoom: [u16; 2],
 }
 
 /// A live camera's remembered face detail. None (snapshots, one-off renders)
@@ -3346,10 +3404,14 @@ pub type FaceDetail<'a> = Option<(&'a std::cell::Cell<DetailMemo>, DetailClock)>
 impl DetailMemo {
     /// The level drawn at `clock` (0 native, 1 strokes, 2 atlas). A blend
     /// takes `frames` per tier it crosses, so the level never moves more than
-    /// the smoothstep's peak of 1.5 / `frames` tiers in one frame.
+    /// the smoothstep's peak of 1.5 / `frames` tiers in one frame; a blend
+    /// after a viewport change takes `frames` in all (at most 3 / `frames`
+    /// tiers in one frame).
     fn level(self, clock: DetailClock) -> Option<f32> {
         let to = self.tier?.level();
-        let length = clock.frames.max(1) as f32 * (to - self.from).abs();
+        let tiers = (to - self.from).abs();
+        let span = if self.resized { tiers.min(1.0) } else { tiers };
+        let length = clock.frames.max(1) as f32 * span;
         let elapsed = clock.frame.saturating_sub(self.started) as f32;
         if elapsed >= length {
             return Some(to);
@@ -3358,33 +3420,92 @@ impl DetailMemo {
         Some(self.from + (to - self.from) * t * t * (3.0 - 2.0 * t))
     }
 
-    /// Head for the tier `target` picks from the remembered one. A new tier
-    /// starts its blend from the level drawn now; the first frame of a
-    /// subject takes its tier at once.
+    /// One live frame in a `viewport` with the face's `metric`: head for the
+    /// tier `target` picks from the remembered one. The first frame of a
+    /// subject takes its tier at once. A new tier starts its blend from the
+    /// level drawn now. A viewport change heads for the exact tier
+    /// (`target(None)`) within one transition. Otherwise the drawn level
+    /// never moves against the way the face moves: when the remembered tier
+    /// lies the other way, the tier is judged again from the drawn tier on the
+    /// side the face moves to; if that still lies the other way, the drawn
+    /// level holds until the face stops moving away.
     fn step(
         self,
         clock: DetailClock,
+        viewport: (u16, u16),
         metric: [f64; 2],
         target: impl Fn(Option<FaceLod>) -> FaceLod,
     ) -> (Self, f32) {
-        let tier = target(self.tier);
-        let mut next = match self.level(clock) {
-            Some(_) if self.tier == Some(tier) => self,
-            Some(level) => Self {
-                tier: Some(tier),
-                from: level,
-                started: clock.frame,
-                ..self
-            },
-            None => Self {
-                tier: Some(tier),
-                from: tier.level(),
-                started: clock.frame,
-                ..self
-            },
+        let measured = metric.map(|m| m as f32);
+        let restart = |tier: FaceLod, from: f32, resized: bool| Self {
+            tier: Some(tier),
+            from,
+            started: clock.frame,
+            resized,
+            ..self
         };
-        next.metric = metric.map(|m| m as f32);
-        (next, next.level(clock).unwrap_or_else(|| tier.level()))
+        let next = match self.level(clock) {
+            None => {
+                let tier = target(None);
+                restart(tier, tier.level(), false)
+            }
+            Some(now) if self.viewport.is_some_and(|drawn| drawn != viewport) => {
+                restart(target(None), now, true)
+            }
+            Some(now) => {
+                let growth = match clock.zoom[1].cmp(&clock.zoom[0]) {
+                    std::cmp::Ordering::Greater => 1,
+                    std::cmp::Ordering::Less => -1,
+                    std::cmp::Ordering::Equal => face_growth(self.metric, measured),
+                };
+                let to = self.tier.map_or(now, FaceLod::level);
+                // What the blend gained since the last drawn frame toward a
+                // tier the face now moves away from is never drawn.
+                let opposed = (growth < 0 && to > self.from) || (growth > 0 && to < self.from);
+                let shown = if opposed && clock.frame <= self.seen.saturating_add(1) {
+                    self.drawn
+                } else {
+                    now
+                };
+                let against = |tier: FaceLod| {
+                    (growth < 0 && tier.level() > shown) || (growth > 0 && tier.level() < shown)
+                };
+                let mut want = target(self.tier);
+                if against(want) {
+                    let side = if growth < 0 {
+                        shown.floor()
+                    } else {
+                        shown.ceil()
+                    };
+                    want = target(Some(FaceLod::at(side as usize)));
+                }
+                if against(want) {
+                    Self {
+                        from: shown,
+                        started: clock.frame,
+                        ..self
+                    }
+                } else if Some(want) == self.tier && shown == now {
+                    self
+                } else {
+                    restart(want, shown, false)
+                }
+            }
+        };
+        let next = Self {
+            metric: measured,
+            viewport: Some(viewport),
+            seen: clock.frame,
+            ..next
+        };
+        let level = next.level(clock).unwrap_or(next.from);
+        (
+            Self {
+                drawn: level,
+                ..next
+            },
+            level,
+        )
     }
 }
 
@@ -3449,8 +3570,8 @@ fn draw_shaded_face(
     draw_shaded_face_with(sprite, renderer, colors, projection, area, buf, face, None)
 }
 
-/// `draw_shaded_face` for a face pass that started from the remembered tier
-/// `previous`: restored body cells keep the body pass's plain native ring.
+/// `draw_shaded_face` for a face pass that started from the memory
+/// `remembered`: restored body cells keep the body pass's plain native ring.
 #[allow(clippy::too_many_arguments)]
 fn draw_shaded_face_with(
     sprite: &Sprite,
@@ -3460,7 +3581,7 @@ fn draw_shaded_face_with(
     area: Rect,
     buf: &mut Buffer,
     face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet, GlyphSet),
-    previous: Option<FaceLod>,
+    remembered: Remembered,
 ) -> bool {
     struct ShadedCell {
         pos: (u16, u16),
@@ -3620,7 +3741,7 @@ fn draw_shaded_face_with(
     // restored body keeps the body pass's plain ring around a native face.
     let restore = (dx, dy) == (1, 1);
     let quiet = if restore {
-        native_quiet_cells(sprite, renderer, colors, projection, area, previous)
+        native_quiet_cells(sprite, renderer, colors, projection, area, remembered)
     } else {
         Vec::new()
     };
@@ -3947,8 +4068,8 @@ fn native_layout(
 }
 
 /// The cells kept plain around native face characters, for the body pass
-/// (and the face passes that repaint body cells, with the same `previous`
-/// remembered tier the face pass starts from):
+/// (and the face passes that repaint body cells, with the same memory
+/// `remembered` the face pass starts from):
 /// every cell within one cell of a character the native layout places, and
 /// the complete head cells between them on their rows. The body pass draws
 /// them as plain body colour (no shading or outline glyph), so the overlay
@@ -3961,7 +4082,7 @@ fn native_quiet_cells(
     colors: &Colors,
     projection: Projection,
     area: Rect,
-    previous: Option<FaceLod>,
+    remembered: Remembered,
 ) -> Vec<(u16, u16)> {
     let overlay = colors.lighting.as_ref().is_some_and(|light| light.enabled)
         && sprite.voxel_extent_pixels().is_some()
@@ -3975,10 +4096,16 @@ fn native_quiet_cells(
     let (head_left, _) = projection.cell(head.left, head.top, renderer);
     let (head_right, _) = projection.cell(head.right, head.bottom, renderer);
     // The face pass's own native gate: the text fits the head, and the face
-    // tier (from the live camera's remembered tier, if any) is native.
+    // heads for the native tier (as the live camera's memory steps, if any).
     let native = area.height <= 3
         || FaceLayout::of(sprite, renderer, colors, projection, area, texture).is_none_or(
-            |layout| face_tier(layout.metric, layout.pixel_atlas, previous) == FaceLod::Native,
+            |layout| {
+                let tier = match remembered {
+                    None => Some(face_tier(layout.metric, layout.pixel_atlas, None)),
+                    Some(live) => live_face_step(live, area, &layout).0.tier,
+                };
+                tier == Some(FaceLod::Native)
+            },
         );
     if head_right - head_left < texture.text.len() as f64 || !native {
         return Vec::new();
@@ -4156,14 +4283,12 @@ fn draw_camera_face_with(
         stroke_color,
         pixel_atlas,
     } = layout;
-    // The tier this frame starts from, as the body pass saw it.
-    let previous = detail.and_then(|(memo, _)| memo.get().tier);
+    // The memory this frame starts from, as the body pass saw it.
+    let remembered = detail.map(|(memo, clock)| (memo.get(), clock));
     let level = match detail {
         None => face_tier(metric, pixel_atlas, None).level(),
         Some((memo, clock)) => {
-            let (next, level) = memo.get().step(clock, metric, |previous| {
-                face_tier(metric, pixel_atlas, previous)
-            });
+            let (next, level) = live_face_step((memo.get(), clock), area, &layout);
             memo.set(next);
             level
         }
@@ -4197,7 +4322,7 @@ fn draw_camera_face_with(
                     area,
                     buf,
                     (face.0, face.1, face.2, face.3, glyphs, 0),
-                    previous,
+                    remembered,
                 ) || native(buf)
             }
             FaceLod::Atlas => draw_atlas_face(
@@ -4208,7 +4333,7 @@ fn draw_camera_face_with(
                 area,
                 buf,
                 (face, glyphs),
-                previous,
+                remembered,
             ),
         }
     };
@@ -4232,7 +4357,7 @@ fn draw_camera_face_with(
             area,
             buf,
             (texture, rect, stroke_color, fit, ALL_GLYPHS, !upper),
-            previous,
+            remembered,
         ) || tier(low, ALL_GLYPHS, buf);
     }
     // Strokes and atlas: each tier draws its own glyphs on its own copy; a cell takes
@@ -4269,7 +4394,7 @@ fn draw_atlas_face(
     area: Rect,
     buf: &mut Buffer,
     face: ((FaceTexture, [f64; 4], Color, FaceFit), GlyphSet),
-    previous: Option<FaceLod>,
+    remembered: Remembered,
 ) -> bool {
     let ((texture, [left, top, right, bottom], stroke_color, fit), glyphs) = face;
     let (dx, dy) = renderer.packing();
@@ -4277,7 +4402,7 @@ fn draw_atlas_face(
     let sclera = Sclera::of(colors);
     let clearance = FaceClearance::of(sprite, renderer, Some((texture, fit)), colors);
     // Restored body cells keep the body pass's plain ring around a native face.
-    let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, previous);
+    let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, remembered);
     let mut painted = false;
     for row in (top.floor() as i32).max(i32::from(area.y))
         ..(bottom.ceil() as i32).min(i32::from(area.bottom()))
@@ -4742,7 +4867,7 @@ impl RoomWidget<'_> {
             self.colors,
             projection,
             viewport,
-            self.face_detail.and_then(|(memo, _)| memo.get().tier),
+            self.face_detail.map(|(memo, clock)| (memo.get(), clock)),
         );
         for row in viewport.y..viewport.bottom() {
             for col in viewport.x..viewport.right() {
@@ -5058,7 +5183,7 @@ impl Widget for RoomWidget<'_> {
             projection,
             viewport,
             buf,
-            self.face_detail.and_then(|(memo, _)| memo.get().tier),
+            self.face_detail.map(|(memo, clock)| (memo.get(), clock)),
         );
         let face_painted = draw_camera_face_with(
             self.sprite,
@@ -12411,6 +12536,7 @@ mod face_transition_tests {
         DetailClock {
             frame,
             frames: FRAMES,
+            zoom: [100, 100],
         }
     }
 
@@ -12695,14 +12821,16 @@ mod face_transition_tests {
             let start = jitter[usize::from(tiers[1] == from)];
             let m = metric(framing, start);
             let mut memo = DetailMemo::default()
-                .step(clock(0), m, |p| face_tier(m, true, p))
+                .step(clock(0), framing.1, m, |p| face_tier(m, true, p))
                 .0;
             assert_eq!(memo.tier, Some(from));
             let (mut held, mut stateless) = (0, 0);
             for k in 1..=20 {
                 let m = metric(framing, jitter[k % 2]);
                 let before = memo.tier;
-                memo = memo.step(clock(k), m, |p| face_tier(m, true, p)).0;
+                memo = memo
+                    .step(clock(k), framing.1, m, |p| face_tier(m, true, p))
+                    .0;
                 held += usize::from(memo.tier != before);
                 stateless +=
                     usize::from(tier(framing, jitter[k % 2]) != tier(framing, jitter[(k + 1) % 2]));
@@ -12733,7 +12861,9 @@ mod face_transition_tests {
                 let m = metric(framing, *zoom);
                 let before = memo.tier;
                 memo = memo
-                    .step(clock(k * 3 * FRAMES), m, |p| face_tier(m, true, p))
+                    .step(clock(k * 3 * FRAMES), framing.1, m, |p| {
+                        face_tier(m, true, p)
+                    })
                     .0;
                 if let (Some(from), Some(to)) = (before, memo.tier) {
                     if from != to {
@@ -12779,7 +12909,7 @@ mod face_transition_tests {
                 };
                 let m = face.metric;
                 let before = memo.tier;
-                memo = memo.step(clock(k), m, |p| face_tier(m, true, p)).0;
+                memo = memo.step(clock(k), size, m, |p| face_tier(m, true, p)).0;
                 remembered += usize::from(before.is_some() && before != memo.tier);
                 let now = face_tier(m, true, None);
                 stateless += usize::from(previous.is_some_and(|p| p != now));
@@ -12904,10 +13034,15 @@ mod face_transition_tests {
     #[test]
     fn detail_memo_steps_are_pure_bounded_and_interruptible() {
         let to = |tier: FaceLod| move |_: Option<FaceLod>| tier;
-        let (memo, level) = DetailMemo::default().step(clock(5), [5.0, 5.0], to(FaceLod::Shaded));
+        const VIEW: (u16, u16) = (130, 29);
+        let (memo, level) =
+            DetailMemo::default().step(clock(5), VIEW, [5.0, 5.0], to(FaceLod::Shaded));
         assert_eq!(level, 1.0);
-        assert_eq!(memo.step(clock(5), [5.0, 5.0], to(FaceLod::Shaded)).0, memo);
-        let (atlas, level) = memo.step(clock(10), [9.0, 9.0], to(FaceLod::Atlas));
+        assert_eq!(
+            memo.step(clock(5), VIEW, [5.0, 5.0], to(FaceLod::Shaded)).0,
+            memo
+        );
+        let (atlas, level) = memo.step(clock(10), VIEW, [9.0, 9.0], to(FaceLod::Atlas));
         assert_eq!(level, 1.0, "a new tier starts from the drawn level");
         let mut previous = level;
         for frame in 11..=10 + FRAMES {
@@ -12917,7 +13052,7 @@ mod face_transition_tests {
             previous = level;
         }
         let drawn = atlas.level(clock(13)).unwrap();
-        let (back, level) = atlas.step(clock(13), [2.0, 2.0], to(FaceLod::Native));
+        let (back, level) = atlas.step(clock(13), VIEW, [2.0, 2.0], to(FaceLod::Native));
         assert_eq!(level, drawn, "an interrupted blend jumped");
         let total = (FRAMES as f32 * drawn).ceil() as usize;
         assert!(back.level(clock(13 + total - 1)).unwrap() > 0.0);
@@ -12996,6 +13131,7 @@ mod face_transition_tests {
                     from: from.level(),
                     started: 0,
                     metric: [0.0; 2],
+                    ..DetailMemo::default()
                 });
                 let mut mixed = before.clone();
                 draw_camera_face_with(
@@ -13059,6 +13195,7 @@ mod face_transition_tests {
                         from: level,
                         started: 0,
                         metric: [0.0; 2],
+                        ..DetailMemo::default()
                     });
                     let mut buf = before.clone();
                     draw_camera_face_with(
@@ -13186,5 +13323,401 @@ mod face_transition_tests {
             partial >= 5 && step <= 0.25,
             "no voxel-by-voxel fade: {partial} partial steps, largest step {step:.3}"
         );
+    }
+
+    /// One live RoomWidget frame (the UI's wiring of the body pass and the
+    /// face pass) with the remembered face detail and the UI's clock.
+    fn live_frame(
+        sprite: &Sprite,
+        (renderer, colors): (Renderer, &Colors),
+        size: (u16, u16),
+        camera: Camera,
+        (memo, clock): (&Cell<DetailMemo>, DetailClock),
+    ) -> Buffer {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let mut buf = Buffer::empty(area);
+        RoomWidget {
+            world: None,
+            sprite,
+            detail: SpriteStyle::SixteenBit,
+            renderer,
+            scale: 0,
+            colors,
+            expression: Expression::Idle,
+            frame: clock.frame,
+            position: (500, 700),
+            camera,
+            habitat: None,
+            face_detail: Some((memo, clock)),
+        }
+        .render(area, &mut buf);
+        buf
+    }
+
+    /// The tier a live frame takes without a memory (a subject's first frame
+    /// uses the exact thresholds).
+    fn live_stateless(
+        sprite: &Sprite,
+        style: (Renderer, &Colors),
+        size: (u16, u16),
+        camera: Camera,
+    ) -> FaceLod {
+        let memo = Cell::new(DetailMemo::default());
+        live_frame(sprite, style, size, camera, (&memo, clock(0)));
+        memo.get().tier.expect("a live face")
+    }
+
+    /// The verifier's blocker: the LIVE camera path keeps the hysteresis, not
+    /// only `face_tier` and `DetailMemo::step`. The zoom jitters frame by
+    /// frame between the two zooms that straddle an exact threshold, starting
+    /// on the tier the hysteresis protects there (native below 3 cells per
+    /// glyph or rows, the atlas from 8): first through the body pass and
+    /// `draw_camera_face_with` with one memory at the verifier's Pet 40x16
+    /// 84%/86%, then through RoomWidget (the UI's wiring, whose viewport
+    /// keeps a caption row) at its own straddling zooms for both thresholds.
+    /// The stateless tier flips on every frame; the remembered tier, the
+    /// drawn level and the drawn face hold.
+    #[test]
+    fn the_live_camera_keeps_its_face_tier_through_zoom_jitter() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let renderer = Renderer::HalfBlock;
+        let size = (40, 16);
+        let jitter = [84u16, 86];
+        let stateless = jitter.map(|z| {
+            face_tier(
+                layout(&sprite, renderer, &colors, size, (CameraView::Pet, z)).metric,
+                true,
+                None,
+            )
+        });
+        assert_eq!(
+            stateless,
+            [FaceLod::Native, FaceLod::Shaded],
+            "Pet 40x16 at 84%/86% must straddle the exact native threshold"
+        );
+        let memo = Cell::new(DetailMemo::default());
+        let mut first: [Option<Buffer>; 2] = [None, None];
+        for k in 0..=20 {
+            let zoom = jitter[k % 2];
+            let area = Rect::new(0, 0, size.0, size.1);
+            let projection = projection(&sprite, renderer, size, (CameraView::Pet, zoom));
+            let mut buf = Buffer::empty(area);
+            for cell in &mut buf.content {
+                cell.set_bg(colors.ink(10));
+            }
+            let remembered = Some((memo.get(), clock(k)));
+            draw_projection_with(
+                &sprite, renderer, &colors, projection, area, &mut buf, remembered,
+            );
+            draw_camera_face_with(
+                &sprite,
+                renderer,
+                &colors,
+                projection,
+                area,
+                &mut buf,
+                Some((&memo, clock(k))),
+            );
+            let label = format!("face pass, Pet {size:?} {zoom}% frame {k}");
+            assert_eq!(
+                memo.get().tier,
+                Some(FaceLod::Native),
+                "{label}: the live tier flipped"
+            );
+            assert_eq!(
+                memo.get().level(clock(k)),
+                Some(0.0),
+                "{label}: the drawn level moved"
+            );
+            match &first[k % 2] {
+                Some(drawn) => assert_eq!(&buf, drawn, "{label}: the drawn face changed"),
+                None => first[k % 2] = Some(buf),
+            }
+        }
+        let zooms: Vec<u16> = (50..=250).step_by(2).collect();
+        let mut judged = Vec::new();
+        for (view, size, held) in [
+            (CameraView::Pet, (40u16, 16u16), FaceLod::Native),
+            (CameraView::Face, (130, 29), FaceLod::Atlas),
+        ] {
+            let tiers: Vec<FaceLod> = zooms
+                .iter()
+                .map(|&z| live_stateless(&sprite, (renderer, &colors), size, camera(view, z)))
+                .collect();
+            let i = (0..zooms.len() - 1)
+                .find(|&i| {
+                    let pair = [tiers[i], tiers[i + 1]];
+                    pair[0] != pair[1] && pair.contains(&held) && pair.contains(&FaceLod::Shaded)
+                })
+                .unwrap_or_else(|| {
+                    panic!("{view:?} {size:?}: no zoom pair straddles the {held:?} threshold")
+                });
+            let jitter = if tiers[i] == held {
+                [zooms[i], zooms[i + 1]]
+            } else {
+                [zooms[i + 1], zooms[i]]
+            };
+            let memo = Cell::new(DetailMemo::default());
+            let mut first: [Option<Buffer>; 2] = [None, None];
+            for k in 0..=20 {
+                let zoom = jitter[k % 2];
+                let buf = live_frame(
+                    &sprite,
+                    (renderer, &colors),
+                    size,
+                    camera(view, zoom),
+                    (&memo, clock(k)),
+                );
+                let label = format!("RoomWidget {view:?} {size:?} {zoom}% frame {k}");
+                assert_eq!(
+                    memo.get().tier,
+                    Some(held),
+                    "{label}: the live tier flipped"
+                );
+                assert_eq!(
+                    memo.get().level(clock(k)),
+                    Some(held.level()),
+                    "{label}: the drawn level moved"
+                );
+                match &first[k % 2] {
+                    Some(drawn) => assert_eq!(&buf, drawn, "{label}: the drawn face changed"),
+                    None => first[k % 2] = Some(buf),
+                }
+            }
+            judged.push((view, size, held, jitter));
+        }
+        // Each pair straddles its exact threshold, so the stateless tier flips
+        // on all 20 jitter frames while the live tier holds on all 20.
+        println!(
+            "live jitter: face pass Pet {size:?} {jitter:?}% stateless {stateless:?}, held Native \
+             20/20; RoomWidget (view, size, held tier, zooms) held 20/20: {judged:?}"
+        );
+    }
+
+    /// R5: a zoom that reverses during a blend moves the face tier only the
+    /// way the zoom moves. The review's case: Face 130x29, `+` x8 quickly from
+    /// 100% (one press a frame), then `0` once the drawn zoom reaches 130%,
+    /// while the blend toward the atlas is in flight; and its mirror, Pet
+    /// 40x16, `-` x2 then `0` at 75% while the blend toward native characters
+    /// is in flight. During the presses the drawn level moves only the
+    /// presses' way. From the reset on, the drawn level and the remembered
+    /// tier move monotonically toward the reset's target, the drawn tier
+    /// changes at most once and the face settles on the tier of 100%. Before
+    /// this change the blend first finished toward the tier the zoom was
+    /// leaving, then changed back.
+    #[test]
+    fn a_zoom_reset_moves_the_face_tier_monotonically_toward_its_target() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let renderer = Renderer::HalfBlock;
+        let len = FaceTexture::new(&sprite).unwrap().text.len();
+        for (view, size, step, presses, turn) in [
+            (CameraView::Face, (130u16, 29u16), 25i32, 8usize, 130u16),
+            (CameraView::Pet, (40, 16), -25, 2, 75),
+        ] {
+            let label = format!("{view:?} {size:?} {presses} x {step:+}% then 0 at {turn}%");
+            let sign = step.signum() as f32;
+            let memo = Cell::new(DetailMemo::default());
+            let mut zoom = Zoom {
+                origin: 100,
+                target: 100,
+                started: 0,
+            };
+            let (mut pressed, mut reset) = (0, None);
+            let mut trace: Vec<(u16, f32, FaceLod)> = Vec::new();
+            for frame in 0..4 * FRAMES + 12 {
+                if reset.is_none() && frame >= 1 {
+                    // One press per animation frame.
+                    if pressed < presses {
+                        zoom.press(frame, step);
+                        pressed += 1;
+                    }
+                    let now = zoom.at(frame);
+                    if (step > 0 && now >= turn) || (step < 0 && now <= turn) {
+                        // `0` resets the zoom only, easing from the zoom drawn now.
+                        zoom.origin = now;
+                        zoom.target = 100;
+                        zoom.started = frame;
+                        reset = Some(frame);
+                    }
+                }
+                let at = zoom.at(frame);
+                // The UI's clock carries the zoom drawn and the zoom it eases to.
+                let live = DetailClock {
+                    zoom: [at, zoom.target],
+                    ..clock(frame)
+                };
+                live_frame(
+                    &sprite,
+                    (renderer, &colors),
+                    size,
+                    camera(view, at),
+                    (&memo, live),
+                );
+                let m = memo.get();
+                trace.push((at, m.level(clock(frame)).unwrap(), m.tier.unwrap()));
+            }
+            let reset = reset.unwrap_or_else(|| panic!("{label}: the zoom never reached {turn}%"));
+            let shown: Vec<String> = trace
+                .iter()
+                .map(|(z, l, t)| format!("{z}%:{l:.3}->{t:?}"))
+                .collect();
+            println!("R5 {label}: reset at frame {reset}: {}", shown.join(" "));
+            let (_, at_reset, heading) = trace[reset];
+            assert!(
+                (heading.level() - at_reset) * sign > 0.0,
+                "{label}: no blend in flight toward the presses' way at the reset \
+                 ({at_reset:.3} -> {heading:?}); the case does not exercise R5"
+            );
+            for (k, pair) in trace[..=reset].windows(2).enumerate() {
+                assert!(
+                    (pair[1].1 - pair[0].1) * sign >= 0.0,
+                    "{label}: frame {}: the level moved against the presses ({:.3} -> {:.3})",
+                    k + 1,
+                    pair[0].1,
+                    pair[1].1
+                );
+            }
+            for (k, pair) in trace[reset..].windows(2).enumerate() {
+                let frame = reset + k + 1;
+                assert!(
+                    (pair[1].1 - pair[0].1) * sign <= 0.0,
+                    "{label}: frame {frame} ({}%): the level moved away from the reset's target \
+                     ({:.3} -> {:.3})",
+                    pair[1].0,
+                    pair[0].1,
+                    pair[1].1
+                );
+                assert!(
+                    (pair[1].2.level() - pair[0].2.level()) * sign <= 0.0,
+                    "{label}: frame {frame}: the remembered tier moved away from the reset's \
+                     target ({:?} -> {:?})",
+                    pair[0].2,
+                    pair[1].2
+                );
+            }
+            let drawn: Vec<Vec<FaceLod>> =
+                trace.iter().map(|(_, l, _)| glyph_tiers(*l, len)).collect();
+            assert_one_ring_per_frame(&drawn, &label);
+            let dominant: Vec<FaceLod> = trace[reset..]
+                .iter()
+                .map(|(_, l, _)| FaceLod::at(l.round() as usize))
+                .collect();
+            let changes = dominant.windows(2).filter(|p| p[0] != p[1]).count();
+            assert!(
+                changes <= 1,
+                "{label}: {changes} drawn tier changes after the reset"
+            );
+            let target = live_stateless(&sprite, (renderer, &colors), size, camera(view, 100));
+            let (_, last, tier) = *trace.last().unwrap();
+            assert_eq!(
+                (last, tier),
+                (target.level(), target),
+                "{label}: the face did not settle on the tier of 100%"
+            );
+        }
+    }
+
+    /// R6: a viewport change is not zoom jitter. Resizing Face 200% from the
+    /// pet area of a 24x12 terminal (22x6, native characters) to that of a
+    /// 130x29 one (78x27, the atlas, two tiers up), the review's case, keeps
+    /// the face as drawn on the first frame, then reaches the new
+    /// size's exact tier within one zoom transition rather than one per tier,
+    /// one glyph ring per frame; the native run on the large head lasts at
+    /// most two frames. Shrinking back reaches native characters within one
+    /// transition too. A resize onto a metric inside a hysteresis band takes
+    /// the exact tier there, while a zoom to the same metric keeps the band's
+    /// tier.
+    #[test]
+    fn a_resize_reaches_its_exact_face_tier_within_one_transition() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let renderer = Renderer::HalfBlock;
+        let len = FaceTexture::new(&sprite).unwrap().text.len();
+        let face = camera(CameraView::Face, 200);
+        let (small, large) = ((22u16, 6u16), (78u16, 27u16));
+        let exact = |size| live_stateless(&sprite, (renderer, &colors), size, face);
+        assert_eq!(
+            (exact(small), exact(large)),
+            (FaceLod::Native, FaceLod::Atlas),
+            "Face 200% must be native at {small:?} and the atlas at {large:?}"
+        );
+        let memo = Cell::new(DetailMemo::default());
+        let mut frame = 0;
+        let mut drawn: Vec<Vec<FaceLod>> = Vec::new();
+        let mut report = Vec::new();
+        for size in [small, large, small] {
+            let before = memo.get().level(clock(frame));
+            let target = exact(size).level();
+            let mut levels = Vec::new();
+            for k in 0..2 * FRAMES + 2 {
+                live_frame(
+                    &sprite,
+                    (renderer, &colors),
+                    size,
+                    face,
+                    (&memo, clock(frame)),
+                );
+                let level = memo.get().level(clock(frame)).unwrap();
+                if let (0, Some(before)) = (k, before) {
+                    assert_eq!(
+                        level, before,
+                        "{size:?}: the first frame after the resize changed the drawn face"
+                    );
+                }
+                levels.push(level);
+                drawn.push(glyph_tiers(level, len));
+                frame += 1;
+            }
+            let reached = levels
+                .iter()
+                .position(|l| *l == target)
+                .unwrap_or(levels.len());
+            report.push((size, reached, levels.clone()));
+            assert!(
+                reached <= FRAMES && levels[reached..].iter().all(|l| *l == target),
+                "{size:?}: the face reached its exact tier after {reached} frames, beyond one \
+                 transition of {FRAMES}: {levels:?}"
+            );
+            if size == large {
+                let native = levels
+                    .iter()
+                    .take_while(|l| glyph_tiers(**l, len).iter().all(|t| *t == FaceLod::Native))
+                    .count();
+                assert!(
+                    native <= 2,
+                    "{size:?}: the old native run stayed {native} frames"
+                );
+            }
+        }
+        assert_one_ring_per_frame(&drawn, "resize 22x6 -> 78x27 -> 22x6");
+        println!("R6 resize (size, frames to the exact tier, levels): {report:?}");
+        // The hysteresis bands: a resize takes the exact tier, a zoom the held one.
+        for (settle, band, held, exact) in [
+            ([2.0, 9.0], [3.2, 9.0], FaceLod::Native, FaceLod::Shaded),
+            ([9.0, 9.0], [7.5, 9.0], FaceLod::Atlas, FaceLod::Shaded),
+        ] {
+            let pick = |m: [f64; 2]| move |p: Option<FaceLod>| face_tier(m, true, p);
+            let memo = DetailMemo::default()
+                .step(clock(0), small, settle, pick(settle))
+                .0;
+            assert_eq!(memo.tier, Some(held));
+            let zoomed = memo.step(clock(1), small, band, pick(band)).0;
+            let resized = memo.step(clock(1), large, band, pick(band)).0;
+            assert_eq!(
+                zoomed.tier,
+                Some(held),
+                "a zoom into the band {band:?} left {held:?}"
+            );
+            assert_eq!(
+                resized.tier,
+                Some(exact),
+                "a resize into the band {band:?} kept {held:?} instead of the exact tier"
+            );
+        }
     }
 }
