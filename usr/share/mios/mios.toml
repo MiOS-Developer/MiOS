@@ -2899,7 +2899,6 @@ keys = [
 [security.nohc_allowlist]
 # SSOT Allowlist for legitimate exceptions to the ports/IPs hardcode check (task_126).
 exempt_files = [
-    "install-mios-agents\\.sh$",
     "usr/lib/mios/agent-pipe/server\\.py$",
     "usr/lib/mios/gateway-agent/.*\\.py$",
     "test_.*\\.py$",
