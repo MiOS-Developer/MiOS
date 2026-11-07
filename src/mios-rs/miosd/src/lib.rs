@@ -854,6 +854,8 @@ pub mod server {
         toml::to_string(&merged).map_err(|_| "the merged config did not serialize".to_string())
     }
 
+    const INVALID_POSTED_TOML: &str = "Invalid TOML: the posted document did not parse";
+
     /// What GET /portal/config serves in place of every secret value.
     pub const REDACTED: &str = "<redacted>";
 
@@ -1149,7 +1151,7 @@ pub mod server {
     pub fn validate_portal_save(body: &str, config: &ConfigServerConfig) -> Vec<String> {
         let posted = match body.parse::<toml::Value>() {
             Ok(v) => v,
-            Err(_) => return vec!["Invalid TOML: the posted document did not parse".to_string()],
+            Err(_) => return vec![INVALID_POSTED_TOML.to_string()],
         };
         let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false).ok();
         let mut errors = Vec::new();
@@ -1235,7 +1237,7 @@ pub mod server {
     ) -> Result<(PathBuf, usize), String> {
         let mut posted = body
             .parse::<toml::Value>()
-            .map_err(|_| "Invalid TOML: the posted document did not parse".to_string())?;
+            .map_err(|_| INVALID_POSTED_TOML.to_string())?;
         if contains_redacted(&posted) {
             // Unresolved tiers leave a marker's value unknown: refuse, keep the tier.
             let root = config.ssot_root.as_deref();
@@ -1287,10 +1289,28 @@ pub mod server {
         };
 
         let tmp_path = dest.with_extension("toml.tmp");
-        fs::write(&tmp_path, &text)
-            .map_err(|_| "Unable to write the configuration temporary file".to_string())?;
-        fs::rename(&tmp_path, dest)
-            .map_err(|_| "Unable to persist the configuration".to_string())?;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut temporary = options
+            .open(&tmp_path)
+            .map_err(|_| "Unable to create the configuration temporary file".to_string())?;
+        if std::io::Write::write_all(&mut temporary, text.as_bytes())
+            .and_then(|()| temporary.sync_all())
+            .is_err()
+        {
+            let _ = fs::remove_file(&tmp_path);
+            return Err("Unable to write the configuration temporary file".to_string());
+        }
+        drop(temporary);
+        if fs::rename(&tmp_path, dest).is_err() {
+            let _ = fs::remove_file(&tmp_path);
+            return Err("Unable to persist the configuration".to_string());
+        }
         Ok((dest.clone(), text.len()))
     }
 
@@ -1523,26 +1543,21 @@ pub mod server {
                         .to_string(),
                     )),
                     Err(e) => {
-                        // Refusals carry their own static categories: an
-                        // unresolvable tier is a conflict, an ambiguous marker
-                        // array or an unparseable document is the client's to
-                        // fix; neither echoes resolver or TOML internals.
-                        let status = if e == UNRESOLVED_REFUSAL {
-                            409
-                        } else if e == AMBIGUOUS_ARRAY_REFUSAL || e.starts_with("Invalid TOML") {
-                            422
+                        // Retain the existing 500 for unresolved source tiers.
+                        // Only known static refusal messages may reach the
+                        // response; unexpected writer diagnostics stay private.
+                        let invalid_input =
+                            e == AMBIGUOUS_ARRAY_REFUSAL || e == INVALID_POSTED_TOML;
+                        let status = if invalid_input { 422 } else { 500 };
+                        let reason = if invalid_input {
+                            "Unprocessable Entity"
                         } else {
-                            500
+                            "Internal Server Error"
                         };
-                        let reason = match status {
-                            409 => "Conflict",
-                            422 => "Unprocessable Entity",
-                            _ => "Internal Server Error",
-                        };
-                        let message = if status == 500 {
-                            "Unable to save user configuration".to_string()
-                        } else {
+                        let message = if invalid_input || e == UNRESOLVED_REFUSAL {
                             e
+                        } else {
+                            "Unable to save user configuration".to_string()
                         };
                         sec_resp(HttpResponse::json(
                             status,
@@ -2797,7 +2812,7 @@ rank = 2
                     .unwrap_or_else(|| panic!("must refuse"))
                     .contains(PRIVATE_SENTINEL));
                 let response = post_toml(&config, &posted);
-                assert_eq!(response.status_code, 409);
+                assert_eq!(response.status_code, 500);
                 assert!(!String::from_utf8_lossy(&response.body).contains(PRIVATE_SENTINEL));
                 assert_eq!(
                     save_user_tier(&config, &posted).err().as_deref(),
@@ -2886,6 +2901,53 @@ rank = 2
             let saved = redacted_user(&config);
             assert!(saved["orphan"].get("github_token").is_none());
             assert_eq!(saved["orphan"]["note"].as_str(), Some("kept"));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn config_server_redacted_writer_uses_private_files_and_refuses_existing_temporary() {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let Some(root) = user_tier_child(
+                "config_server_redacted_writer_uses_private_files_and_refuses_existing_temporary",
+            ) else {
+                return;
+            };
+            let config = redacted_fixture(&root, true);
+            assert_eq!(
+                redacted_response(&config, &redacted_posted(&config)).status_code,
+                200
+            );
+            assert_eq!(
+                fs::metadata(&config.user_toml_path)
+                    .unwrap_or_else(|e| panic!("{e}"))
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            fs::write(&config.user_toml_path, REDACTED_OWN_ARRAY).unwrap_or_else(|e| panic!("{e}"));
+            fs::set_permissions(&config.user_toml_path, fs::Permissions::from_mode(0o644))
+                .unwrap_or_else(|e| panic!("{e}"));
+            let posted = redacted_posted(&config);
+            assert_eq!(redacted_response(&config, &posted).status_code, 200);
+            assert_eq!(
+                fs::metadata(&config.user_toml_path)
+                    .unwrap_or_else(|e| panic!("{e}"))
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+            let before = fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}"));
+            let temporary = config.user_toml_path.with_extension("toml.tmp");
+            fs::write(&temporary, "preserved-existing-fixture").unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(redacted_response(&config, &posted).status_code, 500);
+            assert_eq!(
+                fs::read(&config.user_toml_path).unwrap_or_else(|e| panic!("{e}")),
+                before
+            );
+            assert_eq!(
+                fs::read_to_string(temporary).unwrap_or_else(|e| panic!("{e}")),
+                "preserved-existing-fixture"
+            );
         }
 
         #[test]
