@@ -3038,7 +3038,7 @@ fn draw_shaded_face(
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
-    face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet),
+    face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet, GlyphSet),
 ) -> bool {
     struct ShadedCell {
         pos: (u16, u16),
@@ -3052,7 +3052,8 @@ fn draw_shaded_face(
         original: [Option<u8>; 8],
         surface: [Option<SurfaceLight>; 8],
     }
-    let (texture, [left, top, right, bottom], stroke_color, fit, glyphs) = face;
+    // `glyphs` are drawn; `collapsed` ones as their own single character.
+    let (texture, [left, top, right, bottom], stroke_color, fit, glyphs, collapsed) = face;
     let (dx, dy) = renderer.packing();
     let count = f64::from(dx * dy);
     let mut cells = Vec::new();
@@ -3144,7 +3145,7 @@ fn draw_shaded_face(
             let low = values.clone().min().unwrap_or(0);
             values.max().unwrap_or(0) - low + 1
         };
-        if span(|p| p.1) <= 2 && span(|p| p.0) <= 3 {
+        if draws_glyph(collapsed, index) || (span(|p| p.1) <= 2 && span(|p| p.0) <= 3) {
             // A horizontal mark keeps a run of three or more on the row it
             // covers most; anything shorter is one character.
             let row = members
@@ -3660,7 +3661,7 @@ fn draw_camera_face_with(
                     projection,
                     area,
                     buf,
-                    (face.0, face.1, face.2, face.3, glyphs),
+                    (face.0, face.1, face.2, face.3, glyphs, 0),
                 ) || native(buf)
             }
             FaceLod::Atlas => draw_atlas_face(
@@ -3680,7 +3681,23 @@ fn draw_camera_face_with(
     if upper & every == every {
         return tier(high, ALL_GLYPHS, buf);
     }
-    // Mid-blend: each tier draws its own glyphs on its own copy; a cell takes
+    if low == FaceLod::Native {
+        // Native characters and strokes share one layout: the glyphs not yet
+        // on strokes collapse to their own character inside their glyph box
+        // on the face plane (as glyphs too small for strokes do), so the
+        // expression grows stroke by stroke in place. A separate native run
+        // would sit on the eye line apart from the strokes.
+        return draw_shaded_face(
+            sprite,
+            renderer,
+            colors,
+            projection,
+            area,
+            buf,
+            (texture, rect, stroke_color, fit, ALL_GLYPHS, !upper),
+        ) || tier(low, ALL_GLYPHS, buf);
+    }
+    // Strokes and atlas: each tier draws its own glyphs on its own copy; a cell takes
     // the upper tier's change unless the lower tier drew there too, where the
     // tier holding most glyphs wins.
     let base = buf.clone();
@@ -8759,7 +8776,14 @@ mod kaomoji_scale_tests {
                                         projection,
                                         area,
                                         &mut overlay,
-                                        (texture, [l, t, r, b], stroke, FaceFit::WHOLE, ALL_GLYPHS),
+                                        (
+                                            texture,
+                                            [l, t, r, b],
+                                            stroke,
+                                            FaceFit::WHOLE,
+                                            ALL_GLYPHS,
+                                            0,
+                                        ),
                                     );
                                     if !stroked {
                                         native += usize::from(drew);
@@ -11734,13 +11758,19 @@ mod face_transition_tests {
         assert_eq!(face_blend(2.0, 7).2, 0b111_1111);
     }
 
-    /// T-T5: a blended face draws every cell whole from one tier: each cell
-    /// equals the lower or the upper tier's own render, and both appear.
+    /// T-T5: a blended face draws every glyph whole from one tier. Between
+    /// strokes and the atlas each cell equals the lower or the upper tier's
+    /// own render and both tiers' ink appears. Between native characters and
+    /// strokes the face keeps one layout: the upper glyphs are exactly the
+    /// strokes tier's, and every lower glyph is its own character inside its
+    /// own glyph box on the face plane (never a separate native run).
     #[test]
-    fn blended_faces_draw_every_cell_from_one_tier() {
+    fn blended_faces_draw_every_glyph_from_one_tier_in_one_layout() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
         let sprite = mon(0);
+        let texture = FaceTexture::new(&sprite).unwrap();
+        let len = texture.text.len();
         let mut checked = Vec::new();
         for renderer in [
             Renderer::Ascii,
@@ -11755,7 +11785,7 @@ mod face_transition_tests {
                 ((40, 16), (CameraView::Pet, 100)),
                 ((59, 49), (CameraView::Pet, 100)),
             ] {
-                let zoom = framing.1;
+                let label = format!("{renderer:?} {size:?} {framing:?}");
                 let face = layout(&sprite, renderer, &colors, size, framing);
                 let tier = face_tier(face.metric, face.pixel_atlas, None);
                 // Five eighths of the way from the tier below: the mouth and
@@ -11766,6 +11796,69 @@ mod face_transition_tests {
                     FaceLod::Atlas => FaceLod::Shaded,
                 };
                 let (projection, before) = scene(&sprite, renderer, &colors, size, framing);
+                let area = before.area;
+                let memo = Cell::new(DetailMemo {
+                    tier: Some(tier),
+                    from: from.level(),
+                    started: 0,
+                    metric: [0.0; 2],
+                });
+                let mut mixed = before.clone();
+                draw_camera_face_with(
+                    &sprite,
+                    renderer,
+                    &colors,
+                    projection,
+                    area,
+                    &mut mixed,
+                    Some((&memo, clock(FRAMES * 5 / 8))),
+                );
+                let level = memo.get().level(clock(FRAMES * 5 / 8)).unwrap();
+                assert!(level > from.level() && level < tier.level());
+                let upper = face_blend(level, len).2;
+                if from == FaceLod::Native {
+                    let mut strokes = before.clone();
+                    assert!(draw_shaded_face(
+                        &sprite,
+                        renderer,
+                        &colors,
+                        projection,
+                        area,
+                        &mut strokes,
+                        (texture, face.rect, face.stroke_color, face.fit, upper, 0),
+                    ));
+                    for (i, cell) in strokes.content.iter().enumerate() {
+                        if *cell != before.content[i] {
+                            assert_eq!(
+                                &mixed.content[i], cell,
+                                "{label}: cell {i} of an upper glyph is not its stroke"
+                            );
+                        }
+                    }
+                    let (dx, dy) = renderer.packing();
+                    for glyph in (0..len).filter(|&g| !draws_glyph(upper, g)) {
+                        let character = char::from(texture.text.as_bytes()[glyph]);
+                        let placed = (0..area.height).any(|row| {
+                            (0..area.width).any(|col| {
+                                let (m, s) = (&mixed[(col, row)], &strokes[(col, row)]);
+                                let px = u32::from(col) * u32::from(dx) + u32::from(dx / 2);
+                                let py = u32::from(row) * u32::from(dy) + u32::from(dy / 2);
+                                m != s
+                                    && m.symbol().starts_with(character)
+                                    && projected_face_uv(&sprite, projection, px, py).is_some_and(
+                                        |(uv, _)| texture.glyph_at(face.fit.map(uv)) == glyph,
+                                    )
+                            })
+                        });
+                        assert!(
+                            placed,
+                            "{label}: lower glyph {glyph} {character:?} is not its own character \
+                             in its glyph box"
+                        );
+                    }
+                    checked.push((from, tier));
+                    continue;
+                }
                 let pure = |level: f32| {
                     let memo = Cell::new(DetailMemo {
                         tier: Some(FaceLod::at(level as usize)),
@@ -11774,7 +11867,6 @@ mod face_transition_tests {
                         metric: [0.0; 2],
                     });
                     let mut buf = before.clone();
-                    let area = buf.area;
                     draw_camera_face_with(
                         &sprite,
                         renderer,
@@ -11788,44 +11880,25 @@ mod face_transition_tests {
                 };
                 let low = pure(from.level());
                 let high = pure(tier.level());
-                let memo = Cell::new(DetailMemo {
-                    tier: Some(tier),
-                    from: from.level(),
-                    started: 0,
-                    metric: [0.0; 2],
-                });
-                let mut mixed = before.clone();
-                let area = mixed.area;
-                draw_camera_face_with(
-                    &sprite,
-                    renderer,
-                    &colors,
-                    projection,
-                    area,
-                    &mut mixed,
-                    Some((&memo, clock(FRAMES * 5 / 8))),
-                );
-                let level = memo.get().level(clock(FRAMES * 5 / 8)).unwrap();
-                assert!(level > from.level() && level < tier.level());
                 // Each tier's own ink, where the two tiers differ.
                 let (mut from_low, mut from_high) = (0, 0);
                 for (i, cell) in mixed.content.iter().enumerate() {
                     let (l, h, b) = (&low.content[i], &high.content[i], &before.content[i]);
                     if l == h {
-                        assert_eq!(cell, l, "{renderer:?} {size:?} {zoom}%: cell {i} changed");
+                        assert_eq!(cell, l, "{label}: cell {i} changed");
                         continue;
                     }
                     assert!(
                         cell == l || cell == h,
-                        "{renderer:?} {size:?} {zoom}%: cell {i} is from neither tier"
+                        "{label}: cell {i} is from neither tier"
                     );
                     from_low += usize::from(cell == l && l != b);
                     from_high += usize::from(cell == h && h != b);
                 }
                 assert!(
                     from_low > 0 && from_high > 0,
-                    "{renderer:?} {size:?} {zoom}%: a {from:?}/{tier:?} blend drew one tier \
-                     ({from_low} lower, {from_high} upper ink cells)"
+                    "{label}: a {from:?}/{tier:?} blend drew one tier ({from_low} lower, \
+                     {from_high} upper ink cells)"
                 );
                 checked.push((from, tier));
             }

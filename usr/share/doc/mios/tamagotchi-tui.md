@@ -348,7 +348,9 @@ subject's face showed last:
   eased like the camera. It goes glyph by glyph: the middle glyph first, then
   each mirrored pair outwards (the eyes, then the parentheses). Each glyph is
   drawn whole by one tier, so the expression stays readable and symmetric on
-  every frame.
+  every frame. Between native characters and strokes the face keeps the stroke
+  layout: a glyph not yet on strokes is its own single character inside its
+  glyph box, so the expression grows in place.
 - Zoom, orbit, view changes and terminal resizes all use this path. The first
   frame after a resize still shows the face as it was drawn; a change that
   interrupts a blend continues from the face actually drawn.
