@@ -330,7 +330,8 @@ set of voxel eyes or mouth competes with the expression. Side/rear views cannot
 paint a floating frontal badge. Underresolved heads use individual terminal
 glyphs anchored to visible head-local UVs; each complete glyph cell must still
 pass the actual material/depth mask. Intermediate sizes draw the same expression
-as multi-cell ASCII shading using the configured character ramp. Packed-pixel
+as multi-cell structural ASCII strokes: each cell takes the line, curve or corner
+glyph matching that part of the glyph's own shape, never the shading ramp. Packed-pixel
 renderers switch to the stroke atlas when each glyph has enough visible cells;
 plain ASCII retains character shading at larger sizes. Expression spacing and
 aspect follow the text box rather than stretching one character into a rectangle.
@@ -560,8 +561,53 @@ personality palette indices remain unchanged. The renderer shades their actual
 colors, and ASCII views use a tonal character ramp; monochrome retains its
 uncolored output. Facial ink stays separate from body illumination.
 Silhouettes use visible screen edges as well as model edges, retaining contrast
-against the room at larger zooms. Magnified, shaded body surfaces gain sparse
-ASCII texture; face glyphs, occluders and room cells retain their own rendering.
+against the room at larger zooms.
+
+The ASCII renderers overlay the voxels themselves, in every lit voxel view
+(ASCII, half-block, quadrant and braille; Room, Pet and Face; every size). In
+colour, a Mon cell's background is the voxel's lit colour, plain ASCII included,
+and the overlay glyph is drawn over it:
+
+- Silhouettes: a cell the silhouette crosses keeps the scene actually behind the
+  pet (the floor or wall) as its background and draws the Mon's samples in
+  outline ink. It uses an ASCII line glyph when one re-expresses that exact
+  shape (for example `_` `^` `'` `,` `.` `|` `/` `\` `(` `)`); otherwise it keeps
+  the exact block or braille pattern. A cell with a whole exposed side draws an
+  outline glyph oriented to the silhouette: `-` `_` `|` `/` `\` `^` `v` `<` `>`.
+- Contours: where a nearer part overlaps a farther one (a paw over the body, an
+  ear over the head, a nose over the face), the near part carries a line in its
+  own shadow tint.
+- Creases and seams: where the surface turns at a cube edge, the darker face
+  carries a line; where two materials meet, the lighter one carries a line in the
+  darker colour. Both fade in voxel by voxel between 0.8 and 1.6 cells per
+  voxel, so minified Mons are not covered in lines.
+- Interior shading: the configured ramp minus the line glyphs (`-` `_` `|` `/`
+  `\` `(` `)` `^` `v` `<` `>`), so the vendor ramp `.:-=+*#%@` shades with
+  `.:=+*#%@`. A ramp left with fewer than two glyphs is used unchanged. The
+  level spans the configured light range, from fully occluded ambient light to
+  ambient plus full diffuse light, not the frame's own range. In colour, denser
+  is darker and the glyph is a half-shadow tint of the voxel's material; in
+  monochrome, denser is brighter. From about three cells per voxel, alternate
+  lattice voxels step one glyph within their band, a checker that turns with the
+  model.
+
+Every glyph decision depends only on the voxel a sample shows (its model-lattice
+identity, face orientation, material and depth) and on the voxels its
+neighbouring samples show. A glyph therefore stays on its voxel through orbit,
+zoom, occlusion and resampling, and never follows a fixed screen pattern.
+
+The overlay never obscures the expression. Within a halo around the kaomoji, as
+fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
+plain lit voxel, and the packed renderers keep their block packing for the
+expression strokes. Native characters clear the shading on the head cells beside
+and between them. Facial flat ink is never overpainted, and outline glyphs never
+use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
+
+Room cells that hold only world surfaces keep their own rendering, and a cell the
+pet shares with the world keeps the world surface as its background. The world
+itself has no voxel identity yet and carries no overlay. With lighting disabled,
+or without a lighting model, and for classic pixel sprites, the renderers keep
+their exact legacy packing.
 
 The layered [tamagotchi.voxel_lighting] table and MiOS configurator control the
 ambient and directional light, contact shade, silhouette edge shade, view-space
@@ -875,9 +921,11 @@ Shift+wheel tilts and horizontal wheel input orbits. Other menu scrolling keeps
 its existing behavior.
 
 Inputd's isolated Alt camera aliases work only in an eligible live scene,
-Roster or Sprite studio. They are ignored in code editors, confirmations,
-memory challenges and unrelated menus. Releases and explicit repeat events do
-not leak into care or menu selection. Compatible Inputd application profiles
+Roster or Sprite studio. One exception applies in ordinary menus: a pressed
+Alt+8 or Alt+2 (the controller's vertical stick) moves the menu selection up or
+down, and the other Alt digits are ignored there. All Alt aliases are ignored in
+code editors, confirmations and memory challenges. Releases and explicit repeat
+events do not leak into care or menu selection. Compatible Inputd application profiles
 require their own verified deployment; implementing these client aliases does
 not certify physical controller routing.
 
