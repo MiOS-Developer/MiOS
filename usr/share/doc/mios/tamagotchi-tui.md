@@ -624,7 +624,10 @@ shade over it:
   with fewer than two glyphs is used unchanged. The glyph's band spans the
   configured light range, from fully occluded ambient light to ambient plus full
   diffuse light, not the frame's own range, and density only rises with
-  darkness: the brightest band takes `.`. In colour the glyph is drawn in the
+  darkness: the brightest band takes `.`, and colour hatching stops one short
+  of the densest glyph (in the vendor ramp `@`, a ring that clusters into
+  speckle and reads as an eye), so the darkest light carries its weight in the
+  colour itself. In colour the glyph is drawn in the
   voxel's own material a few shade steps off its light (ink of about 15 to 25
   luma), so it modulates the colour instead of dominating it; in monochrome,
   denser is brighter. By its lattice parities each voxel takes its band's

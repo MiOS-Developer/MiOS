@@ -1013,8 +1013,8 @@ fn lighter_shade(index: i16, mono: bool) -> i16 {
 }
 
 /// The ramp index a flat facet sample shades with (before a wide voxel's
-/// highlight): its light band (denser is darker in colour, brighter in
-/// monochrome),
+/// highlight): its light band (denser is darker in colour, up to the
+/// second-densest glyph; brighter in monochrome),
 /// one lighter or heavier by its voxel's phase (never heavier in the
 /// brightest band). A facial feature in colour stays light: the ramp's two
 /// faintest glyphs by phase ('.' alone in the brightest band).
@@ -1034,15 +1034,20 @@ fn base_shade(
         mono,
         lighting.brightness(normal, occlusion, false),
     );
+    // Colour hatching stops one short of the densest glyph (in the vendor
+    // ramp a ring, `@`, that clusters into speckle and reads as an eye): the
+    // darkest light carries its weight in the colour itself.
+    let top = if mono || len < 3 { len - 1 } else { len - 2 };
     Some(if feature && !mono {
-        usize::from(band > 0 && voxel_phase(voxel).is_multiple_of(2)).min(len - 1)
+        usize::from(band > 0 && voxel_phase(voxel).is_multiple_of(2)).min(top)
     } else {
         match voxel_phase(voxel) {
             1 => band.saturating_sub(1),
-            2 if band > 0 => (band + 1).min(len - 1),
+            2 if band > 0 => band + 1,
             3 => band.saturating_sub(2),
             _ => band,
         }
+        .min(top)
     })
 }
 
