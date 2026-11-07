@@ -11997,20 +11997,20 @@ mod voxel_overlay_tests {
                                         )
                                     })
                                 });
+                                // Every clean crossing is judged: a cell
+                                // without a contour glyph there disagrees.
                                 if crossing && clean {
                                     let (px, py) = mon_samples[0];
-                                    if let (Some(g), Some(line)) = (
-                                        depth_slope(&sprite, projection, px, py),
-                                        contour_direction(glyph),
-                                    ) {
+                                    if let Some(g) = depth_slope(&sprite, projection, px, py) {
                                         let length = g[0].hypot(g[1]);
                                         if length > 0.05 {
                                             judged += 1;
                                             let along = [-g[1] / length, g[0] / length];
-                                            let dot =
-                                                (along[0] * line[0] + along[1] * line[1]).abs();
                                             agreed += u32::from(
-                                                dot >= std::f64::consts::FRAC_1_SQRT_2 - 1e-6,
+                                                contour_direction(glyph).is_some_and(|line| {
+                                                    (along[0] * line[0] + along[1] * line[1]).abs()
+                                                        >= std::f64::consts::FRAC_1_SQRT_2 - 1e-6
+                                                }),
                                             );
                                         }
                                     }
