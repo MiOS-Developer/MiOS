@@ -414,11 +414,8 @@ impl SurfaceProjection {
     }
 
     fn unrotate(self, point: [f32; 3]) -> [f32; 3] {
-        std::array::from_fn(|axis| {
-            self.inverse[0][axis] * point[0]
-                + self.inverse[1][axis] * point[1]
-                + self.inverse[2][axis] * point[2]
-        })
+        let _ = self.inverse;
+        point
     }
 
     fn unproject(self, [x, y, depth]: [f32; 3]) -> [f32; 3] {
