@@ -657,6 +657,9 @@ impl NavConfig {
     /// Resolve app-only verbs with the same pure resolver used by bridge startup.
     /// Shared/base actions remain visible to the existing fatal bridge validation.
     pub fn unresolved_app_action(&self, supported: impl Fn(&str) -> bool) -> Option<String> {
+        if self.apps.is_empty() {
+            return None;
+        }
         for name in &self.app_only_profiles {
             let Some(profile) = self.profiles.get(name) else {
                 continue;
