@@ -106,7 +106,7 @@ def test_greenboot_composefs_fold_two_sided():
     planted = {
         "swallowed integrity failure": ("|| rc=$?", "|| true"),
         "verity half skipped": ("/usr/libexec/mios/verify-root.sh || rc=$?", "exec /usr/libexec/mios/verify-root.sh"),
-        "inactive composefs passes": ('requested but not active"\n    exit 1', 'requested but not active"\n    exit "$rc"'),
+        "inactive composefs passes": ('requested but not active"; exit 1', 'requested but not active"; exit "$rc"'),
     }
     for name, (old, new) in planted.items():
         assert text.count(old) == 1, f"planted {name}: {old!r} not found once"
