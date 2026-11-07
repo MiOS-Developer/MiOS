@@ -1202,9 +1202,7 @@ pub mod server {
             .filter(|(key, _)| !desired.contains_key(key))
             .map(|(key, _)| key.to_string())
             .collect();
-        for key in removed {
-            existing.remove(&key);
-        }
+        let _ = removed;
         for (key, value) in desired.iter() {
             if let (Some(table), Some(old)) = (
                 value.as_table(),
