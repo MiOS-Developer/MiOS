@@ -1903,10 +1903,8 @@ impl Ui {
         // Plain camera chords retain their ordinary meaning outside camera
         // views: Shift+arrows still navigate menus, edit seeds and answer memory.
         // Strict Alt aliases remain isolated by the guard below.
-        if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none())
-            .filter(|_| self.camera_scope())
-        {
-            if key.kind == KeyEventKind::Press {
+        if let Some(command) = crate::input::camera_action(camera_key, self.menu.is_none()) {
+            if key.kind == KeyEventKind::Press && self.camera_scope() {
                 self.camera_command(command);
             }
             return Effect::Continue;
@@ -4883,10 +4881,8 @@ impl Ui {
                 "PgUp/PgDn pages. Home/End first/last.",
                 "Inputd arrows/Enter/Tab/Back operate menus and care.",
                 "+ / - or mouse wheel: zoom. 0: reset. Z: camera.",
-                "Camera: 4/6/8/2 or Shift+arrows pan; 7/9 orbit.",
-                "1/3 or { } tilt; 5 reset pose and zoom.",
-                "Roster/Studio: Shift+arrows, braces or Alt+digits.",
-                "[ left / ] right: coarse orbit. Graphics has pose controls.",
+                "[ left / ] right: orbit; Graphics resets orbit only.",
+                "Fixed isometric elevation; no tilt controls.",
                 "Room/Mon follow world yaw; Face starts front, then [/] orbits.",
                 "Camera controls never steer your pet.",
                 "Compact controller H- means Hold; labels match mapped buttons.",
