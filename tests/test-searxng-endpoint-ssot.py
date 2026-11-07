@@ -635,13 +635,10 @@ def windows_entry_ast(test: unittest.TestCase) -> dict[str, dict]:
     return {name: got[path] for name, path in paths.items()}
 
 
-# One helper's whole entry point, invoked by its own path with -Params bound
-# by name. Elevation is answered by stub types: the helpers' WindowsPrincipal /
-# WindowsIdentity / WindowsBuiltInRole literals resolve through these type
-# accelerators, so IsInRole says what -Admin says, on any host. Start-Process,
-# netsh, the firewall and service cmdlets, Get-NetIPAddress (a LAN address, as
-# on a host with one) and Invoke-WebRequest are recording functions; the
-# external tailscale.exe and wsl.exe are the PATH stubs below.
+# A helper's whole entry point, run by its own path with -Params bound by name.
+# Stub type accelerators answer its Windows* elevation literals per -Admin;
+# Start-Process, netsh, the firewall and service cmdlets, Get-NetIPAddress (a
+# LAN address) and Invoke-WebRequest are recording functions.
 _PS_ENTRY = r"""
 param([string]$Helper, [string]$Params, [string]$Admin)
 $ErrorActionPreference = 'Stop'
@@ -703,12 +700,10 @@ _ENTRY_TREE = (*WIN_HELPERS.values(), WIN_ENTRIES["setup-shim"][0], _COMMON_PS1)
 
 
 def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None, admin: bool = False) -> dict:
-    """`rel` run whole as shipped: invoked by its own path in a scratch tree
-    shaped like the repo (every Windows helper, the Setup shim,
-    installation/mios-common.ps1 and the vendor SSOT at their repo paths),
-    `params` bound by name, elevation answering `admin`. Returns the recorded
-    calls, console and warning lines, what the PATH stubs saw (`external`),
-    and the error that ended the run, if any, with its file and line."""
+    """`rel` run whole as shipped, by its own path in a scratch tree shaped
+    like the repo (_ENTRY_TREE), `params` bound by name, elevation answering
+    `admin`. Returns the recorded calls, console and warning lines, what the
+    PATH stubs saw (`external`), and the error that ended the run, if any."""
     pwsh = test.need(tool("pwsh"), "pwsh")
     tmp = tempfile.mkdtemp(prefix="mios-searxng-entry-")
     test.addCleanup(shutil.rmtree, tmp, True)
