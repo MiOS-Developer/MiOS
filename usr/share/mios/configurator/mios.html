@@ -3719,6 +3719,84 @@
         <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
         <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
         <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <details>
+          <summary>Focused MiOS-Mon controls</summary>
+          <p class="hint">Inputd verifies the foreground executable in the focused terminal or console. These bindings navigate menus and the camera; the pet moves autonomously. Blank fields inherit the vendor policy. User-local samples require their exact absolute executable paths in the user configuration. Install a compatible Inputd daemon and command before applying these profiles.</p>
+          <label>Foreground app poll interval (ms) <input data-key="keybindings.global.controller.nav.app_poll_ms" data-inherit="true" data-type="int" type="number" min="1" max="10000"></label>
+          <label>Foreground app query timeout (ms) <input data-key="keybindings.global.controller.nav.app_query_timeout_ms" data-inherit="true" data-type="int" type="number" min="1" max="10000"></label>
+          <label>MiOS-Mon system executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>MiOS-Mon user executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.user_exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>Terminal app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.terminal" data-inherit="true" type="text"></label>
+          <label>Console app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.console" data-inherit="true" type="text"></label>
+          <details><summary>mon_tmux (inherits terminal_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_plain (inherits terminal_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_tmux (inherits console_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_plain (inherits console_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>MiOS-Mon held camera repeat timing</summary>
+            <label>Left stick left / camera pan left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick right / camera pan right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick down / menu next / camera pan down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick left / orbit left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick right / orbit right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick up / tilt up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick down / tilt down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left trigger / zoom out delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TL2" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right trigger / zoom in delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TR2" data-inherit="true" data-array="csv-int" type="text"></label>
+          </details>
+        </details>
         <label>2D controller cursor shape <input data-key="keybindings.global.controller.cursor_shape" type="text" pattern="[A-Za-z0-9_-]{0,64}" placeholder="crosshair"></label>
         <label>Controller virtual pointer device <input data-key="keybindings.global.controller.virtual_pointer" type="text" maxlength="79" placeholder="mios-vctl-pointer"></label>
         <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>

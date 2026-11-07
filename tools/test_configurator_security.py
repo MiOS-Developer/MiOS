@@ -178,6 +178,60 @@ class TestConfiguratorSecurity(unittest.TestCase):
         output = gather({"tamagotchi": {"camera_view": "room", "unrelated": "kept"}})
         self.assertEqual(output["data"]["tamagotchi"], {"unrelated": "kept"})
 
+    def test_focused_mon_policy_controls_roundtrip_real_form(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        prefix = "keybindings.global.controller.nav."
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.controls = []
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag in ("input", "select") and a.get("data-key", "").startswith(prefix) and a.get("data-inherit") == "true":
+                    self.controls.append({"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": a["data-key"], "inherit": "true",
+                        **({"type": a["data-type"]} if "data-type" in a else {}),
+                        **({"array": a["data-array"]} if "data-array" in a else {})}})
+        parser = Controls()
+        parser.feed(html.read_text())
+        by_key = {c["dataset"]["key"]: c for c in parser.controls}
+        self.assertEqual(len(by_key), len(parser.controls))
+        inputs = ["LS_LEFT", "LS_RIGHT", "LS_UP", "LS_DOWN", "RS_LEFT", "RS_RIGHT",
+                  "RS_UP", "RS_DOWN", "BTN_TL2", "BTN_TR2", "BTN_THUMBL", "BTN_THUMBR"]
+        for profile in ("mon_tmux", "mon_plain", "mon_console_tmux", "mon_console_plain"):
+            for button in inputs:
+                self.assertIn(prefix + profile + "." + button, by_key)
+        def gather(initial):
+            run = subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": parser.controls, "initial": initial}),
+                capture_output=True, text=True, check=True, timeout=15)
+            return json.loads(run.stdout)
+        unchanged = {"identity": {"hostname": "kept"}}
+        self.assertEqual(gather(unchanged)["data"], unchanged)
+        changes = {"app_poll_ms": "300", "app_query_timeout_ms": "100",
+            "apps.mon.exe": "/usr/bin/mios-tamagotchi",
+            "apps.mon.user_exe": "/home/fixture/.local/bin/mios-tamagotchi-sample",
+            "apps.mon.contexts.terminal": "mon", "apps.mon.contexts.console": "mon_console",
+            "mon_tmux.LS_UP": "key:ALT+8", "mon_console_plain.RS_LEFT": "none",
+            "apps.mon.repeat.LS_UP": "220, 80"}
+        for key, value in changes.items():
+            by_key[prefix + key]["value"] = value
+        emitted = tomllib.loads(gather({})["toml"])["keybindings"]["global"]["controller"]["nav"]
+        self.assertEqual(emitted["app_poll_ms"], 300)
+        self.assertEqual(emitted["app_query_timeout_ms"], 100)
+        self.assertEqual(emitted["apps"]["mon"]["exe"], ["/usr/bin/mios-tamagotchi"])
+        self.assertEqual(emitted["apps"]["mon"]["user_exe"],
+                         ["/home/fixture/.local/bin/mios-tamagotchi-sample"])
+        self.assertEqual(emitted["apps"]["mon"]["repeat"]["LS_UP"], [220, 80])
+        self.assertEqual(emitted["apps"]["mon"]["contexts"], {"terminal": "mon", "console": "mon_console"})
+        self.assertEqual(emitted["mon_tmux"]["LS_UP"], "key:ALT+8")
+        self.assertEqual(emitted["mon_console_plain"]["RS_LEFT"], "none")
+        self.assertNotIn("mon_plain", emitted)
+        for control in parser.controls:
+            control["value"] = ""
+        old = {"keybindings.global.controller.nav.mon_tmux": {"LS_UP": "key:ALT+2", "unrelated": "kept"}}
+        self.assertEqual(gather(old)["data"]["keybindings.global.controller.nav.mon_tmux"], {"unrelated": "kept"})
+
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {
             "repos.external.nvidia-container-toolkit": {
