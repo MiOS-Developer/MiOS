@@ -17,9 +17,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 90 |
-| completed | 1892 |
-| incomplete | 19 |
+| in_progress | 87 |
+| completed | 1894 |
+| incomplete | 20 |
 | cancelled | 21 |
 | total | 3770 |
 
@@ -951,10 +951,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3502` Schema-generated configurator (WS-CONFIG | P2 | M) -- pending · P2 · size M · depends_on task_3500, task_3487
 - `task_3523` M4: mios.html is the setup interface, edited through key-level patches into each key's tier (WS-CONFIG | P1 | L) -- pending · P1 · size L
 - `task_3577` P2-8: config writes are atomic, 0600 and versioned, and can be rolled back (WS-CONFIG | P2 | S) -- pending · P2 · size S
-- `task_3766` Refuse ambiguous redacted arrays and redact native Portal failures -- in_progress · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size M
+- `task_3766` Refuse ambiguous redacted arrays and redact native Portal failures -- incomplete · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size M
 - `task_3767` Apply safe array restoration and private errors to the agent Portal -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3769` Review and finish the preserved native Portal guard candidate -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3770` Update the HTTP privacy fixture for the guarded Portal API -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3769` Review and finish the preserved native Portal guard candidate -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3770` Update the HTTP privacy fixture for the guarded Portal API -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ### Epic task_3523
 
