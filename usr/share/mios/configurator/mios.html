@@ -6741,34 +6741,40 @@ function showSavePreview() {
 async function performSave(toml) {
   const finishSave = () => { LOADED_TOML = toml; hideSavePreview(); };
 
-  // The lossless JSON envelope preserves TOML text for both config servers.
-  // Offline saves continue writing the TOML text itself.
+  // Path 0 (STEP 6): embedded behind the Portal -- POST the serialized TOML to
+  // the live layered config. POST /portal/config (relative to location.origin;
+  // no hardcoded host). A 422 means the server's safety net rejected it (no
+  // write happened) -> show the errors inline and stop. Other non-2xx / network
+  // errors fall THROUGH to the FSA / <a download> paths (graceful degrade).
+  // NEVER attempted under file:// (offline USB fallback, ADR-0008).
   if (MIOS_EMBEDDED) {
     try {
       const resp = await fetch("/portal/config", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ toml: toml })
+        headers: { "Content-Type": "application/toml" },
+        body: toml
       });
       if (resp.ok) {
         finishSave();
         showStatus(`Saved to MiOS — wrote the live mios.toml via the Portal (${toml.length} bytes).`, "ok");
         return;
       }
-      let errs = [`Portal save was not confirmed (HTTP ${resp.status}).`];
-      try {
-        const data = await resp.json();
-        if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
-        else if (data && data.error) errs = [String(data.error)];
-      } catch (e) { /* non-JSON body -> keep the generic message */ }
-      renderSaveErrors(errs);
-      showStatus("Portal save was not confirmed — see the errors before retrying.", "err");
+      if (resp.status === 422) {
+        let errs = ["The server rejected the config."];
+        try {
+          const data = await resp.json();
+          if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
+          else if (data && data.error) errs = [String(data.error)];
+        } catch (e) { /* non-JSON body -> keep the generic message */ }
+        renderSaveErrors(errs);
+        showStatus("Portal rejected the config — see the validation errors.", "err");
+        return;   // stay open; nothing written
+      }
+      showStatus(`Portal save unavailable (HTTP ${resp.status}) — saving locally instead.`, "info");
     } catch (err) {
-      renderSaveErrors(["Portal response unavailable. Check the live configuration before retrying."]);
-      showStatus("Portal save result is unknown — check the live configuration.", "err");
+      showStatus("Portal save route unreachable — saving locally instead.", "info");
     }
-    return; // No bound-file write, picker or download after an embedded failure.
   }
 
   // Path 1: bound file handle -- direct in-place overwrite.
