@@ -18065,7 +18065,7 @@ comment = "Open the local SearXNG metasearch proxy at http://localhost:{port}/"
 icon = "system-search-symbolic"
 categories = "Network;WebBrowser;"
 keywords = "mios;searxng;search;metasearch;privacy;"
-ai_hint = "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at the `searxng` port key via a web browser."
+ai_hint = "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at the searxng port key via a web browser."
 
 # [bootstrap.sync] -- Law 15 mirror manifest. Contract: installation/UNIFY.md.
 [bootstrap.sync]
