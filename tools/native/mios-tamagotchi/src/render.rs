@@ -1184,7 +1184,7 @@ fn paint_overlay_cell(
         DIR_N => i / dx == 0,
         DIR_E => i % dx == dx - 1,
         DIR_S => i / dx == dy - 1,
-        _ => i % dx == 0,
+        _ => i.is_multiple_of(dx),
     };
     let mut rim = 0u8;
     for bit in [DIR_N, DIR_E, DIR_S, DIR_W] {
@@ -9280,6 +9280,8 @@ mod voxel_overlay_tests {
         let (_, len) = shading_ramp(&light);
         type Key = Vec<([i32; 3], usize)>;
         type Faces = Vec<[f32; 3]>;
+        type GlyphCounts = HashMap<char, u32>;
+        type FaceCounts = Vec<(Faces, GlyphCounts)>;
         let (mut kept_total, mut shared_total) = (0u32, 0u32);
         let mut worst = 1.0f64;
         for renderer in [Renderer::Ascii, Renderer::HalfBlock, Renderer::Quadrant] {
@@ -9326,8 +9328,7 @@ mod voxel_overlay_tests {
                                             )
                                     })
                         };
-                        let mut votes: HashMap<Key, Vec<(Faces, HashMap<char, u32>)>> =
-                            HashMap::new();
+                        let mut votes: HashMap<Key, FaceCounts> = HashMap::new();
                         for row in 0..29 {
                             for col in 0..130 {
                                 if !samples(renderer, col, row).all(|(_, px, py)| flat(px, py)) {
