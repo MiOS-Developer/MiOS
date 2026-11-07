@@ -234,9 +234,9 @@ class TestRdeEngine(unittest.TestCase):
     # closed, and every unrelated forward survives each case.
 
     def test_dropping_the_agent_overlay_restores_the_vendor_port(self):
-        """Negative Control: an overlay moves the agent port, and once the overlay
-        is gone the vendor port is forwarded again in its own slot, the moved one
-        no longer is, and the forwards are exactly the overlay-free ones."""
+        """Negative Control: an overlay moves the agent port; without it the vendor
+        port is forwarded in its own slot, the moved port is not, and the forwards
+        equal the overlay-free run."""
         vendor = _ssot_ports()["devpod_agent"]
         baseline = self._rde_json("status")["forward_ports"]
         (moved,) = _spare_ports(baseline, 1)
@@ -285,10 +285,9 @@ class TestRdeEngine(unittest.TestCase):
         self.assertEqual(status["forward_ports"], [high if p == vendor else p for p in baseline])
 
     def test_an_agent_overlay_outside_the_tcp_range_fails_closed(self):
-        """Negative Control: 0, 65536 and negative ports are refused by every rde
-        verb with an error naming the key and value, and nothing is planned or
-        reported. 65536 + vendor is the value `as u16` used to wrap onto the
-        vendor port."""
+        """Negative Control: 0, 65536, -1 and 65536 + vendor (which `as u16` wraps
+        onto the vendor port) are refused by every rde verb with an error naming
+        the key and value, and nothing is planned or reported."""
         vendor = _ssot_ports()["devpod_agent"]
         ws = self._workspace()
         for bad in (0, 65536, -1, 65536 + vendor):
