@@ -21,7 +21,13 @@ _MIOS_RS_DIR = os.path.join(_ROOT, "src", "mios-rs")
 
 
 def _find_miosd_binary() -> str:
-    """Finds or builds the miosd executable for testing."""
+    """Finds or builds the miosd executable for testing. MIOS_MIOSD_BIN names a
+    candidate build; when it is set, that binary is the one under test."""
+    override = os.environ.get("MIOS_MIOSD_BIN")
+    if override:
+        if not os.access(override, os.X_OK):
+            raise AssertionError(f"MIOS_MIOSD_BIN={override} is not an executable miosd")
+        return override
     candidates = [
         os.path.join(_MIOS_RS_DIR, "target", "debug", "miosd.exe"),
         os.path.join(_MIOS_RS_DIR, "target", "debug", "miosd"),
@@ -51,6 +57,33 @@ def _ssot_ports() -> dict:
     return _ssot_tree()["ports"]
 
 
+def _agent_overlay_text(port) -> str:
+    """A tier that moves [ports].devpod_agent to `port` (TOML value text). [ports]
+    is re-derived from [ports.categories] after the merge, so an overlay moves a
+    category member through its category."""
+    ssot = _ssot_tree()
+    category = next((name for name, cat in ssot["ports"].get("categories", {}).items()
+                     if "devpod_agent" in (cat.get("members") or [])), None)
+    return (f"[ports.categories.{category}]\npinned = {{ devpod_agent = {port} }}\n"
+            if category else f"[ports]\ndevpod_agent = {port}\n")
+
+
+def _spare_ports(taken, count=2) -> list:
+    """`count` distinct valid TCP ports outside `taken`, to move the agent to."""
+    return [p for p in range(20000, 65536, 1111) if p not in taken][:count]
+
+
+def _devcontainer_forwards() -> dict:
+    """forwardPorts of every devcontainer.json under .devcontainer/, by path."""
+    found = {}
+    for dirpath, _dirs, files in os.walk(os.path.join(_ROOT, ".devcontainer")):
+        if "devcontainer.json" in files:
+            path = os.path.join(dirpath, "devcontainer.json")
+            with open(path, "r", encoding="utf-8") as fh:
+                found[os.path.relpath(path, _ROOT)] = json.load(fh).get("forwardPorts", [])
+    return found
+
+
 class TestRdeEngine(unittest.TestCase):
     """Two-sided test suite for MiOS RDE Orchestration Engine, Copyleft Taint Gating, and SSOT Conformance."""
 
@@ -66,21 +99,21 @@ class TestRdeEngine(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def _rde(self, *args, host_toml=None):
+    def _rde(self, *args, host_toml=None, user_toml=None):
         """miosd rde over this tree's vendor SSOT and nothing else: no host or
         user tier unless the test supplies one, and no inherited MIOS_* pointer."""
         none = os.path.join(self.temp_dir, "none")
         env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
         env.update(MIOS_HOST_TOML=host_toml or os.path.join(none, "host.toml"),
                    MIOS_HOST_TOML_D=os.path.join(none, "host.d"),
-                   MIOS_USER_TOML=os.path.join(none, "user.toml"),
+                   MIOS_USER_TOML=user_toml or os.path.join(none, "user.toml"),
                    MIOS_USER_TOML_D=os.path.join(none, "user.d"),
                    XDG_CONFIG_HOME=os.path.join(none, "xdg"))
         return subprocess.run([self.miosd_bin, "rde", "--root", _ROOT, *args],
                               capture_output=True, text=True, env=env)
 
-    def _rde_json(self, *args, host_toml=None):
-        res = self._rde(*args, "--json", host_toml=host_toml)
+    def _rde_json(self, *args, host_toml=None, user_toml=None):
+        res = self._rde(*args, "--json", host_toml=host_toml, user_toml=user_toml)
         self.assertEqual(res.returncode, 0, f"rde {' '.join(args)} failed: {res.stderr}")
         return json.loads(res.stdout)
 
@@ -91,28 +124,47 @@ class TestRdeEngine(unittest.TestCase):
             json.dump({"name": "Test Workspace"}, f)
         return self.temp_dir
 
-    def _assert_forwarded(self, agent, host_toml=None):
+    def _assert_forwarded(self, agent, host_toml=None, user_toml=None):
         """rde's forward contract for agent port `agent`: every surface that names
         the agent port -- status JSON and text, the up plan JSON and its text --
-        names `agent`, the port is forwarded exactly once, and the devpod command
-        opens every forwarded port."""
-        status = self._rde_json("status", host_toml=host_toml)
+        names `agent`, the port is forwarded exactly once, the devpod command
+        opens every forwarded port, and the forwards are every devcontainer
+        projection's forwardPorts plus the agent transport, each once."""
+        tiers = dict(host_toml=host_toml, user_toml=user_toml)
+        status = self._rde_json("status", **tiers)
         self.assertEqual(status.get("devpod_agent_port"), agent)
         self.assertEqual(status["forward_ports"].count(agent), 1, status["forward_ports"])
-        plan = self._rde_json("up", self._workspace(), "--dry-run", host_toml=host_toml)
+        self.assertEqual(len(set(status["forward_ports"])), len(status["forward_ports"]),
+                         f"a port is forwarded twice: {status['forward_ports']}")
+        plan = self._rde_json("up", self._workspace(), "--dry-run", **tiers)
         self.assertEqual(plan.get("devpod_agent_port"), agent)
         self.assertEqual(plan.get("forward_ports"), status["forward_ports"])
         opened = [plan["command"][i + 1] for i, a in enumerate(plan["command"]) if a == "--open"]
         self.assertEqual(opened, [f"localhost:{p}" for p in plan["forward_ports"]])
         # The human-readable surfaces print the same resolved port, never a literal.
-        text = self._rde("status", host_toml=host_toml)
+        text = self._rde("status", **tiers)
         self.assertEqual(text.returncode, 0, text.stderr)
         self.assertIn(f"Agent Port:   {agent} (forwarded)", text.stdout)
-        text = self._rde("up", self._workspace(), "--dry-run", host_toml=host_toml)
+        text = self._rde("up", self._workspace(), "--dry-run", **tiers)
         self.assertEqual(text.returncode, 0, text.stderr)
         self.assertIn(f"Forwarded Ports:  {plan['forward_ports']} (devpod_agent = {agent})",
                       text.stdout)
+        # Devcontainer parity: whatever the agent port is, every unrelated port a
+        # devcontainer forwards is still forwarded, in order, and nothing else is.
+        devcontainers = _devcontainer_forwards()
+        self.assertTrue(devcontainers, "no devcontainer.json to compare with proves nothing")
+        for path, forwards in devcontainers.items():
+            self.assertEqual([p for p in plan["forward_ports"] if p != agent],
+                             [p for p in forwards if p != agent],
+                             f"rde forwards {plan['forward_ports']} for agent {agent}; {path} forwards {forwards}")
         return status
+
+    def _tier(self, name, port):
+        """Write a tier file that moves the agent port to `port`; returns its path."""
+        path = os.path.join(self.temp_dir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_agent_overlay_text(port))
+        return path
 
     # -------------------------------------------------------------------------
     # POSITIVE CONTROLS
@@ -158,19 +210,10 @@ class TestRdeEngine(unittest.TestCase):
         its text). The moved port REPLACES the vendor port in the vendor port's
         slot of forward_ports -- it is not appended -- so the vendor port is no
         longer forwarded and the moved one is forwarded exactly once."""
-        ssot = _ssot_tree()
-        vendor = ssot["ports"]["devpod_agent"]
+        vendor = _ssot_ports()["devpod_agent"]
         vendor_forwarded = self._rde_json("status")["forward_ports"]
         moved = vendor + 10000 if vendor + 10000 <= 65535 else vendor - 1000
-        # [ports] is re-derived from [ports.categories] after the merge, so an
-        # overlay moves a category member through its category.
-        category = next((name for name, cat in ssot["ports"].get("categories", {}).items()
-                         if "devpod_agent" in (cat.get("members") or [])), None)
-        overlay = (f"[ports.categories.{category}]\npinned = {{ devpod_agent = {moved} }}\n"
-                   if category else f"[ports]\ndevpod_agent = {moved}\n")
-        host = os.path.join(self.temp_dir, "host.toml")
-        with open(host, "w", encoding="utf-8") as f:
-            f.write(overlay)
+        host = self._tier("host.toml", moved)
         status = self._assert_forwarded(moved, host_toml=host)
         self.assertNotIn(vendor, status["forward_ports"], "the vendor agent port must not stay forwarded")
         self.assertEqual(status["forward_ports"],
@@ -184,6 +227,91 @@ class TestRdeEngine(unittest.TestCase):
         self.assertEqual(text.returncode, 0, text.stderr)
         self.assertIn(f"(devpod_agent = {moved})", text.stdout)
         self.assertNotIn(f"(devpod_agent = {vendor})", text.stdout)
+
+    # The agent-port contract (root ruling F2): the SSOT overlay REPLACES the
+    # agent-transport role -- the unselected default is not kept -- a collision
+    # is forwarded once, the last tier wins, an integer outside 1..65535 fails
+    # closed, and every unrelated forward survives each case.
+
+    def test_dropping_the_agent_overlay_restores_the_vendor_port(self):
+        """Negative Control: an overlay moves the agent port, and once the overlay
+        is gone the vendor port is forwarded again in its own slot, the moved one
+        no longer is, and the forwards are exactly the overlay-free ones."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        (moved,) = _spare_ports(baseline, 1)
+        host = self._tier("host.toml", moved)
+        status = self._assert_forwarded(moved, host_toml=host)
+        self.assertNotIn(vendor, status["forward_ports"], "the unselected vendor port is not kept")
+        os.remove(host)
+        status = self._assert_forwarded(vendor, host_toml=host)
+        self.assertEqual(status["forward_ports"], baseline)
+        self.assertNotIn(moved, status["forward_ports"])
+
+    def test_an_agent_overlay_onto_another_forward_is_forwarded_once(self):
+        """Negative Control: an overlay that puts the agent port on a port rde
+        already forwards lists that port once; the vendor port is dropped and every
+        other forward stays."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        others = [p for p in baseline if p != vendor]
+        self.assertTrue(others, "no other forward to collide with proves nothing")
+        for other in others:
+            with self.subTest(other=other):
+                status = self._assert_forwarded(other, host_toml=self._tier("host.toml", other))
+                self.assertNotIn(vendor, status["forward_ports"])
+                self.assertEqual(sorted(status["forward_ports"]), sorted(others))
+
+    def test_host_then_user_agent_overlays_last_tier_wins_once(self):
+        """Negative Control: with a host and a user overlay the user tier's port is
+        the agent port, forwarded once in the vendor slot; neither the host's nor
+        the vendor's port stays forwarded, and the larger port does not win."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        low, high = _spare_ports(baseline)
+        for host_port, user_port in ((low, high), (high, low)):
+            with self.subTest(host=host_port, user=user_port):
+                status = self._assert_forwarded(user_port,
+                                                host_toml=self._tier("host.toml", host_port),
+                                                user_toml=self._tier("user.toml", user_port))
+                self.assertNotIn(host_port, status["forward_ports"])
+                self.assertEqual(status["forward_ports"],
+                                 [user_port if p == vendor else p for p in baseline])
+        # The tiers merge before rde applies the port once, so a host overlay onto
+        # another forward that the user tier moves on leaves that forward in place.
+        other = next(p for p in baseline if p != vendor)
+        status = self._assert_forwarded(high, host_toml=self._tier("host.toml", other),
+                                        user_toml=self._tier("user.toml", high))
+        self.assertEqual(status["forward_ports"], [high if p == vendor else p for p in baseline])
+
+    def test_an_agent_overlay_outside_the_tcp_range_fails_closed(self):
+        """Negative Control: 0, 65536 and negative ports are refused by every rde
+        verb with an error naming the key and value, and nothing is planned or
+        reported. 65536 + vendor is the value `as u16` used to wrap onto the
+        vendor port."""
+        vendor = _ssot_ports()["devpod_agent"]
+        ws = self._workspace()
+        for bad in (0, 65536, -1, 65536 + vendor):
+            host = self._tier("host.toml", bad)
+            for args in (("status", "--json"), ("status",), ("up", ws, "--dry-run", "--json"),
+                         ("up", ws, "--dry-run"), ("down", ws, "--dry-run", "--json"),
+                         ("audit", "--json")):
+                with self.subTest(bad=bad, verb=" ".join(args)):
+                    res = self._rde(*args, host_toml=host)
+                    self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+                    self.assertIn(f"[ports].devpod_agent = {bad} is not a TCP port", res.stderr)
+                    self.assertEqual(res.stdout, "", "a refused port must not print a plan or status")
+
+    def test_an_agent_overlay_on_the_tcp_range_boundaries_is_accepted(self):
+        """Positive Control: ports 1 and 65535 are valid agent ports, forwarded
+        once in the vendor slot on every surface."""
+        vendor = _ssot_ports()["devpod_agent"]
+        baseline = self._rde_json("status")["forward_ports"]
+        for port in (1, 65535):
+            with self.subTest(port=port):
+                status = self._assert_forwarded(port, host_toml=self._tier("host.toml", port))
+                self.assertEqual(status["forward_ports"],
+                                 [port if p == vendor else p for p in baseline])
 
     def test_rde_audit_zero_taint(self):
         """Positive Control: Verify automated license audit confirms 0 copyleft taint."""
