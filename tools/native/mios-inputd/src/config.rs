@@ -563,6 +563,16 @@ impl GlobalConfig {
                 "nav.app_poll_ms + nav.app_query_timeout_ms ({budget} ms) must stay below controller.context_stale_ms ({stale} ms)"
             ));
         }
+        // App-only verbs use the exact startup resolver before check/reload can accept the app.
+        // Every failure path must preserve a usable base controller.
+        #[cfg(target_os = "linux")]
+        if let Some(error) = cfg
+            .controller
+            .nav
+            .unresolved_app_action(|action| crate::runtime::action_supported(&cfg, action))
+        {
+            cfg.controller.nav.app_failed(error);
+        }
         let legacy: LegacyConfig = v
             .get("desktop")
             .and_then(|v| v.get("hyprland"))
@@ -2112,4 +2122,63 @@ mod action_tests {
         );
         assert_eq!(c.resolved_actions["quickshell:lock"], vec!["hyprlock"]);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unresolved_app_verbs_are_disabled_before_startup_and_reload() {
+        for action in ["quickshell:drawer-togle", "hypr:movefocu left"] {
+            let (cfg, _) = try_fixture_mon_with(|v| {
+                v["keybindings"]["global"]["controller"]["nav"]["mon_tmux"]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("BTN_MODE".into(), action.into());
+            })
+            .unwrap();
+            let nav = &cfg.controller.nav;
+            assert!(nav.apps.is_empty(), "{action} remained active");
+            assert!(nav.app_error.as_deref().unwrap().contains(action));
+            assert!(!nav.profiles.contains_key("mon_tmux"));
+            assert!(nav.profiles.contains_key("terminal_tmux"));
+            assert!(
+                crate::runtime::unsupported_actions(&cfg).is_empty(),
+                "an app-only verb must not stop the physical bridge"
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn app_budget_failure_removes_every_app_only_action() {
+        let (cfg, _) = try_fixture_mon_with(|v| {
+            let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+            nav["app_poll_ms"] = 900.into();
+            nav["mon_tmux"]
+                .as_table_mut()
+                .unwrap()
+                .insert("BTN_MODE".into(), "quickshell:drawer-togle".into());
+        })
+        .unwrap();
+        let nav = &cfg.controller.nav;
+        assert!(nav.app_error.as_deref().unwrap().contains("context_stale_ms"));
+        assert!(nav.apps.is_empty());
+        assert!(!nav.profiles.contains_key("mon_tmux"));
+        assert!(nav.profiles.contains_key("terminal_tmux"));
+        assert!(crate::runtime::unsupported_actions(&cfg).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unresolved_shared_base_verbs_remain_a_startup_failure() {
+        let (cfg, _) = try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["terminal_tmux"]["BTN_MODE"] =
+                "quickshell:drawer-togle".into();
+        })
+        .unwrap();
+        assert!(
+            crate::runtime::unsupported_actions(&cfg)
+                .contains(&"quickshell:drawer-togle".to_owned()),
+            "a base action must never be silently discarded as an app-only failure"
+        );
+    }
+
 }
