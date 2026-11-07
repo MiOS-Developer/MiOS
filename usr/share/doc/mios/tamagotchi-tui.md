@@ -586,34 +586,60 @@ Silhouettes use visible screen edges as well as model edges, retaining contrast
 against the room at larger zooms.
 
 The ASCII renderers overlay the voxels themselves, in every lit voxel view
-(ASCII, half-block, quadrant and braille; Room, Pet and Face; every size). In
-colour, a Mon cell's background is the voxel's lit colour, plain ASCII included,
-and the overlay glyph is drawn over it:
+(ASCII, half-block, quadrant and braille; Room, Pet and Face; every size). The
+packed renderers keep their packed geometry, which carries the Mon's detail, and
+shade over it:
 
-- Silhouettes: a cell the silhouette crosses keeps the scene actually behind the
-  pet (the floor or wall) as its background and draws the Mon's samples in
-  outline ink. It uses an ASCII line glyph when one re-expresses that exact
-  shape (for example `_` `^` `'` `,` `.` `|` `/` `\` `(` `)`); otherwise it keeps
-  the exact block or braille pattern. A cell with a whole exposed side draws an
-  outline glyph oriented to the silhouette: `-` `_` `|` `/` `\` `^` `v` `<` `>`.
+- Packed geometry: in half-block, quadrant and braille, every cell whose
+  sub-pixels differ in shaded colour or face orientation keeps its legacy
+  packing (half-block keeps its two colour planes; braille draws its two colours
+  as dots over the more frequent one; a quadrant interior keeps its solid block).
+  ASCII shading goes only on cells whose sub-pixels show one face orientation of
+  one material in one shaded colour, over that colour.
+- Silhouettes: the packed renderers keep the legacy silhouette: the Mon's
+  sub-pixels on the silhouette keep their lit colour where it stands out from
+  the scene behind (the floor or wall actually behind the pet), and the navy
+  outline ink where it would merge with it, on their exact blocks. Half-block
+  and quadrant never trade a silhouette block for a thin glyph. Braille, whose
+  dots are strokes already, may draw an ASCII line glyph instead when the
+  glyph's ink lies only on Mon dots and matches them within one dot (for
+  example `_` `.` `-` `|` `/` `\` `(` `)`). Plain ASCII draws an outline glyph
+  oriented to the silhouette on a cell with a whole exposed side: `-` `_` `|`
+  `/` `\` `^` `v`, and `(` `)` for a tip to the side (never `<` `>`, which read
+  as arrows). No outline glyph is ever drawn in a cell without a Mon sample.
 - Contours: where a nearer part overlaps a farther one (a paw over the body, an
-  ear over the head, a nose over the face), the near part carries a line in its
-  own shadow tint. A minified Mon keeps only contours with a depth jump of at
-  least three voxels. Shallower contours fade in voxel by voxel between 0.35 and
-  0.65 cells per voxel, so zooming never adds or drops them all at once.
-- Creases and seams: where the surface turns at a cube edge, the darker face
-  carries a line; where two materials meet, the lighter one carries a line in the
-  darker colour. Both fade in voxel by voxel between 0.8 and 1.6 cells per
-  voxel, so minified Mons are not covered in lines.
+  ear over the head, a nose over the face), plain ASCII draws a line on the near
+  part in its own shadow tint. A minified Mon keeps only contours with a depth
+  jump of at least three voxels. Shallower contours fade in voxel by voxel
+  between 0.35 and 0.65 cells per voxel, so zooming never adds or drops them all
+  at once.
+- Creases and seams (plain ASCII): where the surface turns at a cube edge, the
+  darker face carries a line, fading in voxel by voxel between 0.8 and 1.6 cells
+  per voxel, so minified Mons are not covered in lines. Where two materials meet,
+  the lighter one carries a line only where the two colours do not already
+  separate; a colour change is its own seam.
 - Interior shading: the configured ramp minus the line glyphs (`-` `_` `|` `/`
-  `\` `(` `)` `^` `v` `<` `>`), so the vendor ramp `.:-=+*#%@` shades with
-  `.:=+*#%@`. A ramp left with fewer than two glyphs is used unchanged. The
-  level spans the configured light range, from fully occluded ambient light to
-  ambient plus full diffuse light, not the frame's own range. In colour, denser
-  is darker and the glyph is a half-shadow tint of the voxel's material; in
-  monochrome, denser is brighter. From about three cells per voxel, alternate
-  lattice voxels step one glyph within their band, a checker that turns with the
-  model.
+  `\` `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads
+  as stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left
+  with fewer than two glyphs is used unchanged. The glyph's band spans the
+  configured light range, from fully occluded ambient light to ambient plus full
+  diffuse light, not the frame's own range, and density only rises with
+  darkness: the brightest band takes `.`. In colour the glyph is drawn in the
+  voxel's own material a few shade steps off its light (ink of about 15 to 25
+  luma), so it modulates the colour instead of dominating it; in monochrome,
+  denser is brighter. By its lattice parities each voxel takes its band's
+  glyph, one lighter, one heavier (never in the brightest band) or two lighter,
+  so the four voxels of any 2x2 patch of a face differ and the texture belongs
+  to the voxels. In plain ASCII colour a Mon cell's background is the voxel's
+  lit colour. Where one voxel spans six or
+  more cells of a row with one glyph, its centre cell and every third cell from
+  it (never its end cells) take the next lighter glyph, so a magnified voxel
+  never draws a long row of one glyph. Rows of four or five identical glyphs can
+  still occur inside a four- or five-cell voxel, or where neighbouring voxels
+  share a glyph; breaking those makes glyphs flicker as the camera turns, since
+  where such a row starts and ends moves with the neighbouring voxels.
+- Facial features: the muzzle, nose, mask and other materials on or inside the
+  head's own surface shade only with the two faintest glyphs (`.` and `:`).
 
 Every glyph decision depends only on the voxel a sample shows (its model-lattice
 identity, face orientation, material and depth) and on the voxels its
@@ -624,9 +650,11 @@ The overlay never obscures the expression. Within a halo around the kaomoji, as
 fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
 plain lit voxel, and the packed renderers keep their block packing for the
 expression strokes. Quadrant and braille draw that packing over the voxel's own lit
-colour, so the room never shows between braille dots on the face. Native characters clear the shading on the head cells beside
-and between them. Facial flat ink is never overpainted, and outline glyphs never
-use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
+colour, so the room never shows between braille dots on the face. A native face
+(one character per cell) keeps a one-cell ring of plain body colour around its
+characters, and the head cells between them: no shading or outline glyph sits
+beside a native eye, mouth or parenthesis. Facial flat ink is never overpainted,
+and outline glyphs never use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
 
 Open eyes have eye whites, so an expression stays noticeable at small sizes and
 matches at large ones:
