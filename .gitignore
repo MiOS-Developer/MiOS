@@ -681,13 +681,13 @@ usr/lib/greenboot/check/required.d/*
 !/usr/lib/greenboot/check/required.d/10-mios-composefs.sh
 !/usr/lib/greenboot/check/required.d/10-mios-role.sh
 !/usr/lib/greenboot/check/required.d/10-uki-promote.sh
-!/usr/lib/greenboot/check/required.d/15-composefs-verity.sh
 !/usr/lib/greenboot/check/required.d/20-podman.sh
 !/usr/lib/greenboot/check/required.d/30-network.sh
 !/usr/lib/greenboot/check/required.d/40-mios-ai-plane.sh
 !/usr/lib/greenboot/check/required.d/55-mios-db-check.sh
 !/usr/lib/greenboot/check/wanted.d/
 usr/lib/greenboot/check/wanted.d/*
+!/usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
 !/usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh
 !/usr/lib/greenboot/check/wanted.d/30-nvidia-cdi.sh
 !/usr/lib/greenboot/check/wanted.d/31-kernel-lockdown.sh

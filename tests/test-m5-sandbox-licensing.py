@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # AI-hint: Automated two-sided verification test suite for Milestone M5 (4-Tier Sandbox Execution Ladder & Permissive Licensing).
-# AI-related: usr/libexec/mios/mios-sandbox-exec, /etc/cdi/nvidia.json, usr/share/containers/containers.conf.d/10-mios-pasta.conf, usr/share/containers/systemd/users/mios-microvm-krun@.container, usr/lib/mios/agent-pipe/mios_isolation.py, usr/share/mios/mios.toml, /etc/fapolicyd/fapolicyd.rules
+# AI-related: usr/libexec/mios/mios-sandbox-exec, usr/libexec/mios/mios-cdi-gen, tests/test-cdi-gen.py, usr/share/containers/containers.conf.d/10-mios-pasta.conf, usr/share/containers/systemd/users/mios-microvm-krun@.container, usr/lib/mios/agent-pipe/mios_isolation.py, usr/share/mios/mios.toml, /etc/fapolicyd/fapolicyd.rules
 """Automated Two-Sided Verification Test Suite for Milestone M5.
 
 Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)
 1. Tier 1 Sandbox (Bubblewrap bwrap <1ms):
    - Confinement via usr/libexec/mios/mios-sandbox-exec with --ro-bind / /, --unshare-all, --cap-drop ALL, and seccomp filter on fd 9.
 2. Tier 2 Sandbox (Rootless OCI crun ~15ms with CDI):
-   - Rootless OCI Quadlets under UID 1000 with static CDI manifest /etc/cdi/nvidia.json binding /dev/nvidia* without --privileged.
+   - Rootless OCI Quadlets under UID 1000 with the CDI spec mios-cdi-gen publishes (nvidia.yaml, intact official
+     toolkit output), generated against a fixture /dev, binding /dev/nvidia* without --privileged. Acceptance on
+     real NVIDIA hardware is a separate, hardware-gated check; no static /etc/cdi/nvidia.json is ever required.
 3. Tier 3 Sandbox (MicroVMs libkrun <=90ms):
    - Runtime=krun with /dev/kvm hardware acceleration and single virtio-net namespace isolation (task_170 ISOL-01).
 4. Tier 4 Sandbox (Hardware VMs KVM/VFIO):
@@ -26,6 +28,8 @@ Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)
 
 from __future__ import annotations
 
+import importlib.machinery
+import importlib.util
 import json
 import os
 import re
@@ -66,6 +70,29 @@ def find_repo_roots() -> list[str]:
             seen.add(norm)
             res.append(norm)
     return res
+
+
+def load_cdi_hardware_fixture():
+    """tests/test-cdi-gen.py's private /dev, /sys and /proc fixture, driving this checkout's mios-cdi-gen."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-cdi-gen.py")
+    loader = importlib.machinery.SourceFileLoader("mios_m5_cdi_hardware", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def generate_nvidia_cdi(hardware, toolkit_spec: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict[str, Any], str]:
+    """Run mios-cdi-gen --vendor nvidia on the fixture host; (status, result, published nvidia spec text)."""
+    if toolkit_spec is not None:
+        hardware.tool_output = json.dumps(toolkit_spec)
+    status, result = hardware.cli("--vendor", "nvidia")
+    target = (result.get("specs", {}).get("nvidia") or {}).get("target", "")
+    text = ""
+    if target in result.get("published", []) and os.path.isfile(target):
+        with open(target, encoding="utf-8") as stream:
+            text = stream.read()
+    return status, result, text
 
 
 def find_file(relative_paths: list[str]) -> str | None:
@@ -308,22 +335,60 @@ class TestMilestoneM5SandboxLicensing(unittest.TestCase):
     # =========================================================================
 
     def test_tier2_cdi_manifest_structure(self):
-        """Tier 2: Verify static CDI manifest /etc/cdi/nvidia.json binds /dev/nvidia* without --privileged."""
-        cdi_path = find_file(["etc/cdi/nvidia.json"])
-        self.assertIsNotNone(cdi_path, "/etc/cdi/nvidia.json must exist")
-        with open(cdi_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        """Tier 2: the NVIDIA CDI spec mios-cdi-gen publishes on a fixture /dev binds /dev/nvidia* without --privileged."""
+        cdi = load_cdi_hardware_fixture()
+        with cdi.Hardware() as hardware:
+            hardware.nvidia()
+            toolkit = hardware.official_spec()
+            # The toolkit emits the lowest cdiVersion its edits need; Tier 2 was specified against 0.6.0.
+            toolkit["cdiVersion"] = "0.6.0"
+            status, result, content = generate_nvidia_cdi(hardware, toolkit)
+            self.assertEqual(status, 0, result)
+            target = result["specs"]["nvidia"]["target"]
+            self.assertEqual(os.path.basename(target), "nvidia.yaml", "the canonical spec is the toolkit's nvidia.yaml")
+            self.assertEqual(os.path.dirname(target), str(hardware.output), "the spec lands in the fixture CDI dir")
+            self.assertFalse(os.path.lexists(os.path.join(hardware.output, "nvidia.json")),
+                             "no static or legacy nvidia.json is published")
 
         ok, msg = self.validator.validate_cdi_spec(content)
         self.assertTrue(ok, f"CDI spec validation failed: {msg}")
 
         data = json.loads(content)
+        self.assertEqual(data, toolkit, "mios-cdi-gen publishes the official toolkit spec intact")
         self.assertEqual(data.get("cdiVersion"), "0.6.0")
         self.assertEqual(data.get("kind"), "nvidia.com/gpu")
 
         dev_names = {d["name"] for d in data.get("devices", [])}
         self.assertIn("0", dev_names, "CDI spec must define device 0")
         self.assertIn("all", dev_names, "CDI spec must define composite device 'all'")
+        self.assertNotIn("privileged", content.lower())
+
+    def test_tier2_planted_negative_generated_cdi_without_nvidia_gpu(self):
+        """PLANTED NEGATIVE CONTROL: no NVIDIA GPU, an AMD-only host, or a spec without 'all' cannot pass Tier 2."""
+        cdi = load_cdi_hardware_fixture()
+        with cdi.Hardware() as hardware:
+            # AMD only, as on CI and this class of host: nothing NVIDIA is published, so nothing validates.
+            hardware.dri()
+            status, result, content = generate_nvidia_cdi(hardware)
+            self.assertEqual((status, result["status"], content), (1, "unavailable", ""), result)
+            self.assertFalse(os.path.lexists(os.path.join(hardware.output, "nvidia.json")))
+            amd_status, amd = hardware.cli("--vendor", "amd")
+            self.assertEqual(amd_status, 0, amd)
+            with open(amd["specs"]["amd"]["target"], encoding="utf-8") as stream:
+                ok, msg = self.validator.validate_cdi_spec(stream.read())
+            self.assertFalse(ok, "an AMD spec must never satisfy the NVIDIA Tier 2 check")
+            self.assertIn("Invalid kind", msg)
+
+        with cdi.Hardware() as hardware:
+            hardware.nvidia()
+            toolkit = hardware.official_spec()
+            toolkit["cdiVersion"] = "0.6.0"
+            toolkit["devices"] = [d for d in toolkit["devices"] if d["name"] != "all"]
+            status, result, content = generate_nvidia_cdi(hardware, toolkit)
+            self.assertEqual(status, 0, result)
+            ok, msg = self.validator.validate_cdi_spec(content)
+            self.assertFalse(ok, "a published spec without the composite device must fail RED")
+            self.assertIn("Missing composite 'all' device", msg)
 
     def test_tier2_rootless_quadlet_configurations(self):
         """Tier 2: Verify rootless OCI Quadlets under UID 1000 bind CDI without --privileged."""

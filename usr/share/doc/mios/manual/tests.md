@@ -1403,7 +1403,9 @@ Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)
 1. Tier 1 Sandbox (Bubblewrap bwrap <1ms):
    - Confinement via usr/libexec/mios/mios-sandbox-exec with --ro-bind / /, --unshare-all, --cap-drop ALL, and seccomp filter on fd 9.
 2. Tier 2 Sandbox (Rootless OCI crun ~15ms with CDI):
-   - Rootless OCI Quadlets under UID 1000 with static CDI manifest /etc/cdi/nvidia.json binding /dev/nvidia* without --privileged.
+   - Rootless OCI Quadlets under UID 1000 with the CDI spec mios-cdi-gen publishes (nvidia.yaml, intact official
+     toolkit output), generated against a fixture /dev, binding /dev/nvidia* without --privileged. Acceptance on
+     real NVIDIA hardware is a separate, hardware-gated check; no static /etc/cdi/nvidia.json is ever required.
 3. Tier 3 Sandbox (MicroVMs libkrun <=90ms):
    - Runtime=krun with /dev/kvm hardware acceleration and single virtio-net namespace isolation (task_170 ISOL-01).
 4. Tier 4 Sandbox (Hardware VMs KVM/VFIO):
@@ -1419,7 +1421,7 @@ Milestone M5: 4-Tier Sandbox Execution Ladder & Permissive Licensing (R5)
    - Injected GPLv3 component in core fails RED.
    - Restored canonical state passes GREEN.
 
-<!-- mios-src:e09c9f4a6348 from tests/test-m5-sandbox-licensing.py:4-25 -->
+<!-- mios-src:627eea35fb04 from tests/test-m5-sandbox-licensing.py:4-27 -->
 
 ### D1 (generators verify): a realized_by row moved onto...
 
