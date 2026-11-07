@@ -11453,47 +11453,6 @@ mod face_transition_tests {
         let tier = |framing, zoom| face_tier(metric(framing, zoom), true, None);
         let zooms: Vec<u16> = (50..=400).step_by(2).collect();
         let below = |m: [f64; 2], floor: [f64; 2]| m[0] < floor[0] || m[1] < floor[1];
-        // Sweeps in and out: the remembered tier switches only past each
-        // threshold's far side.
-        let mut switches = Vec::new();
-        let sweep: Vec<u16> = zooms
-            .iter()
-            .copied()
-            .chain(zooms.iter().rev().copied())
-            .collect();
-        for framing in framings {
-            let mut memo = DetailMemo::default();
-            for (k, zoom) in sweep.iter().enumerate() {
-                let m = metric(framing, *zoom);
-                let before = memo.tier;
-                memo = memo
-                    .step(clock(k * 3 * FRAMES), m, |p| face_tier(m, true, p))
-                    .0;
-                if let (Some(from), Some(to)) = (before, memo.tier) {
-                    if from != to {
-                        switches.push((from, to, m, framing, *zoom));
-                    }
-                }
-            }
-        }
-        let has = |from, to| switches.iter().any(|s| s.0 == from && s.1 == to);
-        assert!(
-            has(FaceLod::Native, FaceLod::Shaded)
-                && has(FaceLod::Shaded, FaceLod::Atlas)
-                && has(FaceLod::Atlas, FaceLod::Shaded)
-                && has(FaceLod::Shaded, FaceLod::Native),
-            "the sweeps must cross both thresholds both ways: {switches:?}"
-        );
-        for (from, to, m, framing, zoom) in &switches {
-            let ok = match (from, to) {
-                (FaceLod::Native, FaceLod::Shaded) => !below(*m, [3.5, 3.5]),
-                (FaceLod::Shaded, FaceLod::Native) => below(*m, [3.0, 3.0]),
-                (FaceLod::Shaded, FaceLod::Atlas) => !below(*m, [8.0, 8.0]),
-                (FaceLod::Atlas, FaceLod::Shaded) => below(*m, [7.0, 7.0]),
-                _ => true,
-            };
-            assert!(ok, "{from:?} -> {to:?} at {m:?} ({framing:?} {zoom}%)");
-        }
         // Jitter between the two neighbouring zooms that straddle each exact
         // threshold, starting on the tier below (native) or above (atlas).
         let mut edges = Vec::new();
@@ -11541,6 +11500,47 @@ mod face_transition_tests {
                 held, 0,
                 "{from:?} flipped at the boundary {jitter:?} {held} times"
             );
+        }
+        // Sweeps in and out: the remembered tier switches only past each
+        // threshold's far side.
+        let mut switches = Vec::new();
+        let sweep: Vec<u16> = zooms
+            .iter()
+            .copied()
+            .chain(zooms.iter().rev().copied())
+            .collect();
+        for framing in framings {
+            let mut memo = DetailMemo::default();
+            for (k, zoom) in sweep.iter().enumerate() {
+                let m = metric(framing, *zoom);
+                let before = memo.tier;
+                memo = memo
+                    .step(clock(k * 3 * FRAMES), m, |p| face_tier(m, true, p))
+                    .0;
+                if let (Some(from), Some(to)) = (before, memo.tier) {
+                    if from != to {
+                        switches.push((from, to, m, framing, *zoom));
+                    }
+                }
+            }
+        }
+        let has = |from, to| switches.iter().any(|s| s.0 == from && s.1 == to);
+        assert!(
+            has(FaceLod::Native, FaceLod::Shaded)
+                && has(FaceLod::Shaded, FaceLod::Atlas)
+                && has(FaceLod::Atlas, FaceLod::Shaded)
+                && has(FaceLod::Shaded, FaceLod::Native),
+            "the sweeps must cross both thresholds both ways: {switches:?}"
+        );
+        for (from, to, m, framing, zoom) in &switches {
+            let ok = match (from, to) {
+                (FaceLod::Native, FaceLod::Shaded) => !below(*m, [3.5, 3.5]),
+                (FaceLod::Shaded, FaceLod::Native) => below(*m, [3.0, 3.0]),
+                (FaceLod::Shaded, FaceLod::Atlas) => !below(*m, [8.0, 8.0]),
+                (FaceLod::Atlas, FaceLod::Shaded) => below(*m, [7.0, 7.0]),
+                _ => true,
+            };
+            assert!(ok, "{from:?} -> {to:?} at {m:?} ({framing:?} {zoom}%)");
         }
         // Turntable: one revolution in 5 degree steps at each threshold's zoom.
         let turntable: Vec<Sprite> = (0..=360u16).step_by(5).map(|yaw| mon(yaw % 360)).collect();
@@ -11758,7 +11758,8 @@ mod face_transition_tests {
                 let zoom = framing.1;
                 let face = layout(&sprite, renderer, &colors, size, framing);
                 let tier = face_tier(face.metric, face.pixel_atlas, None);
-                // Half way from the tier below (or above) towards this one.
+                // Five eighths of the way from the tier below: the mouth and
+                // the eyes are on this tier, the parentheses still below.
                 let from = match tier {
                     FaceLod::Native => continue,
                     FaceLod::Shaded => FaceLod::Native,
@@ -11802,13 +11803,14 @@ mod face_transition_tests {
                     projection,
                     area,
                     &mut mixed,
-                    Some((&memo, clock(FRAMES / 2))),
+                    Some((&memo, clock(FRAMES * 5 / 8))),
                 );
-                let level = memo.get().level(clock(FRAMES / 2)).unwrap();
+                let level = memo.get().level(clock(FRAMES * 5 / 8)).unwrap();
                 assert!(level > from.level() && level < tier.level());
+                // Each tier's own ink, where the two tiers differ.
                 let (mut from_low, mut from_high) = (0, 0);
                 for (i, cell) in mixed.content.iter().enumerate() {
-                    let (l, h) = (&low.content[i], &high.content[i]);
+                    let (l, h, b) = (&low.content[i], &high.content[i], &before.content[i]);
                     if l == h {
                         assert_eq!(cell, l, "{renderer:?} {size:?} {zoom}%: cell {i} changed");
                         continue;
@@ -11817,13 +11819,13 @@ mod face_transition_tests {
                         cell == l || cell == h,
                         "{renderer:?} {size:?} {zoom}%: cell {i} is from neither tier"
                     );
-                    from_low += usize::from(cell == l);
-                    from_high += usize::from(cell == h);
+                    from_low += usize::from(cell == l && l != b);
+                    from_high += usize::from(cell == h && h != b);
                 }
                 assert!(
                     from_low > 0 && from_high > 0,
                     "{renderer:?} {size:?} {zoom}%: a {from:?}/{tier:?} blend drew one tier \
-                     ({from_low} lower, {from_high} upper cells)"
+                     ({from_low} lower, {from_high} upper ink cells)"
                 );
                 checked.push((from, tier));
             }
