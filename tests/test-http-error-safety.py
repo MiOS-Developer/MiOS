@@ -101,6 +101,8 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
     async def test_portal_configuration_failures_and_success(self):
         config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])),
                                  TiersUnresolved=type("TiersUnresolved", (RuntimeError,), {}),
+                                 AmbiguousRedactedArray=type("AmbiguousRedactedArray", (ValueError,), {}),
+                                 REDACTED_ARRAY_REFUSAL=constant(CONFIG, "REDACTED_ARRAY_REFUSAL"),
                                  redact_secrets=Mock(side_effect=lambda merged: {"redacted": merged}),
                                  UNRESOLVED_REFUSAL=constant(CONFIG, "UNRESOLVED_REFUSAL"),
                                  portal_post_toml=handlers(CONFIG, ["portal_post_toml"])["portal_post_toml"])
@@ -129,6 +131,12 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
             self.assert_redacted(refused, 500)
             self.assertIn("nothing was written", refused.content["error"])
             background.add_task.assert_not_called()
+            config.write_user_config.side_effect = config.AmbiguousRedactedArray(MARKER)
+            refused = await scope["post_portal_config"](request, background)
+            self.assert_redacted(refused, 409)
+            self.assertIn("nothing was written", refused.content["error"])
+            background.add_task.assert_not_called()
+            self.assertNotIn(MARKER, str(scope["log"].mock_calls))
             config.write_user_config.side_effect = None
             self.assertEqual((await scope["post_portal_config"](request, background)).content, {"status": "ok"})
             background.add_task.assert_called_once()
