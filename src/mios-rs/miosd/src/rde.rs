@@ -245,7 +245,14 @@ fn agent_port(value: &toml::Value) -> Result<Option<u16>, String> {
         .and_then(|p| u16::try_from(p).ok())
         .filter(|port| *port != 0)
         .map(Some)
-        .ok_or_else(|| format!("[ports].devpod_agent = {value} is not a TCP port"))
+        .ok_or_else(|| {
+            // toml::Value's Display writes a datetime as its serde wrapper table.
+            let shown = match value {
+                toml::Value::Datetime(d) => d.to_string(),
+                other => other.to_string(),
+            };
+            format!("[ports].devpod_agent = {shown} is not a TCP port")
+        })
 }
 
 /// `merged` with [ports] derived from [ports.categories], once every

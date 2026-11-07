@@ -74,7 +74,8 @@ def _flat_overlay_text(value) -> str:
 
 
 # A devpod_agent value of each non-integer TOML type, as written and as named.
-_NOT_INTEGERS = ('"abc"', '"20000"', "20000.0", "1.5", "true", "[20000]", "{ port = 20000 }")
+_NOT_INTEGERS = ('"abc"', '"20000"', "20000.0", "1.5", "true", "[20000]", "{ port = 20000 }",
+                 "1979-05-27")
 
 
 def _spare_ports(taken, count=2) -> list:
@@ -339,8 +340,8 @@ class TestRdeEngine(unittest.TestCase):
 
     def test_a_non_integer_agent_port_fails_closed(self):
         """Negative Control: a string, numeric string, float, integral float, bool,
-        array or table as the agent port, pinned or flat, stops every rde verb
-        with the error naming the value as written."""
+        array, table or date as the agent port, pinned or flat, stops every rde
+        verb with the error naming the value as written."""
         for value in _NOT_INTEGERS:
             self._assert_refused(value, host_toml=self._tier("host.toml", value))
             self._assert_refused(value, host_toml=self._write("host.toml", _flat_overlay_text(value)))
