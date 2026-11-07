@@ -141,6 +141,40 @@ pub struct NavApp {
     pub repeat: BTreeMap<Input, (u64, u64)>,
 }
 
+/// task3773: qualification of a deliberate right-stick out-and-return focus gesture.
+///
+/// UNITS: every magnitude threshold is a fraction of the POST-DEADZONE normalized radial
+/// magnitude that `radial()` reports -- the same scale as `flick_on`/`flick_off`. `radial()`
+/// zeroes per-axis noise below `stick_deadzone/2`, drops magnitudes at or below
+/// `stick_deadzone`, and rescales the remainder so 1.0 is a FULL physical deflection of the
+/// evdev-calibrated axis (min/max normalization in the kernel), not the raw report. A
+/// `neutral_pct` of 0.15 therefore means 15% of full post-deadzone travel, which on the
+/// vendor 0.12 deadzone corresponds to roughly 24.8% of raw physical travel
+/// (0.12 + 0.15 * 0.88). The milliseconds are wall-clock tick time.
+///
+/// A gesture qualifies only when the table is present and the resolved right-stick binding
+/// is a window/pane focus action (`tmux:focus *` or `hypr:movefocus *`); an absent table
+/// keeps the legacy magnitude-flick policy exactly. All seven fields are required together:
+/// there are no hidden per-field defaults, so a partial operator override fails loudly
+/// instead of silently mixing units with vendor guesses.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct FocusGesture {
+    /// Magnitude strictly below this counts as neutral (0.0 < n <= 0.5).
+    pub neutral_pct: f64,
+    /// Continuous neutral dwell required before a gesture may start (1..=2000 ms).
+    pub neutral_ms: u64,
+    /// Peak magnitude the gesture must reach (neutral_pct < p <= 1.0).
+    pub rise_pct: f64,
+    /// Time allowed from leaving neutral to reaching the peak (1..=2000 ms).
+    pub rise_ms: u64,
+    /// Half-angle of the cone around a cardinal axis (1..=45 degrees).
+    pub direction_deg: u64,
+    /// Time allowed from the peak back to neutral (1..=2000 ms).
+    pub return_ms: u64,
+    /// After a focus fires, this long must pass before the next gesture may arm (0..=5000 ms).
+    pub cooldown_ms: u64,
+}
+
 /// The resolved nav projection. `profiles` already has every `inherits` chain applied.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct NavConfig {
@@ -152,6 +186,8 @@ pub struct NavConfig {
     pub repeat: BTreeMap<Input, (u64, u64)>,
     /// Sockets (tmux -L names) whose clients count as a MiOS tmux client for the `<name>_tmux` profile.
     pub tmux_sockets: Vec<String>,
+    /// task3773: right-stick focus-gesture qualification; None keeps the legacy magnitude flicks.
+    pub focus_gesture: Option<FocusGesture>,
     pub profiles: BTreeMap<String, Profile>,
     /// P1: re-verify the focused terminal's foreground app at most this often (0 without `apps`).
     pub app_poll_ms: u64,
@@ -161,7 +197,7 @@ pub struct NavConfig {
     /// Why the app layer was rejected (it is then empty); the base navigation is unaffected.
     pub app_error: Option<String>,
 }
-const RESERVED: [&str; 9] = [
+const RESERVED: [&str; 10] = [
     "enabled",
     "flick_on",
     "flick_off",
@@ -171,6 +207,7 @@ const RESERVED: [&str; 9] = [
     "apps",
     "app_poll_ms",
     "app_query_timeout_ms",
+    "focus_gesture",
 ];
 /// The base contexts an app layer may refine (P2): a terminal window (captured or not) and the Linux console.
 pub const APP_CONTEXTS: [&str; 2] = ["terminal", "console"];
@@ -368,6 +405,62 @@ impl NavConfig {
             && cfg.flick_on <= 1.0)
         {
             return Err("nav: 0 <= flick_off < flick_on <= 1".into());
+        }
+        if let Some(g) = t.get("focus_gesture") {
+            let what = "controller.nav.focus_gesture";
+            let table = g.as_table().ok_or(format!("{what}: must be a table"))?;
+            let pct = |k: &str| -> Result<f64, String> {
+                table
+                    .get(k)
+                    .and_then(toml::Value::as_float)
+                    .or_else(|| table.get(k).and_then(toml::Value::as_integer).map(f64::from))
+                    .ok_or(format!("{what}.{k}: a percentage 0 < x <= 1 is required"))
+            };
+            let ms = |k: &str| -> Result<u64, String> {
+                table
+                    .get(k)
+                    .and_then(toml::Value::as_integer)
+                    .and_then(|v| u64::try_from(v).ok())
+                    .ok_or(format!("{what}.{k}: a whole number of milliseconds is required"))
+            };
+            let gesture = FocusGesture {
+                neutral_pct: pct("neutral_pct")?,
+                neutral_ms: ms("neutral_ms")?,
+                rise_pct: pct("rise_pct")?,
+                rise_ms: ms("rise_ms")?,
+                direction_deg: ms("direction_deg").map_err(|_| {
+                    format!("{what}.direction_deg: a whole number of degrees is required")
+                })?,
+                return_ms: ms("return_ms")?,
+                cooldown_ms: ms("cooldown_ms")?,
+            };
+            let reason = |field: &str, rule: &str| format!("{what}.{field}: {rule}");
+            if !(gesture.neutral_pct.is_finite() && gesture.neutral_pct > 0.0 && gesture.neutral_pct <= 0.5)
+            {
+                return Err(reason("neutral_pct", "0 < x <= 0.5"));
+            }
+            if !(gesture.rise_pct.is_finite()
+                && gesture.rise_pct > gesture.neutral_pct
+                && gesture.rise_pct <= 1.0)
+            {
+                return Err(reason("rise_pct", "neutral_pct < x <= 1"));
+            }
+            if !(1..=2000).contains(&gesture.neutral_ms) {
+                return Err(reason("neutral_ms", "1..=2000 ms"));
+            }
+            if !(1..=2000).contains(&gesture.rise_ms) {
+                return Err(reason("rise_ms", "1..=2000 ms"));
+            }
+            if !(1..=45).contains(&gesture.direction_deg) {
+                return Err(reason("direction_deg", "1..=45 degrees"));
+            }
+            if !(1..=2000).contains(&gesture.return_ms) {
+                return Err(reason("return_ms", "1..=2000 ms"));
+            }
+            if gesture.cooldown_ms > 5000 {
+                return Err(reason("cooldown_ms", "0..=5000 ms"));
+            }
+            cfg.focus_gesture = Some(gesture);
         }
         if let Some(c) = t.get("contexts") {
             for (context, profile) in c.as_table().ok_or("nav.contexts must be a table")? {
@@ -1594,5 +1687,55 @@ mod tests {
         }
         assert!(held.is_empty());
         assert_eq!(s.iter().filter(|e| e.kind == 0).count(), 2);
+    }
+
+    #[test]
+    fn focus_gesture_table_parses_and_validates() {
+        // The vendor table parses with its shipped values.
+        let (cfg, _) = crate::config::tests::fixture_nav();
+        let g = cfg.controller.nav.focus_gesture.expect("vendor table");
+        assert!((g.neutral_pct - 0.15).abs() < 1e-9);
+        assert_eq!(
+            (g.neutral_ms, g.rise_ms, g.direction_deg, g.return_ms, g.cooldown_ms),
+            (80, 120, 20, 250, 400)
+        );
+        assert!((g.rise_pct - 0.9).abs() < 1e-9);
+        // Every out-of-range or mistyped field is rejected with its named reason.
+        for (field, value, reason) in [
+            ("neutral_pct", toml::Value::Float(0.6), "neutral_pct: 0 < x <= 0.5"),
+            ("neutral_pct", toml::Value::Float(0.0), "neutral_pct: 0 < x <= 0.5"),
+            ("rise_pct", toml::Value::Float(0.15), "rise_pct: neutral_pct < x <= 1"),
+            ("rise_pct", toml::Value::Float(1.5), "rise_pct: neutral_pct < x <= 1"),
+            ("neutral_ms", toml::Value::Integer(0), "neutral_ms: 1..=2000 ms"),
+            ("rise_ms", toml::Value::Integer(2001), "rise_ms: 1..=2000 ms"),
+            ("direction_deg", toml::Value::Integer(46), "direction_deg: 1..=45 degrees"),
+            ("return_ms", toml::Value::Integer(0), "return_ms: 1..=2000 ms"),
+            ("cooldown_ms", toml::Value::Integer(5001), "cooldown_ms: 0..=5000 ms"),
+            ("neutral_ms", toml::Value::String("80".into()), "a whole number"),
+        ] {
+            let verdict = crate::config::tests::try_fixture_nav_with(|v| {
+                v["keybindings"]["global"]["controller"]["nav"]["focus_gesture"][field] =
+                    value.clone();
+            });
+            let err = verdict.err().unwrap_or_else(|| panic!("{field} accepted"));
+            assert!(err.contains(reason), "{field}: {err}");
+        }
+        // A partial table is refused: no hidden defaults mix with operator units.
+        let verdict = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["focus_gesture"]
+                .as_table_mut()
+                .unwrap()
+                .remove("cooldown_ms");
+        });
+        assert!(verdict.is_err());
+        // An absent table is the documented legacy policy.
+        let (cfg, _) = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .remove("focus_gesture");
+        })
+        .unwrap();
+        assert!(cfg.controller.nav.focus_gesture.is_none());
     }
 }
