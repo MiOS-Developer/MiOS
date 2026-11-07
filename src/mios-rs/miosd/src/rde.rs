@@ -113,8 +113,15 @@ impl RdeConfig {
     pub fn from_ssot(root: Option<&Path>) -> Result<Self, String> {
         let mut cfg = Self::default();
 
-        let merged = mios_resolver::resolve_merged(root, false).ok();
-        if let Some(doc) = merged {
+        // mios_resolver::resolve_merged, with derive_ports_checked in place of
+        // its derive_ports so the agent port is checked before derivation.
+        let merged = mios_resolver::layers::merge_layer_files(
+            &mios_resolver::layers::resolve_layer_paths(root),
+        )
+        .ok();
+        if let Some(mut doc) = merged {
+            mios_resolver::db_overlay::maybe_apply_db_overlay(&mut doc, false);
+            let doc = derive_ports_checked(doc)?;
             if let Some(rde_tab) = doc.get("rde").and_then(|v| v.as_table()) {
                 if let Some(v) = rde_tab.get("orchestrator").and_then(|v| v.as_str()) {
                     cfg.orchestrator = v.to_string();
@@ -217,17 +224,48 @@ impl RdeConfig {
     /// [ports].devpod_agent is the agent transport this engine forwards and
     /// reports; the SSOT value replaces the compiled fallback.
     fn apply_ports(&mut self, doc: &toml::Value) -> Result<(), String> {
-        if let Some(ports_tab) = doc.get("ports").and_then(|v| v.as_table()) {
-            if let Some(p) = ports_tab.get("devpod_agent").and_then(|v| v.as_integer()) {
-                let agent_port = u16::try_from(p)
-                    .ok()
-                    .filter(|port| *port != 0)
-                    .ok_or_else(|| format!("[ports].devpod_agent = {p} is not a TCP port"))?;
-                self.devpod.set_agent_port(agent_port);
+        if let Some(value) = doc.get("ports").and_then(|p| p.get("devpod_agent")) {
+            if let Some(port) = agent_port(value)? {
+                self.devpod.set_agent_port(port);
             }
         }
         Ok(())
     }
+}
+
+/// A devpod_agent value as the agent TCP port: an integer from 1 to 65535.
+/// An empty string sets nothing, since it never overrides a lower tier. Any
+/// other value is an error; it is never skipped or wrapped onto another port.
+fn agent_port(value: &toml::Value) -> Result<Option<u16>, String> {
+    if value.as_str() == Some("") {
+        return Ok(None);
+    }
+    value
+        .as_integer()
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|port| *port != 0)
+        .map(Some)
+        .ok_or_else(|| format!("[ports].devpod_agent = {value} is not a TCP port"))
+}
+
+/// `merged` with [ports] derived from [ports.categories], once every
+/// devpod_agent value the tiers wrote is a valid agent port. Derivation
+/// copies only integers: it drops a pinned value of another type and writes
+/// the category's port over the flat key, so it would hide a bad value.
+fn derive_ports_checked(mut merged: toml::Value) -> Result<toml::Value, String> {
+    if let Some(ports) = merged.get("ports") {
+        let pinned = ports
+            .get("categories")
+            .and_then(|c| c.as_table())
+            .into_iter()
+            .flat_map(|categories| categories.values())
+            .filter_map(|category| category.get("pinned")?.get("devpod_agent"));
+        for value in ports.get("devpod_agent").into_iter().chain(pinned) {
+            agent_port(value)?;
+        }
+    }
+    mios_resolver::ports::derive_ports(&mut merged);
+    Ok(merged)
 }
 
 #[derive(Debug, Serialize)]
@@ -983,7 +1021,7 @@ mod tests {
     }
 
     /// `config` after `layers` (lowest precedence first) are folded as
-    /// from_ssot folds them: the resolver's layer merge and [ports]
+    /// from_ssot folds them: the resolver's layer merge, the checked [ports]
     /// derivation, then one apply_ports on the merged document.
     fn resolve_onto(mut config: RdeConfig, layers: &[&str]) -> (RdeConfig, Result<(), String>) {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -996,9 +1034,8 @@ mod tests {
                 path
             })
             .collect();
-        let mut doc = mios_resolver::layers::merge_layer_files(&paths).expect("layers merge");
-        mios_resolver::ports::derive_ports(&mut doc);
-        let applied = config.apply_ports(&doc);
+        let doc = mios_resolver::layers::merge_layer_files(&paths).expect("layers merge");
+        let applied = derive_ports_checked(doc).and_then(|doc| config.apply_ports(&doc));
         (config, applied)
     }
 
@@ -1144,6 +1181,123 @@ mod tests {
                 vec![8900, port, 8700, 8500, 8600, USER_FORWARD]
             );
         }
+    }
+
+    /// A devpod_agent value of each non-integer TOML type, as the tier writes
+    /// it and as the error must name it.
+    const NOT_INTEGERS: [&str; 8] = [
+        "\"abc\"",
+        "\"20000\"",
+        "20000.0",
+        "1.5",
+        "true",
+        "[20000]",
+        "{ port = 20000 }",
+        "1979-05-27",
+    ];
+
+    fn flat_overlay(port: &str) -> String {
+        format!("[ports]\ndevpod_agent = {port}\n")
+    }
+
+    /// `layers` fail with the error naming `shown`, and nothing is applied.
+    fn assert_refused(layers: &[&str], shown: &str) {
+        let (config, applied) = resolve_onto(with_user_forward(), layers);
+        assert_eq!(
+            applied,
+            Err(format!("[ports].devpod_agent = {shown} is not a TCP port")),
+            "{layers:?}"
+        );
+        assert_eq!(
+            config.devpod.agent_port, 8910,
+            "{shown}: nothing was applied"
+        );
+        assert_eq!(
+            config.devpod.forward_ports,
+            with_user_forward().devpod.forward_ports,
+            "{shown}: the forwards are untouched"
+        );
+    }
+
+    #[test]
+    fn test_ssot_agent_port_of_another_type_is_refused() {
+        for bad in NOT_INTEGERS {
+            let mut config = RdeConfig::default();
+            let err = config
+                .apply_ports(&ports_doc(&flat_overlay(bad)))
+                .expect_err("a non-integer port must not be skipped");
+            assert_eq!(
+                err,
+                format!("[ports].devpod_agent = {bad} is not a TCP port")
+            );
+            assert_eq!(config.devpod.agent_port, 8910, "{bad}: nothing was applied");
+        }
+    }
+
+    #[test]
+    fn test_a_non_integer_agent_port_fails_closed_pinned_and_flat() {
+        // derive_ports drops a non-integer pin and derives over a flat value.
+        for bad in NOT_INTEGERS {
+            assert_refused(&[VENDOR_DEVTOOLS, &agent_overlay(bad)], bad);
+            assert_refused(&[VENDOR_DEVTOOLS, &flat_overlay(bad)], bad);
+        }
+    }
+
+    #[test]
+    fn test_a_mistyped_pin_in_any_tier_or_category_fails_closed() {
+        let valid = agent_overlay("20000");
+        let mistyped = agent_overlay("\"x\"");
+        // Host 20000 then user "x" merge to the pin "x": an error, not 20000 or 8910.
+        assert_refused(&[VENDOR_DEVTOOLS, &valid, &mistyped], "\"x\"");
+        // A pin in another category is checked though devtools pins a valid port.
+        let other = "[ports.categories.other]\npinned = { devpod_agent = \"x\" }\n";
+        assert_refused(&[VENDOR_DEVTOOLS, &valid, other], "\"x\"");
+        // A mistyped flat value is refused though a valid pin would win.
+        assert_refused(&[VENDOR_DEVTOOLS, &flat_overlay("\"x\""), &valid], "\"x\"");
+
+        // A valid user pin over a mistyped host pin leaves no bad value merged.
+        let (config, applied) =
+            resolve_onto(with_user_forward(), &[VENDOR_DEVTOOLS, &mistyped, &valid]);
+        applied.expect("the user pin replaces the host pin");
+        assert_agent_forwarded_once(&config, 20000);
+        assert!(!config.devpod.forward_ports.contains(&8910));
+    }
+
+    #[test]
+    fn test_a_flat_agent_port_outside_the_tcp_range_fails_closed() {
+        // [ports.categories.devtools] derives the port over each of these.
+        for bad in ["0", "65536", "-1", "74446"] {
+            assert_refused(&[VENDOR_DEVTOOLS, &flat_overlay(bad)], bad);
+        }
+    }
+
+    #[test]
+    fn test_an_empty_agent_port_sets_nothing() {
+        let empty = agent_overlay("\"\"");
+        let (config, applied) = resolve_onto(with_user_forward(), &[VENDOR_DEVTOOLS, &empty]);
+        applied.expect("an empty pin sets nothing");
+        assert_agent_forwarded_once(&config, 8910);
+        assert_eq!(
+            config.devpod.forward_ports,
+            with_user_forward().devpod.forward_ports
+        );
+
+        // An empty string never overrides a lower tier: the host pin stays.
+        let valid = agent_overlay("20000");
+        let (config, applied) =
+            resolve_onto(with_user_forward(), &[VENDOR_DEVTOOLS, &valid, &empty]);
+        applied.expect("an empty pin sets nothing");
+        assert_agent_forwarded_once(&config, 20000);
+
+        let mut config = RdeConfig::default();
+        config
+            .apply_ports(&ports_doc(&flat_overlay("\"\"")))
+            .expect("an empty flat port sets nothing");
+        assert_eq!(config.devpod.agent_port, 8910);
+        assert_eq!(
+            config.devpod.forward_ports,
+            RdeConfig::default().devpod.forward_ports
+        );
     }
 
     #[test]
