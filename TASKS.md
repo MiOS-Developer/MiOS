@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 88 |
+| in_progress | 90 |
 | completed | 1892 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3768 |
+| total | 3770 |
 
 0 record(s) carry at least one override.
 
@@ -953,6 +953,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3577` P2-8: config writes are atomic, 0600 and versioned, and can be rolled back (WS-CONFIG | P2 | S) -- pending · P2 · size S
 - `task_3766` Refuse ambiguous redacted arrays and redact native Portal failures -- in_progress · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size M
 - `task_3767` Apply safe array restoration and private errors to the agent Portal -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3769` Review and finish the preserved native Portal guard candidate -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3770` Update the HTTP privacy fixture for the guarded Portal API -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ### Epic task_3523
 
