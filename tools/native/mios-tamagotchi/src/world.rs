@@ -91,7 +91,8 @@ pub struct WorldSurface {
 impl WorldSurface {
     /// Pick the lattice cell inside this surface, rather than a neighbouring
     /// outside cell. Values within 1e-4 lattice cells of an integer snap to that
-    /// edge; positive model-normal components then select its lower cell.
+    /// edge; model-normal components above 1e-4 then select its lower cell.
+    /// Smaller tangent components are reconstruction noise for this edge rule.
     /// Identical frames are bit-deterministic. This edge rule also tolerates
     /// small inverse-projection errors, without promising cross-camera bit
     /// equality for continuous floating coordinates.
@@ -107,7 +108,7 @@ impl WorldSurface {
             }
             let edge = q.round();
             let inside = if (q - edge).abs() <= 1e-4 {
-                edge - f64::from(u8::from(self.normal[axis] > 0.0))
+                edge - f64::from(u8::from(f64::from(self.normal[axis]) > 1e-4))
             } else {
                 q.floor()
             };
@@ -1102,6 +1103,56 @@ mod tests {
                 f.pixels.len(), plain.as_nanos() as f64 / samples,
                 surface.as_nanos() as f64 / samples, surface.as_secs_f64() * 1000. / 32.);
         }
+    }
+
+    #[test]
+    fn surface_lattice_ignores_tangent_roundoff_at_real_rotated_floor_edges() {
+        for noise in [-f32::EPSILON, 0., f32::EPSILON] {
+            let surface = WorldSurface {
+                position: [2., 1., 3.],
+                normal: [noise, 1., noise],
+            };
+            assert_eq!(surface.lattice_cell(1.), Some([2, 0, 3]));
+        }
+        let point = [2., 1., 3.];
+        let mut eligible = 0;
+        for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
+            for pitch in [15_f32, 48., 75.] {
+                for aspect in [0.5, 1., 2.] {
+                    for scale in [3., 11., 27.] {
+                        let mut projection = Projection {
+                            view: View::new(yaw, aspect),
+                            scale,
+                            offset: [0., 0.],
+                        };
+                        projection.view.elevation = pitch.to_radians();
+                        let screen = projection.point(point);
+                        projection.offset = [14.5 - screen[0], 17.5 - screen[1]];
+                        let mut f = blank();
+                        f.projection = Some(SurfaceProjection::new(projection));
+                        f.triangle(
+                            Triangle {
+                                points: [[0., 1., 0.], [4., 1., 0.], [2., 1., 6.]],
+                                normal: [0., 1., 0.],
+                                palette: 3,
+                                occlusion: 0,
+                            },
+                            projection,
+                        );
+                        let surface = f.sample_surface(14, 17).expect("visible floor sample");
+                        close3(surface.position, point);
+                        close3(surface.normal, [0., 1., 0.]);
+                        assert_eq!(
+                            surface.lattice_cell(1.),
+                            Some([2, 0, 3]),
+                            "yaw={yaw} pitch={pitch} aspect={aspect} scale={scale}: {surface:?}"
+                        );
+                        eligible += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(eligible, 216);
     }
 
     #[test]
