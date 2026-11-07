@@ -336,6 +336,26 @@ renderers switch to the stroke atlas when each glyph has enough visible cells;
 plain ASCII retains character shading at larger sizes. Expression spacing and
 aspect follow the text box rather than stretching one character into a rectangle.
 
+Face detail changes never pop. The live game remembers which tier each scene
+subject's face showed last:
+
+- Hysteresis: a native face switches to strokes only from 3.5 cells per glyph
+  and 3.5 rows, and strokes return to native characters only below the 3.0
+  minimum they need. Strokes switch to the atlas from 8 cells per glyph and 8
+  rows, and the atlas returns to strokes only below 7. A zoom that settles on a
+  threshold, a turntable or a head bob therefore never makes the face flicker.
+- Blending: a tier change takes one zoom_transition_frames transition per tier,
+  eased like the camera. It goes glyph by glyph: the middle glyph first, then
+  each mirrored pair outwards (the eyes, then the parentheses). Each glyph is
+  drawn whole by one tier, so the expression stays readable and symmetric on
+  every frame.
+- Zoom, orbit, view changes and terminal resizes all use this path. The first
+  frame after a resize still shows the face as it was drawn; a change that
+  interrupts a blend continues from the face actually drawn.
+- A new pet, a Roster preview or a Studio preview starts fresh, without
+  inheriting another subject's blend: its first frame uses the exact thresholds
+  (3 and 8), as does any render without a remembered tier.
+
 Face zoom eases toward the visible face-plane centre, preserving actual zoom.
 It does not shrink the model to fit: high zoom in a small viewport can crop the
 outer parentheses and eyes. The actual material/depth mask still occludes
@@ -576,7 +596,9 @@ and the overlay glyph is drawn over it:
   outline glyph oriented to the silhouette: `-` `_` `|` `/` `\` `^` `v` `<` `>`.
 - Contours: where a nearer part overlaps a farther one (a paw over the body, an
   ear over the head, a nose over the face), the near part carries a line in its
-  own shadow tint.
+  own shadow tint. A minified Mon keeps only contours with a depth jump of at
+  least three voxels. Shallower contours fade in voxel by voxel between 0.35 and
+  0.65 cells per voxel, so zooming never adds or drops them all at once.
 - Creases and seams: where the surface turns at a cube edge, the darker face
   carries a line; where two materials meet, the lighter one carries a line in the
   darker colour. Both fade in voxel by voxel between 0.8 and 1.6 cells per

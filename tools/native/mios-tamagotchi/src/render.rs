@@ -813,8 +813,9 @@ const LINE_GLYPHS: &[u8] = b"-_|/\\()^v<>";
 const CREASE_BAND: (f32, f32) = (0.8, 1.6);
 /// The lattice checker fades in over this cells-per-voxel band.
 const CHECKER_BAND: (f32, f32) = (2.5, 4.0);
-/// Below this many cells per voxel, a contour needs a three-voxel depth jump.
-const MINIFIED_CONTOUR_CELLS: f32 = 0.5;
+/// Shallow contours fade in, voxel by voxel, over this cells-per-voxel band;
+/// below it a contour needs a three-voxel depth jump.
+const MINIFIED_CONTOUR_BAND: (f32, f32) = (0.35, 0.65);
 
 /// The configured ramp minus the line alphabet, dim to bright, so a shading
 /// glyph is never mistaken for an outline. A ramp left with fewer than two
@@ -1216,13 +1217,16 @@ fn paint_overlay_cell(
 
     // Contour: a nearer part over a farther one (paw over body, ear over
     // head, nose over face). Never drawn on the face plane itself.
-    let minified = cells_per_voxel < MINIFIED_CONTOUR_CELLS;
+    // Minified, only deep contours remain; across the band each voxel gains
+    // its shallow contours at its own share, so a zoom never drops or adds
+    // every shallow contour at once.
+    let shallow = smoothstep(MINIFIED_CONTOUR_BAND, cells_per_voxel);
     let contours: [u8; 8] = std::array::from_fn(|i| {
         mon[i].filter(|o| !o.face_plane).map_or(0, |o| {
-            if minified {
-                o.deep_contour
-            } else {
+            if voxel_hash(o.voxel) < shallow {
                 o.contour
+            } else {
+                o.deep_contour
             }
         })
     });
@@ -2542,6 +2546,13 @@ fn quiet_native_run(
 }
 type NativeGlyphCell = Option<((u16, u16), u8)>;
 
+/// Every cell a native layout places a glyph on, whichever glyphs a blend
+/// paints: the shading is cleared around the whole expression either way, so
+/// a glyph another tier draws never loses its cell to the clearing.
+fn placed_cells(candidates: &[NativeGlyphCell]) -> Vec<(u16, u16)> {
+    candidates.iter().flatten().map(|(pos, _)| *pos).collect()
+}
+
 /// Allocate mandatory eyes and mouth before optional punctuation. A parenthesis
 /// must never consume the only legal cell for a complete expression core.
 fn native_glyph_candidates(
@@ -2641,7 +2652,7 @@ fn native_micro_candidates(
 }
 
 /// Face level of detail, measured on the letterboxed text box per glyph.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum FaceLod {
     /// Terminal characters: one cell per glyph.
     Native,
@@ -2832,17 +2843,177 @@ fn stroke_glyph(mask: u16, source: u8) -> char {
         .map_or('#', |(glyph, _)| *glyph)
 }
 
+/// The tier a face takes with no remembered tier (the exact thresholds).
+#[cfg(test)]
 fn face_lod(texture: FaceTexture, columns: f64, rows: f64, pixel_atlas: bool) -> FaceLod {
+    face_tier(face_metric(texture, columns, rows), pixel_atlas, None)
+}
+
+/// Cells per glyph and rows of the letterboxed text box.
+fn face_metric(texture: FaceTexture, columns: f64, rows: f64) -> [f64; 2] {
     let fraction = texture.text_fraction();
-    let per_glyph = columns * fraction[0] / texture.text.len() as f64;
-    let rows = rows * fraction[1];
-    if per_glyph < SHADED_MIN_CELLS_PER_GLYPH || rows < SHADED_MIN_ROWS {
+    [
+        columns * fraction[0] / texture.text.len() as f64,
+        rows * fraction[1],
+    ]
+}
+
+/// Schmitt widths of the face tiers, used once a live camera remembers the
+/// tier it drew. A native face enters the strokes only from 3.5 cells per
+/// glyph and 3.5 rows, and leaves them only below the 3.0 minimum the strokes
+/// need; an atlas face is entered at 8 and left only below 7. A metric that
+/// settles or jitters on a threshold (zoom easing, a turntable, a head bob)
+/// therefore never flips the tier. Without a memory the exact minimums apply.
+const SHADED_ENTRY_CELLS_PER_GLYPH: f64 = 3.5;
+const SHADED_ENTRY_ROWS: f64 = 3.5;
+const ATLAS_EXIT_CELLS_PER_GLYPH: f64 = 7.0;
+const ATLAS_EXIT_ROWS: f64 = 7.0;
+
+/// The tier a face of `[cells per glyph, rows]` takes after `previous`.
+fn face_tier([per_glyph, rows]: [f64; 2], pixel_atlas: bool, previous: Option<FaceLod>) -> FaceLod {
+    let shaded = if previous == Some(FaceLod::Native) {
+        [SHADED_ENTRY_CELLS_PER_GLYPH, SHADED_ENTRY_ROWS]
+    } else {
+        [SHADED_MIN_CELLS_PER_GLYPH, SHADED_MIN_ROWS]
+    };
+    let atlas = if previous == Some(FaceLod::Atlas) {
+        [ATLAS_EXIT_CELLS_PER_GLYPH, ATLAS_EXIT_ROWS]
+    } else {
+        [ATLAS_MIN_CELLS_PER_GLYPH, ATLAS_MIN_ROWS]
+    };
+    if per_glyph < shaded[0] || rows < shaded[1] {
         FaceLod::Native
-    } else if pixel_atlas && per_glyph >= ATLAS_MIN_CELLS_PER_GLYPH && rows >= ATLAS_MIN_ROWS {
+    } else if pixel_atlas && per_glyph >= atlas[0] && rows >= atlas[1] {
         FaceLod::Atlas
     } else {
         FaceLod::Shaded
     }
+}
+
+impl FaceLod {
+    /// Position on the detail scale a blend moves along.
+    fn level(self) -> f32 {
+        match self {
+            Self::Native => 0.0,
+            Self::Shaded => 1.0,
+            Self::Atlas => 2.0,
+        }
+    }
+
+    fn at(level: usize) -> Self {
+        match level {
+            0 => Self::Native,
+            1 => Self::Shaded,
+            _ => Self::Atlas,
+        }
+    }
+}
+
+/// The face detail one camera subject drew last, kept by the UI between
+/// frames (presentation only, never saved; a new pet or preview starts from
+/// `Default`). It holds the Schmitt tier the face is heading for and the
+/// drawn level its blend started from. The level eases to that tier with the
+/// camera's smoothstep, one tier per configured zoom transition, glyph by
+/// glyph, so no zoom, orbit, resize or view change swaps a whole face between
+/// native characters, structural strokes and the atlas in one frame, and a
+/// blend interrupted by another change continues from what was drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DetailMemo {
+    tier: Option<FaceLod>,
+    from: f32,
+    started: usize,
+    /// The last measured `[cells per glyph, rows]` (diagnostics and tests).
+    metric: [f32; 2],
+}
+
+/// The UI clock a face blend runs on: the animation frame and the configured
+/// `zoom_transition_frames`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DetailClock {
+    pub frame: usize,
+    pub frames: usize,
+}
+
+/// A live camera's remembered face detail. None (snapshots, one-off renders)
+/// takes the exact tier thresholds with no blend.
+pub type FaceDetail<'a> = Option<(&'a std::cell::Cell<DetailMemo>, DetailClock)>;
+
+impl DetailMemo {
+    /// The level drawn at `clock` (0 native, 1 strokes, 2 atlas). A blend
+    /// takes `frames` per tier it crosses, so the level never moves more than
+    /// the smoothstep's peak of 1.5 / `frames` tiers in one frame.
+    fn level(self, clock: DetailClock) -> Option<f32> {
+        let to = self.tier?.level();
+        let length = clock.frames.max(1) as f32 * (to - self.from).abs();
+        let elapsed = clock.frame.saturating_sub(self.started) as f32;
+        if elapsed >= length {
+            return Some(to);
+        }
+        let t = elapsed / length;
+        Some(self.from + (to - self.from) * t * t * (3.0 - 2.0 * t))
+    }
+
+    /// Head for the tier `target` picks from the remembered one. A new tier
+    /// starts its blend from the level drawn now; the first frame of a
+    /// subject takes its tier at once.
+    fn step(
+        self,
+        clock: DetailClock,
+        metric: [f64; 2],
+        target: impl Fn(Option<FaceLod>) -> FaceLod,
+    ) -> (Self, f32) {
+        let tier = target(self.tier);
+        let mut next = match self.level(clock) {
+            Some(_) if self.tier == Some(tier) => self,
+            Some(level) => Self {
+                tier: Some(tier),
+                from: level,
+                started: clock.frame,
+                ..self
+            },
+            None => Self {
+                tier: Some(tier),
+                from: tier.level(),
+                started: clock.frame,
+                ..self
+            },
+        };
+        next.metric = metric.map(|m| m as f32);
+        (next, next.level(clock).unwrap_or_else(|| tier.level()))
+    }
+}
+
+/// Kaomoji glyphs one face tier draws: bit `i` draws glyph `i`.
+type GlyphSet = u64;
+const ALL_GLYPHS: GlyphSet = GlyphSet::MAX;
+
+fn draws_glyph(glyphs: GlyphSet, index: usize) -> bool {
+    index >= 64 || glyphs & (1 << index) != 0
+}
+
+/// The share of a tier step past which glyph `index` of `len` has switched:
+/// the middle glyph first, then each symmetric pair outwards (the eyes, then
+/// the parentheses or cheeks), so a blend is a mix of whole glyphs that keeps
+/// the expression symmetric and readable on every frame.
+fn glyph_switch(index: usize, len: usize) -> f32 {
+    let rings = len.div_ceil(2).max(1);
+    let ring = (2 * index).abs_diff(len.saturating_sub(1)) / 2;
+    (ring as f32 + 0.5) / rings as f32
+}
+
+/// The two tiers a drawn level lies between, and the glyphs already on the
+/// upper one.
+fn face_blend(level: f32, len: usize) -> (FaceLod, FaceLod, GlyphSet) {
+    let base = level.floor().clamp(0.0, 1.0);
+    let share = level - base;
+    let upper = (0..len.min(64))
+        .filter(|&i| share > glyph_switch(i, len))
+        .fold(0, |set, i| set | (1 << i));
+    (
+        FaceLod::at(base as usize),
+        FaceLod::at(base as usize + 1),
+        upper,
+    )
 }
 
 /// Intermediate and large shaded faces: the kaomoji drawn as structural ASCII
@@ -2867,7 +3038,7 @@ fn draw_shaded_face(
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
-    face: (FaceTexture, [f64; 4], Color, FaceFit),
+    face: (FaceTexture, [f64; 4], Color, FaceFit, GlyphSet),
 ) -> bool {
     struct ShadedCell {
         pos: (u16, u16),
@@ -2881,7 +3052,7 @@ fn draw_shaded_face(
         original: [Option<u8>; 8],
         surface: [Option<SurfaceLight>; 8],
     }
-    let (texture, [left, top, right, bottom], stroke_color, fit) = face;
+    let (texture, [left, top, right, bottom], stroke_color, fit, glyphs) = face;
     let (dx, dy) = renderer.packing();
     let count = f64::from(dx * dy);
     let mut cells = Vec::new();
@@ -3043,6 +3214,11 @@ fn draw_shaded_face(
             );
             target.set_bg(background);
         }
+        // A blend draws each glyph from one tier: another tier owns this one.
+        let owner = cell.source.unwrap_or_else(|| texture.glyph_at(cell.centre));
+        if !draws_glyph(glyphs, owner) {
+            continue;
+        }
         // Eye white: a cell wholly on the face plane that is mostly on an open
         // eye's plate, or that draws an open eye's own stroke (its ink lies
         // inside its plate, so a dot eye collapsed to one character keeps
@@ -3196,6 +3372,21 @@ fn draw_surface_glyphs(
     area: Rect,
     buf: &mut Buffer,
 ) -> bool {
+    draw_surface_glyphs_of(sprite, renderer, colors, projection, area, buf, ALL_GLYPHS)
+}
+
+/// `draw_surface_glyphs` for the glyphs of `glyphs` only. Placement still
+/// lays out the whole expression, so a blended glyph stays exactly where its
+/// native character goes.
+fn draw_surface_glyphs_of(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    glyphs: GlyphSet,
+) -> bool {
     let Some(texture) = FaceTexture::new(sprite) else {
         return false;
     };
@@ -3229,16 +3420,18 @@ fn draw_surface_glyphs(
             }
         }
     }
-    let style = (renderer, colors, texture.text, ink);
+    let style = (renderer, colors, texture.text, ink, glyphs);
     if area.height <= 3 {
         let candidates = native_micro_candidates(texture, &visible);
+        let placed = placed_cells(&candidates);
         let painted = paint_native_glyphs(buf, style, candidates);
-        quiet_native_run((buf, sprite, colors), &painted, &visible);
+        quiet_native_run((buf, sprite, colors), &placed, &visible);
         return !painted.is_empty();
     }
     if let Some(run) = native_run_candidates(texture, &visible) {
+        let placed = placed_cells(&run);
         let painted = paint_native_glyphs(buf, style, run);
-        quiet_native_run((buf, sprite, colors), &painted, &visible);
+        quiet_native_run((buf, sprite, colors), &placed, &visible);
         return !painted.is_empty();
     }
     let horizontal_tolerance = 3.0 / (texture.width() + 2.0);
@@ -3278,13 +3471,15 @@ fn draw_surface_glyphs(
             }
             continue;
         }
+        let placed = placed_cells(&candidates);
         let painted = paint_native_glyphs(buf, style, candidates);
-        quiet_native_run((buf, sprite, colors), &painted, &visible);
+        quiet_native_run((buf, sprite, colors), &placed, &visible);
         return !painted.is_empty();
     }
     if let Some(candidates) = compact {
-        let painted = paint_native_glyphs(buf, style, candidates);
-        quiet_native_run((buf, sprite, colors), &painted, &visible);
+        let placed = placed_cells(&candidates);
+        paint_native_glyphs(buf, style, candidates);
+        quiet_native_run((buf, sprite, colors), &placed, &visible);
         return true;
     }
     false
@@ -3296,13 +3491,13 @@ fn draw_surface_glyphs(
 /// the body. Returns the painted cells.
 fn paint_native_glyphs(
     buf: &mut Buffer,
-    (renderer, colors, text, ink): (Renderer, &Colors, &str, Color),
+    (renderer, colors, text, ink, glyphs): (Renderer, &Colors, &str, Color, GlyphSet),
     candidates: Vec<NativeGlyphCell>,
 ) -> Vec<(u16, u16)> {
     let sclera = Sclera::of(colors);
     let mut painted = Vec::new();
     for (index, candidate) in candidates.into_iter().enumerate() {
-        let Some((pos, glyph)) = candidate else {
+        let Some((pos, glyph)) = candidate.filter(|_| draws_glyph(glyphs, index)) else {
             continue;
         };
         if let Some(cell) = buf.cell_mut(pos) {
@@ -3319,8 +3514,65 @@ fn paint_native_glyphs(
     painted
 }
 
+/// Where the kaomoji lies on the face plane in a viewport, and its size.
+#[derive(Clone, Copy, Debug)]
+struct FaceLayout {
+    /// The face plane's projected cell rectangle (left, top, right, bottom).
+    rect: [f64; 4],
+    fit: FaceFit,
+    /// Cells per glyph and rows of the fitted text box.
+    metric: [f64; 2],
+    stroke_color: Color,
+    /// The renderer has a packed-pixel atlas tier for this face.
+    pixel_atlas: bool,
+}
+
+impl FaceLayout {
+    fn of(
+        sprite: &Sprite,
+        renderer: Renderer,
+        colors: &Colors,
+        projection: Projection,
+        area: Rect,
+        texture: FaceTexture,
+    ) -> Option<Self> {
+        let bounds = FaceTexture::bounds(sprite)?;
+        // Low detail uses independent UV anchors; fine detail samples the
+        // atlas. A severely minified/foreshortened surface keeps the separate
+        // HUD caption rather than forcing a five-character billboard into an
+        // unresolvable head.
+        let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
+        let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
+        // A close-up that shows only part of the face plane fits the kaomoji
+        // to that part, so tiers follow the expression's actual drawn size.
+        let rect = [left, top, right, bottom];
+        let fit = FaceFit::of(sprite, renderer, projection, area, texture, rect);
+        let columns = (right - left) * fit.shrink;
+        let rows = (bottom - top) * fit.shrink;
+        // Native cells use full visible head coverage, including the
+        // forehead. Resolution comes from the letterboxed text box on the
+        // narrow face surface: native characters, then structural ASCII
+        // strokes, then the atlas. One pixel per cell has no sub-cell atlas to
+        // switch to, and half-block atlas ink is a flat palette pixel: a head
+        // that needs a substitute ink (see face_ink) keeps the shaded
+        // strokes, whose glyphs carry it.
+        let stroke_color = face_ink(sprite, colors, InkRegion::TextBox);
+        let pixel_atlas = renderer.packing() != (1, 1)
+            && !(renderer == Renderer::HalfBlock && stroke_color != colors.ink(0));
+        Some(Self {
+            rect,
+            fit,
+            metric: face_metric(texture, columns, rows),
+            stroke_color,
+            pixel_atlas,
+        })
+    }
+}
+
 /// Large expressions are textures on the actual head surface, transformed and
 /// occluded by the sprite's depth-tested UV map, with glyph LOD on small heads.
+/// One stateless frame: the exact tier thresholds, no blend.
+#[cfg(test)]
 fn draw_camera_face(
     sprite: &Sprite,
     renderer: Renderer,
@@ -3328,6 +3580,22 @@ fn draw_camera_face(
     projection: Projection,
     area: Rect,
     buf: &mut Buffer,
+) -> bool {
+    draw_camera_face_with(sprite, renderer, colors, projection, area, buf, None)
+}
+
+/// `draw_camera_face` for a live camera that remembers its face detail: the
+/// tier follows the Schmitt thresholds and blends glyph by glyph over the
+/// transition frames (see `DetailMemo`). Every glyph of a blended frame is
+/// drawn whole by one tier, so the expression stays readable throughout.
+fn draw_camera_face_with(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    detail: FaceDetail<'_>,
 ) -> bool {
     let area = area.intersection(buf.area);
     let Some(texture) = FaceTexture::new(sprite) else {
@@ -3344,58 +3612,110 @@ fn draw_camera_face(
     if area.height <= 3 {
         return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     }
-    let Some(bounds) = FaceTexture::bounds(sprite) else {
+    let Some(layout) = FaceLayout::of(sprite, renderer, colors, projection, area, texture) else {
         return native_fits && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
     };
-    // Low detail uses independent UV anchors; fine detail samples the atlas.
-    // A severely minified/foreshortened surface keeps the separate HUD caption
-    // rather than forcing a five-character billboard into an unresolvable head.
-    let (dx, dy) = renderer.packing();
-    let (left, top) = projection.cell(bounds.left, bounds.top, renderer);
-    let (right, bottom) = projection.cell(bounds.right, bounds.bottom, renderer);
-    // A close-up that shows only part of the face plane fits the kaomoji to
-    // that part, so tiers follow the expression's actual drawn size.
-    let fit = FaceFit::of(
-        sprite,
-        renderer,
-        projection,
-        area,
-        texture,
-        [left, top, right, bottom],
-    );
-    let columns = (right - left) * fit.shrink;
-    let rows = (bottom - top) * fit.shrink;
-    // Native cells use full visible head coverage, including the forehead.
-    // Resolution comes from the letterboxed text box on the narrow face
-    // surface: native characters, then structural ASCII strokes, then the atlas.
-    // One pixel per cell has no sub-cell atlas to switch to, and half-block
-    // atlas ink is a flat palette pixel: a head that needs a substitute ink
-    // (see face_ink) keeps the shaded strokes, whose glyphs carry it.
-    let stroke_color = face_ink(sprite, colors, InkRegion::TextBox);
-    let pixel_atlas = renderer.packing() != (1, 1)
-        && !(renderer == Renderer::HalfBlock && stroke_color != colors.ink(0));
-    match face_lod(texture, columns, rows, pixel_atlas) {
-        FaceLod::Native => {
-            return native_fits
-                && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf);
+    let FaceLayout {
+        rect,
+        fit,
+        metric,
+        stroke_color,
+        pixel_atlas,
+    } = layout;
+    let level = match detail {
+        None => face_tier(metric, pixel_atlas, None).level(),
+        Some((memo, clock)) => {
+            let (next, level) = memo.get().step(clock, metric, |previous| {
+                face_tier(metric, pixel_atlas, previous)
+            });
+            memo.set(next);
+            level
         }
-        FaceLod::Shaded => {
+    };
+    // A renderer without an atlas tier blends back from one at most.
+    let level = if pixel_atlas { level } else { level.min(1.0) };
+    let len = texture.text.len();
+    let (low, high, upper) = face_blend(level, len);
+    let every = if len >= 64 {
+        ALL_GLYPHS
+    } else {
+        (1 << len) - 1
+    };
+    let face = (texture, rect, stroke_color, fit);
+    let tier = |tier: FaceLod, glyphs: GlyphSet, buf: &mut Buffer| {
+        let native = |buf: &mut Buffer| {
+            native_fits
+                && draw_surface_glyphs_of(sprite, renderer, colors, projection, area, buf, glyphs)
+        };
+        match tier {
+            FaceLod::Native => native(buf),
             // A face plane turned nearly edge-on leaves no cell wholly on it,
             // so the overlay lays no stroke: show native glyphs on the visible
             // head instead, or report no face so the caption carries it.
-            return draw_shaded_face(
+            FaceLod::Shaded => {
+                draw_shaded_face(
+                    sprite,
+                    renderer,
+                    colors,
+                    projection,
+                    area,
+                    buf,
+                    (face.0, face.1, face.2, face.3, glyphs),
+                ) || native(buf)
+            }
+            FaceLod::Atlas => draw_atlas_face(
                 sprite,
                 renderer,
                 colors,
                 projection,
                 area,
                 buf,
-                (texture, [left, top, right, bottom], stroke_color, fit),
-            ) || (native_fits
-                && draw_surface_glyphs(sprite, renderer, colors, projection, area, buf));
+                (face, glyphs),
+            ),
         }
-        FaceLod::Atlas => {}
+    };
+    if upper & every == 0 {
+        return tier(low, ALL_GLYPHS, buf);
     }
+    if upper & every == every {
+        return tier(high, ALL_GLYPHS, buf);
+    }
+    // Mid-blend: each tier draws its own glyphs on its own copy; a cell takes
+    // the upper tier's change unless the lower tier drew there too, where the
+    // tier holding most glyphs wins.
+    let base = buf.clone();
+    let mut above = buf.clone();
+    let lower = tier(low, !upper, buf);
+    let higher = tier(high, upper, &mut above);
+    let upper_wins = 2 * (upper & every).count_ones() as usize > len;
+    for row in area.y..area.bottom() {
+        for col in area.x..area.right() {
+            let (was, new) = (&base[(col, row)], &above[(col, row)]);
+            if new == was {
+                continue;
+            }
+            let cell = &mut buf[(col, row)];
+            if *cell == *was || upper_wins {
+                *cell = new.clone();
+            }
+        }
+    }
+    lower || higher
+}
+
+/// The atlas tier: the glyph bitmap (and the open eyes' plates) in packed
+/// pixels on the face plane, for the glyphs of `glyphs`.
+fn draw_atlas_face(
+    sprite: &Sprite,
+    renderer: Renderer,
+    colors: &Colors,
+    projection: Projection,
+    area: Rect,
+    buf: &mut Buffer,
+    face: ((FaceTexture, [f64; 4], Color, FaceFit), GlyphSet),
+) -> bool {
+    let ((texture, [left, top, right, bottom], stroke_color, fit), glyphs) = face;
+    let (dx, dy) = renderer.packing();
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let sclera = Sclera::of(colors);
     let mut painted = false;
@@ -3425,8 +3745,9 @@ fn draw_camera_face(
                     if let Some((uv, footprint)) = projected_face_uv(sprite, projection, px, py) {
                         covered[i] = true;
                         let (uv, footprint) = (fit.map(uv), fit.footprint(footprint));
-                        ink[i] = texture.sample(uv, footprint);
-                        plate[i] = texture.sclera_coverage(uv, footprint, 0.75) >= 0.5;
+                        let own = draws_glyph(glyphs, texture.glyph_at(uv));
+                        ink[i] = own && texture.sample(uv, footprint);
+                        plate[i] = own && texture.sclera_coverage(uv, footprint, 0.75) >= 0.5;
                         pixels[i] = match (ink[i], plate[i]) {
                             (true, true) => Some(sclera.ink_index),
                             (true, false) => Some(0),
@@ -3686,6 +4007,9 @@ pub struct RoomWidget<'a> {
     pub position: (u16, u16),
     pub camera: Camera,
     pub habitat: Option<HabitatView<'a>>,
+    /// The live camera's remembered face detail; None renders one stateless
+    /// frame with the exact tier thresholds.
+    pub face_detail: FaceDetail<'a>,
 }
 
 /// Restore compositor-owned cells after either native text or atlas face paint.
@@ -3698,6 +4022,7 @@ fn draw_world_face(
     projection: Projection,
     authority: (Rect, &[bool]),
     buf: &mut Buffer,
+    detail: FaceDetail<'_>,
 ) -> bool {
     let (viewport, owned) = authority;
     let mut protected = Vec::new();
@@ -3712,7 +4037,8 @@ fn draw_world_face(
             }
         }
     }
-    let painted = draw_camera_face(sprite, renderer, colors, projection, viewport, buf);
+    let painted =
+        draw_camera_face_with(sprite, renderer, colors, projection, viewport, buf, detail);
     for (position, cell) in protected {
         if let Some(target) = buf.cell_mut(position) {
             *target = cell;
@@ -3883,6 +4209,7 @@ impl RoomWidget<'_> {
             projection,
             (viewport, &pet_cells),
             buf,
+            self.face_detail,
         );
         let Some(face) = self.sprite.face_text() else {
             return;
@@ -4134,13 +4461,14 @@ impl Widget for RoomWidget<'_> {
             viewport,
             buf,
         );
-        let face_painted = draw_camera_face(
+        let face_painted = draw_camera_face_with(
             self.sprite,
             self.renderer,
             self.colors,
             projection,
             viewport,
             buf,
+            self.face_detail,
         );
         // Restricted views keep an explicit inline row below the cropped
         // sprite when no complete depth-authorized facial text can fit.
@@ -4763,6 +5091,7 @@ mod habitat_tests {
                 wins: game.wins,
                 age: game.age_ticks,
             }),
+            face_detail: None,
         }
         .render(Rect::new(1, 1, 88, 32), &mut buffer);
         buffer
@@ -4809,6 +5138,7 @@ mod habitat_tests {
                     wins: game.wins,
                     age: game.age_ticks,
                 }),
+                face_detail: None,
             }
             .render(area, &mut buf);
             buf
@@ -5143,6 +5473,7 @@ mod camera_tests {
                             ..Camera::default()
                         },
                         habitat: None,
+                        face_detail: None,
                     }
                     .render(area, &mut buf);
                     for y in buffer_area.y..buffer_area.bottom() {
@@ -5355,6 +5686,7 @@ mod camera_tests {
                     ..Camera::default()
                 },
                 habitat: None,
+                face_detail: None,
             }
             .render(area, &mut buf);
             let caption = text(&buf, Rect::new(1, 8, 20, 1));
@@ -5407,6 +5739,7 @@ mod camera_tests {
                         wins: game.wins,
                         age: game.age_ticks,
                     }),
+                    face_detail: None,
                 }
                 .render(area, &mut buf);
                 assert!(text(&buf, area).is_ascii());
@@ -5468,6 +5801,7 @@ mod camera_tests {
                         position: (500, 500),
                         camera,
                         habitat: None,
+                        face_detail: None,
                     }
                     .render(area, &mut buf);
                     let (dx, dy) = renderer.packing();
@@ -5720,6 +6054,7 @@ mod camera_tests {
                             ..Camera::default()
                         },
                         habitat: None,
+                        face_detail: None,
                     }
                     .render(area, &mut buf);
                     let rendered = text(&buf, area);
@@ -5762,6 +6097,7 @@ mod camera_tests {
                     ..Camera::default()
                 },
                 habitat: None,
+                face_detail: None,
             }
             .render(area, &mut buf);
             assert!(
@@ -6555,6 +6891,7 @@ mod camera_tests {
                                 ..Camera::default()
                             },
                             habitat: None,
+                            face_detail: None,
                         }
                         .render(area, &mut buf);
                         for y in buffer_area.y..buffer_area.bottom() {
@@ -7181,6 +7518,7 @@ mod voxel_world_integration_tests {
                         },
                         habitat: None,
                         world: Some(&WorldRules::default()),
+                        face_detail: None,
                     }
                     .render(area, &mut buf);
                     for row in full.y..full.bottom() {
@@ -7235,6 +7573,7 @@ mod voxel_world_integration_tests {
                     age: game.age_ticks,
                 }),
                 world: Some(&config.world),
+                face_detail: None,
             }
             .render(area, &mut buf);
             frames.push(buf);
@@ -7294,7 +7633,8 @@ mod packed_world_face_regressions {
                     &colors,
                     projection,
                     (area, &owners),
-                    &mut all
+                    &mut all,
+                    None
                 ));
                 let changed = all
                     .content
@@ -7315,6 +7655,7 @@ mod packed_world_face_regressions {
                         projection,
                         (area, &owners),
                         &mut actual,
+                        None,
                     );
                     assert_eq!(
                         actual.content[index], original.content[index],
@@ -8418,7 +8759,7 @@ mod kaomoji_scale_tests {
                                         projection,
                                         area,
                                         &mut overlay,
-                                        (texture, [l, t, r, b], stroke, FaceFit::WHOLE),
+                                        (texture, [l, t, r, b], stroke, FaceFit::WHOLE, ALL_GLYPHS),
                                     );
                                     if !stroked {
                                         native += usize::from(drew);
@@ -10056,6 +10397,7 @@ mod voxel_overlay_tests {
                         ..camera(CameraView::Room, 200)
                     },
                     habitat: None,
+                    face_detail: None,
                 }
                 .render(area, &mut buf);
                 buf
@@ -10799,5 +11141,779 @@ mod eye_plate_tests {
                 previous_lod = face.drawn.then_some(face.lod);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod face_transition_tests {
+    //! F3 transitions. Once a live camera remembers its face detail, the face
+    //! tiers keep a Schmitt hysteresis and blend glyph by glyph, one tier per
+    //! configured transition, so zoom, rotation and resize never swap a whole
+    //! face between native characters, structural strokes and the atlas in
+    //! one frame. The overlay's minified contour tier fades in voxel by voxel.
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+    use std::cell::Cell;
+
+    /// Root's live fox (seed 513).
+    const FOX: Appearance = Appearance {
+        shape: 1,
+        body: 8,
+        accent: 3,
+    };
+    /// The vendor `zoom_transition_frames`.
+    const FRAMES: usize = 8;
+
+    fn mon(yaw: u16) -> Sprite {
+        Sprite::voxel_with_appearance(
+            Stage::Baby,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            yaw,
+            false,
+            FOX,
+        )
+    }
+
+    fn camera(view: CameraView, zoom_percent: u16) -> Camera {
+        Camera {
+            view,
+            from_view: view,
+            zoom_percent,
+            transition_percent: 100,
+            ..Camera::default()
+        }
+    }
+
+    fn clock(frame: usize) -> DetailClock {
+        DetailClock {
+            frame,
+            frames: FRAMES,
+        }
+    }
+
+    fn projection(
+        sprite: &Sprite,
+        renderer: Renderer,
+        (width, height): (u16, u16),
+        (view, zoom): (CameraView, u16),
+    ) -> Projection {
+        Projection::camera(
+            sprite,
+            SolidBounds::of(sprite).unwrap(),
+            Rect::new(0, 0, width, height),
+            renderer,
+            0,
+            (500, 700),
+            camera(view, zoom),
+        )
+    }
+
+    /// The bare Mon over a room-coloured scene, and its projection.
+    fn scene(
+        sprite: &Sprite,
+        renderer: Renderer,
+        colors: &Colors,
+        size: (u16, u16),
+        framing: (CameraView, u16),
+    ) -> (Projection, Buffer) {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let mut buf = Buffer::empty(area);
+        for cell in &mut buf.content {
+            cell.set_bg(colors.ink(10));
+        }
+        let projection = projection(sprite, renderer, size, framing);
+        draw_projection(sprite, renderer, colors, projection, area, &mut buf);
+        (projection, buf)
+    }
+
+    /// The fitted text box's `[cells per glyph, rows]` and atlas availability.
+    fn layout(
+        sprite: &Sprite,
+        renderer: Renderer,
+        colors: &Colors,
+        size: (u16, u16),
+        framing: (CameraView, u16),
+    ) -> FaceLayout {
+        let texture = FaceTexture::new(sprite).unwrap();
+        let area = Rect::new(0, 0, size.0, size.1);
+        let projection = projection(sprite, renderer, size, framing);
+        FaceLayout::of(sprite, renderer, colors, projection, area, texture).unwrap()
+    }
+
+    /// The tier each glyph of a `len`-glyph face is drawn with at `level`.
+    fn glyph_tiers(level: f32, len: usize) -> Vec<FaceLod> {
+        let (low, high, upper) = face_blend(level, len);
+        (0..len)
+            .map(|i| if draws_glyph(upper, i) { high } else { low })
+            .collect()
+    }
+
+    /// Consecutive frames change the tier of at most one symmetric ring of
+    /// glyphs (the middle glyph, or one mirrored pair), and never by two tiers.
+    fn assert_one_ring_per_frame(tiers: &[Vec<FaceLod>], label: &str) -> usize {
+        let mut worst = 0;
+        for (k, pair) in tiers.windows(2).enumerate() {
+            let len = pair[0].len();
+            let changed: Vec<usize> = (0..len).filter(|&i| pair[0][i] != pair[1][i]).collect();
+            worst = worst.max(changed.len());
+            assert!(
+                changed.len() <= 2 && changed.iter().all(|&i| changed.contains(&(len - 1 - i))),
+                "{label}: frame {}: glyphs {changed:?} changed tier in one frame ({:?} -> {:?})",
+                k + 1,
+                pair[0],
+                pair[1]
+            );
+            for &i in &changed {
+                assert!(
+                    (pair[0][i].level() - pair[1][i].level()).abs() <= 1.0,
+                    "{label}: frame {}: glyph {i} jumped two tiers",
+                    k + 1
+                );
+            }
+        }
+        worst
+    }
+
+    /// The UI's zoom easing: each press retargets from the zoom drawn now.
+    struct Zoom {
+        origin: u16,
+        target: u16,
+        started: usize,
+    }
+
+    impl Zoom {
+        fn at(&self, frame: usize) -> u16 {
+            let t = (frame.saturating_sub(self.started) * 100 / FRAMES).min(100) as i32;
+            let eased = t * t * (300 - 2 * t) / 10000;
+            (i32::from(self.origin)
+                + (i32::from(self.target) - i32::from(self.origin)) * eased / 100)
+                .clamp(50, 400) as u16
+        }
+
+        fn press(&mut self, frame: usize, step: i32) {
+            self.origin = self.at(frame);
+            self.target = (i32::from(self.target) + step).clamp(50, 400) as u16;
+            self.started = frame;
+        }
+    }
+
+    /// One drawn frame of a live camera.
+    struct Frame {
+        level: f32,
+        memo: DetailMemo,
+    }
+
+    /// A zoom ramp as the UI eases it: `presses` zoom actions of `step`, one
+    /// per frame from frame 1, then the transition settles.
+    fn ramp(
+        sprite: &Sprite,
+        renderer: Renderer,
+        colors: &Colors,
+        (view, size): (CameraView, (u16, u16)),
+        (start, step, presses): (u16, i32, usize),
+    ) -> Vec<Frame> {
+        let memo = Cell::new(DetailMemo::default());
+        let mut zoom = Zoom {
+            origin: start,
+            target: start,
+            started: 0,
+        };
+        let mut frames = Vec::new();
+        for frame in 0..presses + 3 * FRAMES + 2 {
+            if (1..=presses).contains(&frame) {
+                zoom.press(frame, step);
+            }
+            let (projection, before) =
+                scene(sprite, renderer, colors, size, (view, zoom.at(frame)));
+            let mut buf = before.clone();
+            draw_camera_face_with(
+                sprite,
+                renderer,
+                colors,
+                projection,
+                before.area,
+                &mut buf,
+                Some((&memo, clock(frame))),
+            );
+            frames.push(Frame {
+                level: memo.get().level(clock(frame)).unwrap(),
+                memo: memo.get(),
+            });
+        }
+        frames
+    }
+
+    /// T-T1: zoom ramps and jumps in and out, across the native/strokes and
+    /// the strokes/atlas thresholds, change one symmetric ring of glyphs per
+    /// frame at most, never a whole face, and settle on the Schmitt tier. The
+    /// stateless renderer (the behaviour before this change) swaps every
+    /// glyph in one frame.
+    #[test]
+    fn a_zoom_ramp_blends_face_tiers_one_glyph_ring_per_frame() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let len = FaceTexture::new(&sprite).unwrap().text.len();
+        let mut crossings: Vec<(FaceLod, FaceLod)> = Vec::new();
+        let (mut blended, mut worst) = (0, 0);
+        for (renderer, framing) in [
+            (Renderer::HalfBlock, (CameraView::Face, (130, 29))),
+            (Renderer::Braille, (CameraView::Face, (130, 29))),
+            (Renderer::HalfBlock, (CameraView::Face, (59, 49))),
+            (Renderer::Ascii, (CameraView::Pet, (40, 16))),
+            (Renderer::HalfBlock, (CameraView::Pet, (40, 16))),
+            (Renderer::Quadrant, (CameraView::Pet, (59, 49))),
+        ] {
+            for ramp_case in [(50, 25, 14), (400, -350, 1)] {
+                let label = format!("{renderer:?} {framing:?} zoom {ramp_case:?}");
+                let frames = ramp(&sprite, renderer, &colors, framing, ramp_case);
+                let atlas =
+                    layout(&sprite, renderer, &colors, framing.1, (framing.0, 100)).pixel_atlas;
+                let stateless: Vec<FaceLod> = frames
+                    .iter()
+                    .map(|f| face_tier(f.memo.metric.map(f64::from), atlas, None))
+                    .collect();
+                crossings.extend(
+                    stateless
+                        .windows(2)
+                        .filter(|p| p[0] != p[1])
+                        .map(|p| (p[0], p[1])),
+                );
+                let tiers: Vec<Vec<FaceLod>> =
+                    frames.iter().map(|f| glyph_tiers(f.level, len)).collect();
+                worst = worst.max(assert_one_ring_per_frame(&tiers, &label));
+                blended += tiers
+                    .iter()
+                    .filter(|t| t.iter().any(|tier| *tier != t[0]))
+                    .count();
+                let last = frames.last().unwrap();
+                assert!(
+                    tiers
+                        .last()
+                        .unwrap()
+                        .iter()
+                        .all(|t| Some(*t) == last.memo.tier),
+                    "{label}: the face did not settle on its tier {:?}",
+                    last.memo.tier
+                );
+            }
+        }
+        let count = |a: FaceLod, b: FaceLod| {
+            crossings
+                .iter()
+                .filter(|c| **c == (a, b) || **c == (b, a))
+                .count()
+        };
+        let (native, atlas) = (
+            count(FaceLod::Native, FaceLod::Shaded),
+            count(FaceLod::Shaded, FaceLod::Atlas),
+        );
+        println!(
+            "A8 zoom ramps: stateless crossings native/strokes {native}, strokes/atlas {atlas} \
+             (each swaps {len}/{len} glyphs in one frame); remembered: at most {worst}/{len} \
+             glyphs per frame, {blended} mixed frames"
+        );
+        assert!(
+            native >= 4 && atlas >= 4,
+            "the ramps must cross both thresholds ({crossings:?})"
+        );
+        assert!(
+            blended >= native + atlas,
+            "too few mixed frames ({blended})"
+        );
+    }
+
+    /// T-T2: at either tier threshold the remembered tier holds while the
+    /// stateless tier flips on every jitter; the remembered tier enters the
+    /// strokes only from 3.5 cells per glyph and leaves them only below 3,
+    /// enters the atlas from 8 and leaves it only below 7; a turntable
+    /// crosses each threshold at most twice per revolution.
+    #[test]
+    fn face_tiers_hold_at_a_boundary_with_hysteresis() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let renderer = Renderer::HalfBlock;
+        let framings = [
+            (CameraView::Face, (130u16, 29u16)),
+            (CameraView::Pet, (130, 29)),
+            (CameraView::Pet, (59, 49)),
+            (CameraView::Pet, (40, 16)),
+        ];
+        let metric = |(view, size): (CameraView, (u16, u16)), zoom: u16| {
+            let face = layout(&sprite, renderer, &colors, size, (view, zoom));
+            assert!(face.pixel_atlas, "the fox's half-block face has an atlas");
+            face.metric
+        };
+        let tier = |framing, zoom| face_tier(metric(framing, zoom), true, None);
+        let zooms: Vec<u16> = (50..=400).step_by(2).collect();
+        let below = |m: [f64; 2], floor: [f64; 2]| m[0] < floor[0] || m[1] < floor[1];
+        // Sweeps in and out: the remembered tier switches only past each
+        // threshold's far side.
+        let mut switches = Vec::new();
+        let sweep: Vec<u16> = zooms
+            .iter()
+            .copied()
+            .chain(zooms.iter().rev().copied())
+            .collect();
+        for framing in framings {
+            let mut memo = DetailMemo::default();
+            for (k, zoom) in sweep.iter().enumerate() {
+                let m = metric(framing, *zoom);
+                let before = memo.tier;
+                memo = memo
+                    .step(clock(k * 3 * FRAMES), m, |p| face_tier(m, true, p))
+                    .0;
+                if let (Some(from), Some(to)) = (before, memo.tier) {
+                    if from != to {
+                        switches.push((from, to, m, framing, *zoom));
+                    }
+                }
+            }
+        }
+        let has = |from, to| switches.iter().any(|s| s.0 == from && s.1 == to);
+        assert!(
+            has(FaceLod::Native, FaceLod::Shaded)
+                && has(FaceLod::Shaded, FaceLod::Atlas)
+                && has(FaceLod::Atlas, FaceLod::Shaded)
+                && has(FaceLod::Shaded, FaceLod::Native),
+            "the sweeps must cross both thresholds both ways: {switches:?}"
+        );
+        for (from, to, m, framing, zoom) in &switches {
+            let ok = match (from, to) {
+                (FaceLod::Native, FaceLod::Shaded) => !below(*m, [3.5, 3.5]),
+                (FaceLod::Shaded, FaceLod::Native) => below(*m, [3.0, 3.0]),
+                (FaceLod::Shaded, FaceLod::Atlas) => !below(*m, [8.0, 8.0]),
+                (FaceLod::Atlas, FaceLod::Shaded) => below(*m, [7.0, 7.0]),
+                _ => true,
+            };
+            assert!(ok, "{from:?} -> {to:?} at {m:?} ({framing:?} {zoom}%)");
+        }
+        // Jitter between the two neighbouring zooms that straddle each exact
+        // threshold, starting on the tier below (native) or above (atlas).
+        let mut edges = Vec::new();
+        for (from, to) in [
+            (FaceLod::Native, FaceLod::Shaded),
+            (FaceLod::Atlas, FaceLod::Shaded),
+        ] {
+            let (framing, jitter) = framings
+                .iter()
+                .find_map(|&framing| {
+                    zooms
+                        .windows(2)
+                        .find(|p| {
+                            let (a, b) = (tier(framing, p[0]), tier(framing, p[1]));
+                            a != b && (a == from || b == from) && (a == to || b == to)
+                        })
+                        .map(|p| (framing, [p[0], p[1]]))
+                })
+                .expect("a framing whose zoom range crosses the threshold");
+            let tiers = jitter.map(|z| tier(framing, z));
+            edges.push((framing, jitter[1]));
+            let start = jitter[usize::from(tiers[1] == from)];
+            let m = metric(framing, start);
+            let mut memo = DetailMemo::default()
+                .step(clock(0), m, |p| face_tier(m, true, p))
+                .0;
+            assert_eq!(memo.tier, Some(from));
+            let (mut held, mut stateless) = (0, 0);
+            for k in 1..=20 {
+                let m = metric(framing, jitter[k % 2]);
+                let before = memo.tier;
+                memo = memo.step(clock(k), m, |p| face_tier(m, true, p)).0;
+                held += usize::from(memo.tier != before);
+                stateless +=
+                    usize::from(tier(framing, jitter[k % 2]) != tier(framing, jitter[(k + 1) % 2]));
+            }
+            println!(
+                "hysteresis {from:?}/{to:?} {framing:?} between {jitter:?}% ({:?} / {:?}): \
+                 stateless flips {stateless}/20, remembered {held}/20",
+                metric(framing, jitter[0]),
+                metric(framing, jitter[1])
+            );
+            assert_eq!(stateless, 20);
+            assert_eq!(
+                held, 0,
+                "{from:?} flipped at the boundary {jitter:?} {held} times"
+            );
+        }
+        // Turntable: one revolution in 5 degree steps at each threshold's zoom.
+        let turntable: Vec<Sprite> = (0..=360u16).step_by(5).map(|yaw| mon(yaw % 360)).collect();
+        for ((view, size), zoom) in edges {
+            let (mut remembered, mut stateless) = (0, 0);
+            let mut memo = DetailMemo::default();
+            let mut previous = None;
+            for (k, sprite) in turntable.iter().enumerate() {
+                let Some(texture) = FaceTexture::new(sprite) else {
+                    continue;
+                };
+                let area = Rect::new(0, 0, size.0, size.1);
+                let projection = projection(sprite, renderer, size, (view, zoom));
+                let Some(face) =
+                    FaceLayout::of(sprite, renderer, &colors, projection, area, texture)
+                else {
+                    continue;
+                };
+                let m = face.metric;
+                let before = memo.tier;
+                memo = memo.step(clock(k), m, |p| face_tier(m, true, p)).0;
+                remembered += usize::from(before.is_some() && before != memo.tier);
+                let now = face_tier(m, true, None);
+                stateless += usize::from(previous.is_some_and(|p| p != now));
+                previous = Some(now);
+            }
+            println!(
+                "turntable {view:?} {size:?} {zoom}%: stateless tier changes {stateless}, \
+                 remembered {remembered}"
+            );
+            assert!(
+                remembered <= 4,
+                "turntable at {zoom}%: {remembered} tier changes in one revolution"
+            );
+        }
+    }
+
+    /// T-T3: a resize sequence through RoomWidget (the UI's wiring): the
+    /// first frame after a resize keeps the drawn tiers, each frame changes
+    /// one glyph ring at most (an interrupted resize included), and every
+    /// hold settles on its Schmitt tier within one transition per tier.
+    #[test]
+    fn a_resize_sequence_blends_face_tiers_from_the_drawn_state() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let len = FaceTexture::new(&sprite).unwrap().text.len();
+        let hold = 2 * FRAMES + 2;
+        let steps: Vec<((u16, u16), usize)> = vec![
+            ((130, 29), hold),
+            ((110, 26), hold),
+            ((90, 22), hold),
+            ((70, 18), hold),
+            ((50, 16), hold),
+            ((36, 12), hold),
+            ((24, 10), hold),
+            ((130, 29), hold),
+            // Interrupted: shrink, then grow again three frames in.
+            ((24, 10), 3),
+            ((110, 26), hold),
+        ];
+        let mut changes = Vec::new();
+        for (renderer, framing) in [
+            (Renderer::HalfBlock, (CameraView::Face, 100)),
+            (Renderer::Braille, (CameraView::Face, 100)),
+            (Renderer::HalfBlock, (CameraView::Pet, 200)),
+            (Renderer::HalfBlock, (CameraView::Pet, 100)),
+            (Renderer::Ascii, (CameraView::Pet, 100)),
+        ] {
+            let mut settled = Vec::new();
+            let label = format!("{renderer:?} {framing:?}");
+            let memo = Cell::new(DetailMemo::default());
+            let mut frame = 0;
+            let mut tiers: Vec<Vec<FaceLod>> = Vec::new();
+            for &((width, height), frames) in &steps {
+                for k in 0..frames {
+                    let area = Rect::new(0, 0, width, height);
+                    let mut buf = Buffer::empty(area);
+                    // What this frame would draw had the size not changed.
+                    let unchanged = memo
+                        .get()
+                        .level(clock(frame))
+                        .map(|level| glyph_tiers(level, len));
+                    RoomWidget {
+                        world: None,
+                        sprite: &sprite,
+                        detail: SpriteStyle::SixteenBit,
+                        renderer,
+                        scale: 0,
+                        colors: &colors,
+                        expression: Expression::Idle,
+                        frame,
+                        position: (500, 700),
+                        camera: camera(framing.0, framing.1),
+                        habitat: None,
+                        face_detail: Some((&memo, clock(frame))),
+                    }
+                    .render(area, &mut buf);
+                    let level = memo.get().level(clock(frame)).unwrap();
+                    let now = glyph_tiers(level, len);
+                    if k == 0 {
+                        if let Some(unchanged) = unchanged {
+                            assert_eq!(
+                                now, unchanged,
+                                "{label}: the first frame after the resize to {width}x{height} \
+                                 changed the face tiers"
+                            );
+                        }
+                    }
+                    tiers.push(now);
+                    frame += 1;
+                }
+                if frames == hold {
+                    let memo = memo.get();
+                    assert!(
+                        tiers.last().unwrap().iter().all(|t| Some(*t) == memo.tier),
+                        "{label}: {width}x{height} did not settle on {:?}",
+                        memo.tier
+                    );
+                    settled.push(memo.tier.unwrap());
+                }
+            }
+            assert_one_ring_per_frame(&tiers, &label);
+            println!("resize sequence {label}: settled {settled:?}");
+            changes.extend(
+                settled
+                    .windows(2)
+                    .filter(|p| p[0] != p[1])
+                    .map(|p| (p[0].min(p[1]), p[0].max(p[1]))),
+            );
+        }
+        assert!(
+            changes.contains(&(FaceLod::Native, FaceLod::Shaded))
+                && changes.contains(&(FaceLod::Shaded, FaceLod::Atlas)),
+            "the sizes must change the face tier across both thresholds ({changes:?})"
+        );
+    }
+
+    /// T-T4: the memo's step is pure and bounded: a subject's first frame
+    /// takes its tier at once; a new tier eases from the drawn level, one
+    /// tier per transition, monotonically; an interrupted blend continues
+    /// from what was drawn; the Schmitt table and the glyph rings.
+    #[test]
+    fn detail_memo_steps_are_pure_bounded_and_interruptible() {
+        let to = |tier: FaceLod| move |_: Option<FaceLod>| tier;
+        let (memo, level) = DetailMemo::default().step(clock(5), [5.0, 5.0], to(FaceLod::Shaded));
+        assert_eq!(level, 1.0);
+        assert_eq!(memo.step(clock(5), [5.0, 5.0], to(FaceLod::Shaded)).0, memo);
+        let (atlas, level) = memo.step(clock(10), [9.0, 9.0], to(FaceLod::Atlas));
+        assert_eq!(level, 1.0, "a new tier starts from the drawn level");
+        let mut previous = level;
+        for frame in 11..=10 + FRAMES {
+            let level = atlas.level(clock(frame)).unwrap();
+            assert!(level >= previous && level - previous <= 1.5 / FRAMES as f32 + 1e-4);
+            assert_eq!(level == 2.0, frame == 10 + FRAMES, "frame {frame}: {level}");
+            previous = level;
+        }
+        let drawn = atlas.level(clock(13)).unwrap();
+        let (back, level) = atlas.step(clock(13), [2.0, 2.0], to(FaceLod::Native));
+        assert_eq!(level, drawn, "an interrupted blend jumped");
+        let total = (FRAMES as f32 * drawn).ceil() as usize;
+        assert!(back.level(clock(13 + total - 1)).unwrap() > 0.0);
+        assert_eq!(back.level(clock(13 + total)).unwrap(), 0.0);
+        // Schmitt table.
+        for (metric, previous, tier) in [
+            ([3.2, 9.0], None, FaceLod::Shaded),
+            ([3.2, 9.0], Some(FaceLod::Native), FaceLod::Native),
+            ([3.6, 9.0], Some(FaceLod::Native), FaceLod::Shaded),
+            ([3.2, 9.0], Some(FaceLod::Shaded), FaceLod::Shaded),
+            ([2.9, 9.0], Some(FaceLod::Shaded), FaceLod::Native),
+            ([7.5, 9.0], None, FaceLod::Shaded),
+            ([7.5, 9.0], Some(FaceLod::Atlas), FaceLod::Atlas),
+            ([6.9, 9.0], Some(FaceLod::Atlas), FaceLod::Shaded),
+            ([8.0, 8.0], Some(FaceLod::Shaded), FaceLod::Atlas),
+            ([2.9, 9.0], Some(FaceLod::Atlas), FaceLod::Native),
+            ([9.0, 3.4], Some(FaceLod::Native), FaceLod::Native),
+        ] {
+            assert_eq!(
+                face_tier(metric, true, previous),
+                tier,
+                "{metric:?} after {previous:?}"
+            );
+        }
+        assert_eq!(face_tier([9.0, 9.0], false, None), FaceLod::Shaded);
+        // Rings: middle first, then mirrored pairs outwards.
+        assert_eq!(face_blend(0.2, 5).2, 0b00100);
+        assert_eq!(face_blend(0.6, 5).2, 0b01110);
+        assert_eq!(face_blend(0.9, 5).2, 0b11111);
+        assert_eq!(face_blend(1.4, 6).2, 0b001100);
+        assert_eq!(face_blend(1.0, 5), (FaceLod::Shaded, FaceLod::Atlas, 0));
+        assert_eq!(face_blend(2.0, 7).2, 0b111_1111);
+    }
+
+    /// T-T5: a blended face draws every cell whole from one tier: each cell
+    /// equals the lower or the upper tier's own render, and both appear.
+    #[test]
+    fn blended_faces_draw_every_cell_from_one_tier() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = mon(0);
+        let mut checked = Vec::new();
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            for (size, framing) in [
+                ((130, 29), (CameraView::Face, 100)),
+                ((130, 29), (CameraView::Face, 160)),
+                ((59, 49), (CameraView::Face, 200)),
+                ((40, 16), (CameraView::Pet, 100)),
+                ((59, 49), (CameraView::Pet, 100)),
+            ] {
+                let zoom = framing.1;
+                let face = layout(&sprite, renderer, &colors, size, framing);
+                let tier = face_tier(face.metric, face.pixel_atlas, None);
+                // Half way from the tier below (or above) towards this one.
+                let from = match tier {
+                    FaceLod::Native => continue,
+                    FaceLod::Shaded => FaceLod::Native,
+                    FaceLod::Atlas => FaceLod::Shaded,
+                };
+                let (projection, before) = scene(&sprite, renderer, &colors, size, framing);
+                let pure = |level: f32| {
+                    let memo = Cell::new(DetailMemo {
+                        tier: Some(FaceLod::at(level as usize)),
+                        from: level,
+                        started: 0,
+                        metric: [0.0; 2],
+                    });
+                    let mut buf = before.clone();
+                    let area = buf.area;
+                    draw_camera_face_with(
+                        &sprite,
+                        renderer,
+                        &colors,
+                        projection,
+                        area,
+                        &mut buf,
+                        Some((&memo, clock(0))),
+                    );
+                    buf
+                };
+                let low = pure(from.level());
+                let high = pure(tier.level());
+                let memo = Cell::new(DetailMemo {
+                    tier: Some(tier),
+                    from: from.level(),
+                    started: 0,
+                    metric: [0.0; 2],
+                });
+                let mut mixed = before.clone();
+                let area = mixed.area;
+                draw_camera_face_with(
+                    &sprite,
+                    renderer,
+                    &colors,
+                    projection,
+                    area,
+                    &mut mixed,
+                    Some((&memo, clock(FRAMES / 2))),
+                );
+                let level = memo.get().level(clock(FRAMES / 2)).unwrap();
+                assert!(level > from.level() && level < tier.level());
+                let (mut from_low, mut from_high) = (0, 0);
+                for (i, cell) in mixed.content.iter().enumerate() {
+                    let (l, h) = (&low.content[i], &high.content[i]);
+                    if l == h {
+                        assert_eq!(cell, l, "{renderer:?} {size:?} {zoom}%: cell {i} changed");
+                        continue;
+                    }
+                    assert!(
+                        cell == l || cell == h,
+                        "{renderer:?} {size:?} {zoom}%: cell {i} is from neither tier"
+                    );
+                    from_low += usize::from(cell == l);
+                    from_high += usize::from(cell == h);
+                }
+                assert!(
+                    from_low > 0 && from_high > 0,
+                    "{renderer:?} {size:?} {zoom}%: a {from:?}/{tier:?} blend drew one tier \
+                     ({from_low} lower, {from_high} upper cells)"
+                );
+                checked.push((from, tier));
+            }
+        }
+        println!("blends judged: {checked:?}");
+        assert!(
+            checked.contains(&(FaceLod::Native, FaceLod::Shaded))
+                && checked.contains(&(FaceLod::Shaded, FaceLod::Atlas)),
+            "both blend kinds must be judged ({checked:?})"
+        );
+    }
+
+    /// T-T6: across the minified band each voxel gains its shallow contours
+    /// at its own share, so a zoom never drops or adds every shallow contour
+    /// at once; outside the band the old rule holds exactly.
+    #[test]
+    fn minified_contours_fade_in_voxel_by_voxel() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        const LINES: &str = "-_|/\\^v<>";
+        let share = |cells_per_voxel: f32| {
+            let drawn = (0..400)
+                .filter(|&k| {
+                    let overlay = OverlaySample {
+                        voxel: [k % 20, k / 20, 3],
+                        facet: [0, 0, 127],
+                        material: 8,
+                        depth: 4.0,
+                        voxel_span: [cells_per_voxel; 2],
+                        outside: 0,
+                        contour: DIR_E,
+                        deep_contour: 0,
+                        crease: 0,
+                        seam: 0,
+                        neighbours: [([0, 0, 127], 8); 4],
+                        face_plane: false,
+                    };
+                    let surface = std::array::from_fn(|i| {
+                        (i == 0).then_some(SurfaceLight {
+                            normal: [0.0, 0.0, 1.0],
+                            occlusion: 0,
+                            edge: false,
+                            screen_edge: false,
+                            overlay: Some(overlay),
+                        })
+                    });
+                    let pixels = std::array::from_fn(|i| (i == 0).then_some(8));
+                    let mut cell = ratatui::buffer::Cell::default();
+                    paint_lit_pixels(
+                        Renderer::Ascii,
+                        &colors,
+                        pixels,
+                        surface,
+                        [false; 8],
+                        &mut cell,
+                    );
+                    cell.symbol()
+                        .chars()
+                        .next()
+                        .is_some_and(|c| LINES.contains(c))
+                })
+                .count();
+            drawn as f64 / 400.0
+        };
+        let steps: Vec<f32> = (0..=24).map(|i| 0.25 + 0.025 * i as f32).collect();
+        let shares: Vec<f64> = steps.iter().map(|c| share(*c)).collect();
+        println!(
+            "shallow contour share by cells per voxel: {:?}",
+            steps.iter().zip(&shares).collect::<Vec<_>>()
+        );
+        for (c, s) in steps.iter().zip(&shares) {
+            if *c <= MINIFIED_CONTOUR_BAND.0 {
+                assert_eq!(*s, 0.0, "a minified voxel drew a shallow contour at {c}");
+            }
+            if *c >= MINIFIED_CONTOUR_BAND.1 {
+                assert_eq!(*s, 1.0, "a magnified voxel lost its contour at {c}");
+            }
+        }
+        assert!(
+            shares.windows(2).all(|p| p[1] >= p[0]),
+            "the fade is not monotone"
+        );
+        let partial = shares.iter().filter(|s| **s > 0.0 && **s < 1.0).count();
+        let step = shares
+            .windows(2)
+            .map(|p| p[1] - p[0])
+            .fold(0.0f64, f64::max);
+        assert!(
+            partial >= 5 && step <= 0.25,
+            "no voxel-by-voxel fade: {partial} partial steps, largest step {step:.3}"
+        );
     }
 }

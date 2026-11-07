@@ -147,6 +147,8 @@ pub struct Ui {
     pet_generation: u64,
     /// Source Room/Pet/Face mix in per-mille, target view and start frame.
     camera_resize: Cell<Option<([u16; 3], CameraView, usize)>>,
+    /// The face detail tier and blend the scene subject drew last.
+    face_detail: Cell<crate::render::DetailMemo>,
     /// Mix a manual blend starts from; None keeps the one-hot `camera_from_view`.
     camera_from_weights: Option<[u16; 3]>,
     camera_yaw_origin: Option<u16>,
@@ -254,6 +256,7 @@ impl Ui {
             camera_subject_cut: Cell::new(false),
             pet_generation: 0,
             camera_resize: Cell::new(None),
+            face_detail: Cell::new(crate::render::DetailMemo::default()),
             camera_from_weights: None,
             camera_yaw_origin: None,
             camera_pitch_origin: None,
@@ -584,6 +587,7 @@ impl Ui {
             // Previews and replacement pets are different subjects. Their first
             // frame must not inherit a hatch, resize or manual-view blend.
             self.camera_resize.set(None);
+            self.face_detail.set(crate::render::DetailMemo::default());
             self.camera_pan.set((0, 0));
             self.camera_pan_from.set((0, 0));
             self.camera_pan_target.set((0, 0));
@@ -2795,6 +2799,13 @@ impl Ui {
                     wins: self.game.wins,
                     age: self.game.age_ticks,
                 }),
+                face_detail: Some((
+                    &self.face_detail,
+                    crate::render::DetailClock {
+                        frame: self.frame,
+                        frames: self.camera_transition_frames,
+                    },
+                )),
             },
             room_inner,
         );
@@ -2982,6 +2993,13 @@ impl Ui {
                     wins: self.game.wins,
                     age: self.game.age_ticks,
                 }),
+                face_detail: Some((
+                    &self.face_detail,
+                    crate::render::DetailClock {
+                        frame: self.frame,
+                        frames: self.camera_transition_frames,
+                    },
+                )),
             },
             scene,
         );
@@ -4064,6 +4082,13 @@ impl Ui {
                     wins: self.game.wins,
                     age: self.game.age_ticks,
                 }),
+                face_detail: Some((
+                    &self.face_detail,
+                    crate::render::DetailClock {
+                        frame: self.frame,
+                        frames: self.camera_transition_frames,
+                    },
+                )),
             },
             room,
         );
@@ -4672,6 +4697,13 @@ impl Ui {
                         wins: self.game.wins,
                         age: self.game.age_ticks,
                     }),
+                    face_detail: Some((
+                        &self.face_detail,
+                        crate::render::DetailClock {
+                            frame: self.frame,
+                            frames: self.camera_transition_frames,
+                        },
+                    )),
                 },
                 room,
             );
@@ -10009,5 +10041,66 @@ mod camera_plain_fallthrough_tests {
         for stale in ["no tilt controls", "resets orbit only"] {
             assert!(!text.contains(stale), "{text}");
         }
+    }
+}
+
+// F3: the UI keeps one face-detail memory per scene subject. Presentation
+// only: no case may touch the pet.
+#[cfg(test)]
+mod face_detail_memory_tests {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crate::render::DetailMemo;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn live_draws_record_face_detail_and_a_new_subject_starts_fresh() {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 513);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let mut ui = Ui::configured(game, &config);
+        ui.view_mode = ViewMode::Voxel;
+        ui.camera_view = CameraView::Face;
+        ui.camera_from_view = CameraView::Face;
+        ui.camera_transition_frames = 8;
+        let game = ui.game.clone();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let draw = |ui: &Ui, width: u16, height: u16| {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, ui.frame, false))
+                .unwrap();
+        };
+        assert_eq!(ui.face_detail.get(), DetailMemo::default());
+        for (width, height) in [(130, 29), (59, 49), (40, 14)] {
+            ui.face_detail.set(DetailMemo::default());
+            ui.animate(ui.frame + 1);
+            draw(&ui, width, height);
+            assert_ne!(
+                ui.face_detail.get(),
+                DetailMemo::default(),
+                "{width}x{height}: the live draw recorded no face detail"
+            );
+        }
+        // The same subject resized keeps its memory: the blend starts from it.
+        ui.animate(ui.frame + 1);
+        let live = ui.face_detail.get();
+        draw(&ui, 130, 29);
+        assert_ne!(ui.face_detail.get(), DetailMemo::default());
+        assert_ne!(ui.face_detail.get(), live, "a resize must step the memory");
+        // A preview is a new subject: it never inherits the live face's blend.
+        ui.set_scene_for_stage(
+            Rect::new(0, 0, 80, 30),
+            Some(Stage::Adult),
+            SceneSubject::Roster,
+        );
+        assert_eq!(
+            ui.face_detail.get(),
+            DetailMemo::default(),
+            "a new subject inherited the face detail"
+        );
+        assert_eq!(ui.game, game);
     }
 }
