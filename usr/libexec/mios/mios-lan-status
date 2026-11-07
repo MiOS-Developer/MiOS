@@ -8,13 +8,28 @@ set -uo pipefail
 ACTION="${1:-status}"
 SETUP_PS1="${MIOS_LAN_SETUP_PS1:-/usr/libexec/mios/Setup-MiOSLanPortProxy.ps1}"
 
+# SearXNG: the one mios.toml [ports].searxng as the resolver projects it
+# (MIOS_PORTS_SEARXNG, from the environment or install.env). No literal stands
+# in for it: unresolved, it is left out and the warning names the key. Only
+# that one name is read from install.env; nothing else enters this shell.
+if [ -z "${MIOS_PORTS_SEARXNG:-}" ] && [ -r "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" ]; then
+    MIOS_PORTS_SEARXNG="$(set +u; set -a; . "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" >/dev/null 2>&1; printf '%s' "${MIOS_PORTS_SEARXNG:-}")"
+fi
+
 SERVICES=(
     "8400 forge"
     "8200 open-webui"
     "8900 code-server"
     "8110 cockpit"
     "8500 llm-light"
-    "8800 searxng"
+)
+_searxng_port="${MIOS_PORTS_SEARXNG:-}"
+if [[ "$_searxng_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( _searxng_port <= 65535 )); then
+    SERVICES+=("${_searxng_port} searxng")
+else
+    echo "mios-lan-status: mios.toml [ports].searxng does not resolve (MIOS_PORTS_SEARXNG is unset in the environment and install.env); searxng omitted" >&2
+fi
+SERVICES+=(
     "8720 hermes-api"
     "8210 hermes-dashboard"
     "8220 guacamole"
