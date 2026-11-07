@@ -16,9 +16,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1753 |
-| in_progress | 88 |
-| completed | 1895 |
+| pending | 1751 |
+| in_progress | 87 |
+| completed | 1898 |
 | incomplete | 20 |
 | cancelled | 21 |
 | total | 3777 |
@@ -2667,8 +2667,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3773` Require deliberate short stick gestures for desktop focus changes -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3777` Validate controller timing bounds in the actual configurator form -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 
 ## WS-MIOSSYS
 
@@ -4458,7 +4458,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3772` Keep cursor-owned stick axes out of window and app focus navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3772` Keep cursor-owned stick axes out of window and app focus navigation -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## runtime
 
