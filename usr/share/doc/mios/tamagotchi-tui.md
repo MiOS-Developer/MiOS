@@ -375,10 +375,11 @@ subject's face showed last:
 Face zoom eases toward the visible face-plane centre, preserving actual zoom.
 It does not shrink the model to fit: high zoom in a small viewport can crop the
 outer parentheses and eyes. The actual material/depth mask still occludes
-species noses, oblique edges and rear faces. Face ink uses the existing outline
-contrast setting against the head material as actually rendered, including its
-lighting. Disabling lighting keeps contrast against the unlit material. This
-uses fixed histograms without per-frame heap allocation.
+species noses, oblique edges and rear faces. Face strokes are face shapes, drawn
+the same way on every head (see "Face shapes" below). The renderer still measures
+the head material as actually rendered, including its lighting, against the
+existing outline contrast setting, to decide whether a half-block face may use the
+pixel atlas. This uses fixed histograms without per-frame heap allocation.
 
 Tiny scenes, legacy pixel sprites and read-only snapshots retain literal facial
 text. Compact HUDs keep a separate mood caption. The same clipped projection is
@@ -728,10 +729,38 @@ matches at large ones:
   that does is the pupil. The head-based face ink is never used on a plate.
 - Monochrome eye cells use reverse video: a dark stroke on a light block.
 - Plates draw whether lighting is enabled or not.
-- Quadrant and braille atlas strokes are face ink over the head's own colour, never
-  holes through to the room. Native and stroke characters on those renderers keep
-  the head colour behind them.
 - Unchanged: the classic pixel view, and the separate caption shown when no face fits.
+
+Face shapes are every facial mark except an eye white: pupils, mouths, brows,
+tears, cheeks, the parentheses and closed or squinting eyes. At the native,
+shaded and atlas tiers, and in every renderer, each one is a black cell with a
+grey ASCII glyph:
+
+- The black is the sprite outline's black. The face reads on any head colour and
+  never merges with the body's coloured overlay.
+- The glyph is grey, never black. It brightens with the light on the face surface
+  under it: mid grey (128) in the deepest shadow the lighting configures, up to
+  white in full light. The light is the voxel model's own directional light and
+  contact shadow, so the side of the face turned toward the light reads light grey
+  to white. With lighting disabled every face shape takes one flat grey. Face
+  shapes are always brighter than the outline's dim grey, so they never read as
+  outline.
+- A pupil inside an eye white is a black cell inside the white. A shaded open eye
+  whose plate would have no cell besides its own strokes (a small or dot eye) keeps
+  those strokes on the white instead, so every open eye keeps an eye white.
+- A native open eye is one cell, so it is its own plate: the eye white with the
+  pupil glyph on it, as before.
+- Closed and squinting eyes (`- -`, `^ ^`) have no plate. Their strokes are face
+  shapes like the mouth.
+- Packed-pixel atlas strokes are black cells too: their grey glyph is `#` where
+  the stroke fills the cell, else the line glyph of the stroke's sub-cell shape. A
+  half-block cell with a pixel off the face plane (a nose, an ear, an occluder)
+  keeps that pixel beside the grey stroke pixel. Face strokes are never holes
+  through to the room.
+- Monochrome has no colours: a face shape is the terminal's default glyph, bold, on
+  a plain cell, never reverse video, which marks eye whites.
+- The face pass blackens nothing else. Eye whites stay white, and the body around
+  the face keeps its overlay and outline.
 
 Room cells that hold only world surfaces keep their own rendering, and a cell the
 pet shares with the world keeps the world surface as its background. The world

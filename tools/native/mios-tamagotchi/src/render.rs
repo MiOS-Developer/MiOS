@@ -2590,26 +2590,165 @@ fn paint_plate_cell(cell: &mut ratatui::buffer::Cell, sclera: Sclera, glyph: cha
     }
 }
 
-/// A face character replacing a full quadrant/braille pattern keeps the body
-/// colour that pattern showed as its background, so the room never shows
-/// through the face behind the character.
-fn back_with_body(renderer: Renderer, cell: &mut ratatui::buffer::Cell) {
-    // A two-colour pattern already shows its body colour behind; a full
-    // block (the legacy packing over the scene) shows it as its ink.
-    if matches!(renderer, Renderer::Quadrant | Renderer::Braille)
-        && matches!(cell.symbol(), "█" | "⣿")
-    {
-        let body = cell.fg;
-        cell.set_bg(body);
+/// The glyph grey of a face shape in the deepest shadow the lighting
+/// configures (light level 0); full light (level 1) is white.
+const FACE_SHADOW_GREY: f32 = 128.0;
+
+/// Face shapes are every facial mark except an eye white: pupils, mouths,
+/// brows, tears, cheeks, the parentheses and closed-eye strokes. At every
+/// tier and in every renderer they are black cells whose glyph is grey,
+/// brightening to white with the light on the face under it. They read on any
+/// head colour, and never merge with the body's coloured overlay or (being
+/// brighter than its dimmest grey) with the black outline. The black is the
+/// sprite outline's. Monochrome has no colours: the glyph is the terminal
+/// default, bold, on a plain (dark) cell, never in reverse video, which marks
+/// eye whites.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct FaceShapes {
+    black: Color,
+    mono: bool,
+}
+
+impl FaceShapes {
+    fn of(colors: &Colors) -> Self {
+        let black = outline_black(colors);
+        Self {
+            black,
+            mono: black == Color::Reset,
+        }
+    }
+
+    /// The glyph grey at face light `level` (0 shadow, 1 full light): mid
+    /// grey to white, monotonic, quantized to the black's colour depth.
+    fn grey(self, level: f32) -> Color {
+        let value = (FACE_SHADOW_GREY + (255.0 - FACE_SHADOW_GREY) * level.clamp(0.0, 1.0))
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        match self.black {
+            Color::Rgb(..) => Color::Rgb(value, value, value),
+            Color::Indexed(_) => quantize([value; 3], Depth::Indexed),
+            Color::Reset => Color::Reset,
+            _ => quantize([value; 3], Depth::Ansi),
+        }
     }
 }
 
-/// The face pass's background contract for one cell: unchanged, except an
-/// open-eye plate (eye white with pupil ink or head colour, in either
-/// polarity) and a character or stroke over a quadrant/braille pattern, which
-/// keeps the head colour the pattern showed (braille may swap the planes so
-/// the majority colour is the background). Anything else would be a painted
-/// face rectangle.
+/// The light on the face surface under a cell: the mean light level, over
+/// the configured light range, of the surfaces its packed samples show (0 the
+/// deepest configured shadow, 1 full light). The light is the voxel model's
+/// own directional light and contact shadow, so the side of the face turned
+/// toward the light reads brightest. Disabled lighting, and a cell with no
+/// shaded sample, read the one flat brightness every unlit surface takes;
+/// test-built colours without lighting read full light.
+fn face_light(
+    sprite: &Sprite,
+    colors: &Colors,
+    projection: Projection,
+    renderer: Renderer,
+    (col, row): (u16, u16),
+) -> f32 {
+    let Some(lighting) = colors.lighting.as_ref() else {
+        return 1.0;
+    };
+    let (dx, dy) = renderer.packing();
+    let (mut sum, mut count) = (0.0, 0u16);
+    for y in 0..dy {
+        for x in 0..dx {
+            let px = u32::from(col) * u32::from(dx) + u32::from(x);
+            let py = u32::from(row) * u32::from(dy) + u32::from(y);
+            let shading = projection
+                .source_pixel(sprite, px, py)
+                .and_then(|(sx, sy)| sprite.surface_shading(sx, sy));
+            if let Some((normal, occlusion)) = shading {
+                sum += light_level(lighting, lighting.brightness(normal, occlusion, false));
+                count += 1;
+            }
+        }
+    }
+    if count == 0 {
+        light_level(lighting, lighting.brightness([0.0; 3], 0, false))
+    } else {
+        sum / f32::from(count)
+    }
+}
+
+/// A face shape cell: `glyph` in the grey of face light `level` on black
+/// (monochrome: the terminal default, bold, on a plain cell).
+fn paint_shape_cell(cell: &mut ratatui::buffer::Cell, shapes: FaceShapes, glyph: char, level: f32) {
+    cell.set_char(glyph);
+    if !shapes.mono {
+        cell.set_fg(shapes.grey(level)).set_bg(shapes.black);
+    }
+    let style =
+        ratatui::style::Style::default().remove_modifier(ratatui::style::Modifier::REVERSED);
+    cell.set_style(if shapes.mono {
+        style.add_modifier(ratatui::style::Modifier::BOLD)
+    } else {
+        style
+    });
+}
+
+/// A face shape over a packed atlas cell, a pupil inside its eye white
+/// included: a black cell whose grey glyph (lit by the face, `level`) is the
+/// ASCII shape of the stroke pixels (`ink`) it holds: `#` where they fill the
+/// cell, else the line glyph of their sub-cell mask (`partial_glyph`). A
+/// block glyph would cover the black, so the stroke reads as black cells with
+/// grey ASCII at every renderer, as in the ASCII renderer. A half-block cell
+/// with a pixel off the face plane (`covered`: a nose, an ear, an occluder)
+/// keeps that pixel's colour `kept` beside the stroke pixel in grey. Quadrant
+/// and braille only reach here with every pixel on the face plane.
+fn paint_shape_pixels(
+    (renderer, shapes): (Renderer, FaceShapes),
+    (ink, covered, kept): ([bool; 8], [bool; 8], [Color; 2]),
+    level: f32,
+    cell: &mut ratatui::buffer::Cell,
+) {
+    let (dx, dy) = renderer.packing();
+    let count = usize::from(dx * dy);
+    let grey = shapes.grey(level);
+    if (0..count).all(|i| covered[i]) {
+        let mask = (0..count)
+            .filter(|&i| ink[i])
+            .fold(0u8, |mask, i| mask | (1 << i));
+        let glyph = if mask.count_ones() as usize == count {
+            '#'
+        } else {
+            partial_glyph(renderer, mask)
+        };
+        cell.set_char(glyph).set_fg(grey).set_bg(shapes.black);
+    } else if ink[0] {
+        cell.set_char('▀').set_fg(grey).set_bg(kept[1]);
+    } else {
+        cell.set_char('▄').set_fg(grey).set_bg(kept[0]);
+    }
+    cell.set_style(
+        ratatui::style::Style::default().remove_modifier(ratatui::style::Modifier::REVERSED),
+    );
+}
+
+/// The colours a half-block cell packed as (upper, lower) pixels.
+fn half_block_pixels(cell: &ratatui::buffer::Cell) -> [Color; 2] {
+    match cell.symbol() {
+        "█" => [cell.fg, cell.fg],
+        "▀" => [cell.fg, cell.bg],
+        "▄" => [cell.bg, cell.fg],
+        _ => [cell.bg, cell.bg],
+    }
+}
+
+/// Whether `color` is a face shape's glyph grey: a neutral grey no darker
+/// than the shadow grey (allowing one quantization step).
+#[cfg(test)]
+fn face_grey(color: Color) -> bool {
+    terminal_rgb(color)
+        .is_some_and(|[r, g, b]| r == g && g == b && f32::from(r) >= FACE_SHADOW_GREY - 10.0)
+}
+
+/// The face pass's contract for one cell: unchanged, an open-eye plate (eye
+/// white with pupil ink or head colour, in either polarity), or a face shape:
+/// a black cell with a grey glyph (a half-block pixel off the face plane keeps
+/// its colour beside the grey; monochrome keeps its plain cell). Anything
+/// else would be a painted face rectangle.
 #[cfg(test)]
 fn face_background_kept(
     renderer: Renderer,
@@ -2618,6 +2757,7 @@ fn face_background_kept(
     after: &ratatui::buffer::Cell,
 ) -> bool {
     let sclera = Sclera::of(colors);
+    let shapes = FaceShapes::of(colors);
     // The body colour: an overlay glyph's background, else a pattern's ink.
     let body = if before.symbol().is_ascii() {
         before.bg
@@ -2632,11 +2772,11 @@ fn face_background_kept(
             (body, sclera.white),
         ]
         .contains(&(after.fg, after.bg));
-    let packed =
-        matches!(renderer, Renderer::Quadrant | Renderer::Braille) && !before.symbol().is_ascii();
-    after.bg == before.bg
-        || plate
-        || (packed && (after.bg == body || (renderer == Renderer::Braille && after.fg == body)))
+    let shape = !shapes.mono
+        && face_grey(after.fg)
+        && (after.bg == shapes.black
+            || (renderer == Renderer::HalfBlock && matches!(after.symbol(), "▀" | "▄")));
+    after.bg == before.bg || plate || shape
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -3739,7 +3879,7 @@ fn draw_shaded_face_with(
         surface: [Option<SurfaceLight>; 8],
     }
     // `glyphs` are drawn; `collapsed` ones as their own single character.
-    let (texture, [left, top, right, bottom], stroke_color, fit, glyphs, collapsed) = face;
+    let (texture, [left, top, right, bottom], _stroke, fit, glyphs, collapsed) = face;
     let (dx, dy) = renderer.packing();
     let count = f64::from(dx * dy);
     let clearance = FaceClearance::of(sprite, renderer, Some((texture, fit)));
@@ -3890,6 +4030,20 @@ fn draw_shaded_face_with(
     };
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let sclera = Sclera::of(colors);
+    let shapes = FaceShapes::of(colors);
+    // An open eye whose plate would hold no cell besides its own strokes
+    // (a small or dot eye) keeps its strokes on the white instead, so every
+    // open eye keeps an eye white.
+    let white_eyes: Vec<usize> = (0..texture.text.len())
+        .filter(|&index| {
+            plated_eye(texture.text, index)
+                && !cells.iter().any(|cell| {
+                    cell.glyph.is_none()
+                        && cell.sclera >= 0.5
+                        && texture.glyph_at(cell.centre) == index
+                })
+        })
+        .collect();
     let mut stroked = false;
     for cell in cells {
         let Some(target) = buf.cell_mut(cell.pos) else {
@@ -3912,23 +4066,19 @@ fn draw_shaded_face_with(
         if !draws_glyph(glyphs, owner) {
             continue;
         }
-        // Eye white: a cell wholly on the face plane that is mostly on an open
-        // eye's plate, or that draws an open eye's own stroke (its ink lies
-        // inside its plate, so a dot eye collapsed to one character keeps
-        // one). A mouth or parenthesis stroke is never whitened.
-        let plate = match cell.source {
-            Some(index) => plated_eye(texture.text, index),
-            None => cell.sclera >= 0.5,
+        let Some(glyph) = cell.glyph else {
+            // Eye white: a cell wholly on the face plane that is mostly on an
+            // open eye's plate. A mouth or parenthesis is never whitened.
+            if cell.sclera >= 0.5 {
+                paint_plate_cell(target, sclera, ' ');
+            }
+            continue;
         };
-        if plate {
-            paint_plate_cell(target, sclera, cell.glyph.unwrap_or(' '));
-            stroked |= cell.glyph.is_some();
+        if cell.source.is_some_and(|index| white_eyes.contains(&index)) {
+            paint_plate_cell(target, sclera, glyph);
+            stroked = true;
             continue;
         }
-        let Some(glyph) = cell.glyph else {
-            continue;
-        };
-        back_with_body(renderer, target);
         // Monochrome has no ink colour: a stroke never repeats the body glyph.
         let body = target.symbol().chars().next();
         let glyph = if mono && body == Some(glyph) {
@@ -3939,7 +4089,10 @@ fn draw_shaded_face_with(
         } else {
             glyph
         };
-        paint_face_character(target, colors, stroke_color, glyph);
+        // A face shape, a pupil inside its eye white included: a black cell
+        // with a grey glyph lit by the face.
+        let level = face_light(sprite, colors, projection, renderer, cell.pos);
+        paint_shape_cell(target, shapes, glyph, level);
         stroked = true;
     }
     stroked
@@ -4083,13 +4236,12 @@ fn draw_surface_glyphs_of(
     let Some(texture) = FaceTexture::new(sprite) else {
         return false;
     };
-    let ink = face_ink(sprite, colors, InkRegion::NativeBand);
     let Some(layout) = native_layout(sprite, renderer, projection, area, texture) else {
         return false;
     };
-    let style = (renderer, colors, texture.text, ink, glyphs);
+    let style = (renderer, colors, texture.text, glyphs);
     let placed = placed_cells(&layout.candidates);
-    let painted = paint_native_glyphs(buf, style, layout.candidates);
+    let painted = paint_native_glyphs(buf, style, (sprite, projection), layout.candidates);
     quiet_native_run((buf, sprite, colors), &placed, &layout.visible);
     layout.compact || !painted.is_empty()
 }
@@ -4281,15 +4433,18 @@ fn native_quiet_cells(
 }
 
 /// Native characters on their complete head cells, indexed by kaomoji glyph:
-/// an open eye is its own one-cell sclera plate (so tiny Room, phone and
-/// watch faces keep noticeable eyes); every other character is face ink over
-/// the body. Returns the painted cells.
+/// an open eye is its own one-cell sclera plate with its pupil glyph on it (so
+/// tiny Room, phone and watch faces keep noticeable eye whites); every other
+/// character is a face shape, a black cell with a grey glyph lit by the face.
+/// Returns the painted cells.
 fn paint_native_glyphs(
     buf: &mut Buffer,
-    (renderer, colors, text, ink, glyphs): (Renderer, &Colors, &str, Color, GlyphSet),
+    (renderer, colors, text, glyphs): (Renderer, &Colors, &str, GlyphSet),
+    (sprite, projection): (&Sprite, Projection),
     candidates: Vec<NativeGlyphCell>,
 ) -> Vec<(u16, u16)> {
     let sclera = Sclera::of(colors);
+    let shapes = FaceShapes::of(colors);
     let mut painted = Vec::new();
     for (index, candidate) in candidates.into_iter().enumerate() {
         let Some((pos, glyph)) = candidate.filter(|_| draws_glyph(glyphs, index)) else {
@@ -4299,9 +4454,8 @@ fn paint_native_glyphs(
             if plated_eye(text, index) {
                 paint_plate_cell(cell, sclera, char::from(glyph));
             } else {
-                // Preserve the room plane, including terminal tint/opacity.
-                back_with_body(renderer, cell);
-                paint_face_character(cell, colors, ink, char::from(glyph));
+                let level = face_light(sprite, colors, projection, renderer, pos);
+                paint_shape_cell(cell, shapes, char::from(glyph), level);
             }
             painted.push(pos);
         }
@@ -4539,10 +4693,11 @@ fn draw_atlas_face(
     face: ((FaceTexture, [f64; 4], Color, FaceFit), GlyphSet),
     remembered: Remembered,
 ) -> bool {
-    let ((texture, [left, top, right, bottom], stroke_color, fit), glyphs) = face;
+    let ((texture, [left, top, right, bottom], _stroke, fit), glyphs) = face;
     let (dx, dy) = renderer.packing();
     let mono = colors.palette.iter().all(|c| *c == Color::Reset);
     let sclera = Sclera::of(colors);
+    let shapes = FaceShapes::of(colors);
     let clearance = FaceClearance::of(sprite, renderer, Some((texture, fit)));
     // Restored body cells keep the body pass's plain ring around a native face.
     let quiet = native_quiet_cells(sprite, renderer, colors, projection, area, remembered);
@@ -4591,6 +4746,18 @@ fn draw_atlas_face(
             let full_cell = covered[..count].iter().all(|v| *v);
             let white = (0..count).filter(|&i| plate[i] && !ink[i]).count();
             let plain = quiet.binary_search(&(col as u16, row as u16)).is_ok();
+            let any_ink = ink.iter().any(|on| *on);
+            let level = if any_ink {
+                face_light(
+                    sprite,
+                    colors,
+                    projection,
+                    renderer,
+                    (col as u16, row as u16),
+                )
+            } else {
+                0.0
+            };
             let Some(cell) = buf.cell_mut((col as u16, row as u16)) else {
                 continue;
             };
@@ -4609,19 +4776,18 @@ fn draw_atlas_face(
                         cell,
                     );
                     cell.set_bg(background);
-                    if plate[0] {
-                        paint_plate_cell(cell, sclera, if ink[0] { '#' } else { ' ' });
-                    } else if ink[0] {
-                        let mark = if mono {
-                            if cell.symbol() == "@" {
-                                '#'
-                            } else {
-                                '@'
-                            }
+                    if ink[0] {
+                        // A face shape, a pupil inside its eye white too.
+                        let mark = if mono && cell.symbol() == "@" {
+                            '#'
+                        } else if mono {
+                            '@'
                         } else {
                             '#'
                         };
-                        cell.set_char(mark).set_fg(stroke_color);
+                        paint_shape_cell(cell, shapes, mark, level);
+                    } else if plate[0] {
+                        paint_plate_cell(cell, sclera, ' ');
                     }
                 }
                 Renderer::HalfBlock if mono => {
@@ -4638,17 +4804,21 @@ fn draw_atlas_face(
                         cell,
                     );
                     cell.set_bg(background);
-                    if plate[0] || plate[1] {
-                        let glyph = if ink[0] || ink[1] { '@' } else { ' ' };
-                        paint_plate_cell(cell, sclera, glyph);
-                    } else if ink[0] || ink[1] {
-                        cell.set_char(if cell.symbol() == "@" { '#' } else { '@' });
+                    if any_ink {
+                        let mark = if cell.symbol() == "@" { '#' } else { '@' };
+                        paint_shape_cell(cell, shapes, mark, level);
+                    } else if plate[0] || plate[1] {
+                        paint_plate_cell(cell, sclera, ' ');
                     }
                 }
                 Renderer::HalfBlock => {
-                    // Plate and pupil pixels are flat palette pixels, like ink.
+                    // Plate pixels are flat palette pixels, like ink.
                     let flat = std::array::from_fn(|i| ink[i] || plate[i]);
                     paint_lit_cell((renderer, colors), pixels, surface, flat, plain, cell);
+                    if any_ink {
+                        let kept = half_block_pixels(cell);
+                        paint_shape_pixels((renderer, shapes), (ink, covered, kept), level, cell);
+                    }
                 }
                 Renderer::Quadrant | Renderer::Braille => {
                     // Mixed cells keep the real nose/ear/occluder untouched.
@@ -4665,7 +4835,6 @@ fn draw_atlas_face(
                         cell,
                     );
                     cell.set_bg(background);
-                    let any_ink = ink.iter().any(|on| *on);
                     // An inkless, plateless cell is the body itself (overlay
                     // included); drawing no stroke would only flatten it.
                     if !any_ink && white == 0 {
@@ -4685,10 +4854,9 @@ fn draw_atlas_face(
                     } else {
                         cell.fg
                     };
-                    let on_plate = plate.iter().any(|on| *on);
                     // Two colours per cell. Braille dots are small, so the
                     // majority colour takes the background there and a
-                    // plate's interior reads white, a thick ring dark.
+                    // plate's interior reads white.
                     let two = |cell: &mut ratatui::buffer::Cell, on: [bool; 8], fg, bg| {
                         let n = (0..count).filter(|&i| on[i]).count();
                         if renderer == Renderer::Braille && n * 2 > count {
@@ -4698,20 +4866,23 @@ fn draw_atlas_face(
                         }
                     };
                     if mono {
-                        if on_plate && (any_ink || white * 2 >= count) {
-                            // Reverse video: ink dark on a light plate.
-                            paint_plate_cell(cell, sclera, pattern(ink));
-                        } else if any_ink {
-                            // No ink colour: carve the strokes from the body.
-                            cell.set_char(pattern(ink.map(|v| !v))).set_fg(backing);
+                        if any_ink {
+                            // The strokes' own dots, bold, on a plain cell.
+                            paint_shape_cell(cell, shapes, pattern(ink), level);
+                        } else if white * 2 >= count {
+                            // Reverse video: a light eye-white block.
+                            paint_plate_cell(cell, sclera, pattern([false; 8]));
                         }
-                    } else if any_ink && on_plate {
-                        // The pupil in its ink on the eye white.
-                        two(cell, ink, sclera.ink, sclera.white);
                     } else if any_ink {
-                        // Strokes in face ink over the head's own lit colour,
-                        // never holes through to the room behind the Mon.
-                        two(cell, ink, stroke_color, backing);
+                        // A face shape (a pupil inside its eye white too): the
+                        // strokes in grey on a black cell, never holes
+                        // through to the room behind the Mon.
+                        paint_shape_pixels(
+                            (renderer, shapes),
+                            (ink, covered, [backing; 2]),
+                            level,
+                            cell,
+                        );
                     } else {
                         // The plate's own edge, pixel-exact against the head.
                         two(cell, plate, sclera.white, backing);
@@ -5708,17 +5879,17 @@ mod voxel_lighting_tests {
                             assert_eq!(after[(x, y)], outside[(x, y)]);
                         } else if after[(x, y)] != before[(x, y)] {
                             // (@_@): open eyes sit on their plates in pupil
-                            // ink; every other mark is the dark face ink.
+                            // ink; every other mark is a face shape, a grey
+                            // glyph on black (monochrome keeps its cell).
                             let sclera = Sclera::of(&colors);
+                            let shapes = FaceShapes::of(&colors);
                             let plate = !sclera.mono && after[(x, y)].bg == sclera.white;
-                            assert_eq!(
-                                after[(x, y)].fg,
-                                if plate {
-                                    sclera.ink
-                                } else {
-                                    face_ink(&sprite, &colors, InkRegion::NativeBand)
-                                }
-                            );
+                            if plate {
+                                assert_eq!(after[(x, y)].fg, sclera.ink);
+                            } else if !shapes.mono {
+                                assert_eq!(after[(x, y)].bg, shapes.black);
+                                assert!(face_grey(after[(x, y)].fg), "{:?}", after[(x, y)]);
+                            }
                             assert!(face_background_kept(
                                 renderer,
                                 &colors,
@@ -7146,13 +7317,23 @@ mod camera_tests {
                     draw_surface_glyphs(&sprite, renderer, &colors, projection, area, &mut after);
                 let mut glyphs = Vec::new();
                 let (dx, dy) = renderer.packing();
+                let shapes = FaceShapes::of(&colors);
                 for row in after.area.y..after.area.bottom() {
                     for col in after.area.x..after.area.right() {
-                        assert_eq!(before[(col, row)].bg, after[(col, row)].bg);
+                        // (^_^) has no eye white: every character is a face
+                        // shape, a grey glyph on black; a cleared overlay
+                        // glyph beside native text keeps its background.
+                        let glyph = after[(col, row)].symbol() != " ";
+                        if before[(col, row)] != after[(col, row)] && glyph {
+                            assert_eq!(after[(col, row)].bg, shapes.black);
+                            assert!(face_grey(after[(col, row)].fg));
+                        } else {
+                            assert_eq!(before[(col, row)].bg, after[(col, row)].bg);
+                        }
                         if before[(col, row)] != after[(col, row)] {
                             assert!(area.contains((col, row).into()));
                             // A cleared overlay glyph beside native text is no glyph.
-                            if after[(col, row)].symbol() != " " {
+                            if glyph {
                                 glyphs.push(after[(col, row)].symbol().to_owned());
                             }
                             for y in 0..dy {
@@ -9453,9 +9634,11 @@ mod kaomoji_scale_tests {
 
     #[test]
     fn rendered_face_cells_read_against_the_head_they_are_drawn_on() {
-        // Measures the actual buffer: each face-glyph cell's ink against what is
+        // Measures the actual buffer: each face-glyph cell's grey glyph
+        // against its own black cell, and that face shape against the head
         // under it (the half-block cell's body background, the ASCII body
-        // glyph's colour), with lighting enabled and disabled.
+        // glyph's colour): the black cell or the grey glyph separates from
+        // the head, with lighting enabled and disabled.
         let named = [
             (false, Depth::Ansi, Stage::Baby, SpriteStyle::EightBit, 0),
             (true, Depth::Indexed, Stage::Baby, SpriteStyle::EightBit, 6),
@@ -9533,13 +9716,19 @@ mod kaomoji_scale_tests {
                                         } else {
                                             before.fg
                                         };
-                                        let (Some(ink), Some(under)) =
-                                            (luminance(after.fg), luminance(under))
-                                        else {
+                                        let (Some(ink), Some(cell), Some(under)) = (
+                                            luminance(after.fg),
+                                            luminance(after.bg),
+                                            luminance(under),
+                                        ) else {
                                             continue;
                                         };
                                         case_cells += 1;
-                                        case_legible += usize::from(ink.abs_diff(under) >= minimum);
+                                        case_legible += usize::from(
+                                            ink.abs_diff(cell) >= minimum
+                                                && (cell.abs_diff(under) >= minimum
+                                                    || ink.abs_diff(under) >= minimum),
+                                        );
                                     }
                                 }
                             }
@@ -9859,11 +10048,22 @@ mod kaomoji_scale_tests {
                                             alphabet.contains(&glyph),
                                             "{label}: {glyph:?} at {x},{y} is not a stroke"
                                         );
-                                        assert_eq!(
-                                            cell.fg,
-                                            face_ink(&front, &colors, InkRegion::TextBox),
-                                            "{label}: stroke ink at {x},{y}"
-                                        );
+                                        // A face shape on every species: a
+                                        // grey glyph on black (monochrome: the
+                                        // plain bold terminal default).
+                                        let shapes = FaceShapes::of(&colors);
+                                        if shapes.mono {
+                                            assert_eq!(
+                                                (cell.fg, cell.bg),
+                                                (Color::Reset, Color::Reset),
+                                                "{label}: stroke at {x},{y}"
+                                            );
+                                        } else {
+                                            assert!(
+                                                cell.bg == shapes.black && face_grey(cell.fg),
+                                                "{label}: stroke ink at {x},{y}: {cell:?}"
+                                            );
+                                        }
                                         for sy in 0..dy {
                                             for sx in 0..dx {
                                                 let px =
@@ -13418,9 +13618,11 @@ mod voxel_overlay_tests {
 #[cfg(test)]
 mod eye_plate_tests {
     //! F1 eye whites: sclera plates behind open-eye kaomoji strokes in every
-    //! face tier. Plates are found from the buffer alone (cells the face pass
-    //! changed that show the eye white, or reverse video in monochrome) and
-    //! judged against the sprite's own head/face UV maps and the projection.
+    //! face tier, and the face shapes (black cells with grey glyphs) beside
+    //! and inside them. Plates and shapes are found from the buffer alone
+    //! (cells the face pass changed that show the eye white, or reverse video
+    //! in monochrome; the other changed glyph cells) and judged against the
+    //! sprite's own head/face UV maps, shading and the projection.
     use super::*;
     use crate::{
         game::Stage,
@@ -13890,16 +14092,17 @@ mod eye_plate_tests {
         assert!(checked > 100, "only {checked} closed-eye faces were drawn");
     }
 
-    /// FACE-1: quadrant/braille atlas strokes are face ink or pupil ink over
-    /// the head, never holes through to the room, so the same face reads the
-    /// same over any room colour; plates grow with the face.
+    /// FACE-1: quadrant/braille atlas strokes are face shapes (grey on a
+    /// black cell, a pupil inside its eye white too) or an eye white's edge
+    /// over the head, never holes through to the room, so the same face
+    /// reads the same over any room colour; plates grow with the face.
     #[test]
     fn atlas_strokes_use_face_ink_and_plates_grow_with_the_face() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
         let sclera = Sclera::of(&colors);
+        let shapes = FaceShapes::of(&colors);
         let open = mon(Expression::Idle, 0, 0, 0.32);
-        let stroke = face_ink(&open, &colors, InkRegion::TextBox);
         let mut atlas = 0;
         for renderer in [Renderer::Quadrant, Renderer::Braille] {
             for zoom in [100, 200, 300, 400] {
@@ -13930,17 +14133,15 @@ mod eye_plate_tests {
                             a.bg != colors.ink(13),
                             "{renderer:?} @{zoom}: room shows through the face at {pos:?}"
                         );
-                        // Atlas strokes are drawn in face ink (pupil ink and
-                        // eye white on a plate), never carved from the body.
+                        // Atlas strokes are face shapes, grey on black, and
+                        // a plate's edge is the eye white; never carved from
+                        // the body.
                         if teal.lod == FaceLod::Atlas && teal.before[pos] != *a {
-                            let inks = if a.fg == sclera.white || a.bg == sclera.white {
-                                [sclera.white, sclera.ink]
-                            } else {
-                                [stroke, stroke]
-                            };
+                            let plate_edge = a.fg == sclera.white || a.bg == sclera.white;
+                            let shape = a.bg == shapes.black && face_grey(a.fg);
                             assert!(
-                                inks.contains(&a.fg) || inks.contains(&a.bg),
-                                "{renderer:?} @{zoom}: atlas stroke without face ink at {pos:?}: {a:?}"
+                                plate_edge || shape,
+                                "{renderer:?} @{zoom}: atlas stroke is no face shape at {pos:?}: {a:?}"
                             );
                         }
                     }
@@ -13948,7 +14149,8 @@ mod eye_plate_tests {
             }
         }
         assert!(atlas >= 2, "the quadrant/braille atlas was not exercised");
-        // Plate area (packed pixels) never shrinks as the Face zoom grows.
+        // Eye area (packed pixels of the eye whites and the black pupil cells
+        // inside them) never shrinks as the Face zoom grows.
         for renderer in RENDERERS {
             let mut previous = 0;
             let mut previous_lod = None;
@@ -13961,11 +14163,12 @@ mod eye_plate_tests {
                     colors.ink(10),
                 );
                 let (dx, dy) = renderer.packing();
-                let area = plates(&face, sclera).len() * usize::from(dx * dy);
+                let eyes = plates(&face, sclera).len() + pupils(&open, renderer, &face, &colors);
+                let area = eyes * usize::from(dx * dy);
                 if previous_lod == Some(face.lod) && face.drawn {
                     assert!(
                         area * 10 >= previous * 9,
-                        "{renderer:?} @{zoom} {:?}: plate area fell from {previous} to {area}",
+                        "{renderer:?} @{zoom} {:?}: eye area fell from {previous} to {area}",
                         face.lod
                     );
                 }
@@ -13973,6 +14176,475 @@ mod eye_plate_tests {
                 previous_lod = face.drawn.then_some(face.lod);
             }
         }
+    }
+
+    /// Expressions with every kind of face shape: open, closed, squinting,
+    /// crying and tick eyes, a wink, tears, a dot eye and a pout.
+    const SHAPED: [(Expression, usize, &str); 12] = [
+        (Expression::Idle, 0, "(o_o)"),
+        (Expression::Idle, 2, "(-_-)"),
+        (Expression::Happy, 0, "(^_^)"),
+        (Expression::Surprised, 0, "(O_O)"),
+        (Expression::Sad, 0, "(T_T)"),
+        (Expression::Sad, 1, "(;_;)"),
+        (Expression::Angry, 3, "(`_')"),
+        (Expression::Playful, 0, "(o_<)"),
+        (Expression::Shy, 0, "(._.)"),
+        (Expression::Sick, 1, "(@_@)"),
+        (Expression::Dead, 0, "(x_x)"),
+        (Expression::Hungry, 0, "(u_u)"),
+    ];
+
+    /// An eye-white cell as the buffer shows it: the white behind, or a
+    /// plate's edge in white on the head (never a face shape's own glyph,
+    /// which sits on black even where it is lit white).
+    fn eye_white(cell: &ratatui::buffer::Cell, sclera: Sclera, shapes: FaceShapes) -> bool {
+        if sclera.mono {
+            cell.modifier.contains(ratatui::style::Modifier::REVERSED)
+        } else {
+            cell.bg == sclera.white || (cell.fg == sclera.white && cell.bg != shapes.black)
+        }
+    }
+
+    /// The face shapes a face pass drew: the cells it changed that are no
+    /// eye white and hold a glyph (a cleared overlay glyph beside native text
+    /// is no mark).
+    fn shape_cells(face: &Face, sclera: Sclera, shapes: FaceShapes) -> Vec<(u16, u16)> {
+        let area = face.after.area;
+        let mut cells = Vec::new();
+        for row in area.y..area.bottom() {
+            for col in area.x..area.right() {
+                let (old, new) = (&face.before[(col, row)], &face.after[(col, row)]);
+                if old != new && !eye_white(new, sclera, shapes) && new.symbol() != " " {
+                    cells.push((col, row));
+                }
+            }
+        }
+        cells
+    }
+
+    /// The texture and fit the face pass lays the kaomoji with.
+    fn fitted(sprite: &Sprite, renderer: Renderer, face: &Face) -> (FaceTexture, FaceFit) {
+        let texture = FaceTexture::new(sprite).unwrap();
+        let bounds = FaceTexture::bounds(sprite).unwrap();
+        let (l, t) = face.projection.cell(bounds.left, bounds.top, renderer);
+        let (r, b) = face.projection.cell(bounds.right, bounds.bottom, renderer);
+        let fit = FaceFit::of(
+            sprite,
+            renderer,
+            face.projection,
+            face.after.area,
+            texture,
+            [l, t, r, b],
+        );
+        (texture, fit)
+    }
+
+    /// The fitted face-plane UV at the centre of a cell's face-plane pixels.
+    fn fitted_centre(
+        sprite: &Sprite,
+        renderer: Renderer,
+        face: &Face,
+        fit: FaceFit,
+        (col, row): (u16, u16),
+    ) -> Option<[f64; 2]> {
+        let (dx, dy) = renderer.packing();
+        let mut sum = [0.0; 2];
+        let mut n = 0.0;
+        for y in 0..dy {
+            for x in 0..dx {
+                let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                if let Some((uv, _)) = projected_face_uv(sprite, face.projection, px, py) {
+                    let uv = fit.map(uv);
+                    sum = [sum[0] + uv[0], sum[1] + uv[1]];
+                    n += 1.0;
+                }
+            }
+        }
+        (n > 0.0).then(|| sum.map(|v| v / n))
+    }
+
+    /// The face shapes of an open eye (its pupil cells, in its glyph box on
+    /// the face plane) a face pass drew beyond the native tier.
+    fn pupils(sprite: &Sprite, renderer: Renderer, face: &Face, colors: &Colors) -> usize {
+        if face.lod == FaceLod::Native {
+            return 0;
+        }
+        let (texture, fit) = fitted(sprite, renderer, face);
+        shape_cells(face, Sclera::of(colors), FaceShapes::of(colors))
+            .into_iter()
+            .filter(|&pos| {
+                fitted_centre(sprite, renderer, face, fit, pos)
+                    .is_some_and(|uv| plated_eye(texture.text, texture.glyph_at(uv)))
+            })
+            .count()
+    }
+
+    /// Whether every packed pixel of a cell is on the face plane.
+    fn on_face_plane(
+        sprite: &Sprite,
+        renderer: Renderer,
+        projection: Projection,
+        (col, row): (u16, u16),
+    ) -> bool {
+        let (dx, dy) = renderer.packing();
+        (0..dy).all(|y| {
+            (0..dx).all(|x| {
+                projected_face_uv(
+                    sprite,
+                    projection,
+                    u32::from(col) * u32::from(dx) + u32::from(x),
+                    u32::from(row) * u32::from(dy) + u32::from(y),
+                )
+                .is_some()
+            })
+        })
+    }
+
+    /// The light on the surface under a cell, from the sprite's own shading:
+    /// the mean configured light level of its shaded packed samples.
+    fn surface_light(
+        sprite: &Sprite,
+        colors: &Colors,
+        renderer: Renderer,
+        projection: Projection,
+        (col, row): (u16, u16),
+    ) -> Option<f32> {
+        let lighting = colors.lighting.as_ref()?;
+        let (dx, dy) = renderer.packing();
+        let mut levels = Vec::new();
+        for y in 0..dy {
+            for x in 0..dx {
+                let px = u32::from(col) * u32::from(dx) + u32::from(x);
+                let py = u32::from(row) * u32::from(dy) + u32::from(y);
+                if let Some((normal, occlusion)) = projection
+                    .source_pixel(sprite, px, py)
+                    .and_then(|(sx, sy)| sprite.surface_shading(sx, sy))
+                {
+                    levels.push(light_level(
+                        lighting,
+                        lighting.brightness(normal, occlusion, false),
+                    ));
+                }
+            }
+        }
+        (!levels.is_empty()).then(|| levels.iter().sum::<f32>() / levels.len() as f32)
+    }
+
+    /// FS1: every face shape -- pupils, mouths, brows, tears, the
+    /// parentheses, closed and squinting eyes -- is a black cell with a grey
+    /// glyph, at the native, shaded and atlas tiers, in every renderer and
+    /// colour depth (a half-block pixel off the face plane keeps its own
+    /// colour beside the grey). Never a black glyph. A pupil inside an eye
+    /// white is a black cell in the white. Monochrome shapes are the bold
+    /// terminal default on a plain cell, never reverse video.
+    #[test]
+    fn face_shapes_are_black_cells_with_grey_glyphs_at_every_tier() {
+        let config = Config::sample().unwrap();
+        let mut census: std::collections::BTreeMap<(String, String), usize> = Default::default();
+        let mut pupils: std::collections::BTreeMap<(String, String), usize> = Default::default();
+        let mut kept_pixels = 0;
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi, Depth::Mono] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            let sclera = Sclera::of(&colors);
+            let shapes = FaceShapes::of(&colors);
+            assert_eq!(shapes.mono, depth == Depth::Mono);
+            for (expression, frame, text) in SHAPED {
+                let sprite = mon(expression, frame, 0, 0.32);
+                assert_eq!(sprite.face_text(), Some(text));
+                for renderer in RENDERERS {
+                    for case in CASES {
+                        let face = render_face(&sprite, renderer, &colors, case, colors.ink(10));
+                        if !face.drawn {
+                            continue;
+                        }
+                        let label =
+                            format!("{text} {depth:?} {renderer:?} {case:?} {:?}", face.lod);
+                        let cells = shape_cells(&face, sclera, shapes);
+                        for &pos in &cells {
+                            let cell = &face.after[pos];
+                            if shapes.mono {
+                                assert!(
+                                    cell.modifier.contains(ratatui::style::Modifier::BOLD)
+                                        && !cell.modifier.contains(ratatui::style::Modifier::REVERSED),
+                                    "{label}: monochrome face shape at {pos:?} is not a plain bold cell: {cell:?}"
+                                );
+                                continue;
+                            }
+                            assert!(
+                                face_grey(cell.fg) && cell.fg != shapes.black,
+                                "{label}: face shape glyph at {pos:?} is not grey: {cell:?}"
+                            );
+                            if cell.bg != shapes.black {
+                                assert!(
+                                    renderer == Renderer::HalfBlock
+                                        && !on_face_plane(&sprite, renderer, face.projection, pos),
+                                    "{label}: face shape at {pos:?} is not on black: {cell:?}"
+                                );
+                                kept_pixels += 1;
+                            }
+                        }
+                        let key = (format!("{renderer:?}"), format!("{:?}", face.lod));
+                        *census.entry(key.clone()).or_insert(0) += cells.len();
+                        // A pupil: a face shape beside or inside an eye white.
+                        let white = |pos: (u16, u16)| {
+                            face.after.area.contains(pos.into())
+                                && face.before[pos] != face.after[pos]
+                                && eye_white(&face.after[pos], sclera, shapes)
+                        };
+                        *pupils.entry(key).or_insert(0) += cells
+                            .iter()
+                            .filter(|&&(x, y)| {
+                                [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].into_iter().any(
+                                    |(ox, oy)| {
+                                        let (nx, ny) = (i32::from(x) + ox, i32::from(y) + oy);
+                                        nx >= 0 && ny >= 0 && white((nx as u16, ny as u16))
+                                    },
+                                )
+                            })
+                            .count();
+                    }
+                }
+            }
+        }
+        println!("FS1 face shape cells by renderer and tier: {census:?}; pupils beside an eye white: {pupils:?}; half-block pixels kept off the face plane: {kept_pixels}");
+        for renderer in RENDERERS {
+            let name = format!("{renderer:?}");
+            for lod in ["Native", "Shaded", "Atlas"] {
+                if lod == "Atlas" && renderer.packing() == (1, 1) {
+                    continue;
+                }
+                let key = (name.clone(), lod.to_string());
+                assert!(
+                    census.get(&key).copied().unwrap_or(0) >= 20,
+                    "{name} {lod}: too few face shapes to judge: {census:?}"
+                );
+                if lod != "Native" {
+                    assert!(
+                        pupils.get(&key).copied().unwrap_or(0) > 0,
+                        "{name} {lod}: no pupil is a black cell inside its eye white: {pupils:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// FS2: a face shape's glyph grey follows the light on the face under it,
+    /// monotonically: the face's lit side and a face turned to the light read
+    /// light grey to white, its shadow mid grey; constant light reads one grey.
+    #[test]
+    fn face_glyph_grey_brightens_monotonically_with_the_face_light() {
+        let mut lit = Vec::new();
+        for direction in [
+            [-45, 65, 45],
+            [0, 0, 100],
+            [0, 0, -100],
+            [100, 0, 20],
+            [-100, 0, 20],
+            [0, 100, 20],
+            [0, -100, 20],
+        ] {
+            let mut config = Config::sample().unwrap();
+            config.voxel_lighting.light_direction = direction;
+            let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+            let sclera = Sclera::of(&colors);
+            let shapes = FaceShapes::of(&colors);
+            for (expression, frame) in [(Expression::Idle, 0), (Expression::Happy, 0)] {
+                for yaw in [0, 30, 330] {
+                    let sprite = mon(expression, frame, yaw, 0.32);
+                    for renderer in RENDERERS {
+                        for case in [
+                            ((40, 16), CameraView::Pet, 100),
+                            ((75, 7), CameraView::Face, 200),
+                            ((71, 20), CameraView::Face, 200),
+                            ((71, 20), CameraView::Face, 400),
+                            ((57, 47), CameraView::Face, 300),
+                        ] {
+                            let face =
+                                render_face(&sprite, renderer, &colors, case, colors.ink(10));
+                            for pos in shape_cells(&face, sclera, shapes) {
+                                let Some(level) =
+                                    surface_light(&sprite, &colors, renderer, face.projection, pos)
+                                else {
+                                    continue;
+                                };
+                                let [grey, ..] = terminal_rgb(face.after[pos].fg).unwrap();
+                                lit.push((
+                                    level,
+                                    grey,
+                                    format!("{direction:?} {renderer:?} {case:?} {pos:?}"),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        lit.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for pair in lit.windows(2) {
+            assert!(
+                pair[0].1 <= pair[1].1,
+                "the glyph grey falls as the face light rises: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        let bright: Vec<u8> = lit.iter().filter(|c| c.0 >= 0.9).map(|c| c.1).collect();
+        let dark: Vec<u8> = lit.iter().filter(|c| c.0 <= 0.3).map(|c| c.1).collect();
+        let (low, high) = (
+            lit.first().map_or(0, |c| c.1),
+            lit.last().map_or(0, |c| c.1),
+        );
+        println!(
+            "FS2 face shapes {}: light levels {:.2}..{:.2}, glyph grey {low}..{high}; lit (>= 0.9) {} cells, min grey {:?}; shadowed (<= 0.3) {} cells, max grey {:?}",
+            lit.len(),
+            lit.first().map_or(0.0, |c| c.0),
+            lit.last().map_or(0.0, |c| c.0),
+            bright.len(),
+            bright.iter().min(),
+            dark.len(),
+            dark.iter().max()
+        );
+        assert!(
+            !bright.is_empty() && bright.iter().all(|g| *g >= 240),
+            "a face lit by the light brightens its glyphs to near white: {bright:?}"
+        );
+        assert!(
+            !dark.is_empty() && dark.iter().all(|g| *g <= 175),
+            "a shadowed face keeps mid grey glyphs: {dark:?}"
+        );
+        // The grey itself, in every colour depth: mid grey to white,
+        // never darker than the shadow grey, never black.
+        let config = Config::sample().unwrap();
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi] {
+            let shapes = FaceShapes::of(&Colors::from_config(&config, depth).unwrap());
+            let mut previous = 0;
+            for step in 0..=100 {
+                let grey = shapes.grey(step as f32 / 100.0);
+                let luma = luminance(grey).unwrap();
+                assert!(face_grey(grey), "{depth:?} {step}: {grey:?}");
+                assert!(
+                    luma >= previous,
+                    "{depth:?}: the grey brightens with the light at {step}"
+                );
+                previous = luma;
+            }
+            let (shadow, light) = (
+                luminance(shapes.grey(0.0)).unwrap(),
+                luminance(shapes.grey(1.0)).unwrap(),
+            );
+            assert!(
+                (118..=140).contains(&shadow) && light >= 240,
+                "{depth:?}: the grey brightens from mid grey {shadow} to near white {light}"
+            );
+        }
+    }
+
+    /// FS3: the face pass blackens nothing but face shapes. Every cell it
+    /// turns black is a grey-glyph face shape on the kaomoji's own ink (a
+    /// native character's own cell, a cell within two cells of the fitted
+    /// glyph ink, or a glyph's own character within its reach); eye whites
+    /// and the body around the face keep their colours.
+    #[test]
+    fn the_face_pass_blackens_only_face_shapes() {
+        let config = Config::sample().unwrap();
+        let mut blackened = 0;
+        for depth in [Depth::Rgb, Depth::Indexed] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            let sclera = Sclera::of(&colors);
+            let shapes = FaceShapes::of(&colors);
+            for (expression, frame, text) in SHAPED {
+                for yaw in [0, 25] {
+                    let sprite = mon(expression, frame, yaw, 0.32);
+                    for renderer in RENDERERS {
+                        let (dx, dy) = renderer.packing();
+                        for case in CASES {
+                            let face =
+                                render_face(&sprite, renderer, &colors, case, colors.ink(10));
+                            let area = face.after.area;
+                            let (texture, fit) = fitted(&sprite, renderer, &face);
+                            let native =
+                                native_layout(&sprite, renderer, face.projection, area, texture)
+                                    .map(|layout| placed_cells(&layout.candidates))
+                                    .unwrap_or_default();
+                            let on_ink =
+                                |(col, row): (u16, u16)| {
+                                    (0..dy).any(|y| {
+                                        (0..dx).any(|x| {
+                                            projected_face_uv(
+                                                &sprite,
+                                                face.projection,
+                                                u32::from(col) * u32::from(dx) + u32::from(x),
+                                                u32::from(row) * u32::from(dy) + u32::from(y),
+                                            )
+                                            .is_some_and(|(uv, footprint)| {
+                                                let wide = [
+                                                    footprint[0] * f64::from(4 * dx + 1),
+                                                    footprint[1] * f64::from(4 * dy + 1),
+                                                ];
+                                                texture.coverage(
+                                                    fit.map(uv),
+                                                    fit.footprint(wide),
+                                                    f64::INFINITY,
+                                                ) > 0.0
+                                            })
+                                        })
+                                    })
+                                };
+                            // A glyph too small for strokes is its own
+                            // character on the face-plane cell nearest its
+                            // ink, within the glyph's reach.
+                            let reach = texture.glyph_reach();
+                            let in_reach = |pos: (u16, u16)| {
+                                fitted_centre(&sprite, renderer, &face, fit, pos).is_some_and(
+                                    |uv| {
+                                        (0..texture.text.len())
+                                            .filter_map(|i| texture.glyph_centroid(i))
+                                            .any(|c| {
+                                                ((uv[0] - c[0]) / reach[0])
+                                                    .hypot((uv[1] - c[1]) / reach[1])
+                                                    <= 1.0
+                                            })
+                                    },
+                                )
+                            };
+                            let label = format!(
+                                "{text} yaw {yaw} {depth:?} {renderer:?} {case:?} {:?}",
+                                face.lod
+                            );
+                            for row in area.y..area.bottom() {
+                                for col in area.x..area.right() {
+                                    let pos = (col, row);
+                                    let (old, new) = (&face.before[pos], &face.after[pos]);
+                                    let black = |cell: &ratatui::buffer::Cell| {
+                                        cell.bg == shapes.black || cell.fg == shapes.black
+                                    };
+                                    if old == new || !black(new) || black(old) {
+                                        continue;
+                                    }
+                                    assert!(
+                                        face_grey(new.fg) && new.symbol() != " ",
+                                        "{label}: the face pass blackened {pos:?} without a face shape: {new:?}"
+                                    );
+                                    assert!(
+                                        !eye_white(new, sclera, shapes),
+                                        "{label}: an eye white turned black at {pos:?}"
+                                    );
+                                    assert!(
+                                        native.contains(&pos) || on_ink(pos) || in_reach(pos),
+                                        "{label}: black face shape at {pos:?} is off the kaomoji"
+                                    );
+                                    blackened += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!("FS3 cells the face pass turned black, every one a face shape on the kaomoji: {blackened}");
+        assert!(blackened > 1000, "only {blackened} face shapes were judged");
     }
 }
 
@@ -15690,32 +16362,32 @@ mod render_cost_tests {
     /// and Mono frames, then the live faces; then the pixel view.
     const GOLDEN: [[u64; 5]; 4] = [
         [
-            0x2c4e_241e_4c92_9669,
-            0x9118_6bfa_8fd4_4b34,
-            0x49e6_5de4_ab16_a151,
-            0x4ecc_1f3e_d0e1_4b67,
-            0x206e_49b0_671c_f4a1,
+            0x9fbc_387a_f7f7_abc0,
+            0xc327_9c82_e247_937d,
+            0xaeab_3dfc_db58_53e8,
+            0xee02_5b1d_ee48_71af,
+            0x2bdf_518d_c6b0_9b20,
         ],
         [
-            0x9cc1_1b5b_e151_2230,
-            0xfed1_9e66_a229_1b4e,
-            0xf09b_e9b2_9f48_53f1,
-            0x4ca9_f631_4fef_d343,
-            0xef91_95a6_938d_4a64,
+            0x2feb_21cb_3b29_68ff,
+            0x0cfa_4101_6426_ba58,
+            0x8218_6b58_403f_765c,
+            0x14a5_7309_6b46_3706,
+            0x5848_7f1c_3ced_35a1,
         ],
         [
-            0xe76c_4a39_9f53_2c87,
-            0xac2d_7e04_cc91_2737,
-            0x3153_4642_59e2_e5e3,
-            0xa7bb_fc93_fc79_c23c,
-            0xcac3_2525_8b21_ebe8,
+            0x00e9_c06e_b9dc_feac,
+            0x94a0_ee3a_f53a_f542,
+            0x6fc9_61ca_d27f_9864,
+            0x7a04_0f2e_a442_5edc,
+            0xc644_6290_4b5e_6a28,
         ],
         [
-            0xe065_55ce_e01b_68a2,
-            0x4aaa_f693_aa7c_905f,
-            0x639a_b7a3_e6b7_4c9f,
-            0x58c4_62f3_2df1_224f,
-            0x231f_5350_6c3b_12eb,
+            0x87ed_81eb_1963_ac69,
+            0x7d78_50fc_f613_c02e,
+            0x6b1e_faac_031b_963e,
+            0x3054_5ffc_5be8_d0ed,
+            0xc604_0213_8b80_17c1,
         ],
     ];
     const GOLDEN_PIXEL: u64 = 0xccd4_542c_647b_c827;
