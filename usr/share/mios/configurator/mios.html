@@ -6334,9 +6334,10 @@ function gatherFromForm() {
       DATA[sec][key] = accounts;
     }
     else if (el.dataset.type === "json-array") {
-      const bindings = JSON.parse(el.value);
-      if (!Array.isArray(bindings) || bindings.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
-      DATA[sec][key] = bindings;
+      const values = JSON.parse(el.value);
+      if (!Array.isArray(values)) throw new Error("Setting requires a JSON array: " + el.dataset.key);
+      if (el.dataset.key === "keybindings.global.bindings" && values.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
+      DATA[sec][key] = values;
     }
     else if (el.type === "checkbox") DATA[sec][key] = el.checked;
     else if (el.dataset.array === "csv") {
