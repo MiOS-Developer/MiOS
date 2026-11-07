@@ -10631,7 +10631,7 @@ tests/test-m4-root-git-substrate.py	257	257	1	9	50364e06050c	STAY	local-scoped		
 tests/test-m4-root-git-substrate.py	260	260	1	10	5f063cfae7f6	STAY	local-scoped		0				0
 tests/test-m4-root-git-substrate.py	266	266	1	4	08678f9fb9a9	STAY	local-scoped		0				0
 tests/test-m5-sandbox-licensing.py	1	3	3	26	4d4dde428b93	STAY	ai-header		0				0
-tests/test-m5-sandbox-licensing.py	4	25	21	178	e09c9f4a6348	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:e09c9f4a6348	178	0
+tests/test-m5-sandbox-licensing.py	4	27	23	205	627eea35fb04	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:627eea35fb04	205	0
 tests/test-m5-sandbox-licensing.py	39	39	1	2	652a73c43ff5	STAY	inline-scoped		0				0
 tests/test-m5-sandbox-licensing.py	43	43	1	8	5f1b9e8c1728	STAY	local-scoped		0				0
 tests/test-m5-sandbox-licensing.py	72	72	1	12	7d8125cc8848	STAY	local-scoped		0				0
