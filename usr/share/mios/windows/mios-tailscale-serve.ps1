@@ -73,11 +73,20 @@ $forgePort     = Get-PortFromSsot 'MIOS_PORTS_FORGE_HTTP' 'forge_http' 8400
 $cockpitPort   = Get-PortFromSsot 'MIOS_PORTS_COCKPIT' 'cockpit' 8110
 $adguardPort   = Get-PortFromSsot 'MIOS_PORTS_ADGUARD_UI' 'adguard_ui' 8050
 $guacPort      = Get-PortFromSsot 'MIOS_PORT_GUACAMOLE_WEB' 'guacamole_web' 8220
-$searxngPort   = Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng' 8800
 $codePort      = Get-PortFromSsot 'MIOS_PORTS_CODE_SERVER' 'code_server' 8900
 $ttydBashPort  = Get-PortFromSsot 'MIOS_PORTS_TTYD_BASH' 'ttyd_bash' 8310
 $ttydPwshPort  = Get-PortFromSsot 'MIOS_PORTS_TTYD_POWERSHELL' 'ttyd_powershell' 8320
 $cephPort      = Get-PortFromSsot 'MIOS_PORTS_CEPH_DASHBOARD' 'ceph_dashboard' 8460
+
+# SearXNG has no last-resort literal: the one [ports].searxng (the resolver's
+# MIOS_PORTS_SEARXNG, then the layered Get-MiosSsotValue), or $null. With no
+# default the helper's [int] stays 0, never a port, so 0 means unresolved and
+# SearXNG is left out by name.
+$searxngPort   = Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng'
+if ($searxngPort -lt 1 -or $searxngPort -gt 65535) {
+    $searxngPort = $null
+    Write-Warning 'mios.toml [ports].searxng does not resolve from any layer; SearXNG is not served'
+}
 
 $SERVICES = @(
     @{ port=$openWebuiPort;  name='open-webui';  label='Open WebUI' }
@@ -88,7 +97,7 @@ $SERVICES = @(
     @{ port=$cockpitPort;    name='cockpit';     label='Cockpit (host console)' }
     @{ port=$adguardPort;    name='adguard';     label='AdGuard Home UI' }
     @{ port=$guacPort;       name='guacamole';   label='Guacamole (browser desktop)' }
-    @{ port=$searxngPort;    name='searxng';     label='SearXNG' }
+    if ($null -ne $searxngPort) { @{ port=$searxngPort;    name='searxng';     label='SearXNG' } }
     @{ port=$codePort;       name='code-server'; label='code-server (VS Code)' }
     @{ port=$ttydBashPort;   name='ttyd-bash';   label='ttyd (bash)' }
     @{ port=$ttydPwshPort;   name='ttyd-pwsh';   label='ttyd (PowerShell)' }
