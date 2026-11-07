@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided verification test suite for Milestone M4: Singular Root-Git Substrate,
+# AI-hint: Two-sided verification suite for Milestone M4: Singular Root-Git Substrate,
 # level-by-level .gitignore isolation, Windows host namespace protection, ADR-0030 file budget,
-# bare store .archive/, the one documented SKILLS archive, and standing verification gates.
+# bare store .archive/, the SKILLS archive, and standing verification gates.
 # AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/, SKILLS/MANIFEST.json, usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
 import hashlib
 import io
 import json
+import shutil
 import tarfile
 import tempfile
 import os
@@ -124,8 +125,8 @@ def deployed_root_reason(root: Path, container: str) -> str:
     return ""
 
 
-def _run_root_gate(root: Path):
-    return subprocess.run(["bash", str(ROOT / ROOT_GIT_GATE), str(root)], capture_output=True, text=True)
+def _run_root_gate(root: Path, gate: Path = ROOT / ROOT_GIT_GATE, env=None):
+    return subprocess.run(["bash", str(gate), str(root)], capture_output=True, text=True, env=env)
 
 
 def _ssot_repo(path: Path, track_ssot: bool = True) -> Path:
@@ -485,6 +486,57 @@ class TestSingularRootRepositoryAxiomAndHostProtection(unittest.TestCase):
                         self.assertIn(evidence, detail[0])
                     if outcome == "skipped":
                         self.assertIn("deployed-root axiom does not apply", detail[0])
+
+    def test_08_deployed_root_gate_lints_clean(self):
+        """[drift.lint].shell_directories skips usr/lib/greenboot, so the gate is shellchecked here at the
+        changed-shell bar ([drift.lint].shell_changed_severity, warning); a planted SC2034 must fail."""
+        shellcheck = shutil.which("shellcheck")
+        if not shellcheck:
+            self.assertNotEqual(os.environ.get("MIOS_DRIFT_REQUIRE_TOOLS"), "1",
+                                "shellcheck is required under MIOS_DRIFT_REQUIRE_TOOLS=1 and is not installed")
+            self.skipTest("shellcheck is not installed: the gate's lint was not measured")
+        source = (ROOT / ROOT_GIT_GATE).read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory(prefix="mios-root-gate-lint-") as temp:
+            for name, body, clean in (("gate", source, True),
+                                      ("planted", source.replace("set -euo pipefail\n",
+                                                                 "set -euo pipefail\nplanted_unused=1\n", 1), False)):
+                with self.subTest(name):
+                    self.assertEqual("planted_unused=1" in body, not clean)
+                    path = Path(temp, name + ".sh")
+                    path.write_text(body, encoding="utf-8")
+                    res = subprocess.run([shellcheck, "--severity=warning", str(path)], capture_output=True, text=True)
+                    self.assertEqual(res.returncode == 0, clean, res.stdout + res.stderr)
+                    if not clean:
+                        self.assertIn("SC2034", res.stdout)
+
+    def test_09_deployed_root_gate_trusts_the_root_it_checks(self):
+        """Greenboot runs as root over a root another user may own: like mios_root_merge, the gate passes
+        -c safe.directory for the root it checks. Planted: the same gate without it fails the overlay."""
+        if os.name == "nt":
+            self.skipTest("the deployed-root gate is a greenboot check; greenboot runs on Linux hosts only")
+        # Git's own test hook makes every repository look foreign-owned; no ambient safe.directory applies.
+        env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}
+        trust = '-c safe.directory="$real" '
+        source = (ROOT / ROOT_GIT_GATE).read_text(encoding="utf-8")
+        self.assertEqual(source.count(trust), 1, f"{ROOT_GIT_GATE} must trust the root it checks")
+        with tempfile.TemporaryDirectory(prefix="mios-root-gate-owner-") as temp:
+            overlay = _ssot_repo(Path(temp, "overlay"))
+            plain = subprocess.run(["git", "-C", str(overlay), "rev-parse", "--show-toplevel"],
+                                   capture_output=True, text=True, env=env)
+            self.assertNotEqual(plain.returncode, 0, "precondition: plain git must refuse a foreign-owned root")
+            self.assertIn("dubious ownership", plain.stderr)
+            trusted = _run_root_gate(overlay, env=env)
+            self.assertEqual(trusted.returncode, 0, trusted.stdout + trusted.stderr)
+            self.assertIn("OK: ", trusted.stdout)
+            bare = _run_root_gate(_ssot_repo(Path(temp, "no-ssot"), track_ssot=False), env=env)
+            self.assertNotEqual(bare.returncode, 0)
+            self.assertIn("does not track the vendor SSOT", bare.stdout)
+            planted = Path(temp, "untrusting-gate.sh")
+            planted.write_text(source.replace(trust, ""), encoding="utf-8")
+            refused = _run_root_gate(overlay, gate=planted, env=env)
+            self.assertNotEqual(refused.returncode, 0, "a gate without safe.directory must fail a foreign-owned root")
+            self.assertIn("is not the MiOS Git top level", refused.stdout)
 
 
 class TestAdr0030FileBudgetRatchet(unittest.TestCase):
