@@ -232,6 +232,73 @@ class TestConfiguratorSecurity(unittest.TestCase):
         old = {"keybindings.global.controller.nav.mon_tmux": {"LS_UP": "key:ALT+2", "unrelated": "kept"}}
         self.assertEqual(gather(old)["data"]["keybindings.global.controller.nav.mon_tmux"], {"unrelated": "kept"})
 
+    def test_controller_json_arrays_use_the_real_form_and_keep_binding_validation(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.by_key = {}
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag in ("textarea", "input") and a.get("data-type") == "json-array":
+                    self.by_key[a["data-key"]] = {"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": a["data-key"], "type": "json-array"}}
+        parser = Controls()
+        parser.feed(html.read_text())
+        session = {"name": "player-two", "controllers": ["/dev/input/event14"],
+                   "socket": "/run/user/1000/tmux-1000/mios-human", "session": "play",
+                   "pane": "%3", "ssh_host": "fixture@blade-two"}
+        binding = {"id": "fixture", "chord": "SUPER+F11", "action": "exec:true"}
+        values = {
+            "keybindings.global.bindings": [binding],
+            "keybindings.global.always_active_actions": [],
+            "keybindings.global.controller.sessions": [session],
+            "keybindings.global.controller.capture_navigation_contexts": ["terminal"],
+            "keybindings.global.controller.nav.tmux_sockets": ["mios-human", "mios-nested-fixture"],
+            "keybindings.global.controller.console.pointer_names": ["mios-vctl-pointer"],
+        }
+        for key, value in values.items():
+            self.assertIn(key, parser.by_key)
+            parser.by_key[key]["value"] = json.dumps(value)
+        controls = [parser.by_key[key] for key in values]
+        def gather():
+            initial = {"keybindings.global.controller": {"exclusive_grab": False,
+                "capture_fullscreen": False}, "identity": {"hostname": "kept"}}
+            return subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": controls, "initial": initial}),
+                capture_output=True, text=True, timeout=15)
+        result = gather()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = tomllib.loads(json.loads(result.stdout)["toml"])
+        self.assertEqual(parsed["identity"]["hostname"], "kept")
+        global_keys = parsed["keybindings"]["global"]
+        controller = global_keys["controller"]
+        self.assertEqual(global_keys["bindings"], [binding])
+        self.assertEqual(global_keys["always_active_actions"], [])
+        self.assertEqual(controller["sessions"], [session])
+        self.assertEqual(controller["nav"]["tmux_sockets"], values["keybindings.global.controller.nav.tmux_sockets"])
+        self.assertEqual(controller["capture_navigation_contexts"], ["terminal"])
+        self.assertEqual(controller["console"]["pointer_names"], ["mios-vctl-pointer"])
+        self.assertIs(controller["exclusive_grab"], False)
+        self.assertIs(controller["capture_fullscreen"], False)
+        for key in values:
+            with self.subTest(non_array=key):
+                control = parser.by_key[key]
+                saved = control["value"]
+                for invalid in ("{}", "null", '"text"', "42"):
+                    control["value"] = invalid
+                    rejected = gather()
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertIn("Setting requires a JSON array: " + key, rejected.stderr)
+                control["value"] = saved
+        control = parser.by_key["keybindings.global.bindings"]
+        for invalid in ([{}], ["not a binding"], [{"id": "fixture", "chord": "SUPER+F11"}]):
+            with self.subTest(invalid_binding=invalid):
+                control["value"] = json.dumps(invalid)
+                rejected = gather()
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("Global bindings require an array of binding objects", rejected.stderr)
+
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {
             "repos.external.nvidia-container-toolkit": {
