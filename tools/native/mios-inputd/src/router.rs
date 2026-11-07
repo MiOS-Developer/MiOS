@@ -4286,7 +4286,10 @@ mod nav_contract {
                 output.actions
             );
             assert!(
-                output.pointer.iter().any(|e| e.kind == EV_REL && e.value != 0),
+                output
+                    .pointer
+                    .iter()
+                    .any(|e| e.kind == EV_REL && e.value != 0),
                 "{context}: this must exercise actual pointer output"
             );
         }
