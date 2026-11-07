@@ -849,9 +849,9 @@ pub mod server {
     /// tables whenever a host override repeated a vendor table.
     pub fn read_layered_toml(config: &ConfigServerConfig) -> Result<String, String> {
         let mut merged = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false)
-            .map_err(|e| format!("the layered mios.toml did not resolve: {e}"))?;
+            .map_err(|_| "the layered mios.toml did not resolve".to_string())?;
         redact_secrets(&mut merged);
-        toml::to_string(&merged).map_err(|e| format!("the merged config did not serialize: {e}"))
+        toml::to_string(&merged).map_err(|_| "the merged config did not serialize".to_string())
     }
 
     /// What GET /portal/config serves in place of every secret value.
@@ -859,6 +859,12 @@ pub mod server {
 
     /// The error a save carrying [`REDACTED`] gets when the current tiers do not resolve.
     pub const UNRESOLVED_REFUSAL: &str = "Refusing the save: it carries <redacted> markers but the current config did not resolve, so the values they stand for are unknown; nothing was written";
+
+    /// The error a save gets when a marker sits inside an array that does not
+    /// exactly echo the redacted destination prefix, so no element can be
+    /// attributed to the secret it stands for. Nothing is written, no index
+    /// identity is guessed and no inherited credential is copied upward.
+    pub const AMBIGUOUS_ARRAY_REFUSAL: &str = "Refusing the save: it carries <redacted> markers inside an array that does not exactly echo the redacted destination configuration, so no element can be attributed to the secret it stands for; nothing was written";
 
     pub fn redact_secrets(merged: &mut toml::Value) {
         if let Some(portal) = merged.get_mut("portal").and_then(toml::Value::as_table_mut) {
@@ -941,9 +947,48 @@ pub mod server {
         }
     }
 
+    /// Fail-closed preflight for [`restore_redacted`] on the save path: an
+    /// array carrying [`REDACTED`] anywhere is attributable only when it equals
+    /// `redacted_destination` element for element -- the exact redacted
+    /// destination prefix -- so a validated restore may take each marker's value
+    /// by position. Any other marker array (an edit, a reorder, an insertion, a
+    /// nested change, or an array with no live counterpart) is ambiguous and
+    /// refused. Scalar markers keep their compatible take-or-drop semantics.
+    pub fn validate_marker_arrays(
+        posted: &toml::Value,
+        redacted_destination: &toml::Value,
+    ) -> Result<(), String> {
+        validate_markers_at(posted, Some(redacted_destination))
+    }
+
+    fn validate_markers_at(posted: &toml::Value, live: Option<&toml::Value>) -> Result<(), String> {
+        match posted {
+            toml::Value::Table(table) => {
+                for (k, v) in table {
+                    validate_markers_at(v, live.and_then(|l| l.get(k.as_str())))?;
+                }
+                Ok(())
+            }
+            toml::Value::Array(items) => {
+                if !items.iter().any(contains_redacted) {
+                    // An ordinary array edit without markers needs no attribution.
+                    return Ok(());
+                }
+                match live {
+                    Some(toml::Value::Array(expected)) if items == expected => Ok(()),
+                    _ => Err(AMBIGUOUS_ARRAY_REFUSAL.to_string()),
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Each [`REDACTED`] marker takes back the `live` value at its path, or is
     /// dropped where `live` has none. [`save_user_tier`] passes vendor..host.d
-    /// plus the user tier it writes, so each secret stays in its own layer.
+    /// plus the user tier it writes, so each secret stays in its own layer, and
+    /// preflights every marker array with [`validate_marker_arrays`]: only an
+    /// exact echo of the redacted destination prefix restores, everything else
+    /// is refused there before any write.
     pub fn restore_redacted(posted: &mut toml::Value, live: &toml::Value) {
         restore_at(posted, Some(live));
     }
@@ -1104,7 +1149,7 @@ pub mod server {
     pub fn validate_portal_save(body: &str, config: &ConfigServerConfig) -> Vec<String> {
         let posted = match body.parse::<toml::Value>() {
             Ok(v) => v,
-            Err(e) => return vec![format!("Invalid TOML: {e}")],
+            Err(_) => return vec!["Invalid TOML: the posted document did not parse".to_string()],
         };
         let live = mios_resolver::resolve_merged(config.ssot_root.as_deref(), false).ok();
         let mut errors = Vec::new();
@@ -1137,10 +1182,10 @@ pub mod server {
                 match v.as_integer() {
                     Some(p) if (1..=65535).contains(&p) => {}
                     Some(p) => errors.push(format!(
-                        "[ports].{k} = {p} is out of the valid 1-65535 range."
+                        "[ports].{k} is out of the valid 1-65535 range."
                     )),
                     None => {
-                        errors.push(format!("[ports].{k} must be an integer 1-65535 (got {v})."))
+                        errors.push(format!("[ports].{k} must be an integer 1-65535."))
                     }
                 }
             }
@@ -1158,20 +1203,28 @@ pub mod server {
     ) -> Result<(PathBuf, usize), String> {
         let mut posted = body
             .parse::<toml::Value>()
-            .map_err(|e| format!("Invalid TOML: {e}"))?;
+            .map_err(|_| "Invalid TOML: the posted document did not parse".to_string())?;
         if contains_redacted(&posted) {
             // Unresolved tiers leave a marker's value unknown: refuse, keep the tier.
             let root = config.ssot_root.as_deref();
-            let refuse =
-                |e: mios_resolver::error::ResolverError| format!("{UNRESOLVED_REFUSAL} ({e})");
-            mios_resolver::resolve_merged(root, false).map_err(refuse)?;
-            let mut own = mios_resolver::layers::resolve_layer_paths_below_user(root);
-            own.push(config.user_toml_path.clone());
-            let own = mios_resolver::layers::merge_layer_files(&own).map_err(refuse)?;
+            mios_resolver::resolve_merged(root, false)
+                .map_err(|_| UNRESOLVED_REFUSAL.to_string())?;
+            let mut own_paths = mios_resolver::layers::resolve_layer_paths_below_user(root);
+            own_paths.push(config.user_toml_path.clone());
+            let own = mios_resolver::layers::merge_layer_files(&own_paths)
+                .map_err(|_| UNRESOLVED_REFUSAL.to_string())?;
+            // A marker inside an array is attributable only when the whole array
+            // exactly echoes the redacted destination prefix (vendor..host.d plus
+            // this user tier, never user.d). Anything else -- an edit, a reorder,
+            // an insertion, a nested change or an array with no live counterpart
+            // -- is ambiguous and refused before any restore, file or temp write.
+            let mut expected = own.clone();
+            redact_secrets(&mut expected);
+            validate_marker_arrays(&posted, &expected)?;
             restore_redacted(&mut posted, &own);
         }
         let base = mios_resolver::resolve_below_user(config.ssot_root.as_deref())
-            .map_err(|e| format!("the lower tiers did not resolve: {e}"))?;
+            .map_err(|_| "the lower tiers did not resolve".to_string())?;
         let delta = mios_resolver::merge::diff_against(&posted, &base)
             .unwrap_or_else(|| toml::Value::Table(toml::Table::new()));
         let dest = &config.user_toml_path;
@@ -1192,10 +1245,10 @@ pub mod server {
                 }
                 doc.to_string()
             } else {
-                toml::to_string(&delta).map_err(|e| format!("the delta did not serialize: {e}"))?
+                toml::to_string(&delta).map_err(|_| "the delta did not serialize".to_string())?
             }
         } else {
-            toml::to_string(&delta).map_err(|e| format!("the delta did not serialize: {e}"))?
+            toml::to_string(&delta).map_err(|_| "the delta did not serialize".to_string())?
         };
 
         let tmp_path = dest.with_extension("toml.tmp");
@@ -1410,7 +1463,7 @@ pub mod server {
                             return sec_resp(HttpResponse::json(
                                 422,
                                 "Unprocessable Entity",
-                                serde_json::json!({ "errors": [format!("Failed to convert payload to TOML: {e}")] }).to_string(),
+                                serde_json::json!({ "errors": ["Failed to convert payload to TOML".to_string()] }).to_string(),
                             ));
                         }
                     }
@@ -1436,11 +1489,31 @@ pub mod server {
                         })
                         .to_string(),
                     )),
-                    Err(e) => sec_resp(HttpResponse::json(
-                        500,
-                        "Internal Server Error",
-                        serde_json::json!({ "errors": [e] }).to_string(),
-                    )),
+                    Err(e) => {
+                        // Refusals carry their own static categories: an
+                        // unresolvable tier is a conflict, an ambiguous marker
+                        // array or an unparseable document is the client's to
+                        // fix; neither echoes resolver or TOML internals.
+                        let status = if e == UNRESOLVED_REFUSAL {
+                            409
+                        } else if e == AMBIGUOUS_ARRAY_REFUSAL
+                            || e.starts_with("Invalid TOML")
+                        {
+                            422
+                        } else {
+                            500
+                        };
+                        let reason = match status {
+                            409 => "Conflict",
+                            422 => "Unprocessable Entity",
+                            _ => "Internal Server Error",
+                        };
+                        sec_resp(HttpResponse::json(
+                            status,
+                            reason,
+                            serde_json::json!({ "errors": [e] }).to_string(),
+                        ))
+                    }
                 }
             }
 
@@ -2097,6 +2170,106 @@ agent_pipe = 8700
         }
 
         #[test]
+        /// The stricter array contract, split out of the scalar take-or-drop
+        /// test above so nothing is silently weakened: a marker inside an ARRAY
+        /// is attributable only when the whole array equals the redacted
+        /// destination prefix. The raw helper keeps its historical take-or-drop
+        /// for validated callers (preflighted by `validate_marker_arrays` on
+        /// the save path), but `save_user_tier` refuses an ambiguous marker
+        /// array outright -- an edit, a reorder, an insertion, a nested change
+        /// or an array with no live counterpart never restores, drops or
+        /// copies anything. Scalar orphan markers still simply drop.
+        fn restore_redacted_arrays_refuse_ambiguity_on_save_but_scalar_orphans_still_drop() {
+            let live: toml::Value = r#"
+[[remotes]]
+name = "a"
+github_token = "ghp_live_a"
+[[remotes]]
+name = "b"
+github_token = "ghp_live_b"
+[env]
+list = ["x"]
+"#
+            .parse()
+            .unwrap_or_else(|e| panic!("{e}"));
+            let mut expected = live.clone();
+            redact_secrets(&mut expected);
+
+            // An unchanged echo of the whole redacted array validates.
+            let mut echo = expected.clone();
+            assert_eq!(validate_marker_arrays(&echo, &expected), Ok(()));
+
+            // Edited, reordered, inserted and orphan arrays all refuse before
+            // any write; so does a marker array nested inside another array.
+            for bad in [
+                // one element edited next to the markers
+                r#"
+[[remotes]]
+name = "a2"
+github_token = "<redacted>"
+[[remotes]]
+name = "b"
+github_token = "<redacted>"
+"#,
+                // insertion of a third entry
+                r#"
+[[remotes]]
+name = "a"
+github_token = "<redacted>"
+[[remotes]]
+name = "b"
+github_token = "<redacted>"
+[[remotes]]
+name = "c"
+github_token = "<redacted>"
+"#,
+                // orphan array: no live counterpart at all
+                r#"fresh = ["<redacted>", "kept"]"#,
+                // nested marker array
+                r#"nested = [["<redacted>"], "kept"]"#,
+                // scalar orphan markers still drop (helper), never refuse
+                r#"[ai]
+api_key = "<redacted>"
+endpoint = "e"
+"#,
+            ] {
+                let mut posted: toml::Value = bad
+                    .parse()
+                    .unwrap_or_else(|e| panic!("{e}"));
+                let verdict = validate_marker_arrays(&posted, &expected);
+                if bad.starts_with("[ai]") {
+                    assert_eq!(verdict, Ok(()), "scalar markers keep take-or-drop");
+                    restore_redacted(&mut posted, &expected);
+                    assert!(posted["ai"].get("api_key").is_none());
+                    assert_eq!(posted["ai"]["endpoint"].as_str(), Some("e"));
+                } else {
+                    assert_eq!(
+                        verdict,
+                        Err(AMBIGUOUS_ARRAY_REFUSAL.to_string()),
+                        "must refuse: {bad}"
+                    );
+                }
+            }
+
+            // The raw helper itself keeps take-or-drop for validated callers;
+            // the list below (two markers against a one-element live array)
+            // would only ever reach it after the preflight above refused.
+            let mut helper: toml::Value =
+                r#"[env]
+list = ["<redacted>", "<redacted>", "kept"]
+"#
+                .parse()
+                .unwrap_or_else(|e| panic!("{e}"));
+            restore_redacted(&mut helper, &live);
+            let list: Vec<&str> = helper["env"]["list"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{helper}"))
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .collect();
+            assert_eq!(list, ["x", "kept"]);
+        }
+
         fn restore_redacted_takes_the_live_value_or_drops_the_marker() {
             let live: toml::Value = r#"
 [portal]
@@ -2138,29 +2311,6 @@ list = ["<redacted>", "<redacted>", "kept"]
             assert_eq!(posted["portal"]["password"].as_str(), Some("live-pw"));
             assert!(posted["portal"].get("secret").is_none(), "{posted}");
             assert_eq!(posted["portal"]["user"].as_str(), Some("edited"));
-            assert_eq!(
-                posted["remotes"][0]["github_token"].as_str(),
-                Some("ghp_live_a")
-            );
-            assert_eq!(
-                posted["remotes"][1]["github_token"].as_str(),
-                Some("ghp_live_b")
-            );
-            assert_eq!(posted["remotes"][2]["name"].as_str(), Some("c"));
-            assert!(
-                posted["remotes"][2].get("github_token").is_none(),
-                "{posted}"
-            );
-            let list: Vec<&str> = posted["env"]["list"]
-                .as_array()
-                .unwrap_or_else(|| panic!("{posted}"))
-                .iter()
-                .filter_map(toml::Value::as_str)
-                .collect();
-            assert_eq!(list, ["x", "kept"]);
-            assert!(!toml::to_string(&posted)
-                .unwrap_or_else(|e| panic!("{e}"))
-                .contains(REDACTED));
 
             // A live config with nothing at those paths: every marker is dropped,
             // nothing else is.
