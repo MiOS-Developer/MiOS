@@ -601,26 +601,53 @@ against the room at larger zooms.
 
 The ASCII renderers overlay the voxels themselves with a bold ASCII layer, in
 every voxel view (ASCII, half-block, quadrant and braille; Room, Pet and Face;
-every size and zoom). Every visible Mon cell that is not the face's carries an
+every size and zoom), and ring every Mon with a black sprite outline, like an
+8-bit or 16-bit sprite's, so each species keeps a distinct silhouette at the
+smallest sizes.
+
+The black outline comes first:
+
+- Silhouette: every packed sample of the Mon whose screen neighbour (left,
+  right, above or below) shows no Mon is black. The ring is exactly one
+  sub-pixel wide and closed around the whole Mon (ears, tail and paws included).
+  Half-block, quadrant and braille draw these samples in their own block
+  geometry, so the ring stays one half-block, quadrant or braille dot thin. In
+  a cell the Mon shares with the scene, the rest of the cell keeps the scene
+  actually behind the pet (the floor or wall when there is one); in a full cell
+  the rest keeps the lit voxel. The ASCII renderer has one sample per cell: an
+  outline cell is black and carries an outline glyph oriented to the silhouette
+  (`-` `_` `|` `/` `\` `^` `v`, and `(` `)` for a tip to the side; never `<` `>`,
+  which read as arrows) in a dim grey, the dimmest grey that keeps a 3:1
+  contrast with the black. Beside a native face character the black ASCII cell
+  carries no glyph.
+- Overlaps: where a nearer part passes in front of a farther one (an ear over
+  the head, the head over the body, a paw or the tail over the body, a muzzle
+  over a cheek), the near part's samples along the boundary are black, one
+  sample wide. A minified Mon keeps only overlaps with a depth jump of at least
+  three voxels. Shallower ones fade in voxel by voxel between 0.35 and 0.65
+  cells per voxel, so zooming never adds or drops them all at once.
+- Sharp creases: where two parts of the model meet in a fold sharper than 60
+  degrees (a valley the surface turns through between two one-sided slopes about
+  two voxels long), the fold is black, thinned to one sample. A voxel staircase
+  over a smooth convex surface can fake at most 2 atan(1/2), about 53 degrees, so
+  gentle curvature is never blackened: it stays the ASCII depth contour.
+- A line is drawn once: an overlap or crease right beside the silhouette ring is
+  the ring's, and no line sits on the face plane around the kaomoji or in the
+  plain ring around a native face.
+- The black is pure black in every colour depth (the darkest colour a terminal
+  shows; a dark room backdrop is only a little lighter). Monochrome keeps its
+  glyph outlines (see below).
+
+Inside the outline every visible Mon cell that is not the face's carries an
 ASCII glyph: in half-block, quadrant and braille the glyph replaces the block,
 quadrant or braille geometry. Each cell takes the first of:
 
-- Silhouette, partial cells (the Mon and the scene share the cell): an outline
-  stroke shaped like the cell's Mon sub-pixels, in the navy outline ink over the
-  scene actually behind the pet (the floor or wall when there is one): a corner
-  tick (`` ` `` `'` `,` `.`) for one sub-pixel, `_` along a bottom half, `"` along a
-  top quarter, `-` along a top half, `|` along a column, `/` or `\` across a
-  diagonal.
-- Silhouette, full cells beside the scene: an outline oriented to the silhouette
-  over the lit voxel: `-` `_` `|` `/` `\` `^` `v`, and `(` `)` for a tip to the side
-  (never `<` `>`, which read as arrows). Where navy would not reach a 3:1
-  contrast with what is behind it, the outline is a contrasting shade of the
-  Mon's own hue. No outline glyph is ever drawn in a cell without a Mon sample.
-- Overlaps: where a nearer part overlaps a farther one (a paw over the body, an
-  ear over the head, a nose over the face), a line on the near part. A minified
-  Mon keeps only overlaps with a depth jump of at least three voxels. Shallower
-  ones fade in voxel by voxel between 0.35 and 0.65 cells per voxel, so zooming
-  never adds or drops them all at once.
+- Monochrome only (no colour planes for a black outline): partial cells (the Mon
+  and the scene share the cell) take an outline stroke shaped like the cell's Mon
+  sub-pixels: a corner tick (`` ` `` `'` `,` `.`) for one sub-pixel, `_` along a
+  bottom half, `"` along a top quarter, `-` along a top half, `|` along a column,
+  `/` or `\` across a diagonal. Full cells beside the scene take the oriented
+  outline glyph, and overlaps a line on the near part.
 - Creases and seams: where the surface turns at a cube edge, the darker face
   carries a line; where two materials meet, the lighter one does. Both fade in
   voxel by voxel between 0.8 and 1.6 cells per voxel, so minified Mons are not
@@ -634,8 +661,8 @@ quadrant or braille geometry. Each cell takes the first of:
   gradient: `-` across a vertical gradient, `(` or `)` across a horizontal one
   (open toward the nearer surface), `/` and `\` across the diagonals. Contours
   belong to the view: they slide over the surface as the camera orbits and hold
-  still on a still frame. Outlines stay in outline ink, contours in a shade of
-  their voxel, so the two never read as one.
+  still on a still frame. Outlines are black, contours a shade of their voxel,
+  so the two never read as one.
 - Shading texture: the configured ramp minus the line glyphs (`-` `_` `|` `/` `\`
   `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads as
   stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left with
@@ -649,20 +676,22 @@ quadrant or braille geometry. Each cell takes the first of:
   surfaces read heavier: the Mon's near third of depth (by coarse contour level)
   shades one glyph denser, its far third one lighter.
 
-Every glyph but the outline is a coloured shade of its voxel's own hue (keeping
+Every glyph but the outline's is a coloured shade of its voxel's own hue (keeping
 at least 55% saturation) over the voxel's lit colour, at a WCAG contrast of about
 3.6:1 for texture and 4.6:1 for lines: darker glyphs on lit faces, lighter glyphs
 on shadowed ones. The contrast eases toward 3:1, never below it while any shade
 reaches it, only where a shade near black or white would lose its hue. The
 256-colour and 16-colour palettes take the nearest palette shade that keeps 3:1
 (a chromatic one for a voxel with a hue); monochrome draws glyphs only. In plain
-ASCII colour a Mon cell's background is the voxel's lit colour.
+ASCII colour a Mon cell's background is the voxel's lit colour, or black on the
+outline.
 
 Every glyph decision depends only on the voxel a sample shows (its model-lattice
 identity, face orientation, material and depth) and on the voxels its
 neighbouring samples show. Texture, creases, seams and outlines therefore stay
 on their voxels through orbit, zoom, occlusion and resampling, and never follow a
-fixed screen pattern; depth contours and depth tiers follow the view's depth.
+fixed screen pattern; depth contours and depth tiers follow the view's depth, and
+the black outline follows the silhouette and overlaps the view shows.
 
 The overlay never obscures the expression. Within a halo around the kaomoji, as
 fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
@@ -707,8 +736,8 @@ matches at large ones:
 Room cells that hold only world surfaces keep their own rendering, and a cell the
 pet shares with the world keeps the world surface as its background. The world
 itself has no voxel identity yet and carries no overlay. With lighting disabled
-the overlay still marks every voxel over its flat palette colour: outlines,
-creases, contours and the voxel texture, in one light band. Without a lighting
+the overlay still marks every voxel over its flat palette colour: the black
+outline, creases, contours and the voxel texture, in one light band. Without a lighting
 model, and for classic pixel sprites, the renderers keep their exact legacy
 packing.
 

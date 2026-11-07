@@ -602,6 +602,13 @@ struct OverlaySample {
     /// Depth tier of the sample's coarse contour level within the Mon's depth
     /// range: -1 far, 0 middle, 1 near. Nearer surfaces shade heavier.
     tier: i8,
+    /// A sharp concave fold of the surface (`SHARP_FOLD`) runs through this
+    /// sample, thinned to one packed sample: `DIR_E | DIR_W` for a fold
+    /// across x (the line runs vertically), `DIR_N | DIR_S` across y.
+    fold: u8,
+    /// N/E/S/W: the neighbour is itself on the silhouette ring (beside the
+    /// empty scene), so a line drawn here would double the black outline.
+    beside_ring: u8,
 }
 
 /// What one frame's overlay samples share: the kaomoji texture and its fit
@@ -696,6 +703,9 @@ fn near_kaomoji(
     ) > 0.0
 }
 
+/// A screen neighbour's source pixel and the voxel it shows.
+type NeighbourSource = ((u32, u32), [i32; 3]);
+
 fn overlay_sample(
     sprite: &Sprite,
     projection: Projection,
@@ -714,6 +724,7 @@ fn overlay_sample(
     let cells_per_voxel =
         (span[0] / f64::from(face.packing.0)).min(span[1] / f64::from(face.packing.1)) as f32;
     let (spacing, fine_share) = contour_levels(extent, cells_per_voxel);
+    let (gradient, fold) = surface_slopes(sprite, (sx, sy), voxel, extent);
     let mut sample = OverlaySample {
         voxel,
         facet,
@@ -729,13 +740,17 @@ fn overlay_sample(
         face_plane: valid_face_uv(sprite, sx, sy).is_some()
             && near_kaomoji(sprite, projection, (x, y), face),
         iso: 0,
-        gradient: depth_gradient(sprite, (sx, sy), voxel, extent),
+        gradient,
         tier: face
             .depth_range
             .map_or(0, |range| depth_tier(depth, 2.0 * spacing, range)),
+        fold: 0,
+        beside_ring: 0,
     };
     // A fine-only level line belongs to this voxel's share of the octave.
     let fine_drawn = voxel_hash(voxel) < fine_share;
+    // The N/E/S/W screen neighbours' source pixels and voxels (Mon only).
+    let mut beside: [Option<NeighbourSource>; 4] = [None; 4];
     for (side, (ox, oy, bit)) in NEIGHBOUR_STEPS.into_iter().enumerate() {
         // Screen neighbours before the buffer origin are cropped, not empty.
         let (Some(nx), Some(ny)) = (x.checked_add_signed(ox), y.checked_add_signed(oy)) else {
@@ -749,12 +764,16 @@ fn overlay_sample(
             sample.outside |= bit;
             continue;
         };
-        if side >= 4 || (nsx, nsy) == (sx, sy) {
+        if side >= 4 {
             continue;
         }
         let Some((other_voxel, other_facet)) = sprite.surface_facet(nsx, nsy) else {
             continue;
         };
+        beside[side] = Some(((nsx, nsy), other_voxel));
+        if (nsx, nsy) == (sx, sy) {
+            continue;
+        }
         sample.neighbours[side] = (other_facet, other_material);
         let axis = usize::from(ox == 0);
         let lattice = (0..3)
@@ -788,6 +807,60 @@ fn overlay_sample(
             sample.crease |= bit;
         } else if other_material != material {
             sample.seam |= bit;
+        }
+    }
+    // A screen sample on the silhouette ring: Mon with an empty N/E/S/W
+    // neighbour (one before the buffer origin is cropped, not empty).
+    let ring_at = |(px, py): (u32, u32)| {
+        NEIGHBOUR_STEPS[..4].iter().any(|&(ox, oy, _)| {
+            match (px.checked_add_signed(ox), py.checked_add_signed(oy)) {
+                (Some(nx), Some(ny)) => projection.sample(sprite, nx, ny).is_none(),
+                _ => false,
+            }
+        })
+    };
+    let screen = |side: usize| {
+        let (ox, oy, _) = NEIGHBOUR_STEPS[side];
+        Some((x.checked_add_signed(ox)?, y.checked_add_signed(oy)?))
+    };
+    if sample.outside & (DIR_N | DIR_E | DIR_S | DIR_W) != 0 {
+        return Some(sample);
+    }
+    for side in 0..4 {
+        let bit = 1u8 << side;
+        if sample.contour & bit != 0 && screen(side).is_some_and(ring_at) {
+            sample.beside_ring |= bit;
+        }
+    }
+    // A sharp concave fold, thinned to one packed sample across it: the
+    // fold peaks here among the screen neighbours along its axis (the first
+    // sample of a magnified source pixel carries it), and it never runs
+    // alongside the silhouette ring.
+    let mut best = 0.0f32;
+    for (axis, (minus, plus, bits)) in [(3, 1, DIR_E | DIR_W), (0, 2, DIR_N | DIR_S)]
+        .into_iter()
+        .enumerate()
+    {
+        let own = fold[axis];
+        if own <= SHARP_FOLD || own <= best {
+            continue;
+        }
+        let fold_of = |side: usize| {
+            beside[side].map(|(source, voxel)| {
+                (
+                    source == (sx, sy),
+                    surface_slopes(sprite, source, voxel, extent).1[axis],
+                )
+            })
+        };
+        let first = fold_of(minus).is_none_or(|(same, other)| !same && own > other);
+        let peak = fold_of(plus).is_none_or(|(same, other)| same || own >= other);
+        let alongside = [minus, plus]
+            .into_iter()
+            .any(|side| screen(side).is_some_and(ring_at));
+        if first && peak && !alongside {
+            sample.fold = bits;
+            best = own;
         }
     }
     Some(sample)
@@ -826,12 +899,21 @@ fn depth_tier(depth: f64, coarse: f64, (far, near): (f64, f64)) -> i8 {
     }
 }
 
-/// Source-space depth gradient at `(sx, sy)` over a stencil of about two
-/// voxels (central differences, one-sided beside a gap), using only
-/// neighbours on the same continuous surface (lattice-near the voxel).
-fn depth_gradient(sprite: &Sprite, (sx, sy): (u32, u32), voxel: [i32; 3], extent: f64) -> [f32; 2] {
+/// Source-space depth gradient and concave fold at `(sx, sy)` over a stencil
+/// of about two voxels, using only neighbours on the same continuous surface
+/// (lattice-near the voxel). The gradient takes central differences
+/// (one-sided beside a gap). The fold along each axis is the angle the
+/// surface turns between its two one-sided slopes, in radians: positive in a
+/// valley (where two parts of the model meet), negative over a bump, 0 beside
+/// a gap.
+fn surface_slopes(
+    sprite: &Sprite,
+    (sx, sy): (u32, u32),
+    voxel: [i32; 3],
+    extent: f64,
+) -> ([f32; 2], [f32; 2]) {
     let Some(here) = sprite.depth_pixels(sx, sy) else {
-        return [0.0; 2];
+        return ([0.0; 2], [0.0; 2]);
     };
     let h = (2.0 * extent).round().clamp(1.0, 4.0) as i32;
     let reach = (f64::from(h) / extent.max(1.0e-3)).ceil() as i32 + 2;
@@ -851,10 +933,15 @@ fn depth_gradient(sprite: &Sprite, (sx, sy): (u32, u32), voxel: [i32; 3], extent
         (None, Some(m)) => (here - m) / step,
         (None, None) => 0.0,
     };
-    [
-        slope(at(h, 0), at(-h, 0)) as f32,
-        slope(at(0, h), at(0, -h)) as f32,
-    ]
+    let fold = |plus: Option<f64>, minus: Option<f64>| match (plus, minus) {
+        (Some(p), Some(m)) => (((p - here) / step).atan() - ((here - m) / step).atan()) as f32,
+        _ => 0.0,
+    };
+    let (east, west, south, north) = (at(h, 0), at(-h, 0), at(0, h), at(0, -h));
+    (
+        [slope(east, west) as f32, slope(south, north) as f32],
+        [fold(east, west), fold(south, north)],
+    )
 }
 
 fn projected_surface_light(
@@ -949,6 +1036,11 @@ fn silhouette_color(
 const LINE_GLYPHS: &[u8] = b"-_|/\\()^v<>=";
 /// Crease and seam lines fade in, voxel by voxel, over this cells-per-voxel band.
 const CREASE_BAND: (f32, f32) = (0.8, 1.6);
+/// A concave fold sharper than this is a black crease line (where two parts
+/// of the model meet): beyond the 2 atan(1/2) (about 53 degrees) that the
+/// half-voxel depth steps of a convex voxel staircase can fake between two
+/// one-sided slopes two voxels long, so a smooth bulge is never blackened.
+const SHARP_FOLD: f32 = std::f32::consts::FRAC_PI_3;
 /// Shallow contours fade in, voxel by voxel, over this cells-per-voxel band;
 /// below it a contour needs a three-voxel depth jump.
 const MINIFIED_CONTOUR_BAND: (f32, f32) = (0.35, 0.65);
@@ -1084,6 +1176,7 @@ fn contrast_ratio(a: [u8; 3], b: [u8; 3]) -> f32 {
 }
 
 /// The contrast of two terminal colours; None for the terminal's own default.
+#[cfg(test)]
 fn contrast_of(a: Color, b: Color) -> Option<f32> {
     Some(contrast_ratio(terminal_rgb(a)?, terminal_rgb(b)?))
 }
@@ -1227,41 +1320,44 @@ fn glyph_ink(base: Color, bg: Color, target: f32) -> Color {
     }
 }
 
-/// The first candidate separated from `bg` by `minimum`, else the most
-/// separated one (a 16-colour console may offer no adequate ink).
-fn legible_ink(bg: Color, minimum: u32, candidates: impl Iterator<Item = Color> + Clone) -> Color {
-    candidates
-        .clone()
-        .find(|color| *color != bg && separation(*color, bg) >= minimum)
-        .or_else(|| candidates.max_by_key(|color| separation(*color, bg)))
-        .unwrap_or(bg)
+/// The black of the sprite outline in the palette's colour depth: pure
+/// black, the darkest colour a terminal shows, so the outline is darker than
+/// every Mon colour and every scene colour.
+fn outline_black(colors: &Colors) -> Color {
+    match colors.palette.iter().find(|c| **c != Color::Reset) {
+        Some(Color::Rgb(..)) => Color::Rgb(0, 0, 0),
+        Some(Color::Indexed(_)) => quantize([0, 0, 0], Depth::Indexed),
+        Some(_) => Color::Black,
+        None => Color::Reset,
+    }
 }
 
-/// Silhouette ink, dark first: outline ink (the navy palette entry), then a
-/// contrasting shade of the material's own hue (`glyph_ink`), its brightest
-/// rim, then the palette. The first one
-/// both separated by the configured outline strength and at `MIN_CONTRAST`
-/// wins; else the first separated one; else the most separated.
-fn outline_ink(
-    lighting: &crate::lighting::VoxelLighting,
-    colors: &Colors,
-    base: Color,
-    against: Color,
-) -> Color {
-    let rims = [
-        colors.ink(0),
-        glyph_ink(base, against, LINE_CONTRAST),
-        shade_terminal_color(lighting, base, 180),
-    ];
-    let candidates = || rims.into_iter().chain(colors.palette.iter().copied());
-    let minimum = outline_separation(lighting);
-    candidates()
-        .find(|color| {
-            *color != against
-                && separation(*color, against) >= minimum
-                && contrast_of(*color, against).is_some_and(|c| c >= MIN_CONTRAST)
-        })
-        .unwrap_or_else(|| legible_ink(against, minimum, candidates()))
+/// The ASCII outline's glyph ink on its black cell: the dimmest grey of the
+/// outline's colour depth that still keeps `MIN_CONTRAST` with it, so the
+/// outline reads as a black, ASCII-textured line.
+fn outline_grey(black: Color) -> Color {
+    let Some(rgb) = terminal_rgb(black) else {
+        return black;
+    };
+    let levels: Vec<u8> = match black {
+        Color::Rgb(..) => (0..=255).collect(),
+        Color::Indexed(_) => [0u8, 95, 135, 175, 215, 255]
+            .into_iter()
+            .chain((0..24u8).map(|i| 8 + 10 * i))
+            .collect(),
+        _ => vec![0, 128, 192, 255],
+    };
+    let grey = levels
+        .into_iter()
+        .map(|level| [level; 3])
+        .filter(|grey| contrast_ratio(*grey, rgb) >= MIN_CONTRAST)
+        .min_by(|a, b| relative_luminance(*a).total_cmp(&relative_luminance(*b)))
+        .unwrap_or([255; 3]);
+    match black {
+        Color::Rgb(..) => Color::Rgb(grey[0], grey[1], grey[2]),
+        Color::Indexed(_) => quantize(grey, Depth::Indexed),
+        _ => quantize(grey, Depth::Ansi),
+    }
 }
 
 /// D-table: the side mask (N, E, S, W) of a boundary to its line glyph. A
@@ -1453,28 +1549,35 @@ fn block_glyph(renderer: Renderer, mask: u8) -> char {
 type CellSamples = ([Option<u8>; 8], [Option<SurfaceLight>; 8]);
 
 /// The bold voxel ASCII overlay for one terminal cell: every Mon cell that is
-/// not the face's carries an ASCII glyph, in every renderer (the glyph
-/// replaces the half-block, quadrant or braille geometry) and at every size:
+/// not the face's or the black outline's carries an ASCII glyph, in every
+/// renderer (the glyph replaces the half-block, quadrant or braille geometry)
+/// and at every size:
 ///
-/// 1. partial cells (Mon and scene share the cell): the shape-matching
-///    outline glyph (`partial_glyph`) in the navy silhouette ink over the
-///    scene behind (the world surface sharing the cell when there is one);
-/// 2. the silhouette: the D-table outline in silhouette ink over the lit
-///    voxel;
-/// 3. a nearer part over a farther one (paw over body, ear over head): a
-///    boundary line;
-/// 4. the face plane's quiet zone is the face pass's (unchanged);
-/// 5. creases (orientation changes) and seams (material changes) on one
+/// 1. the black sprite outline (colour depths): the silhouette ring (every
+///    packed sample beside the empty scene, one sample wide) and, off the
+///    face plane, the near side of an occlusion boundary (ear over head, paw
+///    over body) and a sharp concave fold where two parts meet. Packed
+///    renderers draw these samples in their own block geometry in black over
+///    the rest of the cell (the scene in a partial cell, else the lit voxel);
+///    the ASCII renderer draws a black cell carrying the oriented line glyph
+///    in a dim grey (`outline_grey`). Monochrome keeps its glyph outline:
+/// 2. partial cells (mono): the shape-matching outline glyph
+///    (`partial_glyph`);
+/// 3. the silhouette (mono): the D-table outline;
+/// 4. a nearer part over a farther one (mono): a boundary line;
+/// 5. the face plane's quiet zone is the face pass's (unchanged);
+/// 6. creases (orientation changes) and seams (material changes) on one
 ///    continuous surface: a boundary line, fading in voxel by voxel across
 ///    the crease band as the Mon is magnified;
-/// 6. iso-depth contours: a line along the contour, perpendicular to the
+/// 7. iso-depth contours: a line along the contour, perpendicular to the
 ///    depth gradient;
-/// 7. otherwise the shading texture (`texture_index`): density by light over
+/// 8. otherwise the shading texture (`texture_index`): density by light over
 ///    the full range, varied by voxel and material, heavier when nearer.
 ///
 /// Every glyph but the outline is a coloured shade of the voxel's own hue
 /// over the lit voxel (`glyph_ink`); monochrome draws glyphs only. A `quiet`
-/// cell (beside a native face character) is plain body colour.
+/// cell (beside a native face character) is plain body colour inside the
+/// silhouette ring.
 fn paint_overlay_cell(
     style: (Renderer, &Colors, &crate::lighting::VoxelLighting),
     (pixels, surface): CellSamples,
@@ -1532,22 +1635,25 @@ fn paint_overlay_cell(
     let mask = (0..count)
         .filter(|&i| mon[i].is_some())
         .fold(0u8, |mask, i| mask | (1 << i));
-    // Dominant facet: most samples, then nearer, then brighter.
-    let dominant = (0..count)
-        .filter(|&i| mon[i].is_some())
-        .max_by(|&a, &b| {
-            let n = |i: usize| {
-                (0..count)
-                    .filter(|&j| mon[j].is_some() && lit[j] == lit[i])
-                    .count()
-            };
-            let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
-            n(a).cmp(&n(b))
-                .then(depth(a).total_cmp(&depth(b)))
-                .then(brightness[a].cmp(&brightness[b]))
-                .then(b.cmp(&a))
-        })
-        .unwrap_or(first);
+    // Dominant facet among the samples `keep` admits: most samples, then
+    // nearer, then brighter.
+    let dominant_of = |keep: &dyn Fn(usize) -> bool| {
+        (0..count)
+            .filter(|&i| mon[i].is_some() && keep(i))
+            .max_by(|&a, &b| {
+                let n = |i: usize| {
+                    (0..count)
+                        .filter(|&j| mon[j].is_some() && keep(j) && lit[j] == lit[i])
+                        .count()
+                };
+                let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
+                n(a).cmp(&n(b))
+                    .then(depth(a).total_cmp(&depth(b)))
+                    .then(brightness[a].cmp(&brightness[b]))
+                    .then(b.cmp(&a))
+            })
+    };
+    let dominant = dominant_of(&|_| true).unwrap_or(first);
     let cells_per_voxel = mon[first].map_or(1.0, |o| {
         (o.voxel_span[0] / dx as f32).min(o.voxel_span[1] / dy as f32)
     });
@@ -1560,32 +1666,9 @@ fn paint_overlay_cell(
     // A line glyph on voxel sample `i` over the background `bg`: a strong
     // shade of its own hue.
     let line_ink = |i: usize, bg: Color| glyph_ink(base(i), bg, LINE_CONTRAST);
-
-    // 1. Partial: the silhouette's outline over the scene. Beside a native
-    // face character the exact block keeps the face's ring (the face pass's).
-    if (mask.count_ones() as usize) < count {
-        let ink = outline_ink(lighting, colors, base(dominant), scene);
-        let glyph = if quiet {
-            block_glyph(renderer, mask)
-        } else {
-            partial_glyph(renderer, mask)
-        };
-        paint(glyph, ink, scene);
-        return;
-    }
-    // Beside a native face character: plain body colour.
-    if quiet && !mono {
-        let glyph = if count > 1 {
-            block_glyph(renderer, mask)
-        } else {
-            ' '
-        };
-        paint(glyph, lit[dominant], lit[dominant]);
-        return;
-    }
-
-    // 2. Rim: a sample whose screen neighbour shows no Mon (in a full cell,
-    // always beyond the cell's border).
+    let partial = (mask.count_ones() as usize) < count;
+    // The silhouette ring's sides: a sample whose screen neighbour shows no
+    // Mon (in a full cell, always beyond the cell's border).
     let rim = (0..count).fold(0u8, |sides, i| {
         sides | mon[i].map_or(0, |o| o.outside & (DIR_N | DIR_E | DIR_S | DIR_W))
     });
@@ -1596,14 +1679,8 @@ fn paint_overlay_cell(
         shows_mon(count - dx, DIR_SW),
         shows_mon(0, DIR_NW),
     ];
-    if let Some(glyph) = outline_glyph(rim, corners) {
-        let bg = lit[dominant];
-        paint(glyph, outline_ink(lighting, colors, base(dominant), bg), bg);
-        return;
-    }
-
-    // 3. A nearer part over a farther one (paw over body, ear over head, nose
-    // over face). Never drawn on the face plane itself. Minified, only deep
+    // A nearer part over a farther one (paw over body, ear over head, nose
+    // over face), never on the face plane itself. Minified, only deep
     // contours remain; across the band each voxel gains its shallow contours
     // at its own share, so a zoom never drops or adds every one at once.
     let shallow = smoothstep(MINIFIED_CONTOUR_BAND, cells_per_voxel);
@@ -1616,20 +1693,100 @@ fn paint_overlay_cell(
             }
         })
     });
+
+    // 1. The black sprite outline. Beside a native face character only the
+    // silhouette ring is drawn (the face keeps its plain ring inside it).
+    if !mono {
+        let lines: [u8; 8] = std::array::from_fn(|i| {
+            mon[i].map_or(0, |o| {
+                let ring = o.outside & (DIR_N | DIR_E | DIR_S | DIR_W);
+                if ring != 0 || quiet || o.face_plane {
+                    return ring;
+                }
+                let occlusion = contours[i] & !o.beside_ring;
+                if occlusion != 0 {
+                    occlusion
+                } else {
+                    o.fold
+                }
+            })
+        });
+        let black = (0..count)
+            .filter(|&i| lines[i] != 0)
+            .fold(0u8, |mask, i| mask | (1 << i));
+        let ink = outline_black(colors);
+        if partial {
+            // The outline's samples over the scene; a Mon sample behind a
+            // foreground world object (no ring there) keeps its exact block.
+            if black == 0 {
+                paint(block_glyph(renderer, mask), lit[dominant], scene);
+            } else {
+                paint(block_glyph(renderer, black), ink, scene);
+            }
+            return;
+        }
+        if black != 0 {
+            if count == 1 {
+                // Beside a native face character the black cell stays plain.
+                let glyph = if quiet {
+                    Some(' ')
+                } else if rim != 0 {
+                    outline_glyph(rim, corners)
+                } else {
+                    outline_glyph(lines[0], [false; 4])
+                };
+                paint(glyph.unwrap_or('.'), outline_grey(ink), ink);
+            } else {
+                let rest = dominant_of(&|i| lines[i] == 0).map_or(ink, |i| lit[i]);
+                paint(block_glyph(renderer, black), ink, rest);
+            }
+            return;
+        }
+    }
+
+    // 2. Partial (mono): the silhouette's outline glyph. Beside a native
+    // face character the exact block keeps the face's ring.
+    if partial {
+        let glyph = if quiet {
+            block_glyph(renderer, mask)
+        } else {
+            partial_glyph(renderer, mask)
+        };
+        paint(glyph, scene, scene);
+        return;
+    }
+    // Beside a native face character: plain body colour.
+    if quiet && !mono {
+        let glyph = if count > 1 {
+            block_glyph(renderer, mask)
+        } else {
+            ' '
+        };
+        paint(glyph, lit[dominant], lit[dominant]);
+        return;
+    }
+    if mono {
+        // 3. Rim (mono): the D-table outline.
+        if let Some(glyph) = outline_glyph(rim, corners) {
+            paint(glyph, scene, scene);
+            return;
+        }
+        // 4. A nearer part over a farther one (mono): a boundary line.
+        if (0..count).any(|i| contours[i] != 0) {
+            if let Some(glyph) = boundary_glyph(&contours, &mon, (dx, dy)) {
+                paint(glyph, scene, scene);
+                return;
+            }
+        }
+    }
     let nearest = |marks: &[u8; 8]| {
         (0..count).filter(|&i| marks[i] != 0).max_by(|&a, &b| {
             let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
             depth(a).total_cmp(&depth(b))
         })
     };
-    if let Some(near) = nearest(&contours) {
-        if let Some(glyph) = boundary_glyph(&contours, &mon, (dx, dy)) {
-            paint(glyph, line_ink(near, lit[near]), lit[near]);
-            return;
-        }
-    }
 
-    // 4. Quiet zone: the kaomoji's face plane is the face pass's. Monochrome
+    // 5. Quiet zone: the kaomoji's face plane is the face pass's. Monochrome
     // and half-block keep their legacy packing; quadrant and braille their
     // full pattern over the voxel's lit colour; ASCII the plain lit voxel.
     if (0..count).any(|i| mon[i].is_some_and(|o| o.face_plane)) {
@@ -1645,7 +1802,7 @@ fn paint_overlay_cell(
         return;
     }
 
-    // 5. Crease (orientation change) on the darker face; seam (material
+    // 6. Crease (orientation change) on the darker face; seam (material
     // change) on the lighter material. Both fade in voxel by voxel across the
     // crease band.
     let band = smoothstep(CREASE_BAND, cells_per_voxel);
@@ -1683,7 +1840,7 @@ fn paint_overlay_cell(
         }
     }
 
-    // 6. Iso-depth contour: along the contour, across the depth gradient
+    // 7. Iso-depth contour: along the contour, across the depth gradient
     // (summed over the cell's contour samples).
     let iso: [u8; 8] = std::array::from_fn(|i| mon[i].map_or(0, |o| o.iso));
     if let Some(near) = nearest(&iso) {
@@ -1700,7 +1857,7 @@ fn paint_overlay_cell(
         }
     }
 
-    // 7. Shading texture over the full configured light range.
+    // 8. Shading texture over the full configured light range.
     let Some(o) = mon[dominant] else {
         return;
     };
@@ -8426,6 +8583,8 @@ mod legible_silhouette_tests {
             iso: 0,
             gradient: [0.0; 2],
             tier: 0,
+            fold: 0,
+            beside_ring: 0,
         }
     }
 
@@ -8433,6 +8592,10 @@ mod legible_silhouette_tests {
         let mut samples = [None; 8];
         samples[0] = surface;
         samples
+    }
+
+    fn first_char(cell: &ratatui::buffer::Cell) -> char {
+        cell.symbol().chars().next().unwrap_or(' ')
     }
 
     #[test]
@@ -8650,20 +8813,42 @@ mod legible_silhouette_tests {
                 quiet_cell.symbol()
             );
             if count > 1 {
+                // A partial cell's Mon samples beside the empty one are the
+                // silhouette ring: black, in their own block geometry, over
+                // the scene. Behind a foreground world object (no ring) the
+                // Mon keeps its exact block in its lit colour.
                 let mut partial = full;
                 partial[count - 1] = None;
-                let cell = paint(
+                let mut edge = voxel(shadow, 1.0);
+                edge.outside = DIR_S | DIR_E;
+                let mon = (1u8 << (count - 1)) - 1;
+                let cell = paint(partial, cell_of(shadow, 80, Some(edge)), [false; 8]);
+                assert_eq!(
+                    cell.bg, colors.background,
+                    "{renderer:?}: partial keeps the scene"
+                );
+                assert_eq!(
+                    (cell.fg, first_char(&cell)),
+                    (Color::Rgb(0, 0, 0), block_glyph(renderer, mon)),
+                    "{renderer:?}: the partial cell's ring is black block geometry"
+                );
+                let hidden = paint(
                     partial,
                     cell_of(shadow, 80, Some(voxel(shadow, 1.0))),
                     [false; 8],
                 );
                 assert_eq!(
-                    cell.bg, colors.background,
-                    "{renderer:?}: partial keeps the scene"
-                );
-                assert!(
-                    separation(cell.fg, colors.background) >= outline_separation(&light),
-                    "{renderer:?}: partial outline ink separates from the scene"
+                    (hidden.fg, hidden.bg, first_char(&hidden)),
+                    (
+                        shade_terminal_color(
+                            &light,
+                            colors.ink(1),
+                            light.brightness(shadow, 80, false)
+                        ),
+                        colors.background,
+                        block_glyph(renderer, mon)
+                    ),
+                    "{renderer:?}: a Mon behind a foreground object keeps its block"
                 );
             }
         }
@@ -10430,13 +10615,16 @@ mod voxel_overlay_tests {
     }
 
     /// A1 (rewritten for the bold overlay; it replaces
-    /// `full_voxels_carry_ascii_shading_in_every_renderer`): every visible
-    /// Mon cell that is not the face's carries a non-space ASCII glyph, never
-    /// block, quadrant or braille geometry, in every renderer and colour
-    /// depth, at sizes from 24x10 to 200x56 and zooms from 50% to 400%. The
-    /// face's cells are the quiet face zone (the face plane around the fitted
-    /// kaomoji) and the plain ring beside a native face. Colour ASCII fills
-    /// every full voxel cell with its lit colour.
+    /// `full_voxels_carry_ascii_shading_in_every_renderer`; the black outline
+    /// step then took its cells out): every visible Mon cell that is neither
+    /// the face's nor the black outline's carries a non-space ASCII glyph,
+    /// never block, quadrant or braille geometry, in every renderer and
+    /// colour depth, at sizes from 24x10 to 200x56 and zooms from 50% to
+    /// 400%. The face's cells are the quiet face zone (the face plane around
+    /// the fitted kaomoji) and the plain ring beside a native face; the
+    /// outline's cells (any black sub-pixel, colour depths) are judged by
+    /// `the_black_outline_rings_every_mon_one_sub_pixel_wide`. Colour ASCII
+    /// fills every full voxel cell off the outline with its lit colour.
     #[test]
     fn every_visible_mon_cell_carries_an_ascii_glyph_at_every_size_and_zoom() {
         let config = Config::sample().unwrap();
@@ -10483,8 +10671,11 @@ mod voxel_overlay_tests {
                                     {
                                         continue;
                                     }
-                                    cells += 1;
                                     let cell = &buf[(col, row)];
+                                    if depth != Depth::Mono && black_mask(renderer, cell) != 0 {
+                                        continue;
+                                    }
+                                    cells += 1;
                                     let ok = ascii_glyph(cell);
                                     glyphed += u64::from(ok);
                                     assert!(
@@ -10552,21 +10743,21 @@ mod voxel_overlay_tests {
         })
     }
 
-    /// A2 (rewritten for the bold overlay): every silhouette cell carries an
-    /// oriented ASCII outline glyph at every size, in every renderer: a
-    /// partial cell (Mon and scene share it) the shape-matching stroke over
-    /// the scene, a full cell with a sample beside the scene the D-table line
-    /// over the lit voxel, both in outline ink separated from what is behind
-    /// it. The glyph's boundary normal agrees with the ground-truth outward
-    /// normal (from the empty screen neighbours) within 45 degrees.
+    /// A2 (rewritten for the bold overlay, then for the black outline; it
+    /// replaces `every_mon_has_oriented_ascii_outlines_at_every_size`): every
+    /// silhouette cell of all 16 species carries the black outline at every
+    /// size. Its samples beside the scene show black; in half-block, quadrant
+    /// and braille as the cell's own block geometry (a partial cell keeps the
+    /// scene on its other sub-pixels), in ASCII as a black cell carrying an
+    /// oriented outline glyph in a grey that keeps 3:1 on the black, whose
+    /// boundary normal agrees with the ground-truth outward normal (from the
+    /// empty screen neighbours) within 45 degrees.
     #[test]
-    fn every_mon_has_oriented_ascii_outlines_at_every_size() {
+    fn every_mon_has_a_black_outline_with_oriented_ascii_glyphs_at_every_size() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
-        let light = colors.lighting.clone().unwrap();
-        let minimum = outline_separation(&light);
-        let (mut oriented, mut judged) = ([0u32; 4], [0u32; 4]);
-        let mut silhouette = 0u32;
+        let (mut oriented, mut judged) = (0u32, 0u32);
+        let mut silhouette = [0u32; 4];
         for shape in 0..16 {
             for stage in [Stage::Baby, Stage::Adult] {
                 for style in [SpriteStyle::SixteenBit, SpriteStyle::EightBit] {
@@ -10580,15 +10771,14 @@ mod voxel_overlay_tests {
                                     );
                                     let (projection, buf, scene, _) =
                                         project(&sprite, renderer, &colors, framing, size);
-                                    let ring = native_quiet_cells(
+                                    let native = native_quiet_cells(
                                         &sprite, renderer, &colors, projection, buf.area, None,
                                     );
                                     let count = samples(renderer, 0, 0).count();
                                     for row in 0..size.1 {
                                         for col in 0..size.0 {
                                             let cell = &buf[(col, row)];
-                                            let (mut mask, mut tagged, mut rim) =
-                                                (0u8, true, false);
+                                            let (mut mask, mut tagged, mut rim) = (0u8, true, 0u8);
                                             let mut normal = [0.0f64; 2];
                                             for (i, px, py) in samples(renderer, col, row) {
                                                 if projection.sample(&sprite, px, py).is_none() {
@@ -10597,9 +10787,11 @@ mod voxel_overlay_tests {
                                                 mask |= 1 << i;
                                                 tagged &=
                                                     identity(&sprite, projection, px, py).is_some();
-                                                rim |= FOUR.into_iter().any(|offset| {
+                                                if FOUR.into_iter().any(|offset| {
                                                     empty(&sprite, projection, px, py, offset)
-                                                });
+                                                }) {
+                                                    rim |= 1 << i;
+                                                }
                                                 for offset in EIGHT {
                                                     if empty(&sprite, projection, px, py, offset) {
                                                         let v = display(renderer, offset);
@@ -10611,27 +10803,57 @@ mod voxel_overlay_tests {
                                             }
                                             let partial =
                                                 mask != 0 && (mask.count_ones() as usize) < count;
-                                            if !tagged
-                                                || !(partial || rim)
-                                                || ring.binary_search(&(col, row)).is_ok()
-                                            {
+                                            if !tagged || !(partial || rim != 0) {
                                                 continue;
                                             }
-                                            silhouette += 1;
-                                            let glyph = first(cell);
-                                            assert!(
-                                                OUTLINE.contains(glyph),
-                                                "{label}: silhouette {col},{row} mask {mask:#b} drew {glyph:?}"
+                                            silhouette[r] += 1;
+                                            let black = black_mask(renderer, cell);
+                                            assert_eq!(
+                                                black & rim,
+                                                rim,
+                                                "{label}: silhouette {col},{row} samples {rim:#b} are not all black ({black:#b})"
                                             );
-                                            if partial {
-                                                assert_eq!(
-                                                    cell.bg, scene,
-                                                    "{label}: partial {col},{row} keeps the scene"
+                                            if renderer != Renderer::Ascii {
+                                                let pattern = block_pattern(renderer, first(cell));
+                                                assert!(
+                                                    pattern.is_some(),
+                                                    "{label}: silhouette {col},{row} drew {:?}, not block geometry",
+                                                    cell.symbol()
                                                 );
+                                                if partial {
+                                                    // The scene's sub-pixels show the scene.
+                                                    let ink = pattern.unwrap_or(0);
+                                                    for i in
+                                                        (0..count).filter(|i| mask & (1 << i) == 0)
+                                                    {
+                                                        let shown = if ink & (1 << i) != 0 {
+                                                            cell.fg
+                                                        } else {
+                                                            cell.bg
+                                                        };
+                                                        assert_eq!(
+                                                            shown, scene,
+                                                            "{label}: partial {col},{row} keeps the scene"
+                                                        );
+                                                    }
+                                                }
+                                                continue;
                                             }
+                                            // Beside a native face character the
+                                            // black cell stays plain.
+                                            if native.binary_search(&(col, row)).is_ok() {
+                                                continue;
+                                            }
+                                            let glyph = first(cell);
+                                            let fg = terminal_rgb(cell.fg).unwrap();
                                             assert!(
-                                                separation(cell.fg, cell.bg) >= minimum,
-                                                "{label}: outline {col},{row} ink {:?} on {:?}",
+                                                OUTLINE.contains(glyph)
+                                                    && near_black(cell.bg)
+                                                    && fg[0] == fg[1]
+                                                    && fg[1] == fg[2]
+                                                    && contrast_of(cell.fg, cell.bg)
+                                                        .is_some_and(|c| c >= 3.0),
+                                                "{label}: ASCII outline {col},{row} drew {glyph:?} {:?} on {:?}",
                                                 cell.fg,
                                                 cell.bg
                                             );
@@ -10641,11 +10863,11 @@ mod voxel_overlay_tests {
                                             else {
                                                 continue;
                                             };
-                                            judged[r] += 1;
+                                            judged += 1;
                                             let dot = (normal[0] * axis[0] + normal[1] * axis[1])
                                                 / length;
                                             let dot = if signed { dot } else { dot.abs() };
-                                            oriented[r] += u32::from(
+                                            oriented += u32::from(
                                                 dot >= std::f64::consts::FRAC_1_SQRT_2 - 1e-6,
                                             );
                                         }
@@ -10657,30 +10879,17 @@ mod voxel_overlay_tests {
                 }
             }
         }
-        let share = |o: u32, j: u32| f64::from(o) / f64::from(j.max(1));
-        let total = share(oriented.iter().sum(), judged.iter().sum());
+        let share = f64::from(oriented) / f64::from(judged.max(1));
         println!(
-            "A2 silhouette cells outlined: {silhouette}; orientation agreement {total:.3} (ascii {:.3}, half-block {:.3}, quadrant {:.3}, braille {:.3})",
-            share(oriented[0], judged[0]),
-            share(oriented[1], judged[1]),
-            share(oriented[2], judged[2]),
-            share(oriented[3], judged[3])
+            "A2 silhouette cells outlined in black (ascii, half-block, quadrant, braille): {silhouette:?}; ASCII outline orientation agreement {share:.3} of {judged}"
         );
         assert!(
-            judged.iter().all(|j| *j > 1000),
-            "the matrix must judge many outline cells in every renderer ({judged:?})"
+            silhouette.iter().all(|n| *n > 10_000) && judged > 1000,
+            "the matrix must judge many outline cells in every renderer ({silhouette:?}, {judged})"
         );
-        for r in 0..4 {
-            assert!(
-                share(oriented[r], judged[r]) >= 0.8,
-                "{:?} outline orientation agrees on only {:.3}",
-                RENDERERS[r],
-                share(oriented[r], judged[r])
-            );
-        }
         assert!(
-            total >= 0.85,
-            "outline orientation agrees on only {total:.3}"
+            share >= 0.85,
+            "ASCII outline orientation agrees on only {share:.3}"
         );
     }
 
@@ -10732,6 +10941,8 @@ mod voxel_overlay_tests {
                         iso: 0,
                         gradient: [0.0; 2],
                         tier: 0,
+                        fold: 0,
+                        beside_ring: 0,
                     };
                     let pixels: [Option<u8>; 8] = std::array::from_fn(|i| (i < count).then_some(8));
                     let surface: [Option<SurfaceLight>; 8] = std::array::from_fn(|i| {
@@ -11135,6 +11346,8 @@ mod voxel_overlay_tests {
                     iso: 0,
                     gradient: [0.0; 2],
                     tier: 0,
+                    fold: 0,
+                    beside_ring: 0,
                 };
                 let ink: [bool; 8] = std::array::from_fn(|i| i < count && ink_mask & (1 << i) != 0);
                 let pixels: [Option<u8>; 8] =
@@ -11175,6 +11388,30 @@ mod voxel_overlay_tests {
                 let pixels: [Option<u8>; 8] = std::array::from_fn(|i| {
                     (i < count).then_some(if pet_mask & (1 << i) != 0 { 8 } else { 14 })
                 });
+                // A pet sample beside a world sample in the cell shows the
+                // floor where the pet is absent: the silhouette ring.
+                let outside = |i: usize| {
+                    let (x, y) = (i % usize::from(dx), i / usize::from(dx));
+                    let world_at = |x: usize, y: usize| {
+                        x < usize::from(dx)
+                            && y < usize::from(dy)
+                            && pet_mask & (1 << (y * usize::from(dx) + x)) == 0
+                    };
+                    let mut bits = 0u8;
+                    if y > 0 && world_at(x, y - 1) {
+                        bits |= DIR_N;
+                    }
+                    if world_at(x + 1, y) {
+                        bits |= DIR_E;
+                    }
+                    if world_at(x, y + 1) {
+                        bits |= DIR_S;
+                    }
+                    if x > 0 && world_at(x - 1, y) {
+                        bits |= DIR_W;
+                    }
+                    bits
+                };
                 let surface = |overlay: bool| -> [Option<SurfaceLight>; 8] {
                     std::array::from_fn(|i| {
                         let pet = i < count && pet_mask & (1 << i) != 0;
@@ -11189,7 +11426,7 @@ mod voxel_overlay_tests {
                                 material: 8,
                                 depth: 0.0,
                                 voxel_span: [1.0; 2],
-                                outside: 0,
+                                outside: outside(i),
                                 contour: 0,
                                 deep_contour: 0,
                                 crease: 0,
@@ -11199,6 +11436,8 @@ mod voxel_overlay_tests {
                                 iso: 0,
                                 gradient: [0.0; 2],
                                 tier: 0,
+                                fold: 0,
+                                beside_ring: 0,
                             }),
                         })
                     })
@@ -11228,7 +11467,11 @@ mod voxel_overlay_tests {
                         cell.bg, world,
                         "{renderer:?} pet {pet_mask:#b}: the floor behind the pet was erased"
                     );
-                    assert!(separation(cell.fg, world) >= outline_separation(&light));
+                    assert_eq!(
+                        cell.fg,
+                        Color::Rgb(0, 0, 0),
+                        "{renderer:?} pet {pet_mask:#b}: the silhouette is black over the floor"
+                    );
                 }
             }
         }
@@ -11373,11 +11616,12 @@ mod voxel_overlay_tests {
         }
     }
 
-    /// Lighting disabled (rewritten for the bold overlay): the overlay still
-    /// marks every voxel over flat colour, so every visible non-face Mon cell
-    /// carries an ASCII glyph (outlines, creases, contours and a texture by
-    /// voxel), a full ASCII voxel takes its flat palette colour as background
-    /// and a partial cell keeps the scene. No lighting model at all and
+    /// Lighting disabled (rewritten for the bold overlay, then for the black
+    /// outline): the overlay still marks every voxel over flat colour, so
+    /// every visible non-face Mon cell carries the black outline or an ASCII
+    /// glyph (creases, contours and a texture by voxel), a full ASCII voxel
+    /// off the outline takes its flat palette colour as background and a
+    /// partial cell keeps the scene. No lighting model at all and
     /// classic pixel sprites keep the exact legacy packing; monochrome
     /// overlay cells carry glyphs only.
     #[test]
@@ -11421,6 +11665,23 @@ mod voxel_overlay_tests {
                                 continue;
                             }
                             let cell = &on[(col, row)];
+                            let partial =
+                                (mask.count_ones() as usize) < samples(renderer, 0, 0).count();
+                            // The black outline (colour depths): its samples in
+                            // block geometry over the scene or the flat voxel;
+                            // in ASCII a black cell with an outline glyph.
+                            // (A 16-colour voxel can itself quantize to black:
+                            // an ASCII outline cell carries an outline glyph.)
+                            let outline = depth != Depth::Mono
+                                && black_mask(renderer, cell) != 0
+                                && (renderer != Renderer::Ascii || OUTLINE.contains(first(cell)));
+                            if outline {
+                                outlines += 1;
+                                if partial {
+                                    assert_eq!(cell.bg, scene, "{label}: partial {col},{row}");
+                                }
+                                continue;
+                            }
                             assert!(
                                 ascii_glyph(cell),
                                 "{label}: Mon cell {col},{row} drew {:?}",
@@ -11434,8 +11695,6 @@ mod voxel_overlay_tests {
                             if depth == Depth::Mono {
                                 continue;
                             }
-                            let partial =
-                                (mask.count_ones() as usize) < samples(renderer, 0, 0).count();
                             if partial {
                                 assert_eq!(cell.bg, scene, "{label}: partial {col},{row}");
                             } else if renderer == Renderer::Ascii {
@@ -11511,22 +11770,20 @@ mod voxel_overlay_tests {
         cell.bg == navy || (cell.fg == navy && cell.symbol() != " ")
     }
 
-    /// R1 (rewritten for the bold overlay; it replaces
-    /// `packed_bodies_keep_two_tone_detail_and_the_navy_silhouette`): packed
-    /// renderers trade their blocks for ASCII glyphs and keep the navy
-    /// silhouette. The reference is the legacy lit packing (the sprite without
-    /// voxel identity). Every legacy two-tone half-block cell now carries an
-    /// ASCII glyph over one of the Mon's own colours; the legacy navy
-    /// outline cells keep a navy outline (at least 75% per frame, reported)
-    /// or, where navy would not read on the lit voxel, an outline glyph in a
-    /// contrasting ink (all of them).
+    /// R1 (rewritten for the bold overlay, then for the black outline; it
+    /// replaces `packed_bodies_trade_blocks_for_ascii_and_keep_the_navy_silhouette`):
+    /// packed renderers trade their blocks for ASCII glyphs and turn the
+    /// legacy navy silhouette black. The reference is the legacy lit packing
+    /// (the sprite without voxel identity). Every legacy two-tone half-block
+    /// cell now carries an ASCII glyph over one of the Mon's own colours or
+    /// the black outline, and every legacy navy outline cell now holds the
+    /// black outline where it lies on the silhouette.
     #[test]
-    fn packed_bodies_trade_blocks_for_ascii_and_keep_the_navy_silhouette() {
+    fn packed_bodies_trade_blocks_for_ascii_and_keep_a_black_silhouette() {
         let config = Config::sample().unwrap();
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
         let navy = colors.ink(0);
-        let mut worst_navy = (f64::MAX, String::new());
-        let (mut judged, mut tones, mut traded) = (0u32, 0u32, 0u32);
+        let (mut judged, mut tones, mut traded, mut navies) = (0u32, 0u32, 0u32, 0u32);
         for shape in [0, 1, 2, 5, 9, 13] {
             for yaw in [0, 45] {
                 let sprite = mon(Stage::Baby, SpriteStyle::SixteenBit, yaw, shape);
@@ -11547,16 +11804,17 @@ mod voxel_overlay_tests {
                             project_on(&legacy, renderer, &colors, framing, size, scene);
                         let (projection, after, _, face) =
                             project_on(&sprite, renderer, &colors, framing, size, scene);
-                        let (mut navies, mut kept) = (0u32, 0u32);
+                        let mut frame_navies = 0u32;
                         for row in 0..size.1 {
                             for col in 0..size.0 {
                                 let (b, a) = (&before[(col, row)], &after[(col, row)]);
                                 let (_, _, facial) =
                                     cell_truth(&sprite, projection, face, renderer, (col, row));
+                                let black = black_mask(renderer, a) != 0;
                                 if renderer == Renderer::HalfBlock && two_tone(b, scene) && !facial
                                 {
                                     tones += 1;
-                                    let ok = ascii_glyph(a) && a.bg != scene;
+                                    let ok = black || (ascii_glyph(a) && a.bg != scene);
                                     traded += u32::from(ok);
                                     assert!(
                                         ok,
@@ -11565,17 +11823,18 @@ mod voxel_overlay_tests {
                                         a.bg
                                     );
                                 }
-                                if navy_in(b, navy) {
-                                    navies += 1;
-                                    kept += u32::from(navy_in(a, navy));
-                                    // Where navy would not read on the lit
-                                    // voxel, a contrasting outline ink does.
-                                    let legible = navy_in(a, navy)
-                                        || (OUTLINE.contains(first(a))
-                                            && contrast_of(a.fg, a.bg)
-                                                .is_some_and(|c| c >= WCAG_FLOOR));
+                                // A legacy navy cell on the silhouette (not a navy
+                                // material inside the Mon).
+                                let silhouette = samples(renderer, col, row).any(|(_, px, py)| {
+                                    projection.sample(&sprite, px, py).is_some()
+                                        && FOUR.into_iter().any(|offset| {
+                                            empty(&sprite, projection, px, py, offset)
+                                        })
+                                });
+                                if navy_in(b, navy) && silhouette {
+                                    frame_navies += 1;
                                     assert!(
-                                        legible,
+                                        black,
                                         "{label}: navy outline cell {col},{row} became {:?} {:?} on {:?}",
                                         a.symbol(),
                                         a.fg,
@@ -11584,27 +11843,14 @@ mod voxel_overlay_tests {
                                 }
                             }
                         }
-                        // A room every silhouette sample separates from by its
-                        // own light has no navy outline to keep.
-                        if navies < 10 {
-                            continue;
-                        }
-                        judged += 1;
-                        let share = f64::from(kept) / f64::from(navies);
-                        if share < worst_navy.0 {
-                            worst_navy = (share, label.clone());
-                        }
-                        assert!(
-                            share >= 0.75,
-                            "{label}: only {kept} of {navies} navy outline cells stay navy"
-                        );
+                        navies += frame_navies;
+                        judged += u32::from(frame_navies >= 10);
                     }
                 }
             }
         }
         println!(
-            "R1 legacy two-tone cells now ASCII {traded}/{tones}; worst navy share {:.3} ({}); navy cases {judged}",
-            worst_navy.0, worst_navy.1
+            "R1 legacy two-tone cells now ASCII or black outline {traded}/{tones}; legacy navy outline cells now black {navies} over {judged} frames"
         );
         assert!(
             judged >= 20 && tones >= 500,
@@ -11626,11 +11872,11 @@ mod voxel_overlay_tests {
     /// non-face glyph cell (rgb and indexed) at least 95% keep a 3:1 WCAG
     /// contrast with their background, and at least 95% of the shading and
     /// line inks off the silhouette are a coloured shade (chroma above grey;
-    /// the silhouette's navy outline ink is reported apart, since the
-    /// 256-colour palette's nearest navy is grey). Flat interiors away from contour
-    /// levels shade with ramp glyphs (never a line), the texture varies voxel
-    /// to voxel, and rows of one glyph across three or more voxels (stripes)
-    /// stay rare.
+    /// silhouette cells are reported apart). The black outline's cells (any
+    /// black sub-pixel; the outline tests judge them) are left out. Flat
+    /// interiors away from contour levels shade with ramp glyphs (never a
+    /// line), the texture varies voxel to voxel, and rows of one glyph across
+    /// three or more voxels (stripes) stay rare.
     #[test]
     fn interior_shading_is_bold_coloured_and_textured() {
         let config = Config::sample().unwrap();
@@ -11706,6 +11952,10 @@ mod voxel_overlay_tests {
                                 let mut run: (char, Vec<[i32; 3]>) = (' ', Vec::new());
                                 for col in 0..size.0 {
                                     let cell = &buf[(col, row)];
+                                    if black_mask(renderer, cell) != 0 {
+                                        run = (' ', Vec::new());
+                                        continue;
+                                    }
                                     let (mask, tagged, facial) =
                                         cell_truth(&sprite, projection, face, renderer, (col, row));
                                     if mask != 0
@@ -11770,7 +12020,7 @@ mod voxel_overlay_tests {
                                     }
                                     // Texture: a 2x1 patch of two different
                                     // flat voxels shades with two glyphs.
-                                    if col > 0 {
+                                    if col > 0 && black_mask(renderer, &buf[(col - 1, row)]) == 0 {
                                         let left = &buf[(col - 1, row)];
                                         let (a, b) = (voxel_of(col - 1, row), voxel_of(col, row));
                                         let left_flat = samples(renderer, col - 1, row)
@@ -12284,6 +12534,755 @@ mod voxel_overlay_tests {
         }
         println!("R3 partial-cell strokes judged: {partial_strokes}");
         assert!(partial_strokes > 100, "packed silhouettes must be judged");
+    }
+
+    /// A near-black terminal colour: no channel above 16. Pure black in
+    /// every depth; the navy palette ink, every scene colour and every lit
+    /// Mon colour (even navy in full shadow) are lighter.
+    fn near_black(color: Color) -> bool {
+        terminal_rgb(color).is_some_and(|rgb| rgb.iter().all(|c| *c <= 16))
+    }
+
+    /// The sub-pixels a packed block glyph draws in its foreground (bit i for
+    /// sample i); None for any other glyph, under which every sub-pixel shows
+    /// the background.
+    fn block_pattern(renderer: Renderer, glyph: char) -> Option<u8> {
+        match renderer {
+            Renderer::HalfBlock => match glyph {
+                '▀' => Some(1),
+                '▄' => Some(2),
+                '█' => Some(3),
+                _ => None,
+            },
+            Renderer::Quadrant => {
+                (0..16u8).find(|m| quadrant(std::array::from_fn(|i| m & (1 << i) != 0)) == glyph)
+            }
+            Renderer::Braille if ('\u{2800}'..='\u{28FF}').contains(&glyph) => {
+                (0..=255u8).find(|m| braille(std::array::from_fn(|i| m & (1 << i) != 0)) == glyph)
+            }
+            _ => None,
+        }
+    }
+
+    /// The sub-pixels of one rendered cell that show near-black: where a
+    /// block pattern covers a sub-pixel it shows the glyph's ink, elsewhere
+    /// (and under any other glyph) the cell's background.
+    fn black_mask(renderer: Renderer, cell: &ratatui::buffer::Cell) -> u8 {
+        let count = samples(renderer, 0, 0).count();
+        let pattern = block_pattern(renderer, first(cell));
+        (0..count)
+            .filter(|&i| {
+                let ink = pattern.is_some_and(|p| p & (1 << i) != 0);
+                near_black(if ink { cell.fg } else { cell.bg })
+            })
+            .fold(0u8, |mask, i| mask | (1 << i))
+    }
+
+    /// Per-sample ground truth over a buffer's packed pixels, row-major: the
+    /// Mon's occupancy and its silhouette ring (a Mon sample whose N/E/S/W
+    /// neighbour shows no Mon; a neighbour before the origin is cropped).
+    struct Silhouette {
+        width: u32,
+        height: u32,
+        mon: Vec<bool>,
+        ring: Vec<bool>,
+    }
+
+    impl Silhouette {
+        fn of(sprite: &Sprite, projection: Projection, renderer: Renderer, area: Rect) -> Self {
+            let (dx, dy) = renderer.packing();
+            let width = u32::from(area.width) * u32::from(dx);
+            let height = u32::from(area.height) * u32::from(dy);
+            let mut mon = Vec::with_capacity((width * height) as usize);
+            let mut ring = Vec::with_capacity((width * height) as usize);
+            for py in 0..height {
+                for px in 0..width {
+                    let here = projection.sample(sprite, px, py).is_some();
+                    mon.push(here);
+                    ring.push(
+                        here && FOUR
+                            .into_iter()
+                            .any(|offset| empty(sprite, projection, px, py, offset)),
+                    );
+                }
+            }
+            Self {
+                width,
+                height,
+                mon,
+                ring,
+            }
+        }
+
+        fn index(&self, px: u32, py: u32) -> usize {
+            (py * self.width + px) as usize
+        }
+
+        /// The 8-connected Mon components clear of the buffer's border, and
+        /// how many of them have an outer ring (ring samples beside the
+        /// exterior, the empty samples 4-connected to the border) that is one
+        /// 8-connected curve.
+        fn closed_outer_rings(&self) -> (u32, u32) {
+            let (w, h) = (self.width as i64, self.height as i64);
+            let at = |x: i64, y: i64| (y * w + x) as usize;
+            let inside = |x: i64, y: i64| x >= 0 && y >= 0 && x < w && y < h;
+            let mut exterior = vec![false; self.mon.len()];
+            let mut stack: Vec<(i64, i64)> = Vec::new();
+            for y in 0..h {
+                for x in 0..w {
+                    if (x == 0 || y == 0 || x == w - 1 || y == h - 1) && !self.mon[at(x, y)] {
+                        exterior[at(x, y)] = true;
+                        stack.push((x, y));
+                    }
+                }
+            }
+            while let Some((x, y)) = stack.pop() {
+                for (ox, oy) in FOUR {
+                    let (nx, ny) = (x + i64::from(ox), y + i64::from(oy));
+                    if inside(nx, ny) && !self.mon[at(nx, ny)] && !exterior[at(nx, ny)] {
+                        exterior[at(nx, ny)] = true;
+                        stack.push((nx, ny));
+                    }
+                }
+            }
+            let mut seen = vec![false; self.mon.len()];
+            let (mut judged, mut closed) = (0u32, 0u32);
+            for start in 0..self.mon.len() {
+                if !self.mon[start] || seen[start] {
+                    continue;
+                }
+                let mut component = vec![start];
+                seen[start] = true;
+                let mut k = 0;
+                while k < component.len() {
+                    let (x, y) = ((component[k] as i64) % w, (component[k] as i64) / w);
+                    k += 1;
+                    for (ox, oy) in EIGHT {
+                        let (nx, ny) = (x + i64::from(ox), y + i64::from(oy));
+                        if inside(nx, ny) && self.mon[at(nx, ny)] && !seen[at(nx, ny)] {
+                            seen[at(nx, ny)] = true;
+                            component.push(at(nx, ny));
+                        }
+                    }
+                }
+                let border = component.iter().any(|&i| {
+                    let (x, y) = ((i as i64) % w, (i as i64) / w);
+                    x == 0 || y == 0 || x == w - 1 || y == h - 1
+                });
+                if border {
+                    continue;
+                }
+                let outer: Vec<usize> = component
+                    .iter()
+                    .copied()
+                    .filter(|&i| {
+                        let (x, y) = ((i as i64) % w, (i as i64) / w);
+                        self.ring[i]
+                            && FOUR.into_iter().any(|(ox, oy)| {
+                                let (nx, ny) = (x + i64::from(ox), y + i64::from(oy));
+                                inside(nx, ny) && exterior[at(nx, ny)]
+                            })
+                    })
+                    .collect();
+                // A component inside another's hole has no outer ring.
+                let Some(&start) = outer.first() else {
+                    continue;
+                };
+                judged += 1;
+                let mut on_ring = vec![false; self.mon.len()];
+                for &i in &outer {
+                    on_ring[i] = true;
+                }
+                let mut reached = vec![start];
+                on_ring[start] = false;
+                let mut k = 0;
+                while k < reached.len() {
+                    let (x, y) = ((reached[k] as i64) % w, (reached[k] as i64) / w);
+                    k += 1;
+                    for (ox, oy) in EIGHT {
+                        let (nx, ny) = (x + i64::from(ox), y + i64::from(oy));
+                        if inside(nx, ny) && on_ring[at(nx, ny)] {
+                            on_ring[at(nx, ny)] = false;
+                            reached.push(at(nx, ny));
+                        }
+                    }
+                }
+                closed += u32::from(reached.len() == outer.len());
+            }
+            (judged, closed)
+        }
+    }
+
+    /// The black sub-pixels of a rendered buffer, per packed pixel.
+    fn black_samples(renderer: Renderer, buf: &Buffer, truth: &Silhouette) -> Vec<bool> {
+        let mut black = vec![false; truth.mon.len()];
+        for row in 0..buf.area.height {
+            for col in 0..buf.area.width {
+                let mask = black_mask(renderer, &buf[(col, row)]);
+                for (i, px, py) in samples(renderer, col, row) {
+                    black[truth.index(px, py)] = mask & (1 << i) != 0;
+                }
+            }
+        }
+        black
+    }
+
+    /// Ground truth: the sample is the near side of an occlusion boundary:
+    /// a N/E/S/W neighbour shows a lattice-far voxel (another part of the
+    /// model) at the same or a farther depth. With `deep`, only a depth jump
+    /// of at least three voxels to a neighbour off the silhouette ring
+    /// counts.
+    fn occlusion_truth(
+        sprite: &Sprite,
+        projection: Projection,
+        (px, py): (u32, u32),
+        deep: bool,
+    ) -> bool {
+        let Some(own) = projection.source_pixel(sprite, px, py) else {
+            return false;
+        };
+        let (Some((a, _)), Some(depth)) = (
+            sprite.surface_facet(own.0, own.1),
+            sprite.depth_pixels(own.0, own.1),
+        ) else {
+            return false;
+        };
+        let extent = sprite.voxel_extent_pixels().unwrap();
+        let tolerance = step_tolerance(sprite, projection);
+        FOUR.into_iter().any(|(ox, oy)| {
+            let (Some(nx), Some(ny)) = (px.checked_add_signed(ox), py.checked_add_signed(oy))
+            else {
+                return false;
+            };
+            let Some(other) = projection.source_pixel(sprite, nx, ny) else {
+                return false;
+            };
+            let (Some((b, _)), Some(far)) = (
+                sprite.surface_facet(other.0, other.1),
+                sprite.depth_pixels(other.0, other.1),
+            ) else {
+                return false;
+            };
+            let lattice = (0..3).map(|i| (a[i] - b[i]).abs()).max().unwrap_or(0);
+            if other == own || lattice <= tolerance[usize::from(ox == 0)] {
+                return false;
+            }
+            if !deep {
+                return far <= depth;
+            }
+            // The neighbour on the silhouette ring is the outline's already.
+            let ring = FOUR
+                .into_iter()
+                .any(|offset| empty(sprite, projection, nx, ny, offset));
+            depth - far >= 3.0 * extent && !ring
+        })
+    }
+
+    /// Ground truth: the depth surface folds concavely at the sample, along
+    /// x or y, by more than 2 atan(1/2) (the most the half-voxel depth steps
+    /// of a convex voxel staircase can fake), measured between one-sided
+    /// slopes about two voxels long on its continuous surface.
+    fn fold_truth(sprite: &Sprite, projection: Projection, px: u32, py: u32) -> bool {
+        let Some((sx, sy)) = projection.source_pixel(sprite, px, py) else {
+            return false;
+        };
+        let (Some((voxel, _)), Some(here)) =
+            (sprite.surface_facet(sx, sy), sprite.depth_pixels(sx, sy))
+        else {
+            return false;
+        };
+        let extent = sprite.voxel_extent_pixels().unwrap();
+        let step = (2.0 * extent).round().clamp(1.0, 4.0);
+        let reach = (step / extent).ceil() as i32 + 2;
+        let depth_at = |ox: i32, oy: i32| {
+            let (x, y) = (sx.checked_add_signed(ox)?, sy.checked_add_signed(oy)?);
+            let (other, _) = sprite.surface_facet(x, y)?;
+            ((0..3).map(|i| (voxel[i] - other[i]).abs()).max()? <= reach)
+                .then(|| sprite.depth_pixels(x, y))
+                .flatten()
+        };
+        let h = step as i32;
+        let bound = 2.0 * 0.5f64.atan();
+        [((h, 0), (-h, 0)), ((0, h), (0, -h))]
+            .into_iter()
+            .any(
+                |(plus, minus)| match (depth_at(plus.0, plus.1), depth_at(minus.0, minus.1)) {
+                    (Some(p), Some(m)) => {
+                        ((p - here) / step).atan() - ((here - m) / step).atan() > bound
+                    }
+                    _ => false,
+                },
+            )
+    }
+
+    /// The black outline (a)-(c): every Mon in every renderer, size, view and
+    /// colour depth is ringed by a continuous black outline exactly one
+    /// sub-pixel wide. Ground truth is the projection's own silhouette: the
+    /// Mon samples beside the empty scene. Every one of them shows near-black
+    /// (in its packed block geometry; an ASCII cell's background), each Mon's
+    /// outer ring is one closed 8-connected curve, and (rgb) every other
+    /// black sub-pixel is a Mon sample on a ground-truth occlusion boundary
+    /// or sharp fold: nothing outside the Mon and no second ring inside it.
+    /// The ASCII outline's glyph is a dim grey that keeps 3:1 on the black.
+    #[test]
+    fn the_black_outline_rings_every_mon_one_sub_pixel_wide() {
+        let config = Config::sample().unwrap();
+        let (mut ring_samples, mut lines, mut frames) = (0u64, 0u64, 0u32);
+        let (mut judged, mut closed) = (0u32, 0u32);
+        let mut grey = std::collections::BTreeSet::new();
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi] {
+            let colors = Colors::from_config(&config, depth).unwrap();
+            for (shape, stage, style) in [
+                (0, Stage::Baby, SpriteStyle::SixteenBit),
+                (1, Stage::Baby, SpriteStyle::SixteenBit),
+                (2, Stage::Baby, SpriteStyle::SixteenBit),
+                (5, Stage::Baby, SpriteStyle::SixteenBit),
+                (9, Stage::Baby, SpriteStyle::SixteenBit),
+                (13, Stage::Baby, SpriteStyle::SixteenBit),
+                (1, Stage::Adult, SpriteStyle::SixteenBit),
+                (6, Stage::Adult, SpriteStyle::SixteenBit),
+                (1, Stage::Baby, SpriteStyle::EightBit),
+            ] {
+                for yaw in [0, 45, 135] {
+                    let sprite = mon(stage, style, yaw, shape);
+                    for size in [(24, 12), (40, 16), (59, 49), (130, 29), (200, 56)] {
+                        for framing in [
+                            (CameraView::Room, 100),
+                            (CameraView::Pet, 100),
+                            (CameraView::Pet, 300),
+                            (CameraView::Face, 100),
+                        ] {
+                            if depth != Depth::Rgb && (size != (130, 29) || yaw == 135) {
+                                continue;
+                            }
+                            for renderer in RENDERERS {
+                                let label = format!(
+                                    "{depth:?} shape {shape} {stage:?} {style:?} yaw {yaw} {size:?} {framing:?} {renderer:?}"
+                                );
+                                let (projection, buf, _, _) =
+                                    project(&sprite, renderer, &colors, framing, size);
+                                let truth = Silhouette::of(&sprite, projection, renderer, buf.area);
+                                let black = black_samples(renderer, &buf, &truth);
+                                frames += 1;
+                                let mut census = 0u32;
+                                for py in 0..truth.height {
+                                    for px in 0..truth.width {
+                                        let i = truth.index(px, py);
+                                        if truth.ring[i] {
+                                            census += 1;
+                                            assert!(
+                                                black[i],
+                                                "{label}: silhouette sample {px},{py} is not black"
+                                            );
+                                        } else if black[i] && depth == Depth::Rgb {
+                                            assert!(
+                                                truth.mon[i],
+                                                "{label}: black outside the Mon at {px},{py}"
+                                            );
+                                            lines += 1;
+                                            assert!(
+                                                occlusion_truth(&sprite, projection, (px, py), false)
+                                                    || fold_truth(&sprite, projection, px, py),
+                                                "{label}: black at {px},{py} is neither the ring nor an occlusion or sharp fold (a second ring?)"
+                                            );
+                                        }
+                                    }
+                                }
+                                ring_samples += u64::from(census);
+                                // A camera inside the Mon's silhouette shows none.
+                                assert!(
+                                    census > 0
+                                        || !truth.mon.contains(&true)
+                                        || !truth.mon.contains(&false),
+                                    "{label}: the Mon has no silhouette"
+                                );
+                                if renderer == Renderer::Ascii && depth == Depth::Rgb {
+                                    for cell in buf.content.iter().filter(|c| near_black(c.bg)) {
+                                        let fg = terminal_rgb(cell.fg).unwrap();
+                                        assert!(
+                                            fg[0] == fg[1]
+                                                && fg[1] == fg[2]
+                                                && contrast_of(cell.fg, cell.bg).unwrap() >= 3.0,
+                                            "{label}: ASCII outline ink {:?} on {:?}",
+                                            cell.fg,
+                                            cell.bg
+                                        );
+                                        grey.insert(fg[0]);
+                                    }
+                                }
+                                let (j, c) = truth.closed_outer_rings();
+                                judged += j;
+                                closed += c;
+                                assert_eq!(j, c, "{label}: an outer ring is not one closed curve");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "T-O1 frames {frames}: silhouette samples black {ring_samples}; other black samples (rgb, all occlusion or fold) {lines}; outer rings closed {closed}/{judged}; ASCII outline greys {grey:?}"
+        );
+        assert!(
+            ring_samples > 500_000 && judged > 1000 && lines > 1000,
+            "the matrix must judge many rings ({ring_samples}, {judged}) and lines ({lines})"
+        );
+    }
+
+    /// The model coordinate of a lattice voxel's centre (16-bit voxels are
+    /// `FINE_LATTICE` = 2 cells per model unit, 8-bit voxels one).
+    fn model_point(voxel: [i32; 3], style: SpriteStyle) -> [f32; 3] {
+        let k = if style == SpriteStyle::EightBit {
+            1.0
+        } else {
+            2.0
+        };
+        voxel.map(|v| (v as f32 + 0.5) / k - 0.5)
+    }
+
+    /// The black outline (d): where a part of the model passes in front of
+    /// another (ear over head, paw or tail over body, muzzle over cheek) a
+    /// black line runs on the near part. Ground truth: every Mon sample whose
+    /// screen neighbour, off the silhouette ring, shows a lattice-far voxel
+    /// at least three voxels farther, outside the face's quiet zone and the
+    /// plain ring around a native face, is black.
+    #[test]
+    fn occlusion_boundaries_draw_black_lines_where_parts_overlap() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let (mut boundaries, mut drawn, mut parts) = (0u32, 0u32, [0u32; 3]);
+        for shape in [0, 1, 2, 3, 5, 9, 13] {
+            for stage in [Stage::Baby, Stage::Adult] {
+                let anatomy = crate::geometry::anatomy(
+                    stage,
+                    Expression::Idle,
+                    SpriteStyle::SixteenBit,
+                    0,
+                    false,
+                    shape,
+                );
+                let head = anatomy.head.unwrap();
+                for yaw in [0, 45, 135, 315] {
+                    let sprite = mon(stage, SpriteStyle::SixteenBit, yaw, shape);
+                    for (size, framing) in [
+                        ((130, 29), (CameraView::Pet, 100)),
+                        ((130, 29), (CameraView::Pet, 200)),
+                        ((59, 49), (CameraView::Pet, 100)),
+                        ((40, 16), (CameraView::Pet, 100)),
+                        ((200, 56), (CameraView::Pet, 100)),
+                    ] {
+                        for renderer in RENDERERS {
+                            let label = format!(
+                                "shape {shape} {stage:?} yaw {yaw} {size:?} {framing:?} {renderer:?}"
+                            );
+                            let (projection, buf, _, face) =
+                                project(&sprite, renderer, &colors, framing, size);
+                            let truth = Silhouette::of(&sprite, projection, renderer, buf.area);
+                            let black = black_samples(renderer, &buf, &truth);
+                            let native = native_quiet_cells(
+                                &sprite, renderer, &colors, projection, buf.area, None,
+                            );
+                            let (dx, dy) = renderer.packing();
+                            for py in 0..truth.height {
+                                for px in 0..truth.width {
+                                    let i = truth.index(px, py);
+                                    let cell =
+                                        ((px / u32::from(dx)) as u16, (py / u32::from(dy)) as u16);
+                                    if !truth.mon[i]
+                                        || truth.ring[i]
+                                        || quiet(&sprite, projection, face, px, py)
+                                        || native.binary_search(&cell).is_ok()
+                                        || !occlusion_truth(&sprite, projection, (px, py), true)
+                                    {
+                                        continue;
+                                    }
+                                    boundaries += 1;
+                                    drawn += u32::from(black[i]);
+                                    assert!(
+                                        black[i],
+                                        "{label}: occlusion boundary at {px},{py} has no black line"
+                                    );
+                                    // Which part is in front: an ear (above the
+                                    // head), the head, or the body below it.
+                                    let (sx, sy) =
+                                        projection.source_pixel(&sprite, px, py).unwrap();
+                                    let (voxel, _) = sprite.surface_facet(sx, sy).unwrap();
+                                    let y = model_point(voxel, SpriteStyle::SixteenBit)[1];
+                                    let part = if y > head.center[1] + head.radii[1] {
+                                        0
+                                    } else if y > head.center[1] - head.radii[1] {
+                                        1
+                                    } else {
+                                        2
+                                    };
+                                    parts[part] += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "T-O2 deep occlusion boundaries drawn black {drawn}/{boundaries} (near part: ears {}, head {}, body/limbs/tail {})",
+            parts[0], parts[1], parts[2]
+        );
+        assert!(
+            boundaries > 2000,
+            "the matrix must judge many overlaps ({boundaries}, {parts:?})"
+        );
+    }
+
+    /// The black outline (e): gentle curvature stays the ASCII depth contour
+    /// and is never blackened. Ground truth: a Mon sample off the silhouette
+    /// ring, on no occlusion boundary, whose depth surface folds by no more
+    /// than a voxel staircase can fake, is never black; the iso-depth level
+    /// crossings among them are judged apart. A plain egg (one convex
+    /// ellipsoid) is black only on its ring and occlusion boundaries.
+    #[test]
+    fn gentle_curvature_and_depth_contours_never_turn_black() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let (mut gentle, mut crossings, mut egg_lines) = (0u64, 0u64, 0u32);
+        let egg = Sprite::voxel_with_appearance(
+            Stage::Egg,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            45,
+            false,
+            Appearance::default(),
+        );
+        for (name, sprite) in [
+            ("egg", egg),
+            ("cat", mon(Stage::Baby, SpriteStyle::SixteenBit, 45, 0)),
+            ("fox", mon(Stage::Baby, SpriteStyle::SixteenBit, 45, 1)),
+            ("fox yaw 0", mon(Stage::Baby, SpriteStyle::SixteenBit, 0, 1)),
+            ("adult", mon(Stage::Adult, SpriteStyle::SixteenBit, 45, 5)),
+            ("8-bit", mon(Stage::Baby, SpriteStyle::EightBit, 45, 2)),
+        ] {
+            for (size, framing) in [
+                ((130, 29), (CameraView::Pet, 100)),
+                ((130, 29), (CameraView::Pet, 300)),
+                ((130, 29), (CameraView::Face, 200)),
+                ((59, 49), (CameraView::Pet, 100)),
+                ((24, 12), (CameraView::Pet, 100)),
+            ] {
+                for renderer in RENDERERS {
+                    let label = format!("{name} {size:?} {framing:?} {renderer:?}");
+                    let (projection, buf, _, _) =
+                        project(&sprite, renderer, &colors, framing, size);
+                    let truth = Silhouette::of(&sprite, projection, renderer, buf.area);
+                    let black = black_samples(renderer, &buf, &truth);
+                    let (spacing, _) = contour_truth(&sprite, projection, renderer);
+                    for py in 0..truth.height {
+                        for px in 0..truth.width {
+                            let i = truth.index(px, py);
+                            if !truth.mon[i] || truth.ring[i] {
+                                continue;
+                            }
+                            let occluding = occlusion_truth(&sprite, projection, (px, py), false);
+                            if name == "egg" && black[i] {
+                                egg_lines += 1;
+                                assert!(
+                                    occluding,
+                                    "{label}: the egg's smooth shell is black at {px},{py}"
+                                );
+                            }
+                            if occluding || fold_truth(&sprite, projection, px, py) {
+                                continue;
+                            }
+                            gentle += 1;
+                            let crossing = level_crossing(&sprite, projection, (px, py), spacing);
+                            crossings += u64::from(crossing);
+                            assert!(
+                                !black[i],
+                                "{label}: gentle surface at {px},{py} (iso-depth crossing: {crossing}) is black"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "T-O3 gentle samples never black {gentle} (iso-depth crossings {crossings}); egg black off its ring only on occlusions ({egg_lines})"
+        );
+        assert!(
+            gentle > 100_000 && crossings > 10_000,
+            "the matrix must judge many gentle samples ({gentle}) and contour crossings ({crossings})"
+        );
+    }
+
+    /// The black outline (f): inside the outline the ASCII overlay is the
+    /// bold overlay's. Every full Mon cell (no scene sample) holding no black
+    /// sub-pixel, off the face's quiet zone and the plain ring around a
+    /// native face, carries a non-space ASCII glyph over its own lit voxel
+    /// colour (never black) at a 3:1 contrast, in every renderer; the black
+    /// cells are reported against the Mon's cells.
+    #[test]
+    fn the_ascii_overlay_inside_the_outline_is_unchanged() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let (mut cells, mut interior, mut outline) = (0u64, 0u64, 0u64);
+        for shape in [0, 1, 2, 5, 13] {
+            for (stage, yaw) in [(Stage::Baby, 45), (Stage::Baby, 0), (Stage::Adult, 45)] {
+                let sprite = mon(stage, SpriteStyle::SixteenBit, yaw, shape);
+                for size in [(24, 12), (40, 16), (59, 49), (130, 29), (200, 56)] {
+                    for framing in [
+                        (CameraView::Room, 100),
+                        (CameraView::Pet, 100),
+                        (CameraView::Pet, 200),
+                        (CameraView::Face, 200),
+                    ] {
+                        for renderer in RENDERERS {
+                            let label = format!(
+                                "shape {shape} {stage:?} yaw {yaw} {size:?} {framing:?} {renderer:?}"
+                            );
+                            let (projection, buf, _, face) =
+                                project(&sprite, renderer, &colors, framing, size);
+                            let native = native_quiet_cells(
+                                &sprite, renderer, &colors, projection, buf.area, None,
+                            );
+                            let count = samples(renderer, 0, 0).count();
+                            for row in 0..size.1 {
+                                for col in 0..size.0 {
+                                    let (mask, tagged, facial) =
+                                        cell_truth(&sprite, projection, face, renderer, (col, row));
+                                    if mask == 0 || !tagged {
+                                        continue;
+                                    }
+                                    cells += 1;
+                                    let cell = &buf[(col, row)];
+                                    if black_mask(renderer, cell) != 0 {
+                                        outline += 1;
+                                        continue;
+                                    }
+                                    if (mask.count_ones() as usize) < count
+                                        || facial
+                                        || native.binary_search(&(col, row)).is_ok()
+                                    {
+                                        continue;
+                                    }
+                                    interior += 1;
+                                    let contrast = contrast_of(cell.fg, cell.bg).unwrap_or(0.0);
+                                    assert!(
+                                        ascii_glyph(cell)
+                                            && !near_black(cell.bg)
+                                            && contrast >= 3.0 - 1e-3,
+                                        "{label}: interior cell {col},{row} drew {:?} {:?} on {:?}",
+                                        cell.symbol(),
+                                        cell.fg,
+                                        cell.bg
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let share = |a: u64| a as f64 / cells.max(1) as f64;
+        println!(
+            "T-O4 Mon cells {cells}: interior ASCII glyph cells {interior} ({:.3}), black outline cells {outline} ({:.3})",
+            share(interior),
+            share(outline)
+        );
+        assert!(
+            interior > 100_000 && outline > 10_000,
+            "the matrix must judge many interior ({interior}) and outline ({outline}) cells"
+        );
+    }
+
+    /// The black outline (g): the fox keeps its species outline at phone and
+    /// watch sizes. At 24x12 and 40x16, in every renderer and camera role,
+    /// whenever its ears (voxels above the head) or its tail (the tail's
+    /// ellipsoids) show at all, black outline samples lie on them.
+    #[test]
+    fn fox_ears_and_tail_keep_their_outline_at_phone_sizes() {
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let fox = Appearance {
+            shape: 1,
+            body: 8,
+            accent: 3,
+        };
+        let anatomy = crate::geometry::anatomy(
+            Stage::Baby,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            false,
+            1,
+        );
+        let head = anatomy.head.unwrap();
+        // The fox's tail: the three ellipsoids its tail adds last, behind it.
+        let tail = &anatomy.parts[anatomy.parts.len() - 3..];
+        assert!(tail.iter().all(|p| p.center[2] < -1.0 && p.center[0] > 1.0));
+        let within = |p: [f32; 3], part: &crate::geometry::Part| {
+            (0..3)
+                .map(|i| ((p[i] - part.center[i]) / part.radii[i]).powi(2))
+                .sum::<f32>()
+                <= 1.0
+        };
+        let (mut ears, mut tails, mut tail_frames) = (0u32, 0u32, 0u32);
+        for size in [(24, 12), (40, 16)] {
+            for renderer in RENDERERS {
+                let mut tail_seen = 0u32;
+                for yaw in (0..360).step_by(45) {
+                    let sprite = Sprite::voxel_with_appearance(
+                        Stage::Baby,
+                        Expression::Idle,
+                        SpriteStyle::SixteenBit,
+                        0,
+                        yaw,
+                        false,
+                        fox,
+                    );
+                    for framing in [(CameraView::Room, 100), (CameraView::Pet, 100)] {
+                        let label = format!("{size:?} {renderer:?} yaw {yaw} {framing:?}");
+                        let (projection, buf, _, _) =
+                            project(&sprite, renderer, &colors, framing, size);
+                        let truth = Silhouette::of(&sprite, projection, renderer, buf.area);
+                        let black = black_samples(renderer, &buf, &truth);
+                        let (mut ear, mut ear_black, mut tip, mut tip_black) = (0, 0, 0, 0);
+                        for py in 0..truth.height {
+                            for px in 0..truth.width {
+                                let Some((voxel, _)) = identity(&sprite, projection, px, py) else {
+                                    continue;
+                                };
+                                let point = model_point(voxel, SpriteStyle::SixteenBit);
+                                let b = u32::from(black[truth.index(px, py)]);
+                                if point[1] > head.center[1] + head.radii[1] {
+                                    ear += 1;
+                                    ear_black += b;
+                                }
+                                if tail.iter().any(|part| within(point, part)) {
+                                    tip += 1;
+                                    tip_black += b;
+                                }
+                            }
+                        }
+                        assert!(
+                            ear == 0 || ear_black > 0,
+                            "{label}: {ear} ear samples, none outlined"
+                        );
+                        assert!(
+                            tip < 2 || tip_black > 0,
+                            "{label}: {tip} tail samples, none outlined"
+                        );
+                        ears += ear_black;
+                        tails += tip_black;
+                        tail_seen += u32::from(tip >= 2);
+                    }
+                }
+                assert!(tail_seen > 0, "{size:?} {renderer:?}: the tail never shows");
+                tail_frames += tail_seen;
+            }
+        }
+        println!(
+            "T-O5 fox at 24x12 and 40x16: ear outline samples {ears}; tail outline samples {tails} over {tail_frames} frames showing the tail"
+        );
+        assert!(ears > 100 && tails > 20, "ears {ears}, tails {tails}");
     }
 
     /// R4: a native face keeps a one-cell ring of plain body colour: no
@@ -13738,6 +14737,8 @@ mod face_transition_tests {
                         iso: 0,
                         gradient: [0.0; 2],
                         tier: 0,
+                        fold: 0,
+                        beside_ring: 0,
                     };
                     let surface = std::array::from_fn(|i| {
                         (i == 0).then_some(SurfaceLight {
@@ -14668,35 +15669,35 @@ mod render_cost_tests {
     /// and Mono frames, then the live faces; then the pixel view.
     const GOLDEN: [[u64; 5]; 4] = [
         [
-            0x3f2d_6aa5_baa3_2812,
-            0x43d4_0830_b482_76c7,
-            0x7500_bd9c_e4a5_234b,
+            0x2c4e_241e_4c92_9669,
+            0x9118_6bfa_8fd4_4b34,
+            0x49e6_5de4_ab16_a151,
             0x4ecc_1f3e_d0e1_4b67,
-            0x79bb_9f93_2ccd_4a55,
+            0x206e_49b0_671c_f4a1,
         ],
         [
-            0x1ded_25ba_ffaa_4074,
-            0x39b8_3c38_bf96_f0bb,
-            0x0755_16fe_5f29_4658,
+            0x9cc1_1b5b_e151_2230,
+            0xfed1_9e66_a229_1b4e,
+            0xf09b_e9b2_9f48_53f1,
             0x4ca9_f631_4fef_d343,
-            0xc410_ce22_a6e4_1b65,
+            0xef91_95a6_938d_4a64,
         ],
         [
-            0xe2b7_92f1_f7c1_82ca,
-            0x9a47_6e4b_758e_b002,
-            0x709c_662f_d9c6_e763,
+            0xe76c_4a39_9f53_2c87,
+            0xac2d_7e04_cc91_2737,
+            0x3153_4642_59e2_e5e3,
             0xa7bb_fc93_fc79_c23c,
-            0x0736_7189_d12b_d362,
+            0xcac3_2525_8b21_ebe8,
         ],
         [
-            0x935b_c6a3_3db9_8342,
-            0xd65b_d800_8c4b_a2d9,
-            0xbaa3_367e_ff69_f2df,
+            0xe065_55ce_e01b_68a2,
+            0x4aaa_f693_aa7c_905f,
+            0x639a_b7a3_e6b7_4c9f,
             0x58c4_62f3_2df1_224f,
-            0x3590_2ff5_d6b7_ccc1,
+            0x231f_5350_6c3b_12eb,
         ],
     ];
-    const GOLDEN_PIXEL: u64 = 0xc340_a0e3_2bea_0e4f;
+    const GOLDEN_PIXEL: u64 = 0xccd4_542c_647b_c827;
 
     fn assert_golden(renderer: Renderer) {
         let index = RENDERERS.iter().position(|r| *r == renderer).unwrap();
