@@ -1536,7 +1536,7 @@ mod tests {
         }
         let result = crate::config::tests::try_fixture_mon_with(|v| {
             let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
-            nav["terminal_tmux"]["BTN_SOUTH"] = "key:HYPER+a".into();
+            nav["terminal_tmux"]["RS_LEFT"] = "key:HYPER+a".into();
         });
         assert!(
             result.is_err(),
