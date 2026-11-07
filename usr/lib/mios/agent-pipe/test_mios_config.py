@@ -110,23 +110,12 @@ except ImportError:
     psycopg = None
     dict_row = None
 
-def setUpModule():
-    if psycopg is None:
-        raise unittest.SkipTest("no live pgvector -- integration test")
-    port = os.environ.get("MIOS_PORTS_PGVECTOR", "8600")
-    conn_str = f"postgresql://mios:mios@localhost:{port}/mios"
-    try:
-        with psycopg.connect(conn_str, connect_timeout=1):
-            pass
-    except Exception:
-        raise unittest.SkipTest("no live pgvector -- integration test")
-
 class TestMiosConfigAudit(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # The folded runner constructs TestSuites directly, so it bypasses
-        # setUpModule. Probe the same endpoint this class actually tests.
+        # The database fixture belongs only to this integration class.
+        # Hermetic Portal/config tests must also run without a live database.
         if psycopg is None:
             raise unittest.SkipTest("pgvector audit integration dependency absent")
         cls.conn_str = "postgresql://mios:mios@localhost:8432/mios"
