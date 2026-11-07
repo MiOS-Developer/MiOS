@@ -39,17 +39,21 @@ foreach ($pk in $portKeys) {
         $pk.Default
     }
 }
-# SearXNG has no last-resort literal: the one [ports].searxng through the same
-# layered Get-MiosSsotValue, or $null. Unresolved (no layer carries it, or the
-# reader is not loaded), it is neither cleaned nor probed, and the warning
-# names the key.
-$searxngPort = $null
-if (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) {
-    $v = [string](Get-MiosSsotValue -Section 'ports' -Key 'searxng')
-    if ($v -match '^\d{1,5}$' -and [int]$v -ge 1 -and [int]$v -le 65535) { $searxngPort = [int]$v }
+# SearXNG has no last-resort literal: the one [ports].searxng through the
+# layered Get-MiosSsotValue, loaded from <root>\installation in a child scope
+# so the rest of this script never sees the reader, or $null. Unresolved, it
+# is neither cleaned nor probed, and the warning names the key.
+$v = & {
+    if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
+        $c = Join-Path $PSScriptRoot '..\..\..\installation\mios-common.ps1'
+        if (Test-Path $c) { . $c }
+    }
+    if (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) { [string](Get-MiosSsotValue -Section 'ports' -Key 'searxng') }
 }
+$searxngPort = $null
+if ($v -match '^\d{1,5}$' -and [int]$v -ge 1 -and [int]$v -le 65535) { $searxngPort = [int]$v }
 if ($null -ne $searxngPort) { $resolvedPorts['searxng'] = $searxngPort }
-else { Write-Warning 'mios.toml [ports].searxng does not resolve from any layer (or Get-MiosSsotValue is not loaded); SearXNG forwarding is not healed or probed' }
+else { Write-Warning 'mios.toml [ports].searxng does not resolve from any layer; SearXNG forwarding is not healed or probed' }
 $ports = @($resolvedPorts.Values)
 # Cockpit speaks TLS; the probe below picks its scheme off this value.
 $cockpitPort = $resolvedPorts['cockpit']
