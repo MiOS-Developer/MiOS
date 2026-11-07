@@ -8,10 +8,9 @@ set -uo pipefail
 ACTION="${1:-status}"
 SETUP_PS1="${MIOS_LAN_SETUP_PS1:-/usr/libexec/mios/Setup-MiOSLanPortProxy.ps1}"
 
-# SearXNG: the one mios.toml [ports].searxng as the resolver projects it
-# (MIOS_PORTS_SEARXNG, from the environment or install.env). No literal stands
-# in for it: unresolved, it is left out and the warning names the key. Only
-# that one name is read from install.env; nothing else enters this shell.
+# SearXNG is not forwarded: its one listener is loopback-only, at mios.toml
+# [ports].searxng (MIOS_PORTS_SEARXNG, from the environment or install.env;
+# only that one name is read from it), so it is listed as LAN-unsupported.
 if [ -z "${MIOS_PORTS_SEARXNG:-}" ] && [ -r "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" ]; then
     MIOS_PORTS_SEARXNG="$(set +u; set -a; . "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" >/dev/null 2>&1; printf '%s' "${MIOS_PORTS_SEARXNG:-}")"
 fi
@@ -22,14 +21,6 @@ SERVICES=(
     "8900 code-server"
     "8110 cockpit"
     "8500 llm-light"
-)
-_searxng_port="${MIOS_PORTS_SEARXNG:-}"
-if [[ "$_searxng_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( _searxng_port <= 65535 )); then
-    SERVICES+=("${_searxng_port} searxng")
-else
-    echo "mios-lan-status: mios.toml [ports].searxng does not resolve (MIOS_PORTS_SEARXNG is unset in the environment and install.env); searxng omitted" >&2
-fi
-SERVICES+=(
     "8720 hermes-api"
     "8210 hermes-dashboard"
     "8220 guacamole"
@@ -63,6 +54,13 @@ for entry in "${SERVICES[@]}"; do
     fi
 done
 
+_searxng_port="${MIOS_PORTS_SEARXNG:-}"
+if [[ "$_searxng_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( _searxng_port <= 65535 )); then
+    echo "  --   :${_searxng_port}  searxng: loopback-only listener (mios.toml [ports].searxng); direct LAN forwarding is unsupported"
+else
+    echo "mios-lan-status: mios.toml [ports].searxng does not resolve (MIOS_PORTS_SEARXNG is unset in the environment and install.env); searxng omitted" >&2
+fi
+
 if [ "$local_count" -eq 0 ]; then
     echo
     echo "No MiOS service ports listening yet. Bring services up first"
@@ -79,8 +77,8 @@ if [ -r "$SETUP_PS1" ]; then
     echo
     echo "  pwsh -NoProfile -ExecutionPolicy Bypass -File \"$WIN_PS1\""
     echo
-    echo "  (the helper covers all 10 MiOS ports above; one-shot,"
-    echo "  idempotent, self-elevates if the operator forgot Admin)"
+    echo "  (the helper forwards the ${#SERVICES[@]} MiOS ports checked above, not searxng;"
+    echo "  one-shot, idempotent, self-elevates if the operator forgot Admin)"
 else
     echo "  Setup-MiOSLanPortProxy.ps1 not present at $SETUP_PS1"
 fi
