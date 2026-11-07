@@ -946,3 +946,26 @@ than density marks as eyes and mouths. Cropped close-ups fit the expression
 within the visible part of its actual face plane. Species noses and other
 occluders retain depth ownership. Exact side and rear views retain normal
 occlusion; a readable caption remains available when facial strokes cannot fit.
+
+
+### Focused controller policy
+
+The vendor policy declares the system executable under
+[keybindings.global.controller.nav.apps.mon] and supplies mon_tmux, mon_plain,
+mon_console_tmux and mon_console_plain profiles. The configurator exposes the
+foreground-query timing, registered executable paths, context prefixes, camera
+bindings and held-direction repeat timing. Empty controls inherit the vendor tier.
+
+A user-local sample registers its exact absolute executable path in that app's
+user_exe array in the user TOML tier. Only an eligible, verified foreground
+process selects the Mon profile; titles and unrelated terminal sessions do not
+select it. Sticks pan/orbit/tilt the camera, triggers zoom, left stick press changes
+view and right stick press resets the camera. The d-pad and action buttons retain
+their inherited menu bindings. These operations never steer the simulated pet.
+
+Before applying these tables to an existing installation, upgrade both the
+Inputd daemon and every game's PATH-resolved Inputd command to a compatible,
+verified artifact. Deliver the game prompt consumer before activating the policy.
+Rollback removes the app policy before restoring an older daemon or command.
+The source policy and replay tests do not certify a physical controller, VT or
+remote-phone route; each needs its own focus, capture and release check.
