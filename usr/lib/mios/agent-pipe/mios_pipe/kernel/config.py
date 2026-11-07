@@ -401,8 +401,8 @@ def validate_config(toml_text: str, live_config: dict = None):
         size = len(toml_text or "")
     try:
         max_bytes = _validate_max_bytes()
-    except Exception as e:  # noqa: BLE001 -- no ceiling resolved: refuse
-        log.warning("Portal configuration safety cap unavailable: %s", e)
+    except Exception:  # noqa: BLE001 -- no ceiling resolved: refuse
+        log.warning("Portal configuration safety cap unavailable")
         return (False, ["[portal].config_max_body_bytes did not resolve"])
     if size > max_bytes:
         return (False, [f"Config too large: {size} bytes exceeds the "
@@ -414,8 +414,8 @@ def validate_config(toml_text: str, live_config: dict = None):
         import tomli as _toml  # type: ignore
     try:
         parsed = _toml.loads(toml_text)
-    except Exception as e:
-        log.warning("Configuration TOML parse failed: %s", e)
+    except Exception:
+        log.warning("Configuration TOML parse failed")
         return (False, ["Invalid TOML syntax"])
 
     live = live_config if isinstance(live_config, dict) else {}
@@ -443,10 +443,10 @@ def validate_config(toml_text: str, live_config: dict = None):
                 continue  # nested table -- not a port scalar; leave it alone
             if isinstance(v, bool) or not isinstance(v, int):
                 errors.append(
-                    f"[ports].{k} must be an integer 1-65535 (got {v!r}).")
+                    f"[ports].{k} must be an integer 1-65535.")
             elif not (1 <= v <= 65535):
                 errors.append(
-                    f"[ports].{k} = {v} is out of the valid 1-65535 range.")
+                    f"[ports].{k} is out of the valid 1-65535 range.")
 
     return (len(errors) == 0, errors)
 
@@ -512,6 +512,41 @@ def has_redacted(value) -> bool:
         return any(has_redacted(v) for v in value)
     return isinstance(value, str) and value == REDACTED
 
+REDACTED_ARRAY_REFUSAL = (
+    "Refusing the save: a redacted array was edited or cannot be matched to its "
+    "destination layer. Reload or supply explicit values; nothing was written.")
+
+class AmbiguousRedactedArray(ValueError):
+    """An opaque array edit cannot identify the secrets it would restore."""
+
+def _same_config_value(left, right) -> bool:
+    """TOML equality without Python's bool/int or int/float coercions."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_config_value(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_config_value(a, b) for a, b in zip(left, right))
+    return left == right
+
+def validate_redacted_arrays(posted, redacted_prefix) -> None:
+    """Opaque arrays must be an unchanged echo of the destination prefix.
+
+    Matching indexes cannot identify a secret after an insertion, reorder or
+    edit. Compare the complete redacted array before the old restoration walk,
+    including outer arrays with nested markers. Explicit marker-free arrays
+    remain ordinary edits. This check neither mutates nor reveals either input.
+    """
+    if isinstance(posted, list) and has_redacted(posted):
+        if not isinstance(redacted_prefix, list) or not _same_config_value(posted, redacted_prefix):
+            raise AmbiguousRedactedArray(REDACTED_ARRAY_REFUSAL)
+    elif isinstance(posted, dict):
+        for key, value in posted.items():
+            prefix = redacted_prefix.get(key) if isinstance(redacted_prefix, dict) else None
+            validate_redacted_arrays(value, prefix)
+
 def restore_redacted(posted, live):
     """Each REDACTED marker takes back the live value at its path, or is dropped
     where live has none. The input is not mutated."""
@@ -549,8 +584,8 @@ def _unparsed_layers(paths) -> list:
             try:
                 with open(p, "rb") as fh:
                     _toml.load(fh)
-            except Exception as e:  # noqa: BLE001 -- any unreadable layer is unresolved
-                bad.append(f"{p}: {e}")
+            except Exception:  # noqa: BLE001 -- any unreadable layer is unresolved
+                bad.append(p)
     return bad
 
 def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
@@ -568,24 +603,27 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
         vendor, vendor_d, host, host_d, user, user_d = mios_toml._tier_dirs()
         paths = ([vendor] + mios_toml._frags(vendor_d)
                  + [host] + mios_toml._frags(host_d))
+        if _unparsed_layers(paths):
+            raise TiersUnresolved("the lower tiers did not parse; nothing was written")
         for p in paths:
             mios_toml.deep_merge(base_cfg, mios_toml._load_one(p))
         # The posted config carries [ports] derived from [ports.categories]
         # (GET serves load_merged); derive the base the same way so a derived
         # value is not frozen into the user tier. miosd's save does the same.
         mios_toml.derive_ports(base_cfg)
-    except Exception as e:  # noqa: BLE001 -- an empty base would copy every tier upward
-        raise TiersUnresolved(f"the tiers below the user tier did not resolve: {e}") from e
+    except Exception:  # noqa: BLE001 -- an empty base would copy every tier upward
+        raise TiersUnresolved("the tiers below the user tier did not resolve; nothing was written") from None
     if dest_path is None:
         dest_path = user
     if has_redacted(cfg):
         unparsed = _unparsed_layers(paths + [user, dest_path] + mios_toml._frags(user_d))
         if live_config is None or unparsed:
             raise TiersUnresolved("the save carries REDACTED markers but the live config"
-                                  " did not resolve: " + ("; ".join(unparsed) or "not loaded"))
+                                  " did not resolve; nothing was written")
         own = {}
         for p in paths + [dest_path]:
             mios_toml.deep_merge(own, mios_toml._load_one(p))
+        validate_redacted_arrays(cfg, redact_secrets(own))
         cfg = restore_redacted(cfg, own)
 
     def _dict_diff(new_dict: dict, base_dict: dict) -> dict:
