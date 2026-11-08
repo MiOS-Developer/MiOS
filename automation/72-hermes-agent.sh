@@ -164,7 +164,7 @@ for site_packages in "${VENV_DIR}/lib/"python*/site-packages; do
 name: searxng
 kind: backend
 version: ${MIOS_VERSION:-Unknown}
-description: SearXNG web-search provider (local self-hosted instance at mios-searxng:8888).
+description: SearXNG web-search provider (the local self-hosted instance at SEARXNG_URL, port key searxng).
 register: plugins.web.searxng:register
 YAML
         mios_ok "Seeded ${searxng_dir#${VENV_DIR}/}/plugin.yaml"

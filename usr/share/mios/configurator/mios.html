@@ -2885,7 +2885,7 @@
         <label for="f-port-forge-ssh">forge_ssh (Forgejo git+ssh; vacated 2222 for host sshd)</label>
         <input type="text" id="f-port-forge-ssh" data-key="ports.forge_ssh" data-type="int" placeholder="49922">
         <label for="f-port-searxng">searxng (privacy metasearch)</label>
-        <input type="text" id="f-port-searxng" data-key="ports.searxng" data-type="int" placeholder="8888">
+        <input type="text" id="f-port-searxng" data-key="ports.searxng" data-type="int" placeholder="8800">
         <label for="f-port-code-server">code_server (VS Code in browser)</label>
         <input type="text" id="f-port-code-server" data-key="ports.code_server" data-type="int" placeholder="8800">
         <label for="f-port-guacamole">guacamole_web (browser desktop)</label>
@@ -4728,7 +4728,7 @@
         <label for="f-sandbox-enable">sandbox.enable (engine-side confinement; resolver always observes)</label>
         <input type="text" id="f-sandbox-enable" data-key="sandbox.enable" data-type="bool" placeholder="false">
         <label for="f-search-endpoint">search.endpoint (SearXNG metasearch backend)</label>
-        <input type="text" id="f-search-endpoint" data-key="search.endpoint" placeholder="http://localhost:8888/">
+        <input type="text" id="f-search-endpoint" data-key="search.endpoint" placeholder="http://localhost:${MIOS_PORTS_SEARXNG}/">
         <label for="f-search-enable">search.enable</label>
         <input type="text" id="f-search-enable" data-key="search.enable" data-type="bool" placeholder="true">
       </fieldset>

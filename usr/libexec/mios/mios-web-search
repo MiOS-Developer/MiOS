@@ -29,8 +29,10 @@ SSOT: SearXNG endpoint = $MIOS_URLS_SEARXNG; micro-LLM = $MIOS_MICRO_MODEL /
 $MIOS_MICRO_ENDPOINT (same as agent-pipe); fan-out knobs = $MIOS_WEB_FANOUT /
 $MIOS_WEB_FANOUT_WORKERS / $MIOS_WEB_RRF_K; the anchor stopword screen =
 mios.toml [search].anchor_stopwords ($MIOS_WEB_ANCHOR_STOPWORDS CSV) -- all
-rendered from mios.toml. The localhost fallbacks + the documented default
-screen are the only literals, matching the unit/SSOT defaults. The query
+rendered from mios.toml. The SearXNG endpoint resolves through the shared
+resolver with no fallback; the expansion-lane localhost fallbacks + the
+documented default screen are the only literals, matching the unit/SSOT
+defaults. The query
 tokenizer is unicode-aware (CJK/accented scripts tokenize, never to zero).
 """
 from __future__ import annotations
@@ -66,8 +68,14 @@ def _ssot_val(env: str, section: str, key: str, default: str) -> str:
     return default
 
 
-SEARXNG_PORT = _ssot_val("MIOS_PORTS_SEARXNG", "ports", "searxng", "8800")
-SEARXNG_URL = os.environ.get("MIOS_URLS_SEARXNG", f"http://localhost:{SEARXNG_PORT}").rstrip("/")
+def searxng_url() -> str:
+    """[urls].searxng exactly as install.env carries it: the layered SSOT, the
+    [ports.categories] derivation and stack_id offset, a non-empty
+    MIOS_URLS_SEARXNG input. This verb runs on the host beside the loopback
+    SearXNG listener. No literal stands in for a missing setting (KeyError)."""
+    return mios_toml.resolved_export("MIOS_URLS_SEARXNG").rstrip("/")
+
+
 _EXPAND_PORT = _ssot_val("MIOS_PORTS_LLM_LIGHT", "ports", "llm_light", "8500")
 _EXPAND_MODEL = os.environ.get(
     "MIOS_WEB_EXPAND_MODEL",
@@ -118,7 +126,7 @@ def search(query: str, limit: int, timeout: float, category: str = "",
         params["time_range"] = time_range
     qs = urllib.parse.urlencode(params)
     req = urllib.request.Request(
-        f"{SEARXNG_URL}/search?{qs}",
+        f"{searxng_url()}/search?{qs}",
         headers={"User-Agent": "mios-web-search/2 (+local SearXNG)"},
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:

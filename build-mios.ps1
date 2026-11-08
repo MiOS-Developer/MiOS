@@ -265,6 +265,16 @@ function Get-MiosTomlValue {
     return $Default
 }
 
+function Get-MiosSsotPort {
+    # [ports].<Key> through the layered Get-MiosTomlValue, or $null when no layer
+    # carries a valid port. No vendor literal stands in for it: each caller leaves
+    # that service out and says so by key (SearXNG: the one [ports].searxng).
+    param([Parameter(Mandatory)][string]$Key)
+    $port = Get-MiosTomlValue -Section 'ports' -Key $Key -Default 0
+    if ($port -is [int] -and $port -ge 1 -and $port -le 65535) { return $port }
+    return $null
+}
+
 function Resolve-MiosLoginCredential {
     # Evaluate related auth keys within each layer before moving to the next.
     # A host/user password must outrank a vendor password even when the keys differ.
@@ -3158,9 +3168,9 @@ auxiliary:
   # made Hermes 401 against code-server then fall through to its
   # openrouter auto-detect (which also 401'd without an API key).
   base_url: http://localhost:${MIOS_PORTS_LLM_LIGHT:-8450}/v1
-tools:
-  web_search:
-    base_url: http://localhost:${MIOS_PORTS_SEARXNG:-8899}
+# tools.web_search is deliberately not overridden: Hermes reaches SearXNG
+# through SEARXNG_URL, projected from mios.toml [ports].searxng, and the
+# Hermes YAML loader does not expand ${...} (see the vendor config.yaml).
 
 # model / custom_providers / agent are intentionally NOT defined here.
 # mios-hermes-firstboot seeds /var/lib/mios/hermes/config.yaml (=
@@ -3177,9 +3187,14 @@ tools:
 CFGLOCAL
 
 echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward workaround)"
+# mios-searxng takes no drop-in: it is a member of the Network=host
+# mios-webtools pod, so it already shares the VM's netns (podman refuses a
+# container-level Network= on a pod member), and granian binds the one
+# listener the vendor Quadlet renders from mios.toml [ports].searxng.
+# Remove the drop-in earlier overlays wrote, which re-bound it elsewhere.
+sudo rm -f /etc/containers/systemd/mios-searxng.container.d/10-mios-dev-host-network.conf
 for svc_pair in \
     "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=0.0.0.0|Environment=GITEA__server__HTTP_ADDR=0.0.0.0" \
-    "mios-searxng:Environment=GRANIAN_HOST=0.0.0.0|Environment=GRANIAN_PORT=8888|Environment=SEARXNG_BIND_ADDRESS=0.0.0.0:8888|Environment=BIND_ADDRESS=0.0.0.0:8888" \
     "mios-open-webui:Environment=PORT=3030" \
     "mios-code-server:" \
     "mios-cockpit-link:" \
@@ -3268,7 +3283,6 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
         code_server      = 8800
         cockpit          = 8090
         llm_light        = 8450
-        searxng          = 8899
         hermes           = 8642
         hermes_dashboard = 8119
         guacamole_web    = 8080
@@ -3298,6 +3312,10 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     foreach ($_k in $_fwServicePorts.Keys) {
         [void]$_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
     }
+    # SearXNG: the one [ports].searxng key, with no vendor literal.
+    $_searxngPort = Get-MiosSsotPort -Key 'searxng'
+    if ($_searxngPort) { [void]$_fwPortList.Add($_searxngPort) }
+    else { Log-Warn "dev VM firewalld: mios.toml [ports].searxng does not resolve from any layer; SearXNG's port stays closed" }
     $_fwPortsStr = (($_fwPortList | Sort-Object -Unique) -join ' ')
     $overlayScript = $overlayScript -replace '__MIOS_FIREWALL_PORTS__', $_fwPortsStr
     $cockpitPort = [int](Get-MiosTomlValue -Section 'ports' -Key 'cockpit' -Default 8090)
@@ -4273,7 +4291,6 @@ function Set-MiosLanFirewallRules {
         code_server      = 8800
         cockpit          = 8090
         llm_light        = 8450
-        searxng          = 8899
         hermes           = 8642
         hermes_dashboard = 8119
         guacamole_web    = 8080
@@ -4286,12 +4303,21 @@ function Set-MiosLanFirewallRules {
     foreach ($k in $_defaultPorts.Keys) {
         $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
     }
+    # SearXNG gets no LAN rule: its one listener is loopback-only (mios.toml
+    # [ports].searxng), so direct LAN forwarding to it is unsupported. The rule
+    # an earlier run created is removed.
+    $_searxngPort = Get-MiosSsotPort -Key 'searxng'
+    if ($_searxngPort) {
+        Remove-NetFirewallRule -DisplayName "MiOS - searxng ($_searxngPort/tcp)" -ErrorAction SilentlyContinue
+        Log-Info "Firewall: no SearXNG LAN rule -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
+    }
+    else { Log-Warn "Firewall: mios.toml [ports].searxng does not resolve from any layer; no SearXNG LAN rule" }
 
     # Which profiles + which services to expose (operator-editable).
     $_profiles = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'profiles' -Default @('Private','Domain'))
-    $_expose   = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose'   -Default @($_defaultPorts.Keys))
+    $_expose   = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose'   -Default @($_ports.Keys))
     if ($_profiles.Count -eq 0) { $_profiles = @('Private','Domain') }
-    if ($_expose.Count   -eq 0) { $_expose   = @($_defaultPorts.Keys) }
+    if ($_expose.Count   -eq 0) { $_expose   = @($_ports.Keys) }
 
     $applied = New-Object System.Collections.Generic.List[string]
     foreach ($svc in $_expose) {
@@ -4350,7 +4376,6 @@ function Set-MiosLanPortProxy {
         code_server      = 8800
         cockpit          = 8090
         llm_light        = 8450
-        searxng          = 8899
         hermes           = 8642
         hermes_dashboard = 8119
         guacamole_web    = 8080
@@ -4361,8 +4386,17 @@ function Set-MiosLanPortProxy {
     foreach ($k in $_defaultPorts.Keys) {
         $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
     }
-    $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_defaultPorts.Keys))
-    if ($_expose.Count -eq 0) { $_expose = @($_defaultPorts.Keys) }
+    # SearXNG is not forwarded: its one listener is loopback-only (mios.toml
+    # [ports].searxng), which the VM's eth0 IP never reaches, so direct LAN
+    # forwarding to it is unsupported. The mapping an earlier run added is removed.
+    $_searxngPort = Get-MiosSsotPort -Key 'searxng'
+    if ($_searxngPort) {
+        & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$_searxngPort 2>&1 | Out-Null
+        Log-Info "portproxy: SearXNG is not forwarded -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
+    }
+    else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
+    $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_ports.Keys))
+    if ($_expose.Count -eq 0) { $_expose = @($_ports.Keys) }
 
     $_wslIp = $null
     try {
@@ -6310,7 +6344,6 @@ End If
             hermes           = 8642
             guacamole_web    = 8080
             ceph_dashboard   = 8444
-            searxng          = 8899
             cockpit          = 8090
             llm_light        = 8450
         }
@@ -6332,7 +6365,16 @@ End If
         )
         $_svcCreated = 0
         foreach ($_w in $_webLinks) {
-            $_port = [int](Get-MiosTomlValue -Section 'ports' -Key $_w.Key -Default $_defaultPorts[$_w.Key])
+            if ($_defaultPorts.Contains($_w.Key)) {
+                $_port = [int](Get-MiosTomlValue -Section 'ports' -Key $_w.Key -Default $_defaultPorts[$_w.Key])
+            } else {
+                # SearXNG: the one [ports].searxng key, with no vendor literal.
+                $_port = Get-MiosSsotPort -Key $_w.Key
+                if (-not $_port) {
+                    Log-Warn "MiOS Services: mios.toml [ports].$($_w.Key) does not resolve from any layer; no '$($_w.Name)' shortcut"
+                    continue
+                }
+            }
             if ($_port -lt 1 -or $_port -gt 65535) { continue }
             $_url = "{0}://localhost:{1}{2}" -f $_w.Scheme, $_port, $_w.Path
             $_urlFile = Join-Path $servicesDir ("{0}.url" -f $_w.Name)

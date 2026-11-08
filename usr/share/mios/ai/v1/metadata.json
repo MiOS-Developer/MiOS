@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4252,
-  "total_metadata_entries": 3429,
-  "total_hints": 3423,
-  "total_functions_indexed": 2135,
-  "total_related_links": 6844,
+  "total_files_scanned": 4264,
+  "total_metadata_entries": 3432,
+  "total_hints": 3426,
+  "total_functions_indexed": 2136,
+  "total_related_links": 6868,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1253,8 +1253,12 @@
     },
     {
       "path": "automation/30-dns-config.sh",
-      "hint": "systemd-resolved to mios-adguard split-horizon DNS routing configurator (task_441).",
-      "related": [],
+      "hint": "Installs the tracked systemd-resolved drop-in unchanged (host DNS stays on the discovered links) and fails the bake if a DNS= or FallbackDNS= entry would send unicast DNS into resolved's own mDNS listener.",
+      "related": [
+        "usr/lib/systemd/resolved.conf.d/10-adguard.conf",
+        "etc/systemd/resolved.conf.d/10-adguard.conf",
+        "tests/test-adguard-dns.py"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
       "comment_style": "hash",
@@ -1964,7 +1968,8 @@
       ],
       "functions": [
         "main",
-        "run_pipeline_agent"
+        "run_pipeline_agent",
+        "_mios_env"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -3872,6 +3877,19 @@
       "has_shebang": false
     },
     {
+      "path": "etc/xdg/mimeapps.list",
+      "hint": "System-wide default applications (freedesktop mime-apps spec). As a $XDG_CONFIG_DIRS list it outranks the distribution's /usr/share/applications/mimeapps.list and gnome-mimeapps.list and the associations exported Flatpaks declare; ~/.config/mimeapps.list still overrides it per user.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.default_applications] [desktop.launchers]",
+        "usr/share/applications/",
+        "tools/native/mios-gen/src/render.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "etc/xdg/xdg-desktop-portal/portals.conf",
       "hint": "Portal backend order for MiOS: Hyprland first (ScreenCast/Screenshot/GlobalShortcuts -- OBS, browsers and RDP capture need it), then gnome/gtk for the rest; Secret goes to gnome-keyring. A \"default=gnome\" here overrides /usr/share/xdg-desktop-portal/hyprland-portals.conf and leaves screen capture with no sources.",
       "related": [
@@ -3899,18 +3917,26 @@
     },
     {
       "path": "handoff.md",
-      "hint": "Operator handoff prompt for remote agents and subagents installing the playable Tamagotchi sample on real MiOS Blade environments.",
+      "hint": "API-published source snapshot and exact Git-history bundle for remote continuation.",
       "related": [
         "AGENTS.md",
         ".agents/COORDINATION.md",
         "tasks.jsonl",
-        "usr/share/doc/mios/tamagotchi-tui.md",
-        "task_3708"
+        ".devloop/handoff/mios-wip-manifest.json"
       ],
       "functions": [],
       "doc": null,
       "comment_style": "xml",
       "has_shebang": false
+    },
+    {
+      "path": "install-mios-agents.sh",
+      "hint": "bash Installs wrapper scripts for mios-agent-claude, mios-agent-gemini, mios-agent-agy, and mios-llm to /usr/local/bin/ to inject the MiOS system prompt into various LLM ...",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/root.md",
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "installation/README.md",
@@ -6538,8 +6564,12 @@
     },
     {
       "path": "tests/test-adguard-dns.py",
-      "hint": "Automated unit test suite for systemd-resolved to mios-adguard split-horizon DNS routing (task_441).",
-      "related": [],
+      "hint": "Unit suite for the systemd-resolved drop-in policy: host DNS stays on the discovered links, no DNS=/FallbackDNS= entry ever targets resolved's own mDNS port, and the bake (30-dns-config.sh) ships the tracked drop-ins unchanged.",
+      "related": [
+        "automation/30-dns-config.sh",
+        "usr/lib/systemd/resolved.conf.d/10-adguard.conf",
+        "etc/systemd/resolved.conf.d/10-adguard.conf"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
       "comment_style": "hash",
@@ -7167,7 +7197,7 @@
     },
     {
       "path": "tests/test-configurator-server.sh",
-      "hint": "Automated CI verification test suite for miosd embedded Rust SSOT configurator engine (mios.html & /portal/config).",
+      "hint": "Contract suite for miosd's config server (mios.html & /portal/config): login-gated GET, lossless {\"toml\"} saves, redaction markers never written, delta-only user tier.",
       "related": [
         "src/mios-rs/miosd/src/lib.rs",
         "usr/share/mios/configurator/mios.html",
@@ -7718,10 +7748,17 @@
     },
     {
       "path": "tests/test-flatpak-bake.sh",
-      "hint": "Exercises headless Flatpak installation, failure propagation and browser defaults with a real private D-Bus session and isolated command fixtures.",
+      "hint": "Headless Flatpak bake and default-browser tests: MiOS-Portal is the SSOT, resolver and freedesktop default for web content only (gio/xdg-mime over stubbed entries), mailto/PDF keep their handler, the tree ships its Exec, and each plant fails.",
       "related": [
         "automation/61-flatpak-bake.sh",
+        "etc/xdg/mimeapps.list",
+        "usr/share/applications/mios-portal.desktop",
+        "usr/bin/mios-portal",
+        "tools/native/mios-browser/src/main.rs",
         "usr/libexec/mios/mios-hermes-browser",
+        "usr/libexec/mios/mios-app-type",
+        "usr/libexec/mios/mios-launch",
+        "usr/libexec/mios/mios-open-url",
         "usr/share/mios/mios.toml"
       ],
       "functions": [],
@@ -8723,12 +8760,14 @@
     },
     {
       "path": "tests/test-m4-root-git-substrate.py",
-      "hint": "Two-sided verification test suite for Milestone M4: Singular Root-Git Substrate,",
+      "hint": "Two-sided verification suite for Milestone M4: Singular Root-Git Substrate,",
       "related": [
         ".gitignore",
         "usr/share/mios/mios.toml",
         "tools/drift-checks.py",
-        ".archive/"
+        ".archive/",
+        "SKILLS/MANIFEST.json",
+        "usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh"
       ],
       "functions": [],
       "doc": null,
@@ -8740,7 +8779,8 @@
       "hint": "Automated two-sided verification test suite for Milestone M5 (4-Tier Sandbox Execution Ladder & Permissive Licensing).",
       "related": [
         "usr/libexec/mios/mios-sandbox-exec",
-        "/etc/cdi/nvidia.json",
+        "usr/libexec/mios/mios-cdi-gen",
+        "tests/test-cdi-gen.py",
         "usr/share/containers/containers.conf.d/10-mios-pasta.conf",
         "usr/share/containers/systemd/users/mios-microvm-krun@.container",
         "usr/lib/mios/agent-pipe/mios_isolation.py",
@@ -10176,6 +10216,15 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch18-supply-chain-and-image-integrity.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-searxng-endpoint-ssot.py",
+      "hint": "Proof that SearXNG has ONE port key and ONE listener: every default endpoint consumer projects the resolved [ports].searxng through the native SSOT mechanisms, layers move them all, missing settings fail by name, and planted regressions are caught.",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -16031,10 +16080,11 @@
     },
     {
       "path": "usr/lib/greenboot/check/required.d/10-mios-composefs.sh",
-      "hint": "Verifies the integrity of the composefs root filesystem; if this script returns non-zero, greenboot triggers a system rollback or retry.",
+      "hint": "Verifies the composefs root: verify-root.sh integrity when ostree-booted, then, when prepare-root.conf requests verity, the composefs mount and fsverity on a core binary. Non-zero makes greenboot roll back or retry.",
       "related": [
         "/usr/libexec/mios/verify-root.sh",
-        "mios-composefs"
+        "mios-composefs",
+        "/usr/lib/ostree/prepare-root.conf"
       ],
       "functions": [],
       "doc": null,
@@ -16059,15 +16109,6 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch08-bootloader-and-unified-kernel-images-uki.md",
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
-      "path": "usr/lib/greenboot/check/required.d/15-composefs-verity.sh",
-      "hint": "Validates the integrity of the root filesystem by checking if composefs is enabled in prepare-root.conf, verifying the mount type, and performing a fsverity check on critical binaries.",
-      "related": [],
-      "functions": [],
-      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -16108,6 +16149,19 @@
       "related": [
         "usr/libexec/mios/db/mios-db-doctor.py",
         "tests/test-db.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh",
+      "hint": "Advisory greenboot check of the deployed-root axiom: / is the MiOS Git top level and tracks the vendor SSOT, so `git -C / pull` updates the overlay. wanted.d: a miss warns and never rolls back.",
+      "related": [
+        "installation/mios-common.sh",
+        "usr/libexec/mios/git-root-init.sh",
+        "tests/test-m4-root-git-substrate.py"
       ],
       "functions": [],
       "doc": null,
@@ -32361,11 +32415,13 @@
     },
     {
       "path": "usr/share/applications/mios-portal.desktop",
-      "hint": "Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:8700/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal].",
+      "hint": "Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:8700/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for web content only, http, https, HTML and XHTML (its mime_type, projected to etc/xdg/mimeapps.list by [desktop.default_applications]); mailto, PDF and feeds keep their own handlers. The window class is startup_wm_class, the size and glass come from [desktop.portal].",
       "related": [
         "/usr/bin/mios-portal",
         "/usr/share/mios/portal/Host.qml",
+        "/etc/xdg/mimeapps.list",
         "mios.toml [desktop.portal]",
+        "[desktop.default_applications]",
         "http://localhost:{port}/"
       ],
       "functions": [],
@@ -32478,7 +32534,7 @@
     },
     {
       "path": "usr/share/applications/mios-svc-searxng.desktop",
-      "hint": "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at port 8899 via a web browser.",
+      "hint": "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at the searxng port key via a web browser.",
       "related": [
         "localhost:8800"
       ],
@@ -32514,7 +32570,7 @@
     },
     {
       "path": "usr/share/applications/mios-zen.desktop",
-      "hint": "Zen, the native MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it.",
+      "hint": "Zen, a secondary MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it.",
       "related": [
         "/usr/libexec/mios/mios-flatpak-run",
         "/usr/libexec/mios/mios-theme-render (apply_web)"

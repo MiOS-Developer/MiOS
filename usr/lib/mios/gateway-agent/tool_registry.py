@@ -5,10 +5,26 @@
 import asyncio
 import logging
 import os
+import sys
 from typing import List, Callable, Any
 from smolagents import Tool
 
 log = logging.getLogger("gateway-agent-registry")
+
+
+def searxng_url() -> str:
+    """[gateway].searxng_url from the shared layered resolver.
+
+    The vendor value derives from [ports].searxng (http://localhost:<port>):
+    SearXNG is a host-network pod member bound to loopback, and this agent runs
+    as a host systemd service, so localhost is its route. A non-empty host or
+    user layer value is an explicit override and wins. Nothing is substituted
+    when the setting is missing -- KeyError names it."""
+    lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+    import mios_toml
+    return mios_toml.resolved_export("MIOS_GATEWAY_SEARXNG_URL")
 
 class MiOSToolRegistry:
     def __init__(self, mcp_client, main_loop: asyncio.AbstractEventLoop):
@@ -56,12 +72,7 @@ class WebSearchTool(Tool):
             except Exception as e:
                 log.warning("Failed to map MCP tool %s to smolagents.Tool: %s", getattr(mcp_tool, "name", "unknown"), e)
 
-        from server import _toml_section
-        gateway_cfg = _toml_section("gateway")
-        # SSOT [ports].searxng_internal: the in-container listener (host maps 8800->8888).
-        searxng_port = int(os.environ.get("MIOS_PORTS_SEARXNG_INTERNAL", "8888"))
-        searxng_url = gateway_cfg.get("searxng_url", f"http://mios-searxng:{searxng_port}")
-        tools.append(WebSearchTool(searxng_url))
+        tools.append(WebSearchTool(searxng_url()))
 
         return tools
 

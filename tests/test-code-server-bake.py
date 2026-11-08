@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -72,8 +73,9 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="core-hook-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = _bash_directory(self.tmp)
+        self.install_dir = self.root + "/installed tools"
         self.log = os.path.join(self.tmp, "calls.log")
-        for directory in ("bin", "src/mios-rs", "tools/native", "runtime"):
+        for directory in ("bin", "src/mios-rs", "tools/native", "runtime", ".devcontainer"):
             os.makedirs(os.path.join(self.tmp, directory), exist_ok=True)
         with open(os.path.join(self.tmp, "src/mios-rs/Cargo.toml"), "w") as fh:
             fh.write("# fixture\n")
@@ -81,6 +83,23 @@ class TestDevcontainerLifecycle(unittest.TestCase):
             self.shim("bin/" + name,
                       'printf "%s %s\\n" "' + name + '" "$*" >> "$CORE_LOG"\n'
                       'if [[ "' + name + '" == cargo && "${FAIL_BUILD:-}" == 1 ]]; then exit 71; fi\n')
+        self.control_binary = self.root + "/custom target/release/miosd"
+        self.native_binary = self.root + "/custom target/aarch64-unknown-linux-musl/release/mios-gen"
+        for path in (self.control_binary, self.native_binary):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            Path(path).write_text("#!/bin/sh\nexit 0\n")
+            os.chmod(path, 0o755)
+        def artifact(path):
+            return json.dumps({"reason": "compiler-artifact", "target": {
+                "name": os.path.basename(path), "kind": ["bin"]}, "executable": path})
+        self.shim("bin/cargo",
+                  'printf "cargo %s\\n" "$*" >> "$CORE_LOG"\n'
+                  '[[ "${FAIL_BUILD:-}" != 1 ]] || exit 71\n'
+                  'case "$PWD" in */src/mios-rs) printf "%s\\n" '
+                  + shlex.quote(artifact(self.control_binary)) + ' ;;\n'
+                  '*/tools/native) [[ "${FAIL_BUILD:-}" != native ]] || exit 75\n'
+                  'printf "%s\\n" ' + shlex.quote(artifact(self.native_binary)) + ' ;; esac\n'
+                  'printf \'{"reason":"build-finished","success":true}\\n\'\n')
         self.shim("runtime/python", 'printf "runtime import\\n" >> "$CORE_LOG"\n')
 
     def shim(self, relative, body):
@@ -89,20 +108,23 @@ class TestDevcontainerLifecycle(unittest.TestCase):
             fh.write("#!/usr/bin/env bash\n" + body)
         os.chmod(path, 0o755)
 
-    def run_core(self, fail=False):
+    def run_core(self, fail=False, after=""):
         if not shutil.which("bash"):
             self.skipTest("bash is required for the lifecycle hook")
         source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
         source = source.split('case "${1:-start}" in', 1)[0]
+        source = "set -euo pipefail\n" + source[source.index("mios_platform() {"):]
         source = source.replace("local root=/workspaces/MiOS", f'local root="{self.root}"')
+        source = source.replace("local install_dir=/opt/mios/bin", f'local install_dir="{self.install_dir}"')
         source = source.replace("local agent_pipe_python=/usr/lib/mios/agents/.venv/bin/python",
                                 f'local agent_pipe_python="{self.root}/runtime/python"')
         prefix = (f'export PATH="{self.root}/bin:$PATH"\n'
                   f'export CORE_LOG="{self.root}/calls.log"\n'
-                  f'export FAIL_BUILD={1 if fail else 0}\n')
+                  f'export CORE_INSTALL_DIR="{self.install_dir}"\n'
+                  f'export FAIL_BUILD={"native" if fail == "native" else 1 if fail else 0}\n')
         # Send bytes: Windows text-mode pipes turn LF into CRLF, which Bash
         # treats as part of option names (including pipefail).
-        result = subprocess.run(["bash", "-s"], input=(prefix + source + "\nmios_core\n").encode(),
+        result = subprocess.run(["bash", "-s"], input=(prefix + source + "\nmios_core\n" + after).encode(),
                                 capture_output=True,
                                 env=dict(os.environ))
         result.stdout = result.stdout.decode()
@@ -115,10 +137,40 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("runtime import", calls[0])
         builds = [line for line in calls if line.startswith("cargo ")]
-        self.assertEqual(["cargo build --release",
-                          "cargo build --release --workspace --exclude mios-wallpaperd"], builds)
+        self.assertEqual(["cargo build --locked --release --message-format=json-render-diagnostics",
+                          "cargo build --locked --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics"], builds)
         self.assertLess(calls.index(builds[-1]), next(i for i, line in enumerate(calls) if line.startswith("sudo ")))
+        self.assertIn("sudo install -m 0755 " + self.control_binary + " " + self.install_dir + "/miosd", calls)
+        self.assertIn("sudo install -m 0755 " + self.native_binary + " " + self.install_dir + "/mios-gen", calls)
         self.assertEqual("miosd --help", calls[-1])
+
+    def test_core_uses_fresh_tools_before_image_tools(self):
+        """Install into scratch paths, then execute fresh tools over stale PATH entries."""
+        for path in (self.control_binary, self.native_binary):
+            Path(path).write_text('#!/usr/bin/env bash\nprintf "fresh %s %s\\n" '
+                                  '"${0##*/}" "$*" >> "$CORE_LOG"\n')
+        self.shim("bin/mios-gen", 'echo "stale image tool invoked" >&2; exit 78\n')
+        self.shim("bin/sudo",
+                  'printf "sudo %s\\n" "$*" >> "$CORE_LOG"\n'
+                  'case "$1" in\n'
+                  'install)\n'
+                  '  dest="${!#}"\n'
+                  '  [[ "$dest" == "$CORE_INSTALL_DIR" || "$dest" == "$CORE_INSTALL_DIR/"* ]] || exit 76\n'
+                  '  if [[ "$2" == -d ]]; then mkdir -p "$dest"; else cp "$4" "$5"; chmod 0755 "$5"; fi ;;\n'
+                  'ln) : ;;\n'
+                  '*) exit 77 ;; esac\n')
+        result, calls = self.run_core(after='mios-gen --help\nprintf "native-bin %s\\n" "${MIOS_NATIVE_BIN_DIR:-}"\n')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("fresh miosd --help", calls)
+        self.assertEqual("fresh mios-gen --help", calls[-1])
+        self.assertIn("native-bin " + self.install_dir, result.stdout)
+
+    def test_remote_profiles_select_fresh_native_catalog(self):
+        for relative in (".devcontainer/devcontainer.json", ".devcontainer/artifact-builder/devcontainer.json"):
+            with self.subTest(profile=relative):
+                doc = json.loads(_read(os.path.join(ROOT, relative)))
+                self.assertEqual({"PATH": "/opt/mios/bin:${containerEnv:PATH}",
+                                  "MIOS_NATIVE_BIN_DIR": "/opt/mios/bin"}, doc["remoteEnv"])
 
     def test_build_failure_stops_before_install(self):
         result, calls = self.run_core(fail=True)
@@ -126,12 +178,69 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
         self.assertEqual(1, sum(line.startswith("cargo ") for line in calls))
 
+    def test_native_build_failure_stops_before_install(self):
+        result, calls = self.run_core(fail="native")
+        self.assertEqual(75, result.returncode, result.stderr)
+        self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
+        self.assertEqual(2, sum(line.startswith("cargo ") for line in calls))
+
+    def test_missing_artifact_receipts_stop_before_install(self):
+        self.shim("bin/cargo", 'printf \'{"reason":"build-finished","success":true}\\n\'\n')
+        result, calls = self.run_core()
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Cargo did not report the required", result.stderr)
+        self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
+
     def test_missing_runtime_fails_before_build(self):
         os.unlink(os.path.join(self.tmp, "runtime/python"))
         result, calls = self.run_core()
         self.assertEqual(1, result.returncode)
         self.assertIn("Missing agent-pipe runtime", result.stderr)
         self.assertEqual([], calls)
+
+    def run_post_start(self, gateway_status=0):
+        """Run the real post-start body without installs or background servers."""
+        source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
+        source = source.split('case "${1:-start}" in', 1)[0]
+        source = "set -euo pipefail\n" + source[source.index("mios_platform() {"):]
+        source = source.replace("/workspaces/MiOS", self.root)
+        source = source.replace("/workspaces/-dev-loop", self.root + "/missing-dev-loop")
+        self.shim("bin/agy", "exit 0\n")
+        # A listening socket takes the existing-server branch without launching
+        # a process. No HTTP/application readiness is inferred from this socket.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            self.shim("bin/python3",
+                      'printf "python3 %s\\n" "$*" >> "$CORE_LOG"\n'
+                      'case "$1" in */mios-toml-get) printf "%s\\n" "' + str(port) + '" ;;\n'
+                      '*) echo "unexpected Python entrypoint: $1" >&2; exit 72 ;; esac\n')
+            self.shim(".devcontainer/mios-agent-pipe-dev",
+                      'printf "gateway %s\\n" "$*" >> "$CORE_LOG"\n'
+                      '[[ "$1" == check ]] || exit 73\n'
+                      'exit "${GATEWAY_STATUS}"\n')
+            env = dict(os.environ, PATH=self.root + "/bin:" + os.environ["PATH"],
+                       CORE_LOG=self.root + "/calls.log", GATEWAY_STATUS=str(gateway_status))
+            result = subprocess.run(["bash", "-s"],
+                                    input=(source + "\nmios_post_start\n").encode(),
+                                    capture_output=True, env=env)
+        result.stdout = result.stdout.decode()
+        result.stderr = result.stderr.decode()
+        calls = _read(self.log).splitlines() if os.path.isfile(self.log) else []
+        return result, calls
+
+    def test_post_start_checks_shipped_gateway_without_missing_harness(self):
+        result, calls = self.run_post_start()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("gateway check", calls[-1])
+        self.assertIn("Ready for agent dispatch", result.stdout)
+
+    def test_post_start_gateway_failure_is_fatal(self):
+        result, calls = self.run_post_start(gateway_status=74)
+        self.assertEqual(74, result.returncode, result.stderr)
+        self.assertEqual("gateway check", calls[-1])
+        self.assertNotIn("Ready for agent dispatch", result.stdout)
 
 
 class TestCodeServerBake(unittest.TestCase):

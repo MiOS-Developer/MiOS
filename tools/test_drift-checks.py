@@ -80,11 +80,11 @@ class TestDocPortScheme(unittest.TestCase):
         self.write("usr/share/mios/mios.toml", f"""
 [ports]
 win_llm_light = 11450
-searxng_internal = 8888
+legacy_internal = 8888
 [ports.categories.inference.pinned]
 win_llm_light = 11450
 [ports.categories.webtools.pinned]
-searxng_internal = 8888
+legacy_internal = 8888
 [docs]
 retired_ports = {retired}
 port_clean = {paths}
@@ -157,7 +157,7 @@ max_retired_code_exemptions = {ceiling}
 | inference | win_llm_light (pinned) | 11450 |
 <!-- /MIOS-GEN:ports:inference -->
 <!-- MIOS-GEN:ports:webtools -->
-| webtools | searxng_internal (pinned) | 8888 |
+| webtools | legacy_internal (pinned) | 8888 |
 <!-- /MIOS-GEN:ports:webtools -->
 """)
         self.assertEqual((0, ""), self.check())

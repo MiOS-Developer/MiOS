@@ -388,7 +388,7 @@ platform_toolsets:
   api_server:
     - terminal       # shell commands
     - file           # read/write/patch
-    - web            # web_search via SearXNG (:8800) + web_extract via Firecrawl (:3002) -- FREE, local
+    - web            # web_search via SearXNG (SEARXNG_URL, port key searxng) + web_extract via Firecrawl (:3002) -- FREE, local
     - browser        # browser_navigate / _snapshot / _click / ... via CDP -> ChromeDev flatpak
     - messaging      # send_message for Discord, Telegram, etc.
     - discord        # read + participate (fetch messages, search members, create threads)

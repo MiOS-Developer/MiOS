@@ -16,6 +16,7 @@ Sovereign search services are provided locally by containerized SearXNG.
 
 ## Setup
 - **Endpoint**: Runs on the `searxng` port.
+- **Reachability**: loopback-only, one listener at mios.toml `[ports].searxng` in the host network namespace. Direct Windows LAN forwarding (the LAN rule and the portproxy) and tailnet serving are unsupported.
 - **Security**: Disables logging and upstream search tracking.
 - **Performance**: Returns results offline or via private search.
 

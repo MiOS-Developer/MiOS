@@ -70,7 +70,6 @@ is the obvious case, since it cannot float.
 | webtools | searxng | 8800 |
 | webtools | crawl4ai | 8810 |
 | webtools | firecrawl | 8820 |
-| webtools | searxng_internal (pinned) | 8888 |
 | webtools | crawl4ai_internal (pinned) | 11235 |
 | webtools | firecrawl_internal (pinned) | 3002 |
 | webui | open_webui | 8200 |

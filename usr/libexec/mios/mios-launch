@@ -115,7 +115,6 @@ _PORT_COCKPIT="${MIOS_PORTS_COCKPIT:-8110}"
 _PORT_OWUI="${MIOS_PORTS_OPEN_WEBUI:-8200}"
 _PORT_HERMES="${MIOS_PORTS_HERMES:-8720}"
 _PORT_PREFILTER="${MIOS_PORTS_PREFILTER:-8710}"
-_PORT_SEARXNG="${MIOS_PORTS_SEARXNG:-8800}"
 _PORT_FORGE="${MIOS_PORTS_FORGE_HTTP:-8400}"
 # Resolve an explicit registered session before local application lookup.
 if [ -n "$(printenv MIOS_EXECUTION_SESSION 2>/dev/null || true)" ]; then
@@ -132,7 +131,8 @@ case "$NAME" in
     owui|open-webui|webui|ai)  exec mios-open-url "http://localhost:${_PORT_OWUI}" "$@" ;;
     hermes)                    exec mios-open-url "http://localhost:${_PORT_HERMES}/v1" "$@" ;;
     prefilter)                 exec mios-open-url "http://localhost:${_PORT_PREFILTER}/v1" "$@" ;;
-    searxng|search)            exec mios-open-url "http://localhost:${_PORT_SEARXNG}" "$@" ;;
+    # [urls].searxng from install.env, projected from [ports].searxng; unresolved fails.
+    searxng|search)            exec mios-open-url "${MIOS_URLS_SEARXNG:?is unresolved -- install.env must carry [urls].searxng}" "$@" ;;
     forgejo|forge)             exec mios-open-url "http://localhost:${_PORT_FORGE}" "$@" ;;
 esac
 

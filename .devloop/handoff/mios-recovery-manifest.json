@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "artifact_type": "mios.source-recovery-inventory",
+  "observed_at_utc": "2026-11-08",
+  "repository": "https://github.com/MiOS-Developer/MiOS",
+  "publication": {
+    "main_snapshot_commit": "4bf38f52b7d5103c5b6ba6fada6a440e55475062",
+    "pull_request_url": "https://github.com/MiOS-Developer/MiOS/pull/65",
+    "pull_request_base_ref": "refs/heads/main",
+    "pull_request_base_commit": "4bf38f52b7d5103c5b6ba6fada6a440e55475062",
+    "pull_request_source_ref": "refs/heads/claude/code-session-lryqdr",
+    "pull_request_source_commit": "403114b99740c1701b3cb09a88497d3cf3b8aed5",
+    "state_at_observation": "open_draft",
+    "note": "These are observed source revisions, not a claim that future branch tips remain unchanged."
+  },
+  "bundle": {
+    "path": ".devloop/handoff/mios-source-checkpoints.bundle",
+    "sha256": "20afbba3d2f38f0b60d9ff0bcfd3e01dd6706040fa1f6da0fca4ead0f403534d",
+    "bytes": 3988227,
+    "checksum_path": ".devloop/handoff/mios-source-checkpoints.bundle.sha256",
+    "object_format": "sha1",
+    "prerequisite_commits": [
+      "150b5b461796d99607c2d28ceadf977ee2970fc8",
+      "e1da4f0531553412ff69546d4e1d4eded708be18",
+      "c1e55b7582e7335b5f504b393416573b2e34d5d6"
+    ],
+    "source_refs": [
+      {
+        "source_ref": "refs/heads/mios-cloud-handoff",
+        "commit": "fc89aae34d836f4902c6ccd40341fa0c3db87e89",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-cloud-handoff",
+        "disposition": "source_snapshot_published_on_main",
+        "note": "Original checkpoint history is in the bundle; main 4bf38f52 contains its source snapshot with a different commit identity."
+      },
+      {
+        "source_ref": "refs/heads/mios-mons-input-completion",
+        "commit": "fb49657e85fbbe13d8620b6c8e674223e25a558e",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-mons-input-completion",
+        "disposition": "source_snapshot_published_on_main",
+        "note": "Application/Inputd/Portal/CI integration source snapshot is on main; original commit identity is in the bundle."
+      },
+      {
+        "source_ref": "refs/heads/mios-mons-voxel-overlay",
+        "commit": "6b20513e1f657f5159c02384552d7b2294f585bc",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-mons-voxel-overlay",
+        "disposition": "merged_in_pr_65",
+        "note": "Original lane history merged by 6bdcbae43; combined visual/performance acceptance remains incomplete."
+      },
+      {
+        "source_ref": "refs/heads/mios-ci3756-ports",
+        "commit": "58b3752d415806f7cd9d43a6d04090757434eb3e",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-ci3756-ports",
+        "disposition": "merged_in_pr_65",
+        "note": "Original lane history merged by 403114b99; live installation and bootstrap parity remain incomplete."
+      },
+      {
+        "source_ref": "refs/heads/mios-mons-menu-geometry",
+        "commit": "26eb01d492382da7a59d7b17cf5e24af6be55f27",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-mons-menu-geometry",
+        "disposition": "preserved_pending_integration",
+        "note": "HUD geometry/painter implementation needs consumer integration and independent review."
+      },
+      {
+        "source_ref": "refs/heads/mios-mons-camera-follow",
+        "commit": "0e7c693b8242d0342049cfd90b659ab2da1301a3",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-mons-camera-follow",
+        "disposition": "preserved_pending_integration",
+        "note": "Camera settings/follower implementation needs integration and independent review."
+      },
+      {
+        "source_ref": "refs/heads/mios-inputd-focus-gesture",
+        "commit": "3f3dac3beab2f2a6bb7efe009753c2a23daa49ee",
+        "recovery_ref": "refs/remotes/mios-handoff/mios-inputd-focus-gesture",
+        "disposition": "preserved_pending_integration",
+        "note": "Gesture implementation needs configurator completion and final verification."
+      }
+    ]
+  },
+  "wip_manifest": {
+    "path": ".devloop/handoff/mios-wip-manifest.json",
+    "sha256": "5b8e30fbb5fe1dce2472ae7d3a37e0c37cabcae0015483505e4c5e6260808b75",
+    "bytes": 5070,
+    "based_patch_count": 3,
+    "unbased_patch_count": 1,
+    "portable_payload_count": 11
+  },
+  "recovery_boundaries": {
+    "scope": "Published source and preserved WIP; no runtime state or uncommitted remote filesystem content.",
+    "codespace": "fluffy-trout-p7rwx5jj9r55f67qr",
+    "codespace_filesystem_recovery": "not_verified",
+    "codespace_startup": "not_verified",
+    "combined_ci": "not_verified",
+    "live_installation": "not_verified",
+    "visual_acceptance": "partial_historical_report_only"
+  },
+  "resume_note": ".devloop/handoff/mios-checkpoint-manifest.md"
+}

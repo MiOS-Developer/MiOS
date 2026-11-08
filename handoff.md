@@ -1,3 +1,88 @@
+<!-- AI-hint: Current remote recovery entrypoint and milestone publication status. -->
+# Cloud recovery and startup repair
+
+After PR #65 is merged, resume this work from `origin/main`. Before the merge,
+use its head branch, `claude/code-session-lryqdr`, for review. This recovery
+started from main `4bf38f52b7d5103c5b6ba6fada6a440e55475062` and
+also preserves the later main handoff commit
+`c958dd4a07dbb56208b769d6f9e831017faf11fd`.
+The sections below this entry retain the historical source handoff verbatim.
+The voxel R3 and SearXNG D lanes are already merged in the PR at
+`403114b99740c1701b3cb09a88497d3cf3b8aed5`; do not merge them again based on
+an older handoff's pending status. HUD, camera, gesture and R4/menu/root WIP
+remain preserved, with review and integration pending.
+
+The current assignment covers both portable source recovery and the reported
+Codespace failure to load MiOS. The repository is available; direct inspection
+of the selected Codespace is blocked before authentication: this cloud
+environment's enforced proxy rejects CONNECT to `api.github.com` with HTTP 403.
+The user reports being authenticated; GitHub repository pushes work. This
+session exposes policy inspection but no policy-edit or Codespaces tool.
+No unpublished Codespace files or live runtime have been recovered or certified.
+Native MiOS relay/tmux and a MiOS-DEV builder are unavailable in this cloud
+executor; platform subagents are coordinating
+isolated source lanes. No live session transfer is claimed.
+
+## Resume without discarding work
+
+In an existing clone, first preserve local modifications and use a fresh,
+collision-checked worktree. After GitHub reports PR #65 merged, use the main
+route below. The following names must not already be in use:
+
+```sh
+git fetch origin refs/heads/main:refs/remotes/origin/main
+git worktree add -b mios-recovery-resume ../mios-recovery-resume origin/main
+cd ../mios-recovery-resume
+sha256sum -c .devloop/handoff/mios-source-checkpoints.bundle.sha256
+git bundle verify .devloop/handoff/mios-source-checkpoints.bundle
+git bundle list-heads .devloop/handoff/mios-source-checkpoints.bundle
+```
+
+The bundle has three prerequisites, all available from the full main history.
+For a shallow clone, fetch the missing history before importing. Inspect any
+existing `refs/remotes/mios-handoff/*` first; do not force-update a divergent ref:
+
+```sh
+git fetch .devloop/handoff/mios-source-checkpoints.bundle 'refs/heads/*:refs/remotes/mios-handoff/*'
+```
+
+## Milestone publication
+
+The orchestrator serializes integration and remote publication. Each subagent
+works in its own function-named worktree, commits only its assigned files and
+writes a tracked receipt under `.devloop/handoff/mios-<purpose>.md`. Each receipt
+records source, branch, changes, actual positive/negative checks, blockers and
+next actions. Milestone commits are pushed to the PR branch as they become
+reviewable; fetch that branch to recover the latest committed state. Work not
+in a published commit remains local, and a queued message is not a push receipt.
+
+Current lanes:
+
+| Lane | Worktree branch | Receipt |
+| --- | --- | --- |
+| Recovery audit | mios-cloud-recovery | `.devloop/handoff/mios-recovery-audit.md` |
+| Recovery inventory | mios-checkpoint-manifest | `.devloop/handoff/mios-checkpoint-manifest.md` |
+| Codespace startup | mios-codespace-startup | `.devloop/handoff/mios-codespace-startup.md` |
+| CI registration | mios-recovery-ci | `.devloop/handoff/mios-recovery-ci.md` |
+| Integration and publication | mios-cloud-recovery | `.devloop/handoff/mios-cloud-recovery.md` |
+
+The operator explicitly requested finishing PR #65 and merging its source and
+handoffs to main. The integration owner publishes the reviewed PR using an
+expected head SHA; remote successors recover its committed state from main.
+The existing live-installation requirement in `.agents/COORDINATION.md` remains:
+record the actual target and artifact receipt after publication, or record the
+concrete access blocker when installation cannot run. This executor cannot
+reach the selected live Codespace. Source publication does not certify a live
+rebuild or deployed MiOS.
+
+The source repair replaces the absent post-start gate, installs actual
+Cargo-reported executables using locked workspaces, and selects the fresh
+catalog for both lifecycle and editor processes. After updating an existing
+Codespace's clean checkout to the merged main, perform a full container rebuild;
+a reconnect alone retains the old container. See `.devcontainer/README.md`.
+
+---
+
 ## Latest verified status
 
 The post-publication receipt is in `.devloop/handoff/mios-completion-status.json`.

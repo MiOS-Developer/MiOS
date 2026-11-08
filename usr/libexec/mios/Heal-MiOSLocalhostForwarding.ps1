@@ -26,7 +26,6 @@ $portKeys = @(
     @{ Key = 'forge_http'; Default = 8400 },
     @{ Key = 'code_server'; Default = 8900 },
     @{ Key = 'open_webui'; Default = 8200 },
-    @{ Key = 'searxng'; Default = 8800 },
     @{ Key = 'llm_light'; Default = 8500 },
     @{ Key = 'agent_pipe'; Default = 8700 },
     @{ Key = 'hermes_dashboard'; Default = 8210 }
@@ -40,6 +39,21 @@ foreach ($pk in $portKeys) {
         $pk.Default
     }
 }
+# SearXNG has no last-resort literal: the one [ports].searxng through the
+# layered Get-MiosSsotValue, loaded from <root>\installation in a child scope
+# so the rest of this script never sees the reader, or $null. Unresolved, it
+# is neither cleaned nor probed, and the warning names the key.
+$v = & {
+    if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
+        $c = Join-Path $PSScriptRoot '..\..\..\installation\mios-common.ps1'
+        if (Test-Path $c) { try { . $c } catch {} }
+    }
+    if (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) { [string](Get-MiosSsotValue -Section 'ports' -Key 'searxng') }
+}
+$searxngPort = $null
+if ($v -match '^\d{1,5}$' -and [int]$v -ge 1 -and [int]$v -le 65535) { $searxngPort = [int]$v }
+if ($null -ne $searxngPort) { $resolvedPorts['searxng'] = $searxngPort }
+else { Write-Warning 'mios.toml [ports].searxng does not resolve from any layer; SearXNG forwarding is not healed or probed' }
 $ports = @($resolvedPorts.Values)
 # Cockpit speaks TLS; the probe below picks its scheme off this value.
 $cockpitPort = $resolvedPorts['cockpit']

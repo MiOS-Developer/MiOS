@@ -326,7 +326,7 @@ mod tests {
         Ok(())
     }
 
-    const PORTS: &str = "[ports]\nstack_id = 0\nforge_http = 8400\nsearxng = 8800\nsearxng_internal = 8080\nunbound = []\n[ports.categories.forge]\nbase = 8400\n";
+    const PORTS: &str = "[ports]\nstack_id = 0\nforge_http = 8400\npgvector = 8600\npgvector_internal = 5432\nunbound = []\n[ports.categories.forge]\nbase = 8400\n";
 
     #[test]
     fn quadlet_literals_fail_and_ssot_fallbacks_internal_ports_and_comments_pass(
@@ -338,7 +338,7 @@ mod tests {
         write(root, "usr/share/mios/mios.toml", PORTS)?;
         assert!(container_ports(&ctx).is_err_and(|e| e.contains("no subjects")));
         let unit = "usr/share/containers/systemd/mios-forge.container";
-        let clean = "[Container]\n# PublishPort=8400:8400 is documentation\n; 8800 too\nEnvironment=HTTP_PORT=${MIOS_PORTS_FORGE_HTTP:-8400}\nLabel=url=http://localhost:${MIOS_PORT_FORGE_HTTP:-8400}/\nPublishPort=127.0.0.1:${MIOS_PORTS_SEARXNG:-8800}:8080\nEnvironment=PORT=8080\nExec=serve --threads 84000\n";
+        let clean = "[Container]\n# PublishPort=8400:8400 is documentation\n; 8600 too\nEnvironment=HTTP_PORT=${MIOS_PORTS_FORGE_HTTP:-8400}\nLabel=url=http://localhost:${MIOS_PORT_FORGE_HTTP:-8400}/\nPublishPort=127.0.0.1:${MIOS_PORTS_PGVECTOR:-8600}:5432\nEnvironment=PORT=5432\nExec=serve --threads 84000\n";
         write(root, unit, clean)?;
         write(
             root,
@@ -350,17 +350,17 @@ mod tests {
         assert!(container_ports(&ctx).is_err_and(|e| e.contains(&format!(
             "{unit}:9: manual port literal 8400 for [ports].forge_http"
         ))));
-        write(root, unit, &format!("{clean}PublishPort=8080\n"))?;
+        write(root, unit, &format!("{clean}PublishPort=5432\n"))?;
         assert!(container_ports(&ctx).is_err_and(
-            |e| e.contains(":9: manual port literal 8080 for [ports].searxng_internal")
+            |e| e.contains(":9: manual port literal 5432 for [ports].pgvector_internal")
         ));
         write(
             root,
             unit,
-            &format!("{clean}Label=x=http://h/#/${{MIOS_PORTS_X:-1}}:8800\n"),
+            &format!("{clean}Label=x=http://h/#/${{MIOS_PORTS_X:-1}}:8600\n"),
         )?;
         assert!(container_ports(&ctx)
-            .is_err_and(|e| e.contains(":9: manual port literal 8800 for [ports].searxng;")));
+            .is_err_and(|e| e.contains(":9: manual port literal 8600 for [ports].pgvector;")));
         write(root, "usr/share/mios/mios.toml", "[ports]\nstack_id = 0\n")?;
         assert!(container_ports(&ctx).is_err_and(|e| e.contains("no integer port")));
         Ok(())

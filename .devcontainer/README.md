@@ -73,6 +73,41 @@ and leaves that container intact. Preserve its non-workspace state before
 recreating it from the rebuilt image; the source checkout remains in its bind
 mount.
 
+## Applying the source recovery on main
+
+PR #65 repairs the missing post-start harness probe and the native tool
+installation/selection path. After that PR is merged, use `main` as the source
+for an existing Codespace. Save unpublished changes and required state under
+`/workspaces` before changing its checkout; inspect `git status` first. With a
+clean checkout and a local `main` that can fast-forward:
+
+```sh
+git fetch origin main
+git switch main
+git merge --ff-only origin/main
+```
+
+If the checkout is dirty or main has diverged, preserve that work and reconcile
+it in a separate worktree rather than resetting it. From an authenticated
+operator terminal, rebuild the selected Codespace after its checkout is updated:
+
+```sh
+gh codespace rebuild --codespace fluffy-trout-p7rwx5jj9r55f67qr --full
+```
+
+A rebuild uses the selected released MiOS base image plus the checkout's
+lifecycle scripts. If the log reports missing base-image account helpers or
+payloads, the OS image publication must succeed first; the thin wrapper cannot
+supply them. Rebuilt catalog executables install under `/opt/mios/bin`. Both
+profiles prepend that path for editor processes and select it through
+`MIOS_NATIVE_BIN_DIR`; the lifecycle does the same after installation succeeds.
+
+A managed cloud executor's outbound proxy policy is a separate environment
+setting. Committing this repository or merging the PR does not change that
+policy. A CONNECT denial for `api.github.com` occurs before GitHub authentication;
+enable that domain through the environment configuration before using the
+Codespaces API from such an executor. Do not disable the proxy or TLS checks.
+
 ## Development-safe MiOS core
 
 The image includes rootless Podman/Quadlet networking dependencies and the

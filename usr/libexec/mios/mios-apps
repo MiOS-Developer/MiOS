@@ -404,13 +404,18 @@ _SVC_PORT_COCKPIT="${MIOS_PORTS_COCKPIT:-8110}"
 _SVC_PORT_OWUI="${MIOS_PORTS_OPEN_WEBUI:-8200}"
 _SVC_PORT_HERMES="${MIOS_PORTS_HERMES:-8720}"
 _SVC_PORT_PREFILTER="${MIOS_PORTS_PREFILTER:-8710}"
-_SVC_PORT_SEARXNG="${MIOS_PORTS_SEARXNG:-8800}"
 _SVC_PORT_FORGE="${MIOS_PORTS_FORGE_HTTP:-8400}"
 emit service-url "cockpit"   "Web system console"                                   "mios-open-url http://localhost:${_SVC_PORT_COCKPIT}"
 emit service-url "owui"      "MiOS Open WebUI (browser chat front)"                 "mios-open-url http://localhost:${_SVC_PORT_OWUI}"
 emit service-url "hermes"    "Hermes-Agent OpenAI gateway"                          "mios-open-url http://localhost:${_SVC_PORT_HERMES}/v1"
 emit service-url "prefilter" "MiOS-Prefilter (delegate-task forced) -> Hermes"      "mios-open-url http://localhost:${_SVC_PORT_PREFILTER}/v1"
-emit service-url "searxng"   "MiOS-Search (SearXNG)"                               "mios-open-url http://localhost:${_SVC_PORT_SEARXNG}"
+# [urls].searxng from install.env, projected from [ports].searxng; an
+# unresolved key is named and the row omitted, never guessed.
+if [ -n "${MIOS_URLS_SEARXNG:-}" ]; then
+    emit service-url "searxng"   "MiOS-Search (SearXNG)"                           "mios-open-url ${MIOS_URLS_SEARXNG}"
+else
+    echo "mios-apps: MIOS_URLS_SEARXNG is unresolved -- install.env must carry [urls].searxng; searxng omitted" >&2
+fi
 emit service-url "forgejo"   "MiOS-Forge (local git host)"                          "mios-open-url http://localhost:${_SVC_PORT_FORGE}"
 
 exit 0

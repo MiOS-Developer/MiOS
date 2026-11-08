@@ -43,7 +43,6 @@ tools:
   web_search:
     enabled: true
     provider: searxng
-    base_url: http://mios-searxng:8080
 
 # Architectural Law 5 (UNIFIED-AI-REDIRECTS) -- the agent loop must
 # stay local. Without this block Hermes routes /v1/chat/completions

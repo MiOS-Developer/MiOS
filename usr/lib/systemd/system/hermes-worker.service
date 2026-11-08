@@ -34,7 +34,7 @@ Group=mios-ai
 Environment=HOME=/var/lib/mios/hermes-worker
 Environment=HERMES_HOME=/var/lib/mios/hermes-worker
 # Retrieval endpoints (same as the primary -- retrieval, not inference, Law 5).
-Environment=SEARXNG_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_SEARXNG:-8800}
+Environment=SEARXNG_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_SEARXNG}
 Environment=MIOS_CRAWL_SERVICE_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_CRAWL4AI:-8810}
 Environment=FIRECRAWL_API_URL=http://${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_FIRECRAWL:-8820}
 # BIND: API_SERVER_PORT is the load-bearing var. PORT is set for parity/docs but

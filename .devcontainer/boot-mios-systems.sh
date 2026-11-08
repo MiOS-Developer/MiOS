@@ -36,7 +36,7 @@ mios_core() {
     local rust_manifest="${root}/src/mios-rs/Cargo.toml"
     local install_dir=/opt/mios/bin
     local agent_pipe_python=/usr/lib/mios/agents/.venv/bin/python
-    local binary
+    local binary artifacts executables status
 
     if [[ ! -f "${rust_manifest}" ]]; then
         echo "[devcontainer:core] Missing miosd workspace manifest: ${rust_manifest}" >&2
@@ -58,17 +58,50 @@ mios_core() {
         "${HOME}/.cache/mios/agent-pipe"
 
     echo "[devcontainer:core] Building upstream native workspaces..."
-    (cd "${root}/src/mios-rs" && cargo build --release)
-    (cd "${root}/tools/native" && cargo build --release --workspace --exclude mios-wallpaperd)
+    artifacts="$(mktemp)"
+    if (cd "${root}/src/mios-rs" && cargo build --locked --release --message-format=json-render-diagnostics) >"${artifacts}" \
+        && (cd "${root}/tools/native" && cargo build --locked --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics) >>"${artifacts}"; then
+        :
+    else
+        status=$?
+        rm -f "${artifacts}"
+        return "$status"
+    fi
+    # Cargo reports actual executable paths, including configured target triples
+    # and custom CARGO_TARGET_DIR locations. A target/release glob silently kept
+    # the baked tools when tools/native built its configured musl target instead.
+    if executables="$(python3 - "${artifacts}" <<'PY'
+import json, sys
+executables = {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    artifact = json.loads(line)
+    target = artifact.get("target", {})
+    name = target.get("name", "")
+    executable = artifact.get("executable")
+    if (artifact.get("reason") == "compiler-artifact" and "bin" in target.get("kind", [])
+            and (name.startswith("mios") or name == "generate-names-registry") and executable):
+        executables[name] = executable
+if not {"miosd", "mios-gen"}.issubset(executables):
+    raise SystemExit("[devcontainer:core] Cargo did not report the required miosd and mios-gen executables")
+print("\n".join(executables.values()))
+PY
+    )"; then
+        rm -f "${artifacts}"
+    else
+        status=$?
+        rm -f "${artifacts}"
+        return "$status"
+    fi
     sudo install -d -m 0755 "${install_dir}"
-    for binary in \
-        "${root}"/src/mios-rs/target/release/mios* \
-        "${root}"/tools/native/target/release/mios-* \
-        "${root}"/tools/native/target/release/generate-names-registry; do
-        [[ -x "${binary}" ]] || continue
+    while IFS= read -r binary; do
+        [[ -n "${binary}" ]] || continue
         sudo install -m 0755 "${binary}" "${install_dir}/$(basename "${binary}")"
-    done
+    done <<<"${executables}"
     sudo ln -sfn "${install_dir}/miosd" /usr/local/bin/miosd
+    # The rest of this lifecycle must use this source's tools and generator
+    # helpers rather than finding the image's older catalog first.
+    export PATH="${install_dir}:${PATH}"
+    export MIOS_NATIVE_BIN_DIR="${install_dir}"
     miosd --help >/dev/null
 
     echo "[devcontainer:core] MiOS development core is ready."
@@ -170,7 +203,9 @@ mios_post_start() {
         exit 1
     fi
 
-    python3 harness/verification_gates.py --quick
+    # Use the gateway's shipped readiness probe. The former harness/ gate was
+    # never part of this checkout and failed every otherwise successful start.
+    bash /workspaces/MiOS/.devcontainer/mios-agent-pipe-dev check
 
     echo "[devcontainer:post-start] Ready for agent dispatch."
 }

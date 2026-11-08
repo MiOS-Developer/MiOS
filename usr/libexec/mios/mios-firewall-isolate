@@ -12,6 +12,10 @@ import sys
 import tomllib
 from typing import Any, Dict, List, Optional
 
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "lib", "mios"))
+import mios_toml  # noqa: E402  -- the ONE shared layered-mios.toml resolver
+
 DEFAULT_TOML_PATH = "/usr/share/mios/mios.toml"
 DEFAULT_NFT_CONF = "/etc/nftables/mios_container_isolate.nft"
 
@@ -36,6 +40,36 @@ def load_firewall_matrix(toml_path: str) -> Dict[str, Any]:
         })
     except Exception as e:
         return {"default_policy": "drop", "rules": [], "error": str(e)}
+
+
+def rule_port(rule: Dict[str, Any]) -> int:
+    """A rule's destination port: a literal `port`, or `port_key` naming a
+    [ports] key. A port_key resolves through the layered SSOT exactly as
+    install.env renders MIOS_PORTS_<KEY> (vendor < host < user, the
+    [ports.categories] derivation, the [ports].stack_id offset), whatever file
+    --toml names for the matrix. Nothing stands in for a key that does not
+    resolve: ValueError names the rule and the key."""
+    where = f"rule {rule.get('source', '?')}->{rule.get('destination', '?')}"
+    key = rule.get("port_key")
+    if key is not None and "port" in rule:
+        raise ValueError(f"{where}: set port or port_key, not both")
+    if key is None:
+        if "port" not in rule:
+            raise ValueError(f"{where}: neither port nor port_key is set")
+        try:
+            return int(rule["port"])
+        except (TypeError, ValueError):
+            raise ValueError(f"{where}: port {rule['port']!r} is not a port number") from None
+    try:
+        return int(mios_toml.resolved_export(mios_toml.canonical_name(f"ports.{key}")))
+    except KeyError as e:
+        raise ValueError(f"{where}: port_key {key!r}: {e.args[0]}") from None
+
+
+def resolve_rules(matrix: Dict[str, Any]) -> Dict[str, Any]:
+    """The matrix with every rule's `port` resolved (rule_port)."""
+    rules = [{**rule, "port": rule_port(rule)} for rule in matrix.get("rules", [])]
+    return {**matrix, "rules": rules}
 
 
 def generate_nftables_ruleset(matrix: Dict[str, Any]) -> str:
@@ -92,7 +126,11 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    matrix = load_firewall_matrix(args.toml)
+    try:
+        matrix = resolve_rules(load_firewall_matrix(args.toml))
+    except ValueError as e:
+        print(f"mios-firewall-isolate: [network.firewall.container_matrix] {e}", file=sys.stderr)
+        return 78
     ruleset = generate_nftables_ruleset(matrix)
 
     if args.generate and not args.json:

@@ -858,6 +858,28 @@ class TestGuiShellUnify(unittest.TestCase):
                 with patch.dict(globals(), fixture):
                     self.assertIn(problem, contract_defect1_glass_styling_and_compositor_blur())
 
+    def test_regression_native_dispatch_must_not_activate_dbus_entries_that_have_an_exec(self):
+        original = read
+        source = original(NATIVE_DISPATCH)
+        guard = '    if !fields.get("Exec").is_some_and(|s| !s.is_empty())\n        || multiple_single_resources'
+        self.assertEqual(source.count(guard), 1)
+        mutated = source.replace(guard, '    if !fields.get("Exec").is_some_and(|s| !s.is_empty())\n'
+                                 '        || fields.get("DBusActivatable").is_some_and(|s| s == "true")\n'
+                                 '        || multiple_single_resources', 1)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == NATIVE_DISPATCH and ref is None else original(rel, ref)}):
+            self.assertIn("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)",
+                          contract_gnome_phosh_app_launching())
+
+    def test_regression_launcher_must_keep_the_bypassing_dispatcher(self):
+        original = read
+        path = "usr/libexec/mios/mios-desktop-launch"
+        source = original(path)
+        mutated, count = re.subn(r"^exec mios-gen desktop-dispatch .*$", 'exec gtk-launch "$@"', source, count=1, flags=re.M)
+        self.assertEqual(count, 1)
+        with patch.dict(globals(), {"read": lambda rel, ref=None: mutated if rel == path and ref is None else original(rel, ref)}):
+            self.assertIn("mios-desktop-launch does not bypass DBusActivatable=true headless daemon invocation (Calls fails to open GUI window)",
+                          contract_gnome_phosh_app_launching())
+
     def test_positive_defect0_layer_keyboard_focus(self):
         problems = contract_defect0_layer_keyboard_focus(None)
         self.assertEqual(problems, [], f"Defect 0 contract failed on working tree: {problems}")

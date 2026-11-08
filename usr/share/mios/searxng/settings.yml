@@ -11,9 +11,10 @@ general:
   enable_metrics: false
 
 server:
-  base_url: "http://localhost:8899/"
-  port: 8080
-  bind_address: "0.0.0.0"
+  # No base_url / port / bind_address here: the mios-searxng Quadlet projects
+  # SEARXNG_BASE_URL and SEARXNG_BIND_ADDRESS from [ports].searxng, and granian
+  # binds GRANIAN_HOST:GRANIAN_PORT from the same key. A literal here could
+  # only disagree with the SSOT.
   # Filled in at first-boot by SearXNG's entrypoint.
   secret_key: "PLACEHOLDER_SECRET_KEY_REGENERATE_ON_FIRST_BOOT"
   limiter: false

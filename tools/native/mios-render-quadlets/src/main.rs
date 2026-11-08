@@ -94,16 +94,7 @@ fn ssot_exports(root: &Path) -> BTreeMap<String, String> {
     match fig.extract::<toml::Value>() {
         Ok(mut merged) => {
             mios_resolver::db_overlay::maybe_apply_db_overlay(&mut merged, false);
-            let offset = merged
-                .get("ports")
-                .and_then(|p| p.get("stack_id"))
-                .and_then(|v| {
-                    v.as_integer()
-                        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-                })
-                .map(|id| id * 10000)
-                .unwrap_or(0);
-            let mut map = mios_resolver::emit::build_exports_map(&merged, offset);
+            let mut map = exports_of_merged(merged);
             overlay_env(&mut map);
             map
         }
@@ -117,6 +108,26 @@ fn ssot_exports(root: &Path) -> BTreeMap<String, String> {
             map
         }
     }
+}
+
+/// The export map of one merged layer stack, as `resolve_merged` sees it:
+/// `[ports]` is re-derived from `[ports.categories]` after every tier has
+/// merged, then the `[ports].stack_id` offset applies. Without the derivation
+/// a tier that retargets a category base was ignored here while install.env
+/// and the Quadlet generator followed it, and a flat `[ports]` override that
+/// both of them overrule was baked instead.
+fn exports_of_merged(mut merged: toml::Value) -> BTreeMap<String, String> {
+    mios_resolver::ports::derive_ports(&mut merged);
+    let offset = merged
+        .get("ports")
+        .and_then(|p| p.get("stack_id"))
+        .and_then(|v| {
+            v.as_integer()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .map(|id| id * 10000)
+        .unwrap_or(0);
+    mios_resolver::emit::build_exports_map(&merged, offset)
 }
 
 /// A non-empty `MIOS_*` in the process environment outranks the SSOT, which is
@@ -563,6 +574,38 @@ mod tests {
         overlay_from(&mut map, vars(&[("MIOS_PORT_FIXTURE_ONLY", "2222")]));
         let out = render_file("ListenStream=${MIOS_PORT_FIXTURE_ONLY}\n", &cfg(), &map);
         assert!(out.rendered.contains("2222"), "{}", out.rendered);
+    }
+
+    /// The bake follows the authoritative port semantics: a merged stack whose
+    /// category base moved re-derives every member, a flat value the
+    /// derivation overrules is not baked, and stack_id offsets the result.
+    #[test]
+    fn baked_ports_derive_from_categories_after_the_merge() {
+        let doc = || -> toml::Value {
+            toml::from_str(
+                "[ports]\nstack_id = 0\nsearxng = 8830\ncrawl4ai = 8810\n\
+                 [ports.categories.webtools]\nbase = 18800\nstride = 10\n\
+                 members = [\"searxng\", \"crawl4ai\"]\n",
+            )
+            .unwrap()
+        };
+        let map = exports_of_merged(doc());
+        assert_eq!(Some(&"18800".to_string()), map.get("MIOS_PORTS_SEARXNG"));
+        assert_eq!(Some(&"18810".to_string()), map.get("MIOS_PORTS_CRAWL4AI"));
+        let out = render_file(
+            "[Service]\nExecStart=/bin/x\nEnvironment=SEARXNG_URL=http://127.0.0.1:${MIOS_PORTS_SEARXNG}\n",
+            &cfg(),
+            &map,
+        );
+        assert!(
+            out.rendered.contains("http://127.0.0.1:18800\n"),
+            "{}",
+            out.rendered
+        );
+        let mut shifted = doc();
+        shifted["ports"]["stack_id"] = toml::Value::Integer(1);
+        let map = exports_of_merged(shifted);
+        assert_eq!(Some(&"28800".to_string()), map.get("MIOS_PORTS_SEARXNG"));
     }
 
     /// Empty and unset are the same thing here, which is why the guard exists.

@@ -336,13 +336,50 @@ renderers switch to the stroke atlas when each glyph has enough visible cells;
 plain ASCII retains character shading at larger sizes. Expression spacing and
 aspect follow the text box rather than stretching one character into a rectangle.
 
+Face detail changes never pop. The live game remembers which tier each scene
+subject's face showed last:
+
+- Hysteresis: a native face switches to strokes only from 3.5 cells per glyph
+  and 3.5 rows, and strokes return to native characters only below the 3.0
+  minimum they need. Strokes switch to the atlas from 8 cells per glyph and 8
+  rows, and the atlas returns to strokes only below 7. A zoom that settles on a
+  threshold, a turntable or a head bob therefore never makes the face flicker.
+- Blending: a tier change takes one zoom_transition_frames transition per tier
+  (one transition in all after a resize), eased like the camera. It goes glyph
+  by glyph: the middle glyph first, then each mirrored pair outwards (the eyes,
+  then the parentheses). Each glyph is
+  drawn whole by one tier, so the expression stays readable and symmetric on
+  every frame. Between native characters and strokes the face keeps the stroke
+  layout: a glyph not yet on strokes is its own single character inside its
+  glyph box, so the expression grows in place.
+- Direction: a zoom or orbit changes the face's tier only the way the face
+  itself moves. While the face shrinks its detail never rises, and while it
+  grows its detail never falls. An explicit zoom counts from the frame it is
+  pressed, before the eased zoom moves. A zoom that reverses during a blend
+  takes that blend back instead of finishing it and changing tier again; while
+  the face is still past the far threshold, the blend holds. Pressing `+`
+  quickly and then `0` therefore stays on strokes instead of passing through
+  the atlas on the way back.
+- Resizes: a terminal resize (any change of the camera viewport) is not
+  jitter. The face takes the new size's exact tier (3 and 8, no hysteresis)
+  and reaches it within one zoom_transition_frames transition, however many
+  tiers it crosses, so a large head never keeps a small head's native
+  characters. The first frame after a resize still shows the face as it was
+  drawn.
+- Zoom, orbit, view changes and resizes all use this path. A change that
+  interrupts a blend continues from the face actually drawn.
+- A new pet, a Roster preview or a Studio preview starts fresh, without
+  inheriting another subject's blend: its first frame uses the exact thresholds
+  (3 and 8), as does any render without a remembered tier.
+
 Face zoom eases toward the visible face-plane centre, preserving actual zoom.
 It does not shrink the model to fit: high zoom in a small viewport can crop the
 outer parentheses and eyes. The actual material/depth mask still occludes
-species noses, oblique edges and rear faces. Face ink uses the existing outline
-contrast setting against the head material as actually rendered, including its
-lighting. Disabling lighting keeps contrast against the unlit material. This
-uses fixed histograms without per-frame heap allocation.
+species noses, oblique edges and rear faces. Face strokes are face shapes, drawn
+the same way on every head (see "Face shapes" below). The renderer still measures
+the head material as actually rendered, including its lighting, against the
+existing outline contrast setting, to decide whether a half-block face may use the
+pixel atlas. This uses fixed histograms without per-frame heap allocation.
 
 Tiny scenes, legacy pixel sprites and read-only snapshots retain literal facial
 text. Compact HUDs keep a separate mood caption. The same clipped projection is
@@ -563,51 +600,175 @@ uncolored output. Facial ink stays separate from body illumination.
 Silhouettes use visible screen edges as well as model edges, retaining contrast
 against the room at larger zooms.
 
-The ASCII renderers overlay the voxels themselves, in every lit voxel view
-(ASCII, half-block, quadrant and braille; Room, Pet and Face; every size). In
-colour, a Mon cell's background is the voxel's lit colour, plain ASCII included,
-and the overlay glyph is drawn over it:
+The ASCII renderers overlay the voxels themselves with a bold ASCII layer, in
+every voxel view (ASCII, half-block, quadrant and braille; Room, Pet and Face;
+every size and zoom), and ring every Mon with a black sprite outline, like an
+8-bit or 16-bit sprite's, so each species keeps a distinct silhouette at the
+smallest sizes.
 
-- Silhouettes: a cell the silhouette crosses keeps the scene actually behind the
-  pet (the floor or wall) as its background and draws the Mon's samples in
-  outline ink. It uses an ASCII line glyph when one re-expresses that exact
-  shape (for example `_` `^` `'` `,` `.` `|` `/` `\` `(` `)`); otherwise it keeps
-  the exact block or braille pattern. A cell with a whole exposed side draws an
-  outline glyph oriented to the silhouette: `-` `_` `|` `/` `\` `^` `v` `<` `>`.
-- Contours: where a nearer part overlaps a farther one (a paw over the body, an
-  ear over the head, a nose over the face), the near part carries a line in its
-  own shadow tint.
+The black outline comes first:
+
+- Silhouette: every packed sample of the Mon whose screen neighbour (left,
+  right, above or below) shows no Mon is black. The ring is exactly one
+  sub-pixel wide and closed around the whole Mon (ears, tail and paws included).
+  Half-block, quadrant and braille draw these samples in their own block
+  geometry, so the ring stays one half-block, quadrant or braille dot thin. In
+  a cell the Mon shares with the scene, the rest of the cell keeps the scene
+  actually behind the pet (the floor or wall when there is one); in a full cell
+  the rest keeps the lit voxel. The ASCII renderer has one sample per cell: an
+  outline cell is black and carries an outline glyph oriented to the silhouette
+  (`-` `_` `|` `/` `\` `^` `v`, and `(` `)` for a tip to the side; never `<` `>`,
+  which read as arrows) in a dim grey, the dimmest grey that keeps a 3:1
+  contrast with the black. Beside a native face character the black ASCII cell
+  carries no glyph.
+- Overlaps: where a nearer part passes in front of a farther one (an ear over
+  the head, the head over the body, a paw or the tail over the body, a muzzle
+  over a cheek), the near part's samples along the boundary are black, one
+  sample wide. A minified Mon keeps only overlaps with a depth jump of at least
+  three voxels. Shallower ones fade in voxel by voxel between 0.35 and 0.65
+  cells per voxel, so zooming never adds or drops them all at once.
+- Sharp creases: where two parts of the model meet in a fold sharper than 60
+  degrees (a valley the surface turns through between two one-sided slopes about
+  two voxels long), the fold is black, thinned to one sample. A voxel staircase
+  over a smooth convex surface can fake at most 2 atan(1/2), about 53 degrees, so
+  gentle curvature is never blackened: it stays the ASCII depth contour.
+- A line is drawn once: an overlap or crease right beside the silhouette ring is
+  the ring's, and no line sits on the face plane around the kaomoji or in the
+  plain ring around a native face.
+- The black is pure black in every colour depth (the darkest colour a terminal
+  shows; a dark room backdrop is only a little lighter). Monochrome keeps its
+  glyph outlines (see below).
+
+Inside the outline every visible Mon cell that is not the face's carries an
+ASCII glyph: in half-block, quadrant and braille the glyph replaces the block,
+quadrant or braille geometry. Each cell takes the first of:
+
+- Monochrome only (no colour planes for a black outline): partial cells (the Mon
+  and the scene share the cell) take an outline stroke shaped like the cell's Mon
+  sub-pixels: a corner tick (`` ` `` `'` `,` `.`) for one sub-pixel, `_` along a
+  bottom half, `"` along a top quarter, `-` along a top half, `|` along a column,
+  `/` or `\` across a diagonal. Full cells beside the scene take the oriented
+  outline glyph, and overlaps a line on the near part.
 - Creases and seams: where the surface turns at a cube edge, the darker face
-  carries a line; where two materials meet, the lighter one carries a line in the
-  darker colour. Both fade in voxel by voxel between 0.8 and 1.6 cells per
-  voxel, so minified Mons are not covered in lines.
-- Interior shading: the configured ramp minus the line glyphs (`-` `_` `|` `/`
-  `\` `(` `)` `^` `v` `<` `>`), so the vendor ramp `.:-=+*#%@` shades with
-  `.:=+*#%@`. A ramp left with fewer than two glyphs is used unchanged. The
-  level spans the configured light range, from fully occluded ambient light to
-  ambient plus full diffuse light, not the frame's own range. In colour, denser
-  is darker and the glyph is a half-shadow tint of the voxel's material; in
-  monochrome, denser is brighter. From about three cells per voxel, alternate
-  lattice voxels step one glyph within their band, a checker that turns with the
-  model.
+  carries a line; where two materials meet, the lighter one does. Both fade in
+  voxel by voxel between 0.8 and 1.6 cells per voxel, so minified Mons are not
+  covered in lines.
+- Depth contours: iso-depth contour lines where the Mon's continuous surface
+  crosses a depth level. The levels are spaced by the voxel pitch and double each
+  time the Mon halves on screen, so neighbouring lines stay about five cells apart
+  on a surface turned 45 degrees from the view at every size; across each
+  doubling the in-between lines fade out voxel by voxel, so a zoom never adds or
+  drops half of them at once. A contour runs along the surface, across its depth
+  gradient: `-` across a vertical gradient, `(` or `)` across a horizontal one
+  (open toward the nearer surface), `/` and `\` across the diagonals. Contours
+  belong to the view: they slide over the surface as the camera orbits and hold
+  still on a still frame. Outlines are black, contours a shade of their voxel,
+  so the two never read as one.
+- Shading texture: the configured ramp minus the line glyphs (`-` `_` `|` `/` `\`
+  `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads as
+  stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left with
+  fewer than two glyphs is used unchanged. The glyph's band spans the configured
+  light range, from fully occluded ambient light to ambient plus full diffuse
+  light, not the frame's own range, over the whole ramp: in colour denser is
+  darker, in monochrome denser is brighter. On alternate voxels of a 3D checker
+  (keyed with the material) the glyph moves one step toward the middle of the
+  ramp, so lattice neighbours along any axis shade differently, the brightest and
+  darkest bands keep a texture, and the texture belongs to the voxels. Nearer
+  surfaces read heavier: the Mon's near third of depth (by coarse contour level)
+  shades one glyph denser, its far third one lighter.
+
+Every glyph but the outline's is a coloured shade of its voxel's own hue (keeping
+at least 55% saturation) over the voxel's lit colour, at a WCAG contrast of about
+3.6:1 for texture and 4.6:1 for lines: darker glyphs on lit faces, lighter glyphs
+on shadowed ones. The contrast eases toward 3:1, never below it while any shade
+reaches it, only where a shade near black or white would lose its hue. The
+256-colour and 16-colour palettes take the nearest palette shade that keeps 3:1
+(a chromatic one for a voxel with a hue); monochrome draws glyphs only. In plain
+ASCII colour a Mon cell's background is the voxel's lit colour, or black on the
+outline.
 
 Every glyph decision depends only on the voxel a sample shows (its model-lattice
 identity, face orientation, material and depth) and on the voxels its
-neighbouring samples show. A glyph therefore stays on its voxel through orbit,
-zoom, occlusion and resampling, and never follows a fixed screen pattern.
+neighbouring samples show. Texture, creases, seams and outlines therefore stay
+on their voxels through orbit, zoom, occlusion and resampling, and never follow a
+fixed screen pattern; depth contours and depth tiers follow the view's depth, and
+the black outline follows the silhouette and overlaps the view shows.
 
 The overlay never obscures the expression. Within a halo around the kaomoji, as
 fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
 plain lit voxel, and the packed renderers keep their block packing for the
-expression strokes. Native characters clear the shading on the head cells beside
-and between them. Facial flat ink is never overpainted, and outline glyphs never
-use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
+expression strokes. Quadrant and braille draw that packing over the voxel's own lit
+colour, so the room never shows between braille dots on the face. A native face
+(one character per cell) keeps a one-cell ring of plain body colour around its
+characters, and the head cells between them: no shading or outline glyph sits
+beside a native eye, mouth or parenthesis. Facial flat ink is never overpainted,
+and outline glyphs never use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
+
+Open eyes have eye whites, so an expression stays noticeable at small sizes and
+matches at large ones:
+
+- Which eyes: the two eye glyphs either side of the mouth, when they are open
+  (`o` `O` `@` `Q` `*` `+` `.`). Closed, squinting, crying and tick eyes (`-`
+  `=` `^` `u` `~` `>` `<` `T` `;` `x`, the backtick and `'`) never get a plate,
+  so a blink stays readable and a wink whitens only its open eye. Mouths and
+  parentheses are never whitened.
+- Shape: the plate comes from the eye glyph itself, with its enclosed counters
+  filled and grown by one glyph unit. It never reaches the mouth or a parenthesis.
+- Every face tier: a native character is its own one-cell plate, including the
+  smallest faces. A shaded face whitens the cells on the eye's plate and draws
+  that eye's strokes on them. The pixel atlas whitens the plate's own pixels
+  around the pupil.
+- Visibility: the plate is sampled through the same depth-tested face map as the
+  strokes. It turns, foreshortens and hides with the face: noses and occluders
+  keep their cells, an oblique view shows only the visible eye, and profiles and
+  rear views show none.
+- Colours: the plate is the palette's "eyes" entry (index 2) and the pupil is the
+  outline ink (index 0). If a custom palette's entry 2 does not clear the outline
+  ink by the configured outline separation, the brightest palette entry is the
+  plate; if the outline ink does not clear the plate, the first palette entry
+  that does is the pupil. The head-based face ink is never used on a plate.
+- Monochrome eye cells use reverse video: a dark stroke on a light block.
+- Plates draw whether lighting is enabled or not.
+- Unchanged: the classic pixel view, and the separate caption shown when no face fits.
+
+Face shapes are every facial mark except an eye white: pupils, mouths, brows,
+tears, cheeks, the parentheses and closed or squinting eyes. At the native,
+shaded and atlas tiers, and in every renderer, each one is a black cell with a
+grey ASCII glyph:
+
+- The black is the sprite outline's black. The face reads on any head colour and
+  never merges with the body's coloured overlay.
+- The glyph is grey, never black. It brightens with the light on the face surface
+  under it: mid grey (128) in the deepest shadow the lighting configures, up to
+  white in full light. The light is the voxel model's own directional light and
+  contact shadow, so the side of the face turned toward the light reads light grey
+  to white. With lighting disabled every face shape takes one flat grey. Face
+  shapes are always brighter than the outline's dim grey, so they never read as
+  outline.
+- A pupil inside an eye white is a black cell inside the white. A shaded open eye
+  whose plate would have no cell besides its own strokes (a small or dot eye) keeps
+  those strokes on the white instead, so every open eye keeps an eye white.
+- A native open eye is one cell, so it is its own plate: the eye white with the
+  pupil glyph on it, as before.
+- Closed and squinting eyes (`- -`, `^ ^`) have no plate. Their strokes are face
+  shapes like the mouth.
+- Packed-pixel atlas strokes are black cells too: their grey glyph is `#` where
+  the stroke fills the cell, else the line glyph of the stroke's sub-cell shape. A
+  half-block cell with a pixel off the face plane (a nose, an ear, an occluder)
+  keeps that pixel beside the grey stroke pixel. Face strokes are never holes
+  through to the room.
+- Monochrome has no colours: a face shape is the terminal's default glyph, bold, on
+  a plain cell, never reverse video, which marks eye whites.
+- The face pass blackens nothing else. Eye whites stay white, and the body around
+  the face keeps its overlay and outline.
 
 Room cells that hold only world surfaces keep their own rendering, and a cell the
 pet shares with the world keeps the world surface as its background. The world
-itself has no voxel identity yet and carries no overlay. With lighting disabled,
-or without a lighting model, and for classic pixel sprites, the renderers keep
-their exact legacy packing.
+itself has no voxel identity yet and carries no overlay. With lighting disabled
+the overlay still marks every voxel over its flat palette colour: the black
+outline, creases, contours and the voxel texture, in one light band. Without a lighting
+model, and for classic pixel sprites, the renderers keep their exact legacy
+packing.
 
 The layered [tamagotchi.voxel_lighting] table and MiOS configurator control the
 ambient and directional light, contact shade, silhouette edge shade, view-space

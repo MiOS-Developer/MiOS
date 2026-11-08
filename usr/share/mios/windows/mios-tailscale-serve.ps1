@@ -73,11 +73,26 @@ $forgePort     = Get-PortFromSsot 'MIOS_PORTS_FORGE_HTTP' 'forge_http' 8400
 $cockpitPort   = Get-PortFromSsot 'MIOS_PORTS_COCKPIT' 'cockpit' 8110
 $adguardPort   = Get-PortFromSsot 'MIOS_PORTS_ADGUARD_UI' 'adguard_ui' 8050
 $guacPort      = Get-PortFromSsot 'MIOS_PORT_GUACAMOLE_WEB' 'guacamole_web' 8220
-$searxngPort   = Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng' 8800
 $codePort      = Get-PortFromSsot 'MIOS_PORTS_CODE_SERVER' 'code_server' 8900
 $ttydBashPort  = Get-PortFromSsot 'MIOS_PORTS_TTYD_BASH' 'ttyd_bash' 8310
 $ttydPwshPort  = Get-PortFromSsot 'MIOS_PORTS_TTYD_POWERSHELL' 'ttyd_powershell' 8320
 $cephPort      = Get-PortFromSsot 'MIOS_PORTS_CEPH_DASHBOARD' 'ceph_dashboard' 8460
+
+# SearXNG is named, never served: its one listener is loopback-only, and
+# serving a loopback-only VM socket to the tailnet is unverified. Its port is
+# the one [ports].searxng (MIOS_PORTS_SEARXNG, then the layered reader loaded
+# from <root>\installation in a child scope); 0 means unresolved.
+$searxngPort   = & {
+    if (-not (Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue)) {
+        $c = Join-Path $PSScriptRoot '..\..\..\..\installation\mios-common.ps1'
+        if (Test-Path $c) { try { . $c } catch {} }
+    }
+    Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng'
+}
+if ($searxngPort -lt 1 -or $searxngPort -gt 65535) {
+    $searxngPort = $null
+    Write-Warning 'mios.toml [ports].searxng does not resolve from any layer; SearXNG is not served'
+}
 
 $SERVICES = @(
     @{ port=$openWebuiPort;  name='open-webui';  label='Open WebUI' }
@@ -88,7 +103,6 @@ $SERVICES = @(
     @{ port=$cockpitPort;    name='cockpit';     label='Cockpit (host console)' }
     @{ port=$adguardPort;    name='adguard';     label='AdGuard Home UI' }
     @{ port=$guacPort;       name='guacamole';   label='Guacamole (browser desktop)' }
-    @{ port=$searxngPort;    name='searxng';     label='SearXNG' }
     @{ port=$codePort;       name='code-server'; label='code-server (VS Code)' }
     @{ port=$ttydBashPort;   name='ttyd-bash';   label='ttyd (bash)' }
     @{ port=$ttydPwshPort;   name='ttyd-pwsh';   label='ttyd (PowerShell)' }
@@ -157,6 +171,9 @@ Write-Host "Idempotent rebuild: resetting existing serve config..." -ForegroundC
 if (-not $DryRun) { & $ts serve reset 2>&1 | Out-Null }
 
 $served = @()
+if ($null -ne $searxngPort) {
+    Write-Host ("  skip   {0,-14} :{1,-5} (loopback-only listener, mios.toml [ports].searxng; tailnet serve unsupported)" -f 'searxng', $searxngPort) -ForegroundColor DarkGray
+}
 foreach ($s in $SERVICES) {
     if (-not (Test-Port $s.port)) {
         Write-Host ("  skip   {0,-14} :{1,-5} (not listening)" -f $s.name, $s.port) -ForegroundColor DarkGray
