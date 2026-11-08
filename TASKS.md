@@ -16,8 +16,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1751 |
-| in_progress | 90 |
+| pending | 1749 |
+| in_progress | 92 |
 | completed | 1897 |
 | incomplete | 20 |
 | cancelled | 21 |
@@ -2669,8 +2669,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3778` Content-fit menus and spatial controller navigation -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L
-- `task_3779` Textured shaded menu panels with shared content-fit geometry -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3778` Content-fit menus and spatial controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3779` Textured shaded menu panels with shared content-fit geometry -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
 
 ## WS-MIOSSYS
 

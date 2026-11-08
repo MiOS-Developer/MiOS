@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4264,
-  "total_metadata_entries": 3432,
-  "total_hints": 3426,
+  "total_files_scanned": 4281,
+  "total_metadata_entries": 3442,
+  "total_hints": 3436,
   "total_functions_indexed": 2136,
-  "total_related_links": 6868,
+  "total_related_links": 6884,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -285,6 +285,122 @@
     {
       "path": ".devloop/handoff/antigravity-2026-10-03.md",
       "hint": "Work brief for the local Antigravity agent: five MiOS tasks that collide with no running cloud lane, branch-per-task, verified and merged to main by the cloud session.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-camera-continuation.md",
+      "hint": "Current global pickup is main; retain prior-stage evidence below.",
+      "related": [
+        "handoff.md",
+        "tools/native/mios-tamagotchi/src/ui.rs",
+        "tools/native/mios-tamagotchi/src/config.rs",
+        "task_3774"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-checkpoint-manifest.md",
+      "hint": "Recovery inventory milestone and receipt contract for portable source continuation.",
+      "related": [
+        ".devloop/handoff/mios-recovery-manifest.json",
+        ".devloop/handoff/mios-wip-manifest.json",
+        "handoff.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-cloud-recovery.md",
+      "hint": "Integration publication receipt for portable source recovery, Codespace startup repairs and remaining access/build blockers.",
+      "related": [
+        "handoff.md",
+        ".devloop/handoff/mios-recovery-manifest.json",
+        ".devcontainer/boot-mios-systems.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-codespace-startup.md",
+      "hint": "Portable source-level startup fix receipt; live Codespace recovery remains unverified.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-gesture-continuation.md",
+      "hint": "Current global pickup is main; retain prior-stage evidence below.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-handoff-continuation.md",
+      "hint": "Current compiled source milestone; all remote pickup is from main.",
+      "related": [
+        "handoff.md",
+        ".devloop/handoff/mios-recovery-manifest.json",
+        "tasks.jsonl"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-hud-continuation.md",
+      "hint": "Current global pickup is main; retain prior-stage evidence below.",
+      "related": [
+        "tools/native/mios-tamagotchi/src/hud.rs",
+        "handoff.md",
+        "tasks.jsonl task_3778/task_3779"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-inputd-test-portability.md",
+      "hint": "Current global pickup is main; retain prior-stage evidence below.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-recovery-audit.md",
+      "hint": "Independent source-recovery audit with exact Git heads, checked payloads, remote resume commands and unresolved Codespace runtime access.",
+      "related": [
+        "handoff.md",
+        ".agents/COORDINATION.md",
+        ".devloop/handoff/mios-wip-manifest.json",
+        ".devcontainer/boot-mios-systems.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": ".devloop/handoff/mios-recovery-ci.md",
+      "hint": "Remote recovery milestone for CI coverage of the recovered SearXNG lane.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -3917,13 +4033,8 @@
     },
     {
       "path": "handoff.md",
-      "hint": "API-published source snapshot and exact Git-history bundle for remote continuation.",
-      "related": [
-        "AGENTS.md",
-        ".agents/COORDINATION.md",
-        "tasks.jsonl",
-        ".devloop/handoff/mios-wip-manifest.json"
-      ],
+      "hint": "Current compiled source milestone; all remote pickup is from main.",
+      "related": [],
       "functions": [],
       "doc": null,
       "comment_style": "xml",

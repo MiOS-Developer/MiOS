@@ -2437,11 +2437,7 @@ direction_deg = 20\nreturn_ms = 250\ncooldown_ms = 400\n";
             let f = audit(&bad);
             assert!(f.iter().any(|x| x.contains(why)), "{from} -> {to}: {f:#?}");
         }
-        let partial = with_mon(&format!("{NAV}{table}".replacen(
-            "cooldown_ms = 400\n",
-            "",
-            1
-        )));
+        let partial = with_mon(&format!("{NAV}{table}").replacen("cooldown_ms = 400\n", "", 1));
         let f = audit(&partial);
         assert!(f.iter().any(|x| x.contains("required together")));
         let base = with_mon(NAV);
