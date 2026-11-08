@@ -1,3 +1,20 @@
+## Latest verified status
+
+The post-publication receipt is in `.devloop/handoff/mios-completion-status.json`.
+It records the exact 4bf38f52 build, user-local installation, live pinned PiP,
+localhost route and the recovered **CONFIRMED D4** verdict (69 SearXNG + 7 nftables
+checks, all 84 planted failures caught). The bootstrap mirror patch is preserved
+alongside it for review; it has not been applied to a separate repository.
+
+This follow-up changes handoff documentation and artifacts only. Application
+source and build inputs remain those verified at 4bf38f52; the running binary's
+actual build provenance stays at that commit. R4 visuals, performance, merge
+conflicts and full hardware acceptance are still open. A cloud reply was
+forwarded one-way to a session named Code session, without a read receipt or
+confirmation that its identity matches the intended importing session.
+
+---
+
 <!-- AI-hint: API-published source snapshot and exact Git-history bundle for remote continuation. -->
 # Recover this handoff after Git transport failures
 
@@ -111,9 +128,10 @@ visual cutoff is claimed.
 
 D4's cached implementation and entry-point fixes are at 58b3752d4. Earlier
 reports caught 77 planted failures and fixed Setup's param-block ordering.
-The remote importing session reports the final adversarial verifier completed,
-but its final verdict has not been independently recovered for this handoff;
-do not substitute that report for the final raw receipt. Retain shipped-layout
+The source participant subsequently recovered the final adversarial verifier's
+CONFIRMED verdict: 69/69 SearXNG and 7/7 nftables checks, all 84 planted failures
+caught, no skips and an empty FOLLOW_UP register. See the latest status receipt
+for the verifier details and nonblocking near-misses. Retain shipped-layout
 SearXNG value-or-skip resolution, loopback-only reachability, skipped direct
 LAN forwarding and sandboxed firewall exit-78 propagation.
 

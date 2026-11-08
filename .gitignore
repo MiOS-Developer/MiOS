@@ -1170,3 +1170,7 @@ usr/share/mios/virtio/*.iso
 # Exact source-history recovery for the portable handoff.
 !/.devloop/handoff/mios-source-checkpoints.bundle
 !/.devloop/handoff/mios-source-checkpoints.bundle.sha256
+
+# Post-publication evidence and bootstrap mirror recovery.
+!/.devloop/handoff/mios-completion-status.json
+!/.devloop/handoff/mios-bootstrap-ports-sync.d4.patch.gz
