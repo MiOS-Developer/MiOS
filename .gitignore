@@ -1182,3 +1182,9 @@ usr/share/mios/virtio/*.iso
 # Post-publication evidence and bootstrap mirror recovery.
 !/.devloop/handoff/mios-completion-status.json
 !/.devloop/handoff/mios-bootstrap-ports-sync.d4.patch.gz
+
+# Continued development from recovered source lanes.
+!/.devloop/handoff/mios-handoff-continuation.md
+!/.devloop/handoff/mios-camera-continuation.md
+!/.devloop/handoff/mios-hud-continuation.md
+!/.devloop/handoff/mios-gesture-continuation.md
