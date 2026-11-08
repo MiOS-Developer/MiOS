@@ -35,6 +35,7 @@ the actual reported binary paths, including custom target directories and any
 configured architecture, after both builds succeed. Missing required `miosd`
 or `mios-gen` receipts fail before installation. The metadata contains paths,
 not executable content, and dependency library/build-script records are ignored.
+Both build commands use `--locked` to preserve the repository lockfiles.
 
 - `python3 tests/test-code-server-bake.py`: 71 tests pass. Fixtures report
   executable paths under a custom directory with spaces and an ARM musl target.
