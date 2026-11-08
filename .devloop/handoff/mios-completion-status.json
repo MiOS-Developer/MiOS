@@ -83,5 +83,127 @@
     "recovered_build_gib": 11.7,
     "source_released_additional_gib": 61.7,
     "additional_source_targets_deleted": false
+  },
+  "node_local_install": {
+    "result": "passed",
+    "source": "00f1472016b1ef5bbedb54a3d2050bebf6851530",
+    "node": "mios",
+    "architecture": "x86_64",
+    "mios_version": "0.3.0",
+    "checks": {
+      "MiOS_DEV_tests_passed": 734,
+      "game_ignored": 3,
+      "fmt": 0,
+      "clippy": 0,
+      "static_artifact_checks": 0,
+      "normal_user_git_pull": "Already up to date.",
+      "automated_menu": "Home > Games > Home",
+      "natural_hatch": "Egg > Baby"
+    },
+    "live": {
+      "node": "mios",
+      "mios_version": "0.3.0",
+      "arch": "x86_64",
+      "owner": "mios-tamagotchi-live-coordinator",
+      "task": "task3764",
+      "source": "00f1472016b1ef5bbedb54a3d2050bebf6851530",
+      "sha256": "ab275f48697efef717548d68844284cab3d846d85a58efbd9fc6d3bb19c2bb07",
+      "binary": "/home/mios/.local/bin/mios-tamagotchi-sample",
+      "config": "embedded --sample",
+      "save": null,
+      "seed": 513,
+      "descriptor": "/run/user/1000/mios-nested-desktop-810686/session.json",
+      "seat": "mios-mons-main-review",
+      "runtime": "/run/user/1000/mios-nested-desktop-810686",
+      "hypr_instance": "release-v0.56.2_1794165498_1463555919",
+      "parent_window": "0x55b22daae340",
+      "tmux_socket": "/run/user/1000/mios-nested-desktop-810686/tmux/tmux-1000/mios-nested-mios-mons-main-review",
+      "session": "tmux-os",
+      "window": "@2",
+      "pane": "%2",
+      "pid": 2160346,
+      "launcher_pid": 810686,
+      "arguments": [
+        "/usr/bin/env",
+        "PATH=/home/mios/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "MIOS_TOML_ROOT=/home/mios/.local/state/mios/mios-mons-input-rollout/mios-controller-root",
+        "/home/mios/.local/bin/mios-tamagotchi-sample",
+        "--sample",
+        "--seed",
+        "513",
+        "--view",
+        "voxel",
+        "--sprite-style",
+        "sixteen-bit",
+        "--renderer",
+        "half-block",
+        "--color",
+        "rgb",
+        "--dialogs",
+        "inline",
+        "--camera",
+        "face",
+        "--zoom",
+        "100"
+      ],
+      "automated": true
+    },
+    "inputd": {
+      "ActiveState": "active",
+      "SubState": "running",
+      "MainPID": "2137102",
+      "NRestarts": "0",
+      "UMask": "0077",
+      "NoNewPrivileges": "yes",
+      "LockPersonality": "yes",
+      "RestrictSUIDSGID": "yes"
+    },
+    "physical_tests": "unverified",
+    "remaining": [
+      "R4 renderer refinements",
+      "Training menu",
+      "authenticated native nested-controller return",
+      "physical phone/controller/VT acceptance"
+    ],
+    "parent_window": {
+      "address": "0x55b22daae340",
+      "mapped": true,
+      "visible": true,
+      "hidden": false,
+      "pinned": true,
+      "at": [
+        1448,
+        359
+      ],
+      "size": [
+        464,
+        334
+      ],
+      "monitor": 1
+    },
+    "captures": {
+      "mios-main-menu-parent.png": "ed92f9abc6df31bc1fad390672f603ee60d651889fae39fa119cf2001ff8a4f6",
+      "mios-main-scene-parent.png": "47a96e13f1c45d9aa863ce236989c8befa6a93c6644d57cb50ea6b48bf73a69f"
+    },
+    "localhost": "http://localhost:8310 (existing authentication)",
+    "menu": "tmux-os launcher > MiOS > MiOS-Mon",
+    "still_open": true,
+    "paused": true,
+    "receipt_directory": "/home/mios/.local/state/mios/mios-main-refresh-check",
+    "build_context": {
+      "builder": "MiOS-DEV",
+      "container_image": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+      "rust": "1.99.1",
+      "target": "x86_64-unknown-linux-musl",
+      "locked": true,
+      "offline": true,
+      "tests_passed": 734,
+      "game_ignored": 3,
+      "keybinding_gate_filtered": 176,
+      "arm64_execution": "unverified"
+    },
+    "installed_inputd_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb",
+    "code_source_commit": "00f1472016b1ef5bbedb54a3d2050bebf6851530",
+    "prior_live_section_is_historical": true
   }
 }
