@@ -1043,8 +1043,13 @@ fn resolve_selected(
             let right = binding_label(&bindings, "key:ALT+6", family);
             Some(match (left, right) {
                 (Some(left), Some(right))
-                    if up == "LS Up" && down == "LS Down"
-                        && left == "LS Left" && right == "LS Right" => "LS Move".into(),
+                    if up == "LS Up"
+                        && down == "LS Down"
+                        && left == "LS Left"
+                        && right == "LS Right" =>
+                {
+                    "LS Move".into()
+                }
                 (Some(left), Some(right)) => {
                     format!("{up} Up / {down} Down / {left} Left / {right} Right")
                 }
@@ -1472,11 +1477,13 @@ mod controller_tests {
         horizontal["global"]["controller"]["nav"]["mon_tmux"]["LS_LEFT"] = json!("none");
         let selected = resolve_selected(&horizontal, &context, true, "Sony").unwrap();
         assert_eq!(selected.menu_navigation.as_deref(), Some("LS Up/Down"));
-        horizontal["global"]["controller"]["nav"]["mon_tmux"]["BTN_TL"] =
-            json!("key:ALT+4");
+        horizontal["global"]["controller"]["nav"]["mon_tmux"]["BTN_TL"] = json!("key:ALT+4");
         let selected = resolve_selected(&horizontal, &context, true, "Sony").unwrap();
         let menu = selected.menu_navigation.unwrap();
-        assert!(menu.contains("L1 Left") && menu.contains("LS Right Right"), "{menu}");
+        assert!(
+            menu.contains("L1 Left") && menu.contains("LS Right Right"),
+            "{menu}"
+        );
 
         let mut partial = mon_map();
         let nav = &mut partial["global"]["controller"]["nav"]["mon_tmux"];

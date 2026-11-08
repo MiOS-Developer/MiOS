@@ -2389,7 +2389,11 @@ impl Router {
             return false;
         };
         let (xa, ya) = self.right_axes();
-        if !self.nav_active() || self.guide_layer() || self.camera() || self.axis_sink(xa) != Sink::Nav {
+        if !self.nav_active()
+            || self.guide_layer()
+            || self.camera()
+            || self.axis_sink(xa) != Sink::Nav
+        {
             self.nav.focus.cancel();
             return false;
         }
@@ -2402,13 +2406,20 @@ impl Router {
         }
         let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
         let dominant = if x.abs() >= y.abs() {
-            if x > 0.0 { Dir::Right } else { Dir::Left }
+            if x > 0.0 {
+                Dir::Right
+            } else {
+                Dir::Left
+            }
         } else if y > 0.0 {
             Dir::Down
         } else {
             Dir::Up
         };
-        let focus = self.is_focus_action(Input::Stick { right: true, dir: dominant });
+        let focus = self.is_focus_action(Input::Stick {
+            right: true,
+            dir: dominant,
+        });
         if x.hypot(y) >= g.neutral_pct && !focus {
             self.nav.focus.cancel();
             return false;
@@ -2446,7 +2457,9 @@ impl Router {
                 self.nav.focus.armed = false;
             }
             self.nav.focus.dwell_ms += dt * 1000.0;
-            if self.nav.focus.dwell_ms >= g.neutral_ms as f64 && now >= self.nav.focus.cooldown_until {
+            if self.nav.focus.dwell_ms >= g.neutral_ms as f64
+                && now >= self.nav.focus.cooldown_until
+            {
                 self.nav.focus.armed = true;
             }
             return;
@@ -5902,7 +5915,11 @@ mod camera_contract {
         o.extend(stick(&mut r, true, 0.75, 0.0));
         o.extend(wait(&mut r, 2000));
         o.extend(stick(&mut r, true, 0.0, 0.0));
-        assert_eq!(o.actions, ["tmux:focus right"], "one gesture, never a repeat or partial-travel focus");
+        assert_eq!(
+            o.actions,
+            ["tmux:focus right"],
+            "one gesture, never a repeat or partial-travel focus"
+        );
         let mut r = mon(Some("mon"));
         let mut o = stick(&mut r, true, 0.8, 0.0);
         o.extend(wait(&mut r, 2000));
@@ -6335,7 +6352,10 @@ mod focus_gesture_contract {
         r.set_app(Some("mon"), None);
         let mut out = abs(&mut r, 3, 0);
         out.extend(wait(&mut r, 100));
-        assert!(!out.actions.iter().any(|a| a.starts_with("tmux:focus ") || a.starts_with("hypr:movefocus ")));
+        assert!(!out
+            .actions
+            .iter()
+            .any(|a| a.starts_with("tmux:focus ") || a.starts_with("hypr:movefocus ")));
         assert!(r.nav.focus.peak.is_none());
         r.set_app(None, None);
         assert_eq!(gesture(&mut r, 3, 1, 0.95).actions, ["tmux:focus right"]);
@@ -6348,7 +6368,10 @@ mod focus_gesture_contract {
         r.set_tmux(false);
         assert!(gesture(&mut r, 3, 1, 0.95).actions.is_empty());
         wait(&mut r, 400);
-        assert_eq!(gesture(&mut r, 3, 1, 0.95).actions, ["hypr:movefocus right"]);
+        assert_eq!(
+            gesture(&mut r, 3, 1, 0.95).actions,
+            ["hypr:movefocus right"]
+        );
     }
 
     #[test]
@@ -6378,7 +6401,11 @@ mod focus_gesture_contract {
         o.extend(wait(&mut r, 40));
         o.extend(abs(&mut r, 3, 0));
         o.extend(wait(&mut r, 100));
-        assert!(actions(&o).is_empty(), "partial travel fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "partial travel fired: {:?}",
+            actions(&o)
+        );
         // The tracker still works afterwards: one clean gesture fires.
         assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
     }
@@ -6397,7 +6424,11 @@ mod focus_gesture_contract {
         o.extend(wait(&mut r, 50));
         o.extend(abs(&mut r, 3, 0));
         o.extend(wait(&mut r, 100));
-        assert!(actions(&o).is_empty(), "unarmed rise fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "unarmed rise fired: {:?}",
+            actions(&o)
+        );
         // After a real dwell the same motion focuses.
         assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
     }
@@ -6412,7 +6443,11 @@ mod focus_gesture_contract {
         o.extend(wait(&mut r, 60));
         o.extend(abs(&mut r, 3, 0));
         o.extend(wait(&mut r, 100));
-        assert!(actions(&o).is_empty(), "cooldown bounce fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "cooldown bounce fired: {:?}",
+            actions(&o)
+        );
         // ...and a gesture after the cooldown fires once again.
         wait(&mut r, 300);
         assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
@@ -6443,7 +6478,11 @@ mod focus_gesture_contract {
         o.extend(abs(&mut r, 3, 0));
         o.extend(abs(&mut r, 4, 0));
         o.extend(wait(&mut r, 100));
-        assert!(actions(&o).is_empty(), "circular sweep fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "circular sweep fired: {:?}",
+            actions(&o)
+        );
         // A clean cardinal gesture still works after the failures.
         assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
     }
@@ -6458,7 +6497,11 @@ mod focus_gesture_contract {
         o.extend(wait(&mut r, 60));
         o.extend(abs(&mut r, 3, 0));
         o.extend(wait(&mut r, 100));
-        assert!(actions(&o).is_empty(), "cursor mode fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "cursor mode fired: {:?}",
+            actions(&o)
+        );
         // A held stick while cursor mode ENDS: the toggle flushes, so the still-held
         // deflection cannot complete a stale gesture; only a fresh full gesture fires.
         r.cursor = false;
@@ -6474,7 +6517,11 @@ mod focus_gesture_contract {
             o.extend(wait(&mut r, 100));
             o
         };
-        assert!(actions(&o).is_empty(), "flushed gesture fired: {:?}", actions(&o));
+        assert!(
+            actions(&o).is_empty(),
+            "flushed gesture fired: {:?}",
+            actions(&o)
+        );
         assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
     }
 
@@ -6490,13 +6537,20 @@ mod focus_gesture_contract {
         let press = r.event(Event::new(EV_KEY, BTN_DPAD_UP, 1), 0);
         let release = r.event(Event::new(EV_KEY, BTN_DPAD_UP, 0), 0);
         assert_eq!(press.actions, ["key:UP"]);
-        assert!(release.actions.is_empty(), "a scalar binding release never acts");
+        assert!(
+            release.actions.is_empty(),
+            "a scalar binding release never acts"
+        );
         assert!(wait(&mut r, 600).actions.is_empty());
         let guide = button_code(&r.global.controller.guide_button).unwrap();
         let mut menu = r.event(Event::new(EV_KEY, guide, 1), 0);
         menu.extend(r.event(Event::new(EV_KEY, guide, 0), 0));
         menu.extend(wait(&mut r, 600));
-        assert_eq!(menu.actions, ["tmux:menu"], "menu input cannot complete a focus gesture");
+        assert_eq!(
+            menu.actions,
+            ["tmux:menu"],
+            "menu input cannot complete a focus gesture"
+        );
     }
 
     #[test]

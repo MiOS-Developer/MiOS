@@ -416,7 +416,12 @@ impl NavConfig {
                 table
                     .get(k)
                     .and_then(toml::Value::as_float)
-                    .or_else(|| table.get(k).and_then(toml::Value::as_integer).map(|v| v as f64))
+                    .or_else(|| {
+                        table
+                            .get(k)
+                            .and_then(toml::Value::as_integer)
+                            .map(|v| v as f64)
+                    })
                     .ok_or(format!("{what}.{k}: a percentage 0 < x <= 1 is required"))
             };
             let ms = |k: &str| -> Result<u64, String> {
@@ -424,7 +429,9 @@ impl NavConfig {
                     .get(k)
                     .and_then(toml::Value::as_integer)
                     .and_then(|v| u64::try_from(v).ok())
-                    .ok_or(format!("{what}.{k}: a whole number of milliseconds is required"))
+                    .ok_or(format!(
+                        "{what}.{k}: a whole number of milliseconds is required"
+                    ))
             };
             let gesture = FocusGesture {
                 neutral_pct: pct("neutral_pct")?,
@@ -438,7 +445,9 @@ impl NavConfig {
                 cooldown_ms: ms("cooldown_ms")?,
             };
             let reason = |field: &str, rule: &str| format!("{what}.{field}: {rule}");
-            if !(gesture.neutral_pct.is_finite() && gesture.neutral_pct > 0.0 && gesture.neutral_pct <= 0.5)
+            if !(gesture.neutral_pct.is_finite()
+                && gesture.neutral_pct > 0.0
+                && gesture.neutral_pct <= 0.5)
             {
                 return Err(reason("neutral_pct", "0 < x <= 0.5"));
             }
@@ -1832,22 +1841,68 @@ mod tests {
         let g = cfg.controller.nav.focus_gesture.expect("vendor table");
         assert!((g.neutral_pct - 0.15).abs() < 1e-9);
         assert_eq!(
-            (g.neutral_ms, g.rise_ms, g.direction_deg, g.return_ms, g.cooldown_ms),
+            (
+                g.neutral_ms,
+                g.rise_ms,
+                g.direction_deg,
+                g.return_ms,
+                g.cooldown_ms
+            ),
             (80, 120, 20, 250, 400)
         );
         assert!((g.rise_pct - 0.9).abs() < 1e-9);
         // Every out-of-range or mistyped field is rejected with its named reason.
         for (field, value, reason) in [
-            ("neutral_pct", toml::Value::Float(0.6), "neutral_pct: 0 < x <= 0.5"),
-            ("neutral_pct", toml::Value::Float(0.0), "neutral_pct: 0 < x <= 0.5"),
-            ("rise_pct", toml::Value::Float(0.15), "rise_pct: neutral_pct < x <= 1"),
-            ("rise_pct", toml::Value::Float(1.5), "rise_pct: neutral_pct < x <= 1"),
-            ("neutral_ms", toml::Value::Integer(0), "neutral_ms: 1..=2000 ms"),
-            ("rise_ms", toml::Value::Integer(2001), "rise_ms: 1..=2000 ms"),
-            ("direction_deg", toml::Value::Integer(46), "direction_deg: 1..=45 degrees"),
-            ("return_ms", toml::Value::Integer(0), "return_ms: 1..=2000 ms"),
-            ("cooldown_ms", toml::Value::Integer(5001), "cooldown_ms: 0..=5000 ms"),
-            ("neutral_ms", toml::Value::String("80".into()), "a whole number"),
+            (
+                "neutral_pct",
+                toml::Value::Float(0.6),
+                "neutral_pct: 0 < x <= 0.5",
+            ),
+            (
+                "neutral_pct",
+                toml::Value::Float(0.0),
+                "neutral_pct: 0 < x <= 0.5",
+            ),
+            (
+                "rise_pct",
+                toml::Value::Float(0.15),
+                "rise_pct: neutral_pct < x <= 1",
+            ),
+            (
+                "rise_pct",
+                toml::Value::Float(1.5),
+                "rise_pct: neutral_pct < x <= 1",
+            ),
+            (
+                "neutral_ms",
+                toml::Value::Integer(0),
+                "neutral_ms: 1..=2000 ms",
+            ),
+            (
+                "rise_ms",
+                toml::Value::Integer(2001),
+                "rise_ms: 1..=2000 ms",
+            ),
+            (
+                "direction_deg",
+                toml::Value::Integer(46),
+                "direction_deg: 1..=45 degrees",
+            ),
+            (
+                "return_ms",
+                toml::Value::Integer(0),
+                "return_ms: 1..=2000 ms",
+            ),
+            (
+                "cooldown_ms",
+                toml::Value::Integer(5001),
+                "cooldown_ms: 0..=5000 ms",
+            ),
+            (
+                "neutral_ms",
+                toml::Value::String("80".into()),
+                "a whole number",
+            ),
         ] {
             let verdict = crate::config::tests::try_fixture_nav_with(|v| {
                 v["keybindings"]["global"]["controller"]["nav"]["focus_gesture"][field] =

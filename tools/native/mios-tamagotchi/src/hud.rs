@@ -1026,16 +1026,8 @@ mod menu_geometry_tests {
         let bounds = Rect::new(5, 7, 12, 6);
         for requested_height in [3, 5, u16::MAX] {
             for selected in [0, 3, 7] {
-                let geom = menu_geometry(
-                    bounds,
-                    &[6; 8],
-                    selected,
-                    2,
-                    requested_height,
-                    1,
-                    3,
-                    1.618,
-                );
+                let geom =
+                    menu_geometry(bounds, &[6; 8], selected, 2, requested_height, 1, 3, 1.618);
                 assert_eq!(geom.cell_height, 1, "compact tiles must be explicit");
                 assert_eq!(geom.footer.height, 2, "both control rows must survive");
                 assert!(geom.panel.height < bounds.height, "retain scene space");
@@ -1057,16 +1049,8 @@ mod menu_geometry_tests {
             let bounds = Rect::new(5, 7, width, height);
             for requested_height in [1, 3, 5, u16::MAX] {
                 for selected in [0, 7, 19] {
-                    let geom = menu_geometry(
-                        bounds,
-                        &[8; 20],
-                        selected,
-                        2,
-                        requested_height,
-                        1,
-                        3,
-                        1.618,
-                    );
+                    let geom =
+                        menu_geometry(bounds, &[8; 20], selected, 2, requested_height, 1, 3, 1.618);
                     assert_eq!(geom.panel.intersection(bounds), geom.panel);
                     assert_eq!(geom.body.intersection(geom.panel), geom.body);
                     assert_eq!(geom.footer.intersection(geom.panel), geom.footer);

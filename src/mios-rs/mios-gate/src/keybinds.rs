@@ -1274,18 +1274,20 @@ fn focus_gesture_audit(v: &toml::Value, out: &mut Vec<String>) {
     };
     let pct = |k: &str, out: &mut Vec<String>| -> Option<f64> {
         let v = t.get(k)?;
-        let n = v
-            .as_float()
-            .or_else(|| v.as_integer().map(|v| v as f64));
+        let n = v.as_float().or_else(|| v.as_integer().map(|v| v as f64));
         if n.is_none() {
-            out.push(format!("controller.nav.focus_gesture.{k}: a percentage 0 < x <= 1 is required"));
+            out.push(format!(
+                "controller.nav.focus_gesture.{k}: a percentage 0 < x <= 1 is required"
+            ));
         }
         n
     };
     let ms = |k: &str, out: &mut Vec<String>| -> Option<i64> {
         let n = t.get(k).and_then(toml::Value::as_integer);
         if n.is_none() {
-            out.push(format!("controller.nav.focus_gesture.{k}: a whole number of milliseconds is required"));
+            out.push(format!(
+                "controller.nav.focus_gesture.{k}: a whole number of milliseconds is required"
+            ));
         }
         n
     };
@@ -1296,7 +1298,15 @@ fn focus_gesture_audit(v: &toml::Value, out: &mut Vec<String>) {
     let direction = ms("direction_deg", out);
     let ret = ms("return_ms", out);
     let cooldown = ms("cooldown_ms", out);
-    for k in ["neutral_pct", "neutral_ms", "rise_pct", "rise_ms", "direction_deg", "return_ms", "cooldown_ms"] {
+    for k in [
+        "neutral_pct",
+        "neutral_ms",
+        "rise_pct",
+        "rise_ms",
+        "direction_deg",
+        "return_ms",
+        "cooldown_ms",
+    ] {
         if !t.contains_key(k) {
             out.push(format!(
                 "controller.nav.focus_gesture.{k}: required together with the rest of the table"
@@ -1311,7 +1321,11 @@ fn focus_gesture_audit(v: &toml::Value, out: &mut Vec<String>) {
             out.push("controller.nav.focus_gesture.rise_pct: neutral_pct < x <= 1".into());
         }
     }
-    for (k, n) in [("neutral_ms", neutral_ms), ("rise_ms", rise_ms), ("return_ms", ret)] {
+    for (k, n) in [
+        ("neutral_ms", neutral_ms),
+        ("rise_ms", rise_ms),
+        ("return_ms", ret),
+    ] {
         if let Some(n) = n {
             if !(1..=2000).contains(&n) {
                 out.push(format!("controller.nav.focus_gesture.{k}: 1..=2000 ms"));
@@ -2386,23 +2400,48 @@ direction_deg = 20\nreturn_ms = 250\ncooldown_ms = 400\n";
         let f = audit(&ok);
         assert!(f.is_empty(), "vendor-shaped table: {f:#?}");
         for (from, to, why) in [
-            ("neutral_pct = 0.15", "neutral_pct = 0.6", "neutral_pct: 0 < x <= 0.5"),
-            ("rise_pct = 0.9", "rise_pct = 0.1", "rise_pct: neutral_pct < x <= 1"),
-            ("neutral_ms = 80", "neutral_ms = 0", "neutral_ms: 1..=2000 ms"),
+            (
+                "neutral_pct = 0.15",
+                "neutral_pct = 0.6",
+                "neutral_pct: 0 < x <= 0.5",
+            ),
+            (
+                "rise_pct = 0.9",
+                "rise_pct = 0.1",
+                "rise_pct: neutral_pct < x <= 1",
+            ),
+            (
+                "neutral_ms = 80",
+                "neutral_ms = 0",
+                "neutral_ms: 1..=2000 ms",
+            ),
             ("rise_ms = 120", "rise_ms = 2001", "rise_ms: 1..=2000 ms"),
-            ("direction_deg = 20", "direction_deg = 46", "direction_deg: 1..=45 degrees"),
+            (
+                "direction_deg = 20",
+                "direction_deg = 46",
+                "direction_deg: 1..=45 degrees",
+            ),
             ("return_ms = 250", "return_ms = 0", "return_ms: 1..=2000 ms"),
-            ("cooldown_ms = 400", "cooldown_ms = 5001", "cooldown_ms: 0..=5000 ms"),
-            ("neutral_ms = 80", "neutral_ms = \"slow\"", "a whole number of milliseconds"),
+            (
+                "cooldown_ms = 400",
+                "cooldown_ms = 5001",
+                "cooldown_ms: 0..=5000 ms",
+            ),
+            (
+                "neutral_ms = 80",
+                "neutral_ms = \"slow\"",
+                "a whole number of milliseconds",
+            ),
         ] {
             let bad = with_mon(&format!("{NAV}{table}").replacen(from, to, 1));
             let f = audit(&bad);
-            assert!(
-                f.iter().any(|x| x.contains(why)),
-                "{from} -> {to}: {f:#?}"
-            );
+            assert!(f.iter().any(|x| x.contains(why)), "{from} -> {to}: {f:#?}");
         }
-        let partial = with_mon(&format!("{NAV}{table}".replacen("cooldown_ms = 400\n", "", 1)));
+        let partial = with_mon(&format!("{NAV}{table}".replacen(
+            "cooldown_ms = 400\n",
+            "",
+            1
+        )));
         let f = audit(&partial);
         assert!(f.iter().any(|x| x.contains("required together")));
         let base = with_mon(NAV);
