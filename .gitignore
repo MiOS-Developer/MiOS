@@ -1156,3 +1156,13 @@ usr/share/mios/virtio/*.iso
 !/SKILLS/**
 
 !/tools/native/mios-tamagotchi/src/seed_entry.rs
+
+# Portable operator-requested engineering handoff.
+!/.devloop/handoff/mios-render-r4.patch.gz
+!/.devloop/handoff/mios-menu-navigation.patch.gz
+!/.devloop/handoff/mios-root-tracked.patch.gz
+!/.devloop/handoff/mios-root-untracked-code.patch.gz
+!/.devloop/handoff/mios-wip-manifest.json
+!/.devloop/handoff/mios-multiplayer-design.md
+!/.devloop/handoff/mios-multiplayer-task-proposal.md
+!/.devloop/handoff/mios-mon-world-research.md

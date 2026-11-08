@@ -1,0 +1,110 @@
+{
+  "patches": [
+    {
+      "path": ".devloop/handoff/mios-render-r4.patch.gz",
+      "base": "6b20513e1f657f5159c02384552d7b2294f585bc",
+      "source_paths": [
+        "tools/native/mios-tamagotchi/src/render.rs"
+      ],
+      "status": "unmerged WIP preserved without altering source worktree",
+      "uncompressed_sha256": "8481c287ad37ffb67e43a865638ab3efa57e40b19ddc67169cb7c4b3d65f119b",
+      "uncompressed_bytes": 59751,
+      "compression": "gzip",
+      "sha256": "b22040436abdba1661c60c7867dc68a4107986b679b678c0793383c5dd374db8",
+      "bytes": 14923
+    },
+    {
+      "path": ".devloop/handoff/mios-menu-navigation.patch.gz",
+      "base": "fb49657e85fbbe13d8620b6c8e674223e25a558e",
+      "source_paths": [
+        "tools/native/mios-tamagotchi/src/ui.rs",
+        "tools/native/mios-tamagotchi/src/input.rs"
+      ],
+      "status": "unmerged WIP preserved without altering source worktree",
+      "uncompressed_sha256": "aac78f02c50c06c733421e31d34a69f3658cc82a7b8bfec306410a5d2d27b133",
+      "uncompressed_bytes": 14462,
+      "compression": "gzip",
+      "sha256": "00f92a518b7dba4ba51dd51a4dc1f91153d2214e4495c717275fc1496d417427",
+      "bytes": 3883
+    },
+    {
+      "path": ".devloop/handoff/mios-root-tracked.patch.gz",
+      "base": "f576f22f1b91c9cffa1070dd55b6eb5c296b6a01",
+      "source_paths": [
+        ".gitignore",
+        "etc/chrony.conf",
+        "usr/share/mios/hyprland/hyprland.lua"
+      ],
+      "status": "unmerged WIP preserved without altering source worktree",
+      "uncompressed_sha256": "4c727f1d7827f522387a68e55391a20fa3b9699a309972574a0f13ec6cd35aa4",
+      "uncompressed_bytes": 7129,
+      "compression": "gzip",
+      "sha256": "767fe490e8719ff4778cc8622f21f79ec44b9147a3d0ee186787695d324032ab",
+      "bytes": 2429
+    }
+  ],
+  "excluded_runtime_data": [
+    "usr/share/mios/llamacpp/models",
+    "var/lib/mios/ai",
+    "var/lib/mios/.models-firstboot-*",
+    "var/lib/mios/.selinux-init-done"
+  ],
+  "note": "Runtime model/cache markers and agent datastores were not staged. Existing root tracked changes remain untouched; patch is for review.",
+  "portable_payloads": [
+    {
+      "path": ".devloop/handoff/antigravity-2026-10-03.md",
+      "bytes": 2359,
+      "sha256": "a6168935b118db8f4f034026f0fb411e7af59ca6ad1ce874dce5a6fe3fb7b8b2"
+    },
+    {
+      "path": ".devloop/handoff/mios-menu-navigation.patch.gz",
+      "bytes": 3883,
+      "sha256": "00f92a518b7dba4ba51dd51a4dc1f91153d2214e4495c717275fc1496d417427"
+    },
+    {
+      "path": ".devloop/handoff/mios-mon-world-research.md",
+      "bytes": 32176,
+      "sha256": "8f01d98e06aa45e61dfd854312b485ac470796ae81238885b8d3b10d5bb54ce5"
+    },
+    {
+      "path": ".devloop/handoff/mios-multiplayer-design.md",
+      "bytes": 81685,
+      "sha256": "d194633ad0e2344569a4ab92e17cf4370f7b9e312a3a79b58a75f5a3f0ca473d"
+    },
+    {
+      "path": ".devloop/handoff/mios-multiplayer-task-proposal.md",
+      "bytes": 46850,
+      "sha256": "0c9f4bb5e9600ecfb3d9d69929719b562119356dcd6b7d395eca31aafe85b402"
+    },
+    {
+      "path": ".devloop/handoff/mios-render-r4.patch.gz",
+      "bytes": 14923,
+      "sha256": "b22040436abdba1661c60c7867dc68a4107986b679b678c0793383c5dd374db8"
+    },
+    {
+      "path": ".devloop/handoff/mios-root-tracked.patch.gz",
+      "bytes": 2429,
+      "sha256": "767fe490e8719ff4778cc8622f21f79ec44b9147a3d0ee186787695d324032ab"
+    },
+    {
+      "path": ".devloop/handoff/mios-root-untracked-code.patch.gz",
+      "bytes": 1113,
+      "sha256": "9085dea89f1fc3b6e21b90ee0052f51d139d44fd9a7b7658ef4da600f6f61dc3"
+    },
+    {
+      "path": ".devloop/handoff/peer-lane-collaboration-probe.md",
+      "bytes": 4828,
+      "sha256": "dcdcfa71f3652e15847c9848d4f0835dba69fe3896d3f31a9a7288d18634f7ef"
+    },
+    {
+      "path": ".devloop/handoff/peer-lane-review-20261007.md",
+      "bytes": 15405,
+      "sha256": "85cd42f0d21510fb0bc8459b8964aaaf19fc4ef071160f3cff9878870eb5d094"
+    },
+    {
+      "path": ".devloop/handoff/zcode-live-onboarding-20261007.md",
+      "bytes": 9792,
+      "sha256": "526c7207b6a6294aacd8cfbed461ed01bad919e3ad3ae7ff7b599234de067f04"
+    }
+  ]
+}
