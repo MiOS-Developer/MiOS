@@ -149,7 +149,7 @@ pub struct NavApp {
 /// `stick_deadzone`, and rescales the remainder so 1.0 is a FULL physical deflection of the
 /// evdev-calibrated axis (min/max normalization in the kernel), not the raw report. A
 /// `neutral_pct` of 0.15 therefore means 15% of full post-deadzone travel, which on the
-/// vendor 0.12 deadzone corresponds to roughly 24.8% of raw physical travel
+/// vendor 0.12 deadzone corresponds to roughly 25.2% of raw physical travel
 /// (0.12 + 0.15 * 0.88). The milliseconds are wall-clock tick time.
 ///
 /// A gesture qualifies only when the table is present and the resolved right-stick binding
@@ -416,7 +416,7 @@ impl NavConfig {
                 table
                     .get(k)
                     .and_then(toml::Value::as_float)
-                    .or_else(|| table.get(k).and_then(toml::Value::as_integer).map(f64::from))
+                    .or_else(|| table.get(k).and_then(toml::Value::as_integer).map(|v| v as f64))
                     .ok_or(format!("{what}.{k}: a percentage 0 < x <= 1 is required"))
             };
             let ms = |k: &str| -> Result<u64, String> {
