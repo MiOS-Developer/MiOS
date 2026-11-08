@@ -4826,8 +4826,9 @@ impl Ui {
                 format!("{binding}{short}")
             })
             .collect();
-        // Keep room for the existing static navigation footer when it fits.
-        let minimum_width = bounds.width.saturating_sub(2).min(17);
+        // Keep the full Enter/Back captions when an 18-cell footer fits. A
+        // 17-cell body unnecessarily shortened Enter at the supported 20x8 size.
+        let minimum_width = bounds.width.saturating_sub(2).min(18);
         let widths: Vec<_> = labels
             .iter()
             .map(|label| {
@@ -9208,20 +9209,33 @@ mod console_shell_regressions {
         terminal
             .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
             .unwrap();
-        assert!(terminal.backend().buffer()[(1, 1)]
+        let target = |ui: &Ui, index| {
+            ui.menu_targets
+                .borrow()
+                .iter()
+                .find(|(_, item)| *item == index)
+                .expect("painted menu target")
+                .0
+        };
+        let first = target(&ui, 0);
+        let idle = target(&ui, 1);
+        assert!(terminal.backend().buffer()[(first.x + 1, first.y)]
             .modifier
             .contains(Modifier::REVERSED));
-        assert!(!terminal.backend().buffer()[(1, 2)]
+        assert!(!terminal.backend().buffer()[(idle.x + 1, idle.y)]
             .modifier
             .contains(Modifier::REVERSED));
         ui.handle(key(KeyCode::Down), &config.game);
         terminal
             .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 1, false))
             .unwrap();
-        assert!(!terminal.backend().buffer()[(1, 1)]
+        assert_ne!(ui.menu_selected, 0, "directional focus must move");
+        let next = target(&ui, ui.menu_selected);
+        let first = target(&ui, 0);
+        assert!(!terminal.backend().buffer()[(first.x + 1, first.y)]
             .modifier
             .contains(Modifier::REVERSED));
-        assert!(terminal.backend().buffer()[(1, 2)]
+        assert!(terminal.backend().buffer()[(next.x + 1, next.y)]
             .modifier
             .contains(Modifier::REVERSED));
         assert_eq!(ui.game, game);
@@ -9355,23 +9369,38 @@ mod console_shell_regressions {
             };
             0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b)
         };
-        for (row, label) in [(1, "Care"), (2, "Games")] {
+        for (index, label) in [(0, "Care"), (1, "Games")] {
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
                 .unwrap();
             let buffer = terminal.backend().buffer();
-            let line = (0..80)
-                .map(|x| buffer[(x, row)].symbol())
+            assert_eq!(ui.menu_selected, index);
+            let target = ui
+                .menu_targets
+                .borrow()
+                .iter()
+                .find(|(_, item)| *item == index)
+                .expect("selected painted target")
+                .0;
+            let line = (target.x..target.right())
+                .map(|x| buffer[(x, target.y)].symbol())
                 .collect::<String>();
-            let column = line.find(label).expect("selected label is visible") as u16;
-            let cell = &buffer[(column, row)];
+            let column = target.x + line.find(label).expect("selected label is visible") as u16;
+            let cell = &buffer[(column, target.y)];
             let (a, b) = (luminance(cell.fg), luminance(cell.bg));
             let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
             assert!(contrast >= 4.5, "{label}: selected contrast {contrast}");
-            if row == 2 {
-                assert_ne!(buffer[(column, 1)].bg, cell.bg);
+            if index == 1 {
+                let previous = ui
+                    .menu_targets
+                    .borrow()
+                    .iter()
+                    .find(|(_, item)| *item == 0)
+                    .expect("previous painted target")
+                    .0;
+                assert_ne!(buffer[(previous.x + 1, previous.y)].bg, cell.bg);
             }
-            ui.handle(key(KeyCode::Down), &config.game);
+            ui.handle(key(KeyCode::Tab), &config.game);
         }
         assert_eq!(ui.game, game);
     }

@@ -143,3 +143,32 @@ The operator subsequently required that future publication go **only to main**
 for global pickup/handoff. This consumer commit is local; the integration owner
 must compile, reconcile it with the camera lane, and publish the verified result
 and handoff on main. Do not resume lane-branch pushes from the earlier workflow.
+
+## First compiled consumer feedback
+
+The integration owner reports that the combined consumer compiled and executed
+445 tests: 439 passed, three failed and three were ignored. The three failures
+were existing console-shell regressions. This local follow-up corrects the
+underlying compact-footer bug and updates two tests to read the actual painted
+option coordinates:
+
+- A 20x8 menu had been narrowed to a 17-cell body, which unnecessarily replaced
+  the supported `Enter: OK` caption with `Ent: OK`. The control-width minimum
+  now retains 18 body cells when the viewport permits. The existing description
+  regression still requires the large care description, excludes it at 20x8,
+  and requires both complete tiny control captions and working Back targets.
+- The monochrome highlight regression reads the selected and idle rectangles
+  from actual painted targets, then verifies that directional navigation moves
+  REVERSED highlighting to the new target and removes it from the former one.
+  Its unchanged-game assertion remains.
+- The four-color contrast regression locates the actual Care/Games text within
+  each painted target, retains the >=4.5 contrast threshold, compares selected
+  and previous background colors, and uses Tab's sequential order to reach
+  Games. Directional grid movement has separate actual-buffer coverage. Its
+  unchanged-game assertion remains.
+
+`git diff --check` passes for this follow-up. The integration owner's previous
+native run establishes compilation of the prior combined source, not of these
+new fixes. Rerunning these three tests, the complete package suite, formatting,
+Clippy and the pending compiled negative controls remains the integration
+owner's next action. No branch push accompanies this local fix.
