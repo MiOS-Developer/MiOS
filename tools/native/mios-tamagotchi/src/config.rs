@@ -255,7 +255,10 @@ pub struct CameraRules {
     pub tilt_rate_deg_s: u16,
     pub pan_rate_permille_s: u16,
     pub zoom_rate_percent_s: u16,
+    /// Maximum accumulated camera transition time; zero cuts immediately.
+    /// Reset may cut at the deadline even if a configured rate is slower.
     pub reset_glide_ms: u16,
+    /// Stop threshold in per-mille of each axis's configured input step.
     pub rest_epsilon_permille: u16,
 }
 

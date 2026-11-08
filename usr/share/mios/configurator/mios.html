@@ -3454,7 +3454,7 @@
         <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
         <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
       </fieldset><fieldset><legend>Camera controls</legend>
-        <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Pan and tilt ease over the transition length above.</p>
+        <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Camera axes follow elapsed time while the pet keeps its own animation clock. Reset finishes within its accumulated camera transition limit and cuts to the resting pose at that deadline, even with slower speed settings; zero cuts immediately. New camera input cancels that reset deadline. The stop threshold is per-mille of each axis's own input step.</p>
         <label for="f-mon-tamagotchi-animation_frame_ms">Pet animation frame interval (ms)</label>
         <input type="number" id="f-mon-tamagotchi-animation_frame_ms" data-inherit="true" data-key="tamagotchi.animation_frame_ms" data-type="int" placeholder="Inherit vendor" min="40" max="2000" step="1">
         <label for="f-mon-tamagotchi-camera-follow_half_life_ms">Camera smoothing half-time (ms)</label>

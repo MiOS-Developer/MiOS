@@ -20288,8 +20288,8 @@ orbit_rate_deg_s = 180
 tilt_rate_deg_s = 90
 pan_rate_permille_s = 600
 zoom_rate_percent_s = 300
-reset_glide_ms = 350
-rest_epsilon_permille = 2
+reset_glide_ms = 350         # maximum accumulated camera transition ms; deadline cuts to reset pose,0 cuts immediately
+rest_epsilon_permille = 2    # stop threshold: per-mille of the axis's own input step, not raw degrees/percent
 
 [tamagotchi.presentation]
 automatic = true
