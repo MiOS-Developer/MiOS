@@ -485,7 +485,7 @@ llm_heavy = 41012
 pgvector = 41013
 win_llm_light = 41014
 ssh = 41015
-searxng_internal = 41016
+searxng = 41016
 [ports.categories.agent]
 base = 41010
 stride = 10

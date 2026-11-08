@@ -404,9 +404,16 @@
     "usr/lib/mios/agent-pipe/mios_pipe/kernel/config.py": {
       "configure_kwargs": [],
       "public_symbols": [
+        "AmbiguousRedactedArray",
+        "TiersUnresolved",
+        "has_redacted",
+        "portal_post_toml",
         "quote_key",
+        "redact_secrets",
+        "restore_redacted",
         "to_toml",
         "validate_config",
+        "validate_redacted_arrays",
         "write_user_config"
       ]
     },

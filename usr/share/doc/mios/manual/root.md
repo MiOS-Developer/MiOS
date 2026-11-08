@@ -4982,13 +4982,18 @@ while shaking out the operator's first install.
       http://localhost:${MIOS_PORTS_HERMES}/v1 (mios-hermes:${MIOS_PORTS_HERMES} doesn't resolve in
       host netns; use localhost instead).
   hermes: PORT=${MIOS_PORTS_HERMES} (otherwise picks an upstream default).
-  searxng: BIND_ADDRESS=0.0.0.0:${MIOS_PORTS_SEARXNG} (granian default is :8080 which
-      collides with mios-ai).
+  searxng: no drop-in. mios-searxng is a member of the Network=host
+      mios-webtools pod (podman refuses a container-level Network= on
+      a pod member), and its vendor Quadlet already sets GRANIAN_HOST
+      to loopback and GRANIAN_PORT from mios.toml [ports].searxng, so
+      its one listener is 127.0.0.1 on that key. The overlay deletes
+      the stale SearXNG drop-in earlier overlays wrote.
 Hermes-Agent on the dev VM uses host networking, so the
 container-name DNS that the vendor /etc/mios/hermes/config.yaml
-relies on (mios-ollama, mios-ai, mios-searxng) does NOT resolve.
+relies on (mios-ollama, mios-ai) does NOT resolve.
 Drop a config.local.yaml that overrides each base_url to talk over
-the VM's loopback instead. The vendor config has a trailing
+the VM's loopback instead. SearXNG takes no override there: Hermes
+reaches it through SEARXNG_URL, projected from [ports].searxng. The vendor config has a trailing
 `include: /etc/hermes/config.local.yaml` so this auto-merges on
 top without touching the upstream file.
 
@@ -5401,6 +5406,11 @@ open the containers ports / forward them on windows side so that
 we can access open webui, searxng, hermes, etc -- from my phone
 or another device(s) on the local network."
 
+SearXNG is the exception: its one listener is loopback-only, at
+mios.toml [ports].searxng, so it gets no LAN rule and direct LAN
+forwarding to it is unsupported. A rule an earlier run created is
+removed.
+
 <!-- mios-src:622661edbc55 from build-mios.ps1:5600-5628 -->
 
 ### Windows-side `netsh interface portproxy` mappings so OTHER...
@@ -5429,6 +5439,12 @@ firewall rules above, so opening / closing a service in mios.html
 affects BOTH layers in lock-step. Idempotent: deletes the old
 mapping before adding so re-runs converge cleanly without
 accumulating duplicate listeners.
+
+SearXNG is not forwarded: its one listener is loopback-only, at
+mios.toml [ports].searxng, which the WSL VM's eth0 IP never
+reaches, so direct LAN forwarding to it is unsupported, and
+Setup-MiOSLanPortProxy.ps1 skips it too. The mapping an earlier run
+added is removed; mios-lan-status lists SearXNG as loopback-only.
 
 <!-- mios-src:83a136647573 from build-mios.ps1:5712-5735 -->
 

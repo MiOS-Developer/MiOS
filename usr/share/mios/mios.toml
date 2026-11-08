@@ -520,7 +520,7 @@ ExecStart = '''/bin/bash -c '\
         "${MIOS_PORTS_OPEN_WEBUI:-8200}" \
         "${MIOS_PORTS_CODE_SERVER:-8900}" \
         "${MIOS_PORTS_HERMES:-8720}" \
-        "${MIOS_PORTS_SEARXNG:-8800}" \
+        "${MIOS_PORTS_SEARXNG}" \
         "${MIOS_PORTS_COCKPIT:-8110}" \
         "${MIOS_PORTS_HERMES_DASHBOARD:-8210}" \
         "${MIOS_PORTS_LLM_LIGHT:-8500}" \
@@ -2384,6 +2384,8 @@ allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
 
 # Declarative nftables container micro-segmentation matrix (task_423)
+# A rule names its port with port_key = "<[ports] key>", which mios-firewall-isolate resolves
+# through the layered SSOT exactly as install.env renders it, or with a literal port.
 [network.firewall.container_matrix]
 default_policy = "drop"
 rules = [
@@ -2391,7 +2393,7 @@ rules = [
     { source = "agent_pipe", destination = "hermes", port = 8720, protocol = "tcp" },
     { source = "agent_pipe", destination = "pgvector", port = 5432, protocol = "tcp" },
     { source = "agent_pipe", destination = "llm_light", port = 8500, protocol = "tcp" },
-    { source = "hermes", destination = "searxng", port = 8800, protocol = "tcp" },
+    { source = "hermes", destination = "searxng", port_key = "searxng", protocol = "tcp" },
     { source = "hermes", destination = "pgvector", port = 5432, protocol = "tcp" },
     { source = "forge_runner", destination = "forge", port = 8400, protocol = "tcp" },
 ]
@@ -3190,7 +3192,7 @@ tool_loop_engine          = "smolagents"
 mcp_refresh_seconds       = 300
 skill_refresh_seconds     = 300
 skill_catalog_static_path = "/var/lib/mios/skills/catalog.json"
-searxng_url               = "http://mios-searxng:8080"
+searxng_url               = "http://localhost:${MIOS_PORTS_SEARXNG}"   # host service -> the loopback SearXNG listener; a non-empty host/user value overrides
 enable                    = false
 
 [blades]
@@ -10499,8 +10501,7 @@ forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd
 cockpit            = 8110     # host Cockpit web console
 cockpit_internal   = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
 cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
-searxng            = 8800     # local privacy-respecting metasearch
-searxng_internal   = 8888     # SearXNG internal container listening port (upstream standard 8888; host maps 8800->8888)
+searxng            = 8800     # local privacy-respecting metasearch -- the ONE SearXNG key and listener: mios-searxng is a host-network mios-webtools member, so granian binds 127.0.0.1 on this port directly via GRANIAN_HOST/GRANIAN_PORT (no port mapping, no internal key)
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
 crawl4ai_internal  = 11235   # crawl4ai container internal listening port (upstream default 11235)
 firecrawl          = 8820     # self-hosted firecrawl api -- the firecrawl-api member of the mios-webtools pod (Hermes's native web backend; FIRECRAWL_API_URL). LOOPBACK only (127.0.0.1), NOT a published/LAN port. (3002 is firecrawl's own default; free on MiOS -- 3000=forge_http, 3033=open_webui.)
@@ -10627,7 +10628,7 @@ doc     = "Agent plane. Ordered along the request path: pipe -> prefilter -> her
 base    = 8800
 stride  = 10
 members = ["searxng", "crawl4ai", "firecrawl"]
-pinned  = { searxng_internal = 8888, crawl4ai_internal = 11235, firecrawl_internal = 3002 }
+pinned  = { crawl4ai_internal = 11235, firecrawl_internal = 3002 }
 doc     = "Search, crawl and scrape backends (the mios-webtools pod). LOOPBACK-only."
 
 [ports.categories.devtools]
@@ -10719,7 +10720,7 @@ non_addressable = [
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
   "otelcol_otlp", "piper", "prefilter", "pxe_hub_api", "radosgw", "rdp", "redis",
-  "searxng_internal", "ssh", "ttyd_bash", "ttyd_powershell", "whisper",
+  "ssh", "ttyd_bash", "ttyd_powershell", "whisper",
 ]
 
 # ----------------------------------------------------------------------------
@@ -15395,11 +15396,11 @@ Wants = "network-online.target"
 [containers.mios-searxng.Container]
 ContainerName = "mios-searxng"
 Environment = [
-  "SEARXNG_BASE_URL=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/",
-  "SEARXNG_BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG:-8800}",
-  "BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG:-8800}",
+  "SEARXNG_BASE_URL=http://localhost:${MIOS_PORTS_SEARXNG}/",
+  "SEARXNG_BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG}",
+  "BIND_ADDRESS=127.0.0.1:${MIOS_PORTS_SEARXNG}",
   "GRANIAN_HOST=127.0.0.1",
-  "GRANIAN_PORT=${MIOS_PORTS_SEARXNG:-8800}",
+  "GRANIAN_PORT=${MIOS_PORTS_SEARXNG}",
   "GRANIAN_WORKERS=2",
   "GRANIAN_BLOCKING_THREADS=8",
   "SEARXNG_LOG_LEVEL=WARNING"
@@ -15409,9 +15410,9 @@ Group = "${MIOS_SERVICES_SEARXNG_GID:-818}"
 Image = "${MIOS_SEARXNG_IMAGE:-docker.io/searxng/searxng:latest}"
 Label = [
   "org.opencontainers.image.title=mios-searxng",
-  "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/",
+  "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_SEARXNG}/",
   "org.opencontainers.image.documentation=https://docs.searxng.org/",
-  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_SEARXNG:-8800}/"
+  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_SEARXNG}/"
 ]
 Pod = "mios-webtools.pod"
 User = "${MIOS_SERVICES_SEARXNG_UID:-818}"
@@ -18176,7 +18177,7 @@ comment = "Open the local SearXNG metasearch proxy at http://localhost:{port}/"
 icon = "system-search-symbolic"
 categories = "Network;WebBrowser;"
 keywords = "mios;searxng;search;metasearch;privacy;"
-ai_hint = "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at port 8899 via a web browser."
+ai_hint = "Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at the searxng port key via a web browser."
 
 # [bootstrap.sync] -- Law 15 mirror manifest. Contract: installation/UNIFY.md.
 [bootstrap.sync]
@@ -18254,7 +18255,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 678
+max_tracked_mb    = 684
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.

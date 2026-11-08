@@ -1,4 +1,4 @@
-# AI-hint: Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at port 8899 via a web browser.
+# AI-hint: Desktop entry for the SearXNG metasearch proxy; used by agents to identify and launch the local search interface at the searxng port key via a web browser.
 # AI-related: localhost:8800
 [Desktop Entry]
 Type=Application

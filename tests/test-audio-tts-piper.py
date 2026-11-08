@@ -362,21 +362,31 @@ def test_5_quadlet_container_syntax() -> None:
         else:
             assert_fail(f"mios-piper Exec carries flags http_server does not accept: {bad_flags or c_exec}")
 
-        # Law 7: only the generator-projected User=/Group= may carry the uid/gid;
-        # any other uid/port literal or ${VAR:-literal} fallback is hand-written.
-        uid = str(ssot["services"]["piper"]["uid"])
-        gid = str(ssot["services"]["piper"]["gid"])
-        port = str(ssot["ports"]["piper"])
+        # Law 7 + Law 8 (task3756 ruling): the generator resolves the uid/gid/port from the
+        # layered SSOT, so a literal is allowed only where it is projected -- User=/Group=,
+        # Exec='s --port and the HealthCmd URL -- and only when it equals the resolved value.
+        # Any other uid/port literal or ${VAR:-literal} fallback is hand-written. Test 7 holds
+        # the literal to regeneration, including under a layered override.
+        resolved = _resolved_ssot()
+        uid = str(resolved["services"]["piper"]["uid"])
+        gid = str(resolved["services"]["piper"]["gid"])
+        port = str(resolved["ports"]["piper"])
         quadlet_text = QUADLET_FILE.read_text(encoding="utf-8")
-        body = [ln for ln in quadlet_text.splitlines()
+        exec_port, health_port, scrubbed = _projected_port_sites(quadlet_text)
+        body = [ln for ln in scrubbed.splitlines()
                 if not ln.startswith(("User=", "Group="))]
         literals = [ln for ln in body if uid in ln or gid in ln or port in ln or ":-" in ln]
         if (cp.get("Container", "User", fallback="") == uid
                 and cp.get("Container", "Group", fallback="") == gid
-                and not literals):
-            assert_pass(f"Quadlet carries no literal {uid}/{port} and no :- fallback outside the SSOT-projected User=/Group=")
+                and exec_port == port and health_port == port and not literals):
+            assert_pass(f"Quadlet's projected uid {uid}/port {port} equal the resolved SSOT in User=/Group=, "
+                        "Exec --port and the HealthCmd URL, with no other literal and no :- fallback")
         else:
-            assert_fail(f"mios-piper Quadlet carries literal {uid}/{port} or :- fallbacks: {literals}")
+            assert_fail(f"mios-piper Quadlet must carry the resolved uid {uid}/gid {gid}/port {port} only where "
+                        f"projected: User={cp.get('Container', 'User', fallback='')} "
+                        f"Group={cp.get('Container', 'Group', fallback='')} Exec --port={exec_port} "
+                        f"HealthCmd port={health_port}; stray literals or :- fallbacks: {literals}")
+        # The source spec is never projected, so it carries no literal at all.
         src_literals = [f"{sec}.{k}" for sec, kv in piper_spec.items() if isinstance(kv, dict)
                         for k, v in kv.items() if uid in str(v) or port in str(v)]
         if not src_literals:
@@ -386,6 +396,148 @@ def test_5_quadlet_container_syntax() -> None:
 
     except Exception as e:
         assert_fail("Quadlet syntax parsing failed", str(e))
+
+
+# ==============================================================================
+# Projection helpers: the resolved SSOT and the generator's own render
+# ==============================================================================
+_PORT_MARK = "<MIOS_PORTS_PIPER>"
+
+
+def _mios_toml():
+    """This tree's usr/lib/mios/mios_toml.py by path, never an installed copy earlier on sys.path."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_tree_mios_toml", ROOT_DIR / "usr" / "lib" / "mios" / "mios_toml.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolved_ssot(host_layer: str | None = None) -> Dict[str, Any]:
+    """The tree's vendor tier (monolith + usr/lib/mios/mios.d) with an optional host layer,
+    merged and port-derived by the Python resolver -- never the operator's /etc or ~ layers."""
+    mt = _mios_toml()
+    layers = [str(SSOT_TOML)] + mt._frags(str(ROOT_DIR / "usr" / "lib" / "mios" / "mios.d"))
+    return mt.load_merged(layers + ([host_layer] if host_layer else []))
+
+
+def _projected_port_sites(text: str):
+    """(Exec --port value, HealthCmd URL port, text with exactly those two sites masked)."""
+    exec_port = health_port = None
+    lines = []
+    for ln in text.splitlines():
+        if ln.startswith("Exec="):
+            toks = shlex.split(ln[len("Exec="):])
+            ports = [toks[i + 1] for i, t in enumerate(toks[:-1]) if t == "--port"]
+            if len(ports) == 1 and ln.count(f"--port {ports[0]}") == 1:
+                exec_port = ports[0]
+                ln = ln.replace(f"--port {exec_port}", f"--port {_PORT_MARK}")
+        elif ln.startswith("HealthCmd="):
+            url = re.search(r"https?://[^\s'\"]+", ln)
+            parsed = urllib.parse.urlparse(url.group(0)) if url else None
+            try:
+                port = parsed.port if parsed else None
+            except ValueError:  # ${VAR:-N} or any other non-numeric port is not a projected literal
+                port = None
+            if port is not None:
+                health_port = str(port)
+                site = f"{parsed.hostname}:{health_port}"
+                ln = ln.replace(url.group(0), url.group(0).replace(site, f"{parsed.hostname}:{_PORT_MARK}", 1))
+        lines.append(ln)
+    return exec_port, health_port, "\n".join(lines)
+
+
+def _native_mios_gen() -> str | None:
+    """MIOS_NATIVE_BIN_DIR's mios-gen, else the newest this tree built, else the installed one."""
+    exe = ".exe" if sys.platform == "win32" else ""
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        path = os.path.join(catalog, "mios-gen" + exe)
+        return path if os.path.isfile(path) else None
+    built = [p for p in (ROOT_DIR / "tools" / "native" / "target" / t / ("mios-gen" + exe)
+                         for t in ("release", "debug")) if p.is_file()]
+    if built:
+        return str(max(built, key=lambda p: p.stat().st_mtime))
+    for p in ("/usr/libexec/mios/mios-gen", "/usr/bin/mios-gen"):
+        if os.path.isfile(p):
+            return p
+    return shutil.which("mios-gen")
+
+
+def _render_piper(gen: str, work: str, tag: str, host_layer: str | None) -> str:
+    """mios-gen pod-quadlets for this tree, the vendor tier plus host_layer only; the rendered mios-piper.container."""
+    out = os.path.join(work, f"out-{tag}")
+    none = os.path.join(work, "none")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+    env.update(MIOS_POD_OUT=out, MIOS_HOST_TOML=host_layer or os.path.join(none, "h.toml"),
+               MIOS_HOST_TOML_D=os.path.join(none, "h.d"), MIOS_USER_TOML=os.path.join(none, "u.toml"),
+               MIOS_USER_TOML_D=os.path.join(none, "u.d"), XDG_CONFIG_HOME=os.path.join(none, "x"))
+    res = subprocess.run([gen, "pod-quadlets", "--root", str(ROOT_DIR)], env=env,
+                         capture_output=True, text=True, timeout=300)
+    rendered = os.path.join(out, QUADLET_FILE.name)
+    if res.returncode != 0 or not os.path.isfile(rendered):
+        raise RuntimeError(f"{gen} pod-quadlets ({tag}) rc={res.returncode}: {(res.stdout + res.stderr)[-400:]}")
+    return pathlib.Path(rendered).read_text(encoding="utf-8")
+
+
+def _port_override_layer(doc: Dict[str, Any]) -> str:
+    """A host-layer TOML that moves [ports].piper the way an operator would: through the
+    category that allocates it (base), its pin, or the flat key when it has neither."""
+    cats = doc.get("ports", {}).get("categories", {})
+    for name, cfg in cats.items():
+        if isinstance(cfg, dict) and "piper" in (cfg.get("members") or []):
+            return f"[ports.categories.{name}]\nbase = {int(cfg['base']) + 1000}\n"
+        if isinstance(cfg, dict) and "piper" in (cfg.get("pinned") or {}):
+            return f"[ports.categories.{name}.pinned]\npiper = {int(cfg['pinned']['piper']) + 1000}\n"
+    return f"[ports]\npiper = {int(doc['ports']['piper']) + 1000}\n"
+
+
+# ==============================================================================
+# Test 7: the projected port is the layered SSOT's, and regeneration proves it
+# ==============================================================================
+def test_7_quadlet_ports_follow_the_layered_ssot() -> None:
+    log("Test 7: projected Quadlet port follows the layered SSOT (Law 8 regenerate-and-diff)")
+    gen = _native_mios_gen()
+    if not gen:
+        assert_fail("mios-gen is not available, so the projected port cannot be held to the SSOT -- "
+                    "build it: cd tools/native && cargo build -p mios-gen")
+        return
+    committed = QUADLET_FILE.read_text(encoding="utf-8")
+    vendor_port = str(_resolved_ssot()["ports"]["piper"])
+    with tempfile.TemporaryDirectory(prefix="test-tts-piper-gen-") as work:
+        try:
+            rendered = _render_piper(gen, work, "vendor", None)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            assert_fail("mios-gen pod-quadlets failed for the vendor tier", str(e))
+            return
+        if rendered == committed:
+            assert_pass(f"Committed mios-piper.container is exactly what {gen} renders from the vendor SSOT")
+        else:
+            assert_fail("Committed mios-piper.container drifts from the vendor SSOT render (regenerate it)")
+
+        host_layer = os.path.join(work, "host-override.toml")
+        pathlib.Path(host_layer).write_text(_port_override_layer(_resolved_ssot()), encoding="utf-8")
+        want = str(_resolved_ssot(host_layer)["ports"]["piper"])
+        if want != vendor_port:
+            assert_pass(f"A layered host override resolves [ports].piper {vendor_port} -> {want}")
+        else:
+            assert_fail(f"The host override did not move the resolved [ports].piper off {vendor_port}")
+            return
+        try:
+            moved = _render_piper(gen, work, "override", host_layer)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+            assert_fail("mios-gen pod-quadlets failed under the layered override", str(e))
+            return
+        exec_port, health_port, scrubbed = _projected_port_sites(moved)
+        if exec_port == want and health_port == want:
+            assert_pass(f"Under the override the projected Exec --port and HealthCmd URL port are {want}")
+        else:
+            assert_fail(f"Under the override [ports].piper resolves to {want} but the render projects "
+                        f"Exec --port={exec_port} HealthCmd port={health_port}")
+        if scrubbed == _projected_port_sites(committed)[2] and vendor_port not in scrubbed:
+            assert_pass("The override changes only the projected port sites, and no stale vendor port survives")
+        else:
+            assert_fail("The override render differs from the committed Quadlet beyond the projected port sites")
 
 
 def _require_unix_sockets() -> None:
@@ -507,6 +659,7 @@ def main() -> int:
     test_3_sub_300ms_latency_sla()
     test_4_negative_control_validation()
     test_5_quadlet_container_syntax()
+    test_7_quadlet_ports_follow_the_layered_ssot()
     try:
         test_6_mock_end_to_end_loopback()
     except unittest.SkipTest as exc:

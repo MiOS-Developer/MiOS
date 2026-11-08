@@ -63,7 +63,7 @@ QtObject {
     property real drawerOpacity: 55 / 100
     property int notificationWidth: 310
     property real notificationOpacity: 92 / 100
-    property string notificationPosition: "top-center"
+    property string notificationPosition: "island"
     property real hoverOpacity: 50 / 100
     property real selectionOpacity: 65 / 100
     property real scrimOpacity: 60 / 100

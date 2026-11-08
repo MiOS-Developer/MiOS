@@ -1112,7 +1112,14 @@ async def portal_page_logic(request: Request):
     if not _portal_authed(request):
         return RedirectResponse("/login", status_code=303)
     _port_owui = _portal_port("MIOS_PORTS_OPEN_WEBUI", "open_webui", 8200)
-    _port_searxng = _portal_port("MIOS_PORTS_SEARXNG", "searxng", 8800)
+    # [ports].searxng as install.env carries it (layers, category derivation,
+    # stack_id offset, a non-empty MIOS_PORTS_SEARXNG input); no literal stands
+    # in for a missing setting.
+    _lib = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+    if _lib not in sys.path:
+        sys.path.insert(0, _lib)
+    import mios_toml
+    _port_searxng = int(mios_toml.resolved_export("MIOS_PORTS_SEARXNG"))
     _port_inject = (
         f"<script>var _MIOS_PORT_OWUI={_port_owui};"
         f"var _MIOS_PORT_SEARXNG={_port_searxng};</script></head>"
