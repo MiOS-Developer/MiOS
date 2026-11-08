@@ -1170,3 +1170,9 @@ usr/share/mios/virtio/*.iso
 # Exact source-history recovery for the portable handoff.
 !/.devloop/handoff/mios-source-checkpoints.bundle
 !/.devloop/handoff/mios-source-checkpoints.bundle.sha256
+
+# Remote recovery receipts and machine-readable inventory.
+!/.devloop/handoff/mios-recovery-audit.md
+!/.devloop/handoff/mios-recovery-manifest.json
+!/.devloop/handoff/mios-checkpoint-manifest.md
+!/.devloop/handoff/mios-codespace-startup.md

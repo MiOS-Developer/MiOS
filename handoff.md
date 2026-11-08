@@ -1,3 +1,69 @@
+<!-- AI-hint: Current remote recovery entrypoint and milestone publication status. -->
+# Cloud recovery and startup repair
+
+Resume this work from PR #65's head branch, `claude/code-session-lryqdr`,
+which is based on published main `4bf38f52b7d5103c5b6ba6fada6a440e55475062`.
+The sections below this entry retain the historical source handoff verbatim.
+The voxel R3 and SearXNG D lanes are already merged in the PR at
+`403114b99740c1701b3cb09a88497d3cf3b8aed5`; do not merge them again based on
+an older handoff's pending status. HUD, camera, gesture and R4/menu/root WIP
+remain preserved, with review and integration pending.
+
+The current assignment covers both portable source recovery and the reported
+Codespace failure to load MiOS. The repository is available; direct inspection
+of the selected Codespace is blocked by missing authorized Codespaces access
+(the CLI returned Forbidden). No unpublished Codespace files or live runtime
+have been recovered or certified. Native MiOS relay/tmux and a MiOS-DEV builder
+are unavailable in this cloud executor; platform subagents are coordinating
+isolated source lanes. No live session transfer is claimed.
+
+## Resume without discarding work
+
+In an existing clone, first preserve local modifications and use a fresh,
+collision-checked worktree. The following names must not already be in use:
+
+```sh
+git fetch origin main claude/code-session-lryqdr
+git worktree add -b mios-recovery-resume ../mios-recovery-resume origin/claude/code-session-lryqdr
+cd ../mios-recovery-resume
+sha256sum -c .devloop/handoff/mios-source-checkpoints.bundle.sha256
+git bundle verify .devloop/handoff/mios-source-checkpoints.bundle
+git bundle list-heads .devloop/handoff/mios-source-checkpoints.bundle
+```
+
+The bundle has three prerequisites, all available from the full main history.
+For a shallow clone, fetch the missing history before importing. Inspect any
+existing `refs/remotes/mios-handoff/*` first; do not force-update a divergent ref:
+
+```sh
+git fetch .devloop/handoff/mios-source-checkpoints.bundle 'refs/heads/*:refs/remotes/mios-handoff/*'
+```
+
+## Milestone publication
+
+The orchestrator serializes integration and remote publication. Each subagent
+works in its own function-named worktree, commits only its assigned files and
+writes a tracked receipt under `.devloop/handoff/mios-<purpose>.md`. Each receipt
+records source, branch, changes, actual positive/negative checks, blockers and
+next actions. Milestone commits are pushed to the PR branch as they become
+reviewable; fetch that branch to recover the latest committed state. Work not
+in a published commit remains local, and a queued message is not a push receipt.
+
+Current lanes:
+
+| Lane | Worktree branch | Receipt |
+| --- | --- | --- |
+| Recovery audit | mios-cloud-recovery | `.devloop/handoff/mios-recovery-audit.md` |
+| Recovery inventory | mios-checkpoint-manifest | `.devloop/handoff/mios-checkpoint-manifest.md` |
+| Codespace startup | mios-codespace-startup | `.devloop/handoff/mios-codespace-startup.md` |
+
+Main publication and immediate live installation remain coupled by
+`.agents/COORDINATION.md`. This executor has no authorized live MiOS target,
+so source milestones are published to the existing PR branch. Source tests do
+not establish that a Codespace rebuilt successfully or that MiOS was deployed.
+
+---
+
 <!-- AI-hint: API-published source snapshot and exact Git-history bundle for remote continuation. -->
 # Recover this handoff after Git transport failures
 
