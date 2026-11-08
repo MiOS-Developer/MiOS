@@ -727,15 +727,132 @@ type LevelsMemo = (f64, (u32, u32), FrameLevels);
 /// One cell's packed samples as a body pass kept them (`count` of each).
 type KeptSamples<'a> = (&'a [Option<u8>], &'a [Option<SurfaceLight>]);
 
+/// One source pixel as the sprite's per-pixel accessors return it
+/// (`pixel`, `surface_facet`, `depth_pixels` and whether `valid_face_uv`
+/// maps it), read once a frame: the overlay asks each source pixel again for
+/// every screen sample that shows it or borders it, and for every surface
+/// stencil that reaches it. Every accessor returns exactly the sprite's value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Texel {
+    voxel: [i32; 3],
+    /// `depth_pixels` in its own units of 1/256 source pixel: the sprite
+    /// stores depth so, and both directions of the conversion are exact.
+    depth: i32,
+    facet: [i8; 3],
+    material: u8,
+    flags: u8,
+}
+
+const TEXEL_READ: u8 = 1;
+const TEXEL_MATERIAL: u8 = 2;
+const TEXEL_FACET: u8 = 4;
+const TEXEL_DEPTH: u8 = 8;
+const TEXEL_FACE: u8 = 16;
+
+impl Texel {
+    const UNREAD: Self = Self {
+        voxel: [0; 3],
+        depth: 0,
+        facet: [0; 3],
+        material: 0,
+        flags: 0,
+    };
+
+    fn of(sprite: &Sprite, x: u32, y: u32) -> Self {
+        let mut texel = Self {
+            flags: TEXEL_READ,
+            ..Self::UNREAD
+        };
+        let Some(material) = sprite.pixel(x, y, 1) else {
+            return texel;
+        };
+        texel.material = material;
+        texel.flags |= TEXEL_MATERIAL;
+        if let Some((voxel, facet)) = sprite.surface_facet(x, y) {
+            texel.voxel = voxel;
+            texel.facet = facet;
+            texel.flags |= TEXEL_FACET;
+        }
+        if let Some(depth) = sprite.depth_pixels(x, y) {
+            texel.depth = (depth * 256.0) as i32;
+            texel.flags |= TEXEL_DEPTH;
+        }
+        if valid_face_uv(sprite, x, y).is_some() {
+            texel.flags |= TEXEL_FACE;
+        }
+        texel
+    }
+
+    /// `Sprite::pixel` at scale 1.
+    fn pixel(self) -> Option<u8> {
+        (self.flags & TEXEL_MATERIAL != 0).then_some(self.material)
+    }
+
+    /// `Sprite::surface_facet`.
+    fn facet(self) -> Option<([i32; 3], [i8; 3])> {
+        (self.flags & TEXEL_FACET != 0).then_some((self.voxel, self.facet))
+    }
+
+    /// `Sprite::depth_pixels`.
+    fn depth(self) -> Option<f64> {
+        (self.flags & TEXEL_DEPTH != 0).then(|| f64::from(self.depth) / 256.0)
+    }
+
+    /// `valid_face_uv(..).is_some()`.
+    fn face(self) -> bool {
+        self.flags & TEXEL_FACE != 0
+    }
+}
+
+/// A source pixel's slopes as a sampler solved them: the gradient, and per
+/// axis either the exact fold (`SLOPE_EXACT_X`, `SLOPE_EXACT_Y`) or only the
+/// knowledge that it is no sharper than `SHARP_FOLD` (all the overlay asks of
+/// almost every pixel; see `fold_bound`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SlopeMemo {
+    gradient: [f32; 2],
+    fold: [f32; 2],
+    flags: u8,
+}
+
+const SLOPE_KNOWN: u8 = 1;
+const SLOPE_EXACT_X: u8 = 2;
+const SLOPE_EXACT_Y: u8 = 4;
+const SLOPE_EXACT: u8 = SLOPE_KNOWN | SLOPE_EXACT_X | SLOPE_EXACT_Y;
+
+impl SlopeMemo {
+    const UNKNOWN: Self = Self {
+        gradient: [0.0; 2],
+        fold: [0.0; 2],
+        flags: 0,
+    };
+}
+
+/// `surface_slopes`' stencil at one source pixel: its depth, the depths `h`
+/// pixels east, west, south and north on the same continuous surface, and
+/// the step.
+type Stencil = (f64, [Option<f64>; 4], f64);
+
+/// Whether a fold is surely no sharper than `SHARP_FOLD`, known without its
+/// arctangents: the fold is `atan(a) - atan(b)` of the two one-sided slopes,
+/// and the arctangent is 1-Lipschitz, so `a - b <= 1` bounds the fold by 1
+/// (plus the few ulps libm and the subtraction may add), well below
+/// `SHARP_FOLD` (pi / 3, about 1.047). False: the fold may be sharper, and
+/// its exact value decides.
+fn fold_bound(a: f64, b: f64) -> bool {
+    a - b <= 1.0
+}
+
 /// How packed screen samples reach the sprite: the projection itself, or, for
 /// one frame's passes over a viewport, the same mapping tabulated once (it is
 /// separable: a source column depends on the packed column alone and a row on
 /// the packed row alone), with what depends on one source pixel alone (its
-/// surface slopes and face-UV frame) solved once and kept for every sample
-/// that shows it or borders it, and the frame's contour levels solved once.
-/// Every lookup returns exactly what the projection, `surface_slopes`,
-/// `projected_face_uv` and `FrameLevels::of` return; the tables only spare
-/// repeating them for each sample's screen neighbourhood.
+/// accessors, its surface slopes and face-UV frame) solved once and kept for
+/// every sample that shows it or borders it, and the frame's contour levels
+/// solved once. Every lookup returns exactly what the projection, the
+/// sprite's accessors, `surface_slopes`, `projected_face_uv` and
+/// `FrameLevels::of` return; the tables only spare repeating them for each
+/// sample's screen neighbourhood.
 struct Sampler<'a> {
     sprite: &'a Sprite,
     projection: Projection,
@@ -743,13 +860,26 @@ struct Sampler<'a> {
     /// column or row each shows (None off the sprite).
     columns: Vec<Option<u32>>,
     rows: Vec<Option<u32>>,
+    /// The same packed columns and rows: `(x + 0.5 - left) / scale` and
+    /// `(y + 0.5 - top) / scale_y`, the source position of their centres
+    /// (`refine_frame`'s terms).
+    column_centres: Vec<f64>,
+    row_centres: Vec<f64>,
     origin: (u32, u32),
-    /// Per source pixel (row-major), its slopes once solved. A pixel's slopes
+    /// The source pixels the frame's samples and stencils reach, from
+    /// `window_origin`, `window_size` wide and tall (row-major): each one's
+    /// accessors once read, and its slopes once solved. A pixel's slopes
     /// depend on that pixel alone (its own winning voxel and the sprite's
-    /// voxel pitch), so the first sample to ask solves them for all.
-    slopes: Vec<std::cell::Cell<Option<Slopes>>>,
+    /// voxel pitch), so the first sample to ask solves them for all. Pixels
+    /// outside the window are read from the sprite where they are asked.
+    texels: Vec<std::cell::Cell<Texel>>,
+    slopes: Vec<std::cell::Cell<SlopeMemo>>,
+    window_origin: (u32, u32),
+    window_size: (u32, u32),
     /// The frame's levels for the last voxel pitch and packing asked.
     levels: std::cell::Cell<Option<LevelsMemo>>,
+    /// The stencil step and lattice reach for the last voxel pitch asked.
+    reach: std::cell::Cell<Option<(f64, i32, i32)>>,
     /// Per source pixel of the face plane's bounds (row-major from
     /// `face_origin`, `face_width` wide), its face-UV texel frame once
     /// solved (`texel_frame` of `valid_face_uv`).
@@ -793,6 +923,11 @@ impl FrameLevels {
 /// reach (a neighbour's own neighbours, for the silhouette ring).
 const SAMPLER_REACH: u32 = 2;
 
+/// Source pixels beyond those a frame's samples show that the frame reads:
+/// a sample's source neighbours, and the surface stencil (`surface_slopes`
+/// steps up to four pixels) and face-UV frames around them.
+const WINDOW_MARGIN: u32 = 6;
+
 impl<'a> Sampler<'a> {
     /// The projection alone: every lookup is computed where it is asked.
     fn direct(sprite: &'a Sprite, projection: Projection) -> Self {
@@ -801,9 +936,15 @@ impl<'a> Sampler<'a> {
             projection,
             columns: Vec::new(),
             rows: Vec::new(),
+            column_centres: Vec::new(),
+            row_centres: Vec::new(),
             origin: (0, 0),
+            texels: Vec::new(),
             slopes: Vec::new(),
+            window_origin: (0, 0),
+            window_size: (0, 0),
             levels: std::cell::Cell::new(None),
+            reach: std::cell::Cell::new(None),
             face_frames: Vec::new(),
             face_origin: (0, 0),
             face_width: 0,
@@ -818,19 +959,45 @@ impl<'a> Sampler<'a> {
         let y0 = (u32::from(area.y) * dy).saturating_sub(SAMPLER_REACH);
         let x1 = u32::from(area.right()) * dx + SAMPLER_REACH;
         let y1 = u32::from(area.bottom()) * dy + SAMPLER_REACH;
+        let columns: Vec<Option<u32>> = (x0..x1)
+            .map(|x| projection.source_column(sprite, x))
+            .collect();
+        let rows: Vec<Option<u32>> = (y0..y1).map(|y| projection.source_row(sprite, y)).collect();
+        // The source pixels the samples show, and the margin they read.
+        let window = |table: &[Option<u32>], size: u16| {
+            let (low, high) = table
+                .iter()
+                .flatten()
+                .fold((u32::MAX, 0), |(low, high), &v| (low.min(v), high.max(v)));
+            if low > high {
+                (0, 0)
+            } else {
+                let start = low.saturating_sub(WINDOW_MARGIN);
+                (
+                    start,
+                    (high + WINDOW_MARGIN + 1).min(u32::from(size)) - start,
+                )
+            }
+        };
+        let (wx, ww) = window(&columns, sprite.width());
+        let (wy, wh) = window(&rows, sprite.height());
+        let cells = (ww * wh) as usize;
         Self {
             sprite,
             projection,
-            columns: (x0..x1)
-                .map(|x| projection.source_column(sprite, x))
+            column_centres: (x0..x1)
+                .map(|x| (f64::from(x) + 0.5 - projection.left) / projection.scale)
                 .collect(),
-            rows: (y0..y1).map(|y| projection.source_row(sprite, y)).collect(),
+            row_centres: (y0..y1)
+                .map(|y| (f64::from(y) + 0.5 - projection.top) / projection.scale_y)
+                .collect(),
+            columns,
+            rows,
             origin: (x0, y0),
-            slopes: vec![
-                std::cell::Cell::new(None);
-                usize::from(sprite.width()) * usize::from(sprite.height())
-            ],
-            levels: std::cell::Cell::new(None),
+            texels: vec![std::cell::Cell::new(Texel::UNREAD); cells],
+            slopes: vec![std::cell::Cell::new(SlopeMemo::UNKNOWN); cells],
+            window_origin: (wx, wy),
+            window_size: (ww, wh),
             ..Self::faced(sprite, projection)
         }
     }
@@ -854,11 +1021,41 @@ impl<'a> Sampler<'a> {
         }
     }
 
+    /// The index of source pixel `(sx, sy)` in the frame's window.
+    fn window_index(&self, sx: u32, sy: u32) -> Option<usize> {
+        let i = sx.wrapping_sub(self.window_origin.0);
+        let j = sy.wrapping_sub(self.window_origin.1);
+        (i < self.window_size.0 && j < self.window_size.1)
+            .then(|| (j * self.window_size.0 + i) as usize)
+    }
+
+    /// Source pixel `(sx, sy)`'s accessors (`Texel::of`), read once a frame.
+    fn texel(&self, sx: u32, sy: u32) -> Texel {
+        let Some(index) = self.window_index(sx, sy) else {
+            return Texel::of(self.sprite, sx, sy);
+        };
+        let memo = &self.texels[index];
+        let texel = memo.get();
+        if texel.flags & TEXEL_READ != 0 {
+            return texel;
+        }
+        let texel = Texel::of(self.sprite, sx, sy);
+        memo.set(texel);
+        texel
+    }
+
+    /// `Sprite::pixel` at scale 1, through the window.
+    fn pixel(&self, sx: u32, sy: u32) -> Option<u8> {
+        if self.window_index(sx, sy).is_some() {
+            self.texel(sx, sy).pixel()
+        } else {
+            self.sprite.pixel(sx, sy, 1)
+        }
+    }
+
     /// `projected_face_uv` of packed pixel `(x, y)`.
     fn face_uv(&self, x: u32, y: u32) -> Option<([f64; 2], [f64; 2])> {
-        let (sx, sy) = self.source_pixel(x, y)?;
-        let frame = self.face_frame((sx, sy))?;
-        let (uv, per_x, per_y) = refine_frame(self.projection, (x, y), (sx, sy), frame);
+        let (uv, per_x, per_y) = self.face_frame_at(x, y)?;
         let footprint = std::array::from_fn(|i| per_x[i].abs() + per_y[i].abs());
         Some((uv, footprint))
     }
@@ -867,7 +1064,40 @@ impl<'a> Sampler<'a> {
     fn face_frame_at(&self, x: u32, y: u32) -> Option<([f64; 2], [f64; 2], [f64; 2])> {
         let (sx, sy) = self.source_pixel(x, y)?;
         let frame = self.face_frame((sx, sy))?;
-        Some(refine_frame(self.projection, (x, y), (sx, sy), frame))
+        Some(self.refine(frame, (x, y), (sx, sy)))
+    }
+
+    /// `refine_frame`, with the packed pixel's source position from the
+    /// frame's tables where they cover it (the same quotients, solved once).
+    fn refine(
+        &self,
+        (uv, horizontal, vertical): TexelFrame,
+        (x, y): (u32, u32),
+        (sx, sy): (u32, u32),
+    ) -> ([f64; 2], [f64; 2], [f64; 2]) {
+        let column = x
+            .checked_sub(self.origin.0)
+            .and_then(|i| self.column_centres.get(i as usize));
+        let row = y
+            .checked_sub(self.origin.1)
+            .and_then(|j| self.row_centres.get(j as usize));
+        let (Some(&column), Some(&row)) = (column, row) else {
+            return refine_frame(
+                self.projection,
+                (x, y),
+                (sx, sy),
+                (uv, horizontal, vertical),
+            );
+        };
+        let offset = [column - f64::from(sx) - 0.5, row - f64::from(sy) - 0.5];
+        let refined = std::array::from_fn(|i| {
+            (uv[i] + horizontal[i] * offset[0] + vertical[i] * offset[1]).clamp(0.0, 1.0)
+        });
+        (
+            refined,
+            horizontal.map(|d| d / self.projection.scale),
+            vertical.map(|d| d / self.projection.scale_y),
+        )
     }
 
     /// The face-UV texel frame of source pixel `(sx, sy)`.
@@ -920,22 +1150,160 @@ impl<'a> Sampler<'a> {
     /// `Projection::sample`.
     fn sample(&self, x: u32, y: u32) -> Option<u8> {
         let (sx, sy) = self.source_pixel(x, y)?;
-        self.sprite.pixel(sx, sy, 1)
+        self.pixel(sx, sy)
+    }
+
+    /// `surface_slopes`' step and lattice reach at voxel pitch `extent`.
+    fn stencil_reach(&self, extent: f64) -> (i32, i32) {
+        if let Some((pitch, h, reach)) = self.reach.get() {
+            if pitch.to_bits() == extent.to_bits() {
+                return (h, reach);
+            }
+        }
+        let h = (2.0 * extent).round().clamp(1.0, 4.0) as i32;
+        let reach = (f64::from(h) / extent.max(1.0e-3)).ceil() as i32 + 2;
+        self.reach.set(Some((extent, h, reach)));
+        (h, reach)
+    }
+
+    /// `surface_slopes`' stencil at `(sx, sy)` (whose winning voxel is
+    /// `voxel`), through the window; None where the pixel has no depth.
+    fn stencil(&self, (sx, sy): (u32, u32), voxel: [i32; 3], extent: f64) -> Option<Stencil> {
+        let here = self.texel(sx, sy).depth()?;
+        let (h, reach) = self.stencil_reach(extent);
+        let at = |ox: i32, oy: i32| -> Option<f64> {
+            let x = sx.checked_add_signed(ox)?;
+            let y = sy.checked_add_signed(oy)?;
+            let texel = self.texel(x, y);
+            let (other, _) = texel.facet()?;
+            let lattice = (voxel[0] - other[0])
+                .abs()
+                .max((voxel[1] - other[1]).abs())
+                .max((voxel[2] - other[2]).abs());
+            if lattice > reach {
+                return None;
+            }
+            texel.depth()
+        };
+        Some((
+            here,
+            [at(h, 0), at(-h, 0), at(0, h), at(0, -h)],
+            f64::from(h),
+        ))
     }
 
     /// `surface_slopes` of source pixel `(sx, sy)`, whose winning voxel is
     /// `voxel`, at the sprite's voxel pitch `extent`.
     fn slopes(&self, (sx, sy): (u32, u32), voxel: [i32; 3], extent: f64) -> Slopes {
-        let index = sy as usize * usize::from(self.sprite.width()) + sx as usize;
-        let Some(memo) = self.slopes.get(index) else {
-            return surface_slopes(self.sprite, (sx, sy), voxel, extent);
-        };
-        if let Some(slopes) = memo.get() {
-            return slopes;
+        let memo = self.window_index(sx, sy).map(|index| &self.slopes[index]);
+        if let Some(known) = memo.map(std::cell::Cell::get) {
+            if known.flags & SLOPE_EXACT == SLOPE_EXACT {
+                return (known.gradient, known.fold);
+            }
         }
-        let slopes = surface_slopes(self.sprite, (sx, sy), voxel, extent);
-        memo.set(Some(slopes));
+        let slopes = match self.stencil((sx, sy), voxel, extent) {
+            None => ([0.0; 2], [0.0; 2]),
+            Some((here, [east, west, south, north], step)) => (
+                [
+                    stencil_slope(here, (east, west), step) as f32,
+                    stencil_slope(here, (south, north), step) as f32,
+                ],
+                [
+                    stencil_fold(here, (east, west), step),
+                    stencil_fold(here, (south, north), step),
+                ],
+            ),
+        };
+        if let Some(memo) = memo {
+            memo.set(SlopeMemo {
+                gradient: slopes.0,
+                fold: slopes.1,
+                flags: SLOPE_EXACT,
+            });
+        }
         slopes
+    }
+
+    /// `slopes`' gradient, and its fold on each axis where the fold may be
+    /// sharper than `SHARP_FOLD` (None: surely not, `fold_bound`). The
+    /// overlay only ever compares a fold that is sharper.
+    fn sharp_slopes(
+        &self,
+        (sx, sy): (u32, u32),
+        voxel: [i32; 3],
+        extent: f64,
+    ) -> ([f32; 2], [Option<f32>; 2]) {
+        let read = |known: SlopeMemo| {
+            let fold =
+                |axis: usize, exact: u8| (known.flags & exact != 0).then_some(known.fold[axis]);
+            (
+                known.gradient,
+                [fold(0, SLOPE_EXACT_X), fold(1, SLOPE_EXACT_Y)],
+            )
+        };
+        let memo = self.window_index(sx, sy).map(|index| &self.slopes[index]);
+        if let Some(known) = memo
+            .map(std::cell::Cell::get)
+            .filter(|known| known.flags & SLOPE_KNOWN != 0)
+        {
+            return read(known);
+        }
+        let solved = match self.stencil((sx, sy), voxel, extent) {
+            None => SlopeMemo {
+                gradient: [0.0; 2],
+                fold: [0.0; 2],
+                flags: SLOPE_EXACT,
+            },
+            Some((here, [east, west, south, north], step)) => {
+                let mut solved = SlopeMemo {
+                    gradient: [
+                        stencil_slope(here, (east, west), step) as f32,
+                        stencil_slope(here, (south, north), step) as f32,
+                    ],
+                    fold: [0.0; 2],
+                    flags: SLOPE_KNOWN,
+                };
+                for (axis, (pair, exact)) in [
+                    ((east, west), SLOPE_EXACT_X),
+                    ((south, north), SLOPE_EXACT_Y),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let gentle = match pair {
+                        (Some(p), Some(m)) => fold_bound((p - here) / step, (here - m) / step),
+                        _ => false,
+                    };
+                    if !gentle {
+                        solved.fold[axis] = stencil_fold(here, pair, step);
+                        solved.flags |= exact;
+                    }
+                }
+                solved
+            }
+        };
+        if let Some(memo) = memo {
+            memo.set(solved);
+        }
+        read(solved)
+    }
+}
+
+/// `surface_slopes`' gradient along one axis from its stencil.
+fn stencil_slope(here: f64, (plus, minus): (Option<f64>, Option<f64>), step: f64) -> f64 {
+    match (plus, minus) {
+        (Some(p), Some(m)) => (p - m) / (2.0 * step),
+        (Some(p), None) => (p - here) / step,
+        (None, Some(m)) => (here - m) / step,
+        (None, None) => 0.0,
+    }
+}
+
+/// `surface_slopes`' fold along one axis from its stencil.
+fn stencil_fold(here: f64, (plus, minus): (Option<f64>, Option<f64>), step: f64) -> f32 {
+    match (plus, minus) {
+        (Some(p), Some(m)) => (((p - here) / step).atan() - ((here - m) / step).atan()) as f32,
+        _ => 0.0,
     }
 }
 
@@ -945,18 +1313,18 @@ fn overlay_sample(
     (sx, sy): (u32, u32),
     face: FaceClearance,
 ) -> Option<OverlaySample> {
-    let sprite = sampler.sprite;
-    let (voxel, facet) = sprite.surface_facet(sx, sy)?;
-    let extent = sprite.voxel_extent_pixels()?;
-    let material = sprite.pixel(sx, sy, 1)?;
-    let depth = sprite.depth_pixels(sx, sy)?;
+    let own = sampler.texel(sx, sy);
+    let (voxel, facet) = own.facet()?;
+    let extent = sampler.sprite.voxel_extent_pixels()?;
+    let material = own.pixel()?;
+    let depth = own.depth()?;
     let FrameLevels {
         span,
         tolerance,
         spacing,
         fine_share,
     } = sampler.levels(extent, face.packing);
-    let (gradient, fold) = sampler.slopes((sx, sy), voxel, extent);
+    let (gradient, fold) = sampler.sharp_slopes((sx, sy), voxel, extent);
     let mut sample = OverlaySample {
         voxel,
         facet,
@@ -969,8 +1337,7 @@ fn overlay_sample(
         crease: 0,
         seam: 0,
         neighbours: [(facet, material); 4],
-        face_plane: valid_face_uv(sprite, sx, sy).is_some()
-            && sampled_near_kaomoji(sampler, (x, y), face),
+        face_plane: own.face() && sampled_near_kaomoji(sampler, (x, y), face),
         iso: 0,
         gradient,
         tier: face
@@ -985,6 +1352,7 @@ fn overlay_sample(
     let mut beside: [Option<NeighbourSource>; 4] = [None; 4];
     // This sample's own coarse and fine iso-depth levels, once asked.
     let mut own_levels: Option<(f64, f64)> = None;
+    let level = |d: f64, step: f64| floor_exact(d / step);
     for (side, (ox, oy, bit)) in NEIGHBOUR_STEPS.into_iter().enumerate() {
         // Screen neighbours before the buffer origin are cropped, not empty.
         let (Some(nx), Some(ny)) = (x.checked_add_signed(ox), y.checked_add_signed(oy)) else {
@@ -1001,24 +1369,25 @@ fn overlay_sample(
             }
             continue;
         }
-        let Some(other_material) = sprite.pixel(nsx, nsy, 1) else {
+        let other = sampler.texel(nsx, nsy);
+        let Some(other_material) = other.pixel() else {
             sample.outside |= bit;
             continue;
         };
         if side >= 4 {
             continue;
         }
-        let Some((other_voxel, other_facet)) = sprite.surface_facet(nsx, nsy) else {
+        let Some((other_voxel, other_facet)) = other.facet() else {
             continue;
         };
         beside[side] = Some(((nsx, nsy), other_voxel));
         sample.neighbours[side] = (other_facet, other_material);
         let axis = usize::from(ox == 0);
-        let lattice = (0..3)
-            .map(|i| (voxel[i] - other_voxel[i]).abs())
-            .max()
-            .unwrap_or(0);
-        let other_depth = sprite.depth_pixels(nsx, nsy).unwrap_or(depth);
+        let lattice = (voxel[0] - other_voxel[0])
+            .abs()
+            .max((voxel[1] - other_voxel[1]).abs())
+            .max((voxel[2] - other_voxel[2]).abs());
+        let other_depth = other.depth().unwrap_or(depth);
         if lattice > tolerance[axis] {
             // Another part of the model: the near side carries the line; at
             // equal depth the greater lattice key does, so it is drawn once.
@@ -1034,7 +1403,6 @@ fn overlay_sample(
         // One continuous surface crossing an iso-depth level: the nearer
         // sample carries the contour, so it is drawn once.
         if depth > other_depth {
-            let level = |d: f64, step: f64| (d / step).floor();
             let (own_coarse, own_fine) = *own_levels
                 .get_or_insert_with(|| (level(depth, 2.0 * spacing), level(depth, spacing)));
             let coarse = own_coarse != level(other_depth, 2.0 * spacing);
@@ -1075,13 +1443,16 @@ fn overlay_sample(
     // A sharp concave fold, thinned to one packed sample across it: the
     // fold peaks here among the screen neighbours along its axis (the first
     // sample of a magnified source pixel carries it), and it never runs
-    // alongside the silhouette ring.
+    // alongside the silhouette ring. A fold surely no sharper than
+    // `SHARP_FOLD` (left unsolved by `sharp_slopes`) never draws.
     let mut best = 0.0f32;
     for (axis, (minus, plus, bits)) in [(3, 1, DIR_E | DIR_W), (0, 2, DIR_N | DIR_S)]
         .into_iter()
         .enumerate()
     {
-        let own = fold[axis];
+        let Some(own) = fold[axis] else {
+            continue;
+        };
         if own <= SHARP_FOLD || own <= best {
             continue;
         }
@@ -1130,7 +1501,7 @@ fn contour_levels(extent: f64, cells_per_voxel: f32) -> (f64, f32) {
 /// Tiers change only on coarse contour lines, so each contour band shades
 /// with one weight.
 fn depth_tier(depth: f64, coarse: f64, (far, near): (f64, f64)) -> i8 {
-    let centre = ((depth / coarse).floor() + 0.5) * coarse;
+    let centre = (floor_exact(depth / coarse) + 0.5) * coarse;
     let t = (centre - far) / (near - far).max(1.0e-6);
     if t >= 2.0 / 3.0 {
         1
@@ -1202,19 +1573,18 @@ fn sampled_surface_light(
     (x, y): (u32, u32),
     face: FaceClearance,
 ) -> Option<SurfaceLight> {
-    let sprite = sampler.sprite;
     let (sx, sy) = sampler.source_pixel(x, y)?;
-    let (normal, occlusion) = sprite.surface_shading(sx, sy)?;
+    let (normal, occlusion) = sampler.sprite.surface_shading(sx, sy)?;
     let edge = sx
         .checked_sub(1)
-        .and_then(|x| sprite.pixel(x, sy, 1))
+        .and_then(|x| sampler.pixel(x, sy))
         .is_none()
-        || sprite.pixel(sx + 1, sy, 1).is_none()
+        || sampler.pixel(sx + 1, sy).is_none()
         || sy
             .checked_sub(1)
-            .and_then(|y| sprite.pixel(sx, y, 1))
+            .and_then(|y| sampler.pixel(sx, y))
             .is_none()
-        || sprite.pixel(sx, sy + 1, 1).is_none();
+        || sampler.pixel(sx, sy + 1).is_none();
     // Screen neighbours before the buffer origin are cropped, not empty.
     let empty_on_screen = |px: Option<u32>, py: Option<u32>| {
         px.zip(py)
@@ -1230,6 +1600,217 @@ fn sampled_surface_light(
         edge: edge || screen_edge,
         screen_edge,
         overlay: overlay_sample(sampler, (x, y), (sx, sy), face),
+    })
+}
+
+/// `overlay_sample` as first written, through the projection and the
+/// sprite's own accessors alone (no frame tables, the libm floor, every fold
+/// solved): the reference the frame sampler's fast paths are tested against.
+#[cfg(test)]
+fn overlay_sample_reference(
+    sprite: &Sprite,
+    projection: Projection,
+    (x, y): (u32, u32),
+    (sx, sy): (u32, u32),
+    face: FaceClearance,
+) -> Option<OverlaySample> {
+    let (voxel, facet) = sprite.surface_facet(sx, sy)?;
+    let extent = sprite.voxel_extent_pixels()?;
+    let material = sprite.pixel(sx, sy, 1)?;
+    let depth = sprite.depth_pixels(sx, sy)?;
+    let FrameLevels {
+        span,
+        tolerance,
+        spacing,
+        fine_share,
+    } = FrameLevels::of(projection, extent, face.packing);
+    let (gradient, fold) = surface_slopes(sprite, (sx, sy), voxel, extent);
+    let mut sample = OverlaySample {
+        voxel,
+        facet,
+        material,
+        depth: depth as f32,
+        voxel_span: span.map(|s| s as f32),
+        outside: 0,
+        contour: 0,
+        deep_contour: 0,
+        crease: 0,
+        seam: 0,
+        neighbours: [(facet, material); 4],
+        face_plane: valid_face_uv(sprite, sx, sy).is_some()
+            && near_kaomoji(sprite, projection, (x, y), face),
+        iso: 0,
+        gradient,
+        tier: face
+            .depth_range
+            .map_or(0, |range| depth_tier(depth, 2.0 * spacing, range)),
+        fold: 0,
+        beside_ring: 0,
+    };
+    // A fine-only level line belongs to this voxel's share of the octave.
+    let fine_drawn = voxel_hash(voxel) < fine_share;
+    // The N/E/S/W screen neighbours' source pixels and voxels (Mon only).
+    let mut beside: [Option<NeighbourSource>; 4] = [None; 4];
+    // This sample's own coarse and fine iso-depth levels, once asked.
+    let mut own_levels: Option<(f64, f64)> = None;
+    for (side, (ox, oy, bit)) in NEIGHBOUR_STEPS.into_iter().enumerate() {
+        // Screen neighbours before the buffer origin are cropped, not empty.
+        let (Some(nx), Some(ny)) = (x.checked_add_signed(ox), y.checked_add_signed(oy)) else {
+            continue;
+        };
+        let Some((nsx, nsy)) = projection.source_pixel(sprite, nx, ny) else {
+            sample.outside |= bit;
+            continue;
+        };
+        if (nsx, nsy) == (sx, sy) {
+            // This sample's own source pixel: Mon, the same voxel.
+            if side < 4 {
+                beside[side] = Some(((sx, sy), voxel));
+            }
+            continue;
+        }
+        let Some(other_material) = sprite.pixel(nsx, nsy, 1) else {
+            sample.outside |= bit;
+            continue;
+        };
+        if side >= 4 {
+            continue;
+        }
+        let Some((other_voxel, other_facet)) = sprite.surface_facet(nsx, nsy) else {
+            continue;
+        };
+        beside[side] = Some(((nsx, nsy), other_voxel));
+        sample.neighbours[side] = (other_facet, other_material);
+        let axis = usize::from(ox == 0);
+        let lattice = (0..3)
+            .map(|i| (voxel[i] - other_voxel[i]).abs())
+            .max()
+            .unwrap_or(0);
+        let other_depth = sprite.depth_pixels(nsx, nsy).unwrap_or(depth);
+        if lattice > tolerance[axis] {
+            // Another part of the model: the near side carries the line; at
+            // equal depth the greater lattice key does, so it is drawn once.
+            let jump = depth - other_depth;
+            if jump > 0.0 || (jump == 0.0 && voxel > other_voxel) {
+                sample.contour |= bit;
+                if jump >= 3.0 * extent {
+                    sample.deep_contour |= bit;
+                }
+            }
+            continue;
+        }
+        // One continuous surface crossing an iso-depth level: the nearer
+        // sample carries the contour, so it is drawn once.
+        if depth > other_depth {
+            let level = |d: f64, step: f64| (d / step).floor();
+            let (own_coarse, own_fine) = *own_levels
+                .get_or_insert_with(|| (level(depth, 2.0 * spacing), level(depth, spacing)));
+            let coarse = own_coarse != level(other_depth, 2.0 * spacing);
+            let fine = own_fine != level(other_depth, spacing);
+            if coarse || (fine && fine_drawn) {
+                sample.iso |= bit;
+            }
+        }
+        if other_facet != facet {
+            sample.crease |= bit;
+        } else if other_material != material {
+            sample.seam |= bit;
+        }
+    }
+    // A screen sample on the silhouette ring: Mon with an empty N/E/S/W
+    // neighbour (one before the buffer origin is cropped, not empty).
+    let ring_at = |(px, py): (u32, u32)| {
+        NEIGHBOUR_STEPS[..4].iter().any(|&(ox, oy, _)| {
+            match (px.checked_add_signed(ox), py.checked_add_signed(oy)) {
+                (Some(nx), Some(ny)) => projection.sample(sprite, nx, ny).is_none(),
+                _ => false,
+            }
+        })
+    };
+    let screen = |side: usize| {
+        let (ox, oy, _) = NEIGHBOUR_STEPS[side];
+        Some((x.checked_add_signed(ox)?, y.checked_add_signed(oy)?))
+    };
+    if sample.outside & (DIR_N | DIR_E | DIR_S | DIR_W) != 0 {
+        return Some(sample);
+    }
+    for side in 0..4 {
+        let bit = 1u8 << side;
+        if sample.contour & bit != 0 && screen(side).is_some_and(ring_at) {
+            sample.beside_ring |= bit;
+        }
+    }
+    // A sharp concave fold, thinned to one packed sample across it: the
+    // fold peaks here among the screen neighbours along its axis (the first
+    // sample of a magnified source pixel carries it), and it never runs
+    // alongside the silhouette ring.
+    let mut best = 0.0f32;
+    for (axis, (minus, plus, bits)) in [(3, 1, DIR_E | DIR_W), (0, 2, DIR_N | DIR_S)]
+        .into_iter()
+        .enumerate()
+    {
+        let own = fold[axis];
+        if own <= SHARP_FOLD || own <= best {
+            continue;
+        }
+        let fold_of = |side: usize| {
+            beside[side].map(|(source, voxel)| {
+                (
+                    source == (sx, sy),
+                    surface_slopes(sprite, source, voxel, extent).1[axis],
+                )
+            })
+        };
+        let first = || fold_of(minus).is_none_or(|(same, other)| !same && own > other);
+        let peak = || fold_of(plus).is_none_or(|(same, other)| same || own >= other);
+        let alongside = || {
+            [minus, plus]
+                .into_iter()
+                .any(|side| screen(side).is_some_and(ring_at))
+        };
+        if first() && peak() && !alongside() {
+            sample.fold = bits;
+            best = own;
+        }
+    }
+    Some(sample)
+}
+
+/// `sampled_surface_light` as first written (see `overlay_sample_reference`).
+#[cfg(test)]
+fn reference_surface_light(
+    sprite: &Sprite,
+    projection: Projection,
+    (x, y): (u32, u32),
+    face: FaceClearance,
+) -> Option<SurfaceLight> {
+    let (sx, sy) = projection.source_pixel(sprite, x, y)?;
+    let (normal, occlusion) = sprite.surface_shading(sx, sy)?;
+    let edge = sx
+        .checked_sub(1)
+        .and_then(|x| sprite.pixel(x, sy, 1))
+        .is_none()
+        || sprite.pixel(sx + 1, sy, 1).is_none()
+        || sy
+            .checked_sub(1)
+            .and_then(|y| sprite.pixel(sx, y, 1))
+            .is_none()
+        || sprite.pixel(sx, sy + 1, 1).is_none();
+    // Screen neighbours before the buffer origin are cropped, not empty.
+    let empty_on_screen = |px: Option<u32>, py: Option<u32>| {
+        px.zip(py)
+            .is_some_and(|(px, py)| projection.sample(sprite, px, py).is_none())
+    };
+    let screen_edge = empty_on_screen(x.checked_sub(1), Some(y))
+        || empty_on_screen(x.checked_add(1), Some(y))
+        || empty_on_screen(Some(x), y.checked_sub(1))
+        || empty_on_screen(Some(x), y.checked_add(1));
+    Some(SurfaceLight {
+        normal,
+        occlusion,
+        edge: edge || screen_edge,
+        screen_edge,
+        overlay: overlay_sample_reference(sprite, projection, (x, y), (sx, sy), face),
     })
 }
 
@@ -1374,26 +1955,26 @@ fn light_band_of(
 ) -> usize {
     let level = light_level(lighting, brightness);
     let tone = if mono { level } else { 1.0 - level };
-    (tone * len.saturating_sub(1) as f32)
-        .round()
-        .clamp(0.0, len.saturating_sub(1) as f32) as usize
+    round_exact_f32(tone * len.saturating_sub(1) as f32).clamp(0.0, len.saturating_sub(1) as f32)
+        as usize
 }
 
-/// The ramp index a voxel facet shades with: its light band over the full
+/// The index into a shading ramp of `len` glyphs a voxel facet shades with:
+/// its light band over the full
 /// configured range (denser is darker in colour, brighter in monochrome);
 /// on alternate voxels of a 3D checker keyed with the material one glyph
 /// toward the middle of the ramp (the texture: lattice neighbours along any
 /// axis always shade differently, two materials swap the pattern, and the
 /// brightest and darkest bands keep a texture); and one heavier on the Mon's
 /// near depth tier, one lighter on its far tier (nearer reads heavier).
-fn texture_index(
+fn texture_index_of(
+    len: usize,
     lighting: &crate::lighting::VoxelLighting,
     mono: bool,
     brightness: u16,
     (voxel, material): ([i32; 3], u8),
     tier: i8,
 ) -> Option<usize> {
-    let (_, len) = shading_ramp(lighting);
     let top = i32::try_from(len).ok()?.checked_sub(1)?;
     let band = light_band_of(len, lighting, mono, brightness) as i32;
     let checker = (voxel[0] + voxel[1] + voxel[2]).rem_euclid(2) ^ i32::from(material & 1);
@@ -1415,6 +1996,45 @@ fn voxel_hash(voxel: [i32; 3]) -> f32 {
 fn smoothstep((low, high): (f32, f32), x: f32) -> f32 {
     let t = ((x - low) / (high - low)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// `x.floor()`, bit for bit (the sign of zero and NaN included), without the
+/// libm call the baseline x86-64 target makes for it: below 2^52 a double
+/// truncates exactly through an integer, and one below its truncation (a
+/// negative fraction) floors one lower; above it every double is integral.
+#[inline]
+fn floor_exact(x: f64) -> f64 {
+    if x.abs() < 4_503_599_627_370_496.0 {
+        let t = x as i64 as f64;
+        if t > x {
+            t - 1.0
+        } else {
+            t.copysign(x)
+        }
+    } else {
+        x.floor()
+    }
+}
+
+/// `x.round()` (half away from zero), bit for bit, without the libm call:
+/// below 2^23 an `f32` truncates exactly through an integer and its fraction
+/// is exact, so the half test is exact.
+#[inline]
+fn round_exact_f32(x: f32) -> f32 {
+    if x.abs() < 8_388_608.0 {
+        let t = x as i32 as f32;
+        let fraction = x - t;
+        let rounded = if fraction >= 0.5 {
+            t + 1.0
+        } else if fraction <= -0.5 {
+            t - 1.0
+        } else {
+            t
+        };
+        rounded.copysign(x)
+    } else {
+        x.round()
+    }
 }
 
 fn separation(a: Color, b: Color) -> u32 {
@@ -2032,6 +2652,60 @@ fn block_glyph(renderer: Renderer, mask: u8) -> char {
     }
 }
 
+/// The dominant sample of a cell among the Mon samples `keep` admits: the
+/// one whose lit colour most samples share, then the nearest, then the
+/// brightest, then the first. Each sample's share is counted once.
+fn dominant_sample(
+    count: usize,
+    mon: &[Option<&OverlaySample>; 8],
+    (lit, brightness): (&[Color; 8], &[u16; 8]),
+    keep: &dyn Fn(usize) -> bool,
+) -> Option<usize> {
+    if count == 1 {
+        return (mon[0].is_some() && keep(0)).then_some(0);
+    }
+    let kept: [bool; 8] = std::array::from_fn(|i| i < count && mon[i].is_some() && keep(i));
+    let shares: [usize; 8] = std::array::from_fn(|i| {
+        if kept[i] {
+            (0..count).filter(|&j| kept[j] && lit[j] == lit[i]).count()
+        } else {
+            0
+        }
+    });
+    let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
+    (0..count).filter(|&i| kept[i]).max_by(|&a, &b| {
+        shares[a]
+            .cmp(&shares[b])
+            .then(depth(a).total_cmp(&depth(b)))
+            .then(brightness[a].cmp(&brightness[b]))
+            .then(b.cmp(&a))
+    })
+}
+
+/// `dominant_sample` as first written (each comparison recounts).
+#[cfg(test)]
+fn dominant_sample_reference(
+    count: usize,
+    mon: &[Option<&OverlaySample>; 8],
+    (lit, brightness): (&[Color; 8], &[u16; 8]),
+    keep: &dyn Fn(usize) -> bool,
+) -> Option<usize> {
+    (0..count)
+        .filter(|&i| mon[i].is_some() && keep(i))
+        .max_by(|&a, &b| {
+            let n = |i: usize| {
+                (0..count)
+                    .filter(|&j| mon[j].is_some() && keep(j) && lit[j] == lit[i])
+                    .count()
+            };
+            let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
+            n(a).cmp(&n(b))
+                .then(depth(a).total_cmp(&depth(b)))
+                .then(brightness[a].cmp(&brightness[b]))
+                .then(b.cmp(&a))
+        })
+}
+
 /// One cell's packed samples: palette pixels and surfaces.
 type CellSamples<'a> = (&'a [Option<u8>; 8], &'a [Option<SurfaceLight>; 8]);
 
@@ -2125,23 +2799,9 @@ fn overlay_paint(
         .filter(|&i| mon[i].is_some())
         .fold(0u8, |mask, i| mask | (1 << i));
     // Dominant facet among the samples `keep` admits: most samples, then
-    // nearer, then brighter.
-    let dominant_of = |keep: &dyn Fn(usize) -> bool| {
-        (0..count)
-            .filter(|&i| mon[i].is_some() && keep(i))
-            .max_by(|&a, &b| {
-                let n = |i: usize| {
-                    (0..count)
-                        .filter(|&j| mon[j].is_some() && keep(j) && lit[j] == lit[i])
-                        .count()
-                };
-                let depth = |i: usize| mon[i].map_or(f32::MIN, |o| o.depth);
-                n(a).cmp(&n(b))
-                    .then(depth(a).total_cmp(&depth(b)))
-                    .then(brightness[a].cmp(&brightness[b]))
-                    .then(b.cmp(&a))
-            })
-    };
+    // nearer, then brighter (`dominant_sample`).
+    let dominant_of =
+        |keep: &dyn Fn(usize) -> bool| dominant_sample(count, &mon, (&lit, &brightness), keep);
     let dominant = dominant_of(&|_| true).unwrap_or(first);
     let cells_per_voxel = mon[first].map_or(1.0, |o| {
         (o.voxel_span[0] / dx as f32).min(o.voxel_span[1] / dy as f32)
@@ -2290,14 +2950,16 @@ fn overlay_paint(
         if voxel_hash(o.voxel) >= band {
             continue;
         }
+        let light =
+            |n: [i8; 3]| lit_brightness(lighting, n.map(|v| f32::from(v) / 127.0), 0, false);
+        // The sample's own facet light, solved once for all its creases.
+        let mut own_light = None;
         for side in 0..4 {
             let bit = 1u8 << side;
             let (facet, material) = o.neighbours[side];
             if o.crease & bit != 0 {
-                let light = |n: [i8; 3]| {
-                    lit_brightness(lighting, n.map(|v| f32::from(v) / 127.0), 0, false)
-                };
-                let (own, other) = (light(o.facet), light(facet));
+                let own = *own_light.get_or_insert_with(|| light(o.facet));
+                let other = light(facet);
                 if own < other || (own == other && o.facet < facet) {
                     lines[i] |= bit;
                 }
@@ -2335,7 +2997,8 @@ fn overlay_paint(
     // 8. Shading texture over the full configured light range.
     let o = mon[dominant]?;
     let (ramp, len) = shading_ramp(lighting);
-    if let Some(index) = texture_index(
+    if let Some(index) = texture_index_of(
+        len,
         lighting,
         mono,
         brightness[dominant],
@@ -3579,8 +4242,8 @@ impl FaceTexture {
                     - (centre - radius).max(f64::from(start)))
                 .max(0.0)
             };
-            let mut low = (centre - radius).floor() as i32;
-            let mut high = (centre + radius).floor() as i32;
+            let mut low = floor_exact(centre - radius) as i32;
+            let mut high = floor_exact(centre + radius) as i32;
             if low <= high && overlap(low) <= 0.0 {
                 low += 1;
             }
@@ -3591,16 +4254,14 @@ impl FaceTexture {
         };
         let (left, right) = positive(grid[0], radius[0]);
         let (top, bottom) = positive(grid[1], radius[1]);
-        (top.max(0)..=bottom.min(8)).any(|y| self.row_ink(y, left, right))
-    }
-
-    /// Whether any `bit(x, y)` holds for `x` in `low..=high`.
-    fn row_ink(self, y: i32, low: i32, high: i32) -> bool {
-        if !(0..9).contains(&y) {
+        let (top, bottom) = (top.max(0), bottom.min(8));
+        if top > bottom {
             return false;
         }
-        let low = low.max(0);
-        let high = high.min(self.text.len() as i32 * 8 - 1);
+        // Whether any `bit(x, y)` holds for x in left..=right and y in
+        // top..=bottom, glyph by glyph: each glyph's rows are looked up once.
+        let low = left.max(0);
+        let high = right.min(self.text.len() as i32 * 8 - 1);
         if low > high {
             return false;
         }
@@ -3616,7 +4277,9 @@ impl FaceTexture {
                     .is_some_and(|rows| {
                         // Columns first..=last are bits (4 - last)..=(4 - first).
                         let columns = (1u16 << (5 - first)) - (1u16 << (4 - last));
-                        u16::from(rows[y as usize]) & columns != 0
+                        rows[top as usize..=bottom as usize]
+                            .iter()
+                            .any(|row| u16::from(*row) & columns != 0)
                     })
         })
     }
@@ -17609,6 +18272,334 @@ mod render_cost_tests {
         assert!(
             compared > 5_000 && overlay > 2_000,
             "{compared} cells, {overlay} with overlay samples"
+        );
+    }
+
+    /// The exact floor and round agree with libm bit for bit: signed zeros,
+    /// halves, integers, the edges of the exact-integer ranges, subnormals,
+    /// infinities, NaN and random values at every magnitude.
+    #[test]
+    fn exact_rounding_matches_libm() {
+        let mut rng = Rng(0x0DDB_A11C_0FFE_E123);
+        let mut wide: Vec<f64> = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            1.5,
+            -1.5,
+            2.5,
+            -2.5,
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            f64::MIN_POSITIVE / 4.0,
+            -f64::MIN_POSITIVE / 4.0,
+            f64::MAX,
+            f64::MIN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::EPSILON,
+            -f64::EPSILON,
+            1.0 - f64::EPSILON,
+            -(1.0 - f64::EPSILON),
+        ];
+        for edge in [
+            4_503_599_627_370_496.0f64,
+            9_007_199_254_740_992.0,
+            2.0f64.powi(63),
+        ] {
+            for k in -4i32..=4 {
+                for sign in [1.0, -1.0] {
+                    let v = sign * (edge + f64::from(k) * (edge * f64::EPSILON).max(0.5));
+                    wide.extend([v, v + 0.5, v - 0.5, f64::from_bits(v.to_bits() + 1)]);
+                }
+            }
+        }
+        for _ in 0..200_000 {
+            let mantissa = rng.next() >> 11;
+            let exponent = rng.below(140) as i32 - 70;
+            let sign = if rng.below(2) == 0 { 1.0 } else { -1.0 };
+            wide.push(sign * mantissa as f64 / (1u64 << 52) as f64 * 2f64.powi(exponent));
+            // Exact halves and near-halves of small integers.
+            let n = rng.below(4001) as f64 - 2000.0;
+            wide.extend([
+                n,
+                n + 0.5,
+                n - 0.5,
+                n + 0.25,
+                f64::from_bits((n + 0.5).to_bits() + 1),
+            ]);
+            // Every bit pattern class.
+            wide.push(f64::from_bits(rng.next()));
+        }
+        let mut checked = (0usize, 0usize);
+        for v in &wide {
+            assert_eq!(
+                floor_exact(*v).to_bits(),
+                v.floor().to_bits(),
+                "floor of {v:e} ({:#x})",
+                v.to_bits()
+            );
+            checked.0 += 1;
+            let f = *v as f32;
+            for f in [
+                f,
+                f32::from_bits(f.to_bits().wrapping_add(1)),
+                f32::from_bits(rng.next() as u32),
+            ] {
+                assert_eq!(
+                    round_exact_f32(f).to_bits(),
+                    f.round().to_bits(),
+                    "round of {f:e} ({:#x})",
+                    f.to_bits()
+                );
+                checked.1 += 1;
+            }
+        }
+        // Every f32 below 2^23 with a 0.5 fraction, both signs, and its neighbours.
+        for n in (0..8_388_608u32).step_by(997) {
+            for f in [n as f32 + 0.5, -(n as f32) - 0.5] {
+                for g in [
+                    f,
+                    f32::from_bits(f.to_bits() - 1),
+                    f32::from_bits(f.to_bits() + 1),
+                ] {
+                    assert_eq!(
+                        round_exact_f32(g).to_bits(),
+                        g.round().to_bits(),
+                        "round of {g:e}"
+                    );
+                    checked.1 += 1;
+                }
+            }
+        }
+        println!(
+            "rounding census: {} floors, {} rounds",
+            checked.0, checked.1
+        );
+        assert!(checked.0 > 500_000 && checked.1 > 1_000_000, "{checked:?}");
+    }
+
+    /// A frame's texel table returns exactly the sprite's accessors, inside
+    /// its window (read once, then from the table) and beyond it.
+    #[test]
+    fn frame_texels_match_the_sprite_accessors() {
+        let (mut tabled, mut beyond, mut mon) = (0usize, 0usize, 0usize);
+        for (sprite, renderer, camera, (w, h)) in equivalence_cases() {
+            let Some(bounds) = SolidBounds::of(&sprite) else {
+                continue;
+            };
+            let viewport = Rect::new(1, 1, w - 2, h - 2);
+            let projection =
+                Projection::camera(&sprite, bounds, viewport, renderer, 0, (500, 700), camera);
+            let sampler = Sampler::frame(&sprite, projection, renderer, viewport);
+            for y in 0..u32::from(sprite.height()) + 3 {
+                for x in 0..u32::from(sprite.width()) + 3 {
+                    for _ in 0..2 {
+                        let texel = sampler.texel(x, y);
+                        assert_eq!(texel.pixel(), sprite.pixel(x, y, 1), "pixel ({x}, {y})");
+                        assert_eq!(sampler.pixel(x, y), sprite.pixel(x, y, 1));
+                        assert_eq!(
+                            texel.facet(),
+                            sprite.surface_facet(x, y),
+                            "facet ({x}, {y})"
+                        );
+                        assert_eq!(
+                            texel.depth().map(f64::to_bits),
+                            sprite.depth_pixels(x, y).map(f64::to_bits),
+                            "depth ({x}, {y})"
+                        );
+                        assert_eq!(texel.face(), valid_face_uv(&sprite, x, y).is_some());
+                    }
+                    if sampler.window_index(x, y).is_some() {
+                        tabled += 1;
+                    } else {
+                        beyond += 1;
+                    }
+                    mon += usize::from(sprite.surface_facet(x, y).is_some());
+                }
+            }
+        }
+        println!("texel census: {tabled} tabled, {beyond} beyond the window, {mon} voxel pixels");
+        assert!(
+            tabled > 20_000 && beyond > 1_000 && mon > 10_000,
+            "{tabled} tabled, {beyond} beyond, {mon} voxel pixels"
+        );
+    }
+
+    /// The bench frames and the equivalence matrix as (sprite, renderer,
+    /// camera, size) cases.
+    fn sampling_cases() -> Vec<(Sprite, Renderer, Camera, (u16, u16))> {
+        let mut cases = equivalence_cases();
+        for (view, zoom, size, renderer) in bench_cases() {
+            cases.push((bench_fox(), renderer, camera(view, zoom, 45), size));
+        }
+        cases
+    }
+
+    /// Every packed sample the frame sampler classifies (the texel table,
+    /// the tabulated source positions, the exact floor and the unsolved
+    /// gentle folds) equals the overlay sample as first written, on and
+    /// beyond the viewport; every gentle fold left unsolved is truly no
+    /// sharper than `SHARP_FOLD`, and every solved one is exact.
+    #[test]
+    fn fast_overlay_samples_match_the_reference() {
+        let (mut samples, mut overlay, mut sharp, mut gentle, mut folds) =
+            (0usize, 0usize, 0usize, 0usize, 0usize);
+        for (sprite, renderer, camera, (w, h)) in sampling_cases() {
+            let Some(bounds) = SolidBounds::of(&sprite) else {
+                continue;
+            };
+            let viewport = Rect::new(1, 1, w - 2, h - 2);
+            let projection =
+                Projection::camera(&sprite, bounds, viewport, renderer, 0, (500, 700), camera);
+            let sampler = Sampler::frame(&sprite, projection, renderer, viewport);
+            let bounded = Sampler::frame(&sprite, projection, renderer, viewport);
+            let mut seen = vec![false; 256 * 256];
+            let face = face_clearance(&sprite, renderer, projection, viewport);
+            let (dx, dy) = renderer.packing();
+            let reach = SAMPLER_REACH + 2;
+            let xs = (u32::from(viewport.x) * u32::from(dx)).saturating_sub(reach)
+                ..u32::from(viewport.right()) * u32::from(dx) + reach;
+            let ys = (u32::from(viewport.y) * u32::from(dy)).saturating_sub(reach)
+                ..u32::from(viewport.bottom()) * u32::from(dy) + reach;
+            for y in ys {
+                for x in xs.clone() {
+                    let reference = reference_surface_light(&sprite, projection, (x, y), face);
+                    assert_eq!(
+                        sampled_surface_light(&sampler, (x, y), face),
+                        reference,
+                        "sample ({x}, {y}) {renderer:?} {camera:?} {w}x{h}"
+                    );
+                    samples += 1;
+                    overlay += usize::from(reference.is_some_and(|s| s.overlay.is_some()));
+                    assert_eq!(
+                        sampler.face_uv(x, y),
+                        projected_face_uv(&sprite, projection, x, y)
+                    );
+                    assert_eq!(
+                        sampler.face_frame_at(x, y),
+                        projected_face_frame(&sprite, projection, x, y)
+                    );
+                    let (Some((sx, sy)), Some(extent)) = (
+                        projection.source_pixel(&sprite, x, y),
+                        sprite.voxel_extent_pixels(),
+                    ) else {
+                        continue;
+                    };
+                    let Some(voxel) = sprite.surface_voxel(sx, sy) else {
+                        continue;
+                    };
+                    let exact = surface_slopes(&sprite, (sx, sy), voxel, extent);
+                    // `bounded` is only ever asked for bounded slopes, so its
+                    // first answer for a pixel is the bounded solve.
+                    for sampler in [&bounded, &sampler] {
+                        let (gradient, fold) = sampler.sharp_slopes((sx, sy), voxel, extent);
+                        assert_eq!(gradient, exact.0, "gradient of ({sx}, {sy})");
+                        for axis in 0..2 {
+                            match fold[axis] {
+                                Some(f) => assert_eq!(f.to_bits(), exact.1[axis].to_bits()),
+                                None => assert!(
+                                    exact.1[axis] <= SHARP_FOLD,
+                                    "an unsolved fold of ({sx}, {sy}) is {}",
+                                    exact.1[axis]
+                                ),
+                            }
+                            if std::ptr::eq(sampler, &bounded) && !seen[(sy * 256 + sx) as usize] {
+                                folds += 1;
+                                match fold[axis] {
+                                    None => gentle += 1,
+                                    Some(f) if f > SHARP_FOLD => sharp += 1,
+                                    Some(_) => {}
+                                }
+                            }
+                        }
+                    }
+                    seen[(sy * 256 + sx) as usize] = true;
+                    assert_eq!(sampler.slopes((sx, sy), voxel, extent), exact);
+                }
+            }
+        }
+        println!(
+            "overlay census: {samples} samples, {overlay} overlay, {folds} folds ({gentle} left unsolved, {sharp} sharp)"
+        );
+        assert!(
+            overlay > 100_000 && gentle > 20_000 && sharp > 500,
+            "{samples} samples, {overlay} overlay, {gentle} unsolved, {sharp} sharp folds"
+        );
+    }
+
+    /// The dominant sample counted once per sample equals the recounting
+    /// original for every cell of the matrix, whichever samples are kept.
+    #[test]
+    fn dominant_samples_match_the_reference() {
+        let (mut cells, mut packed) = (0usize, 0usize);
+        for (k, (sprite, renderer, camera, (w, h))) in sampling_cases().into_iter().enumerate() {
+            let Some(bounds) = SolidBounds::of(&sprite) else {
+                continue;
+            };
+            let config = lighting_variant(k as u64 % 5);
+            let colors = Colors::from_config(&config, DEPTHS[k % 4]).unwrap();
+            let Some(lighting) = colors.lighting.as_ref() else {
+                continue;
+            };
+            let viewport = Rect::new(1, 1, w - 2, h - 2);
+            let projection =
+                Projection::camera(&sprite, bounds, viewport, renderer, 0, (500, 700), camera);
+            let face = face_clearance(&sprite, renderer, projection, viewport);
+            let (dx, dy) = renderer.packing();
+            let count = usize::from(dx * dy);
+            for row in viewport.y..viewport.bottom() {
+                for col in viewport.x..viewport.right() {
+                    let mut surface = [None; 8];
+                    let mut pixels = [None; 8];
+                    for i in 0..count {
+                        let px = u32::from(col) * u32::from(dx) + (i % usize::from(dx)) as u32;
+                        let py = u32::from(row) * u32::from(dy) + (i / usize::from(dx)) as u32;
+                        pixels[i] = projection.sample(&sprite, px, py);
+                        surface[i] = reference_surface_light(&sprite, projection, (px, py), face);
+                    }
+                    let mon: [Option<&OverlaySample>; 8] = std::array::from_fn(|i| {
+                        surface[i]
+                            .as_ref()
+                            .filter(|_| i < count && pixels[i].is_some())
+                            .and_then(|s| s.overlay.as_ref())
+                    });
+                    if mon.iter().all(Option::is_none) {
+                        continue;
+                    }
+                    let brightness: [u16; 8] = std::array::from_fn(|i| {
+                        surface[i]
+                            .map_or(100, |s| lighting.brightness(s.normal, s.occlusion, false))
+                    });
+                    let lit: [Color; 8] = std::array::from_fn(|i| {
+                        shade_terminal_color(
+                            lighting,
+                            colors.ink(usize::from(pixels[i].unwrap_or(0))),
+                            brightness[i],
+                        )
+                    });
+                    let kept = [1u8, 2, 5, 9, 0xFF, 0x0F];
+                    for mask in kept {
+                        let keep = |i: usize| mask & (1 << i) != 0;
+                        assert_eq!(
+                            dominant_sample(count, &mon, (&lit, &brightness), &keep),
+                            dominant_sample_reference(count, &mon, (&lit, &brightness), &keep),
+                            "cell ({col}, {row}) {renderer:?} keep {mask:#x}"
+                        );
+                    }
+                    cells += 1;
+                    packed += usize::from(count > 1);
+                }
+            }
+        }
+        println!("dominant census: {cells} cells, {packed} packed");
+        assert!(
+            cells > 20_000 && packed > 10_000,
+            "{cells} cells, {packed} packed"
         );
     }
 
