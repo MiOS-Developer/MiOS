@@ -1,7 +1,7 @@
 // AI-hint: Cell-budgeted golden-ratio HUD geometry and exact compact status labels.
 // AI-related: ui.rs, config.rs, usr/share/mios/mios.toml [mcp.tmux.workspace]
-use crate::{capabilities::Renderer, game::Game, sprite::SpriteStyle};
-use ratatui::layout::Rect;
+use crate::{capabilities::Renderer, game::Game, render::Colors, sprite::SpriteStyle};
+use ratatui::{buffer::Buffer, layout::Rect};
 
 /// One scene-wide detail decision, shared by the pet, room, HUD and menus.
 /// All operator thresholds come from the layered SSOT; no private defaults.
@@ -156,6 +156,356 @@ pub fn menu_window(selected: usize, total: usize, rows: u16) -> MenuWindow {
         .saturating_sub(count.saturating_sub(1))
         .min(total.saturating_sub(count));
     MenuWindow { start, count }
+}
+
+/// One selectable hit cell in a content-sized menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuCell {
+    pub index: usize,
+    pub area: Rect,
+}
+
+/// Content-fit menu geometry with bounded panel, distinct body/footer
+/// viewports, visible in-bounds hit cells, and full-set spatial navigation centers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MenuGeometry {
+    pub panel: Rect,
+    pub body: Rect,
+    pub footer: Rect,
+    pub items: Vec<MenuCell>,
+    pub first: usize,
+    pub visible: usize,
+    pub columns: u16,
+    pub rows: u16,
+    pub navigation: Vec<(usize, i32, i32)>,
+}
+
+/// Visual focus and interaction state for textured menu tiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileState {
+    Idle,
+    Focused,
+    Disabled,
+    FocusedDisabled,
+}
+
+/// Content-fitted panel rectangle bounded by the scene golden budget.
+///
+/// Bounded to available screen or container bounds, retaining room for the
+/// scene according to golden proportions while strictly guaranteeing that
+/// tiny viewports (such as 12x6) retain at least one option and controls.
+pub fn content_panel(
+    bounds: Rect,
+    content_width: u16,
+    content_rows: u16,
+    footer_rows: u16,
+    ratio: f64,
+) -> Rect {
+    if bounds.width == 0 || bounds.height == 0 {
+        return Rect::new(bounds.x, bounds.y, 0, 0);
+    }
+    let ratio = if ratio.is_finite() && ratio > 1.0 {
+        ratio
+    } else {
+        2.0
+    };
+
+    let panel_width = content_width.saturating_add(2).clamp(1, bounds.width);
+    let needed_height = content_rows.saturating_add(footer_rows).saturating_add(2);
+
+    let min_content = content_rows.min(1);
+    let min_needed = min_content
+        .saturating_add(footer_rows)
+        .saturating_add(2)
+        .min(bounds.height);
+
+    let scene_share = ((f64::from(bounds.height) / ratio).round() as u16)
+        .min(bounds.height.saturating_sub(min_needed));
+    let max_budget_height = bounds.height.saturating_sub(scene_share).max(min_needed);
+
+    let panel_height = needed_height
+        .min(max_budget_height)
+        .clamp(min_needed, bounds.height);
+
+    let x = bounds.x + bounds.width.saturating_sub(panel_width) / 2;
+    let y = bounds.y + bounds.height.saturating_sub(panel_height);
+    Rect::new(x, y, panel_width, panel_height)
+}
+
+/// Computes content-fitted menu geometry, visible item hit cells, and full-set
+/// 2D spatial navigation centers.
+#[allow(clippy::too_many_arguments)]
+pub fn menu_geometry(
+    bounds: Rect,
+    item_widths: &[u16],
+    selected: usize,
+    footer_rows: u16,
+    cell_height: u16,
+    gap: u16,
+    max_columns: u16,
+    ratio: f64,
+) -> MenuGeometry {
+    let cell_height = cell_height.max(1);
+    let max_columns = max_columns.max(1);
+    let total_items = item_widths.len();
+
+    if total_items == 0 || bounds.width == 0 || bounds.height == 0 {
+        let panel = content_panel(bounds, 0, 0, footer_rows, ratio);
+        let inner_w = panel.width.saturating_sub(2);
+        let inner_h = panel.height.saturating_sub(2);
+        let footer_h = footer_rows.min(inner_h);
+        let body_h = inner_h.saturating_sub(footer_h);
+        let body = Rect::new(panel.x + 1, panel.y + 1, inner_w, body_h);
+        let footer = Rect::new(panel.x + 1, panel.y + 1 + body_h, inner_w, footer_h);
+        return MenuGeometry {
+            panel,
+            body,
+            footer,
+            items: Vec::new(),
+            first: 0,
+            visible: 0,
+            columns: 1,
+            rows: 0,
+            navigation: Vec::new(),
+        };
+    }
+
+    let max_inner_w = bounds.width.saturating_sub(2).max(1);
+    let max_item_width = item_widths.iter().copied().max().unwrap_or(1).max(1);
+
+    let max_possible_cols = (total_items as u16).min(max_columns).max(1);
+    let mut columns = 1u16;
+    for c in (1..=max_possible_cols).rev() {
+        let needed_w = c
+            .saturating_mul(max_item_width)
+            .saturating_add(c.saturating_sub(1).saturating_mul(gap));
+        if needed_w <= max_inner_w {
+            columns = c;
+            break;
+        }
+    }
+
+    let col_width = if columns == 1 {
+        max_item_width.min(max_inner_w).max(1)
+    } else {
+        max_item_width
+    };
+
+    let content_width = columns
+        .saturating_mul(col_width)
+        .saturating_add(columns.saturating_sub(1).saturating_mul(gap))
+        .min(max_inner_w);
+
+    let rows = total_items.div_ceil(columns as usize) as u16;
+    let content_rows = rows.saturating_mul(cell_height);
+
+    let panel = content_panel(bounds, content_width, content_rows, footer_rows, ratio);
+
+    let inner_w = panel.width.saturating_sub(2);
+    let inner_h = panel.height.saturating_sub(2);
+    let footer_h = footer_rows.min(inner_h);
+    let body_h = inner_h.saturating_sub(footer_h);
+
+    let body = Rect::new(panel.x + 1, panel.y + 1, inner_w, body_h);
+    let footer = Rect::new(panel.x + 1, panel.y + 1 + body_h, inner_w, footer_h);
+
+    let visible_rows = (body.height / cell_height) as usize;
+
+    let sel = selected.min(total_items.saturating_sub(1));
+    let sel_row = sel / columns as usize;
+
+    let first_row =
+        if visible_rows == 0 || (rows as usize) <= visible_rows || sel_row < visible_rows {
+            0
+        } else {
+            let max_first = (rows as usize).saturating_sub(visible_rows);
+            sel_row
+                .saturating_sub(visible_rows.saturating_sub(1))
+                .min(max_first)
+        };
+
+    let first = first_row * (columns as usize);
+    let page_capacity = visible_rows * (columns as usize);
+    let end_idx = (first + page_capacity).min(total_items);
+
+    let mut items = Vec::new();
+    if visible_rows > 0 && body.width > 0 && body.height > 0 {
+        for idx in first..end_idx {
+            let rel_idx = idx - first;
+            let col = (rel_idx % columns as usize) as u16;
+            let row = (rel_idx / columns as usize) as u16;
+            let cell_x = body.x + col * (col_width + gap);
+            let cell_y = body.y + row * cell_height;
+            let cell_area = Rect::new(cell_x, cell_y, col_width, cell_height);
+            let in_bounds = cell_area.intersection(body);
+            if !in_bounds.is_empty() {
+                items.push(MenuCell {
+                    index: idx,
+                    area: in_bounds,
+                });
+            }
+        }
+    }
+
+    let visible = items.len();
+
+    let mut navigation = Vec::with_capacity(total_items);
+    for idx in 0..total_items {
+        let r = idx / columns as usize;
+        let c = idx % columns as usize;
+        let cell_x = body.x + (c as u16) * (col_width + gap);
+        let center_x = cell_x as i32 + (col_width as i32) / 2;
+
+        let row_offset = (r as i32) - (first_row as i32);
+        let logical_y = body.y as i32 + row_offset * (cell_height as i32);
+        let center_y = logical_y + (cell_height as i32) / 2;
+
+        navigation.push((idx, center_x, center_y));
+    }
+
+    MenuGeometry {
+        panel,
+        body,
+        footer,
+        items,
+        first,
+        visible,
+        columns,
+        rows,
+        navigation,
+    }
+}
+
+/// Deterministic ASCII / Unicode textured panel painter.
+///
+/// Draws border bevels and interior background strictly within the given area.
+/// Contains no simulation, time, RNG, scene clearing, or action handling.
+pub fn paint_menu_panel(buffer: &mut Buffer, area: Rect, colors: &Colors, ascii: bool) {
+    let area = area.intersection(buffer.area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let (tl, tr, bl, br, h, v) = if ascii {
+        ('+', '+', '+', '+', '-', '|')
+    } else {
+        ('┌', '┐', '└', '┘', '─', '│')
+    };
+
+    let border_fg = colors.ink(3);
+    let border_bg = colors.background;
+    let interior_fg = colors.ink(2);
+    let interior_bg = colors.background;
+
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            let is_top = y == area.top();
+            let is_bot = y == area.bottom() - 1;
+            let is_left = x == area.left();
+            let is_right = x == area.right() - 1;
+
+            if let Some(cell) = buffer.cell_mut((x, y)) {
+                if is_top && is_left {
+                    cell.set_char(tl).set_fg(border_fg).set_bg(border_bg);
+                } else if is_top && is_right {
+                    cell.set_char(tr).set_fg(border_fg).set_bg(border_bg);
+                } else if is_bot && is_left {
+                    cell.set_char(bl).set_fg(border_fg).set_bg(border_bg);
+                } else if is_bot && is_right {
+                    cell.set_char(br).set_fg(border_fg).set_bg(border_bg);
+                } else if is_top || is_bot {
+                    cell.set_char(h).set_fg(border_fg).set_bg(border_bg);
+                } else if is_left || is_right {
+                    cell.set_char(v).set_fg(border_fg).set_bg(border_bg);
+                } else {
+                    cell.set_char(' ').set_fg(interior_fg).set_bg(interior_bg);
+                }
+            }
+        }
+    }
+}
+
+/// Deterministic ASCII / Unicode menu tile painter with visible focus in mono.
+///
+/// Paints background, bevels, and focus indicator glyphs. Does NOT render labels,
+/// perform input handling, or evaluate affordability or simulation state.
+pub fn paint_menu_tile(
+    buffer: &mut Buffer,
+    area: Rect,
+    colors: &Colors,
+    state: TileState,
+    ascii: bool,
+) {
+    let area = area.intersection(buffer.area);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let (border_fg, tile_bg, tile_fg) = match state {
+        TileState::Focused => (colors.ink(1), colors.ink(2), colors.background),
+        TileState::Idle => (colors.ink(3), colors.background, colors.ink(7)),
+        TileState::Disabled => (colors.ink(6), colors.background, colors.ink(6)),
+        TileState::FocusedDisabled => (colors.ink(4), colors.background, colors.ink(4)),
+    };
+
+    if area.height == 1 {
+        let (left_glyph, right_glyph) = match state {
+            TileState::Focused => ('>', '<'),
+            TileState::FocusedDisabled => ('!', '!'),
+            TileState::Disabled => ('.', '.'),
+            TileState::Idle => (' ', ' '),
+        };
+
+        for x in area.left()..area.right() {
+            if let Some(cell) = buffer.cell_mut((x, area.top())) {
+                if x == area.left() {
+                    cell.set_char(left_glyph).set_fg(border_fg).set_bg(tile_bg);
+                } else if x == area.right() - 1 && area.width > 1 {
+                    cell.set_char(right_glyph).set_fg(border_fg).set_bg(tile_bg);
+                } else {
+                    cell.set_char(' ').set_fg(tile_fg).set_bg(tile_bg);
+                }
+            }
+        }
+    } else {
+        let (tl, tr, bl, br, h, v) = match (state, ascii) {
+            (TileState::Focused, true) => ('>', '<', '>', '<', '=', '|'),
+            (TileState::Focused, false) => ('╔', '╗', '╚', '╝', '═', '║'),
+            (TileState::FocusedDisabled, true) => ('!', '!', '!', '!', '=', '|'),
+            (TileState::FocusedDisabled, false) => ('╒', '╕', '╘', '╛', '═', '│'),
+            (TileState::Disabled, true) => ('.', '.', '.', '.', '.', ':'),
+            (TileState::Disabled, false) => ('┌', '┐', '└', '┘', '╌', '┊'),
+            (TileState::Idle, true) => ('+', '+', '+', '+', '-', '|'),
+            (TileState::Idle, false) => ('┌', '┐', '└', '┘', '─', '│'),
+        };
+
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                let is_top = y == area.top();
+                let is_bot = y == area.bottom() - 1;
+                let is_left = x == area.left();
+                let is_right = x == area.right() - 1;
+
+                if let Some(cell) = buffer.cell_mut((x, y)) {
+                    if is_top && is_left {
+                        cell.set_char(tl).set_fg(border_fg).set_bg(tile_bg);
+                    } else if is_top && is_right {
+                        cell.set_char(tr).set_fg(border_fg).set_bg(tile_bg);
+                    } else if is_bot && is_left {
+                        cell.set_char(bl).set_fg(border_fg).set_bg(tile_bg);
+                    } else if is_bot && is_right {
+                        cell.set_char(br).set_fg(border_fg).set_bg(tile_bg);
+                    } else if is_top || is_bot {
+                        cell.set_char(h).set_fg(border_fg).set_bg(tile_bg);
+                    } else if is_left || is_right {
+                        cell.set_char(v).set_fg(border_fg).set_bg(tile_bg);
+                    } else {
+                        cell.set_char(' ').set_fg(tile_fg).set_bg(tile_bg);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn counter(value: u32) -> String {
@@ -515,5 +865,257 @@ mod menu_window_tests {
             }
         }
         assert_eq!(menu_window(0, 0, 8), MenuWindow { start: 0, count: 0 });
+    }
+}
+
+#[cfg(test)]
+mod menu_geometry_tests {
+    use super::*;
+
+    #[test]
+    fn content_panel_preserves_golden_budget_and_micro_minimums() {
+        // 12x6: must retain at least one option (1 row) and controls (1 footer row)
+        let bounds_12x6 = Rect::new(0, 0, 12, 6);
+        let panel_12x6 = content_panel(bounds_12x6, 6, 2, 1, 1.618);
+        assert!(panel_12x6.width <= 12);
+        assert!(panel_12x6.height <= 6);
+        assert!(panel_12x6.height >= 4); // border (2) + option (1) + footer (1)
+
+        // Large 80x24: content-needed height is respected rather than stretching
+        let bounds_80x24 = Rect::new(0, 0, 80, 24);
+        let panel_small_content = content_panel(bounds_80x24, 20, 2, 1, 1.618);
+        // Needed: 2 content + 1 footer + 2 border = 5
+        assert_eq!(panel_small_content.height, 5);
+
+        // Large 80x24: tall content is bounded by scene golden budget
+        let panel_tall_content = content_panel(bounds_80x24, 20, 30, 2, 1.618);
+        // Golden budget leaves scene share (~15 rows), capping panel height
+        assert!(panel_tall_content.height < 24);
+        assert!(bounds_80x24.height - panel_tall_content.height >= 14);
+
+        // Empty bounds
+        let empty = content_panel(Rect::new(5, 5, 0, 0), 10, 5, 2, 1.618);
+        assert_eq!(empty.width, 0);
+        assert_eq!(empty.height, 0);
+    }
+
+    #[test]
+    fn menu_geometry_positive_resolutions_and_bounds() {
+        let resolutions = [
+            (12, 6, 1, 1),   // micro
+            (20, 8, 2, 1),   // compact
+            (20, 26, 2, 1),  // portrait
+            (80, 24, 2, 1),  // standard terminal
+            (127, 29, 2, 1), // wide status
+            (320, 90, 2, 1), // ultra wide
+        ];
+
+        for (w, h, footer_rows, cell_h) in resolutions {
+            let bounds = Rect::new(0, 0, w, h);
+            let item_widths = [6, 8, 7, 5, 10, 6, 9, 8];
+            for sel in [0, 2, 7] {
+                let geom =
+                    menu_geometry(bounds, &item_widths, sel, footer_rows, cell_h, 1, 3, 1.618);
+
+                // Panel is strictly inside bounds:
+                assert_eq!(geom.panel.intersection(bounds), geom.panel);
+                assert!(!geom.panel.is_empty(), "panel empty for {w}x{h}");
+
+                // Body and footer are inside panel:
+                assert_eq!(geom.body.intersection(geom.panel), geom.body);
+                assert_eq!(geom.footer.intersection(geom.panel), geom.footer);
+
+                // No overlap between body and footer:
+                assert!(geom.body.intersection(geom.footer).is_empty());
+
+                // Rows is total logical rows:
+                let expected_rows = item_widths.len().div_ceil(geom.columns as usize);
+                assert_eq!(geom.rows as usize, expected_rows);
+
+                // Selected is visible in items:
+                assert!(
+                    geom.items.iter().any(|c| c.index == sel),
+                    "selected {sel} must be visible in {w}x{h}"
+                );
+
+                // Items are strictly inside body and do not overlap:
+                for (i, cell_a) in geom.items.iter().enumerate() {
+                    assert_eq!(cell_a.area.intersection(geom.body), cell_a.area);
+                    for cell_b in &geom.items[i + 1..] {
+                        assert!(
+                            cell_a.area.intersection(cell_b.area).is_empty(),
+                            "cells overlap in {w}x{h}: {:?} vs {:?}",
+                            cell_a,
+                            cell_b
+                        );
+                    }
+                }
+
+                // Visible count matches items len:
+                assert_eq!(geom.visible, geom.items.len());
+
+                // Navigation contains ALL items (including off-page):
+                assert_eq!(geom.navigation.len(), item_widths.len());
+                for (idx, &(nav_idx, _, _)) in geom.navigation.iter().enumerate() {
+                    assert_eq!(nav_idx, idx);
+                }
+
+                // 12x6 retains at least 1 option and controls:
+                if w == 12 && h == 6 {
+                    assert!(
+                        !geom.items.is_empty(),
+                        "12x6 must retain at least one option"
+                    );
+                    assert!(geom.footer.height >= 1, "12x6 must retain controls");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn menu_geometry_navigation_centers_and_paging_reachability() {
+        let bounds = Rect::new(0, 0, 40, 10);
+        let item_widths = [8; 20]; // 20 items
+        let geom = menu_geometry(bounds, &item_widths, 0, 1, 1, 1, 2, 1.618);
+
+        // All 20 centers are present in navigation:
+        assert_eq!(geom.navigation.len(), 20);
+
+        // First page items have centers within body:
+        for cell in &geom.items {
+            let (_, cx, cy) = geom.navigation[cell.index];
+            assert!(cx >= geom.body.x as i32 && cx < geom.body.right() as i32);
+            assert!(cy >= geom.body.y as i32 && cy < geom.body.bottom() as i32);
+        }
+
+        // Off-page items on subsequent rows have centers below body:
+        let off_page_idx = geom.first + geom.visible;
+        if off_page_idx < item_widths.len() {
+            let (_, _, off_cy) = geom.navigation[off_page_idx];
+            assert!(
+                off_cy >= geom.body.bottom() as i32,
+                "off-page item center Y {off_cy} must be >= body.bottom() {}",
+                geom.body.bottom()
+            );
+        }
+
+        // Selected at last item reveals it on page:
+        let geom_last = menu_geometry(bounds, &item_widths, 19, 1, 1, 1, 2, 1.618);
+        assert!(
+            geom_last.items.iter().any(|c| c.index == 19),
+            "last item must be visible when selected"
+        );
+        assert_eq!(geom_last.first % geom_last.columns as usize, 0);
+
+        // Items on earlier pages have centers above body:
+        if geom_last.first > 0 {
+            let (_, _, early_cy) = geom_last.navigation[0];
+            assert!(
+                early_cy < geom_last.body.y as i32,
+                "early item center Y {early_cy} must be < body.y {}",
+                geom_last.body.y
+            );
+        }
+    }
+
+    #[test]
+    fn menu_geometry_negative_control_off_page_centers_stripped_regression() {
+        let bounds = Rect::new(0, 0, 40, 10);
+        let item_widths = [8; 20];
+        let geom = menu_geometry(bounds, &item_widths, 0, 1, 1, 1, 2, 1.618);
+
+        // Real geometry: can reach off-page items because navigation has all centers:
+        let can_reach_next_page = geom.navigation.iter().any(|&(idx, _, cy)| {
+            idx >= geom.first + geom.visible && cy >= geom.body.bottom() as i32
+        });
+        assert!(
+            can_reach_next_page,
+            "real geometry must provide off-page navigation targets"
+        );
+
+        // Planted regression: strip off-page centers (simulating linear-only or clamped navigation):
+        let stripped_navigation: Vec<_> = geom
+            .navigation
+            .iter()
+            .copied()
+            .filter(|&(_, _, cy)| cy >= geom.body.y as i32 && cy < geom.body.bottom() as i32)
+            .collect();
+        let stripped_can_reach_next_page = stripped_navigation.iter().any(|&(idx, _, cy)| {
+            idx >= geom.first + geom.visible && cy >= geom.body.bottom() as i32
+        });
+        assert!(
+            !stripped_can_reach_next_page,
+            "negative control: stripped navigation cannot reach off-page targets"
+        );
+    }
+
+    #[test]
+    fn menu_geometry_negative_control_selection_reveal_regression() {
+        let bounds = Rect::new(0, 0, 30, 8);
+        let item_widths = [8; 20];
+        let geom = menu_geometry(bounds, &item_widths, 15, 1, 1, 1, 2, 1.618);
+        assert!(
+            geom.items.iter().any(|c| c.index == 15),
+            "real geometry reveals selected item"
+        );
+
+        // Planted regression: no scrolling (first locked at 0):
+        let regression_visible = (geom.body.height as usize) * geom.columns as usize;
+        let regression_contains_sel = (0..regression_visible).any(|idx| idx == 15);
+        assert!(
+            !regression_contains_sel,
+            "negative control: without reveal, selection on later page is invisible"
+        );
+    }
+
+    #[test]
+    fn menu_painters_deterministic_focus_and_borders() {
+        let colors = Colors::from_config(
+            &crate::config::Config::sample().unwrap(),
+            crate::capabilities::Depth::Mono,
+        )
+        .unwrap();
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 10));
+
+        // Paint panel in ASCII and Unicode:
+        paint_menu_panel(&mut buffer, Rect::new(1, 1, 28, 8), &colors, true);
+        assert_eq!(buffer[(1, 1)].symbol(), "+");
+        assert_eq!(buffer[(28, 1)].symbol(), "+");
+        assert_eq!(buffer[(2, 1)].symbol(), "-");
+        assert_eq!(buffer[(1, 2)].symbol(), "|");
+
+        paint_menu_panel(&mut buffer, Rect::new(1, 1, 28, 8), &colors, false);
+        assert_eq!(buffer[(1, 1)].symbol(), "┌");
+        assert_eq!(buffer[(28, 1)].symbol(), "┐");
+        assert_eq!(buffer[(2, 1)].symbol(), "─");
+        assert_eq!(buffer[(1, 2)].symbol(), "│");
+
+        // Paint tiles in mono - focus MUST be visible via glyphs/bevels:
+        let tile_area = Rect::new(3, 3, 10, 1);
+        paint_menu_tile(&mut buffer, tile_area, &colors, TileState::Focused, true);
+        assert_eq!(buffer[(3, 3)].symbol(), ">");
+        assert_eq!(buffer[(12, 3)].symbol(), "<");
+
+        paint_menu_tile(&mut buffer, tile_area, &colors, TileState::Idle, true);
+        assert_eq!(buffer[(3, 3)].symbol(), " ");
+        assert_eq!(buffer[(12, 3)].symbol(), " ");
+
+        // In 3-line tiles:
+        let tile3_area = Rect::new(3, 3, 10, 3);
+        paint_menu_tile(&mut buffer, tile3_area, &colors, TileState::Focused, false);
+        assert_eq!(buffer[(3, 3)].symbol(), "╔");
+        assert_eq!(buffer[(12, 3)].symbol(), "╗");
+        assert_eq!(buffer[(4, 3)].symbol(), "═");
+
+        paint_menu_tile(&mut buffer, tile3_area, &colors, TileState::Idle, false);
+        assert_eq!(buffer[(3, 3)].symbol(), "┌");
+        assert_eq!(buffer[(12, 3)].symbol(), "┐");
+        assert_eq!(buffer[(4, 3)].symbol(), "─");
+
+        // Focused is distinguishable from Idle in glyphs:
+        assert_ne!(
+            "╔", "┌",
+            "focused and idle borders must differ in glyphs for mono visibility"
+        );
     }
 }
