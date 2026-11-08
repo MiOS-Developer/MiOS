@@ -399,34 +399,45 @@ impl Ui {
             .min(100) as i32;
         let eased = t * t * (300 - 2 * t) / 10000;
         self.camera_blend = eased as u16;
-        self.zoom_percent = (i32::from(self.zoom_origin)
-            + (i32::from(self.zoom_target) - i32::from(self.zoom_origin)) * eased / 100)
-            .clamp(50, 400) as u16;
-        let t = frame
-            .saturating_sub(self.orbit_started)
-            .saturating_mul(100)
-            .checked_div(self.camera_transition_frames.max(1))
-            .unwrap_or(100)
-            .min(100) as i32;
-        let eased = t * t * (300 - 2 * t) / 10000;
-        let turn = (i32::from(self.orbit_target) - i32::from(self.orbit_origin) + 540) % 360 - 180;
-        self.orbit_degrees =
-            (i32::from(self.orbit_origin) + turn * eased / 100).rem_euclid(360) as u16;
-        let t = frame
-            .saturating_sub(self.camera_axes_started.get())
-            .saturating_mul(100)
-            .checked_div(self.camera_transition_frames.max(1))
-            .unwrap_or(100)
-            .min(100) as i32;
-        let eased = t * t * (300 - 2 * t) / 10000;
-        let lerp = |from: i16, to: i16| {
-            (i32::from(from) + (i32::from(to) - i32::from(from)) * eased / 100) as i16
-        };
-        let from = self.camera_pan_from.get();
-        let to = self.camera_pan_target.get();
-        self.camera_pan
-            .set((lerp(from.0, to.0), lerp(from.1, to.1)));
-        self.camera_tilt = lerp(self.camera_tilt_from, self.camera_tilt_target);
+        // Realtime motion owns the displayed axes once the interactive loop starts.
+        // Frame-only snapshots retain their deterministic legacy interpolation.
+        if !self.camera_stepped_realtime {
+            self.zoom_percent = (i32::from(self.zoom_origin)
+                + (i32::from(self.zoom_target) - i32::from(self.zoom_origin)) * eased / 100)
+                .clamp(50, 400) as u16;
+            let t = frame
+                .saturating_sub(self.orbit_started)
+                .saturating_mul(100)
+                .checked_div(self.camera_transition_frames.max(1))
+                .unwrap_or(100)
+                .min(100) as i32;
+            let eased = t * t * (300 - 2 * t) / 10000;
+            let turn =
+                (i32::from(self.orbit_target) - i32::from(self.orbit_origin) + 540) % 360 - 180;
+            self.orbit_degrees =
+                (i32::from(self.orbit_origin) + turn * eased / 100).rem_euclid(360) as u16;
+            let t = frame
+                .saturating_sub(self.camera_axes_started.get())
+                .saturating_mul(100)
+                .checked_div(self.camera_transition_frames.max(1))
+                .unwrap_or(100)
+                .min(100) as i32;
+            let eased = t * t * (300 - 2 * t) / 10000;
+            let lerp = |from: i16, to: i16| {
+                (i32::from(from) + (i32::from(to) - i32::from(from)) * eased / 100) as i16
+            };
+            let from = self.camera_pan_from.get();
+            let to = self.camera_pan_target.get();
+            self.camera_pan
+                .set((lerp(from.0, to.0), lerp(from.1, to.1)));
+            self.camera_tilt = lerp(self.camera_tilt_from, self.camera_tilt_target);
+            self.camera_orbit_deg = f64::from(self.orbit_degrees);
+            self.camera_tilt_deg = f64::from(self.camera_tilt);
+            self.camera_zoom_pct = f64::from(self.zoom_percent);
+            let pan = self.camera_pan.get();
+            self.camera_pan_current
+                .set((f64::from(pan.0), f64::from(pan.1)));
+        }
         self.frame = frame;
     }
     pub fn effective_style(&self) -> SpriteStyle {
@@ -610,6 +621,7 @@ impl Ui {
             self.camera_resize.set(None);
             self.face_detail.set(crate::render::DetailMemo::default());
             self.camera_pan.set((0, 0));
+            self.camera_pan_current.set((0.0, 0.0));
             self.camera_pan_from.set((0, 0));
             self.camera_pan_target.set((0, 0));
             self.preview_angle.set(None);
@@ -681,6 +693,7 @@ impl Ui {
         }
     }
     fn change_camera(&mut self, view: CameraView, zoom: u16) {
+        self.camera_reset_in_flight = false;
         // A new manual blend starts from the mix drawn now (task3755a).
         let mix = self.camera_mix();
         self.camera_yaw_origin = Some(self.camera_yaw(self.subject_yaw()));
@@ -734,6 +747,7 @@ impl Ui {
         self.change_camera(next, self.zoom_target);
     }
     fn change_orbit(&mut self, target: u16) {
+        self.camera_reset_in_flight = false;
         self.orbit_origin = self.orbit_degrees;
         self.orbit_target = target % 360;
         self.orbit_started = self.frame;
@@ -859,6 +873,7 @@ impl Ui {
             self.preview_angle.set(Some(self.preview_yaw()));
         }
         let rules = self.camera_rules;
+        self.camera_reset_in_flight = false;
         let lead = i32::from(rules.max_lead_steps);
         self.camera_pan_from.set(self.camera_pan.get());
         self.camera_tilt_from = self.camera_tilt;
@@ -920,15 +935,7 @@ impl Ui {
                 self.camera_yaw_origin = Some(drawn_yaw);
                 self.camera_pitch_origin = Some(drawn_pitch);
                 if rules.reset_glide_ms == 0 {
-                    self.camera_orbit_deg = f64::from(self.orbit_default);
-                    self.orbit_degrees = self.orbit_default;
-                    self.camera_tilt_deg = 0.0;
-                    self.camera_tilt = 0;
-                    self.camera_pan_current.set((0.0, 0.0));
-                    self.camera_pan.set((0, 0));
-                    self.camera_zoom_pct = 100.0;
-                    self.zoom_percent = 100;
-                    self.camera_reset_in_flight = false;
+                    self.snap_camera_targets();
                 } else {
                     self.camera_reset_in_flight = true;
                     self.camera_reset_elapsed_ms = 0.0;
@@ -938,27 +945,73 @@ impl Ui {
         self.notice = "Camera: Shift+arrows or 4/6/8/2 pan; 7/9 orbit; 1/3 tilt; 5 reset. Graphics has touch controls.".into();
     }
 
-    pub fn camera_unsettled(&self) -> bool {
-        let eps = f64::from(self.camera_rules.rest_epsilon_permille);
+    fn camera_axis_epsilon(&self, step: u16) -> f64 {
+        f64::from(step) * f64::from(self.camera_rules.rest_epsilon_permille) / 1000.0
+    }
+
+    fn camera_axes_unsettled(&self) -> bool {
+        let rules = self.camera_rules;
         let orbit_diff =
             ((f64::from(self.orbit_target) - self.camera_orbit_deg + 540.0) % 360.0) - 180.0;
-        let tilt_diff = f64::from(self.camera_tilt_target) - self.camera_tilt_deg;
         let pan = self.camera_pan_current.get();
         let target_pan = self.camera_pan_target.get();
-        let pan_x_diff = f64::from(target_pan.0) - pan.0;
-        let pan_y_diff = f64::from(target_pan.1) - pan.1;
-        let zoom_diff = f64::from(self.zoom_target) - self.camera_zoom_pct;
+        orbit_diff.abs() > self.camera_axis_epsilon(rules.orbit_fine_step_degrees)
+            || (f64::from(self.camera_tilt_target) - self.camera_tilt_deg).abs()
+                > self.camera_axis_epsilon(u16::from(rules.tilt_step_degrees))
+            || (f64::from(target_pan.0) - pan.0).abs()
+                > self.camera_axis_epsilon(rules.pan_step_permille)
+            || (f64::from(target_pan.1) - pan.1).abs()
+                > self.camera_axis_epsilon(rules.pan_step_permille)
+            || (f64::from(self.zoom_target) - self.camera_zoom_pct).abs()
+                > self.camera_axis_epsilon(self.zoom_step)
+    }
 
-        self.camera_reset_in_flight
-            || orbit_diff.abs() > eps
-            || tilt_diff.abs() > eps
-            || pan_x_diff.abs() > eps
-            || pan_y_diff.abs() > eps
-            || zoom_diff.abs() > eps
+    pub fn camera_unsettled(&self) -> bool {
+        self.camera_reset_in_flight || self.camera_axes_unsettled()
+    }
+
+    fn camera_poll_interval_ms(&self, config: &Config) -> u64 {
+        let frame_ms = if self.camera_unsettled() {
+            u64::from(config.camera.motion_frame_ms)
+        } else {
+            config.animation_frame_ms
+        };
+        config.tick_ms.min(frame_ms)
+    }
+
+    fn snap_camera_targets(&mut self) {
+        self.camera_orbit_deg = f64::from(self.orbit_target);
+        self.orbit_degrees = self.orbit_target;
+        self.orbit_origin = self.orbit_target;
+        self.camera_tilt_deg = f64::from(self.camera_tilt_target);
+        self.camera_tilt = self.camera_tilt_target;
+        self.camera_tilt_from = self.camera_tilt_target;
+        let pan = self.camera_pan_target.get();
+        self.camera_pan_current
+            .set((f64::from(pan.0), f64::from(pan.1)));
+        self.camera_pan.set(pan);
+        self.camera_pan_from.set(pan);
+        self.camera_zoom_pct = f64::from(self.zoom_target);
+        self.zoom_percent = self.zoom_target;
+        self.zoom_origin = self.zoom_target;
+        self.camera_reset_in_flight = false;
+        self.camera_reset_elapsed_ms = 0.0;
+        // A completed reset must not keep a second frame-clock yaw/pitch blend.
+        self.camera_yaw_origin = None;
+        self.camera_pitch_origin = None;
+        self.camera_from_view = self.camera_view;
+        self.camera_from_weights = None;
+        self.camera_resize.set(None);
     }
 
     pub fn step_camera_realtime(&mut self, dt_ms: f64) {
+        self.camera_stepped_realtime = true;
         let dt = dt_ms.clamp(0.0, 250.0);
+        if !dt.is_finite() || dt == 0.0 {
+            return;
+        }
+        let previous_orbit = self.orbit_degrees;
+        let previous_tilt = self.camera_tilt;
         let rules = self.camera_rules;
         let half_life = f64::from(rules.follow_half_life_ms);
         let alpha = if half_life > 0.0 {
@@ -966,80 +1019,85 @@ impl Ui {
         } else {
             1.0
         };
-        let eps = f64::from(rules.rest_epsilon_permille);
-
-        // Orbit update (shortest wrapped yaw)
-        let target_orbit = f64::from(self.orbit_target);
-        let orbit_diff = ((target_orbit - self.camera_orbit_deg + 540.0) % 360.0) - 180.0;
-        if orbit_diff.abs() <= eps {
-            self.camera_orbit_deg = target_orbit;
-        } else {
-            let max_orbit_step = f64::from(rules.orbit_rate_deg_s) * (dt / 1000.0);
-            let step = (orbit_diff * alpha).clamp(-max_orbit_step, max_orbit_step);
-            self.camera_orbit_deg = (self.camera_orbit_deg + step).rem_euclid(360.0);
-        }
+        let approach = |current: f64, difference: f64, rate: u16, epsilon: f64| {
+            let max_step = f64::from(rate) * dt / 1000.0;
+            // Settling may snap only inside both the stop threshold and this
+            // frame's rate budget. Zero time can never move a camera axis.
+            let step = if difference.abs() <= epsilon {
+                difference
+            } else {
+                difference * alpha
+            };
+            current + step.clamp(-max_step, max_step)
+        };
+        let orbit_diff =
+            ((f64::from(self.orbit_target) - self.camera_orbit_deg + 540.0) % 360.0) - 180.0;
+        self.camera_orbit_deg = approach(
+            self.camera_orbit_deg,
+            orbit_diff,
+            rules.orbit_rate_deg_s,
+            self.camera_axis_epsilon(rules.orbit_fine_step_degrees),
+        )
+        .rem_euclid(360.0);
         self.orbit_degrees = self.camera_orbit_deg.round() as u16 % 360;
-
-        // Tilt update
-        let target_tilt = f64::from(self.camera_tilt_target);
-        let tilt_diff = target_tilt - self.camera_tilt_deg;
-        if tilt_diff.abs() <= eps {
-            self.camera_tilt_deg = target_tilt;
-        } else {
-            let max_tilt_step = f64::from(rules.tilt_rate_deg_s) * (dt / 1000.0);
-            let step = (tilt_diff * alpha).clamp(-max_tilt_step, max_tilt_step);
-            self.camera_tilt_deg += step;
-        }
+        self.camera_tilt_deg = approach(
+            self.camera_tilt_deg,
+            f64::from(self.camera_tilt_target) - self.camera_tilt_deg,
+            rules.tilt_rate_deg_s,
+            self.camera_axis_epsilon(u16::from(rules.tilt_step_degrees)),
+        );
         self.camera_tilt = self.camera_tilt_deg.round() as i16;
-
-        // Pan update
-        let (cur_pan_x, cur_pan_y) = self.camera_pan_current.get();
+        let pan = self.camera_pan_current.get();
         let target_pan = self.camera_pan_target.get();
-        let pan_x_diff = f64::from(target_pan.0) - cur_pan_x;
-        let pan_y_diff = f64::from(target_pan.1) - cur_pan_y;
-        let max_pan_step = f64::from(rules.pan_rate_permille_s) * (dt / 1000.0);
-        let next_pan_x = if pan_x_diff.abs() <= eps {
-            f64::from(target_pan.0)
-        } else {
-            cur_pan_x + (pan_x_diff * alpha).clamp(-max_pan_step, max_pan_step)
-        };
-        let next_pan_y = if pan_y_diff.abs() <= eps {
-            f64::from(target_pan.1)
-        } else {
-            cur_pan_y + (pan_y_diff * alpha).clamp(-max_pan_step, max_pan_step)
-        };
-        self.camera_pan_current.set((next_pan_x, next_pan_y));
+        let pan_epsilon = self.camera_axis_epsilon(rules.pan_step_permille);
+        let next_pan = (
+            approach(
+                pan.0,
+                f64::from(target_pan.0) - pan.0,
+                rules.pan_rate_permille_s,
+                pan_epsilon,
+            ),
+            approach(
+                pan.1,
+                f64::from(target_pan.1) - pan.1,
+                rules.pan_rate_permille_s,
+                pan_epsilon,
+            ),
+        );
+        self.camera_pan_current.set(next_pan);
         self.camera_pan
-            .set((next_pan_x.round() as i16, next_pan_y.round() as i16));
-
-        // Zoom update
-        let target_zoom = f64::from(self.zoom_target);
-        let zoom_diff = target_zoom - self.camera_zoom_pct;
-        if zoom_diff.abs() <= eps {
-            self.camera_zoom_pct = target_zoom;
-        } else {
-            let max_zoom_step = f64::from(rules.zoom_rate_percent_s) * (dt / 1000.0);
-            let step = (zoom_diff * alpha).clamp(-max_zoom_step, max_zoom_step);
-            self.camera_zoom_pct += step;
-        }
+            .set((next_pan.0.round() as i16, next_pan.1.round() as i16));
+        self.camera_zoom_pct = approach(
+            self.camera_zoom_pct,
+            f64::from(self.zoom_target) - self.camera_zoom_pct,
+            rules.zoom_rate_percent_s,
+            self.camera_axis_epsilon(self.zoom_step),
+        );
         self.zoom_percent = self.camera_zoom_pct.round() as u16;
 
-        // Reset glide handling
+        // The Room/Pet/Face blend retains its pet-frame clock, but its captured
+        // endpoints must both follow realtime orbit/tilt. Otherwise a zoom or
+        // view blend pins the drawn yaw/pitch between pet animation frames.
+        let orbit_step =
+            (i32::from(self.orbit_degrees) - i32::from(previous_orbit) + 540) % 360 - 180;
+        if let Some(origin) = &mut self.camera_yaw_origin {
+            *origin = (i32::from(*origin) + orbit_step).rem_euclid(360) as u16;
+        }
+        if let Some(origin) = &mut self.camera_pitch_origin {
+            *origin += f32::from(self.camera_tilt - previous_tilt).to_radians();
+        }
+
         if self.camera_reset_in_flight {
-            if rules.reset_glide_ms == 0 {
-                self.camera_reset_in_flight = false;
-                self.camera_reset_elapsed_ms = 0.0;
-            } else {
-                self.camera_reset_elapsed_ms += dt;
-                if self.camera_reset_elapsed_ms >= f64::from(rules.reset_glide_ms)
-                    && !self.camera_unsettled()
-                {
-                    self.camera_reset_in_flight = false;
-                    self.camera_reset_elapsed_ms = 0.0;
-                }
+            self.camera_reset_elapsed_ms += dt;
+            // reset_glide_ms bounds the accumulated camera transition time.
+            // At the deadline reset cuts to its target, even with slow rates;
+            // other input cancels that deadline before choosing a new target.
+            if !self.camera_axes_unsettled()
+                || self.camera_reset_elapsed_ms >= f64::from(rules.reset_glide_ms)
+            {
+                self.snap_camera_targets();
             }
         }
-        self.camera_stepped_realtime = true;
     }
     fn can_move(&self) -> bool {
         self.mobile_stage
@@ -5631,12 +5689,7 @@ pub fn run(
             .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?
             .area
             .as_size();
-        let poll_interval = if ui.camera_unsettled() {
-            config.tick_ms.min(u64::from(config.camera.motion_frame_ms))
-        } else {
-            config.tick_ms.min(config.animation_frame_ms)
-        };
-        if event::poll(Duration::from_millis(poll_interval))? {
+        if event::poll(Duration::from_millis(ui.camera_poll_interval_ms(config)))? {
             let incoming = event::read()?;
             let was_paused = ui.game.paused;
             let was_overlay = ui.overlay_open();
@@ -10218,26 +10271,222 @@ mod camera_plain_fallthrough_tests {
 
     #[test]
     fn camera_dt_spike_clamped_and_sim_frozen_during_motion() {
-        let (_config, mut ui) = fixture();
-        let initial_age = ui.game.age_ticks;
-        ui.orbit_target = 180;
-        ui.step_camera_realtime(1000.0);
-        assert_eq!(ui.game.age_ticks, initial_age);
+        let (_config, mut spike) = fixture();
+        let (_config, mut bounded) = fixture();
+        let game = spike.game.clone();
+        spike.orbit_target = 180;
+        bounded.orbit_target = 180;
+        spike.step_camera_realtime(1000.0);
+        bounded.step_camera_realtime(250.0);
+        spike.animate(spike.frame);
+        bounded.animate(bounded.frame);
+        assert_eq!(spike.camera_orbit_deg, bounded.camera_orbit_deg);
+        assert_eq!(spike.orbit_degrees, bounded.orbit_degrees);
+        assert_eq!(spike.game, game);
     }
 
     #[test]
     fn camera_reset_glide_zero_is_instant_cut() {
-        let (mut config, mut ui) = fixture();
-        config.camera.reset_glide_ms = 0;
+        let (_config, mut ui) = fixture();
         ui.camera_rules.reset_glide_ms = 0;
         ui.camera_orbit_deg = 180.0;
         ui.orbit_degrees = 180;
         ui.camera_tilt_deg = 20.0;
         ui.camera_tilt = 20;
         ui.camera_command(crate::input::CameraCommand::Reset);
+        ui.step_camera_realtime(0.0);
+        ui.animate(ui.frame);
         assert!(!ui.camera_unsettled());
         assert_eq!(ui.orbit_degrees, ui.orbit_default);
         assert_eq!(ui.camera_tilt, 0);
+    }
+
+    #[test]
+    fn realtime_pose_survives_animate_and_live_draw_at_the_same_pet_frame() {
+        use crate::input::CameraCommand;
+        let (config, mut ui) = fixture();
+        let before = draw(&ui, &config, 100, 40);
+        let yaw_before = ui.camera_yaw(ui.subject_yaw());
+        let pitch_before = ui.camera_pitch();
+        let game = ui.game.clone();
+        let frame = ui.frame;
+        let initial = (
+            ui.orbit_degrees,
+            ui.camera_tilt,
+            ui.camera_pan.get(),
+            ui.zoom_percent,
+        );
+        ui.camera_command(CameraCommand::Orbit(1));
+        ui.camera_command(CameraCommand::Tilt(1));
+        ui.camera_command(CameraCommand::Pan(1, 1));
+        ui.camera_command(CameraCommand::Zoom(true));
+        ui.step_camera_realtime(33.0);
+        let moved = (
+            ui.orbit_degrees,
+            ui.camera_tilt,
+            ui.camera_pan.get(),
+            ui.zoom_percent,
+        );
+        assert_ne!(moved.0, initial.0);
+        assert_ne!(moved.1, initial.1);
+        assert_ne!(moved.2, initial.2);
+        assert_ne!(moved.3, initial.3);
+        ui.animate(frame);
+        let after = draw(&ui, &config, 100, 40);
+        assert_eq!(
+            (
+                ui.orbit_degrees,
+                ui.camera_tilt,
+                ui.camera_pan.get(),
+                ui.zoom_percent
+            ),
+            moved,
+            "the rendered camera lost its realtime pose to the pet frame clock"
+        );
+        assert_ne!(
+            before, after,
+            "realtime camera motion must reach the live draw"
+        );
+        assert_ne!(ui.camera_yaw(ui.subject_yaw()), yaw_before);
+        assert!((ui.camera_pitch() - pitch_before).abs() > 0.001);
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.frame, frame);
+    }
+
+    #[test]
+    fn extra_camera_frames_preserve_active_paused_and_sleeping_pet_clocks() {
+        for (paused, sleeping) in [(false, false), (true, false), (false, true)] {
+            let (_config, mut moving) = fixture();
+            let (_config, mut reference) = fixture();
+            moving.game.paused = paused;
+            moving.game.sleeping = sleeping;
+            reference.game = moving.game.clone();
+            moving.destination = (800, 800);
+            reference.destination = moving.destination;
+            moving.camera_command(crate::input::CameraCommand::Orbit(1));
+            for frame in 0..=4 {
+                for _ in 0..4 {
+                    moving.step_camera_realtime(33.0);
+                    moving.animate(frame);
+                }
+                reference.animate(frame);
+                assert_eq!(moving.game, reference.game);
+                assert_eq!(moving.position, reference.position);
+                assert_eq!(moving.yaw, reference.yaw);
+                assert_eq!(moving.frame, reference.frame);
+            }
+        }
+    }
+
+    #[test]
+    fn default_reset_finishes_by_its_deadline_and_returns_to_idle_cadence() {
+        let (config, mut ui) = fixture();
+        assert_eq!(config.camera.reset_glide_ms, 350);
+        let game = ui.game.clone();
+        let frame = ui.frame;
+        ui.camera_orbit_deg = f64::from((ui.orbit_default + 120) % 360);
+        ui.orbit_degrees = ui.camera_orbit_deg as u16;
+        ui.camera_pan_current.set((120.0, -80.0));
+        ui.camera_pan.set((120, -80));
+        ui.camera_tilt_deg = 20.0;
+        ui.camera_tilt = 20;
+        ui.camera_zoom_pct = 200.0;
+        ui.zoom_percent = 200;
+        // Slow rates cannot make a reset exceed its explicit maximum duration.
+        ui.camera_rules.orbit_rate_deg_s = 10;
+        ui.camera_command(crate::input::CameraCommand::Reset);
+        for _ in 0..10 {
+            ui.step_camera_realtime(33.0);
+            ui.animate(frame);
+            assert!(ui.camera_unsettled());
+            assert_eq!(
+                ui.camera_poll_interval_ms(&config),
+                config.tick_ms.min(u64::from(config.camera.motion_frame_ms))
+            );
+        }
+        ui.step_camera_realtime(20.0);
+        ui.animate(frame);
+        assert!(
+            !ui.camera_unsettled(),
+            "default reset left motion cadence running forever"
+        );
+        assert_eq!(ui.orbit_degrees, ui.orbit_default);
+        assert_eq!(ui.camera_pan.get(), (0, 0));
+        assert_eq!(ui.camera_tilt, 0);
+        assert_eq!(ui.zoom_percent, 100);
+        assert_eq!(
+            ui.camera_poll_interval_ms(&config),
+            config.tick_ms.min(config.animation_frame_ms)
+        );
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.frame, frame);
+    }
+
+    #[test]
+    fn stop_threshold_scales_each_axis_and_cannot_bypass_its_rate_budget() {
+        let (_config, mut ui) = fixture();
+        ui.camera_rules.rest_epsilon_permille = 50;
+        ui.camera_orbit_deg = 0.0;
+        ui.orbit_degrees = 0;
+        ui.orbit_target = ui.camera_rules.orbit_fine_step_degrees;
+        ui.camera_pan_target.set((1, 0));
+        assert!(
+            ui.camera_unsettled(),
+            "fifty per-mille is not fifty degrees"
+        );
+        let pan_before = ui.camera_pan_current.get();
+        for dt in [0.0, -1.0, f64::NAN] {
+            ui.step_camera_realtime(dt);
+            assert_eq!(ui.camera_orbit_deg, 0.0);
+            assert_eq!(ui.camera_pan_current.get(), pan_before);
+        }
+        ui.step_camera_realtime(0.001);
+        assert!(ui.camera_orbit_deg > 0.0);
+        assert!(ui.camera_orbit_deg < f64::from(ui.orbit_target));
+        assert!(
+            ui.camera_pan_current.get().0
+                <= f64::from(ui.camera_rules.pan_rate_permille_s) / 1_000_000.0 + 1e-12
+        );
+        assert!(ui.camera_unsettled());
+    }
+
+    #[test]
+    fn subject_change_clears_the_realtime_pan_before_the_next_draw() {
+        let (config, mut ui) = fixture();
+        ui.set_scene(Rect::new(0, 0, 100, 40));
+        ui.camera_command(crate::input::CameraCommand::Pan(1, 1));
+        ui.step_camera_realtime(33.0);
+        ui.animate(ui.frame);
+        assert_ne!(ui.camera_pan.get(), (0, 0));
+        ui.set_scene_for_stage(
+            Rect::new(0, 0, 100, 40),
+            Some(Stage::Adult),
+            SceneSubject::Roster,
+        );
+        ui.step_camera_realtime(33.0);
+        ui.animate(ui.frame);
+        assert_eq!(ui.camera_pan_current.get(), (0.0, 0.0));
+        assert_eq!(ui.camera_pan_target.get(), (0, 0));
+        assert_eq!(ui.camera().pan_permille, (0, 0));
+        assert!(!draw(&ui, &config, 100, 40).is_empty());
+    }
+
+    #[test]
+    fn interrupted_reset_does_not_cut_a_new_camera_target_at_the_old_deadline() {
+        let (_config, mut ui) = fixture();
+        ui.camera_orbit_deg = f64::from((ui.orbit_default + 120) % 360);
+        ui.orbit_degrees = ui.camera_orbit_deg as u16;
+        ui.camera_rules.orbit_rate_deg_s = 10;
+        ui.camera_command(crate::input::CameraCommand::Reset);
+        ui.step_camera_realtime(33.0);
+        ui.camera_command(crate::input::CameraCommand::Pan(1, 0));
+        for _ in 0..4 {
+            ui.step_camera_realtime(250.0);
+            ui.animate(ui.frame);
+        }
+        assert!(!ui.camera_reset_in_flight);
+        assert!(ui.camera_unsettled());
+        assert_ne!(ui.orbit_degrees, ui.orbit_target);
     }
 
     #[test]
