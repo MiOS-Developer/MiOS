@@ -73,6 +73,7 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="core-hook-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = _bash_directory(self.tmp)
+        self.install_dir = self.root + "/installed tools"
         self.log = os.path.join(self.tmp, "calls.log")
         for directory in ("bin", "src/mios-rs", "tools/native", "runtime", ".devcontainer"):
             os.makedirs(os.path.join(self.tmp, directory), exist_ok=True)
@@ -107,20 +108,23 @@ class TestDevcontainerLifecycle(unittest.TestCase):
             fh.write("#!/usr/bin/env bash\n" + body)
         os.chmod(path, 0o755)
 
-    def run_core(self, fail=False):
+    def run_core(self, fail=False, after=""):
         if not shutil.which("bash"):
             self.skipTest("bash is required for the lifecycle hook")
         source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
         source = source.split('case "${1:-start}" in', 1)[0]
+        source = "set -euo pipefail\n" + source[source.index("mios_platform() {"):]
         source = source.replace("local root=/workspaces/MiOS", f'local root="{self.root}"')
+        source = source.replace("local install_dir=/opt/mios/bin", f'local install_dir="{self.install_dir}"')
         source = source.replace("local agent_pipe_python=/usr/lib/mios/agents/.venv/bin/python",
                                 f'local agent_pipe_python="{self.root}/runtime/python"')
         prefix = (f'export PATH="{self.root}/bin:$PATH"\n'
                   f'export CORE_LOG="{self.root}/calls.log"\n'
+                  f'export CORE_INSTALL_DIR="{self.install_dir}"\n'
                   f'export FAIL_BUILD={"native" if fail == "native" else 1 if fail else 0}\n')
         # Send bytes: Windows text-mode pipes turn LF into CRLF, which Bash
         # treats as part of option names (including pipefail).
-        result = subprocess.run(["bash", "-s"], input=(prefix + source + "\nmios_core\n").encode(),
+        result = subprocess.run(["bash", "-s"], input=(prefix + source + "\nmios_core\n" + after).encode(),
                                 capture_output=True,
                                 env=dict(os.environ))
         result.stdout = result.stdout.decode()
@@ -136,9 +140,37 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(["cargo build --locked --release --message-format=json-render-diagnostics",
                           "cargo build --locked --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics"], builds)
         self.assertLess(calls.index(builds[-1]), next(i for i, line in enumerate(calls) if line.startswith("sudo ")))
-        self.assertIn("sudo install -m 0755 " + self.control_binary + " /opt/mios/bin/miosd", calls)
-        self.assertIn("sudo install -m 0755 " + self.native_binary + " /opt/mios/bin/mios-gen", calls)
+        self.assertIn("sudo install -m 0755 " + self.control_binary + " " + self.install_dir + "/miosd", calls)
+        self.assertIn("sudo install -m 0755 " + self.native_binary + " " + self.install_dir + "/mios-gen", calls)
         self.assertEqual("miosd --help", calls[-1])
+
+    def test_core_uses_fresh_tools_before_image_tools(self):
+        """Install into scratch paths, then execute fresh tools over stale PATH entries."""
+        for path in (self.control_binary, self.native_binary):
+            Path(path).write_text('#!/usr/bin/env bash\nprintf "fresh %s %s\\n" '
+                                  '"${0##*/}" "$*" >> "$CORE_LOG"\n')
+        self.shim("bin/mios-gen", 'echo "stale image tool invoked" >&2; exit 78\n')
+        self.shim("bin/sudo",
+                  'printf "sudo %s\\n" "$*" >> "$CORE_LOG"\n'
+                  'case "$1" in\n'
+                  'install)\n'
+                  '  dest="${!#}"\n'
+                  '  [[ "$dest" == "$CORE_INSTALL_DIR" || "$dest" == "$CORE_INSTALL_DIR/"* ]] || exit 76\n'
+                  '  if [[ "$2" == -d ]]; then mkdir -p "$dest"; else cp "$4" "$5"; chmod 0755 "$5"; fi ;;\n'
+                  'ln) : ;;\n'
+                  '*) exit 77 ;; esac\n')
+        result, calls = self.run_core(after='mios-gen --help\nprintf "native-bin %s\\n" "${MIOS_NATIVE_BIN_DIR:-}"\n')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("fresh miosd --help", calls)
+        self.assertEqual("fresh mios-gen --help", calls[-1])
+        self.assertIn("native-bin " + self.install_dir, result.stdout)
+
+    def test_remote_profiles_select_fresh_native_catalog(self):
+        for relative in (".devcontainer/devcontainer.json", ".devcontainer/artifact-builder/devcontainer.json"):
+            with self.subTest(profile=relative):
+                doc = json.loads(_read(os.path.join(ROOT, relative)))
+                self.assertEqual({"PATH": "/opt/mios/bin:${containerEnv:PATH}",
+                                  "MIOS_NATIVE_BIN_DIR": "/opt/mios/bin"}, doc["remoteEnv"])
 
     def test_build_failure_stops_before_install(self):
         result, calls = self.run_core(fail=True)

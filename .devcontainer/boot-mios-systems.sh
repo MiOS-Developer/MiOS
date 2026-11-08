@@ -98,6 +98,10 @@ PY
         sudo install -m 0755 "${binary}" "${install_dir}/$(basename "${binary}")"
     done <<<"${executables}"
     sudo ln -sfn "${install_dir}/miosd" /usr/local/bin/miosd
+    # The rest of this lifecycle must use this source's tools and generator
+    # helpers rather than finding the image's older catalog first.
+    export PATH="${install_dir}:${PATH}"
+    export MIOS_NATIVE_BIN_DIR="${install_dir}"
     miosd --help >/dev/null
 
     echo "[devcontainer:core] MiOS development core is ready."
