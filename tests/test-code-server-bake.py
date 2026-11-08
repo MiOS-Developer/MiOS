@@ -82,6 +82,23 @@ class TestDevcontainerLifecycle(unittest.TestCase):
             self.shim("bin/" + name,
                       'printf "%s %s\\n" "' + name + '" "$*" >> "$CORE_LOG"\n'
                       'if [[ "' + name + '" == cargo && "${FAIL_BUILD:-}" == 1 ]]; then exit 71; fi\n')
+        self.control_binary = self.root + "/custom target/release/miosd"
+        self.native_binary = self.root + "/custom target/aarch64-unknown-linux-musl/release/mios-gen"
+        for path in (self.control_binary, self.native_binary):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            Path(path).write_text("#!/bin/sh\nexit 0\n")
+            os.chmod(path, 0o755)
+        def artifact(path):
+            return json.dumps({"reason": "compiler-artifact", "target": {
+                "name": os.path.basename(path), "kind": ["bin"]}, "executable": path})
+        self.shim("bin/cargo",
+                  'printf "cargo %s\\n" "$*" >> "$CORE_LOG"\n'
+                  '[[ "${FAIL_BUILD:-}" != 1 ]] || exit 71\n'
+                  'case "$PWD" in */src/mios-rs) printf "%s\\n" '
+                  + shlex.quote(artifact(self.control_binary)) + ' ;;\n'
+                  '*/tools/native) [[ "${FAIL_BUILD:-}" != native ]] || exit 75\n'
+                  'printf "%s\\n" ' + shlex.quote(artifact(self.native_binary)) + ' ;; esac\n'
+                  'printf \'{"reason":"build-finished","success":true}\\n\'\n')
         self.shim("runtime/python", 'printf "runtime import\\n" >> "$CORE_LOG"\n')
 
     def shim(self, relative, body):
@@ -100,7 +117,7 @@ class TestDevcontainerLifecycle(unittest.TestCase):
                                 f'local agent_pipe_python="{self.root}/runtime/python"')
         prefix = (f'export PATH="{self.root}/bin:$PATH"\n'
                   f'export CORE_LOG="{self.root}/calls.log"\n'
-                  f'export FAIL_BUILD={1 if fail else 0}\n')
+                  f'export FAIL_BUILD={"native" if fail == "native" else 1 if fail else 0}\n')
         # Send bytes: Windows text-mode pipes turn LF into CRLF, which Bash
         # treats as part of option names (including pipefail).
         result = subprocess.run(["bash", "-s"], input=(prefix + source + "\nmios_core\n").encode(),
@@ -116,9 +133,11 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("runtime import", calls[0])
         builds = [line for line in calls if line.startswith("cargo ")]
-        self.assertEqual(["cargo build --release",
-                          "cargo build --release --workspace --exclude mios-wallpaperd"], builds)
+        self.assertEqual(["cargo build --release --message-format=json-render-diagnostics",
+                          "cargo build --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics"], builds)
         self.assertLess(calls.index(builds[-1]), next(i for i, line in enumerate(calls) if line.startswith("sudo ")))
+        self.assertIn("sudo install -m 0755 " + self.control_binary + " /opt/mios/bin/miosd", calls)
+        self.assertIn("sudo install -m 0755 " + self.native_binary + " /opt/mios/bin/mios-gen", calls)
         self.assertEqual("miosd --help", calls[-1])
 
     def test_build_failure_stops_before_install(self):
@@ -126,6 +145,19 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(71, result.returncode, result.stderr)
         self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
         self.assertEqual(1, sum(line.startswith("cargo ") for line in calls))
+
+    def test_native_build_failure_stops_before_install(self):
+        result, calls = self.run_core(fail="native")
+        self.assertEqual(75, result.returncode, result.stderr)
+        self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
+        self.assertEqual(2, sum(line.startswith("cargo ") for line in calls))
+
+    def test_missing_artifact_receipts_stop_before_install(self):
+        self.shim("bin/cargo", 'printf \'{"reason":"build-finished","success":true}\\n\'\n')
+        result, calls = self.run_core()
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Cargo did not report the required", result.stderr)
+        self.assertFalse(any(line.startswith("sudo ") for line in calls), calls)
 
     def test_missing_runtime_fails_before_build(self):
         os.unlink(os.path.join(self.tmp, "runtime/python"))
