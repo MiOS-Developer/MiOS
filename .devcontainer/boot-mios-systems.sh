@@ -59,8 +59,8 @@ mios_core() {
 
     echo "[devcontainer:core] Building upstream native workspaces..."
     artifacts="$(mktemp)"
-    if (cd "${root}/src/mios-rs" && cargo build --release --message-format=json-render-diagnostics) >"${artifacts}" \
-        && (cd "${root}/tools/native" && cargo build --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics) >>"${artifacts}"; then
+    if (cd "${root}/src/mios-rs" && cargo build --locked --release --message-format=json-render-diagnostics) >"${artifacts}" \
+        && (cd "${root}/tools/native" && cargo build --locked --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics) >>"${artifacts}"; then
         :
     else
         status=$?

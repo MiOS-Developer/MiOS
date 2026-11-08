@@ -133,8 +133,8 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("runtime import", calls[0])
         builds = [line for line in calls if line.startswith("cargo ")]
-        self.assertEqual(["cargo build --release --message-format=json-render-diagnostics",
-                          "cargo build --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics"], builds)
+        self.assertEqual(["cargo build --locked --release --message-format=json-render-diagnostics",
+                          "cargo build --locked --release --workspace --exclude mios-wallpaperd --message-format=json-render-diagnostics"], builds)
         self.assertLess(calls.index(builds[-1]), next(i for i, line in enumerate(calls) if line.startswith("sudo ")))
         self.assertIn("sudo install -m 0755 " + self.control_binary + " /opt/mios/bin/miosd", calls)
         self.assertIn("sudo install -m 0755 " + self.native_binary + " /opt/mios/bin/mios-gen", calls)
