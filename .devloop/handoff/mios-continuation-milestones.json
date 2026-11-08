@@ -1,25 +1,33 @@
 {
   "schema_version": 1,
   "publication_target": "refs/heads/main",
-  "base_main": "375aefba6c2de84b3d380864159a9e27045fb3ec",
+  "base_main": "2c1e0942bcd9c6538bc61b70268742003b82f57a",
   "bundle": {
     "path": ".devloop/handoff/mios-continuation-checkpoints.bundle",
-    "bytes": 63028,
-    "sha256": "b6736a2685d46254848a1fd1c3d3980bf20e9768f00d08246788fae05bb5e724",
-    "exclude_ancestor": "69fa06efe04f6422bbaec8b4ea0b953c24df2dd5",
+    "bytes": 34123,
+    "sha256": "57a9572457257e8a367887579bdf9ccacf367dc2e9e5d79a053413f46d13efc2",
+    "exclude_ancestor": "2c1e0942bcd9c6538bc61b70268742003b82f57a",
     "heads": [
       {
         "commit": "8e0cafe328a6cdf883643cc60edc29cda89c51a1",
         "ref": "refs/heads/mios-camera-continuation"
       },
       {
-        "commit": "e1a3e77a820abfa8caaa665553e26117dbf58383",
+        "commit": "69a80a2462393862e16e9092a5c2be0617db3dc7",
         "ref": "refs/heads/mios-hud-continuation"
       },
       {
         "commit": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
         "ref": "refs/heads/mios-gesture-continuation"
+      },
+      {
+        "commit": "572f072fd97fd72a36d05cc67804df029355e8d7",
+        "ref": "refs/heads/mios-inputd-test-portability"
       }
+    ],
+    "prerequisite_commits": [
+      "69fa06efe04f6422bbaec8b4ea0b953c24df2dd5",
+      "2c1e0942bcd9c6538bc61b70268742003b82f57a"
     ]
   },
   "milestones": {
@@ -34,8 +42,9 @@
       "state": "source_integrated_in_main_375aefba6"
     },
     "hud_consumer": {
-      "commit": "e1a3e77a820abfa8caaa665553e26117dbf58383",
-      "state": "exact_source_in_bundle_pending_native_verification"
+      "commit": "69a80a2462393862e16e9092a5c2be0617db3dc7",
+      "state": "source_integrated_with_compiled_menu_regressions",
+      "finite_source": "e1a3e77a820abfa8caaa665553e26117dbf58383"
     },
     "gesture": {
       "commit": "555eff9ba99df6d2ef604d2a29dd8aa9b1c2552f",
@@ -44,13 +53,18 @@
     },
     "gesture_fixture_correction": {
       "commit": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
-      "state": "exact_source_in_bundle_pending_native_rerun"
+      "state": "source_integrated_131_router_tests_pass"
+    },
+    "inputd_test_portability": {
+      "commit": "572f072fd97fd72a36d05cc67804df029355e8d7",
+      "receipt": ".devloop/handoff/mios-inputd-test-portability.md",
+      "state": "source_integrated_248_controller_tests_pass"
     }
   },
   "verification": {
     "source": "375aefba6c2de84b3d380864159a9e27045fb3ec",
     "tamagotchi_unit": {
-      "passed": 436,
+      "passed": 442,
       "failed": 0,
       "ignored": 3
     },
@@ -67,7 +81,44 @@
       "passed": 12,
       "failed": 0
     },
-    "native_builder": "Exact SSOT upstream container userspace, flattened locally; Rust1.99.1 stable musl target, preinstalled host GCC exposed for host linking; no published OS image or live acceptance."
+    "native_builder": "Exact SSOT upstream container userspace, flattened locally; Rust1.99.1 stable musl target, preinstalled host GCC exposed for host linking; no published OS image or live acceptance.",
+    "tamagotchi_source_commit": "238f9a9b4",
+    "inputd_source_commit": "8563b7e4bd48e955b39b1a7ac5beb14fa9ac4472",
+    "inputd_final": {
+      "passed": 248,
+      "failed": 0,
+      "ignored": 0
+    },
+    "inputd_router": {
+      "passed": 131,
+      "failed": 0
+    },
+    "native_clippy": "PASS: both packages, all targets, musl, -D warnings",
+    "native_format": "PASS: cargo fmt for both packages",
+    "camera_compiled_negative_controls": {
+      "source": "8e0cafe328a6cdf883643cc60edc29cda89c51a1",
+      "plants_caught": 2,
+      "restored_positives_passed": 2,
+      "inventory": 430,
+      "cached_initial_445_results": "excluded_as_source_specific_evidence"
+    },
+    "projection_sync": "pending source-matched 29-step execution",
+    "native_keybinding_gate": "running; no pass claimed",
+    "live_installation": "not_verified: Codespaces API proxy CONNECT403"
   },
-  "resume": "Read handoff.md and .devloop/handoff/mios-handoff-continuation.md. Fetch main; verify bundle SHA256/prerequisites before importing into a fresh namespace. Historical worker ref names are contained in this main artifact; no remote worker branch is needed."
+  "resume": "Read handoff.md and .devloop/handoff/mios-handoff-continuation.md. Fetch main; verify bundle SHA256/prerequisites before importing into a fresh namespace. Historical worker ref names are contained in this main artifact; no remote worker branch is needed.",
+  "bootstrap": {
+    "repository": "https://github.com/MiOS-Developer/mios-bootstrap",
+    "main_commit": "56794f046e5e0f738ace0b02ab1d50ef24ed8876",
+    "mirror_files_checked": 13,
+    "tables_checked": 2,
+    "keys_checked": 7,
+    "idempotent": true,
+    "live_windows_installation": "not_verified"
+  },
+  "verification_archive": {
+    "path": ".devloop/handoff/mios-native-verification.tar.gz",
+    "sha256": "304277889eb7d75c0c8e8aa2e2e5f8e462a85a6093c0cb686d014b35636b5b4c",
+    "bytes": 6670
+  }
 }

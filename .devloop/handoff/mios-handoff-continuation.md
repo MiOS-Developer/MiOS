@@ -1,3 +1,28 @@
+<!-- AI-hint: Current compiled source milestone; all remote pickup is from main. -->
+# Verified source continuation on main
+
+The menu consumer and controller-fixture portability fixes are now integrated
+for main publication. Native results:442 Tamagotchi unit checks pass,3 remain
+ignored,13 CLI checks pass;248 Inputd checks pass; fatal Clippy and package fmt
+pass. Real configurator form tests pass12 checks. Two actual camera defects
+were replanted, compiled, caught by named assertions and restored to passing.
+
+All agents resume from main and `.devloop/handoff/mios-continuation-milestones.json`.
+The exact-history bundle includes all four continued worker heads; historical
+worker branches are not required pickup destinations. Raw native records and
+provenance are in `.devloop/handoff/mios-native-verification.tar.gz`; explicitly
+excluded cached/interrupted records remain labelled, not counted as success.
+
+Bootstrap parity is published to its own main at56794f046e5e0f738ace0b02ab1d50ef24ed8876:
+13 mirrored files,2 tables,7 keys match; a second apply changes nothing. Native
+projection tools are built; the29-step sync and native keybinding gate are the
+next serialized checks. Full image CI, release, live Codespace installation,
+physical input and R4 visual/performance acceptance are not certified.
+Upgrade and verify Inputd absolute entrypoints before applying new live policy;
+preserve adopted sessions, pet saves and unpublished work.
+
+---
+
 <!-- AI-hint: Reviewable continuation of recovered camera, HUD and deliberate-gesture source lanes from merged main. -->
 <!-- AI-related: handoff.md, .devloop/handoff/mios-recovery-manifest.json, tasks.jsonl -->
 # Development continuation

@@ -1193,3 +1193,6 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-continuation-checkpoints.bundle
 !/.devloop/handoff/mios-continuation-checkpoints.bundle.sha256
 !/.devloop/handoff/mios-continuation-milestones.json
+
+!/.devloop/handoff/mios-inputd-test-portability.md
+!/.devloop/handoff/mios-native-verification.tar.gz

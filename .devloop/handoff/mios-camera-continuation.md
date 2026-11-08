@@ -1,3 +1,15 @@
+<!-- AI-hint: Current global pickup is main; retain prior-stage evidence below. -->
+## Current main pickup
+
+Resume from main and `mios-continuation-milestones.json`, not the historical
+worker-branch commands below. Native combined results now include442 game
+unit/13 CLI passes (3 ignored),248 controller passes, fatal Clippy and format.
+See `mios-native-verification.tar.gz` for exact source/proof and exclusions.
+Prior unrun/source-only notes below describe the worker stage, not this current
+compiled milestone. Live/physical acceptance remains unverified.
+
+---
+
 <!-- AI-hint: Recoverable camera-continuation milestone with exact source ancestry, known defects and unrun native verification. -->
 <!-- AI-related: handoff.md, tools/native/mios-tamagotchi/src/ui.rs, tools/native/mios-tamagotchi/src/config.rs, task_3774 -->
 # Camera continuation
