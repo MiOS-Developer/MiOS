@@ -177,6 +177,9 @@ pub struct MenuGeometry {
     pub visible: usize,
     pub columns: u16,
     pub rows: u16,
+    /// Actual tile height, reduced to one row when the requested height cannot
+    /// fit alongside the border and footer. Zero when there are no items.
+    pub cell_height: u16,
     pub navigation: Vec<(usize, i32, i32)>,
 }
 
@@ -201,6 +204,17 @@ pub fn content_panel(
     footer_rows: u16,
     ratio: f64,
 ) -> Rect {
+    content_panel_with_minimum(bounds, content_width, content_rows, footer_rows, 1, ratio)
+}
+
+fn content_panel_with_minimum(
+    bounds: Rect,
+    content_width: u16,
+    content_rows: u16,
+    footer_rows: u16,
+    minimum_content_rows: u16,
+    ratio: f64,
+) -> Rect {
     if bounds.width == 0 || bounds.height == 0 {
         return Rect::new(bounds.x, bounds.y, 0, 0);
     }
@@ -213,7 +227,7 @@ pub fn content_panel(
     let panel_width = content_width.saturating_add(2).clamp(1, bounds.width);
     let needed_height = content_rows.saturating_add(footer_rows).saturating_add(2);
 
-    let min_content = content_rows.min(1);
+    let min_content = content_rows.min(minimum_content_rows);
     let min_needed = min_content
         .saturating_add(footer_rows)
         .saturating_add(2)
@@ -233,7 +247,8 @@ pub fn content_panel(
 }
 
 /// Computes content-fitted menu geometry, visible item hit cells, and full-set
-/// 2D spatial navigation centers.
+/// 2D spatial navigation centers. Reserve a complete tile before applying the
+/// scene budget; if it cannot fit with the border and footer, use one-row tiles.
 #[allow(clippy::too_many_arguments)]
 pub fn menu_geometry(
     bounds: Rect,
@@ -245,7 +260,7 @@ pub fn menu_geometry(
     max_columns: u16,
     ratio: f64,
 ) -> MenuGeometry {
-    let cell_height = cell_height.max(1);
+    let requested_cell_height = cell_height.max(1);
     let max_columns = max_columns.max(1);
     let total_items = item_widths.len();
 
@@ -266,6 +281,7 @@ pub fn menu_geometry(
             visible: 0,
             columns: 1,
             rows: 0,
+            cell_height: 0,
             navigation: Vec::new(),
         };
     }
@@ -296,10 +312,23 @@ pub fn menu_geometry(
         .saturating_add(columns.saturating_sub(1).saturating_mul(gap))
         .min(max_inner_w);
 
+    let available_body_height = bounds.height.saturating_sub(2).saturating_sub(footer_rows);
+    let cell_height = if requested_cell_height <= available_body_height {
+        requested_cell_height
+    } else {
+        1
+    };
     let rows = total_items.div_ceil(columns as usize) as u16;
     let content_rows = rows.saturating_mul(cell_height);
 
-    let panel = content_panel(bounds, content_width, content_rows, footer_rows, ratio);
+    let panel = content_panel_with_minimum(
+        bounds,
+        content_width,
+        content_rows,
+        footer_rows,
+        cell_height,
+        ratio,
+    );
 
     let inner_w = panel.width.saturating_sub(2);
     let inner_h = panel.height.saturating_sub(2);
@@ -372,6 +401,7 @@ pub fn menu_geometry(
         visible,
         columns,
         rows,
+        cell_height,
         navigation,
     }
 }
@@ -967,6 +997,97 @@ mod menu_geometry_tests {
                         "12x6 must retain at least one option"
                     );
                     assert!(geom.footer.height >= 1, "12x6 must retain controls");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tall_tiles_retain_a_complete_selected_option_in_micro_panels() {
+        let bounds = Rect::new(5, 7, 12, 6);
+        for selected in 0..8 {
+            let geom = menu_geometry(bounds, &[6; 8], selected, 1, 3, 1, 3, 1.618);
+            assert_eq!(geom.cell_height, 3);
+            assert_eq!(geom.body.height, 3);
+            assert_eq!(geom.footer.height, 1);
+            let item = geom
+                .items
+                .iter()
+                .find(|item| item.index == selected)
+                .expect("selected tall tile must remain visible");
+            assert_eq!(item.area.height, 3);
+            assert_eq!(item.area.intersection(geom.body), item.area);
+            assert!(item.area.intersection(geom.footer).is_empty());
+        }
+    }
+
+    #[test]
+    fn oversized_tiles_fall_back_to_single_rows_without_losing_controls() {
+        let bounds = Rect::new(5, 7, 12, 6);
+        for requested_height in [3, 5, u16::MAX] {
+            for selected in [0, 3, 7] {
+                let geom = menu_geometry(
+                    bounds,
+                    &[6; 8],
+                    selected,
+                    2,
+                    requested_height,
+                    1,
+                    3,
+                    1.618,
+                );
+                assert_eq!(geom.cell_height, 1, "compact tiles must be explicit");
+                assert_eq!(geom.footer.height, 2, "both control rows must survive");
+                assert!(geom.panel.height < bounds.height, "retain scene space");
+                let item = geom
+                    .items
+                    .iter()
+                    .find(|item| item.index == selected)
+                    .expect("selected compact fallback must remain visible");
+                assert_eq!(item.area.height, 1);
+                assert_eq!(item.area.intersection(geom.body), item.area);
+                assert!(item.area.intersection(geom.footer).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn tall_tile_geometry_keeps_hit_boxes_and_navigation_inside_offset_viewports() {
+        for (width, height) in [(12, 6), (20, 8), (20, 26), (80, 24), (127, 29), (320, 90)] {
+            let bounds = Rect::new(5, 7, width, height);
+            for requested_height in [1, 3, 5, u16::MAX] {
+                for selected in [0, 7, 19] {
+                    let geom = menu_geometry(
+                        bounds,
+                        &[8; 20],
+                        selected,
+                        2,
+                        requested_height,
+                        1,
+                        3,
+                        1.618,
+                    );
+                    assert_eq!(geom.panel.intersection(bounds), geom.panel);
+                    assert_eq!(geom.body.intersection(geom.panel), geom.body);
+                    assert_eq!(geom.footer.intersection(geom.panel), geom.footer);
+                    assert!(geom.body.intersection(geom.footer).is_empty());
+                    assert_eq!(geom.visible, geom.items.len());
+                    assert_eq!(geom.navigation.len(), 20);
+                    assert!(geom.items.iter().any(|item| item.index == selected));
+                    for (index, item) in geom.items.iter().enumerate() {
+                        assert_eq!(item.area.intersection(geom.body), item.area);
+                        assert_eq!(item.area.height, geom.cell_height);
+                        assert!(item.area.intersection(geom.footer).is_empty());
+                        for other in &geom.items[index + 1..] {
+                            assert!(item.area.intersection(other.area).is_empty());
+                        }
+                        let (nav_index, x, y) = geom.navigation[item.index];
+                        assert_eq!(nav_index, item.index);
+                        assert!(x >= i32::from(item.area.x));
+                        assert!(x < i32::from(item.area.right()));
+                        assert!(y >= i32::from(item.area.y));
+                        assert!(y < i32::from(item.area.bottom()));
+                    }
                 }
             }
         }
