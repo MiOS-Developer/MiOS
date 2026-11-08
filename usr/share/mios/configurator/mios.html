@@ -3454,7 +3454,25 @@
         <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
         <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
       </fieldset><fieldset><legend>Camera controls</legend>
-        <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Pan and tilt ease over the transition length above.</p>
+        <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Camera axes follow elapsed time while the pet keeps its own animation clock. Reset finishes within its accumulated camera transition limit and cuts to the resting pose at that deadline, even with slower speed settings; zero cuts immediately. New camera input cancels that reset deadline. The stop threshold is per-mille of each axis's own input step.</p>
+        <label for="f-mon-tamagotchi-animation_frame_ms">Pet animation frame interval (ms)</label>
+        <input type="number" id="f-mon-tamagotchi-animation_frame_ms" data-inherit="true" data-key="tamagotchi.animation_frame_ms" data-type="int" placeholder="Inherit vendor" min="40" max="2000" step="1">
+        <label for="f-mon-tamagotchi-camera-follow_half_life_ms">Camera smoothing half-time (ms)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-follow_half_life_ms" data-inherit="true" data-key="tamagotchi.camera.follow_half_life_ms" data-type="int" placeholder="Inherit vendor" min="20" max="1000" step="1">
+        <label for="f-mon-tamagotchi-camera-motion_frame_ms">Camera motion redraw interval (ms)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-motion_frame_ms" data-inherit="true" data-key="tamagotchi.camera.motion_frame_ms" data-type="int" placeholder="Inherit vendor" min="16" max="140" step="1">
+        <label for="f-mon-tamagotchi-camera-orbit_rate_deg_s">Orbit speed (degrees per second)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-orbit_rate_deg_s" data-inherit="true" data-key="tamagotchi.camera.orbit_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="10" max="720" step="1">
+        <label for="f-mon-tamagotchi-camera-tilt_rate_deg_s">Tilt speed (degrees per second)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-tilt_rate_deg_s" data-inherit="true" data-key="tamagotchi.camera.tilt_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="5" max="360" step="1">
+        <label for="f-mon-tamagotchi-camera-pan_rate_permille_s">Pan speed (per-mille of the scene per second)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-pan_rate_permille_s" data-inherit="true" data-key="tamagotchi.camera.pan_rate_permille_s" data-type="int" placeholder="Inherit vendor" min="50" max="2000" step="1">
+        <label for="f-mon-tamagotchi-camera-zoom_rate_percent_s">Zoom speed (percent per second)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-zoom_rate_percent_s" data-inherit="true" data-key="tamagotchi.camera.zoom_rate_percent_s" data-type="int" placeholder="Inherit vendor" min="25" max="800" step="1">
+        <label for="f-mon-tamagotchi-camera-reset_glide_ms">Reset transition limit (ms; zero is instant)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-reset_glide_ms" data-inherit="true" data-key="tamagotchi.camera.reset_glide_ms" data-type="int" placeholder="Inherit vendor" min="0" max="2000" step="1">
+        <label for="f-mon-tamagotchi-camera-rest_epsilon_permille">Camera stop threshold (per-mille of one step)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-rest_epsilon_permille" data-inherit="true" data-key="tamagotchi.camera.rest_epsilon_permille" data-type="int" placeholder="Inherit vendor" min="1" max="50" step="1">
         <label for="f-mon-tamagotchi-camera-pan_step_permille">Pan step (per-mille of the scene)</label>
         <input type="number" id="f-mon-tamagotchi-camera-pan_step_permille" data-inherit="true" data-key="tamagotchi.camera.pan_step_permille" data-type="int" placeholder="Inherit vendor" min="5" max="200" step="1">
         <label for="f-mon-tamagotchi-camera-pan_max_permille">Pan limit per axis (per-mille; 0 disables pan)</label>
@@ -3802,6 +3820,17 @@
         <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>
         <label>Right-stick flick threshold <input data-key="keybindings.global.controller.nav.flick_on" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
         <label>Right-stick re-arm threshold <input data-key="keybindings.global.controller.nav.flick_off" data-type="float" type="number" min="0" max="0.95" step="0.05"></label>
+        <details>
+          <summary>Deliberate right-stick focus gesture</summary>
+          <p class="hint">Move pane or window focus with a quick cardinal out-and-return gesture. Thresholds are fractions of travel after the controller deadzone. Blank fields inherit the vendor policy; camera, pointer and window-move bindings keep their existing behavior.</p>
+          <label>Neutral threshold (0 &lt; fraction &le; 0.5) <input data-key="keybindings.global.controller.nav.focus_gesture.neutral_pct" data-inherit="true" data-type="float" type="number" min="0" max="0.5" step="0.01"></label>
+          <label>Neutral dwell (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.neutral_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Peak threshold (above neutral, at most 1) <input data-key="keybindings.global.controller.nav.focus_gesture.rise_pct" data-inherit="true" data-type="float" type="number" min="0" max="1" step="0.01"></label>
+          <label>Time to reach peak (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.rise_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Cardinal direction half-angle (degrees) <input data-key="keybindings.global.controller.nav.focus_gesture.direction_deg" data-inherit="true" data-type="int" type="number" min="1" max="45" step="1"></label>
+          <label>Time to return to neutral (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.return_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Cooldown after focus (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.cooldown_ms" data-inherit="true" data-type="int" type="number" min="0" max="5000" step="1"></label>
+        </details>
         <label>tmux servers driven by the controller (-L names) <textarea data-key="keybindings.global.controller.nav.tmux_sockets" data-type="json-array"></textarea></label>
         <label>Ordinary windows: nav profile ("vpad" = raw gamepad) <input data-key="keybindings.global.controller.nav.contexts.desktop-2d" type="text"></label>
         <label>Terminals: nav profile (terminal = terminal_tmux / terminal_plain) <input data-key="keybindings.global.controller.nav.contexts.terminal" type="text"></label>
@@ -6354,12 +6383,38 @@ function gatherFromForm() {
           .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
       }
     }
+    else if (sec === "keybindings.global.controller.nav.focus_gesture") {
+      const ranges = {neutral_pct: [0, 0.5], neutral_ms: [1, 2000], rise_pct: [0, 1],
+        rise_ms: [1, 2000], direction_deg: [1, 45], return_ms: [1, 2000], cooldown_ms: [0, 5000]};
+      const range = ranges[key], n = Number(el.value);
+      const fraction = key === "neutral_pct" || key === "rise_pct";
+      if (!range || !Number.isFinite(n) || n < range[0] || n > range[1]
+          || (fraction ? n <= 0 : !/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n))) {
+        throw new Error("Focus gesture setting outside supported range: " + el.dataset.key);
+      }
+      DATA[sec][key] = n;
+    }
     else if (el.dataset.type === "int") {
       const timing = {
         "keybindings.global.controller.nav.app_poll_ms": [50, 2000],
         "keybindings.global.controller.nav.app_query_timeout_ms": [20, 1000]
       }[el.dataset.key];
-      if (timing) {
+      const cameraBounds = {
+        "tamagotchi.animation_frame_ms": [40, 2000],
+        "tamagotchi.camera.follow_half_life_ms": [20, 1000],
+        "tamagotchi.camera.motion_frame_ms": [16, 140],
+        "tamagotchi.camera.orbit_rate_deg_s": [10, 720],
+        "tamagotchi.camera.tilt_rate_deg_s": [5, 360],
+        "tamagotchi.camera.pan_rate_permille_s": [50, 2000],
+        "tamagotchi.camera.zoom_rate_percent_s": [25, 800],
+        "tamagotchi.camera.reset_glide_ms": [0, 2000],
+        "tamagotchi.camera.rest_epsilon_permille": [1, 50]
+      }[el.dataset.key];
+      if (cameraBounds) {
+        const n = Number(el.value);
+        if (!/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n) || n < cameraBounds[0] || n > cameraBounds[1]) throw new Error("Camera setting outside supported range: " + el.dataset.key);
+        DATA[sec][key] = n;
+      } else if (timing) {
         const n = Number(el.value);
         if (!/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n) || n < timing[0] || n > timing[1]) throw new Error("Controller timing outside supported range: " + el.dataset.key);
         DATA[sec][key] = n;
@@ -6385,6 +6440,11 @@ function gatherFromForm() {
   });
   const nav = DATA["keybindings.global.controller.nav"];
   if (nav && Number.isInteger(nav.app_poll_ms) && Number.isInteger(nav.app_query_timeout_ms) && nav.app_query_timeout_ms > nav.app_poll_ms) throw new Error("Controller app query timeout must not exceed poll interval");
+  const camera = DATA["tamagotchi.camera"], mon = DATA.tamagotchi;
+  if (camera && mon && Number.isInteger(camera.motion_frame_ms) && Number.isInteger(mon.animation_frame_ms) && camera.motion_frame_ms > mon.animation_frame_ms) throw new Error("Camera motion interval must not exceed pet animation interval");
+  if (camera && Number.isInteger(camera.follow_half_life_ms) && Number.isInteger(camera.reset_glide_ms) && camera.reset_glide_ms !== 0 && camera.follow_half_life_ms > camera.reset_glide_ms) throw new Error("Camera smoothing half-time must not exceed reset transition limit");
+  const gesture = DATA["keybindings.global.controller.nav.focus_gesture"];
+  if (gesture && gesture.neutral_pct !== undefined && gesture.rise_pct !== undefined && gesture.rise_pct <= gesture.neutral_pct) throw new Error("Focus gesture peak must exceed neutral threshold");
 }
 
 function renderRaw() {

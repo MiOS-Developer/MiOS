@@ -4,7 +4,9 @@ use crate::config::{
     axis_code, button_code, system_layer_code, ControllerConfig, GlobalConfig, LegacyConfig,
     RoomAction,
 };
-use crate::nav::{Dir, Input, Value, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP};
+use crate::nav::{
+    Dir, FocusGesture, Input, Value, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub const EV_SYN: u16 = 0;
@@ -172,6 +174,37 @@ struct NavState {
     thumbs_cancelled: bool,
     wheel: f64,
     hwheel: f64,
+    /// task3773: the right-stick focus-gesture tracker (see `FocusGesture` for units).
+    focus: FocusTracker,
+}
+
+/// task3773 right-stick focus-gesture tracker. Magnitudes are post-deadzone normalized
+/// fractions (the same scale `nav_flicks` uses); `now_ms` advances by `dt` every tick, so
+/// every deadline is wall-clock tick time and independent of the polling rate.
+#[derive(Clone, Debug, Default)]
+struct FocusTracker {
+    now_ms: f64,
+    /// Continuous dwell below neutral_pct; ANY excursion above it resets this to zero.
+    dwell_ms: f64,
+    /// Set once the dwell completed; consumed by the first excursion above neutral, so
+    /// jitter around the boundary can never start a rise without a real dwell.
+    armed: bool,
+    /// When the current rise left neutral and its cardinal direction.
+    rising_since: Option<(f64, Dir)>,
+    /// (when the peak locked, the locked cardinal direction) while waiting for the return.
+    peak: Option<(f64, Dir)>,
+    /// Firing sets this; no new gesture may leave neutral before it passes.
+    cooldown_until: f64,
+}
+impl FocusTracker {
+    /// Cancel any pending gesture (every INV-6 flush path calls this); the clock and the
+    /// post-fire cooldown survive, so a context switch cannot shortcut a bounce guard.
+    fn cancel(&mut self) {
+        self.dwell_ms = 0.0;
+        self.armed = false;
+        self.rising_since = None;
+        self.peak = None;
+    }
 }
 enum GuideSingle {
     Action(String),
@@ -1720,6 +1753,8 @@ impl Router {
         } else {
             0.0
         };
+        // task3773: the focus-gesture tracker's monotonic clock (ms).
+        self.nav.focus.now_ms += dt * 1000.0;
         if self.capture_override.is_some() {
             // C-03: a capture/release the compositor never confirmed must not keep the pad (or the room) forever.
             self.override_ms += dt * 1000.0;
@@ -1742,6 +1777,7 @@ impl Router {
             }
         }
         if self.shell_overlay {
+            self.nav.focus.cancel();
             self.nav_timers(dt, &mut o);
             self.nav_wheel(dt, &mut o);
             self.pad.neutralize();
@@ -1799,6 +1835,9 @@ impl Router {
         }
         self.nav_timers(dt, &mut o);
         self.update_pad();
+        // Neutral dwell and gesture deadlines must advance even when an idle
+        // controller emits no SYN_REPORT. Event samples contribute no dwell.
+        self.focus_gesture_sample(dt, &mut o);
         if !self.pointer_mode() {
             self.pointer_motion = PointerMotion::default();
             self.fraction_x = 0.0;
@@ -2008,6 +2047,7 @@ impl Router {
     /// Key output is atomic strokes, so no virtual key is ever left down. A stick (in a camera profile: each of its
     /// half-axes) still at or past flick_off must fall below it before it can fire again.
     fn nav_flush(&mut self) -> Output {
+        self.nav.focus.cancel();
         self.nav.held.clear();
         self.nav.stick_dir = [None; 2];
         self.nav.axis_dir = [[None; 2]; 2];
@@ -2285,9 +2325,21 @@ impl Router {
             let mag = x.hypot(y);
             if self.axis_sink(xa) != Sink::Nav {
                 // Cursor/half-capture owns this stick: pointer motion cannot also focus a window.
+                if right {
+                    self.nav.focus.cancel();
+                }
                 if let Some(dir) = self.nav.stick_dir[i].take() {
                     self.nav.held.remove(&Input::Stick { right, dir });
                 }
+                self.nav.armed[i] = mag < off;
+                continue;
+            }
+            // task3773: with a focus_gesture policy, a RIGHT stick whose dominant
+            // direction resolves to a window/pane focus binding qualifies only
+            // through the deliberate out-and-return gesture machine below. Window
+            // move bindings, wheels, `none`, the left stick and a policy-free
+            // configuration all keep the legacy magnitude flicks unchanged.
+            if right && self.focus_gesture_sample(0.0, o) {
                 self.nav.armed[i] = mag < off;
                 continue;
             }
@@ -2321,6 +2373,123 @@ impl Router {
             self.nav_press(input, o);
         }
     }
+    /// A right-stick binding qualifies for the focus gesture only when it moves
+    /// window/pane focus: `tmux:focus *` on a tmux profile, `hypr:movefocus *` on a
+    /// plain desktop profile. Moving a window, pointer wheels, menus and `none` do not.
+    fn is_focus_action(&self, input: Input) -> bool {
+        matches!(self.nav_value(input), Some(Value::Press(a))
+            if a.starts_with("tmux:focus ") || a.starts_with("hypr:movefocus "))
+    }
+
+    /// Sample only the qualified right-stick focus lane. Other bindings keep
+    /// their existing event-driven flick/camera/pointer behavior.
+    fn focus_gesture_sample(&mut self, dt: f64, o: &mut Output) -> bool {
+        let Some(g) = self.global.controller.nav.focus_gesture.clone() else {
+            self.nav.focus.cancel();
+            return false;
+        };
+        let (xa, ya) = self.right_axes();
+        if !self.nav_active() || self.guide_layer() || self.camera() || self.axis_sink(xa) != Sink::Nav {
+            self.nav.focus.cancel();
+            return false;
+        }
+        let any_focus = [Dir::Left, Dir::Right, Dir::Up, Dir::Down]
+            .into_iter()
+            .any(|dir| self.is_focus_action(Input::Stick { right: true, dir }));
+        if !any_focus {
+            self.nav.focus.cancel();
+            return false;
+        }
+        let (x, y) = self.stick(xa, ya, self.global.controller.stick_deadzone, 1.0);
+        let dominant = if x.abs() >= y.abs() {
+            if x > 0.0 { Dir::Right } else { Dir::Left }
+        } else if y > 0.0 {
+            Dir::Down
+        } else {
+            Dir::Up
+        };
+        let focus = self.is_focus_action(Input::Stick { right: true, dir: dominant });
+        if x.hypot(y) >= g.neutral_pct && !focus {
+            self.nav.focus.cancel();
+            return false;
+        }
+        self.focus_gesture(&g, x, y, dt, o);
+        focus
+    }
+
+    /// One deliberate out-and-return focus gesture (task3773). Phases: a continuous
+    /// neutral dwell; a rise to the peak inside its window locked to a cardinal cone; a
+    /// return to neutral inside its window; then exactly ONE focus action and a cooldown.
+    /// Slow ramps, sustained holds, jitter, partial travel, rapid bounces, circular
+    /// sweeps and held diagonals never fire. Every INV-6 flush cancels a pending gesture
+    /// through `nav_flush`; a button/key RELEASE never becomes an action (the atomic
+    /// press+release here is the gesture completing, not a release firing).
+    fn focus_gesture(&mut self, g: &FocusGesture, x: f64, y: f64, dt: f64, o: &mut Output) {
+        let mag = x.hypot(y);
+        let now = self.nav.focus.now_ms;
+        if mag < g.neutral_pct {
+            if let Some((at, dir)) = self.nav.focus.peak.take() {
+                if now - at <= g.return_ms as f64 {
+                    let input = Input::Stick { right: true, dir };
+                    self.nav.armed[1] = false;
+                    self.nav_press(input, o);
+                    self.nav_release(input, o);
+                    self.nav.focus.cooldown_until = now + g.cooldown_ms as f64;
+                }
+                // Too slow back to neutral, or fired: either way a fresh dwell is required.
+                self.nav.focus.cancel();
+                return;
+            }
+            if self.nav.focus.rising_since.take().is_some() {
+                // Returned to neutral without ever peaking: partial travel, restart the dwell.
+                self.nav.focus.dwell_ms = 0.0;
+                self.nav.focus.armed = false;
+            }
+            self.nav.focus.dwell_ms += dt * 1000.0;
+            if self.nav.focus.dwell_ms >= g.neutral_ms as f64 && now >= self.nav.focus.cooldown_until {
+                self.nav.focus.armed = true;
+            }
+            return;
+        }
+        // Above neutral: preserve an in-progress rise across event and tick
+        // samples. Arming is consumed only when the rise begins.
+        self.nav.focus.dwell_ms = 0.0;
+        if let Some((at, dir)) = self.nav.focus.peak {
+            // A hold past the deadline or a sweep outside the locked cone
+            // cancels the peak; neither may later become a return gesture.
+            if now - at > g.return_ms as f64 || cardinal(x, y, g.direction_deg) != Some(dir) {
+                self.nav.focus.cancel();
+            }
+            return;
+        }
+        if now < self.nav.focus.cooldown_until {
+            // A cooldown bounce or an excursion without a completed dwell never rises.
+            self.nav.focus.cancel();
+            return;
+        }
+        let (since, dir) = if let Some(rise) = self.nav.focus.rising_since {
+            rise
+        } else if self.nav.focus.armed {
+            self.nav.focus.armed = false;
+            let Some(dir) = cardinal(x, y, g.direction_deg) else {
+                self.nav.focus.cancel();
+                return;
+            };
+            self.nav.focus.rising_since = Some((now, dir));
+            (now, dir)
+        } else {
+            return;
+        };
+        if now - since > g.rise_ms as f64 || cardinal(x, y, g.direction_deg) != Some(dir) {
+            self.nav.focus.cancel();
+            return;
+        }
+        if mag >= g.rise_pct {
+            self.nav.focus.rising_since = None;
+            self.nav.focus.peak = Some((now, dir));
+        }
+    }
+
     /// Analog wheel for stick directions mapped to pointer: (the vertical and horizontal parts separately).
     fn nav_wheel(&mut self, dt: f64, o: &mut Output) {
         let sens = self.global.controller.scroll_sensitivity;
@@ -2398,6 +2567,27 @@ impl Router {
         }
     }
 }
+/// The cardinal direction whose cone (± `cone_deg`) contains the vector, if any.
+/// Screen coordinates: x grows right, y grows down; the angle is measured from +x.
+fn cardinal(x: f64, y: f64, cone_deg: u64) -> Option<Dir> {
+    let cone = cone_deg.min(45) as f64 * std::f64::consts::PI / 180.0;
+    let angle = y.atan2(x);
+    [
+        (0.0, Dir::Right),
+        (std::f64::consts::PI, Dir::Left),
+        (std::f64::consts::FRAC_PI_2, Dir::Down),
+        (-std::f64::consts::FRAC_PI_2, Dir::Up),
+    ]
+    .into_iter()
+    .find_map(|(center, dir)| {
+        let mut delta = (angle - center).abs();
+        if delta > std::f64::consts::PI {
+            delta = 2.0 * std::f64::consts::PI - delta;
+        }
+        (delta <= cone).then_some(dir)
+    })
+}
+
 pub fn radial(mut x: f64, mut y: f64, deadzone: f64, sensitivity: f64) -> (f64, f64) {
     if x.abs() < deadzone * 0.5 {
         x = 0.0;
@@ -3906,8 +4096,17 @@ mod nav_contract {
         }
         axes
     }
+    /// This module holds the PRE-task3773 magnitude-flick contracts, so its fixture
+    /// removes the vendor focus_gesture table: an absent table is the documented
+    /// legacy policy, and nothing here is silently re-qualified as a gesture.
     fn nav(context: &str) -> Router {
-        let (c, l) = crate::config::tests::fixture_nav();
+        let (c, l) = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .remove("focus_gesture");
+        })
+        .unwrap();
         Router::with_context(c, l, axes(), context)
     }
     fn plain(context: &str) -> Router {
@@ -4955,10 +5154,16 @@ mod guide_layer_contract {
         }
         axes
     }
+    /// Legacy module (pre-task3773): strip the vendor focus_gesture table so the
+    /// magnitude flicks below keep their original contract.
     fn vendor(context: &str) -> Router {
-        let v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+        let mut v: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
             .parse()
             .unwrap();
+        v["keybindings"]["global"]["controller"]["nav"]
+            .as_table_mut()
+            .unwrap()
+            .remove("focus_gesture");
         let (c, l) = GlobalConfig::from_value(&v).unwrap();
         Router::with_context(c, l, axes(), context)
     }
@@ -5611,6 +5816,12 @@ mod camera_contract {
     fn an_invalid_app_layer_leaves_the_base_profile_live() {
         let (c, l) = crate::config::tests::try_fixture_mon_with(|v| {
             v["keybindings"]["global"]["controller"]["nav"]["app_poll_ms"] = 49.into();
+            // The base-profile flick this test asserts is the legacy magnitude
+            // flick; the vendor gesture policy is out of scope here.
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .remove("focus_gesture");
         })
         .unwrap();
         assert!(c.controller.nav.app_error.is_some());
@@ -5977,5 +6188,338 @@ mod camera_contract {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod focus_gesture_contract {
+    //! task3773: the deliberate out-and-return RIGHT-stick focus gesture. The vendor
+    //! SSOT ships the focus_gesture table, so these fixtures keep it; the legacy
+    //! modules above strip it for their pre-gesture magnitude contracts. Units:
+    //! thresholds are POST-DEADZONE fractions (1.0 = full deflection); `raw(f)`
+    //! converts to the raw axis value through the vendor 0.12 deadzone
+    //! (raw = 0.12 + f*0.88), i.e. 15% post-deadzone neutral = ~25.2% physical.
+    use super::*;
+    const SOUTH: u16 = 0x130;
+
+    fn axes() -> BTreeMap<u16, Axis> {
+        let mut axes = BTreeMap::new();
+        for c in [0, 1, 3, 4] {
+            axes.insert(
+                c,
+                Axis {
+                    min: -32768,
+                    max: 32767,
+                    value: 0,
+                },
+            );
+        }
+        axes
+    }
+    fn gesture_router(context: &str, tmux: bool) -> Router {
+        let (c, l) = crate::config::tests::fixture_nav();
+        let mut r = Router::with_context(c, l, axes(), context);
+        r.set_tmux(tmux);
+        r
+    }
+    fn abs(r: &mut Router, c: u16, v: i32) -> Output {
+        let mut o = r.event(Event::new(EV_ABS, c, v), 0);
+        o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0));
+        o
+    }
+    fn wait(r: &mut Router, ms: u64) -> Output {
+        let mut o = Output::default();
+        for _ in 0..ms / 10 {
+            o.extend(r.tick(0.01));
+        }
+        o
+    }
+    /// Raw axis value for a post-deadzone magnitude fraction (vendor 0.12 deadzone).
+    fn raw(f: f64) -> i32 {
+        // Round up so a positive sample requested at rise_pct is not just
+        // below that threshold after integer axis quantization.
+        ((0.12 + f * 0.88) * 32767.0).ceil() as i32
+    }
+    /// One complete qualifying gesture on one axis: neutral dwell, fast rise to
+    /// `peak`, quick return. The returned Output collects everything that fired.
+    fn gesture(r: &mut Router, axis: u16, sign: i32, peak: f64) -> Output {
+        let mut o = wait(r, 100);
+        o.extend(abs(r, axis, sign * raw(peak)));
+        o.extend(wait(r, 60));
+        o.extend(abs(r, axis, 0));
+        o.extend(wait(r, 30));
+        o
+    }
+    fn actions(o: &Output) -> Vec<String> {
+        o.actions.clone()
+    }
+
+    #[test]
+    fn each_direction_focuses_once_in_tmux_and_plain_profiles() {
+        // terminal_tmux: RS is tmux:focus; each deliberate gesture fires exactly once.
+        let mut r = gesture_router("terminal", true);
+        for (axis, sign, action) in [
+            (3u16, 1, "tmux:focus right"),
+            (3, -1, "tmux:focus left"),
+            (4, 1, "tmux:focus down"),
+            (4, -1, "tmux:focus up"),
+        ] {
+            let o = gesture(&mut r, axis, sign, 0.95);
+            assert_eq!(actions(&o), [action], "axis {axis} sign {sign}");
+            assert!(
+                actions(&wait(&mut r, 600)).is_empty(),
+                "cooldown holds: no repeat for {action}"
+            );
+        }
+        // terminal_plain: RS is hypr:movefocus; same contract through the compositor verb.
+        let mut r = gesture_router("terminal", false);
+        for (axis, sign, action) in [
+            (3u16, 1, "hypr:movefocus right"),
+            (3, -1, "hypr:movefocus left"),
+            (4, 1, "hypr:movefocus down"),
+            (4, -1, "hypr:movefocus up"),
+        ] {
+            let o = gesture(&mut r, axis, sign, 0.95);
+            assert_eq!(actions(&o), [action]);
+            assert!(actions(&wait(&mut r, 600)).is_empty());
+        }
+    }
+
+    #[test]
+    fn idle_neutral_ticks_arm_without_controller_frames() {
+        let mut r = gesture_router("terminal", true);
+        assert!(wait(&mut r, 80).actions.is_empty());
+        assert!(r.nav.focus.armed, "an idle pad emits no SYN_REPORT frames");
+        assert!(abs(&mut r, 3, raw(0.95)).actions.is_empty());
+        assert!(wait(&mut r, 50).actions.is_empty());
+        let out = abs(&mut r, 3, 0);
+        assert_eq!(out.actions, ["tmux:focus right"]);
+        assert!(out.app.is_empty() && out.pointer.is_empty());
+    }
+
+    #[test]
+    fn a_fast_multisample_rise_fires_only_after_the_return() {
+        let mut r = gesture_router("terminal", true);
+        wait(&mut r, 100);
+        let mut out = abs(&mut r, 3, raw(0.3));
+        out.extend(wait(&mut r, 30));
+        out.extend(abs(&mut r, 3, raw(0.6)));
+        out.extend(wait(&mut r, 30));
+        out.extend(abs(&mut r, 3, raw(0.95)));
+        out.extend(wait(&mut r, 30));
+        assert!(out.actions.is_empty(), "the peak is not a focus action");
+        out.extend(abs(&mut r, 3, 0));
+        out.extend(wait(&mut r, 20));
+        assert_eq!(out.actions, ["tmux:focus right"]);
+        assert!(out.app.is_empty() && out.pointer.is_empty());
+    }
+
+    #[test]
+    fn app_profile_changes_discard_a_pending_base_focus_gesture() {
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        r.set_tmux(true);
+        wait(&mut r, 100);
+        abs(&mut r, 3, raw(0.95));
+        r.set_app(Some("mon"), None);
+        let mut out = abs(&mut r, 3, 0);
+        out.extend(wait(&mut r, 100));
+        assert!(!out.actions.iter().any(|a| a.starts_with("tmux:focus ") || a.starts_with("hypr:movefocus ")));
+        assert!(r.nav.focus.peak.is_none());
+        r.set_app(None, None);
+        assert_eq!(gesture(&mut r, 3, 1, 0.95).actions, ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn profile_changes_do_not_shortcut_the_post_fire_cooldown() {
+        let mut r = gesture_router("terminal", true);
+        assert_eq!(gesture(&mut r, 3, 1, 0.95).actions, ["tmux:focus right"]);
+        r.set_tmux(false);
+        assert!(gesture(&mut r, 3, 1, 0.95).actions.is_empty());
+        wait(&mut r, 400);
+        assert_eq!(gesture(&mut r, 3, 1, 0.95).actions, ["hypr:movefocus right"]);
+    }
+
+    #[test]
+    fn slow_ramps_sustained_holds_and_partial_travel_never_focus() {
+        let mut r = gesture_router("terminal", true);
+        // Slow ramp: crossing 90% long after the 120 ms rise window expired.
+        let mut o = wait(&mut r, 120);
+        for f in [0.3, 0.5, 0.7, 0.85] {
+            o.extend(abs(&mut r, 3, raw(f)));
+            o.extend(wait(&mut r, 60));
+        }
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 60));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "slow ramp fired: {:?}", actions(&o));
+        // Long hold at the peak: the 250 ms return window expires first.
+        let mut o = wait(&mut r, 120);
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 400));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "long hold fired: {:?}", actions(&o));
+        // Partial travel: peaks below rise_pct and returns without ever locking.
+        let mut o = wait(&mut r, 120);
+        o.extend(abs(&mut r, 3, raw(0.6)));
+        o.extend(wait(&mut r, 40));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "partial travel fired: {:?}", actions(&o));
+        // The tracker still works afterwards: one clean gesture fires.
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn boundary_jitter_without_a_real_dwell_never_rises() {
+        let mut r = gesture_router("terminal", true);
+        // Jitter around the 15% neutral boundary, never dwelling 80 ms below it.
+        let mut o = Output::default();
+        for below in [true, false] {
+            o.extend(abs(&mut r, 3, if below { raw(0.05) } else { raw(0.2) }));
+            o.extend(wait(&mut r, 20));
+        }
+        // Then a fast qualifying rise whose dwell never completed.
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 50));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "unarmed rise fired: {:?}", actions(&o));
+        // After a real dwell the same motion focuses.
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn cooldown_bounces_never_double_fire() {
+        let mut r = gesture_router("terminal", true);
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+        // An immediate second gesture inside the 400 ms cooldown stays silent...
+        let mut o = wait(&mut r, 150);
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 60));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "cooldown bounce fired: {:?}", actions(&o));
+        // ...and a gesture after the cooldown fires once again.
+        wait(&mut r, 300);
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn diagonals_circular_sweeps_and_direction_changes_never_lock() {
+        let mut r = gesture_router("terminal", true);
+        // Held diagonal at the peak: 45 degrees is outside every 20-degree cone.
+        let mut o = wait(&mut r, 120);
+        o.extend(abs(&mut r, 3, raw(0.7)));
+        o.extend(abs(&mut r, 4, raw(0.7)));
+        o.extend(wait(&mut r, 60));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(abs(&mut r, 4, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "diagonal fired: {:?}", actions(&o));
+        // Circular sweep: peak at a cardinal, then rotate while staying deflected;
+        // the return window expires before the stick ever reaches neutral.
+        let mut o = wait(&mut r, 120);
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 60));
+        for (x, y) in [(0.7_f64, 0.7_f64), (0.0, 0.95), (-0.7, 0.7), (-0.95, 0.0)] {
+            o.extend(abs(&mut r, 3, raw(x.abs()) * x.signum() as i32));
+            o.extend(abs(&mut r, 4, raw(y.abs()) * y.signum() as i32));
+            o.extend(wait(&mut r, 80));
+        }
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(abs(&mut r, 4, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "circular sweep fired: {:?}", actions(&o));
+        // A clean cardinal gesture still works after the failures.
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn cursor_mode_context_switch_and_flush_cancel_pending_gestures() {
+        // Cursor mode owns the sticks: the tracker cancels and nothing focuses.
+        let mut r = gesture_router("terminal", true);
+        r.cursor = true;
+        let mut o = wait(&mut r, 120);
+        o.extend(abs(&mut r, 3, raw(0.95)));
+        o.extend(wait(&mut r, 60));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 100));
+        assert!(actions(&o).is_empty(), "cursor mode fired: {:?}", actions(&o));
+        // A held stick while cursor mode ENDS: the toggle flushes, so the still-held
+        // deflection cannot complete a stale gesture; only a fresh full gesture fires.
+        r.cursor = false;
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+        // A context/target switch at the peak cancels the pending lock.
+        let mut r = gesture_router("terminal", true);
+        wait(&mut r, 120);
+        abs(&mut r, 3, raw(0.95));
+        wait(&mut r, 60);
+        r.set_focus("terminal", Some(("other-window".into(), 9)), false);
+        let o = {
+            let mut o = abs(&mut r, 3, 0);
+            o.extend(wait(&mut r, 100));
+            o
+        };
+        assert!(actions(&o).is_empty(), "flushed gesture fired: {:?}", actions(&o));
+        assert_eq!(actions(&gesture(&mut r, 3, 1, 0.95)), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn no_button_release_or_menu_input_becomes_a_focus_action() {
+        let mut r = gesture_router("terminal", true);
+        let press = r.event(Event::new(EV_KEY, SOUTH, 1), 0);
+        let release = r.event(Event::new(EV_KEY, SOUTH, 0), 0);
+        assert_eq!(press.actions.len(), 1);
+        assert!(release.actions.is_empty(), "a release never acts");
+        assert!(wait(&mut r, 600).actions.is_empty());
+    }
+
+    #[test]
+    fn legacy_policy_without_the_table_keeps_magnitude_flicks() {
+        // Absent table = the documented legacy policy: one magnitude flick, no gesture.
+        let (c, l) = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]
+                .as_table_mut()
+                .unwrap()
+                .remove("focus_gesture");
+        })
+        .unwrap();
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        r.set_tmux(true);
+        let mut o = abs(&mut r, 3, raw(0.8));
+        o.extend(wait(&mut r, 200));
+        assert_eq!(actions(&o), ["tmux:focus right"]);
+    }
+
+    #[test]
+    fn camera_profiles_and_pointer_axes_stay_outside_the_gesture() {
+        // A camera app keeps the continuous P5 semantics: instant, no qualification.
+        let (c, l) = crate::config::tests::fixture_mon();
+        let mut r = Router::with_context(c, l, axes(), "terminal");
+        r.set_tmux(true);
+        r.set_app(Some("mon"), None);
+        let mut o = abs(&mut r, 3, raw(0.9));
+        o.extend(wait(&mut r, 20));
+        assert_eq!(actions(&o), ["key:ALT+9"], "camera RS fires at once");
+        // The window-move binding stays a legacy flick (it is not a focus action).
+        let mut r = gesture_router("desktop-2d", false);
+        let mut o = abs(&mut r, 3, raw(0.8));
+        o.extend(wait(&mut r, 200));
+        assert_eq!(actions(&o), ["hypr:movewindow right"]);
+    }
+
+    #[test]
+    fn a_gesture_at_the_configured_boundaries_qualifies() {
+        // Exactly at the thresholds: dwell 80 ms, rise window 120 ms, peak 0.9.
+        let mut r = gesture_router("terminal", true);
+        wait(&mut r, 80);
+        let mut o = abs(&mut r, 3, raw(0.9));
+        o.extend(wait(&mut r, 120));
+        o.extend(abs(&mut r, 3, 0));
+        o.extend(wait(&mut r, 250));
+        assert_eq!(actions(&o), ["tmux:focus right"]);
     }
 }

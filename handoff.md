@@ -1,3 +1,15 @@
+<!-- AI-hint: Active post-merge development continuation; retained handoffs below are historical receipts. -->
+# Continue development after PR #65
+
+PR #65 merged to main as `69fa06efe04f6422bbaec8b4ea0b953c24df2dd5`.
+The next source work is on `mios-handoff-continuation`, with isolated camera,
+HUD and deliberate-gesture worker branches. Read
+`.devloop/handoff/mios-handoff-continuation.md` and each worker receipt before
+continuing. New native behavior is under review; do not treat a preserved WIP,
+pushed branch, source inspection or HTML test as compiled/live acceptance.
+
+---
+
 <!-- AI-hint: Current remote recovery entrypoint and milestone publication status. -->
 # Cloud recovery and startup repair
 
