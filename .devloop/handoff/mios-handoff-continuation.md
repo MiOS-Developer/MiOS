@@ -1,27 +1,67 @@
-<!-- AI-hint: Current compiled source milestone; all remote pickup is from main. -->
-# Verified source continuation on main
+<!-- AI-hint: Authoritative compiled milestone; global recovery and all remote publication use main. -->
+# Verified source and global pickup on main
 
-The menu consumer and controller-fixture portability fixes are now integrated
-for main publication. Native results:442 Tamagotchi unit checks pass,3 remain
-ignored,13 CLI checks pass;248 Inputd checks pass; fatal Clippy and package fmt
-pass. Real configurator form tests pass12 checks. Two actual camera defects
-were replanted, compiled, caught by named assertions and restored to passing.
+PR #65 merged as `69fa06efe04f6422bbaec8b4ea0b953c24df2dd5`; PR #66 merged as
+`375aefba6c2de84b3d380864159a9e27045fb3ec`. Source repairs and all declared
+projections are on main through `8d2e899ee693b5deb2293e65a7223a443bfd3ff4`.
+The integration owner serializes all further fast-forward pushes to main.
+Workers retain isolated local worktrees; every global pickup uses main and
+`.devloop/handoff/mios-continuation-milestones.json`.
 
-All agents resume from main and `.devloop/handoff/mios-continuation-milestones.json`.
-The exact-history bundle includes all four continued worker heads; historical
-worker branches are not required pickup destinations. Raw native records and
-provenance are in `.devloop/handoff/mios-native-verification.tar.gz`; explicitly
-excluded cached/interrupted records remain labelled, not counted as success.
+Verified native results:442 Tamagotchi unit tests and13 CLI tests pass, with3
+existing unit tests ignored; all248 Inputd tests pass. Both packages pass fatal
+Clippy and formatting. The native keybinding regression suite passes31 tests;
+the actual vendor-tree keybinding gate also reports zero findings. All six
+standing gates pass. The configurator
+form suite passes12 tests. All29 declared projection stages completed twice,
+with no second-run changes. Native task validation covers3779 records.
 
-Bootstrap parity is published to its own main at56794f046e5e0f738ace0b02ab1d50ef24ed8876:
-13 mirrored files,2 tables,7 keys match; a second apply changes nothing. Native
-projection tools are built; the29-step sync and native keybinding gate are the
-next serialized checks. Full image CI, release, live Codespace installation,
-physical input and R4 visual/performance acceptance are not certified.
-Upgrade and verify Inputd absolute entrypoints before applying new live policy;
-preserve adopted sessions, pet saves and unpublished work.
+Four actual defects were replanted in isolated worker source and compiled:
+camera follower overwrite, circular camera reset, missing idle-neutral gesture
+dwell, and linear-only HUD navigation. Each failed its intended native behavior
+assertion and passed after exact source restoration. The receipts identify
+source-specific test inventories and exclude cached/interrupted runs.
+
+The four continued source heads and prerequisites are preserved in
+`mios-continuation-checkpoints.bundle`, with SHA256 and machine-readable refs.
+Raw tests, controls, generation and provenance are in
+`mios-native-verification.tar.gz`. No worker remote is needed:
+
+```sh
+git fetch origin main
+# Open a clean, collision-checked checkout of that main; preserve existing work.
+sha256sum -c .devloop/handoff/mios-continuation-checkpoints.bundle.sha256
+git bundle verify .devloop/handoff/mios-continuation-checkpoints.bundle
+git bundle list-heads .devloop/handoff/mios-continuation-checkpoints.bundle
+# Import only after checking the destination namespace is unused.
+git fetch .devloop/handoff/mios-continuation-checkpoints.bundle 'refs/heads/*:refs/remotes/mios-continuation-pickup/*'
+```
+
+Bootstrap parity is on its repository's main at
+`56794f046e5e0f738ace0b02ab1d50ef24ed8876`:13 mirrored files,2 tables,7 scalar
+keys agree; repeated apply changes nothing. Preserve its nested LAN firewall
+table. Portable receipt: `.devloop/handoff/mios-bootstrap-port-parity.md` in
+`MiOS-Developer/mios-bootstrap`.
+
+The source-equivalent MiOS-DEV builder uses the exact SSOT upstream child
+`quay.io/podman/machine-os@sha256:d0928c16a5c9ec640f42b695be404031352fc2582ef39abc9ef133d85e596692`,
+flattened to avoid VFS layer exhaustion, with official Rust1.99.1 and musl.
+Builds run as UID1000 with four CPUs, the unchanged12288MiB admission floor
+and a shared heavy lock. This is development userspace; full image CI, release,
+live Codespace installation, physical input and R4 visual/performance acceptance
+remain open. Preserve adopted sessions, pet saves and unpublished source.
+
+After main publication, the live target remains blocked: `gh codespace view`
+for `fluffy-trout-p7rwx5jj9r55f67qr` returns `Forbidden` at `api.github.com`.
+The cloud policy is enforced, excludes that API host, and the exposed Cloud
+Environment tools cannot edit it. Repository GitHub authentication/pushes work.
+No unpublished Codespace state, live rebuild or deployed MiOS is certified.
+Resume live verification only through authorized Codespaces access; verify
+Inputd absolute entrypoints before activating new policy on an existing host.
 
 ---
+
+<!-- AI-hint: Historical checkpoints below retain earlier failures and worker-branch instructions; the current main summary above supersedes them. -->
 
 <!-- AI-hint: Reviewable continuation of recovered camera, HUD and deliberate-gesture source lanes from merged main. -->
 <!-- AI-related: handoff.md, .devloop/handoff/mios-recovery-manifest.json, tasks.jsonl -->

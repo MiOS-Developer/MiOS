@@ -53,7 +53,7 @@
     },
     "gesture_fixture_correction": {
       "commit": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
-      "state": "source_integrated_131_router_tests_pass"
+      "state": "source_integrated_248_full_controller_tests_pass"
     },
     "inputd_test_portability": {
       "commit": "572f072fd97fd72a36d05cc67804df029355e8d7",
@@ -62,7 +62,6 @@
     }
   },
   "verification": {
-    "source": "375aefba6c2de84b3d380864159a9e27045fb3ec",
     "tamagotchi_unit": {
       "passed": 442,
       "failed": 0,
@@ -75,14 +74,14 @@
     "inputd_first_run": {
       "passed": 232,
       "failed": 15,
-      "follow_up": "Three stale binding fixtures corrected in bundled1861aca81; environment-specific Lua/tmux/app-detection cases require diagnosis. No all-inputd green claim."
+      "follow_up": "Resolved by bundled binding-fixture correction, Lua/tmux provisioning with safe umask022, and the test-only portable procfs barrier. Final source-matched full Inputd run passes all248 tests."
     },
     "configurator_form_tests": {
       "passed": 12,
       "failed": 0
     },
     "native_builder": "Exact SSOT upstream container userspace, flattened locally; Rust1.99.1 stable musl target, preinstalled host GCC exposed for host linking; no published OS image or live acceptance.",
-    "tamagotchi_source_commit": "238f9a9b4",
+    "tamagotchi_source_commit": "238f9a9b4a48a65ca9239b2f9ea916fc2dd694ad",
     "inputd_source_commit": "8563b7e4bd48e955b39b1a7ac5beb14fa9ac4472",
     "inputd_final": {
       "passed": 248,
@@ -102,9 +101,68 @@
       "inventory": 430,
       "cached_initial_445_results": "excluded_as_source_specific_evidence"
     },
-    "projection_sync": "pending source-matched 29-step execution",
-    "native_keybinding_gate": "running; no pass claimed",
-    "live_installation": "not_verified: Codespaces API proxy CONNECT403"
+    "projection_sync": {
+      "declared_stages": 29,
+      "final_runs_passed": 2,
+      "second_run_changed_files": false,
+      "receipt_member": "mios-projection-idempotence.json"
+    },
+    "native_keybinding_gate": {
+      "state": "PASS",
+      "findings": 0,
+      "declared_bindings": 19,
+      "compositor_table_bindings": 24,
+      "literal_hl_bind_lines": 64,
+      "dynamic_unaudited": 2
+    },
+    "live_installation": "not_verified: post-publication Codespaces API request Forbidden; enforced cloud policy excludes api.github.com and no exposed policy-edit tool exists. Repository pushes work.",
+    "baseline_source": "375aefba6c2de84b3d380864159a9e27045fb3ec",
+    "verified_source_checkpoint": "8d2e899ee693b5deb2293e65a7223a443bfd3ff4",
+    "native_keybinding_tests": {
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_library_tests": 176,
+      "note": "Filtered integration binaries ran zero selected tests and are not counted."
+    },
+    "standing_gates": {
+      "state": "PASS",
+      "checks": [
+        "phase-registry",
+        "ratchet-direction",
+        "credential-literals",
+        "version-literals-ssot",
+        "signature-policy",
+        "keybind-collisions"
+      ],
+      "ratchet_base": "98d0629925737e90f5c90b6fd5f7448e296a8901",
+      "receipt_member": "mios-final-standing-gates.log"
+    },
+    "task_validation": {
+      "state": "PASS",
+      "records": 3779,
+      "overrides": 0,
+      "portable_evidence_tasks": [
+        3773,
+        3774,
+        3778,
+        3779
+      ]
+    },
+    "gesture_compiled_negative_control": {
+      "source": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
+      "inventory": 247,
+      "plants_caught": 1,
+      "restored_positives_passed": 1,
+      "receipt_member": "mios-gesture-dwell-control.md"
+    },
+    "hud_compiled_negative_control": {
+      "source": "69a80a2462393862e16e9092a5c2be0617db3dc7",
+      "inventory": 433,
+      "plants_caught": 1,
+      "restored_positives_passed": 1,
+      "receipt_member": "mios-hud-spatial-controls-receipt.md"
+    }
   },
   "resume": "Read handoff.md and .devloop/handoff/mios-handoff-continuation.md. Fetch main; verify bundle SHA256/prerequisites before importing into a fresh namespace. Historical worker ref names are contained in this main artifact; no remote worker branch is needed.",
   "bootstrap": {
@@ -118,7 +176,18 @@
   },
   "verification_archive": {
     "path": ".devloop/handoff/mios-native-verification.tar.gz",
-    "sha256": "304277889eb7d75c0c8e8aa2e2e5f8e462a85a6093c0cb686d014b35636b5b4c",
-    "bytes": 6670
+    "sha256": "1a5e8d246ad3f5fa656d990f085ddb9f2b5a2537c4f3bd6d48c5f84c73c1190d",
+    "bytes": 15656,
+    "members": 31
+  },
+  "cold_recovery": {
+    "state": "PASS",
+    "published_source_main": "8d2e899ee693b5deb2293e65a7223a443bfd3ff4",
+    "only_remote": "origin/main",
+    "shared_objects": false,
+    "alternates": false,
+    "source_bundle_heads_imported": 4,
+    "receipt_member": "mios-cold-recovery-audit.log",
+    "scope": "Source and prior evidence checks from an isolated direct GitHub clone. Final publication archive is checked separately after push."
   }
 }

@@ -1,14 +1,19 @@
-<!-- AI-hint: Current global pickup is main; retain prior-stage evidence below. -->
+<!-- AI-hint: Current global pickup is main; historical stage receipts follow. -->
 ## Current main pickup
 
-Resume from main and `mios-continuation-milestones.json`, not the historical
-worker-branch commands below. Native combined results now include442 game
-unit/13 CLI passes (3 ignored),248 controller passes, fatal Clippy and format.
-See `mios-native-verification.tar.gz` for exact source/proof and exclusions.
-Prior unrun/source-only notes below describe the worker stage, not this current
-compiled milestone. Live/physical acceptance remains unverified.
+Resume from main and `mios-continuation-milestones.json`. Combined native results
+include442 game unit and13 CLI passes (3 ignored),248 controller passes, fatal
+Clippy and format. The keybinding test suite passes31 tests. All29 projection
+stages completed twice without second-run changes.
+
+The actual painted-grid navigation test passed, failed after a compiled linear-navigation plant (index2 versus5), then passed after exact restoration. See mios-hud-spatial-controls-receipt.md inside the archive.
+
+Exact source/provenance and raw records are in `mios-native-verification.tar.gz`.
+Live Codespace, physical input, full image and R4 acceptance remain open.
 
 ---
+
+<!-- AI-hint: Historical source-stage receipt; current summary above supersedes earlier unrun or branch-pickup notes. -->
 
 <!-- AI-hint: Finite HUD source recovery, tall-tile budget repair and pending native verification. -->
 <!-- AI-related: tools/native/mios-tamagotchi/src/hud.rs, handoff.md, tasks.jsonl task_3778/task_3779 -->
