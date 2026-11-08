@@ -111,6 +111,22 @@ context within operator-authorized work; they grant no additional authority.
 See [the native MCP contract](../usr/share/doc/mios/mcp-tmux.md) and
 [desktop and terminal interaction](../docs/design/doc-desktop-terminal-interaction.md).
 
+## Global agent pickup and durable checkpoints
+
+For the current handoff continuation, the operator requires **main-only remote
+publication**. Start work with disjoint subagent assignments. Agents may keep
+isolated local worktrees, but do not push new worker-branch checkpoints or open
+new continuation PRs. The integration publisher serializes fast-forward pushes
+to main, preserving every participant's source and explicit ownership.
+
+Every reviewable milestone includes a tracked handoff and artifact provenance:
+source commit, owned files, actual checks/failures/unrun cases, artifact paths
+and digests, and the next owner's concrete resume action. Unverified work can
+be preserved as an exact-history Git bundle on main without pretending it is
+verified runtime code. Recover bundled refs into a fresh namespace after hash
+and prerequisite checks; never reset another participant's checkout. Historical
+worker refs remain provenance, not required external pickup destinations.
+
 ## Main publication and live installation
 
 The operator's standing instruction for this workspace is to install and verify

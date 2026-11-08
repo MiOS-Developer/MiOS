@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "publication_target": "refs/heads/main",
+  "base_main": "375aefba6c2de84b3d380864159a9e27045fb3ec",
+  "bundle": {
+    "path": ".devloop/handoff/mios-continuation-checkpoints.bundle",
+    "bytes": 63028,
+    "sha256": "b6736a2685d46254848a1fd1c3d3980bf20e9768f00d08246788fae05bb5e724",
+    "exclude_ancestor": "69fa06efe04f6422bbaec8b4ea0b953c24df2dd5",
+    "heads": [
+      {
+        "commit": "8e0cafe328a6cdf883643cc60edc29cda89c51a1",
+        "ref": "refs/heads/mios-camera-continuation"
+      },
+      {
+        "commit": "e1a3e77a820abfa8caaa665553e26117dbf58383",
+        "ref": "refs/heads/mios-hud-continuation"
+      },
+      {
+        "commit": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
+        "ref": "refs/heads/mios-gesture-continuation"
+      }
+    ]
+  },
+  "milestones": {
+    "camera": {
+      "commit": "8e0cafe328a6cdf883643cc60edc29cda89c51a1",
+      "receipt": ".devloop/handoff/mios-camera-continuation.md",
+      "state": "source_integrated_in_main_375aefba6"
+    },
+    "hud_geometry": {
+      "commit": "73515f072faeeeafe83748fd4bf94a5c83cbe500",
+      "receipt": ".devloop/handoff/mios-hud-continuation.md",
+      "state": "source_integrated_in_main_375aefba6"
+    },
+    "hud_consumer": {
+      "commit": "e1a3e77a820abfa8caaa665553e26117dbf58383",
+      "state": "exact_source_in_bundle_pending_native_verification"
+    },
+    "gesture": {
+      "commit": "555eff9ba99df6d2ef604d2a29dd8aa9b1c2552f",
+      "receipt": ".devloop/handoff/mios-gesture-continuation.md",
+      "state": "source_integrated_in_main_375aefba6"
+    },
+    "gesture_fixture_correction": {
+      "commit": "1861aca81411e89d7d6819ff9bd747ac30adabf1",
+      "state": "exact_source_in_bundle_pending_native_rerun"
+    }
+  },
+  "verification": {
+    "source": "375aefba6c2de84b3d380864159a9e27045fb3ec",
+    "tamagotchi_unit": {
+      "passed": 436,
+      "failed": 0,
+      "ignored": 3
+    },
+    "tamagotchi_cli": {
+      "passed": 13,
+      "failed": 0
+    },
+    "inputd_first_run": {
+      "passed": 232,
+      "failed": 15,
+      "follow_up": "Three stale binding fixtures corrected in bundled1861aca81; environment-specific Lua/tmux/app-detection cases require diagnosis. No all-inputd green claim."
+    },
+    "configurator_form_tests": {
+      "passed": 12,
+      "failed": 0
+    },
+    "native_builder": "Exact SSOT upstream container userspace, flattened locally; Rust1.99.1 stable musl target, preinstalled host GCC exposed for host linking; no published OS image or live acceptance."
+  },
+  "resume": "Read handoff.md and .devloop/handoff/mios-handoff-continuation.md. Fetch main; verify bundle SHA256/prerequisites before importing into a fresh namespace. Historical worker ref names are contained in this main artifact; no remote worker branch is needed."
+}

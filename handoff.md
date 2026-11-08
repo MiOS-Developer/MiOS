@@ -1,3 +1,33 @@
+<!-- AI-hint: Canonical main-only pickup for all continued agent milestones. -->
+# Global agent pickup: main
+
+PR #66 merged as `375aefba6c2de84b3d380864159a9e27045fb3ec`, after PR #65.
+The operator requires all further remote milestone publication on **main**.
+The integration owner serializes pushes; workers use isolated local worktrees
+and submit commits for main publication. No new worker branch push is needed
+for pickup. Older branch-oriented instructions below are historical receipts.
+
+Read `.devloop/handoff/mios-continuation-milestones.json` and
+`.devloop/handoff/mios-handoff-continuation.md`. The new exact-history bundle
+contains each continued camera/HUD/gesture head, including locally completed
+menu-consumer and test-fixture work not yet verified for runtime integration:
+
+```sh
+git fetch origin main
+sha256sum -c .devloop/handoff/mios-continuation-checkpoints.bundle.sha256
+git bundle verify .devloop/handoff/mios-continuation-checkpoints.bundle
+git bundle list-heads .devloop/handoff/mios-continuation-checkpoints.bundle
+```
+
+Preserve local work. After checking for existing refs, import into a fresh
+namespace such as `refs/remotes/mios-continuation-pickup/*`. Do not confuse
+source preservation with a compiled, deployed or physically accepted result.
+Native Tamagotchi tests on main375aefba6 passed436 unit/13 CLI, with3 unit
+checks ignored. Inputd's first compiled run passed232 and failed15; three stale
+binding fixtures have a bundled correction and environment failures remain.
+
+---
+
 <!-- AI-hint: Active post-merge development continuation; retained handoffs below are historical receipts. -->
 # Continue development after PR #65
 

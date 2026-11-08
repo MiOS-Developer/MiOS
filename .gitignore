@@ -1188,3 +1188,8 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-camera-continuation.md
 !/.devloop/handoff/mios-hud-continuation.md
 !/.devloop/handoff/mios-gesture-continuation.md
+
+# Global agent pickup: exact continued source checkpoints on main.
+!/.devloop/handoff/mios-continuation-checkpoints.bundle
+!/.devloop/handoff/mios-continuation-checkpoints.bundle.sha256
+!/.devloop/handoff/mios-continuation-milestones.json

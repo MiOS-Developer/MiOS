@@ -61,3 +61,29 @@ blocker; preserve adopted sessions, pet saves and unpublished source.
    has compiled verification. Update tasks from real evidence, preserving
    historical ownership and incomplete live/hardware acceptance.
 4. Push source checkpoints and receipts before handing off; verify remote heads.
+
+## Main-only publication and compiled milestone
+
+PR #66 merged as375aefba6. All source and per-agent receipts in that PR are on
+main. The operator reiterated that future agent milestones must be pushed
+only to main; worker branches are now local development/provenance only. This
+checkpoint includes the exact continued heads in
+`mios-continuation-checkpoints.bundle` with a SHA256 file and machine-readable
+milestone manifest. Global agents can recover all three lanes from main alone.
+
+The source-equivalent builder is running as owned container podman-MiOS-DEV
+from the exact SSOT upstream child. It was flattened to avoid VFS extraction
+exhaustion; its userspace is unchanged. DNF provisioning is blocked by Fedora
+repository CONNECT403, so official Rust1.99.1 was provisioned from allowed Rust
+distribution hosts and existing host GCC files are exposed read-only for host
+linking. Builds run inside the container as UID1000, locked musl target, two
+Cargo jobs, serialized heavy lock. SSOT MemAvailable floor12288MiB was checked
+without lowering it; actual inventory16689MiB exceeded it.
+
+On main375aefba6: Tamagotchi compiled436 unit tests pass,3 ignored, plus13 CLI
+tests pass. Inputd compiled232 tests pass and15 fail: three stale declared-
+binding fixtures are corrected in bundled1861aca81 pending rerun; missing
+Lua/tmux and three app-detection fixture failures are under diagnosis. Do not
+report all-native or full CI green. The combined real HTML/JS form suite12
+checks passes. HUD consumer e1a3e77a8 is preserved in the bundle pending native
+integration/checks. No live Codespace or physical-controller result is claimed.
