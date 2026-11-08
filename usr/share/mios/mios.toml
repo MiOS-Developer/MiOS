@@ -18525,6 +18525,7 @@ unit = [
     "tests/test-xdp-fastpath.py",
     "tests/test-microvm-squashfs-nbd.py",
     "tests/test-firewall-nftables.py",
+    "tests/test-searxng-endpoint-ssot.py",
     "tests/test-flatpak-overrides.py",
     "tests/test-doctor.py",
     "tests/test-tpm2-seal.py",
