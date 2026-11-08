@@ -1178,3 +1178,7 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-codespace-startup.md
 !/.devloop/handoff/mios-recovery-ci.md
 !/.devloop/handoff/mios-cloud-recovery.md
+
+# Post-publication evidence and bootstrap mirror recovery.
+!/.devloop/handoff/mios-completion-status.json
+!/.devloop/handoff/mios-bootstrap-ports-sync.d4.patch.gz

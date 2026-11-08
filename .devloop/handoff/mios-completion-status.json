@@ -1,0 +1,87 @@
+{
+  "snapshot_main": "4bf38f52b7d5103c5b6ba6fada6a440e55475062",
+  "source_history_bundle": ".devloop/handoff/mios-source-checkpoints.bundle",
+  "application_changes_in_this_status_update": false,
+  "build": {
+    "source": "4bf38f52b7d5103c5b6ba6fada6a440e55475062",
+    "context": "MiOS-DEV e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "target": "x86_64-unknown-linux-musl",
+    "unit_passed": 377,
+    "cli_passed": 13,
+    "ignored": 1,
+    "fmt": 0,
+    "clippy": 0,
+    "release": 0,
+    "static_artifact_check": 0,
+    "sha256": "fd391b68a67e0e57ce9fc62957f6b92c31b02cc8ab890d9ab872d4d7d25a15ab"
+  },
+  "live": {
+    "node": "mios",
+    "mios_version": "0.3.0",
+    "arch": "x86_64",
+    "binary": "/home/mios/.local/bin/mios-tamagotchi-sample",
+    "source": "4bf38f52b7d5103c5b6ba6fada6a440e55475062",
+    "seat": "mios-mons-main-review",
+    "launcher_pid": 810686,
+    "game_pid": 869403,
+    "pane": "%1",
+    "window": "@1",
+    "owner": "mios-tamagotchi-live-coordinator",
+    "save": null,
+    "seed": 513,
+    "paused": true,
+    "parent_window": "0x55b22daae340",
+    "pinned_visible_verified": true,
+    "menu_frames_changed": true,
+    "resume": "Focus the labelled PiP; Esc returns from menus, P resumes.",
+    "localhost": "http://localhost:8310/",
+    "localhost_auth_status": 401,
+    "phone_attached_tested": false
+  },
+  "d4": {
+    "source": "58b3752d415806f7cd9d43a6d04090757434eb3e",
+    "verdict": "CONFIRMED by the source participant's recovered adversarial verifier",
+    "searxng_tests_passed": 69,
+    "nftables_tests_passed": 7,
+    "negative_controls_caught": 84,
+    "skips": 0,
+    "follow_up": {},
+    "mirror_patch": {
+      "path": ".devloop/handoff/mios-bootstrap-ports-sync.d4.patch.gz",
+      "uncompressed_sha256": "89032d72f9dc3ea637836b522e00c3e1b26879a0b57da90cac4f7d9355997fa3",
+      "sha256": "bcd4233b4a475ff5b6f56b04d86714cb5affabb3157683df73798e968525a6b6"
+    },
+    "mirror_validation": "13 mirrored files, 2 tables, 7 keys match in a scratch clone; not applied to another root repository",
+    "nonblocking_near_misses": [
+      "wrapped wildcard-bind manual claim is not caught",
+      "SearXNG LAN URL outside pinned passages is not caught",
+      "Setup rerun does not itself remove a prior SearXNG LAN rule; build-mios removes the rule and Heal removes the proxy"
+    ]
+  },
+  "renderer": {
+    "r3": "6b20513e1f657f5159c02384552d7b2294f585bc",
+    "r4_visual_fix_complete": false,
+    "r4_wip": "a5dc1205c, code verified by its owner byte-identical to the published compressed patch",
+    "performance_target_met": false,
+    "remaining": [
+      "R4 visual fixes",
+      "Pet/Face <=1.15x baseline",
+      "nofold and facenavy mutant gaps",
+      "renderer/ports merge conflicts",
+      "camera/HUD review and menu integration",
+      "gesture configurator fields and native nested controller return",
+      "full combined CI and live hardware acceptance"
+    ]
+  },
+  "cloud_delivery": {
+    "forwarded_by_local_source": true,
+    "route": "one-way cross-session message to running cloud session named Code session",
+    "intended_session_match_confirmed": false,
+    "read_receipt": false
+  },
+  "cleanup": {
+    "recovered_build_gib": 11.7,
+    "source_released_additional_gib": 61.7,
+    "additional_source_targets_deleted": false
+  }
+}

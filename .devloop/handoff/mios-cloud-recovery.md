@@ -85,3 +85,15 @@ Codespace files were recovered.
 4. In authorized MiOS-DEV, run projection sync and standing gates, review the
    complete PR, and perform the required live installation after main publication.
    Preserve adopted sessions, pet saves, models and other participants' worktrees.
+
+## Concurrent main handoff preserved
+
+After the source milestones were pushed, another session published main
+`c958dd4a07dbb56208b769d6f9e831017faf11fd`. It adds the source participant's
+completion-status JSON and compressed bootstrap mirror patch. This integration
+merges that commit, retaining both sets of handoff text and whitelist additions.
+Its reported live sample is built from 4bf38f52 and does not certify this PR's
+changed tree or the selected Codespace. The bootstrap patch's compressed and
+decompressed SHA-256 match its completion-status receipt. Application to the
+separate bootstrap repository remains pending; no live targets are inferred
+from that session's historical process IDs or paths.
