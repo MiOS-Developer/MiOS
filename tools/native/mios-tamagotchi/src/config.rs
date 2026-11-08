@@ -143,6 +143,11 @@ impl Config {
         self.presentation.validate()?;
         self.world.validate()?;
         self.camera.validate()?;
+        if u64::from(self.camera.motion_frame_ms) > self.animation_frame_ms {
+            return Err(
+                "tamagotchi.camera: motion_frame_ms must not exceed animation_frame_ms".into(),
+            );
+        }
         self.genetics.validate()?;
         self.habitat.validate()?;
         if !(1000..=600_000).contains(&self.dialog_timeout_ms)
@@ -244,6 +249,14 @@ pub struct CameraRules {
     pub orbit_fine_step_degrees: u16,
     pub max_lead_steps: u8,
     pub preview_orbit_pauses_turntable: bool,
+    pub follow_half_life_ms: u16,
+    pub motion_frame_ms: u16,
+    pub orbit_rate_deg_s: u16,
+    pub tilt_rate_deg_s: u16,
+    pub pan_rate_permille_s: u16,
+    pub zoom_rate_percent_s: u16,
+    pub reset_glide_ms: u16,
+    pub rest_epsilon_permille: u16,
 }
 
 impl CameraRules {
@@ -258,6 +271,14 @@ impl CameraRules {
         orbit_fine_step_degrees: 0,
         max_lead_steps: 0,
         preview_orbit_pauses_turntable: false,
+        follow_half_life_ms: 90,
+        motion_frame_ms: 33,
+        orbit_rate_deg_s: 180,
+        tilt_rate_deg_s: 90,
+        pan_rate_permille_s: 600,
+        zoom_rate_percent_s: 300,
+        reset_glide_ms: 350,
+        rest_epsilon_permille: 2,
     };
 
     pub fn validate(&self) -> Result<(), String> {
@@ -303,6 +324,42 @@ impl CameraRules {
         rule(
             (1..=10).contains(&self.max_lead_steps),
             "max_lead_steps must be 1..=10",
+        )?;
+        rule(
+            (20..=1000).contains(&self.follow_half_life_ms),
+            "follow_half_life_ms must be 20..=1000",
+        )?;
+        rule(
+            (16..=140).contains(&self.motion_frame_ms),
+            "motion_frame_ms must be 16..=140",
+        )?;
+        rule(
+            (10..=720).contains(&self.orbit_rate_deg_s),
+            "orbit_rate_deg_s must be 10..=720",
+        )?;
+        rule(
+            (5..=360).contains(&self.tilt_rate_deg_s),
+            "tilt_rate_deg_s must be 5..=360",
+        )?;
+        rule(
+            (50..=2000).contains(&self.pan_rate_permille_s),
+            "pan_rate_permille_s must be 50..=2000",
+        )?;
+        rule(
+            (25..=800).contains(&self.zoom_rate_percent_s),
+            "zoom_rate_percent_s must be 25..=800",
+        )?;
+        rule(
+            self.reset_glide_ms <= 2000,
+            "reset_glide_ms must be 0..=2000",
+        )?;
+        rule(
+            (1..=50).contains(&self.rest_epsilon_permille),
+            "rest_epsilon_permille must be 1..=50",
+        )?;
+        rule(
+            self.reset_glide_ms == 0 || self.follow_half_life_ms <= self.reset_glide_ms,
+            "follow_half_life_ms must not exceed reset_glide_ms unless reset_glide_ms is 0",
         )
     }
 }
@@ -456,6 +513,25 @@ mod camera_rules_validation_tests {
             ("tilt_step_degrees = 0", "tilt_step_degrees"),
             ("orbit_fine_step_degrees = 91", "orbit_fine_step_degrees"),
             ("max_lead_steps = 0", "max_lead_steps"),
+            ("follow_half_life_ms = 19", "follow_half_life_ms"),
+            ("follow_half_life_ms = 1001", "follow_half_life_ms"),
+            ("motion_frame_ms = 15", "motion_frame_ms"),
+            ("motion_frame_ms = 141", "motion_frame_ms"),
+            ("orbit_rate_deg_s = 9", "orbit_rate_deg_s"),
+            ("orbit_rate_deg_s = 721", "orbit_rate_deg_s"),
+            ("tilt_rate_deg_s = 4", "tilt_rate_deg_s"),
+            ("tilt_rate_deg_s = 361", "tilt_rate_deg_s"),
+            ("pan_rate_permille_s = 49", "pan_rate_permille_s"),
+            ("pan_rate_permille_s = 2001", "pan_rate_permille_s"),
+            ("zoom_rate_percent_s = 24", "zoom_rate_percent_s"),
+            ("zoom_rate_percent_s = 801", "zoom_rate_percent_s"),
+            ("reset_glide_ms = 2001", "reset_glide_ms"),
+            ("rest_epsilon_permille = 0", "rest_epsilon_permille"),
+            ("rest_epsilon_permille = 51", "rest_epsilon_permille"),
+            (
+                "follow_half_life_ms = 400\nreset_glide_ms = 350",
+                "follow_half_life_ms must not exceed reset_glide_ms",
+            ),
             ("unknown = 1", "unknown"),
         ] {
             let overlay = format!("[tamagotchi.camera]\n{setting}\n")
@@ -464,5 +540,28 @@ mod camera_rules_validation_tests {
             let error = Config::from_value(&overlay).unwrap_err();
             assert!(error.contains(rule), "{setting}: {error}");
         }
+    }
+
+    #[test]
+    fn reset_glide_zero_is_instant_cut_and_allows_any_valid_half_life() {
+        let overlay = "[tamagotchi.camera]\nfollow_half_life_ms = 500\nreset_glide_ms = 0\n"
+            .parse::<toml::Value>()
+            .unwrap();
+        let cfg = Config::from_value(&overlay).unwrap();
+        assert_eq!(cfg.camera.follow_half_life_ms, 500);
+        assert_eq!(cfg.camera.reset_glide_ms, 0);
+    }
+
+    #[test]
+    fn motion_frame_ms_cannot_exceed_animation_frame_ms() {
+        let overlay =
+            "[tamagotchi]\nanimation_frame_ms = 40\n[tamagotchi.camera]\nmotion_frame_ms = 50\n"
+                .parse::<toml::Value>()
+                .unwrap();
+        let error = Config::from_value(&overlay).unwrap_err();
+        assert!(
+            error.contains("motion_frame_ms must not exceed animation_frame_ms"),
+            "{error}"
+        );
     }
 }

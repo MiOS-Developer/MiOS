@@ -161,6 +161,13 @@ pub struct Ui {
     camera_tilt: i16,
     camera_tilt_from: i16,
     camera_tilt_target: i16,
+    camera_pan_current: Cell<(f64, f64)>,
+    camera_tilt_deg: f64,
+    camera_orbit_deg: f64,
+    camera_zoom_pct: f64,
+    camera_reset_in_flight: bool,
+    camera_reset_elapsed_ms: f64,
+    camera_stepped_realtime: bool,
     preview_angle: Cell<Option<u16>>,
     position: (u16, u16),
     destination: (u16, u16),
@@ -268,6 +275,13 @@ impl Ui {
             camera_tilt: 0,
             camera_tilt_from: 0,
             camera_tilt_target: 0,
+            camera_pan_current: Cell::new((0.0, 0.0)),
+            camera_tilt_deg: 0.0,
+            camera_orbit_deg: 0.0,
+            camera_zoom_pct: 100.0,
+            camera_reset_in_flight: false,
+            camera_reset_elapsed_ms: 0.0,
+            camera_stepped_realtime: false,
             preview_angle: Cell::new(None),
             position: (500, 700),
             destination: (500, 700),
@@ -317,6 +331,13 @@ impl Ui {
         ui.orbit_target = ui.orbit_default;
         ui.face_orbit_reference = ui.orbit_default;
         ui.orbit_step = config.world.orbit_step_degrees;
+        ui.camera_pan_current = Cell::new((0.0, 0.0));
+        ui.camera_tilt_deg = 0.0;
+        ui.camera_orbit_deg = f64::from(ui.orbit_default);
+        ui.camera_zoom_pct = f64::from(ui.zoom_percent);
+        ui.camera_reset_in_flight = false;
+        ui.camera_reset_elapsed_ms = 0.0;
+        ui.camera_stepped_realtime = false;
         ui.world_enabled = config.world.enabled;
         ui.world_elevation = config.world.elevation_degrees;
         ui.wander_speed = config.wander_speed;
