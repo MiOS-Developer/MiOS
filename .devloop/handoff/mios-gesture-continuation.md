@@ -1,4 +1,4 @@
-<!-- AI-hint: Uncompiled gesture continuation source, exact recovery provenance, ownership and verification requirements. -->
+<!-- AI-hint: Gesture continuation source, exact recovery provenance, ownership and verification requirements. -->
 # MiOS deliberate focus gesture continuation
 
 Base: main `69fa06efe`. Lane: `mios-gesture-continuation`.
@@ -77,3 +77,27 @@ hand-edit globals or metadata to simulate a projection pass.
 Keep this continuation draft until native compilation and replay validate
 the combined source. Upgrade verified Inputd absolute entrypoints before
 deploying new controller policy, preserving the documented release ordering.
+
+## Native replay expectation corrections
+
+The integration owner subsequently compiled the combined main source
+`375aefba6` in a prepared source-equivalent MiOS-DEV context. That first Inputd
+run reported 247 tests: 232 passed and 15 failed. Three failures traced to
+incorrect gesture/camera fixture expectations rather than unexpected focus
+leakage; the other failures are being investigated by the integration owner.
+
+This follow-up changes only native tests:
+
+- The camera-repeat contract now completes a real base-profile gesture, asserts
+  focus happens only after return, then verifies prolonged and partial travel
+  do not repeat it. Verified camera-app repeat counts remain unchanged.
+- The non-focus test explicitly declares its window-move action. Vendor
+  `nav.desktop.RS_RIGHT` is a focus action and cannot stand in for that fixture.
+- Button/menu isolation now asserts the declared South tap/hold behavior
+  (Enter on short release), scalar D-pad press/release behavior, and exact
+  Guide menu output. None may produce an extra focus action.
+
+`git diff --check` passes. Scoped native reruns are pending the integration
+owner's serialized build slot; no new runtime or global-green claim is made.
+The operator now requires publication only through main. This worker commits
+the correction locally for integration and does not push its branch.

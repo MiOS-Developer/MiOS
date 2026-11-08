@@ -5888,10 +5888,21 @@ mod camera_contract {
     fn rs_repeats_only_in_camera_apps() {
         let mut r = mon(None);
         assert_eq!(r.nav_profile().as_deref(), Some("terminal_tmux"));
-        let mut o = stick(&mut r, true, 0.8, 0.0);
+        // The base profile now requires a deliberate gesture. It still has no
+        // right-stick repeat, unlike the verified camera app below.
+        let mut o = wait(&mut r, 100);
+        o.extend(stick(&mut r, true, 0.35, 0.0));
+        o.extend(wait(&mut r, 40));
+        o.extend(stick(&mut r, true, 0.95, 0.0));
+        o.extend(wait(&mut r, 40));
+        assert!(o.actions.is_empty(), "focus waits for the neutral return");
+        o.extend(stick(&mut r, true, 0.0, 0.0));
+        assert_eq!(o.actions, ["tmux:focus right"]);
         o.extend(wait(&mut r, 2000));
         o.extend(stick(&mut r, true, 0.75, 0.0));
-        assert_eq!(o.actions, ["tmux:focus right"], "one flick, never a repeat");
+        o.extend(wait(&mut r, 2000));
+        o.extend(stick(&mut r, true, 0.0, 0.0));
+        assert_eq!(o.actions, ["tmux:focus right"], "one gesture, never a repeat or partial-travel focus");
         let mut r = mon(Some("mon"));
         let mut o = stick(&mut r, true, 0.8, 0.0);
         o.extend(wait(&mut r, 2000));
@@ -6472,9 +6483,20 @@ mod focus_gesture_contract {
         let mut r = gesture_router("terminal", true);
         let press = r.event(Event::new(EV_KEY, SOUTH, 1), 0);
         let release = r.event(Event::new(EV_KEY, SOUTH, 0), 0);
-        assert_eq!(press.actions.len(), 1);
-        assert!(release.actions.is_empty(), "a release never acts");
+        // South is a declared [tap, hold] binding: a short release delivers
+        // Enter. It must not be confused with the stick's return-to-neutral.
+        assert!(press.actions.is_empty());
+        assert_eq!(release.actions, ["key:ENTER"]);
+        let press = r.event(Event::new(EV_KEY, BTN_DPAD_UP, 1), 0);
+        let release = r.event(Event::new(EV_KEY, BTN_DPAD_UP, 0), 0);
+        assert_eq!(press.actions, ["key:UP"]);
+        assert!(release.actions.is_empty(), "a scalar binding release never acts");
         assert!(wait(&mut r, 600).actions.is_empty());
+        let guide = button_code(&r.global.controller.guide_button).unwrap();
+        let mut menu = r.event(Event::new(EV_KEY, guide, 1), 0);
+        menu.extend(r.event(Event::new(EV_KEY, guide, 0), 0));
+        menu.extend(wait(&mut r, 600));
+        assert_eq!(menu.actions, ["tmux:menu"], "menu input cannot complete a focus gesture");
     }
 
     #[test]
@@ -6504,8 +6526,13 @@ mod focus_gesture_contract {
         let mut o = abs(&mut r, 3, raw(0.9));
         o.extend(wait(&mut r, 20));
         assert_eq!(actions(&o), ["key:ALT+9"], "camera RS fires at once");
-        // The window-move binding stays a legacy flick (it is not a focus action).
-        let mut r = gesture_router("desktop-2d", false);
+        // Explicitly bind window movement: the shipped desktop nav profile
+        // binds movefocus, which must use the gesture instead.
+        let (c, l) = crate::config::tests::fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["desktop"]["RS_RIGHT"] =
+                "hypr:movewindow right".into();
+        });
+        let mut r = Router::with_context(c, l, axes(), "desktop-2d");
         let mut o = abs(&mut r, 3, raw(0.8));
         o.extend(wait(&mut r, 200));
         assert_eq!(actions(&o), ["hypr:movewindow right"]);
