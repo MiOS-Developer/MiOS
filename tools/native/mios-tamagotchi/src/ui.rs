@@ -191,6 +191,7 @@ pub struct Ui {
     dialog_area: Cell<Rect>,
     care_targets: RefCell<Vec<(Rect, usize)>>,
     menu_targets: RefCell<Vec<(Rect, usize)>>,
+    choice_geometry: RefCell<Option<(Menu, crate::hud::MenuGeometry)>>,
     control_targets: RefCell<Vec<(Rect, Action)>>,
 }
 impl Ui {
@@ -305,6 +306,7 @@ impl Ui {
             dialog_area: Cell::new(Rect::default()),
             care_targets: RefCell::new(Vec::new()),
             menu_targets: RefCell::new(Vec::new()),
+            choice_geometry: RefCell::new(None),
             control_targets: RefCell::new(Vec::new()),
         }
     }
@@ -830,7 +832,7 @@ impl Ui {
     }
 
     fn controller_navigation(&self, pad: &ControllerPrompts) -> String {
-        if self.menu_navigation_scope() {
+        if self.menu_navigation_scope() && self.menu.is_some_and(choice_menu) {
             if let Some(menu) = &self.controller_menu_navigation {
                 return format!("{} + {menu}", pad.navigate);
             }
@@ -844,7 +846,7 @@ impl Ui {
         }
         let hint = if self.camera_scope() {
             self.controller_camera.as_deref()
-        } else if self.menu_navigation_scope() {
+        } else if self.menu_navigation_scope() && self.menu.is_some_and(choice_menu) {
             self.controller_menu_navigation.as_deref()
         } else {
             None
@@ -1360,6 +1362,7 @@ impl Ui {
         }
     }
     fn open(&mut self, menu: Menu) {
+        self.choice_geometry.borrow_mut().take();
         if let Some(parent) = self.menu {
             if parent != menu && self.menu_history.len() < 16 {
                 self.menu_history.push(parent);
@@ -1375,6 +1378,7 @@ impl Ui {
         self.menu_number_count.set(0);
     }
     fn back(&mut self) {
+        self.choice_geometry.borrow_mut().take();
         self.menu = self.menu_history.pop();
         self.menu_selected = 0;
         self.menu_scroll = 0;
@@ -1415,10 +1419,15 @@ impl Ui {
     }
 
     fn menu_panel(&self, title: &str, colors: &Colors, ascii: bool) -> Block<'static> {
+        panel("", colors, ascii)
+            .title(Line::from(self.menu_caption(title, self.viewport.get().0)))
+    }
+
+    fn menu_caption(&self, title: &str, width: u16) -> String {
         let menu = self.menu.unwrap_or(Menu::Home);
-        let width = usize::from(self.viewport.get().0);
+        let width = usize::from(width);
         let mode = self.detail_tag();
-        let caption = if width < 30 {
+        if width < 30 {
             format!("{mode} {}", menu_title(menu))
         } else if menu == Menu::Home {
             format!("{} [{mode}]", menu_title(menu))
@@ -1448,8 +1457,7 @@ impl Ui {
             } else {
                 format!("{} [{mode}]", menu_title(menu))
             }
-        };
-        panel("", colors, ascii).title(Line::from(caption))
+        }
     }
 
     fn menu_description(&self, menu: Menu) -> Option<&'static str> {
@@ -2080,7 +2088,7 @@ impl Ui {
     }
 
     pub fn handle(&mut self, key: KeyEvent, rules: &Rules) -> Effect {
-        // Inputd's vertical stick aliases navigate ordinary menus. Preview
+        // Inputd's cardinal stick aliases follow painted choice menus. Preview
         // cameras keep their pan controls; text entry, confirmation and native
         // dialogs retain their own input ownership. A release/repeat never acts.
         if key.kind == KeyEventKind::Press
@@ -2093,6 +2101,10 @@ impl Ui {
             let direction = match key.code {
                 crossterm::event::KeyCode::Char('8') => Some(Direction::Up),
                 crossterm::event::KeyCode::Char('2') => Some(Direction::Down),
+                crossterm::event::KeyCode::Char('4')
+                    if self.menu.is_some_and(choice_menu) => Some(Direction::Left),
+                crossterm::event::KeyCode::Char('6')
+                    if self.menu.is_some_and(choice_menu) => Some(Direction::Right),
                 _ => None,
             };
             if let Some(direction) = direction {
@@ -2439,6 +2451,23 @@ impl Ui {
         }
         Effect::Continue
     }
+    fn navigate_choice_menu(&mut self, menu: Menu, direction: Direction) {
+        let count = self.menu_len(menu);
+        let geometry = self.choice_geometry.borrow();
+        if let Some((owner, geometry)) = geometry.as_ref().filter(|(owner, geometry)| {
+            *owner == menu && geometry.navigation.len() == count
+        }) {
+            debug_assert_eq!(*owner, menu);
+            self.menu_selected =
+                spatial_menu_neighbor(&geometry.navigation, self.menu_selected, direction);
+        } else {
+            // Before the first current-menu paint, only the known sequential
+            // column is safe. Never use the previous menu's layout.
+            let column: Vec<_> = (0..count).map(|index| (index, 0, index as i32)).collect();
+            self.menu_selected = spatial_menu_neighbor(&column, self.menu_selected, direction);
+        }
+    }
+
     fn menu_input(&mut self, action: Action, rules: &Rules) -> Effect {
         let Some(menu) = self.menu else {
             return Effect::Continue;
@@ -2571,6 +2600,9 @@ impl Ui {
         let count = self.menu_len(menu);
         match action {
             Action::Cancel => self.back(),
+            Action::Direction(direction) if choice_menu(menu) => {
+                self.navigate_choice_menu(menu, direction)
+            }
             Action::Previous | Action::Direction(Direction::Up | Direction::Left) => {
                 self.menu_selected = (self.menu_selected + count - 1) % count
             }
@@ -2808,6 +2840,7 @@ impl Ui {
         self.seed_cursor_targets.borrow_mut().clear();
         self.care_targets.borrow_mut().clear();
         self.menu_targets.borrow_mut().clear();
+        self.choice_geometry.borrow_mut().take();
         self.control_targets.borrow_mut().clear();
         self.menu_number_count.set(0);
         self.menu_footer.set(Rect::default());
@@ -2862,7 +2895,7 @@ impl Ui {
             );
             return;
         }
-        if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
+        if let Some(menu) = self.menu.filter(|menu| !self.native_modal && !choice_menu(*menu)) {
             self.draw_menu(screen, menu, config, colors, renderer);
             self.draw_menu_navigation(screen, colors);
             self.draw_menu_position(screen, colors);
@@ -2884,6 +2917,7 @@ impl Ui {
             if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
                 self.draw_menu(screen, menu, config, colors, renderer);
             }
+            self.draw_menu_position(screen, colors);
             self.draw_reset(screen, colors, ascii);
             self.draw_menu_navigation(screen, colors);
             self.suspend_native_targets();
@@ -3133,6 +3167,7 @@ impl Ui {
         if let Some(menu) = self.menu.filter(|_| !self.native_modal) {
             self.draw_menu(screen, menu, config, colors, renderer);
         }
+        self.draw_menu_position(screen, colors);
         self.draw_reset(screen, colors, ascii);
         self.draw_menu_navigation(screen, colors);
         self.suspend_native_targets();
@@ -4752,6 +4787,139 @@ impl Ui {
         ));
     }
 
+    fn draw_choice_menu(
+        &self,
+        screen: &mut Frame,
+        menu: Menu,
+        entries: &[&str],
+        config: &Config,
+        colors: &Colors,
+        ascii: bool,
+    ) {
+        let bounds = screen.area();
+        let labels: Vec<_> = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let entry = *entry;
+                let short = if bounds.width < 32 {
+                    if menu == Menu::Care {
+                        ["Feed", "Clean", "Rest", "Med", "Back"][index]
+                    } else {
+                        compact_menu_entry(menu, index).unwrap_or(entry)
+                    }
+                } else {
+                    entry
+                };
+                let binding = menu_binding(menu, index).map_or(String::new(), |key| {
+                    if bounds.width < 32 {
+                        format!("{key} ")
+                    } else {
+                        format!("[{key}] ")
+                    }
+                });
+                format!("{binding}{short}")
+            })
+            .collect();
+        // Keep room for the existing static navigation footer when it fits.
+        let minimum_width = bounds.width.saturating_sub(2).min(17);
+        let widths: Vec<_> = labels
+            .iter()
+            .map(|label| {
+                (Line::from(label.as_str()).width().min(usize::from(u16::MAX)) as u16)
+                    .saturating_add(4) // two number cells and two focus edges
+                    .max(minimum_width)
+            })
+            .collect();
+        let description = self.menu_description(menu);
+        let description_rows = u16::from(bounds.height >= 10 && description.is_some());
+        let geometry = crate::hud::menu_geometry(
+            bounds,
+            &widths,
+            self.menu_selected,
+            2 + description_rows,
+            1,
+            1,
+            entries.len().min(usize::from(u16::MAX)) as u16,
+            config.hud_golden_ratio,
+        );
+        let numbered = crate::hud::menu_window(
+            self.menu_selected.saturating_sub(geometry.first),
+            geometry.visible,
+            9,
+        );
+        let number_start = geometry.first + numbered.start;
+        self.menu_number_start.set(number_start);
+        self.menu_number_count.set(numbered.count);
+        self.menu_visible_rows.set(geometry.visible);
+        crate::hud::paint_menu_panel(screen.buffer_mut(), geometry.panel, colors, ascii);
+        screen.render_widget(
+            Paragraph::new(self.menu_caption(menu_title(menu), geometry.panel.width))
+                .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+            Rect::new(
+                geometry.panel.x + 1,
+                geometry.panel.y,
+                geometry.panel.width.saturating_sub(2),
+                1,
+            ),
+        );
+        for item in &geometry.items {
+            let selected = item.index == self.menu_selected;
+            crate::hud::paint_menu_tile(
+                screen.buffer_mut(),
+                item.area,
+                colors,
+                if selected {
+                    crate::hud::TileState::Focused
+                } else {
+                    crate::hud::TileState::Idle
+                },
+                ascii,
+            );
+            let number = if (number_start..number_start + numbered.count).contains(&item.index) {
+                format!("{} ", item.index - number_start + 1)
+            } else {
+                "  ".into()
+            };
+            screen.render_widget(
+                Paragraph::new(format!("{number}{}", labels[item.index])).style(if selected {
+                    selected_style(colors)
+                } else {
+                    Style::default().fg(colors.ink(2)).bg(colors.background)
+                }),
+                Rect::new(
+                    item.area.x + 1,
+                    item.area.y,
+                    item.area.width.saturating_sub(2),
+                    geometry.cell_height,
+                ),
+            );
+            self.menu_targets.borrow_mut().push((item.area, item.index));
+        }
+        let controls = Rect::new(
+            geometry.footer.x,
+            geometry.footer.y + description_rows,
+            geometry.footer.width,
+            geometry.footer.height.saturating_sub(description_rows),
+        );
+        if let Some(description) = description.filter(|_| description_rows > 0) {
+            screen.render_widget(
+                Paragraph::new(description).style(Style::default().fg(colors.ink(7))),
+                Rect::new(geometry.footer.x, geometry.footer.y, geometry.footer.width, 1),
+            );
+        }
+        let hint = self.controller.as_ref().map_or_else(
+            || "Enter: OK\nEsc: Back".into(),
+            |pad| format!("{}: OK\n{}: Back", tiny_button(&pad.accept), tiny_button(&pad.back)),
+        );
+        screen.render_widget(
+            Paragraph::new(hint).style(Style::default().fg(colors.ink(7))),
+            controls,
+        );
+        self.menu_controls(controls);
+        *self.choice_geometry.borrow_mut() = Some((menu, geometry));
+    }
+
     fn draw_menu(
         &self,
         screen: &mut Frame,
@@ -5014,6 +5182,10 @@ impl Ui {
                 unreachable!("special menus draw their own view")
             }
         };
+        if choice_menu(menu) {
+            self.draw_choice_menu(screen, menu, &entries, config, colors, ascii);
+            return;
+        }
         let modal = screen.area();
         screen.render_widget(Clear, modal);
         let menu_title = if menu == Menu::Graphics {
@@ -5355,6 +5527,65 @@ fn selected_style(colors: &Colors) -> Style {
             .bg(colors.ink(7))
             .add_modifier(Modifier::BOLD)
     }
+}
+
+fn choice_menu(menu: Menu) -> bool {
+    matches!(menu, Menu::Home | Menu::Care | Menu::Games | Menu::Graphics)
+}
+
+/// Navigate the complete painted grid, including positions outside its current
+/// page. Wrap only the requested axis and retain the nearest cross-axis match.
+fn spatial_menu_neighbor(
+    positions: &[(usize, i32, i32)],
+    selected: usize,
+    direction: Direction,
+) -> usize {
+    let Some(&(_, x, y)) = positions.iter().find(|entry| entry.0 == selected) else {
+        return selected;
+    };
+    let horizontal = matches!(direction, Direction::Left | Direction::Right);
+    let positive = matches!(direction, Direction::Right | Direction::Down);
+    let axis = |px: i32, py: i32| if horizontal { px } else { py };
+    let cross = |px: i32, py: i32| if horizontal { py } else { px };
+    let origin = axis(x, y);
+    let across = cross(x, y);
+    let nearest = positions
+        .iter()
+        .filter(|entry| entry.0 != selected)
+        .filter_map(|&(index, px, py)| {
+            let delta = i128::from(axis(px, py)) - i128::from(origin);
+            let primary = if positive { delta } else { -delta };
+            let perpendicular = i128::from(cross(px, py)) - i128::from(across);
+            (primary > 0).then_some((
+                perpendicular.abs() > primary,
+                primary * primary + perpendicular * perpendicular,
+                perpendicular.abs(),
+                index,
+            ))
+        })
+        .min();
+    if let Some((_, _, _, index)) = nearest {
+        return index;
+    }
+    let edge = if positive {
+        positions.iter().map(|entry| axis(entry.1, entry.2)).min()
+    } else {
+        positions.iter().map(|entry| axis(entry.1, entry.2)).max()
+    };
+    let Some(edge) = edge.filter(|edge| *edge != origin) else {
+        return selected;
+    };
+    positions
+        .iter()
+        .filter(|entry| entry.0 != selected && axis(entry.1, entry.2) == edge)
+        .map(|&(index, px, py)| {
+            (
+                (i128::from(cross(px, py)) - i128::from(across)).abs(),
+                index,
+            )
+        })
+        .min()
+        .map_or(selected, |(_, index)| index)
 }
 
 fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
@@ -8837,9 +9068,9 @@ mod console_shell_regressions {
         ui.handle(key(KeyCode::Enter), &config.game);
         let lines = draw(&ui, &config, 80, 24, Renderer::Ascii);
         assert!(
-            lines[0].contains("Home > CARE") && !lines[0].contains("AUTO"),
+            lines.iter().any(|line| line.contains("Home > CARE") && !line.contains("AUTO")),
             "{}",
-            lines[0]
+            lines.join("\n")
         );
         let (row, line) = lines
             .iter()
@@ -9937,7 +10168,7 @@ mod controller_alias_precedence_tests {
     }
 
     #[test]
-    fn ordinary_menus_accept_only_vertical_press_aliases() {
+    fn menu_aliases_preserve_unpainted_columns_and_special_input_scopes() {
         let (config, mut ui) = fixture();
         let game = ui.game.clone();
         for menu in [
@@ -10501,6 +10732,197 @@ mod camera_plain_fallthrough_tests {
             "camera must remain unsettled during flight"
         );
         assert_ne!(ui.orbit_degrees, 90, "instant snap regression detected");
+    }
+}
+
+#[cfg(test)]
+mod choice_menu_geometry_tests {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, buffer::Buffer};
+
+    fn fixture() -> (Config, Ui) {
+        let config = Config::sample().unwrap();
+        let mut game = Game::new(&config.game, 3778);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        (config.clone(), Ui::configured(game, &config))
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16, depth: Depth) -> Buffer {
+        let colors = Colors::from_config(config, depth).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn geometry(ui: &Ui) -> crate::hud::MenuGeometry {
+        ui.choice_geometry.borrow().as_ref().expect("painted choice geometry").1.clone()
+    }
+
+    fn text(buffer: &Buffer) -> String {
+        buffer.content.iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn real_painted_choices_publish_cardinal_navigation_without_charging_gameplay() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        let first = draw(&ui, &config, 127, 29, Depth::Mono);
+        let layout = geometry(&ui);
+        assert!(layout.columns > 1);
+        assert!(layout.panel.height < first.area.height);
+        assert!(ui.pet_area.get().height > 0, "scene must be painted behind the menu");
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        let camera = (ui.camera_pan_target.get(), ui.camera_tilt_target, ui.orbit_target, ui.zoom_target);
+        ui.handle(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::ALT), &config.game);
+        assert_eq!(ui.menu_selected, 1, "right follows the actual painted row");
+        ui.handle(key(KeyCode::Down), &config.game);
+        assert_eq!(ui.menu_selected, 1 + usize::from(layout.columns));
+        ui.handle(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::ALT), &config.game);
+        assert_eq!(ui.menu_selected, usize::from(layout.columns));
+        ui.handle(key(KeyCode::Tab), &config.game);
+        assert_eq!(ui.menu_selected, usize::from(layout.columns) + 1);
+        let second = draw(&ui, &config, 127, 29, Depth::Mono);
+        assert_ne!(first, second, "focus must change the actual buffer");
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+        assert_eq!((ui.camera_pan_target.get(), ui.camera_tilt_target, ui.orbit_target, ui.zoom_target), camera);
+    }
+
+    #[test]
+    fn full_geometry_reaches_off_page_choices_and_reveals_the_new_selection() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Graphics);
+        draw(&ui, &config, 80, 24, Depth::Mono);
+        let first = geometry(&ui);
+        assert!(first.visible < ui.menu_len(Menu::Graphics));
+        assert_eq!(first.navigation.len(), ui.menu_len(Menu::Graphics));
+        let game = ui.game.clone();
+        for _ in 0..=first.visible {
+            ui.handle(key(KeyCode::Down), &config.game);
+            if !first.items.iter().any(|item| item.index == ui.menu_selected) {
+                break;
+            }
+        }
+        assert!(!first.items.iter().any(|item| item.index == ui.menu_selected));
+        draw(&ui, &config, 80, 24, Depth::Mono);
+        let next = geometry(&ui);
+        assert!(next.items.iter().any(|item| item.index == ui.menu_selected));
+        ui.handle(key(KeyCode::End), &config.game);
+        draw(&ui, &config, 80, 24, Depth::Mono);
+        assert!(geometry(&ui).items.iter().any(|item| item.index == 29));
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn repaint_and_menu_changes_invalidate_old_spatial_geometry() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        draw(&ui, &config, 127, 29, Depth::Mono);
+        assert!(geometry(&ui).columns > 1);
+        draw(&ui, &config, 20, 8, Depth::Mono);
+        assert_eq!(geometry(&ui).columns, 1);
+        ui.handle(key(KeyCode::Right), &config.game);
+        assert_eq!(ui.menu_selected, 0, "portrait must discard the old wide row");
+        ui.handle(key(KeyCode::Down), &config.game);
+        assert_eq!(ui.menu_selected, 1);
+        ui.open(Menu::Care);
+        assert!(ui.choice_geometry.borrow().is_none());
+        ui.handle(key(KeyCode::Right), &config.game);
+        assert_eq!(ui.menu_selected, 0, "an unpainted menu has only a safe column");
+        draw(&ui, &config, 80, 24, Depth::Mono);
+        assert!(geometry(&ui).columns > 1);
+        ui.handle(key(KeyCode::Right), &config.game);
+        assert_eq!(ui.menu_selected, 1);
+        ui.back();
+        assert!(ui.choice_geometry.borrow().is_none());
+        ui.open(Menu::Help);
+        draw(&ui, &config, 80, 24, Depth::Mono);
+        assert!(ui.choice_geometry.borrow().is_none(), "documents own their existing layout");
+    }
+
+    #[test]
+    fn shared_painted_hit_boxes_and_numbered_choices_return_without_gameplay_charges() {
+        let (config, mut ui) = fixture();
+        for numeric in [false, true] {
+            ui.open(Menu::Home);
+            ui.open(Menu::Care);
+            draw(&ui, &config, 80, 24, Depth::Mono);
+            let layout = geometry(&ui);
+            let back = layout.items.iter().find(|item| item.index == 4).unwrap();
+            assert!(ui.menu_targets.borrow().contains(&(back.area, 4)));
+            let before = ui.game.clone();
+            let effect = if numeric {
+                let number = 4 - ui.menu_number_start.get();
+                assert!(number < ui.menu_number_count.get() && number < 9);
+                ui.handle(key(KeyCode::Char(char::from(b'1' + number as u8))), &config.game)
+            } else {
+                ui.click(back.area.x, back.area.y, &config.game)
+            };
+            assert_eq!(effect, Effect::Continue);
+            assert_eq!(ui.menu, Some(Menu::Home));
+            assert_eq!(ui.game, before);
+        }
+    }
+
+    #[test]
+    fn tiny_ascii_mono_keeps_selected_focus_and_both_control_rows() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        ui.menu_selected = 9;
+        let buffer = draw(&ui, &config, 12, 6, Depth::Mono);
+        let content = text(&buffer);
+        assert!(content.is_ascii());
+        for caption in ["Quit", "Enter: OK", "Esc: Back"] {
+            assert!(content.contains(caption), "{caption}: {content}");
+        }
+        let layout = geometry(&ui);
+        let selected = layout.items.iter().find(|item| item.index == 9).unwrap();
+        assert_eq!(buffer[(selected.area.x, selected.area.y)].symbol(), ">");
+        assert_eq!(layout.footer.height, 2);
+        let before = ui.game.clone();
+        assert_eq!(ui.handle(key(KeyCode::Char('1')), &config.game), Effect::Quit);
+        assert_eq!(ui.game, before);
+    }
+
+    #[test]
+    fn choice_panels_share_nonoverlapping_in_bounds_targets_across_depths_and_sizes() {
+        let (config, mut ui) = fixture();
+        for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi, Depth::Mono] {
+            for menu in [Menu::Home, Menu::Care, Menu::Games, Menu::Graphics] {
+                ui.open(menu);
+                ui.menu_selected = ui.menu_len(menu) - 1;
+                for (width, height) in [(12, 6), (20, 8), (59, 49), (127, 29), (320, 90)] {
+                    let buffer = draw(&ui, &config, width, height, depth);
+                    let layout = geometry(&ui);
+                    assert!(text(&buffer).is_ascii());
+                    assert_eq!(layout.panel.intersection(buffer.area), layout.panel);
+                    assert_eq!(layout.navigation.len(), ui.menu_len(menu));
+                    assert!(layout.items.iter().any(|item| item.index == ui.menu_selected));
+                    for (index, item) in layout.items.iter().enumerate() {
+                        assert_eq!(item.area.intersection(layout.body), item.area);
+                        assert!(item.area.intersection(layout.footer).is_empty());
+                        assert!(ui.menu_targets.borrow().contains(&(item.area, item.index)));
+                        for other in &layout.items[index + 1..] {
+                            assert!(item.area.intersection(other.area).is_empty());
+                        }
+                    }
+                    assert!(ui.menu_number_count.get() <= 9);
+                    assert!(ui.menu_selected >= ui.menu_number_start.get());
+                    assert!(ui.menu_selected < ui.menu_number_start.get() + ui.menu_number_count.get());
+                }
+            }
+        }
     }
 }
 

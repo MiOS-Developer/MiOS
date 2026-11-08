@@ -293,7 +293,7 @@ impl ControllerMonitor {
         self.fresh_sample().and_then(|sample| sample.camera.clone())
     }
 
-    /// Actual vertical alias bindings for ordinary menus, from the same sample
+    /// Actual cardinal alias bindings for choice menus, from the same sample
     /// as poll. Reading metadata never consumes a newer generation.
     pub fn menu_navigation(&self) -> Option<String> {
         self.fresh_sample()
@@ -1039,10 +1039,17 @@ fn resolve_selected(
         .then(|| {
             let up = binding_label(&bindings, "key:ALT+8", family)?;
             let down = binding_label(&bindings, "key:ALT+2", family)?;
-            Some(if up == "LS Up" && down == "LS Down" {
-                "LS Up/Down".into()
-            } else {
-                format!("{up} Up / {down} Down")
+            let left = binding_label(&bindings, "key:ALT+4", family);
+            let right = binding_label(&bindings, "key:ALT+6", family);
+            Some(match (left, right) {
+                (Some(left), Some(right))
+                    if up == "LS Up" && down == "LS Down"
+                        && left == "LS Left" && right == "LS Right" => "LS Move".into(),
+                (Some(left), Some(right)) => {
+                    format!("{up} Up / {down} Down / {left} Left / {right} Right")
+                }
+                _ if up == "LS Up" && down == "LS Down" => "LS Up/Down".into(),
+                _ => format!("{up} Up / {down} Down"),
             })
         })
         .flatten();
@@ -1459,7 +1466,17 @@ mod controller_tests {
             !camera.contains("RS orbit/tilt") && !camera.contains("R3 reset"),
             "{camera}"
         );
+        assert_eq!(selected.menu_navigation.as_deref(), Some("LS Move"));
+
+        let mut horizontal = mon_map();
+        horizontal["global"]["controller"]["nav"]["mon_tmux"]["LS_LEFT"] = json!("none");
+        let selected = resolve_selected(&horizontal, &context, true, "Sony").unwrap();
         assert_eq!(selected.menu_navigation.as_deref(), Some("LS Up/Down"));
+        horizontal["global"]["controller"]["nav"]["mon_tmux"]["BTN_TL"] =
+            json!("key:ALT+4");
+        let selected = resolve_selected(&horizontal, &context, true, "Sony").unwrap();
+        let menu = selected.menu_navigation.unwrap();
+        assert!(menu.contains("L1 Left") && menu.contains("LS Right Right"), "{menu}");
 
         let mut partial = mon_map();
         let nav = &mut partial["global"]["controller"]["nav"]["mon_tmux"];

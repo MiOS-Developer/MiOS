@@ -88,3 +88,58 @@ landed on the original `work` branch. The integration owner restored that
 checkout to its exact clean `c1e55b758` after preserving another participant's
 in-progress operation. The correct lane and published finite commit above use
 the main base. No uncommitted contributions were discarded.
+
+## Choice-menu consumer continuation
+
+The next local milestone reconciles the preserved navigation WIP into current
+`ui.rs` and `input.rs` instead of replaying the patch's stale final hunk. It
+adds production geometry consumption for **Home, Care, Games and Graphics**.
+Their scene paints before a content-sized panel; the panel and tile painters,
+click targets, at-most-nine numbered shortcuts and full logical navigation all
+come from one `MenuGeometry`. Description and static control rows retain their
+own footer space. This first consumer uses compact one-row tiles.
+
+The actual painter publishes the geometry cache. Arrow/D-pad and Alt+4/6/8/2
+navigation use its complete item positions, including off-page choices. Tab,
+BackTab and touch previous/next retain sequential order. A new menu, Back or
+repaint clears the old cache; before first paint only a safe single-column
+fallback is available. Numeric labels are a contiguous window within visible
+items, keeping the selection numbered even when a wide panel fits more than
+nine choices. Mouse/touch can still activate every visible item.
+
+New horizontal aliases and cardinal hints are restricted to the four
+choice-menu scopes. The resolver derives their actual labels from the verified
+selected profile; missing horizontal aliases retain the truthful vertical-only
+hint. Special Roster/Studio camera controls, Seed editing and Status/Help
+document navigation retain their existing paths. No camera/animation
+implementation was edited. The existing care-description test now locates the
+content-sized panel's title where it is actually painted rather than assuming
+its title occupies row zero.
+
+Six new native tests render real buffers before input; they do not inject
+synthetic navigation positions. They cover cardinal versus sequential focus,
+off-page reachability/reveal, resize and menu invalidation, shared numeric/hit
+targets, no gameplay charges on navigation/Back, ASCII/mono focus and 12x6
+controls, and bounded hit rectangles across four color depths and five sizes.
+The existing profile-remapping test also covers cardinal and vertical-only
+labels. `git diff --check` passes; compilation, rustfmt, Clippy, native tests,
+compiled negative controls and visual review remain **UNRUN** in this executor.
+
+Run the locked MiOS-DEV package suite, particularly
+`ui::choice_menu_geometry_tests`, `input::controller_tests`, the prior menu-shell
+and `direct_navigation_regressions` modules, and the combined camera tests.
+Required compiled negative controls are:
+
+1. Remove the `choice_geometry` publication at the end of `draw_choice_menu`;
+   the real-buffer navigation test must fail its painted-cache assertion.
+2. Restore linear handling for ordinary directional actions;
+   `real_painted_choices_publish_cardinal_navigation_without_charging_gameplay`
+   must fail its actual-row/column assertion.
+3. Strip off-page positions before publishing the geometry;
+   `full_geometry_reaches_off_page_choices_and_reveals_the_new_selection` must
+   fail its full-set or reachability assertion.
+
+The operator subsequently required that future publication go **only to main**
+for global pickup/handoff. This consumer commit is local; the integration owner
+must compile, reconcile it with the camera lane, and publish the verified result
+and handoff on main. Do not resume lane-branch pushes from the earlier workflow.
