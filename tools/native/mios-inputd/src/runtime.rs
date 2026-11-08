@@ -4750,21 +4750,37 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
+            fn is_inspection_child(&self, status: &str, command: &[u8]) -> bool {
+                let parent = status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("PPid:")?.trim().parse::<u32>().ok());
+                if parent != Some(std::process::id()) {
+                    return false;
+                }
+                let args = command.split(|b| *b == 0).collect::<Vec<_>>();
+                args.contains(&self.socket.as_os_str().as_encoded_bytes())
+                    && args.contains(&b"display-message".as_slice())
+                    && args.contains(&crate::sessions::IDENTITY_FORMAT.as_bytes())
+            }
             fn inspection_started(&self) -> bool {
-                std::fs::read_dir("/proc/self/task")
+                // Some container procfs implementations omit task/*/children.
+                // PPid still identifies our direct children, including those
+                // spawned by worker threads. Require the identity query so a
+                // background pane-app verifier cannot satisfy this barrier.
+                std::fs::read_dir("/proc")
                     .unwrap()
                     .filter_map(Result::ok)
-                    .any(|task| {
-                        std::fs::read_to_string(task.path().join("children"))
-                            .unwrap_or_default()
-                            .split_whitespace()
-                            .any(|pid| {
-                                let args = std::fs::read(format!("/proc/{pid}/cmdline"))
-                                    .unwrap_or_default();
-                                let parts = args.split(|b| *b == 0).collect::<Vec<_>>();
-                                parts.contains(&self.socket.as_os_str().as_encoded_bytes())
-                                    && parts.contains(&b"display-message".as_slice())
-                            })
+                    .filter(|entry| {
+                        entry.file_name().to_str().is_some_and(|name| {
+                            !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit())
+                        })
+                    })
+                    .any(|entry| {
+                        let status = std::fs::read_to_string(entry.path().join("status"))
+                            .unwrap_or_default();
+                        let command =
+                            std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
+                        self.is_inspection_child(&status, &command)
                     })
             }
             fn stop(&mut self) {
@@ -5143,6 +5159,54 @@ mod tests {
             assert!(worker.submit("key:A".into()));
             drained(worker);
             PrivateServer::wait(|| server.bytes("output") == b"a");
+        }
+        #[test]
+        fn inspection_barrier_requires_a_direct_child_and_exact_worker_query() {
+            let server = PrivateServer::new();
+            let status = format!("Name:\ttmux\nPPid:\t{}\n", std::process::id());
+            let command = |socket: &Path, query: &str, action: &str| {
+                [
+                    "/usr/bin/tmux",
+                    "-S",
+                    socket.to_str().unwrap(),
+                    action,
+                    "-p",
+                    "-t",
+                    "%0",
+                    query,
+                    "",
+                ]
+                .join("\0")
+                .into_bytes()
+            };
+            let worker = command(
+                &server.socket,
+                crate::sessions::IDENTITY_FORMAT,
+                "display-message",
+            );
+            assert!(server.is_inspection_child(&status, &worker));
+            assert!(!server.is_inspection_child("Name:\ttmux\nPPid:\t0\n", &worker));
+            assert!(!server.is_inspection_child("Name:\ttmux\n", &worker));
+            assert!(!server.is_inspection_child(
+                &status,
+                &command(&server.socket, "#{pane_pid}", "display-message"),
+            ));
+            assert!(!server.is_inspection_child(
+                &status,
+                &command(
+                    &server.dir.path().join("another-socket"),
+                    crate::sessions::IDENTITY_FORMAT,
+                    "display-message",
+                ),
+            ));
+            assert!(!server.is_inspection_child(
+                &status,
+                &command(
+                    &server.socket,
+                    crate::sessions::IDENTITY_FORMAT,
+                    "display-message-unrelated",
+                ),
+            ));
         }
         #[test]
         fn revocation_cancels_a_stalled_inspection_and_discards_queued_input() {
