@@ -106,5 +106,24 @@
       "bytes": 9792,
       "sha256": "526c7207b6a6294aacd8cfbed461ed01bad919e3ad3ae7ff7b599234de067f04"
     }
+  ],
+  "unbased_patches": [
+    {
+      "path": ".devloop/handoff/mios-root-untracked-code.patch.gz",
+      "base": null,
+      "base_status": "Original capture did not record a base; additions-only patch applies to multiple histories. Do not infer the original base from applicability.",
+      "source_paths": [
+        "usr/libexec/mios/mios-build-status",
+        "usr/libexec/mios/mios-build-tail",
+        "usr/libexec/mios/mios-hardcode-lint",
+        "usr/lib/systemd/system/nvidia-cdi-refresh.service.d/10-container-engines.conf"
+      ],
+      "status": "unmerged root additions preserved for ownership and deployment review; not eligible for automatic replay",
+      "uncompressed_sha256": "e31921ea3a942bae9e017a3d3a0a3e08fa1c17781aeba17decf99653abaf70e7",
+      "uncompressed_bytes": 2720,
+      "compression": "gzip",
+      "sha256": "9085dea89f1fc3b6e21b90ee0052f51d139d44fd9a7b7658ef4da600f6f61dc3",
+      "bytes": 1113
+    }
   ]
 }
