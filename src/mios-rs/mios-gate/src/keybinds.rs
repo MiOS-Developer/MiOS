@@ -1151,7 +1151,7 @@ pub fn controller_audit(
     }
     for (name, t) in nav {
         if name.as_str() == "focus_gesture" {
-            focus_gesture_audit(v, out);
+            focus_gesture_audit(t, &mut out);
             continue;
         }
         if NAV_SETTINGS.contains(&name.as_str()) {
@@ -1276,7 +1276,7 @@ fn focus_gesture_audit(v: &toml::Value, out: &mut Vec<String>) {
         let v = t.get(k)?;
         let n = v
             .as_float()
-            .or_else(|| v.as_integer().map(f64::from));
+            .or_else(|| v.as_integer().map(|v| v as f64));
         if n.is_none() {
             out.push(format!("controller.nav.focus_gesture.{k}: a percentage 0 < x <= 1 is required"));
         }
