@@ -7,7 +7,10 @@ Integration branch: `mios-cloud-recovery`. Publication destination: PR #65's
 `mios-cloud-recovery`. Original main is
 `4bf38f52b7d5103c5b6ba6fada6a440e55475062`. Find the commit carrying this
 receipt with `git log -1 --format=%H -- .devloop/handoff/mios-cloud-recovery.md`;
-verify its remote head before resuming. No main merge or live install is claimed.
+verify its remote head before resuming. This receipt was prepared on the PR
+branch before the requested merge. GitHub's PR #65 merge result and main history
+are the publication receipt; this document does not predict a merge SHA.
+Live installation of this PR source has not been verified.
 
 ## Published worker milestones
 
@@ -20,6 +23,7 @@ Cherry-picks preserve each milestone as a separate integration commit.
 | Startup readiness | dfde1a837ef72018445415a040ebc5d3d587a6e8 | e5bb1853f |
 | Startup artifact paths | 7fb65eb282ab055cc872f3dad0df795ec0c9c272 | 03748168f |
 | Locked workspace builds | 54fd9ee15 | 8553f7852 |
+| Fresh catalog selection | cbe46888a | a37e95627 |
 | CI registration | 0f8d44e1b86d5a573ab05f37bfa651695d4ccd73 | 0a18c098f |
 | Audit and lane handoff | Written by audit worker; published by integration owner | 6fefad425 |
 
@@ -27,13 +31,16 @@ The startup now uses the shipped gateway readiness probe rather than an absent
 `harness/verification_gates.py`. Installation follows Cargo's reported executable
 paths instead of silently skipping configured target directories. Both builds
 use `--locked`; missing required artifact reports and build/probe failures stop
-startup. The SearXNG suite is registered in the canonical unit CI tier.
+startup. Both devcontainer profiles and the running lifecycle select the newly
+installed catalog with PATH and MIOS_NATIVE_BIN_DIR, so baked tools cannot shadow
+it. The SearXNG suite is registered in the canonical unit CI tier.
 
 ## Integration verification
 
-- `python3 tests/test-code-server-bake.py`: 71 tests OK on the combined tree,
+- `python3 tests/test-code-server-bake.py`: 73 tests OK on the combined tree,
   including alternate target architecture, target directory spaces, missing
-  executable receipts and build/readiness failure propagation.
+  executable receipts, build/readiness failure propagation, actual fresh-tool
+  invocation ahead of stale PATH entries and preserved remoteEnv projection.
 - `python3 tools/test_ci-suites.py`: 81 tests OK.
 - `python3 tests/test-searxng-endpoint-ssot.py`: 69 tests OK, 33 skipped for
   unavailable PowerShell/native components. Skips are not runtime passes.
@@ -71,7 +78,7 @@ Codespace files were recovered.
 
 ## Next owner actions
 
-1. Fetch the latest PR branch into a collision-checked worktree and read
+1. After PR #65 is merged, fetch main into a collision-checked worktree and read
    `handoff.md` and each lane receipt. All seven original histories remain
    recoverable from the bundle already on main; HUD/camera/gesture/R4/menu/root
    WIP are preserved, not silently merged.
@@ -97,3 +104,17 @@ changed tree or the selected Codespace. The bootstrap patch's compressed and
 decompressed SHA-256 match its completion-status receipt. Application to the
 separate bootstrap repository remains pending; no live targets are inferred
 from that session's historical process IDs or paths.
+
+## Explicit main publication request
+
+The operator subsequently requested finishing PR #65 and merging it, including
+all handoffs, into main. The source/receipt publication is authorized even
+though this executor cannot certify the inaccessible live target. Preserve
+that limitation as the deployment receipt; do not confuse source merge with
+image publication, Codespace rebuild or physical acceptance. The current
+request does not authorize weakening verification gates or discarding WIP.
+
+The prior original-PR CI failure named the missing SearXNG registration and is
+fixed here. Run 42519272460 at 38d6107b had native and Portal builds still in
+progress at the pre-merge review; it was not a green combined-CI receipt. Check
+the final source revision's own checks and retain their actual conclusions.

@@ -1,8 +1,9 @@
 <!-- AI-hint: Current remote recovery entrypoint and milestone publication status. -->
 # Cloud recovery and startup repair
 
-Resume this work from PR #65's head branch, `claude/code-session-lryqdr`,
-which started from main `4bf38f52b7d5103c5b6ba6fada6a440e55475062` and
+After PR #65 is merged, resume this work from `origin/main`. Before the merge,
+use its head branch, `claude/code-session-lryqdr`, for review. This recovery
+started from main `4bf38f52b7d5103c5b6ba6fada6a440e55475062` and
 also preserves the later main handoff commit
 `c958dd4a07dbb56208b769d6f9e831017faf11fd`.
 The sections below this entry retain the historical source handoff verbatim.
@@ -17,18 +18,20 @@ of the selected Codespace is blocked before authentication: this cloud
 environment's enforced proxy rejects CONNECT to `api.github.com` with HTTP 403.
 The user reports being authenticated; GitHub repository pushes work. This
 session exposes policy inspection but no policy-edit or Codespaces tool.
-No unpublished Codespace files or live runtime have been recovered or certified. Native MiOS relay/tmux and a MiOS-DEV builder
-are unavailable in this cloud executor; platform subagents are coordinating
+No unpublished Codespace files or live runtime have been recovered or certified.
+Native MiOS relay/tmux and a MiOS-DEV builder are unavailable in this cloud
+executor; platform subagents are coordinating
 isolated source lanes. No live session transfer is claimed.
 
 ## Resume without discarding work
 
 In an existing clone, first preserve local modifications and use a fresh,
-collision-checked worktree. The following names must not already be in use:
+collision-checked worktree. After GitHub reports PR #65 merged, use the main
+route below. The following names must not already be in use:
 
 ```sh
-git fetch origin refs/heads/main:refs/remotes/origin/main refs/heads/claude/code-session-lryqdr:refs/remotes/origin/claude/code-session-lryqdr
-git worktree add -b mios-recovery-resume ../mios-recovery-resume origin/claude/code-session-lryqdr
+git fetch origin refs/heads/main:refs/remotes/origin/main
+git worktree add -b mios-recovery-resume ../mios-recovery-resume origin/main
 cd ../mios-recovery-resume
 sha256sum -c .devloop/handoff/mios-source-checkpoints.bundle.sha256
 git bundle verify .devloop/handoff/mios-source-checkpoints.bundle
@@ -63,10 +66,20 @@ Current lanes:
 | CI registration | mios-recovery-ci | `.devloop/handoff/mios-recovery-ci.md` |
 | Integration and publication | mios-cloud-recovery | `.devloop/handoff/mios-cloud-recovery.md` |
 
-Main publication and immediate live installation remain coupled by
-`.agents/COORDINATION.md`. This executor has no authorized live MiOS target,
-so source milestones are published to the existing PR branch. Source tests do
-not establish that a Codespace rebuilt successfully or that MiOS was deployed.
+The operator explicitly requested finishing PR #65 and merging its source and
+handoffs to main. The integration owner publishes the reviewed PR using an
+expected head SHA; remote successors recover its committed state from main.
+The existing live-installation requirement in `.agents/COORDINATION.md` remains:
+record the actual target and artifact receipt after publication, or record the
+concrete access blocker when installation cannot run. This executor cannot
+reach the selected live Codespace. Source publication does not certify a live
+rebuild or deployed MiOS.
+
+The source repair replaces the absent post-start gate, installs actual
+Cargo-reported executables using locked workspaces, and selects the fresh
+catalog for both lifecycle and editor processes. After updating an existing
+Codespace's clean checkout to the merged main, perform a full container rebuild;
+a reconnect alone retains the old container. See `.devcontainer/README.md`.
 
 ---
 
