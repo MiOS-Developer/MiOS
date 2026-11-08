@@ -110,9 +110,24 @@ implementation lane owns its repair and verification. Missing base-image
 account/helpers can fail before lifecycle commands run; the actual Codespace
 creation log is still needed to establish its first failing stage.
 
+The audited `mios_core` also copies native tools from
+`tools/native/target/release`, while that workspace's `.cargo/config.toml`
+sets `build.target = "x86_64-unknown-linux-musl"`. Its default release output
+therefore lives under `target/x86_64-unknown-linux-musl/release`; the install
+loop silently skips those rebuilt tools. Both findings were sent to the
+startup implementation owner for source fixes and regression checks.
+
 No combined MiOS CI, MiOS-DEV build, release artifact, visible Nested MiOS
 Session, physical-device acceptance or live installation is certified here.
 R3 rendering performance/visual gaps, D4's unrecovered raw adversarial receipt,
 bootstrap parity and the remaining source lanes stay explicit follow-up work.
 Per `.agents/COORDINATION.md`, a main push requires an authorized live-install
 receipt; a PR-branch push does not trigger that installation rule.
+
+Later access diagnosis by the integration owner: the user reports authenticated
+access, but a fresh ordinary HTTPS probe to the Codespaces API fails at proxy
+CONNECT with HTTP 403 before GitHub authentication. `api.github.com` is absent
+from this environment's enforced allowlist. Git repository pushes work through
+`github.com`. No environment policy mutation or Codespaces tool is exposed in
+this session. CLI login diagnostics under that denial cannot establish whether
+the user's GitHub credentials are valid.

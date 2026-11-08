@@ -11,8 +11,10 @@ remain preserved, with review and integration pending.
 
 The current assignment covers both portable source recovery and the reported
 Codespace failure to load MiOS. The repository is available; direct inspection
-of the selected Codespace is blocked by missing authorized Codespaces access
-(the CLI returned Forbidden). No unpublished Codespace files or live runtime
+of the selected Codespace is blocked before authentication: this cloud
+environment's enforced proxy rejects CONNECT to `api.github.com` with HTTP 403.
+The user reports being authenticated; GitHub repository pushes work. This
+session exposes policy inspection but no policy-edit or Codespaces tool. No unpublished Codespace files or live runtime
 have been recovered or certified. Native MiOS relay/tmux and a MiOS-DEV builder
 are unavailable in this cloud executor; platform subagents are coordinating
 isolated source lanes. No live session transfer is claimed.
@@ -23,7 +25,7 @@ In an existing clone, first preserve local modifications and use a fresh,
 collision-checked worktree. The following names must not already be in use:
 
 ```sh
-git fetch origin main claude/code-session-lryqdr
+git fetch origin refs/heads/main:refs/remotes/origin/main refs/heads/claude/code-session-lryqdr:refs/remotes/origin/claude/code-session-lryqdr
 git worktree add -b mios-recovery-resume ../mios-recovery-resume origin/claude/code-session-lryqdr
 cd ../mios-recovery-resume
 sha256sum -c .devloop/handoff/mios-source-checkpoints.bundle.sha256
@@ -56,6 +58,8 @@ Current lanes:
 | Recovery audit | mios-cloud-recovery | `.devloop/handoff/mios-recovery-audit.md` |
 | Recovery inventory | mios-checkpoint-manifest | `.devloop/handoff/mios-checkpoint-manifest.md` |
 | Codespace startup | mios-codespace-startup | `.devloop/handoff/mios-codespace-startup.md` |
+| CI registration | mios-recovery-ci | `.devloop/handoff/mios-recovery-ci.md` |
+| Integration and publication | mios-cloud-recovery | `.devloop/handoff/mios-cloud-recovery.md` |
 
 Main publication and immediate live installation remain coupled by
 `.agents/COORDINATION.md`. This executor has no authorized live MiOS target,

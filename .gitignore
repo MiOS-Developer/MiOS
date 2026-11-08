@@ -1176,3 +1176,5 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-recovery-manifest.json
 !/.devloop/handoff/mios-checkpoint-manifest.md
 !/.devloop/handoff/mios-codespace-startup.md
+!/.devloop/handoff/mios-recovery-ci.md
+!/.devloop/handoff/mios-cloud-recovery.md
