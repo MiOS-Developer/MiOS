@@ -105,6 +105,75 @@ vm.runInContext(match[0], ctx);
 
 class TestConfiguratorSecurity(unittest.TestCase):
 
+    def test_focus_gesture_controls_roundtrip_and_reject_invalid_settings(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        section = "keybindings.global.controller.nav.focus_gesture"
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.by_key = {}
+                self.attrs = {}
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                key = a.get("data-key", "")
+                if tag == "input" and key.startswith(section + "."):
+                    name = key.rsplit(".", 1)[1]
+                    if name in self.by_key:
+                        raise AssertionError("Duplicate focus gesture control: " + name)
+                    self.attrs[name] = a
+                    self.by_key[name] = {"tagName": "INPUT", "type": a.get("type", ""), "value": "",
+                        "dataset": {"key": key, "inherit": a.get("data-inherit"), "type": a.get("data-type")}}
+        parser = Controls()
+        parser.feed(html.read_text())
+        vendor = tomllib.loads((ROOT / "usr/share/mios/mios.toml").read_text())
+        vendor = vendor["keybindings"]["global"]["controller"]["nav"]["focus_gesture"]
+        self.assertEqual(set(parser.by_key), set(vendor), "expose exactly the native table's seven fields")
+        self.assertEqual(len(parser.by_key), 7)
+        for key, attrs in parser.attrs.items():
+            self.assertEqual(attrs["data-type"], "float" if key.endswith("_pct") else "int", key)
+            self.assertEqual(attrs["data-inherit"], "true", key)
+            self.assertNotIn("value", attrs, "HTML must not duplicate vendor defaults")
+        def gather(initial=None):
+            return subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": list(parser.by_key.values()), "initial": initial or {}}),
+                capture_output=True, text=True, timeout=15)
+        self.assertEqual(json.loads(gather().stdout)["data"], {})
+        settings = {"neutral_pct": "0.2", "neutral_ms": "100", "rise_pct": "0.95", "rise_ms": "90",
+                    "direction_deg": "15", "return_ms": "200", "cooldown_ms": "0"}
+        for key, value in settings.items():
+            parser.by_key[key]["value"] = value
+        result = gather()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        table = tomllib.loads(json.loads(result.stdout)["toml"])["keybindings"]["global"]["controller"]["nav"]["focus_gesture"]
+        self.assertEqual(table, {key: float(value) if key.endswith("_pct") else int(value) for key, value in settings.items()})
+        for key, values in {
+            "neutral_pct": ["0", "0.51", "NaN", "Infinity", "0.2oops"],
+            "rise_pct": ["0", "1.01", "NaN", "Infinity", "0.95oops"],
+            "neutral_ms": ["0", "2001", "1.5", "80ms", "1e2"],
+            "rise_ms": ["0", "2001", "1.5", "120ms"],
+            "direction_deg": ["0", "46", "1.5", "20deg"],
+            "return_ms": ["0", "2001", "1.5", "250ms"],
+            "cooldown_ms": ["-1", "5001", "1.5", "400ms"],
+        }.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    parser.by_key[key]["value"] = value
+                    result = gather()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Focus gesture setting outside supported range", result.stderr)
+            parser.by_key[key]["value"] = settings[key]
+        for value in ("0.1", "0.2"):
+            parser.by_key["rise_pct"]["value"] = value
+            result = gather()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("peak must exceed neutral", result.stderr)
+        for control in parser.by_key.values():
+            control["value"] = ""
+        retained = {section: {"neutral_pct": 0.3, "other": "preserved"}}
+        result = gather(retained)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["data"], {section: {"other": "preserved"}})
+
     def test_mon_controls_preserve_vendor_inheritance_and_typed_nested_overrides(self):
         html = ROOT / "usr/share/mios/configurator/mios.html"
         class Controls(HTMLParser):

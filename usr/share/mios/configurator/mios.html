@@ -3820,6 +3820,17 @@
         <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>
         <label>Right-stick flick threshold <input data-key="keybindings.global.controller.nav.flick_on" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
         <label>Right-stick re-arm threshold <input data-key="keybindings.global.controller.nav.flick_off" data-type="float" type="number" min="0" max="0.95" step="0.05"></label>
+        <details>
+          <summary>Deliberate right-stick focus gesture</summary>
+          <p class="hint">Move pane or window focus with a quick cardinal out-and-return gesture. Thresholds are fractions of travel after the controller deadzone. Blank fields inherit the vendor policy; camera, pointer and window-move bindings keep their existing behavior.</p>
+          <label>Neutral threshold (0 &lt; fraction &le; 0.5) <input data-key="keybindings.global.controller.nav.focus_gesture.neutral_pct" data-inherit="true" data-type="float" type="number" min="0" max="0.5" step="0.01"></label>
+          <label>Neutral dwell (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.neutral_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Peak threshold (above neutral, at most 1) <input data-key="keybindings.global.controller.nav.focus_gesture.rise_pct" data-inherit="true" data-type="float" type="number" min="0" max="1" step="0.01"></label>
+          <label>Time to reach peak (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.rise_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Cardinal direction half-angle (degrees) <input data-key="keybindings.global.controller.nav.focus_gesture.direction_deg" data-inherit="true" data-type="int" type="number" min="1" max="45" step="1"></label>
+          <label>Time to return to neutral (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.return_ms" data-inherit="true" data-type="int" type="number" min="1" max="2000" step="1"></label>
+          <label>Cooldown after focus (ms) <input data-key="keybindings.global.controller.nav.focus_gesture.cooldown_ms" data-inherit="true" data-type="int" type="number" min="0" max="5000" step="1"></label>
+        </details>
         <label>tmux servers driven by the controller (-L names) <textarea data-key="keybindings.global.controller.nav.tmux_sockets" data-type="json-array"></textarea></label>
         <label>Ordinary windows: nav profile ("vpad" = raw gamepad) <input data-key="keybindings.global.controller.nav.contexts.desktop-2d" type="text"></label>
         <label>Terminals: nav profile (terminal = terminal_tmux / terminal_plain) <input data-key="keybindings.global.controller.nav.contexts.terminal" type="text"></label>
@@ -6372,6 +6383,17 @@ function gatherFromForm() {
           .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
       }
     }
+    else if (sec === "keybindings.global.controller.nav.focus_gesture") {
+      const ranges = {neutral_pct: [0, 0.5], neutral_ms: [1, 2000], rise_pct: [0, 1],
+        rise_ms: [1, 2000], direction_deg: [1, 45], return_ms: [1, 2000], cooldown_ms: [0, 5000]};
+      const range = ranges[key], n = Number(el.value);
+      const fraction = key === "neutral_pct" || key === "rise_pct";
+      if (!range || !Number.isFinite(n) || n < range[0] || n > range[1]
+          || (fraction ? n <= 0 : !/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n))) {
+        throw new Error("Focus gesture setting outside supported range: " + el.dataset.key);
+      }
+      DATA[sec][key] = n;
+    }
     else if (el.dataset.type === "int") {
       const timing = {
         "keybindings.global.controller.nav.app_poll_ms": [50, 2000],
@@ -6421,6 +6443,8 @@ function gatherFromForm() {
   const camera = DATA["tamagotchi.camera"], mon = DATA.tamagotchi;
   if (camera && mon && Number.isInteger(camera.motion_frame_ms) && Number.isInteger(mon.animation_frame_ms) && camera.motion_frame_ms > mon.animation_frame_ms) throw new Error("Camera motion interval must not exceed pet animation interval");
   if (camera && Number.isInteger(camera.follow_half_life_ms) && Number.isInteger(camera.reset_glide_ms) && camera.reset_glide_ms !== 0 && camera.follow_half_life_ms > camera.reset_glide_ms) throw new Error("Camera smoothing half-time must not exceed reset transition limit");
+  const gesture = DATA["keybindings.global.controller.nav.focus_gesture"];
+  if (gesture && gesture.neutral_pct !== undefined && gesture.rise_pct !== undefined && gesture.rise_pct <= gesture.neutral_pct) throw new Error("Focus gesture peak must exceed neutral threshold");
 }
 
 function renderRaw() {

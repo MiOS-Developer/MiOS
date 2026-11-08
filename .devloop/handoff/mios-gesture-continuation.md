@@ -42,10 +42,34 @@ percentages. Missing table means the legacy magnitude-flick policy.
 
 ## Resume and remaining work
 
+## Configurator source milestone
+
+All seven native settings now have typed, inheritable controls in the existing
+controller section. Empty controls omit overrides without copying vendor
+defaults into HTML. The real form serializer checks finite fraction bounds,
+whole-number time/angle ranges and an explicitly edited peak greater than
+neutral. Native validation remains authoritative after layered resolution.
+
+Verification performed in this cloud worktree:
+
+- `python3 tools/test_configurator_security.py`: 11 tests pass. The added
+  test executes the actual JavaScript, checks exact control/table membership,
+  parses emitted TOML, and rejects malformed, non-finite, fractional integer,
+  out-of-range and inverted-threshold values. Existing controls remain covered.
+- Negative control: removing upper-bound validation in a temporary HTML copy
+  triggers all seven expected out-of-range failures; original source stays
+  unchanged.
+- `python3 tools/ci-suites.py --check`: 573 suites registered across three
+  tiers, six exemptions; pass.
+- `git diff 69fa06efe --check`: pass.
+
+No native compile/tests, generator projection, bootstrap mirror synchronization,
+live Inputd replacement or physical controller validation has run here.
+
+## Remote verification handoff
+
 Fetch `origin/mios-gesture-continuation` and inspect this receipt and the Git
-log in an isolated worktree. Next source milestone adds the seven actual
-configurator controls and real JavaScript serialization/negative checks.
-Then, in MiOS-DEV, run locked native Inputd and keybinding-gate tests, fatal
+log in an isolated worktree. In MiOS-DEV, run locked native Inputd and keybinding-gate tests, fatal
 Clippy, formatting, release/static checks and compiled negative controls.
 Regenerate derived SSOT artifacts through the supported pipeline; do not
 hand-edit globals or metadata to simulate a projection pass.
