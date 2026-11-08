@@ -19,6 +19,10 @@
     "DEVLOOP_HARNESS": "embedded",
     "PYTHONUNBUFFERED": "1"
   },
+  "remoteEnv": {
+    "PATH": "/opt/mios/bin:${containerEnv:PATH}",
+    "MIOS_NATIVE_BIN_DIR": "/opt/mios/bin"
+  },
   "forwardPorts": [
     8900,
     8700,

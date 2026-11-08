@@ -46,7 +46,30 @@ Both build commands use `--locked` to preserve the repository lockfiles.
 - `bash -n .devcontainer/boot-mios-systems.sh` and `git diff --check`: pass.
 - No native build, image publication, installation or live loading is claimed.
 
-Next: integrate both startup milestones and rerun combined source checks.
+## Fresh native catalog selection milestone
+
+Source-built executables were installed in `/opt/mios/bin`, but native commands
+and generator helpers could still select the older image catalog first. After
+successful installation, the lifecycle now prepends that directory to PATH and
+sets `MIOS_NATIVE_BIN_DIR` for generator helper resolution. Both portable and
+artifact-builder profiles set the corresponding `remoteEnv`, so newly attached
+editor sessions select the same catalog while retaining the container PATH.
+
+- `python3 tests/test-code-server-bake.py`: 73 tests pass. The new fixture
+  installs executable scripts into a temporary directory with spaces and proves
+  both fresh `miosd` and fresh `mios-gen` execute ahead of stale PATH entries.
+  Neither `/opt` nor real system executables are changed by this fixture.
+- Removing the two lifecycle exports in memory invokes the planted stale tool
+  and fails the new regression test with status 78 as expected.
+- A real `sync-dotfiles.py --client-surfaces` run in the existing temporary
+  projection fixture preserves `remoteEnv` while rewriting stale settings,
+  identity, and workspace fields. The generator does not own `remoteEnv`.
+- Both profiles' PATH and catalog declarations are checked together.
+- Shell syntax and whitespace checks pass. No image build or live Codespace
+  loading is claimed; the managed environment's external proxy policy is
+  independent of these repository changes.
+
+Next: integrate startup milestones and rerun combined source checks.
 To resume this lane, fetch `origin/mios-codespace-startup`, inspect its log and
 this receipt, and use a separate worktree. Preserve unpublished Codespace files
 before an authenticated operator rebuilds the existing container.
