@@ -113,12 +113,93 @@ def t_env_grounding():
     check("env_grounding: temporal grounding", "Temporal grounding" in out)
     check("env_grounding: anti-stale warning", "stale" in out.lower())
 
+class _Records(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.DEBUG)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+def _bind_turn(mode):
+    """One _client_env turn under bind mode `mode`: the body claims 'claimed', the
+    caller-key's bound account is 'bound'. Returns (user_name, log records)."""
+    rec = _Records()
+    logger = logging.getLogger("mios-agent-pipe")
+    logger.addHandler(rec)
+    prior = os.environ.get("MIOS_PRINCIPAL_BIND_MODE")
+    os.environ["MIOS_PRINCIPAL_BIND_MODE"] = mode
+    g.configure(check_inbound_principal=lambda tok: {"account": "bound"} if tok == "k1" else None)
+    try:
+        out = g._client_env({"user": "claimed"}, {"authorization": "Bearer k1"})
+    finally:
+        logger.removeHandler(rec)
+        if prior is None:
+            os.environ.pop("MIOS_PRINCIPAL_BIND_MODE", None)
+        else:
+            os.environ["MIOS_PRINCIPAL_BIND_MODE"] = prior
+    return out.get("user_name"), rec.records
+
+def t_principal_bind_mode():
+    p = g._parse_principal_bind_mode
+
+    def parsed(raw):
+        try:
+            return p(raw)
+        except ValueError as exc:  # a rejected canonical value is a FAIL line, not a crash
+            return exc
+
+    for raw, want in (("off", "off"), ("verify", "verify"), ("enforce", "enforce"),
+                      ("audit", "verify"), (" AUDIT ", "verify"), (None, "off"), ("", "off")):
+        got = parsed(raw)
+        check(f"bind mode: {raw!r} -> {want}", got == want, repr(got))
+    # An unknown value is REJECTED with a message naming the key, the value and
+    # every accepted spelling -- never silently read as off.
+    for bad in ("bogus", "on", "true", ["enforce"]):
+        try:
+            p(bad)
+            check(f"bind mode: {bad!r} is rejected", False, "accepted")
+        except ValueError as exc:
+            msg = str(exc)
+            check(f"bind mode: {bad!r} is rejected with a clear message",
+                  "[security].principal_bind_mode" in msg and repr(bad) in msg
+                  and all(w in msg for w in ("off", "verify", "audit", "enforce")), msg)
+
+    # The vendor value "audit" observes like verify: the mismatch is logged and
+    # the claimed owner is kept. NEGATIVE CONTROL: off logs nothing.
+    who, logs = _bind_turn("audit")
+    check("bind audit: claimed owner kept", who == "claimed", repr(who))
+    check("bind audit: mismatch logged as verify",
+          any("mode=verify" in r.getMessage() for r in logs), [r.getMessage() for r in logs])
+    who, logs = _bind_turn("off")
+    check("bind off (negative control): claimed owner kept, no mismatch logged",
+          who == "claimed" and not any("principal-bind" in r.getMessage() for r in logs))
+    who, _ = _bind_turn("enforce")
+    check("bind enforce: the token-bound account is the owner", who == "bound", repr(who))
+
+    # An unknown value fails CLOSED to enforce, with one error naming it.
+    who, logs = _bind_turn("verfy")
+    errors = [r.getMessage() for r in logs if r.levelno >= logging.ERROR]
+    check("bind unknown: fails closed to the token-bound owner", who == "bound", repr(who))
+    check("bind unknown: one error names the rejected value",
+          len(errors) == 1 and "'verfy'" in errors[0] and "fail" in errors[0], errors)
+    _, logs = _bind_turn("verfy")
+    check("bind unknown: the error is not repeated every turn",
+          not [r for r in logs if r.levelno >= logging.ERROR])
+    os.environ["MIOS_PRINCIPAL_BIND_MODE"] = "verfy"
+    try:
+        check("bind unknown: _principal_bind_mode reports enforce",
+              g._principal_bind_mode() == "enforce")
+    finally:
+        os.environ.pop("MIOS_PRINCIPAL_BIND_MODE", None)
+
 def main():
     t_capability()
     t_host_os()
     t_client_env()
     t_env_block()
     t_env_grounding()
+    t_principal_bind_mode()
     print(f"\n{'ALL PASS' if _fails == 0 else str(_fails) + ' FAIL(S)'}")
     sys.exit(1 if _fails else 0)
 

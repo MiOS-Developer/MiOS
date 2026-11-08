@@ -10,8 +10,17 @@ pub mod render_desktop {
 
     const DEFAULT_TOML_PATH: &str = "usr/share/mios/mios.toml";
     const APPLICATIONS_DIR: &str = "usr/share/applications";
+    /// The system-wide mime-apps list (`$XDG_CONFIG_DIRS` defaults to /etc/xdg). A config-dir list
+    /// outranks every `$XDG_DATA_DIRS/applications` list, which is where the distribution's own
+    /// mimeapps.list and gnome-mimeapps.list and every exported Flatpak's associations live.
+    const MIMEAPPS_LIST: &str = "etc/xdg/mimeapps.list";
 
-    type DesktopSsot = (BTreeMap<String, i64>, BTreeMap<String, Value>);
+    /// `[ports]`, `[desktop.launchers]` and `[desktop.default_applications]` (`None` when undeclared).
+    type DesktopSsot = (
+        BTreeMap<String, i64>,
+        BTreeMap<String, Value>,
+        Option<Value>,
+    );
 
     pub fn load_ssot(root: &Path) -> Result<DesktopSsot, String> {
         let toml_path = match std::env::var("MIOS_TOML") {
@@ -40,15 +49,112 @@ pub mod render_desktop {
         }
 
         let mut launchers = BTreeMap::new();
+        let mut default_applications = None;
         if let Some(desktop) = parsed.get("desktop").and_then(|d| d.as_table()) {
             if let Some(launchers_table) = desktop.get("launchers").and_then(|l| l.as_table()) {
                 for (k, v) in launchers_table {
                     launchers.insert(k.clone(), v.clone());
                 }
             }
+            default_applications = desktop.get("default_applications").cloned();
         }
 
-        Ok((ports, launchers))
+        Ok((ports, launchers, default_applications))
+    }
+
+    /// A MIME type as the shared-mime-info spec spells it: `media/subtype`, token characters only.
+    fn valid_mime_type(mime: &str) -> bool {
+        let token = |part: &str| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "!#$&^_.+-".contains(c))
+        };
+        matches!(mime.split_once('/'), Some((media, sub)) if token(media) && token(sub))
+    }
+
+    /// `etc/xdg/mimeapps.list` from `[desktop.default_applications]`: every launcher it names is the
+    /// `[Default Applications]` handler for each type its `mime_type` declares, in the listed order.
+    /// Fails closed: an unknown launcher, one with no mime_type, an Exec that could not receive
+    /// the URL or file (no %u/%U/%f/%F), or a malformed type is an error, never a skipped line.
+    pub fn render_mimeapps(
+        defaults: &Value,
+        launchers: &BTreeMap<String, Value>,
+    ) -> Result<String, String> {
+        const TABLE: &str = "[desktop.default_applications]";
+        let names = defaults
+            .get("launchers")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("{TABLE}.launchers must be an array of launcher names"))?;
+        if names.is_empty() {
+            return Err(format!("{TABLE}.launchers names no launcher"));
+        }
+        let mut seen = Vec::new();
+        let mut by_type: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for entry in names {
+            let name = entry
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .ok_or_else(|| format!("{TABLE}.launchers holds a non-name value: {entry}"))?;
+            if seen.contains(&name) {
+                return Err(format!("{TABLE}.launchers names {name} twice"));
+            }
+            seen.push(name);
+            let cfg = launchers.get(name).ok_or_else(|| {
+                format!(
+                    "{TABLE}.launchers names {name}, which no [desktop.launchers.{name}] declares"
+                )
+            })?;
+            let field = |k: &str| cfg.get(k).and_then(Value::as_str).unwrap_or("");
+            if !field("exec_cmd")
+                .split_whitespace()
+                .any(|t| matches!(t, "%u" | "%U" | "%f" | "%F"))
+            {
+                return Err(format!(
+                    "[desktop.launchers.{name}].exec_cmd has no %u, %U, %f or %F, so it could not receive what it would be the default for"
+                ));
+            }
+            let types: Vec<&str> = field("mime_type")
+                .split(';')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .collect();
+            if types.is_empty() {
+                return Err(format!(
+                    "{TABLE}.launchers names {name}, but [desktop.launchers.{name}] declares no mime_type"
+                ));
+            }
+            for mime in types {
+                if !valid_mime_type(mime) {
+                    return Err(format!(
+                        "[desktop.launchers.{name}].mime_type holds {mime:?}, which is not a MIME type"
+                    ));
+                }
+                let ids = by_type.entry(mime.to_string()).or_default();
+                let id = format!("{name}.desktop");
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+        let mut out = String::from(concat!(
+            // Split so this source never carries the contiguous generated-file marker.
+            "# GENERATED IN FULL",
+            " from usr/share/mios/mios.toml [desktop.default_applications] by mios-gen render-desktop; DO NOT EDIT -- re-run the renderer.\n",
+            "# AI-hint: System-wide default applications (freedesktop mime-apps spec). As a $XDG_CONFIG_DIRS list it outranks the distribution's /usr/share/applications/mimeapps.list and gnome-mimeapps.list and the associations exported Flatpaks declare; ~/.config/mimeapps.list still overrides it per user.\n",
+            "# AI-related: usr/share/mios/mios.toml [desktop.default_applications] [desktop.launchers], usr/share/applications/, tools/native/mios-gen/src/render.rs\n",
+            "[Default Applications]\n",
+        ));
+        for (mime, ids) in &by_type {
+            out.push_str(mime);
+            out.push('=');
+            for id in ids {
+                out.push_str(id);
+                out.push(';');
+            }
+            out.push('\n');
+        }
+        Ok(out)
     }
 
     pub fn render_launcher(name: &str, cfg_val: &Value, ports: &BTreeMap<String, i64>) -> String {
@@ -241,8 +347,14 @@ pub mod render_desktop {
     }
 
     pub fn run_render_desktop(root: &Path, check: bool) -> Result<(String, i32), (String, i32)> {
-        let (ports, launchers) = load_ssot(root).map_err(|e| (e, 1))?;
+        let (ports, launchers, default_applications) = load_ssot(root).map_err(|e| (e, 1))?;
         let apps_dir = root.join(APPLICATIONS_DIR);
+        // Rendered before anything is written, so an invalid table never leaves a half-synced tree.
+        let mimeapps = default_applications
+            .as_ref()
+            .map(|defaults| render_mimeapps(defaults, &launchers))
+            .transpose()
+            .map_err(|e| (format!("[render-desktop] {e}"), 1))?;
 
         let mut on_disk = Vec::new();
         if apps_dir.is_dir() {
@@ -329,6 +441,41 @@ pub mod render_desktop {
             }
         }
 
+        let mimeapps_path = root.join(MIMEAPPS_LIST);
+        match &mimeapps {
+            Some(rendered) if check => {
+                if !mimeapps_path.is_file() {
+                    drifted.push(format!("{MIMEAPPS_LIST} missing"));
+                } else if fs::read_to_string(&mimeapps_path).unwrap_or_default() != *rendered {
+                    drifted.push(format!("{MIMEAPPS_LIST} content drifted"));
+                }
+            }
+            Some(rendered) => {
+                if let Some(parent) = mimeapps_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                fs::write(&mimeapps_path, rendered.as_bytes()).map_err(|e| {
+                    (
+                        format!(
+                            "render-desktop: write {} failed: {e}",
+                            mimeapps_path.display()
+                        ),
+                        1,
+                    )
+                })?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&mimeapps_path, fs::Permissions::from_mode(0o644))
+                        .map_err(|e| (e.to_string(), 1))?;
+                }
+            }
+            None if check && mimeapps_path.exists() => drifted.push(format!(
+                "{MIMEAPPS_LIST} ships but no [desktop.default_applications] declares it"
+            )),
+            None => {}
+        }
+
         if check {
             if !drifted.is_empty() {
                 let mut lines = Vec::new();
@@ -350,8 +497,104 @@ pub mod render_desktop {
     }
     #[cfg(test)]
     mod tests {
-        use super::render_launcher;
+        use super::{render_launcher, render_mimeapps};
         use std::collections::BTreeMap;
+
+        fn launchers(src: &str) -> BTreeMap<String, toml::Value> {
+            let parsed: toml::Value =
+                toml::from_str(src).unwrap_or_else(|e| unreachable!("fixture parses: {e}"));
+            parsed
+                .as_table()
+                .map(|t| t.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default()
+        }
+
+        fn defaults(src: &str) -> toml::Value {
+            toml::from_str(src).unwrap_or_else(|e| unreachable!("fixture parses: {e}"))
+        }
+
+        const BROWSERS: &str = r#"
+            [portal]
+            exec_cmd = "/usr/bin/portal %u"
+            mime_type = "x-scheme-handler/https;text/html;x-scheme-handler/http;"
+            [zen]
+            exec_cmd = "run app.zen @@u %u @@"
+            mime_type = "text/html;application/pdf;"
+            [plain]
+            exec_cmd = "/usr/bin/plain"
+            mime_type = "text/html;"
+            [silent]
+            exec_cmd = "/usr/bin/silent %u"
+        "#;
+
+        #[test]
+        fn mimeapps_lists_each_named_launcher_for_its_types_in_order() {
+            let all = launchers(BROWSERS);
+            let out = render_mimeapps(&defaults(r#"launchers = ["portal"]"#), &all)
+                .unwrap_or_else(|e| unreachable!("renders: {e}"));
+            let body: Vec<&str> = out.lines().filter(|l| !l.starts_with('#')).collect();
+            assert_eq!(
+                body,
+                [
+                    "[Default Applications]",
+                    "text/html=portal.desktop;",
+                    "x-scheme-handler/http=portal.desktop;",
+                    "x-scheme-handler/https=portal.desktop;",
+                ],
+                "{out}"
+            );
+            assert!(
+                out.starts_with(concat!(
+                    "# GENERATED IN FULL",
+                    " from usr/share/mios/mios.toml"
+                )),
+                "{out}"
+            );
+            // A type two named launchers declare lists both, the first named first.
+            let out = render_mimeapps(&defaults(r#"launchers = ["zen", "portal"]"#), &all)
+                .unwrap_or_else(|e| unreachable!("renders: {e}"));
+            assert!(
+                out.contains("\ntext/html=zen.desktop;portal.desktop;\n"),
+                "{out}"
+            );
+            assert!(out.contains("\napplication/pdf=zen.desktop;\n"), "{out}");
+            assert!(
+                out.contains("\nx-scheme-handler/https=portal.desktop;\n"),
+                "{out}"
+            );
+        }
+
+        #[test]
+        fn mimeapps_fails_closed_on_a_default_that_could_not_serve() {
+            let all = launchers(BROWSERS);
+            for (table, why) in [
+                (r#"launchers = []"#, "names no launcher"),
+                (r#"launchers = "portal""#, "must be an array"),
+                (r#"other = ["portal"]"#, "must be an array"),
+                (r#"launchers = ["portal", "portal"]"#, "twice"),
+                (r#"launchers = [""]"#, "non-name"),
+                (r#"launchers = [7]"#, "non-name"),
+                (r#"launchers = ["absent"]"#, "no [desktop.launchers.absent]"),
+                (r#"launchers = ["plain"]"#, "has no %u"),
+                (r#"launchers = ["silent"]"#, "declares no mime_type"),
+            ] {
+                let err = render_mimeapps(&defaults(table), &all)
+                    .err()
+                    .unwrap_or_else(|| unreachable!("{table} must not render"));
+                assert!(err.contains(why), "{table}: {err}");
+            }
+            let bad = launchers(
+                r#"
+                [portal]
+                exec_cmd = "/usr/bin/portal %u"
+                mime_type = "text/html;x-scheme-handler/https=evil.desktop;"
+                "#,
+            );
+            let err = render_mimeapps(&defaults(r#"launchers = ["portal"]"#), &bad)
+                .err()
+                .unwrap_or_else(|| unreachable!("an injected key must not render"));
+            assert!(err.contains("not a MIME type"), "{err}");
+        }
 
         #[test]
         fn mime_type_and_actions_render_as_spec_groups() {

@@ -302,3 +302,239 @@ fn backward_profile_layers_preserve_operator_choices_and_reject_corruption() {
         assert!(!root.path().join("state").exists());
     }
 }
+
+// Complete test module for tools/native/mios-tamagotchi/tests/cli.rs.
+// Run only in real MiOS-DEV alongside the integration's existing root() helper.
+#[cfg(test)]
+mod progression_legacy_snapshot_review {
+    use super::*;
+    use mios_tamagotchi::{
+        config::Config,
+        game::{Challenge, Direction, Game},
+        save::Store,
+    };
+
+    fn entries(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+        let mut names = fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn every_legacy_schema_snapshot_keeps_name_bytes_and_files_with_or_without_active_writer() {
+        let config = Config::sample().unwrap();
+        for schema in 1..=3 {
+            let fixture = root();
+            let path = fixture.path().join("pet.json");
+            let mut game = Game::new(&config.game, 727);
+            game.age_ticks = config.game.adult_ticks + 3;
+            game.character = 11;
+            game.fullness = 31;
+            game.happiness = 49;
+            game.hygiene = 52;
+            game.energy = 63;
+            game.health = 88;
+            game.coins = 42;
+            game.wins = 3;
+            game.paused = true;
+            game.ill = true;
+            game.challenge = Some(Challenge {
+                pattern: [Direction::Left, Direction::Down, Direction::Right],
+                entered: 1,
+                reveal: 0,
+            });
+            let mut legacy = serde_json::to_value(&game).unwrap();
+            legacy.as_object_mut().unwrap().remove("progress");
+            if schema < 3 {
+                legacy.as_object_mut().unwrap().remove("habitat");
+            }
+            if schema == 1 {
+                legacy.as_object_mut().unwrap().remove("character");
+            }
+            let original =
+                serde_json::to_vec(&serde_json::json!({"schema":schema,"game":legacy})).unwrap();
+            fs::write(&path, &original).unwrap();
+            let character_id = if schema == 1 { 0 } else { game.character };
+            let expected_name = &config
+                .characters
+                .iter()
+                .find(|c| c.id == character_id)
+                .unwrap()
+                .name;
+            for active_writer in [false, true] {
+                let _writer = active_writer.then(|| Store::open(&path).unwrap());
+                let original_entries = entries(fixture.path());
+                for explicit_snapshot in [false, true] {
+                    let mut command = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"));
+                    command.env_clear().args([
+                        "--root",
+                        fixture.path().to_str().unwrap(),
+                        "--save",
+                        path.to_str().unwrap(),
+                        "--dialogs",
+                        "native",
+                    ]);
+                    if explicit_snapshot {
+                        command.arg("--snapshot");
+                    }
+                    let result = command.output().unwrap();
+                    assert!(
+                        result.status.success(),
+                        "schema{schema}, writer{active_writer}: {}",
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                    assert!(result.stdout.is_ascii());
+                    assert!(!result.stdout.contains(&27));
+                    let text = String::from_utf8(result.stdout).unwrap();
+                    assert!(text.contains(&format!("{expected_name} thinks:")), "{text}");
+                    assert!(text.contains("coins 42"), "{text}");
+                    for stat in ["Swim:", "Flight:", "Run:", "Power:", "Stamina:"] {
+                        assert!(text.contains(stat), "{text}");
+                    }
+                    assert_eq!(fs::read(&path).unwrap(), original);
+                    assert_eq!(entries(fixture.path()), original_entries);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn portable_birth_codes_replay_ascii_snapshots_without_writing_saves() {
+    let scratch = tempfile::tempdir().unwrap();
+    let exe = env!("CARGO_BIN_EXE_mios-tamagotchi");
+    let first = Command::new(exe)
+        .env_clear()
+        .args(["--sample", "--seed", "123456789", "--snapshot"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let text = String::from_utf8(first.stdout.clone()).unwrap();
+    let code = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Birth code: "))
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap();
+    assert_eq!(code.len(), 17);
+    let second = Command::new(exe)
+        .env_clear()
+        .args(["--sample", "--seed", code, "--snapshot"])
+        .output()
+        .unwrap();
+    assert_eq!(first.stdout, second.stdout);
+    let directory = scratch.path().join("optional");
+    let result = Command::new(exe)
+        .env_clear()
+        .args(["--sample", "--seed", code, "--save-dir"])
+        .arg(&directory)
+        .arg("--snapshot")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(
+        !directory.exists(),
+        "read-only snapshot must not create progress directory"
+    );
+    assert!(first.stdout.is_ascii() && !first.stdout.contains(&27));
+}
+#[test]
+fn bad_birth_codes_and_conflicting_save_options_fail_before_rendering() {
+    let exe = env!("CARGO_BIN_EXE_mios-tamagotchi");
+    for args in [
+        vec!["--sample", "--seed", "0"],
+        vec!["--sample", "--seed", "M1-XXXX-XXXX-XXXX-XXX"],
+        vec!["--sample", "--save-dir", "unused"],
+        vec![
+            "--sample",
+            "--seed",
+            "1",
+            "--save-dir",
+            "unused",
+            "--save",
+            "unused.json",
+        ],
+        vec!["--demo", "--seed", "1"],
+    ] {
+        let result = Command::new(exe).env_clear().args(args).output().unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+        assert!(!result.stderr.contains(&27));
+    }
+}
+
+#[test]
+fn code_named_progress_loads_only_matching_birth_without_changing_bytes() {
+    use mios_tamagotchi::{
+        config::Config,
+        game::Game,
+        genetics::{MonCode, Profile},
+        save::Store,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::sample().unwrap();
+    let code = MonCode::new(9001).unwrap();
+    let path = dir.path().join(format!("{}.json", code.compact()));
+    let store = Store::open(&path).unwrap();
+    let mut game = Game::new(&config.game, code.seed());
+    game.paused = true;
+    store.save(&game).unwrap();
+    drop(store);
+    for legacy in [false, true] {
+        if legacy {
+            game.genesis_seed = None;
+            Store::open(&path).unwrap().save(&game).unwrap();
+        }
+        let original = fs::read(&path).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"))
+            .env_clear()
+            .args(["--sample", "--seed", &code.compact(), "--save-dir"])
+            .arg(dir.path())
+            .arg("--snapshot")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), !legacy);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        if legacy {
+            assert!(output.stdout.is_empty());
+        }
+        let mismatch = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"))
+            .env_clear()
+            .args(["--sample", "--seed", "9002", "--save"])
+            .arg(&path)
+            .arg("--snapshot")
+            .output()
+            .unwrap();
+        assert!(!mismatch.status.success());
+        assert!(mismatch.stdout.is_empty() && !mismatch.stderr.contains(&27));
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+    let mut birth = Game::new(&config.game, 9001);
+    for _ in 0..config.game.hatch_ticks {
+        birth.tick(&config.game);
+    }
+    let profile = Profile::for_game(&birth, &config).unwrap();
+    let base = mios_tamagotchi::characters::character(&config.characters, birth.character);
+    let generated = profile.character(base, &config);
+    let expected = mios_tamagotchi::characters::speech(&generated, &birth, &config.game, 0);
+    Store::open(&path).unwrap().save(&birth).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mios-tamagotchi"))
+        .env_clear()
+        .args(["--sample", "--save"])
+        .arg(path)
+        .arg("--snapshot")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains(&format!("{} says: {}", profile.name, expected)));
+}

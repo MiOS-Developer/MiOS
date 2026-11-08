@@ -1,0 +1,45 @@
+{
+  "objective": "Refactor telemetry pipeline to async workers with schema validation and two-sided tests",
+  "base_branch": "main",
+  "worktree_dir": ".worktrees",
+  "terminal_layout": "wt_grid",
+  "timeout_seconds": 1800,
+  "lanes": [
+    {
+      "domain": "backend",
+      "worker_id": "lane-be-async",
+      "harness": "claude",
+      "worktree": ".worktrees/lane-be-async",
+      "command": "Refactor src/telemetry/queue.py to AsyncQueue with atomic write buffer and backoff",
+      "test_cmd": "pytest tests/unit/test_telemetry_async.py -v",
+      "env": {
+        "ENV_MODE": "test",
+        "CI_STRICT": "1"
+      }
+    },
+    {
+      "domain": "frontend",
+      "worker_id": "lane-fe-stream",
+      "harness": "openai",
+      "worktree": ".worktrees/lane-fe-stream",
+      "command": "Update src/dashboard/telemetry-hook.ts to consume streaming telemetry SSE feed",
+      "test_cmd": "npm test -- src/dashboard/__tests__/telemetry-hook.test.ts"
+    },
+    {
+      "domain": "qa",
+      "worker_id": "lane-qa-two-sided",
+      "harness": "cloudcode",
+      "worktree": ".worktrees/lane-qa-two-sided",
+      "command": "Author two-sided verification suite in tests/qa/test_telemetry_negatives.py",
+      "test_cmd": "pytest tests/qa/test_telemetry_negatives.py -k 'test_pos_control or test_neg_control'"
+    },
+    {
+      "domain": "security",
+      "worker_id": "lane-sec-audit",
+      "harness": "gemini",
+      "worktree": ".worktrees/lane-sec-audit",
+      "command": "Audit telemetry payload serializer against injection surfaces and secret leakage",
+      "test_cmd": "python3 -m bandit -r src/telemetry/ -ll"
+    }
+  ]
+}

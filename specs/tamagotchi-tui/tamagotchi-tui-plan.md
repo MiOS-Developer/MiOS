@@ -987,3 +987,19 @@ restricted/remote transports. These characters and dialogue are original; the
 research note distinguishes primary Nintendo design statements, community
 documentation and our implementation choices. Physical mobile-browser and
 controller acceptance remains a per-session runtime receipt.
+
+
+## Current mature-body and habitat extension
+
+The implemented child/adult art uses8x16/16x32 pixel canvases and24x48/32x64
+solid voxel canvases, retaining sixteen original animal identities. Distinct
+head/torso/limbs, autonomous gait and front-facing ASCII kaomoji replace the
+floating-head silhouette; tiny HUDs retain a readable face when art is reduced.
+
+Persistent seeded theme/layout, purchased/earned decoration state and validated
+catalogues extend saves to schema3, while schemas1/2 migrate without changing
+their original simulation fields. Rooms use an independent cosmetic seed;
+coins change only through explicit validated purchases. The Habitat HUD and
+native context-menu entry support buying/placing/hiding items and selecting a
+theme. Native dialogue retains focused popup and inline-below-pet fallbacks.
+See usr/share/doc/mios/tamagotchi-tui.md for the current installation contract.

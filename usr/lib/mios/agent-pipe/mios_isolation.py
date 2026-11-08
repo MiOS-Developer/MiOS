@@ -746,13 +746,14 @@ def resolve_audit_recorder(log_path: Optional[str] = None, key_path: Optional[st
     except ImportError:
         pass
 
-    # Search known candidate paths in workspace
+    # Search known candidate paths. The sibling copy comes first: this module lives at usr/lib/mios/agent-pipe/,
+    # so usr/libexec/mios/ai/ is three levels up -- in a source tree that is the tree's own audit_chain.py, on an
+    # installed system it is /usr/libexec/mios/ai/audit_chain.py itself.
     candidates = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "libexec", "mios", "ai", "audit_chain.py")),
         os.path.normpath(r"C:\MiOS\usr\libexec\mios\ai\audit_chain.py"),
         os.path.normpath(r"M:\MiOS\worktrees\mios-integration\usr\libexec\mios\ai\audit_chain.py"),
         "/usr/libexec/mios/ai/audit_chain.py",
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "usr", "libexec", "mios", "ai", "audit_chain.py")),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "libexec", "mios", "ai", "audit_chain.py")),
     ]
 
     for cand in candidates:

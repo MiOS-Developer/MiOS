@@ -18,7 +18,8 @@
   python3 tests/test-appmenu-global.py                         # static tier
   MIOS_LIVE_NESTED=1 MIOS_MIOSD=... MIOS_APPMENU_PLUGIN=... MIOS_APPMENU_FIXTURES=<dir with kde_dbusmenu, qt_menubar> \
     env -u MIOS_TOML python3 tests/test-appmenu-global.py live
-Optional: MIOS_LIVE_OUT (evidence dir), MIOS_APPMENU_CASES, MIOS_APPMENU_EXPECT=before|after (default after)."""
+Optional: MIOS_LIVE_OUT (evidence dir, kept; default: a temp dir removed at exit), MIOS_APPMENU_CASES, MIOS_APPMENU_EXPECT=before|after (default after)."""
+import atexit
 import json
 import os
 import re
@@ -290,7 +291,12 @@ def summarize(menus):
 
 
 def live_tier():
+    # Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary
+    # default is removed when the run exits.
+    keep_out = bool(os.environ.get('MIOS_LIVE_OUT'))
     out = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-appmenu-global-'))
+    if not keep_out:
+        atexit.register(shutil.rmtree, out, True)
     out.mkdir(parents=True, exist_ok=True)
     miosd = os.environ.get('MIOS_MIOSD', '/usr/bin/miosd')
     plugin = os.environ.get('MIOS_APPMENU_PLUGIN', 'none')
@@ -686,7 +692,8 @@ def live_tier():
                   HOME / '.var/app/com.google.ChromeDev/cache/mios-appmenu-test-x11'):
             shutil.rmtree(p, ignore_errors=True)
         (out / 'result.json').write_text(json.dumps([{'name': n, 'ok': o, 'detail': t} for n, o, t in results], indent=1))
-        print(f'evidence: {out}')
+        print(f'evidence: {out}' if keep_out else
+              'evidence: removed at exit; set MIOS_LIVE_OUT=<dir> to keep it')
     return out
 
 

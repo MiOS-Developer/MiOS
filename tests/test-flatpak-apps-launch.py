@@ -39,6 +39,26 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="mios-flatpak-test-")
         self.test_path = Path(self.temp_dir.name)
+        # The native dispatcher launches only entries of the installed registry ([desktop.launch].application_dirs,
+        # whose first entry is $XDG_DATA_HOME/applications): probes are installed there, in this test's data home.
+        self.data_home = self.test_path / "data"
+        self.apps = self.data_home / "applications"
+        self.apps.mkdir(parents=True)
+
+    def dispatch_env(self, base: dict | None = None) -> dict:
+        """Environment for a probe launch through mios-desktop-launch.
+
+        The dispatcher acknowledges an exec only for a declared graphical target ("Graphical session is unavailable"
+        otherwise) and these probes are plain processes that need no compositor: they get a placeholder X display and
+        never the operator's compositor, Wayland socket or user manager. A CI container has none of them, and on a
+        desktop they would route test probes through the live session.
+        """
+        env = dict(os.environ if base is None else base)
+        for key in ("HYPRLAND_INSTANCE_SIGNATURE", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"):
+            env.pop(key, None)
+        env["DISPLAY"] = ":mios-test-placeholder"
+        env["XDG_DATA_HOME"] = str(self.data_home)
+        return env
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -123,7 +143,7 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
         )
         probe_script.chmod(0o755)
 
-        desktop_file = self.test_path / "probe.desktop"
+        desktop_file = self.apps / "probe.desktop"
         desktop_file.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -133,7 +153,7 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
 
         # Launch via mios-desktop-launch
         cmd = [str(_LAUNCHER), "launch", str(desktop_file)]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        res = subprocess.run(cmd, env=self.dispatch_env(), capture_output=True, text=True, timeout=15)
         self.assertEqual(res.returncode, 0, f"Launcher failed: {res.stdout}\n{res.stderr}")
 
         # Wait for receipt file from probe app
@@ -165,7 +185,7 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
         )
         probe_script.chmod(0o755)
 
-        desktop_file = self.test_path / "restart_probe.desktop"
+        desktop_file = self.apps / "restart_probe.desktop"
         desktop_file.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -180,7 +200,8 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
             f"proc.wait(timeout=5)\n"
             f"sys.exit(proc.returncode)\n"
         )
-        parent_proc = subprocess.run([sys.executable, "-c", launch_runner], capture_output=True, text=True, timeout=10)
+        parent_proc = subprocess.run([sys.executable, "-c", launch_runner], env=self.dispatch_env(),
+                                     capture_output=True, text=True, timeout=10)
         self.assertEqual(parent_proc.returncode, 0, f"Parent launcher failed: {parent_proc.stderr}")
 
         # The parent process has now exited (simulating shell reload/restart).
@@ -209,7 +230,7 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
         )
         probe_script.chmod(0o755)
 
-        desktop_file = self.test_path / "env_probe.desktop"
+        desktop_file = self.apps / "env_probe.desktop"
         desktop_file.write_text(
             "[Desktop Entry]\n"
             "Type=Application\n"
@@ -218,7 +239,7 @@ class FlatpakAppsLaunchSuite(unittest.TestCase):
         )
 
         # Inject fake MIOS_* variables into environment
-        fake_env = dict(os.environ)
+        fake_env = self.dispatch_env()
         for i in range(100):
             fake_env[f"MIOS_TEST_INJECT_{i}"] = f"val_{i}"
         fake_env["KEEP_ME_NON_MIOS"] = "intact_value"

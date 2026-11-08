@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-import tempfile
 import time
 
 parser = argparse.ArgumentParser(description='Opt-in RDPDR native shared-folder integration; use an owned nested desktop and a private test-auth binary')
@@ -80,7 +79,7 @@ def mounts():
 
 before_mounts = mounts()
 before_geometry = e.local_snapshot()
-root = Path(tempfile.mkdtemp(prefix='mios-remote-files-network-', dir='/var/tmp'))
+root = Path(e.live_dir('mios-remote-files-network-', dir='/var/tmp'))  # scratch, removed at exit
 client = root / 'client-files'
 client.mkdir()
 data = bytes(range(256)) * 1024
@@ -169,7 +168,7 @@ for enabled in (True, False):
 assert mounts() == before_mounts, 'native drive mount set changed'
 assert e.local_snapshot() == before_geometry, 'nested display geometry changed'
 report = {'passed':True,'results':results,'mounts_removed':True,'nested_geometry_unchanged':True,
-    'nested_left_running':True,'managed_service':args.managed_service,'work_dir':str(root)}
+    'nested_left_running':True,'managed_service':args.managed_service}
 Path(args.report).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report),flush=True)
 print('MIOS_STORAGE_NETWORK_DONE',flush=True)

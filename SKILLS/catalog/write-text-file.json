@@ -1,0 +1,1 @@
+{"name":"write-text-file","description":"Create a file at `path` with `body` content via text_create, then text_view it to confirm.","source":"import","status":"promoted","body":{"steps":[{"verb":"text_create","args":{"path":"$path","content":"$body"}},{"verb":"text_view","args":{"path":"$path"}}],"params":["path","body"]}}

@@ -82,9 +82,8 @@ executable by `automation/46-greenboot.sh`).
 
 | Check | Verifies | Mechanism |
 | --- | --- | --- |
-| `10-mios-composefs.sh` | Root filesystem integrity | `exec`s `/usr/libexec/mios/verify-root.sh` (ostree-booted marker, `/usr/lib/os-release` parseable, `/usr` mounted read-only, best-effort fsverity/ostree-commit probes) |
+| `10-mios-composefs.sh` | Root filesystem integrity and composefs verity sealing | When ostree-booted, runs `/usr/libexec/mios/verify-root.sh` (`/usr/lib/os-release` parseable, `/usr` mounted read-only, best-effort fsverity/ostree-commit probes); then, if `enabled = verity` in `/usr/lib/ostree/prepare-root.conf`, confirms root is mounted `type composefs` and samples fsverity on a core binary (`/usr/bin/bash`). Both halves always run; either failing fails the check |
 | `10-mios-role.sh` | The host role applied successfully | `mios-role.service` is active **and** `/var/lib/mios/role.active` exists |
-| `15-composefs-verity.sh` | composefs verity sealing | If `enabled = verity` in `/usr/lib/ostree/prepare-root.conf`, confirms root is mounted `type composefs` and samples fsverity on a core binary (`/usr/bin/bash`) |
 | `20-podman.sh` | Container engine is up | `podman.socket` is active (the whole agent + service plane is Quadlet-driven, so a dead socket means a dead system) |
 | `30-network.sh` | Network/DNS reachability | Waits up to 30s for `systemd-resolve ghcr.io` to succeed (DNS-only, no `curl`/`wget` dependency); a broken resolver after upgrade is rollback-worthy because Day-2 `bootc upgrade` itself needs the registry |
 

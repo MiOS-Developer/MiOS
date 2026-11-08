@@ -1306,6 +1306,33 @@ class TestLegacyArchive(unittest.TestCase):
         self._git(d, "commit", "-q", "-m", "drop keep.txt without re-archiving")
         self._fails(d, "missing: keep.txt")
 
+    def test_retracking_an_archived_file_fails_until_the_archive_is_rebuilt(self):
+        """A dropped file restored to the tree (install-mios-agents.sh) leaves the dropped set,
+        so the archive must be rebuilt without it; committing the restore alone fails."""
+        d = self._repo()
+        store = os.path.join(d, ".archive")
+        self.assertEqual("gone.txt\ntool.sh", self._git(d, "ls-tree", "--name-only", "legacy", git_dir=store))
+        self._write(d, "tool.sh", "#!/bin/sh\necho restored\n")
+        self._git(d, "add", "tool.sh")
+        self._git(d, "update-index", "--chmod=+x", "tool.sh")
+        self._git(d, "commit", "-q", "-m", "re-track tool.sh without rebuilding the archive")
+        r = self._check(d)
+        self.assertEqual(1, r.returncode, "a re-tracked archived file passed:\n" + r.stdout + r.stderr)
+        self.assertEqual(["[archive] extra: tool.sh (archived, but not in the dropped set)"],
+                         r.stdout.splitlines())
+        rebuilt = subprocess.run([self.gen, "archive", "--root", d], env=self.env, capture_output=True, text=True)
+        self.assertEqual(0, rebuilt.returncode, rebuilt.stdout + rebuilt.stderr)
+        self.assertIn("rebuilt at", rebuilt.stdout)
+        self._git(d, "add", "--all", "--", ".archive")
+        self._git(d, "commit", "-q", "-m", "rebuild the archive")
+        self.assertEqual("", self._git(d, "status", "--porcelain"))
+        r = self._check(d)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("holds every dropped file: 1 dropped paths", r.stdout)
+        self.assertEqual("gone.txt", self._git(d, "ls-tree", "--name-only", "legacy", git_dir=store))
+        self.assertEqual(1, len([n for n in os.listdir(os.path.join(store, "objects", "pack"))
+                                 if n.endswith(".pack")]))
+
     def test_an_extra_path_fails(self):
         d = self._repo()
         self._plant(d, "planted.txt", "never tracked\n")

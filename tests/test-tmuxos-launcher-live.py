@@ -6,8 +6,9 @@
 # mios-inputd (built from this tree); they are bind-mounted over /usr/bin/miosd, /usr/bin/mios-gen and
 # /usr/libexec/mios/mios-inputd inside a private mount namespace (bwrap) that holds ONLY the nested session, together
 # with this tree's mios-terminal, tmux projections and SSOT. Nothing is installed and the primary compositor only
-# receives send_key_state for the nested window. MIOS_TMUXOS_EVIDENCE = where screenshots go (default: a temp dir).
+# receives send_key_state for the nested window. MIOS_TMUXOS_EVIDENCE = where screenshots go (kept; default: a temp dir removed at exit).
 # The fixture pad is grabbed by the fixture bridge before any event is emitted (Steam on the host reads uinput pads).
+import atexit
 import json
 import os
 from pathlib import Path
@@ -65,6 +66,10 @@ if not primary_sig:
 penv = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'TMUX', 'TMUX_PANE')}
 penv.update(HYPRLAND_INSTANCE_SIGNATURE=primary_sig, XDG_RUNTIME_DIR=str(uid_rt))
 tmp = Path(tempfile.mkdtemp(prefix='mios-tmuxos-live-'))
+# The scratch directory is removed at exit. Evidence is opt-in: only a caller-supplied
+# MIOS_TMUXOS_EVIDENCE survives the run; the default lives inside the scratch.
+atexit.register(shutil.rmtree, tmp, True)
+KEEP_EVID = 'MIOS_TMUXOS_EVIDENCE' in os.environ
 EVID = Path(os.environ.get('MIOS_TMUXOS_EVIDENCE', str(tmp / 'evidence')))
 EVID.mkdir(parents=True, exist_ok=True)
 procs = []
@@ -451,7 +456,8 @@ finally:
         launcher.wait(timeout=20)
     except subprocess.TimeoutExpired:
         os.killpg(launcher.pid, signal.SIGKILL)
-    print(f'evidence: {EVID}', flush=True)
+    print(f'evidence: {EVID}' if KEEP_EVID else
+          'evidence: removed at exit; set MIOS_TMUXOS_EVIDENCE=<dir> to keep it', flush=True)
 
 print(f'{sum(res)}/{len(res)} passed', flush=True)
 sys.exit(0 if res and all(res) else 1)

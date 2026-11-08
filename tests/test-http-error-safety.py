@@ -42,6 +42,13 @@ def handlers(path, names, **injected):
     return scope
 
 
+def constant(path, name):
+    for node in ast.parse((ROOT / path).read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Assign) and [getattr(t, "id", None) for t in node.targets] == [name]:
+            return ast.literal_eval(node.value)
+    raise AssertionError((path, name))
+
+
 class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
     def assert_redacted(self, result, status):
         self.assertEqual(result.status_code, status)
@@ -92,23 +99,44 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await scope["ast_review_endpoint"](request)).content["review_id"], "existing")
 
     async def test_portal_configuration_failures_and_success(self):
-        config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])))
+        config = SimpleNamespace(to_toml=Mock(side_effect=RuntimeError(MARKER)), write_user_config=Mock(), validate_config=Mock(return_value=(True, [])),
+                                 TiersUnresolved=type("TiersUnresolved", (RuntimeError,), {}),
+                                 AmbiguousRedactedArray=type("AmbiguousRedactedArray", (ValueError,), {}),
+                                 REDACTED_ARRAY_REFUSAL=constant(CONFIG, "REDACTED_ARRAY_REFUSAL"),
+                                 redact_secrets=Mock(side_effect=lambda merged: {"redacted": merged}),
+                                 UNRESOLVED_REFUSAL=constant(CONFIG, "UNRESOLVED_REFUSAL"),
+                                 portal_post_toml=handlers(CONFIG, ["portal_post_toml"])["portal_post_toml"])
         toml = SimpleNamespace(load_merged=Mock(return_value={}))
         scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None)
-        request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"))
+        request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"), headers={})
         background = SimpleNamespace(add_task=Mock())
         with patch.dict(sys.modules, {"mios_toml": toml, "mios_pipe.kernel.config": config}):
             self.assert_redacted(await scope["get_portal_config"](request), 500)
             config.to_toml.side_effect = None
             config.to_toml.return_value = "resolved TOML"
             self.assertEqual((await scope["get_portal_config"](request)).content, "resolved TOML")
+            config.to_toml.assert_called_with({"redacted": {}})  # serialized only after redaction
             request.body.return_value = ("invalid = " + MARKER).encode()
             self.assert_redacted(await scope["post_portal_config"](request, background), 400)
+            request.headers = {"content-type": "application/json"}
+            request.body.return_value = ("{" + MARKER).encode()
+            self.assert_redacted(await scope["post_portal_config"](request, background), 400)
+            request.headers = {}
             config.write_user_config.assert_not_called()
             request.body.return_value = b"[identity]\nusername='mios'\n"
             config.write_user_config.side_effect = RuntimeError(MARKER)
             self.assert_redacted(await scope["post_portal_config"](request, background), 500)
+            config.write_user_config.side_effect = config.TiersUnresolved(MARKER)
+            refused = await scope["post_portal_config"](request, background)
+            self.assert_redacted(refused, 500)
+            self.assertIn("nothing was written", refused.content["error"])
             background.add_task.assert_not_called()
+            config.write_user_config.side_effect = config.AmbiguousRedactedArray(MARKER)
+            refused = await scope["post_portal_config"](request, background)
+            self.assert_redacted(refused, 409)
+            self.assertIn("nothing was written", refused.content["error"])
+            background.add_task.assert_not_called()
+            self.assertNotIn(MARKER, str(scope["log"].mock_calls))
             config.write_user_config.side_effect = None
             self.assertEqual((await scope["post_portal_config"](request, background)).content, {"status": "ok"})
             background.add_task.assert_called_once()

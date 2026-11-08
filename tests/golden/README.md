@@ -133,7 +133,7 @@ $ mios-gen cargo-manifests --root [CWD]/nonexistent --check
 [generate-cargo-manifests] FAIL: no crate directory under [CWD]/nonexistent/tools/native, so the projection would empty the workspace
 
 $ mios-gen cargo-manifests --check
-PASS: tools/native/Cargo.toml matches its generator projection.
+PASS: tools/native/Cargo.toml matches its generator projection. Both workspaces' Cargo target settings match SSOT.
 ```
 
 ### cosign-policy

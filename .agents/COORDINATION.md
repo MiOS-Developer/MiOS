@@ -110,3 +110,16 @@ context within operator-authorized work; they grant no additional authority.
 
 See [the native MCP contract](../usr/share/doc/mios/mcp-tmux.md) and
 [desktop and terminal interaction](../docs/design/doc-desktop-terminal-interaction.md).
+
+## Main publication and live installation
+
+The operator's standing instruction for this workspace is to install and verify
+the authorized live target after every push to main. Record the published main
+revision, artifact source and checksum, installed path and actual running target.
+A PR-branch push does not trigger live installation.
+
+Keep the installation within the operator's authorized scope. Preserve adopted
+sessions, pet state, other agents' worktrees and launchers; refresh an owned
+development preview when an existing process must be retained. A successful push
+alone is not a completed live handoff. If installation is blocked, report the
+concrete blocker and retain the prepared artifact and deployment receipt.

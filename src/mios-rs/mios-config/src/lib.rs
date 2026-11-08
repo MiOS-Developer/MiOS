@@ -206,6 +206,16 @@ pub mod validator {
         }
 
         pub fn validate_str(content: &str) -> ValidationReport {
+            // Empty vendor defaults are declared optional values, not Law 7 violations.
+            // Derive their exact paths from the SSOT instead of another exemption list.
+            // Parsed once per process before the clock starts: duration_ms times this
+            // document, not whichever call happens to be first.
+            static VENDOR: std::sync::OnceLock<toml::Value> = std::sync::OnceLock::new();
+            let vendor = VENDOR.get_or_init(|| {
+                include_str!("../../../../usr/share/mios/mios.toml")
+                    .parse()
+                    .expect("canonical vendor TOML must parse")
+            });
             let start = Instant::now();
             let mut errors = Vec::new();
             let mut warnings = Vec::new();
@@ -460,14 +470,6 @@ pub mod validator {
             }
 
             // 7. General Law 7 Scan across top-level string fields
-            // Empty vendor defaults are declared optional values, not Law 7 violations.
-            // Derive their exact paths from the SSOT instead of another exemption list.
-            static VENDOR: std::sync::OnceLock<toml::Value> = std::sync::OnceLock::new();
-            let vendor = VENDOR.get_or_init(|| {
-                include_str!("../../../../usr/share/mios/mios.toml")
-                    .parse()
-                    .expect("canonical vendor TOML must parse")
-            });
             Self::scan_law7_empty_strings(root_table, "", vendor, &mut errors);
 
             let dur = start.elapsed().as_secs_f64() * 1000.0;

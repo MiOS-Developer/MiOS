@@ -10,9 +10,11 @@
 # Test fixture overrides in the private SSOT copy (never in the vendor SSOT): the plugin path, the nested shell entry
 # (this tree's Nested.qml, so the candidate DockLamp.qml runs) and [desktop.mobile].enabled = false (the small PiP
 # viewport would otherwise be a phone-style monocle output and nothing would tile).
+import atexit
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -23,7 +25,13 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 ROOT = Path(__file__).resolve().parents[1]
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get("MIOS_LIVE_OUT"))
 OUT = Path(os.environ.get("MIOS_LIVE_OUT") or tempfile.mkdtemp(prefix="mios-lamp-live-"))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else "removed at exit; set MIOS_LIVE_OUT=<dir> to keep it"
 LAUNCHER = os.environ.get("MIOS_NESTED_LAUNCHER", "/usr/bin/mios-gen")
 SSOT = Path(os.environ.get("MIOS_VENDOR_TOML") or ROOT / "usr/share/mios/mios.toml")
 FILL = "#!/bin/bash\nprintf '\\033[?25l'\nif [ \"$1\" = ramp ]; then\n" \
@@ -523,7 +531,7 @@ def main():
         print("skip: MIOS_LAMP_PLUGIN (candidate mios-wobbly.so) missing")
         return 0
     OUT.mkdir(parents=True, exist_ok=True)
-    print(f"output: {OUT}", flush=True)
+    print(f"output: {OUT_NOTE}", flush=True)
     run_session("candidate", os.path.abspath(cand), False)
     old = os.environ.get("MIOS_LAMP_PLUGIN_OLD")
     if old and os.path.isfile(old):

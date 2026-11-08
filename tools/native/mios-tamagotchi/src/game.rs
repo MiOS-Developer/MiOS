@@ -23,6 +23,7 @@ pub struct Rules {
     pub medicine_cost: u32,
     pub starting_coins: u32,
     pub memory_reveal_ticks: u16,
+    pub training: crate::progression::TrainingRules,
 }
 
 impl Rules {
@@ -54,6 +55,7 @@ impl Rules {
         {
             return Err("tamagotchi.game: invalid care, memory or currency limits".into());
         }
+        self.training.validate()?;
         Ok(())
     }
 }
@@ -97,8 +99,14 @@ pub struct Challenge {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Game {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis_seed: Option<u64>,
     #[serde(default)]
     pub character: u8,
+    #[serde(default)]
+    pub habitat: crate::habitat::Habitat,
+    #[serde(default)]
+    pub progress: crate::progression::Progress,
     pub age_ticks: u64,
     pub fullness: u8,
     pub happiness: u8,
@@ -133,7 +141,10 @@ impl Game {
         Self {
             // Select an animal family, then one of its two original individuals.
             // This does not consume the memory game's saved RNG stream.
+            genesis_seed: (seed != 0).then_some(seed),
             character: ((seed % 8) + ((seed >> 8) % 2) * 8) as u8,
+            habitat: crate::habitat::Habitat::new(seed),
+            progress: crate::progression::Progress::new(seed),
             age_ticks: 0,
             fullness: rules.initial_need,
             happiness: rules.initial_need,
@@ -150,6 +161,26 @@ impl Game {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_habitat(crate::habitat::vendor_rules()?)
+    }
+    pub fn validate_habitat(&self, habitat: &crate::habitat::HabitatRules) -> Result<(), String> {
+        self.habitat.validate(self.wins, self.age_ticks, habitat)?;
+        self.progress.validate()?;
+        if self.genesis_seed.is_some_and(|seed| {
+            seed == 0
+                || (!self.progress.legacy
+                    && crate::progression::Progress::new(seed).origin_seed
+                        != self.progress.origin_seed)
+        }) {
+            return Err("save contains an invalid or inconsistent birth seed".into());
+        }
+        if self
+            .progress
+            .last_train_tick
+            .is_some_and(|last| last > self.age_ticks)
+        {
+            return Err("save contains a future training tick".into());
+        }
         if [
             self.fullness,
             self.happiness,
@@ -193,7 +224,14 @@ impl Game {
         if self.paused || self.health == 0 {
             return;
         }
+        // Invalid callers cannot trigger a hatch panic or advance care time.
+        if r.training.validate().is_err() || self.progress.validate().is_err() {
+            return;
+        }
         self.age_ticks = self.age_ticks.saturating_add(1);
+        if self.prepare_progress(r).is_err() {
+            return;
+        }
         if self.stage(r) == Stage::Egg {
             return;
         }

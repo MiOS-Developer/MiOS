@@ -443,6 +443,13 @@ whose only client is `hermes-worker`, which a seat does not run. A seat was star
 worker it did not have. It is now gated with its consumer, which changes **only** the seat — every
 other archetype keeps it.
 
+**The host daemons belong to the Blade, not the seat.** Some long-running units manage the machine
+itself (power, thermals, fans and the FHS overlay) rather than the person's I/O. The operator ruled
+on them by the invariant that the Blade owns the hardware: `mios-thermald`, `mios-powerd`,
+`mios-power-sampler`, `ventulusd` (fan control) and `mios-fhs-sync` are each gated on
+`service-plane`, so an endpoint seat runs none of them. None is seat-side, none is ungated debt,
+and `tests/test-seat-activates-nothing.py` pins all five.
+
 The rule is mechanical, and the mechanism is why it was missed. **The AI plane couples over
 ADDRESSES, not unit dependencies**, so the `Requires=`/`Wants=` walk that found the eleven
 dependency violations structurally could not see this one: `hermes-worker` reaches the browser

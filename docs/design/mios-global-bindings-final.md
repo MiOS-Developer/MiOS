@@ -224,6 +224,24 @@ VT·plain (operator decision C-18, I3): a bare VT may run any program (a shell, 
 | Client discovery (C-09) | On the desktop: a tmux client process under the focused terminal's pid, matched by `#{client_pid}`. On a VT: the client whose `client_tty` is `/dev/tty<active>`. If none is found, the `*_plain` profile applies. |
 | `mios:graphical-vt` | Ctrl+Alt+F<VTNr> for this user's graphical session, VTNr from logind. |
 
+### 3.3a Foreground apps and camera profiles (I5)
+
+`[keybindings.global.controller.nav.apps.<name>]` refines the `terminal` or `console` base context while the focused
+terminal's foreground process is a registered binary. The Mon (`mios-tamagotchi`) is the first app; its tables land
+with the game lane (G2), after this binary and the mios-gate mirror.
+
+| Rule | Behavior |
+|---|---|
+| Settings | `nav.app_poll_ms` (50..=2000) and `nav.app_query_timeout_ms` (20..=1000, at most `app_poll_ms`); their sum stays below `context_stale_ms`. Both are required once any app exists. `apps`, `app_poll_ms` and `app_query_timeout_ms` are reserved names, never profiles. |
+| Registration | `exe`: 1-8 root-owned system binaries. `user_exe` (optional): up to 8 per-user candidates, normally set in the user tier (`~/.config/mios/mios.toml`), owned by the bridge's uid. Every entry is an absolute path without empty, `.` or `..` parts. |
+| Matching | `/proc/<leader>/exe` must name a listed path verbatim, with the same inode. The path must be canonical: no symlink anywhere on it, so a link never stands for an unlisted target. The file must not be group- or world-writable, and every ancestor directory must be owned by root or the uid and not group- or world-writable (a root-owned sticky directory is allowed). `/proc/<leader>` must be owned by the uid. A `(deleted)` image never matches. Nothing matches by basename or pattern. |
+| Foreground | tmux: the client's active `#{pane_pid}` (one bounded query), then that tty's foreground group leader. A plain terminal: the leader of its tty's foreground group in the window's process tree. A bare VT: the same among the processes on the VT. A local session route: its current pane. An ssh route never selects an app. |
+| Selection | `contexts[base]` (or its `_tmux`/`_plain` pair) replaces the base profile, but only where the base has navigation (not `vpad`). The app is bound to the window it was verified for. A focus change clears it, and a late result for another window selects nothing. A route drops its app when it moves to another pane. Any app, tmux, focus or profile change flushes held nav input. |
+| Validation | An invalid app row (schema, an app profile that breaks its base context's rules, or a camera stick row other than `key:`/`none`) drops the app layer and is reported by `check` (`nav_app_error`), `map --text` and the bridge log. The base navigation keeps working. A right-stick row in `[nav.repeat]` is still a load error. |
+| Camera sticks | After `radial()` (`stick_deadzone`), each stick's x and y are separate half-axes: at least `flick_on` presses, below `flick_off` releases (and fires nothing), and a sign flip presses the opposite half at once. Repeat comes from `apps.<name>.repeat`, else `[nav.repeat]`. This is the only place the right stick repeats. After any flush, a deflected half-axis must fall below `flick_off` before it fires again. |
+| Precedence | Camera keys are sent only for a stick routed to nav. The room, the Guide layer, a captured non-terminal and cursor mode take the sticks first. Toggling cursor mode, an ownership change, any L3+R3 overlap and a resync all flush held nav input. |
+| Observability | `context` adds `tmux`, `app`, `nav_profile` and `camera`. `map --text` lists the apps. `replay` takes `"app"` at the top level and `{"app": name or null}` steps. |
+
 ### 3.4 Implementation map (IMPLEMENTED today, then the owner for new cells)
 
 | Behavior | Code today | Owner for the change |

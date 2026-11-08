@@ -1,0 +1,75 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "dev_loop",
+      "description": "Orchestrates concurrent terminal worker agents in isolated git worktrees across multiple harnesses (OpenAI, Claude Code, Gemini/Cloud Code) to execute planning, editing, testing, and two-sided verification.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "objective": {
+            "type": "string",
+            "description": "High-level engineering task or goal to implement."
+          },
+          "base_branch": {
+            "type": "string",
+            "default": "main",
+            "description": "Base git branch to branch worktrees from and reconcile into."
+          },
+          "terminal_layout": {
+            "type": "string",
+            "enum": ["wt_grid", "detached_ps", "tmux_grid", "detached_sh", "headless_py"],
+            "default": "wt_grid",
+            "description": "Terminal session layout manager for worker execution."
+          },
+          "worktree_dir": {
+            "type": "string",
+            "default": ".worktrees",
+            "description": "Dedicated parent directory for worktree instances (must be gitignored)."
+          },
+          "lanes": {
+            "type": "array",
+            "description": "Array of concurrent worker lanes.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "domain": {
+                  "type": "string",
+                  "description": "Domain or subsystem responsibility (e.g., backend, frontend, qa, security)."
+                },
+                "worker_id": {
+                  "type": "string",
+                  "description": "Unique worker identifier (letters, numbers, hyphens, underscores)."
+                },
+                "harness": {
+                  "type": "string",
+                  "enum": ["openai", "claude", "cloudcode", "gemini", "custom"],
+                  "description": "Agent harness CLI driving the lane."
+                },
+                "worktree": {
+                  "type": "string",
+                  "description": "Relative directory path for the isolated git worktree."
+                },
+                "command": {
+                  "type": "string",
+                  "description": "Instruction, prompt, or command for the harness worker."
+                },
+                "test_cmd": {
+                  "type": "string",
+                  "description": "Automated verification test command executed in the worktree."
+                }
+              },
+              "required": ["domain", "worker_id", "harness", "worktree", "command"]
+            }
+          },
+          "reconcile_and_clean": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether to perform automated pre-merge verification, atomic merge, and worktree cleanup."
+          }
+        },
+        "required": ["objective", "lanes"]
+      }
+    }
+  }
+]

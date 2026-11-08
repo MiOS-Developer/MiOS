@@ -11,7 +11,6 @@ from pathlib import Path
 import select
 import signal
 import subprocess
-import tempfile
 import threading
 import time
 
@@ -38,7 +37,7 @@ e.ENV.pop('DISPLAY', None)
 
 def pa(*args): return subprocess.check_output(['pactl', *args], text=True, timeout=6).strip()
 before = (pa('get-default-source'), pa('get-default-sink'))
-root = Path(tempfile.mkdtemp(prefix='mios-remote-mic-network-', dir='/var/tmp'))
+root = Path(e.live_dir('mios-remote-mic-network-', dir='/var/tmp'))  # scratch, removed at exit
 synthetic = 'mios-remote-mic-network-' + str(os.getpid())
 server_prefix = 'mios-remote-mic-network-server-' + str(os.getpid())
 fifo = root / 'input.fifo'
@@ -120,7 +119,7 @@ finally:
     if module: pa('unload-module', module)
     if fifo.exists(): fifo.unlink()
 assert before == (pa('get-default-source'),pa('get-default-sink')), 'physical defaults changed'
-report = {'passed':True,'results':results,'physical_microphone_recorded':False,'default_audio_unchanged':True,'native_sources_removed':True,'nested_left_running':True,'work_dir':str(root)}
+report = {'passed':True,'results':results,'physical_microphone_recorded':False,'default_audio_unchanged':True,'native_sources_removed':True,'nested_left_running':True}
 Path(args.report).write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report), flush=True)
 print('MIOS_MICROPHONE_NETWORK_DONE', flush=True)

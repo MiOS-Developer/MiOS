@@ -46,7 +46,326 @@ const reparsed = vm.runInContext('parseToml(toml)', ctx);
 process.stdout.write(JSON.stringify({toml, reparsed}));
 '''
 
+
+MON_FORM_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const ctx = {DATA: input.initial, controls: input.controls, storeGpuResourceTables:()=>{},
+ document:{getElementById:()=>({value:'[]'}),querySelectorAll:()=>input.controls}};
+vm.createContext(ctx);
+for (const name of ['splitDataKey','gatherFromForm','emitToml','emitTomlValue']) {
+ const match=html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
+ if(!match)throw new Error('Missing function '+name);
+ vm.runInContext(match[0],ctx);
+}
+vm.runInContext('gatherFromForm()',ctx);
+const toml=vm.runInContext('emitToml(DATA)',ctx);
+process.stdout.write(JSON.stringify({data:ctx.DATA,toml}));
+'''
+
+
+SAVE_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const events = {fetch: [], writes: [], errors: [], statuses: [], downloads: 0, pickers: 0, hidden: 0};
+const ctx = {
+  MIOS_EMBEDDED: input.embedded !== false,
+  FILE_HANDLE: input.handle ? {name:'bound.toml'} : null,
+  HAS_FSA: !!input.fsa, LOADED_TOML: 'original', toml: input.toml, Blob,
+  hideSavePreview: () => events.hidden++,
+  renderSaveErrors: errors => events.errors.push(errors),
+  showStatus: (text, level) => events.statuses.push({text, level}),
+  writeFileHandle: async (handle, text) => events.writes.push({name:handle.name, text}),
+  window: {showSaveFilePicker: async () => { events.pickers++; return {name:'chosen.toml'}; }},
+  URL: {createObjectURL: () => 'blob:fixture', revokeObjectURL: () => {}},
+  setTimeout: fn => fn(),
+  document: {createElement: () => ({click: () => events.downloads++})},
+  fetch: async (url, options) => {
+    events.fetch.push({url, options});
+    if (input.networkError) throw new Error('transport interrupted');
+    const status = input.status || 200;
+    return {ok: status >= 200 && status < 300, status,
+      json: async () => {
+        if (input.badJson) throw new Error('bad response JSON');
+        return {errors: ['Synthetic validation refusal']};
+      }};
+  }
+};
+vm.createContext(ctx);
+const match = html.match(/^async function performSave\([^\n]*\n[\s\S]*?^}/m);
+if (!match) throw new Error('Missing performSave');
+vm.runInContext(match[0], ctx);
+(async () => {
+  await vm.runInContext('performSave(toml)', ctx);
+  process.stdout.write(JSON.stringify({events, loaded:ctx.LOADED_TOML}));
+})().catch(error => { console.error(error); process.exitCode = 1; });
+'''
+
 class TestConfiguratorSecurity(unittest.TestCase):
+
+    def test_mon_controls_preserve_vendor_inheritance_and_typed_nested_overrides(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.controls = []
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                key = a.get("data-key", "")
+                if tag in ("input", "select") and a.get("data-inherit") == "true":
+                    self.controls.append({"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": key, "inherit": "true",
+                            **({"type": a["data-type"]} if "data-type" in a else {}),
+                            **({"array": a["data-array"]} if "data-array" in a else {})}})
+        parser = Controls()
+        parser.feed(html.read_text())
+        by_key = {control["dataset"]["key"]: control for control in parser.controls}
+        self.assertEqual(len(by_key), len(parser.controls), "no duplicate inheritance controls")
+        for key in ["tamagotchi.camera_view", "tamagotchi.zoom_percent",
+                    "tamagotchi.game.training.name_starts", "tamagotchi.game.training.species_colors",
+                    "tamagotchi.game.training.personality_colors.cozy",
+                    "tamagotchi.camera.pan_step_permille",
+                    "tamagotchi.camera.preview_orbit_pauses_turntable"]:
+            self.assertIn(key, by_key)
+        def gather(initial):
+            result = subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": parser.controls, "initial": initial}),
+                capture_output=True, text=True, check=True, timeout=15)
+            return json.loads(result.stdout)
+        # Empty fields inherit the canonical runtime tier, without an HTML copy
+        # of vendor numeric values or an invalid empty-string override.
+        output = gather({"identity": {"hostname": "mios-test"}})
+        self.assertEqual(output["data"], {"identity": {"hostname": "mios-test"}})
+        self.assertNotIn("tamagotchi", tomllib.loads(output["toml"]))
+        changes = {"tamagotchi.camera_view": "face", "tamagotchi.zoom_percent": "175",
+            "tamagotchi.game.training.name_starts": "Yu, Ko",
+            "tamagotchi.game.training.species_colors": "4,8,14,15,14,11,7,1",
+            "tamagotchi.game.training.personality_colors.cozy": "3",
+            "tamagotchi.camera.pan_step_permille": "50"}
+        for key, value in changes.items():
+            by_key[key]["value"] = value
+        output = gather({})
+        parsed = tomllib.loads(output["toml"])["tamagotchi"]
+        self.assertEqual(parsed["camera_view"], "face")
+        self.assertEqual(parsed["zoom_percent"], 175)
+        self.assertEqual(parsed["game"]["training"]["name_starts"], ["Yu", "Ko"])
+        self.assertEqual(parsed["game"]["training"]["species_colors"], [4,8,14,15,14,11,7,1])
+        self.assertEqual(parsed["game"]["training"]["personality_colors"]["cozy"], 3)
+        self.assertEqual(parsed["camera"]["pan_step_permille"], 50)
+        self.assertNotIn("preview_orbit_pauses_turntable", parsed["camera"])
+        # The camera flag is a typed, inheritable bool select. (Bool emission
+        # is the client's job; gatherFromForm owns that coercion.)
+        flag = by_key["tamagotchi.camera.preview_orbit_pauses_turntable"]
+        self.assertEqual((flag["tagName"], flag["dataset"].get("type")), ("SELECT", "bool"))
+        for value, expected in [("true", True), ("false", False)]:
+            flag["value"] = value
+            typed = tomllib.loads(gather({})["toml"])["tamagotchi"]["camera"]
+            self.assertIs(typed["preview_orbit_pauses_turntable"], expected)
+        flag["value"] = "not-a-bool"
+        with self.assertRaises(subprocess.CalledProcessError) as invalid:
+            gather({})
+        self.assertIn("Boolean setting requires true or false", invalid.exception.stderr)
+        flag["value"] = ""
+        for key in ["pan_step_permille", "pan_max_permille", "pan_margin_permille",
+                    "tilt_step_degrees", "tilt_min_degrees", "tilt_max_degrees",
+                    "orbit_fine_step_degrees", "max_lead_steps"]:
+            self.assertEqual(by_key["tamagotchi.camera." + key]["dataset"].get("type"), "int", key)
+        # Choosing Inherit for an existing key removes that override only.
+        for control in parser.controls:
+            control["value"] = ""
+        output = gather({"tamagotchi": {"camera_view": "room", "unrelated": "kept"}})
+        self.assertEqual(output["data"]["tamagotchi"], {"unrelated": "kept"})
+
+    def test_focused_mon_policy_controls_roundtrip_real_form(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        prefix = "keybindings.global.controller.nav."
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.controls = []
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag in ("input", "select") and a.get("data-key", "").startswith(prefix) and a.get("data-inherit") == "true":
+                    self.controls.append({"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": a["data-key"], "inherit": "true",
+                        **({"type": a["data-type"]} if "data-type" in a else {}),
+                        **({"array": a["data-array"]} if "data-array" in a else {})}})
+        parser = Controls()
+        parser.feed(html.read_text())
+        by_key = {c["dataset"]["key"]: c for c in parser.controls}
+        self.assertEqual(len(by_key), len(parser.controls))
+        inputs = ["LS_LEFT", "LS_RIGHT", "LS_UP", "LS_DOWN", "RS_LEFT", "RS_RIGHT",
+                  "RS_UP", "RS_DOWN", "BTN_TL2", "BTN_TR2", "BTN_THUMBL", "BTN_THUMBR"]
+        for profile in ("mon_tmux", "mon_plain", "mon_console_tmux", "mon_console_plain"):
+            for button in inputs:
+                self.assertIn(prefix + profile + "." + button, by_key)
+        def gather(initial):
+            run = subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": parser.controls, "initial": initial}),
+                capture_output=True, text=True, check=True, timeout=15)
+            return json.loads(run.stdout)
+        unchanged = {"identity": {"hostname": "kept"}}
+        self.assertEqual(gather(unchanged)["data"], unchanged)
+        changes = {"app_poll_ms": "300", "app_query_timeout_ms": "100",
+            "apps.mon.exe": "/usr/bin/mios-tamagotchi",
+            "apps.mon.user_exe": "/home/fixture/.local/bin/mios-tamagotchi-sample",
+            "apps.mon.contexts.terminal": "mon", "apps.mon.contexts.console": "mon_console",
+            "mon_tmux.LS_UP": "key:ALT+8", "mon_console_plain.RS_LEFT": "none",
+            "apps.mon.repeat.LS_UP": "220, 80"}
+        for key, value in changes.items():
+            by_key[prefix + key]["value"] = value
+        emitted = tomllib.loads(gather({})["toml"])["keybindings"]["global"]["controller"]["nav"]
+        self.assertEqual(emitted["app_poll_ms"], 300)
+        self.assertEqual(emitted["app_query_timeout_ms"], 100)
+        self.assertEqual(emitted["apps"]["mon"]["exe"], ["/usr/bin/mios-tamagotchi"])
+        self.assertEqual(emitted["apps"]["mon"]["user_exe"],
+                         ["/home/fixture/.local/bin/mios-tamagotchi-sample"])
+        self.assertEqual(emitted["apps"]["mon"]["repeat"]["LS_UP"], [220, 80])
+        self.assertEqual(emitted["apps"]["mon"]["contexts"], {"terminal": "mon", "console": "mon_console"})
+        self.assertEqual(emitted["mon_tmux"]["LS_UP"], "key:ALT+8")
+        self.assertEqual(emitted["mon_console_plain"]["RS_LEFT"], "none")
+        self.assertNotIn("mon_plain", emitted)
+        for control in parser.controls:
+            control["value"] = ""
+        old = {"keybindings.global.controller.nav.mon_tmux": {"LS_UP": "key:ALT+2", "unrelated": "kept"}}
+        self.assertEqual(gather(old)["data"]["keybindings.global.controller.nav.mon_tmux"], {"unrelated": "kept"})
+
+    def test_controller_json_arrays_use_the_real_form_and_keep_binding_validation(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.by_key = {}
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if tag in ("textarea", "input") and a.get("data-type") == "json-array":
+                    self.by_key[a["data-key"]] = {"tagName": tag.upper(), "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": a["data-key"], "type": "json-array"}}
+        parser = Controls()
+        parser.feed(html.read_text())
+        session = {"name": "player-two", "controllers": ["/dev/input/event14"],
+                   "socket": "/run/user/1000/tmux-1000/mios-human", "session": "play",
+                   "pane": "%3", "ssh_host": "fixture@blade-two"}
+        binding = {"id": "fixture", "chord": "SUPER+F11", "action": "exec:true"}
+        values = {
+            "keybindings.global.bindings": [binding],
+            "keybindings.global.always_active_actions": [],
+            "keybindings.global.controller.sessions": [session],
+            "keybindings.global.controller.capture_navigation_contexts": ["terminal"],
+            "keybindings.global.controller.nav.tmux_sockets": ["mios-human", "mios-nested-fixture"],
+            "keybindings.global.controller.console.pointer_names": ["mios-vctl-pointer"],
+        }
+        for key, value in values.items():
+            self.assertIn(key, parser.by_key)
+            parser.by_key[key]["value"] = json.dumps(value)
+        controls = [parser.by_key[key] for key in values]
+        def gather():
+            initial = {"keybindings.global.controller": {"exclusive_grab": False,
+                "capture_fullscreen": False}, "identity": {"hostname": "kept"}}
+            return subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": controls, "initial": initial}),
+                capture_output=True, text=True, timeout=15)
+        result = gather()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parsed = tomllib.loads(json.loads(result.stdout)["toml"])
+        self.assertEqual(parsed["identity"]["hostname"], "kept")
+        global_keys = parsed["keybindings"]["global"]
+        controller = global_keys["controller"]
+        self.assertEqual(global_keys["bindings"], [binding])
+        self.assertEqual(global_keys["always_active_actions"], [])
+        self.assertEqual(controller["sessions"], [session])
+        self.assertEqual(controller["nav"]["tmux_sockets"], values["keybindings.global.controller.nav.tmux_sockets"])
+        self.assertEqual(controller["capture_navigation_contexts"], ["terminal"])
+        self.assertEqual(controller["console"]["pointer_names"], ["mios-vctl-pointer"])
+        self.assertIs(controller["exclusive_grab"], False)
+        self.assertIs(controller["capture_fullscreen"], False)
+        for key in values:
+            with self.subTest(non_array=key):
+                control = parser.by_key[key]
+                saved = control["value"]
+                for invalid in ("{}", "null", '"text"', "42"):
+                    control["value"] = invalid
+                    rejected = gather()
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertIn("Setting requires a JSON array: " + key, rejected.stderr)
+                control["value"] = saved
+        control = parser.by_key["keybindings.global.bindings"]
+        for invalid in ([{}], ["not a binding"], [{"id": "fixture", "chord": "SUPER+F11"}]):
+            with self.subTest(invalid_binding=invalid):
+                control["value"] = json.dumps(invalid)
+                rejected = gather()
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("Global bindings require an array of binding objects", rejected.stderr)
+
+    def test_controller_timing_bounds_and_repeat_pairs_use_the_real_form(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        prefix = "keybindings.global.controller.nav."
+        class Controls(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.by_key = {}
+                self.bounds = {}
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                key = a.get("data-key", "")
+                if tag == "input" and key.startswith(prefix) and (
+                        key in (prefix + "app_poll_ms", prefix + "app_query_timeout_ms")
+                        or key.startswith(prefix + "apps.mon.repeat.")):
+                    self.bounds[key] = (a.get("min"), a.get("max"))
+                    self.by_key[key] = {"tagName": "INPUT", "type": a.get("type", ""),
+                        "value": "", "dataset": {"key": key, "inherit": "true",
+                            **({"type": a["data-type"]} if "data-type" in a else {}),
+                            **({"array": a["data-array"]} if "data-array" in a else {})}}
+        parser = Controls()
+        parser.feed(html.read_text())
+        poll, query = prefix + "app_poll_ms", prefix + "app_query_timeout_ms"
+        self.assertEqual(parser.bounds[poll], ("50", "2000"))
+        self.assertEqual(parser.bounds[query], ("20", "1000"))
+        self.assertEqual(len(parser.by_key), 12)
+        def gather():
+            return subprocess.run(["node", "-e", MON_FORM_NODE],
+                input=json.dumps({"path": str(html), "controls": list(parser.by_key.values()), "initial": {}}),
+                capture_output=True, text=True, timeout=15)
+        def reject(key, value, error):
+            with self.subTest(key=key, value=value):
+                old = parser.by_key[key]["value"]
+                parser.by_key[key]["value"] = value
+                try:
+                    result = gather()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(error, result.stderr)
+                finally:
+                    parser.by_key[key]["value"] = old
+        for key, values in [(poll, ["49", "2001", "50.5", "50ms", "-1", "NaN"]),
+                            (query, ["19", "1001", "20.5", "20ms", "-1", "Infinity"])]:
+            for value in values:
+                reject(key, value, "Controller timing outside supported range")
+        for key in parser.by_key:
+            if ".repeat." not in key:
+                continue
+            for value in ["49,16", "5001,16", "50,15", "50,5001", "50.5,16", "50ms,16",
+                          "50", "50,16,20", "50,,16", "50,-16"]:
+                reject(key, value, "Controller repeat requires delay")
+            for value in ["50,16", "5000,5000"]:
+                parser.by_key[key]["value"] = value
+                result = gather()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                emitted = tomllib.loads(json.loads(result.stdout)["toml"])
+                self.assertEqual(emitted["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"]["repeat"][key.rsplit(".", 1)[1]],
+                                 [int(v) for v in value.split(",")])
+            parser.by_key[key]["value"] = ""
+        for p, q in [("50", "20"), ("2000", "1000")]:
+            parser.by_key[poll]["value"], parser.by_key[query]["value"] = p, q
+            result = gather()
+            self.assertEqual(result.returncode, 0, result.stderr)
+        parser.by_key[poll]["value"] = "50"
+        reject(query, "51", "query timeout must not exceed poll interval")
+        for control in parser.by_key.values():
+            control["value"] = ""
+        self.assertEqual(json.loads(gather().stdout)["data"], {})
+
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {
             "repos.external.nvidia-container-toolkit": {
@@ -125,6 +444,65 @@ class TestConfiguratorSecurity(unittest.TestCase):
         self.assertNotIn('img', tags)
         self.assertIn('&lt;img', output['banner'])
         self.assertNotIn(attack, output['banner'])
+
+
+    def _save_case(self, **case):
+        payload = {"path": str(ROOT / "usr/share/mios/configurator/mios.html"),
+                   "toml": '# keep comment\n[custom."unknown.key"]\nvalue = "quoted \\"text\\""\n',
+                   **case}
+        result = subprocess.run(["node", "-e", SAVE_NODE],
+                                input=json.dumps(payload), capture_output=True,
+                                text=True, check=True, timeout=15)
+        return payload, json.loads(result.stdout)
+
+    def test_portal_save_uses_a_lossless_envelope_and_finishes_only_after_success(self):
+        payload, output = self._save_case(handle=True, fsa=True)
+        events = output["events"]
+        self.assertEqual(len(events["fetch"]), 1)
+        request = events["fetch"][0]
+        self.assertEqual(request["url"], "/portal/config")
+        self.assertEqual(request["options"]["credentials"], "same-origin")
+        self.assertEqual(request["options"]["headers"]["Content-Type"], "application/json")
+        self.assertEqual(json.loads(request["options"]["body"]), {"toml": payload["toml"]})
+        self.assertEqual(output["loaded"], payload["toml"])
+        self.assertEqual(events["hidden"], 1)
+        self.assertEqual(events["writes"], [])
+        self.assertEqual(events["pickers"], 0)
+        self.assertEqual(events["downloads"], 0)
+        self.assertEqual(events["errors"], [])
+
+    def test_portal_refusals_and_unknown_transport_never_fall_through_to_local_save(self):
+        cases = [{"status": status} for status in [400, 401, 403, 409, 422, 500, 502, 503]]
+        cases += [{"status": 500, "badJson": True}, {"networkError": True}]
+        for case in cases:
+            with self.subTest(case):
+                _, output = self._save_case(handle=True, fsa=True, **case)
+                events = output["events"]
+                self.assertEqual(events["writes"], [], "a refused Portal save must not overwrite a bound file")
+                self.assertEqual(events["pickers"], 0)
+                self.assertEqual(events["downloads"], 0)
+                self.assertEqual(events["hidden"], 0, "preview stays available for correction")
+                self.assertEqual(output["loaded"], "original")
+                self.assertTrue(events["errors"])
+                self.assertEqual(events["statuses"][-1]["level"], "err")
+
+    def test_standalone_offline_file_picker_and_download_paths_still_save(self):
+        for mode in [{"handle": True}, {"fsa": True}, {}]:
+            with self.subTest(mode):
+                payload, output = self._save_case(embedded=False, **mode)
+                events = output["events"]
+                self.assertEqual(events["fetch"], [])
+                self.assertEqual(output["loaded"], payload["toml"])
+                self.assertEqual(events["hidden"], 1)
+                if mode:
+                    self.assertEqual(len(events["writes"]), 1)
+                    self.assertEqual(events["writes"][0]["text"], payload["toml"])
+                    self.assertEqual(events["pickers"], int(bool(mode.get("fsa"))))
+                    self.assertEqual(events["downloads"], 0)
+                else:
+                    self.assertEqual(events["downloads"], 1)
+                    self.assertEqual(events["writes"], [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -19,6 +19,7 @@ import mios_toml  # noqa: E402 -- the one layered mios.toml loader (Law 13)
 
 STYLE_ID = "mios-edge"
 TTYD_ANCHOR = "#terminal-container .terminal{height:calc(100% - 10px);padding:5px}"
+TTYD_POINTER_STYLE = '<style id="mios-terminal-pointer">.xterm-helper-textarea{pointer-events:none}</style>'
 HINT = "/* AI-hint: Portal expanded terminal card CSS rendered by portal_edge.py from mios.toml [theme.edge].portal_term_* */"
 CSS_GOLDEN = "usr/share/mios/theme/fixtures/edge/portal-term.css"
 TTYD_GOLDEN = "usr/share/mios/theme/fixtures/edge/ttyd-page.json"  # the baked page's pin; 41-services.sh fails unless the bake matches it
@@ -84,7 +85,21 @@ def ttyd_page(html_h, data):
     hits = page.count(TTYD_ANCHOR)
     if hits != 1:
         raise ValueError(f"ttyd page: .terminal padding anchor {TTYD_ANCHOR!r} found {hits} times, expected 1")
-    return page.replace(TTYD_ANCHOR, rule)
+    page = page.replace(TTYD_ANCHOR, rule)
+    # A mobile browser otherwise uses a desktop-width layout viewport, making
+    # every terminal cell microscopic instead of letting the TUI reflow.
+    heads = list(re.finditer(r"<head\b[^>]*>(.*?)</head\s*>", page, re.I | re.S))
+    if len(heads) != 1:
+        raise ValueError(f"ttyd page: head found {len(heads)} times, expected 1")
+    head = heads[0]
+    meta = '<meta name="viewport" content="width=device-width,initial-scale=1">'
+    pattern = r'<meta\b[^>]*\bname\s*=\s*([\'"]?)viewport\1(?=[\s/>])[^>]*>'
+    found = list(re.finditer(pattern, head.group(1), re.I))
+    if len(found) > 1:
+        raise ValueError(f"ttyd page: viewport found {len(found)} times, expected at most 1")
+    content = re.sub(pattern, lambda _: meta, head.group(1), count=1, flags=re.I) if found else head.group(1) + meta
+    # Hidden IME textareas stay keyboard-focusable but must not attract touch snapping.
+    return page[:head.start(1)] + content + TTYD_POINTER_STYLE + page[head.end(1):]
 
 def ttyd_golden(data, page_sha256):
     """The committed pin of the baked page: version, source and page sha256, and the patched .terminal rule."""

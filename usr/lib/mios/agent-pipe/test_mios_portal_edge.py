@@ -20,7 +20,7 @@ MODULE = os.path.join(HERE, "mios_pipe", "routing", "portal_edge.py")
 PORTAL = os.path.join(HERE, "mios_pipe", "routing", "portal.py")
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 FIXTURE = os.path.join(ROOT, portal_edge.CSS_GOLDEN)
-PAGE = "<style>#terminal-container .terminal{height:calc(100% - 10px);padding:5px}</style>"
+PAGE = "<head><style>#terminal-container .terminal{height:calc(100% - 10px);padding:5px}</style></head>"
 
 def html_h(page, length_delta=0):
     raw = gzip.compress(page.encode())
@@ -134,6 +134,58 @@ class TestPortalEdge(unittest.TestCase):
         self.assertIn("#terminal-container .terminal{height:calc(100% - 0px);padding:0px}", page)
         self.assertNotIn(portal_edge.TTYD_ANCHOR, page)
         self.assertIn("padding:2px", portal_edge.ttyd_page(src, ttyd_data(src, pad=2)))
+
+    def test_mobile_viewport_is_device_width_without_disabling_zoom(self):
+        src = html_h("<html>" + PAGE + "</html>")
+        page = portal_edge.ttyd_page(src, ttyd_data(src))
+        self.assertEqual(page.count('name="viewport"'), 1)
+        self.assertIn('content="width=device-width,initial-scale=1"', page)
+        self.assertNotIn("user-scalable=no", page)
+        for existing in ['<meta name=viewport content="width=980">',
+                         '<meta name="viewport" content="width=980">']:
+            raw = html_h(PAGE.replace("</head>", existing + "</head>"))
+            fixed = portal_edge.ttyd_page(raw, ttyd_data(raw))
+            self.assertEqual(fixed.count('name="viewport"'), 1)
+            self.assertNotIn("width=980", fixed)
+
+    def test_touch_patch_preserves_focusable_input_and_keyboard_program(self):
+        body = ('<body><textarea class="xterm-helper-textarea" tabindex="0"></textarea>'
+                '<script>document.querySelector("textarea").focus()</script></body>')
+        src = html_h("<html>" + PAGE + body + "</html>")
+        page = portal_edge.ttyd_page(src, ttyd_data(src))
+        self.assertEqual(re.search(r"<body>.*</body>", page).group(0), body)
+        self.assertIn('.xterm-helper-textarea{pointer-events:none}', page)
+        self.assertNotIn('disabled', page)
+        self.assertNotIn('display:none', page)
+        self.assertEqual(page.count('id="mios-terminal-pointer"'), 1)
+
+    def test_mobile_viewport_rejects_missing_head_and_duplicate_tags(self):
+        for page, needle in [(PAGE.replace("<head>", "").replace("</head>", ""), "head found 0"),
+                             (PAGE.replace("</head>", '<meta name=viewport><meta name="viewport"></head>'), "viewport found 2")]:
+            src = html_h(page)
+            with self.assertRaisesRegex(ValueError, needle):
+                portal_edge.ttyd_page(src, ttyd_data(src))
+
+    def test_launcher_accepts_readable_user_page_and_refuses_missing_explicit_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = os.path.join(tmp, "ttyd")
+            with open(fake, "w", encoding="utf-8") as fh:
+                fh.write("#!" + sys.executable + "\nimport json,sys\nargs=sys.argv[1:]\n"
+                         "print(json.dumps({'page':args[args.index('-I')+1] if '-I' in args else None}))\n")
+            os.chmod(fake, 0o700)
+            page = os.path.join(tmp, "page.html")
+            with open(page, "w", encoding="utf-8") as fh:
+                fh.write("<html><head></head></html>")
+            launcher = os.path.join(ROOT, "usr/libexec/mios/mios-ttyd-launch")
+            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"], MIOS_TTYD_PAGE_PATH=page)
+            good = subprocess.run(["bash", launcher, "bash"], env=env, capture_output=True, text=True)
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertIn(page, good.stdout)
+            env["MIOS_TTYD_PAGE_PATH"] = os.path.join(tmp, "missing.html")
+            bad = subprocess.run(["bash", launcher, "bash"], env=env, capture_output=True, text=True)
+            self.assertEqual(bad.returncode, 2)
+            self.assertIn("explicit page is not readable", bad.stderr)
+            self.assertEqual(bad.stdout, "")
 
     def test_ttyd_page_fails_loud(self):
         moved = html_h(PAGE.replace("padding:5px", "padding:6px"))

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4145,
-  "total_metadata_entries": 3402,
-  "total_hints": 3396,
-  "total_functions_indexed": 2108,
-  "total_related_links": 6703,
+  "total_files_scanned": 4252,
+  "total_metadata_entries": 3429,
+  "total_hints": 3423,
+  "total_functions_indexed": 2135,
+  "total_related_links": 6844,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -777,6 +777,263 @@
         "mios-dev",
         "mios-hardening",
         "audit-prompt"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/README.md",
+      "hint": "Portable snapshot of global MiOS skills for detached transfer and installation.",
+      "related": [
+        "MANIFEST.json",
+        "SHA256SUMS",
+        "definitions/",
+        "catalog/",
+        "context/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/context/.agents/COORDINATION.md",
+      "hint": "Implemented MiOS session messaging and visible tmux worker coordination contract.",
+      "related": [
+        "usr/share/mios/mios.toml [mcp.agents]",
+        "[mcp.tmux]",
+        "[keybindings]; usr/share/doc/mios/mcp-tmux.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/context/.agents/rules/AGENTS.md",
+      "hint": "Antigravity CLI (AGY) project rules for MiOS development pipelines, CI/CD cycles, and artifacting.",
+      "related": [
+        "/usr/share/mios/ai/system.md",
+        "/etc/mios/ai/system-prompt.md",
+        "AGENTS.md",
+        "GEMINI.md",
+        "usr/share/mios/mios.toml",
+        "tools/sync-generated.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/context/AGENTS.md",
+      "hint": "The primary entry point and source of truth for all AI agents in mios-bootstrap \u2014 the interactive installer + user-editable layer of MiOS. Defines the project identity, the whole-system context (immutable bootc/OCI Fedora workstation that is also a local self-replicating agentic AI OS), OpenAI-compatible interface standards, and this repo's role as the user-facing installer surface that drives the build pipeline into a deployed image.",
+      "related": [
+        "/etc/mios/profile.toml",
+        "/usr/share/mios/profile.toml",
+        "/usr/share/mios/ai/system.md",
+        "/etc/mios/ai/system-prompt.md",
+        "/usr/share/mios/ai/",
+        "/usr/share/mios/mios.toml",
+        "/usr/share/mios/llamacpp/llama-swap.yaml",
+        "/etc/mios/install.env",
+        "mios-bootstrap",
+        "mios-dev",
+        "mios-pipeline",
+        "mios-pull",
+        "mios-llm-light",
+        "mios-pgvector"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/context/usr/share/doc/mios/mcp-tmux.md",
+      "hint": "Native MiOS-MCP and tmux-mcp architecture, packaging, runtime theme projection and verification contract.",
+      "related": [
+        "/usr/share/mios/mios.toml [mcp]",
+        "[packages.mcp]",
+        "[keybindings]",
+        "[theme]; /usr/libexec/mios/mios-mcp-server"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/app-launch/SKILL.md",
+      "hint": "Defines the canonical `app-launch` skill for the Hermes agent, mandating the use of the `launch_windows_app` tool to resolve and execute any application, game, or service via the MiOS broker instead of direct shell commands.",
+      "related": [
+        "/usr/share/mios/hermes/skills/app-launch/SKILL.md._",
+        "mios-launch",
+        "mios-hermes",
+        "mios-launcher",
+        "localhost:9090"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/find-files-and-apps/SKILL.md",
+      "hint": "Defines the logic for locating files and applications across Linux and Windows filesystems by mapping user intent to specific discovery tools (find_file_fast, app_search, list_installed_apps, linux_file_search, windows_file_search) to resolve concrete paths; the NTFS file index (windows_file_search / find_file_fast) is the authoritative answer for whether a file/app exists on any Windows drive, so never fabricate a negative without querying it.",
+      "related": [
+        "/usr/share/mios/hermes/skills/find-files-and-apps/SKILL.md._",
+        "/usr/lib/mios/agent-pipe"
+      ],
+      "functions": [
+        "app_search",
+        "find_file_fast",
+        "windows_file_search",
+        "linux_file_search",
+        "list_installed_apps",
+        "resolve_launch_command",
+        "verify_launch"
+      ],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/linux-control/SKILL.md",
+      "hint": "Defines the linux-control skill for interacting with Linux/Wayland desktops via the linux_desktop_* verbs, providing an environment-adaptive interface for UI automation using AT-SPI semantic trees or vision-based fallbacks.",
+      "related": [
+        "/etc/mios/ai/v1/mcp.json",
+        "/etc/mios/ai/v1/a2a-peers.json",
+        "mios-computer-use",
+        "mios-pc-control",
+        "mios-env-probe",
+        "mios-environment",
+        "mios-grounding",
+        "mios-pc-vision",
+        "mios-computer-use-server"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/mios-environment/SKILL.md",
+      "hint": "Maps the MiOS host environment and provides a reference for agents to use specific helper tools (mios-find, mios-windows, mios-gui) to launch apps, manage services, and handle cross-platform execution.",
+      "related": [
+        "/usr/share/mios/hermes/skills/mios-environment/SKILL.md.",
+        "/etc/mios/cron-rules.toml",
+        "mios-environment",
+        "mios-find",
+        "mios-windows",
+        "mios-gui",
+        "mios-hermes-firstboot",
+        "mios-apps",
+        "mios-open-url",
+        "mios-pc-control"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/mios-skill-catalog/SKILL.md",
+      "hint": "Defines the MiOS skill catalog as a repository of codified, multi-agent procedure DAGs; agents use tool_search to discover, list, and execute promoted skill chains over the `agent_pipe` port.",
+      "related": [
+        "/usr/share/mios/hermes/skills/mios-skill-catalog/SKILL.md._",
+        "mios-skill-catalog",
+        "mios-skills-miner",
+        "mios-skills",
+        "mios-skills-miner.timer"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/opencode-delegation/SKILL.md",
+      "hint": "Defines the routing logic for the agent-pipe orchestrator to delegate multi-file refactors, filesystem-heavy loops, and code-aware PC-control tasks to the opencode peer via the gateway on the `opencode_gateway` port.",
+      "related": [
+        "/usr/lib/mios/agents/opencode/bin/opencode",
+        "mios-opencode-gateway",
+        "mios-opencode",
+        "mios-find",
+        "mios-opencode-gateway.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/package-management/SKILL.md",
+      "hint": "Defines the unified package-management skill for Hermes, mapping \"install\", \"find\", and \"update\" commands to platform-specific winget (Windows) or flatpak (Linux) tools based on application type.",
+      "related": [
+        "/usr/share/mios/hermes/skills/package-management/SKILL.md._",
+        "mios-launch",
+        "mios-winget"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/parallel-fanout/SKILL.md",
+      "hint": "Defines the parallel-fanout skill for Hermes to replace serial tool-call loops with `delegate_subtask_to_peer_agent(tasks=[...])` when processing independent subtasks like multi-file audits or multi-host queries to optimize execution via child agents.",
+      "related": [
+        "/usr/share/mios/hermes/skills/parallel-fanout/SKILL.md.",
+        "mios-hermes-firstboot",
+        "mios-llm-light",
+        "hermes-agent.service",
+        "MIOS_AI_ENDPOINT"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/self-improvement/SKILL.md",
+      "hint": "Defines the self-improvement skill for agents to clone and modify immutable vendor skills or shims into writable overlays, ensuring local overrides are used instead of failing on read-only system paths.",
+      "related": [
+        "/usr/share/mios/hermes/skills/",
+        "/usr/share/mios/hermes/",
+        "mios-skill-clone",
+        "mios-tool-clone",
+        "mios-windows",
+        "mios-windows-extended"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "SKILLS/definitions/windows-control/SKILL.md",
+      "hint": "Defines the windows-control skill for the Hermes agent to manage Windows host window state (focus/move/resize/minimize/maximize/restore/close/query) and drive the Windows desktop (click UI elements, type text, press keys) via native Win32-backed broker dispatch verbs, resolving windows by title and elements by name rather than by raw hwnd or coordinates.",
+      "related": [
+        "list_windows",
+        "focus_window",
+        "move_window_to_region",
+        "place_window_at_pixel",
+        "resize_window",
+        "minimize_window",
+        "maximize_window",
+        "restore_window",
+        "close_window",
+        "window_state",
+        "screen_layout",
+        "windows_desktop_click",
+        "windows_desktop_click_element",
+        "windows_desktop_find_element_by_name",
+        "windows_desktop_list_elements",
+        "windows_desktop_type_text",
+        "windows_desktop_press_key"
       ],
       "functions": [],
       "doc": null,
@@ -13088,7 +13345,7 @@
     },
     {
       "path": "tools/native/mios-inputd/src/nav.rs",
-      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules and the Linux console byte translation of a key: stroke.",
+      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.",
       "related": [
         "usr/share/mios/mios.toml [keybindings.global.controller.nav]",
         "tools/native/mios-inputd/src/router.rs",
@@ -13097,6 +13354,7 @@
       "functions": [
         "NavConfig::from_value",
         "NavConfig::profile_name",
+        "NavConfig::app_profile",
         "NavConfig::text",
         "parse_key_chord",
         "stroke",
@@ -13944,6 +14202,63 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-tamagotchi/src/genetics.rs",
+      "hint": "Versioned transmissible birth codes and pure seeded Mon identities; progress is separate.",
+      "related": [
+        "game.rs",
+        "progression.rs",
+        "config.rs",
+        "ui.rs",
+        "usr/share/mios/mios.toml [tamagotchi.genetics]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/geometry.rs",
+      "hint": "Original compact doll animal volumes; pure geometry, no facial glyph meshes or game state.",
+      "related": [
+        "sprite.rs",
+        "game.rs",
+        "/usr/share/mios/templates/rust"
+      ],
+      "functions": [
+        "anatomy"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/habitat.rs",
+      "hint": "Deterministic cosmetic rooms, validated SSOT catalogues and explicit decoration transactions.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [tamagotchi.habitat]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/hud.rs",
+      "hint": "Cell-budgeted golden-ratio HUD geometry and exact compact status labels.",
+      "related": [
+        "ui.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [mcp.tmux.workspace]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-tamagotchi/src/input.rs",
       "hint": "Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.",
       "related": [
@@ -13969,6 +14284,25 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-tamagotchi/src/lighting.rs",
+      "hint": "Pure SSOT-configured voxel lighting and visible ASCII tonal shading.",
+      "related": [
+        "config.rs",
+        "render.rs",
+        "sprite.rs",
+        "usr/share/mios/mios.toml [tamagotchi.voxel_lighting]"
+      ],
+      "functions": [
+        "validate",
+        "brightness",
+        "shade_rgb",
+        "glyph"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-tamagotchi/src/main.rs",
       "hint": "Playable local virtual pet with explicit sample mode, read-only snapshots and single-writer saves.",
       "related": [
@@ -13984,8 +14318,22 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-tamagotchi/src/progression.rs",
+      "hint": "Original generated Mon names, independent hatch genetics and bounded care-funded training.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [tamagotchi.game.training]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-tamagotchi/src/render.rs",
-      "hint": "Clipped indexed sprite widget; half-blocks preserve two colors and pattern cells preserve masks.",
+      "hint": "Signed camera projection samples only the viewport; indexed packing retains terminal color semantics.",
       "related": [
         "sprite.rs",
         "capabilities.rs",
@@ -14003,6 +14351,19 @@
         "game.rs",
         "main.rs",
         "usr/share/doc/mios/tamagotchi-tui.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/seed_entry.rs",
+      "hint": "Pure bounded ASCII shared-code editor; validation delegates to MonCode.",
+      "related": [
+        "genetics.rs",
+        "ui.rs",
+        "input.rs"
       ],
       "functions": [],
       "doc": null,
@@ -14045,6 +14406,19 @@
         "input.rs",
         "config.rs",
         "specs/tamagotchi-tui"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-tamagotchi/src/world.rs",
+      "hint": "Deterministic CPU room solids, orthographic camera and depth-tested surface metadata.",
+      "related": [
+        "render.rs HabitatView",
+        "sprite.rs",
+        "usr/share/mios/mios.toml [tamagotchi.world]"
       ],
       "functions": [],
       "doc": null,
@@ -15232,6 +15606,19 @@
       "path": "usr/lib/NetworkManager/conf.d/22-wifi-mac-addr.conf",
       "hint": "Configuration profile for 22-wifi-mac-addr.conf in the MiOS operating system.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/NetworkManager/conf.d/30-mios-tether-metric.conf",
+      "hint": "Demotes USB phone tethers (Android NCM/RNDIS, iPhone ipheth) below Wi-Fi and wired uplinks so a lossy cellular tether is never the host default route; the tether still carries the local link Tailscale uses to reach the phone as an exit node.",
+      "related": [
+        "mios-tailscale-sync",
+        "[tailscale].exit_nodes",
+        "NetworkManager.conf(5) \"Connection Section\""
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -22549,6 +22936,31 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-tailscale-sync.service",
+      "hint": "Oneshot that applies SSOT [tailscale] to the live node with `tailscale set` and fails the exit node over along [tailscale].exit_nodes.",
+      "related": [
+        "/usr/libexec/mios/mios-tailscale-sync",
+        "mios-tailscale-sync.timer",
+        "tailscaled.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-tailscale-sync.timer",
+      "hint": "Re-runs mios-tailscale-sync so the exit node follows [tailscale].exit_nodes as peers come and go.",
+      "related": [
+        "mios-tailscale-sync.service",
+        "timers.target"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-thermald.service",
       "hint": "Systemd service unit for proactive PID thermal daemon and dynamic CPU/GPU power cap modulator (task_487, task_2720).",
       "related": [],
@@ -28891,14 +29303,28 @@
     },
     {
       "path": "usr/libexec/mios/mios-tailscale-sync",
-      "hint": "Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT.",
+      "hint": "Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.",
       "related": [
         "/usr/share/mios/mios.toml",
         "/etc/mios/mios.toml",
         "tailscaled.service",
-        "mios-headscale"
+        "mios-headscale",
+        "mios-tailscale-sync.timer",
+        "test_mios_tailscale_sync.py"
       ],
-      "functions": [],
+      "functions": [
+        "_load_config",
+        "_health_config",
+        "find_tailscale",
+        "get_status",
+        "select_exit_node",
+        "build_set_cmd",
+        "probe",
+        "direct_interface",
+        "exit_is_worse",
+        "_active_exit_ip",
+        "sync_mesh"
+      ],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -30800,6 +31226,23 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "usr/libexec/mios/test_mios_tailscale_sync.py",
+      "hint": "Two-sided controls for mios-tailscale-sync -- SSOT [tailscale] is actually applied with `tailscale set`, the exit node is the first online peer from exit_nodes that offers one, else cleared, and a health gate drops an exit node worse than the direct uplink.",
+      "related": [
+        "usr/libexec/mios/mios-tailscale-sync",
+        "usr/share/mios/mios.toml",
+        "mios-tailscale-sync.timer"
+      ],
+      "functions": [
+        "load_sync",
+        "run_sync",
+        "TestTailscaleSync"
+      ],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },

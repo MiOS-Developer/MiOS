@@ -3369,6 +3369,195 @@
   </div>
 </details>
 
+<details class="section" id="sec-mios-mon">
+  <summary>MiOS-Mon appearance and training <span class="phase-badge">virtual pet</span></summary>
+  <div class="section-body">
+    <p>Species sets the primary color; personality sets the accent. New names and innate stats roll at hatching. Training uses food and energy. Landscape and portrait HUDs inherit the native workspace golden ratio.</p>
+    <div class="grid">
+      <fieldset><legend>Camera and responsive HUD</legend>
+        <label for="f-mon-tamagotchi-view-mode">Sprite view</label>
+        <select id="f-mon-tamagotchi-view-mode" data-inherit="true" data-key="tamagotchi.view_mode">
+          <option value="">Inherit vendor</option>
+          <option value="voxel">Voxel 3D</option>
+          <option value="pixel">Classic pixel</option>
+        </select>
+        <label for="f-mon-tamagotchi-sprite-style">Sprite detail</label>
+        <select id="f-mon-tamagotchi-sprite-style" data-inherit="true" data-key="tamagotchi.sprite_style">
+          <option value="">Inherit vendor</option>
+          <option value="eight-bit">8-bit</option>
+          <option value="sixteen-bit">16-bit</option>
+        </select>
+        <label for="f-mon-tamagotchi-camera-view">Starting camera</label>
+        <select id="f-mon-tamagotchi-camera-view" data-inherit="true" data-key="tamagotchi.camera_view">
+          <option value="">Inherit vendor</option>
+          <option value="room">Room</option>
+          <option value="pet">Pet body</option>
+          <option value="face">Face close-up</option>
+        </select>
+<p>Isometric room: fixed30 degree elevation, rotatable azimuth, follows the autonomous Mon.</p>
+<label for="f-mon-tamagotchi-world-width_tiles">Room width in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-width_tiles" data-inherit="true" data-key="tamagotchi.world.width_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+
+<label for="f-mon-tamagotchi-world-depth_tiles">Room depth in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-depth_tiles" data-inherit="true" data-key="tamagotchi.world.depth_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+
+<label for="f-mon-tamagotchi-world-wall_height">Wall height in tiles</label>
+<input type="number" id="f-mon-tamagotchi-world-wall_height" data-inherit="true" data-key="tamagotchi.world.wall_height" data-type="int" placeholder="Inherit vendor" min="2" max="8" step="1">
+
+<label for="f-mon-tamagotchi-world-pet_height_percent">Pet height relative to wall (%)</label>
+<input type="number" id="f-mon-tamagotchi-world-pet_height_percent" data-inherit="true" data-key="tamagotchi.world.pet_height_percent" data-type="int" placeholder="Inherit vendor" min="10" max="150" step="1">
+
+<label for="f-mon-tamagotchi-world-default_yaw_degrees">Starting world orbit (degrees)</label>
+<input type="number" id="f-mon-tamagotchi-world-default_yaw_degrees" data-inherit="true" data-key="tamagotchi.world.default_yaw_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="359" step="1">
+
+<label for="f-mon-tamagotchi-world-orbit_step_degrees">Orbit step (degrees)</label>
+<input type="number" id="f-mon-tamagotchi-world-orbit_step_degrees" data-inherit="true" data-key="tamagotchi.world.orbit_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="180" step="1">
+
+<label for="f-mon-tamagotchi-world-elevation_degrees">Isometric elevation (fixed)</label>
+<input type="number" id="f-mon-tamagotchi-world-elevation_degrees" data-inherit="true" data-key="tamagotchi.world.elevation_degrees" data-type="int" placeholder="Inherit vendor" min="30" max="30" step="1">
+
+<label for="f-mon-tamagotchi-world-follow_percent">Camera follow (%)</label>
+<input type="number" id="f-mon-tamagotchi-world-follow_percent" data-inherit="true" data-key="tamagotchi.world.follow_percent" data-type="int" placeholder="Inherit vendor" min="0" max="100" step="1">
+
+<label for="f-mon-tamagotchi-world-backdrop">Backdrop palette index</label>
+<input type="number" id="f-mon-tamagotchi-world-backdrop" data-inherit="true" data-key="tamagotchi.world.backdrop" data-type="int" placeholder="Inherit vendor" min="0" max="15" step="1">
+
+<label for="f-mon-world-enabled">Voxel room</label><select id="f-mon-world-enabled" data-inherit="true" data-key="tamagotchi.world.enabled" data-type="bool"><option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Legacy room</option></select>
+
+<label for="f-mon-genetics-likes">Likes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-likes" data-inherit="true" data-key="tamagotchi.genetics.likes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-dislikes">Dislikes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-dislikes" data-inherit="true" data-key="tamagotchi.genetics.dislikes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-traits">Trait vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-traits" data-inherit="true" data-key="tamagotchi.genetics.traits" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-genetics-tropes">Character trope vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-tropes" data-inherit="true" data-key="tamagotchi.genetics.tropes" data-array="csv" placeholder="Inherit vendor">
+
+<label for="f-mon-tamagotchi-game-training-hatch_bonus">Seeded hatch bonus</label>
+<input type="number" id="f-mon-tamagotchi-game-training-hatch_bonus" data-inherit="true" data-key="tamagotchi.game.training.hatch_bonus" data-type="int" placeholder="Inherit vendor" min="0" max="20" step="1">
+        <label for="f-mon-tamagotchi-hud-mode">HUD layout</label>
+        <select id="f-mon-tamagotchi-hud-mode" data-inherit="true" data-key="tamagotchi.hud_mode">
+          <option value="">Inherit vendor</option>
+          <option value="auto">Automatic</option>
+          <option value="minimal">Minimal</option>
+          <option value="full">Full</option>
+        </select>
+        <label for="f-mon-tamagotchi-zoom-percent">Starting zoom (%)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-percent" data-inherit="true" data-key="tamagotchi.zoom_percent" placeholder="Inherit vendor" data-type="int" min="50" max="400" step="1">
+        <label for="f-mon-tamagotchi-zoom-step-percent">Zoom step (%)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-step-percent" data-inherit="true" data-key="tamagotchi.zoom_step_percent" placeholder="Inherit vendor" data-type="int" min="5" max="100" step="1">
+        <label for="f-mon-tamagotchi-zoom-transition-frames">Transition length (animation frames)</label>
+        <input type="number" id="f-mon-tamagotchi-zoom-transition-frames" data-inherit="true" data-key="tamagotchi.zoom_transition_frames" placeholder="Inherit vendor" data-type="int" min="1" max="60" step="1">
+        <label for="f-mon-tamagotchi-hud-minimal-width">Automatic minimal HUD below this width (cells)</label>
+        <input type="number" id="f-mon-tamagotchi-hud-minimal-width" data-inherit="true" data-key="tamagotchi.hud_minimal_width" placeholder="Inherit vendor" data-type="int" min="20" max="200" step="1">
+        <label for="f-mon-tamagotchi-hud-minimal-height">Automatic minimal HUD below this height (cells)</label>
+        <input type="number" id="f-mon-tamagotchi-hud-minimal-height" data-inherit="true" data-key="tamagotchi.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
+        <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
+        <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
+      </fieldset><fieldset><legend>Camera controls</legend>
+        <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Pan and tilt ease over the transition length above.</p>
+        <label for="f-mon-tamagotchi-camera-pan_step_permille">Pan step (per-mille of the scene)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-pan_step_permille" data-inherit="true" data-key="tamagotchi.camera.pan_step_permille" data-type="int" placeholder="Inherit vendor" min="5" max="200" step="1">
+        <label for="f-mon-tamagotchi-camera-pan_max_permille">Pan limit per axis (per-mille; 0 disables pan)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-pan_max_permille" data-inherit="true" data-key="tamagotchi.camera.pan_max_permille" data-type="int" placeholder="Inherit vendor" min="0" max="400" step="1">
+        <label for="f-mon-tamagotchi-camera-pan_margin_permille">Subject margin inside the scene (per-mille)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-pan_margin_permille" data-inherit="true" data-key="tamagotchi.camera.pan_margin_permille" data-type="int" placeholder="Inherit vendor" min="0" max="250" step="1">
+        <label for="f-mon-tamagotchi-camera-tilt_step_degrees">Tilt step (degrees)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-tilt_step_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="30" step="1">
+        <label for="f-mon-tamagotchi-camera-tilt_min_degrees">Lowest tilt offset from the rest pitch (degrees)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-tilt_min_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_min_degrees" data-type="int" placeholder="Inherit vendor" min="-17" max="0" step="1">
+        <label for="f-mon-tamagotchi-camera-tilt_max_degrees">Highest tilt offset from the rest pitch (degrees)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-tilt_max_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_max_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="55" step="1">
+        <label for="f-mon-tamagotchi-camera-orbit_fine_step_degrees">Fine orbit step (degrees)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-orbit_fine_step_degrees" data-inherit="true" data-key="tamagotchi.camera.orbit_fine_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="90" step="1">
+        <label for="f-mon-tamagotchi-camera-max_lead_steps">Held input lead limit (steps)</label>
+        <input type="number" id="f-mon-tamagotchi-camera-max_lead_steps" data-inherit="true" data-key="tamagotchi.camera.max_lead_steps" data-type="int" placeholder="Inherit vendor" min="1" max="10" step="1">
+        <label for="f-mon-tamagotchi-camera-preview_orbit_pauses_turntable">Explicit orbit pauses the Roster/Studio turntable</label>
+        <select id="f-mon-tamagotchi-camera-preview_orbit_pauses_turntable" data-inherit="true" data-key="tamagotchi.camera.preview_orbit_pauses_turntable" data-type="bool">
+          <option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Disabled</option>
+        </select>
+      </fieldset><fieldset><legend>Global responsive detail</legend>
+        <p>The terminal font size applies to all text. The resulting cell grid and zoom select one shared detail level for the pet, face, habitat and previews.</p>
+        <label for="f-mon-detail-automatic">Automatic 8-bit / 16-bit detail</label>
+        <select id="f-mon-detail-automatic" data-inherit="true" data-key="tamagotchi.presentation.automatic" data-type="bool">
+          <option value="">Inherit vendor</option><option value="true">Automatic</option><option value="false">Manual sprite style</option>
+        </select>
+        <label for="f-mon-detail-min-width">Detailed mode minimum width (packed pixels)</label>
+        <input type="number" id="f-mon-detail-min-width" data-inherit="true" data-key="tamagotchi.presentation.min_width" placeholder="Inherit vendor" data-type="int" min="8" max="1024" step="1">
+        <label for="f-mon-detail-min-height">Detailed mode minimum height (packed pixels)</label>
+        <input type="number" id="f-mon-detail-min-height" data-inherit="true" data-key="tamagotchi.presentation.min_height" placeholder="Inherit vendor" data-type="int" min="4" max="1024" step="1">
+        <label for="f-mon-detail-hysteresis-percent">Resize stability band (%)</label>
+        <input type="number" id="f-mon-detail-hysteresis-percent" data-inherit="true" data-key="tamagotchi.presentation.hysteresis_percent" placeholder="Inherit vendor" data-type="int" min="0" max="50" step="1">
+      </fieldset><fieldset><legend>Voxel shading</legend>
+        <p>Lighting keeps the species palette and adds shape to ears, muzzles, limbs and tails. ASCII views use a tonal character ramp.</p>
+        <label for="f-mon-light-enabled">Directional shading</label>
+        <select id="f-mon-light-enabled" data-inherit="true" data-key="tamagotchi.voxel_lighting.enabled" data-type="bool">
+          <option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Disabled</option>
+        </select>
+        <label for="f-mon-light-ambient-percent">Ambient light (%)</label>
+        <input type="number" id="f-mon-light-ambient-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.ambient_percent" placeholder="Inherit vendor" data-type="int" min="20" max="100" step="1">
+        <label for="f-mon-light-diffuse-percent">Directional light (%)</label>
+        <input type="number" id="f-mon-light-diffuse-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.diffuse_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-occlusion-percent">Contact shadow strength (%)</label>
+        <input type="number" id="f-mon-light-occlusion-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.occlusion_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-outline-percent">Silhouette edge shade (%)</label>
+        <input type="number" id="f-mon-light-outline-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.outline_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-light-direction">Light direction: right, up, viewer (three comma-separated values)</label>
+        <input type="text" id="f-mon-light-direction" data-inherit="true" data-key="tamagotchi.voxel_lighting.light_direction" data-array="csv-int" placeholder="Inherit vendor">
+        <label for="f-mon-light-ascii-ramp">ASCII shading: dim to bright</label>
+        <input type="text" id="f-mon-light-ascii-ramp" data-inherit="true" data-key="tamagotchi.voxel_lighting.ascii_ramp" placeholder="Inherit vendor">
+      </fieldset><fieldset><legend>Hatch identity and training</legend>
+        <label for="f-mon-tamagotchi-game-training-name-starts">Name first syllables (comma separated)</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-name-starts" data-inherit="true" data-key="tamagotchi.game.training.name_starts" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-tamagotchi-game-training-name-ends">Name final syllables (comma separated)</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-name-ends" data-inherit="true" data-key="tamagotchi.game.training.name_ends" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-tamagotchi-game-training-species-colors">Species palette indices: cat, fox, tanuki, rabbit, bear, frog, bird, turtle</label>
+        <input type="text" id="f-mon-tamagotchi-game-training-species-colors" data-inherit="true" data-key="tamagotchi.game.training.species_colors" placeholder="Inherit vendor" data-array="csv-int">
+        <label for="f-mon-tamagotchi-game-training-hatch-min">Minimum innate hatch stat</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-hatch-min" data-inherit="true" data-key="tamagotchi.game.training.hatch_min" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-hatch-max">Maximum innate hatch stat</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-hatch-max" data-inherit="true" data-key="tamagotchi.game.training.hatch_max" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-max-level">Maximum trained level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-max-level" data-inherit="true" data-key="tamagotchi.game.training.max_level" placeholder="Inherit vendor" data-type="int" min="1" max="99" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-base">Base XP threshold</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-base" data-inherit="true" data-key="tamagotchi.game.training.xp_base" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-per-level">Additional threshold XP per level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-per-level" data-inherit="true" data-key="tamagotchi.game.training.xp_per_level" placeholder="Inherit vendor" data-type="int" min="0" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-gain-min">Minimum training XP gain</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-min" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_min" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-xp-gain-max">Maximum training XP gain</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-max" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_max" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-tamagotchi-game-training-energy-cost">Energy cost per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-energy-cost" data-inherit="true" data-key="tamagotchi.game.training.energy_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-fullness-cost">Food cost per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-fullness-cost" data-inherit="true" data-key="tamagotchi.game.training.fullness_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-happiness-gain">Happiness gain per session</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-happiness-gain" data-inherit="true" data-key="tamagotchi.game.training.happiness_gain" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-tamagotchi-game-training-cooldown-ticks">Active ticks between sessions</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-cooldown-ticks" data-inherit="true" data-key="tamagotchi.game.training.cooldown_ticks" placeholder="Inherit vendor" data-type="int" min="1" max="1000000" step="1">
+        <label for="f-mon-tamagotchi-game-training-level-coin-reward">Coins per earned level</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-level-coin-reward" data-inherit="true" data-key="tamagotchi.game.training.level_coin_reward" placeholder="Inherit vendor" data-type="int" min="0" max="1000" step="1">
+      </fieldset><fieldset><legend>Distinct personality accent indices (0..15)</legend>
+        <label for="f-mon-tamagotchi-game-training-personality-colors-cozy">Cozy</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-cozy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.cozy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-athletic">Athletic</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-athletic" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.athletic" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-grumbly">Grumbly</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-grumbly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.grumbly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-showy">Showy</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-showy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.showy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-neighborly">Neighborly</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-neighborly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.neighborly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-sunny">Sunny</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-sunny" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.sunny" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-refined">Refined</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-refined" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.refined" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-tamagotchi-game-training-personality-colors-protective">Protective</label>
+        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-protective" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.protective" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+      </fieldset>
+    </div>
+  </div>
+</details>
+
 <details class="section">
   <summary>Terminal · MiOS terminal dimensions and theming <span class="phase-badge">every spawned shell</span></summary>
   <div class="section-body">
@@ -3530,6 +3719,84 @@
         <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
         <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
         <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <details>
+          <summary>Focused MiOS-Mon controls</summary>
+          <p class="hint">Inputd verifies the foreground executable in the focused terminal or console. These bindings navigate menus and the camera; the pet moves autonomously. Blank fields inherit the vendor policy. User-local samples require their exact absolute executable paths in the user configuration. Install a compatible Inputd daemon and command before applying these profiles.</p>
+          <label>Foreground app poll interval (ms) <input data-key="keybindings.global.controller.nav.app_poll_ms" data-inherit="true" data-type="int" type="number" min="50" max="2000"></label>
+          <label>Foreground app query timeout (ms) <input data-key="keybindings.global.controller.nav.app_query_timeout_ms" data-inherit="true" data-type="int" type="number" min="20" max="1000"></label>
+          <label>MiOS-Mon system executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>MiOS-Mon user executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.user_exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>Terminal app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.terminal" data-inherit="true" type="text"></label>
+          <label>Console app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.console" data-inherit="true" type="text"></label>
+          <details><summary>mon_tmux (inherits terminal_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_plain (inherits terminal_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_tmux (inherits console_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_plain (inherits console_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>MiOS-Mon held camera repeat timing</summary>
+            <label>Left stick left / camera pan left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick right / camera pan right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick down / menu next / camera pan down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick left / orbit left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick right / orbit right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick up / tilt up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick down / tilt down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left trigger / zoom out delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TL2" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right trigger / zoom in delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TR2" data-inherit="true" data-array="csv-int" type="text"></label>
+          </details>
+        </details>
         <label>2D controller cursor shape <input data-key="keybindings.global.controller.cursor_shape" type="text" pattern="[A-Za-z0-9_-]{0,64}" placeholder="crosshair"></label>
         <label>Controller virtual pointer device <input data-key="keybindings.global.controller.virtual_pointer" type="text" maxlength="79" placeholder="mios-vctl-pointer"></label>
         <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>
@@ -5486,7 +5753,10 @@ function refreshFromData() {
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);
     const v = DATA[sec]?.[key];
-    if (v === undefined) return;
+    if (v === undefined) {
+      if (el.dataset.inherit === "true") el.value = "";
+      return;
+    }
     if (el.dataset.key === "autounattend.accounts") {
       if (Array.isArray(v)) {
         el.value = v.map(a => `${a.name || ""},${a.password || ""},${a.display_name || ""},${a.group || "Users"}`).join("\n");
@@ -6041,6 +6311,12 @@ function gatherFromForm() {
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el.dataset.customOf) return;
     const [sec, key] = splitDataKey(el.dataset.key);
+    // Empty inheritable controls omit the overlay key; runtime resolves the
+    // canonical vendor tier rather than a second set of HTML default values.
+    if (el.dataset.inherit === "true" && !el.value.trim()) {
+      if (DATA[sec]) delete DATA[sec][key];
+      return;
+    }
     DATA[sec] = DATA[sec] || {};
     if (el.dataset.key === "autounattend.accounts") {
       const accounts = [];
@@ -6058,26 +6334,47 @@ function gatherFromForm() {
       DATA[sec][key] = accounts;
     }
     else if (el.dataset.type === "json-array") {
-      const bindings = JSON.parse(el.value);
-      if (!Array.isArray(bindings) || bindings.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
-      DATA[sec][key] = bindings;
+      const values = JSON.parse(el.value);
+      if (!Array.isArray(values)) throw new Error("Setting requires a JSON array: " + el.dataset.key);
+      if (el.dataset.key === "keybindings.global.bindings" && values.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
+      DATA[sec][key] = values;
     }
     else if (el.type === "checkbox") DATA[sec][key] = el.checked;
     else if (el.dataset.array === "csv") {
       DATA[sec][key] = el.value.split(",").map(s => s.trim()).filter(Boolean);
     }
     else if (el.dataset.array === "csv-int") {
-      DATA[sec][key] = el.value.split(",")
-        .map(s => s.trim()).filter(Boolean)
-        .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      const parts = el.value.split(",").map(s => s.trim());
+      if (el.dataset.key.startsWith("keybindings.global.controller.nav.apps.") && el.dataset.key.includes(".repeat.")) {
+        const pair = parts.map(Number);
+        if (parts.length !== 2 || parts.some(s => !/^[0-9]+$/.test(s)) || pair.some(n => !Number.isSafeInteger(n)) || pair[0] < 50 || pair[0] > 5000 || pair[1] < 16 || pair[1] > 5000) throw new Error("Controller repeat requires delay 50..5000 and interval 16..5000 ms: " + el.dataset.key);
+        DATA[sec][key] = pair;
+      } else {
+        DATA[sec][key] = parts.filter(Boolean)
+          .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      }
     }
     else if (el.dataset.type === "int") {
-      const n = parseInt(el.value, 10);
-      DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      const timing = {
+        "keybindings.global.controller.nav.app_poll_ms": [50, 2000],
+        "keybindings.global.controller.nav.app_query_timeout_ms": [20, 1000]
+      }[el.dataset.key];
+      if (timing) {
+        const n = Number(el.value);
+        if (!/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n) || n < timing[0] || n > timing[1]) throw new Error("Controller timing outside supported range: " + el.dataset.key);
+        DATA[sec][key] = n;
+      } else {
+        const n = parseInt(el.value, 10);
+        DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      }
     }
     else if (el.dataset.type === "float") {
       const n = parseFloat(el.value);
       DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+    }
+    else if (el.dataset.type === "bool") {
+      if (el.value !== "true" && el.value !== "false") throw new Error("Boolean setting requires true or false: " + el.dataset.key);
+      DATA[sec][key] = el.value === "true";
     }
     else if (el.tagName === "SELECT" && el.value !== "__custom__") DATA[sec][key] = el.value;
     else if (el.tagName === "SELECT" && el.value === "__custom__") {
@@ -6086,6 +6383,8 @@ function gatherFromForm() {
     }
     else DATA[sec][key] = el.value;
   });
+  const nav = DATA["keybindings.global.controller.nav"];
+  if (nav && Number.isInteger(nav.app_poll_ms) && Number.isInteger(nav.app_query_timeout_ms) && nav.app_query_timeout_ms > nav.app_poll_ms) throw new Error("Controller app query timeout must not exceed poll interval");
 }
 
 function renderRaw() {
@@ -6496,7 +6795,7 @@ function renderSaveErrors(errs) {
   const box = document.getElementById("save-preview-errors");
   if (!box) return;
   if (!errs || !errs.length) { box.style.display = "none"; box.innerHTML = ""; return; }
-  box.innerHTML = "<b>The Portal rejected this config (nothing was written):</b>" +
+  box.innerHTML = "<b>The save was not confirmed:</b>" +
     "<ul>" + errs.map(e => `<li>${escapeHtml(e)}</li>`).join("") + "</ul>";
   box.style.display = "block";
 }
@@ -6533,47 +6832,40 @@ function showSavePreview() {
   if (panel) panel.classList.add("open");
 }
 
-// The actual write. Behaviour is the pre-WS-CONFIG one-click Save, EXCEPT a 422
-// (safety-validation failure) is surfaced inline in the panel and does NOT fall
-// through to a local write -- the operator fixes it and retries. Any other
-// non-2xx / network error still degrades to the FSA / download paths.
+// Embedded saves are authoritative Portal requests. A refusal or uncertain
+// network result stays in the preview; it must never overwrite a local file
+// through an offline fallback. Standalone file:// saves use the paths below.
 async function performSave(toml) {
   const finishSave = () => { LOADED_TOML = toml; hideSavePreview(); };
 
-  // Path 0 (STEP 6): embedded behind the Portal -- POST the serialized TOML to
-  // the live layered config. POST /portal/config (relative to location.origin;
-  // no hardcoded host). A 422 means the server's safety net rejected it (no
-  // write happened) -> show the errors inline and stop. Other non-2xx / network
-  // errors fall THROUGH to the FSA / <a download> paths (graceful degrade).
-  // NEVER attempted under file:// (offline USB fallback, ADR-0008).
+  // The lossless JSON envelope preserves TOML text for both config servers.
+  // Offline saves continue writing the TOML text itself.
   if (MIOS_EMBEDDED) {
     try {
       const resp = await fetch("/portal/config", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/toml" },
-        body: toml
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toml: toml })
       });
       if (resp.ok) {
         finishSave();
         showStatus(`Saved to MiOS — wrote the live mios.toml via the Portal (${toml.length} bytes).`, "ok");
         return;
       }
-      if (resp.status === 422) {
-        let errs = ["The server rejected the config."];
-        try {
-          const data = await resp.json();
-          if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
-          else if (data && data.error) errs = [String(data.error)];
-        } catch (e) { /* non-JSON body -> keep the generic message */ }
-        renderSaveErrors(errs);
-        showStatus("Portal rejected the config — see the validation errors.", "err");
-        return;   // stay open; nothing written
-      }
-      showStatus(`Portal save unavailable (HTTP ${resp.status}) — saving locally instead.`, "info");
+      let errs = [`Portal save was not confirmed (HTTP ${resp.status}).`];
+      try {
+        const data = await resp.json();
+        if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
+        else if (data && data.error) errs = [String(data.error)];
+      } catch (e) { /* non-JSON body -> keep the generic message */ }
+      renderSaveErrors(errs);
+      showStatus("Portal save was not confirmed — see the errors before retrying.", "err");
     } catch (err) {
-      showStatus("Portal save route unreachable — saving locally instead.", "info");
+      renderSaveErrors(["Portal response unavailable. Check the live configuration before retrying."]);
+      showStatus("Portal save result is unknown — check the live configuration.", "err");
     }
+    return; // No bound-file write, picker or download after an embedded failure.
   }
 
   // Path 1: bound file handle -- direct in-place overwrite.

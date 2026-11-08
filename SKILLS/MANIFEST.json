@@ -1,0 +1,862 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-11-05T17:36:20.139073+00:00",
+  "node": "mios",
+  "source_repository": "https://github.com/MiOS-Developer/MiOS",
+  "source_commit": "150b5b461796d99607c2d28ceadf977ee2970fc8",
+  "export_kind": "portable repository snapshot",
+  "counts": {
+    "instruction_skills": 16,
+    "procedure_definitions": 12,
+    "database_export_rows": 0,
+    "local_catalog_files": 0,
+    "additional_profile_mios_skills": 0
+  },
+  "excluded": [
+    {
+      "scope": "notes-vault skills namespace",
+      "count": 8,
+      "reason": "conversation transcripts rather than reusable global skill definitions; no private transcript content exported"
+    },
+    {
+      "scope": "generic third-party plugins and temporary worker copies",
+      "reason": "not global MiOS definitions"
+    }
+  ],
+  "skills": [
+    {
+      "name": "agents",
+      "format": "SKILL.md",
+      "source": "/.agents/skills/agents",
+      "destination": "definitions/agents",
+      "files": 1
+    },
+    {
+      "name": "artifacting",
+      "format": "SKILL.md",
+      "source": "/.agents/skills/artifacting",
+      "destination": "definitions/artifacting",
+      "files": 1
+    },
+    {
+      "name": "dev-loop",
+      "format": "SKILL.md",
+      "source": "/.agents/skills/dev-loop",
+      "destination": "definitions/dev-loop",
+      "files": 58
+    },
+    {
+      "name": "pipeline",
+      "format": "SKILL.md",
+      "source": "/.agents/skills/pipeline",
+      "destination": "definitions/pipeline",
+      "files": 1
+    },
+    {
+      "name": "source-command-loop-grill",
+      "format": "SKILL.md",
+      "source": "/.agents/skills/source-command-loop-grill",
+      "destination": "definitions/source-command-loop-grill",
+      "files": 1
+    },
+    {
+      "name": "dev-pipeline",
+      "format": "SKILL.md",
+      "source": "/.agents/plugins/mios-cicd/skills/dev-pipeline",
+      "destination": "definitions/dev-pipeline",
+      "files": 1
+    },
+    {
+      "name": "app-launch",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/app-launch",
+      "destination": "definitions/app-launch",
+      "files": 1
+    },
+    {
+      "name": "find-files-and-apps",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/find-files-and-apps",
+      "destination": "definitions/find-files-and-apps",
+      "files": 1
+    },
+    {
+      "name": "linux-control",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/linux-control",
+      "destination": "definitions/linux-control",
+      "files": 1
+    },
+    {
+      "name": "mios-environment",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/mios-environment",
+      "destination": "definitions/mios-environment",
+      "files": 1
+    },
+    {
+      "name": "mios-skill-catalog",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/mios-skill-catalog",
+      "destination": "definitions/mios-skill-catalog",
+      "files": 1
+    },
+    {
+      "name": "opencode-delegation",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/opencode-delegation",
+      "destination": "definitions/opencode-delegation",
+      "files": 1
+    },
+    {
+      "name": "package-management",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/package-management",
+      "destination": "definitions/package-management",
+      "files": 1
+    },
+    {
+      "name": "parallel-fanout",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/parallel-fanout",
+      "destination": "definitions/parallel-fanout",
+      "files": 1
+    },
+    {
+      "name": "self-improvement",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/self-improvement",
+      "destination": "definitions/self-improvement",
+      "files": 1
+    },
+    {
+      "name": "windows-control",
+      "format": "SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/windows-control",
+      "destination": "definitions/windows-control",
+      "files": 1
+    },
+    {
+      "name": "install-flatpak-app",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/install-flatpak-app.json",
+      "destination": "catalog/install-flatpak-app.json",
+      "status": "promoted"
+    },
+    {
+      "name": "install-windows-app",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/install-windows-app.json",
+      "destination": "catalog/install-windows-app.json",
+      "status": "promoted"
+    },
+    {
+      "name": "open-and-focus",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/open-and-focus.json",
+      "destination": "catalog/open-and-focus.json",
+      "status": "promoted"
+    },
+    {
+      "name": "open-url-fallback-chain",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/open-url-fallback-chain.json",
+      "destination": "catalog/open-url-fallback-chain.json",
+      "status": "promoted"
+    },
+    {
+      "name": "open-url-resilient",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/open-url-resilient.json",
+      "destination": "catalog/open-url-resilient.json",
+      "status": "promoted"
+    },
+    {
+      "name": "safe-open-flatpak",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/safe-open-flatpak.json",
+      "destination": "catalog/safe-open-flatpak.json",
+      "status": "promoted"
+    },
+    {
+      "name": "save-document",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/save-document.json",
+      "destination": "catalog/save-document.json",
+      "status": "promoted"
+    },
+    {
+      "name": "sync-to-root",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/sync-to-root.json",
+      "destination": "catalog/sync-to-root.json",
+      "status": "promoted"
+    },
+    {
+      "name": "window-focus-mode",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/window-focus-mode.json",
+      "destination": "catalog/window-focus-mode.json",
+      "status": "promoted"
+    },
+    {
+      "name": "window-restore-and-focus",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/window-restore-and-focus.json",
+      "destination": "catalog/window-restore-and-focus.json",
+      "status": "promoted"
+    },
+    {
+      "name": "window-tile-side-by-side",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/window-tile-side-by-side.json",
+      "destination": "catalog/window-tile-side-by-side.json",
+      "status": "promoted"
+    },
+    {
+      "name": "write-text-file",
+      "format": "procedure-json",
+      "source": "/usr/share/mios/skills/write-text-file.json",
+      "destination": "catalog/write-text-file.json",
+      "status": "promoted"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "definitions/agents/SKILL.md",
+      "source": "/.agents/skills/agents/SKILL.md",
+      "sha256": "f05ee88077208df57a606259be39f57aa0959e029ed1041fee877c2b56a4c377",
+      "bytes": 2333,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/artifacting/SKILL.md",
+      "source": "/.agents/skills/artifacting/SKILL.md",
+      "sha256": "6731ffd925f2e04cff8b707ec3b2187f8b571b299366beeaf179e1ed210404dd",
+      "bytes": 1394,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/SKILL.md",
+      "source": "/.agents/skills/dev-loop/SKILL.md",
+      "sha256": "29464335ab3c60aaad2ab2b272f5203a04d628f069dd37d3aa32f8f9747caca5",
+      "bytes": 40618,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/dev-loop.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/dev-loop.md",
+      "sha256": "bf7784de3f8e15d296709b48843f6492db8d569db3278aa5ce76176d7852366c",
+      "bytes": 798,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/goal.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/goal.md",
+      "sha256": "63e101c28dbd87341e7c93793ad9f3eca5aa9410f6eb752de1b6475497eb5e56",
+      "bytes": 762,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/loop-grill.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/loop-grill.md",
+      "sha256": "94c1183c5ab9c9b2f286c49e0a01d8d8c51d4bc1b243c68b3f3951763f5c25ec",
+      "bytes": 153,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/loop-review.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/loop-review.md",
+      "sha256": "29a68c976d468946052a6307ea02ae8f2fefc9466d269cf393a7eed4be711b9c",
+      "bytes": 122,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/research.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/research.md",
+      "sha256": "faa5ab394a6fb6f5c088a131dc47fcfa5334b4c82b77859592e49f0ae614d9ae",
+      "bytes": 312,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/review.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/review.md",
+      "sha256": "eff5916db0b8a7045ffc7954387f8f9ee0b8512126c749b414a2875a852695e3",
+      "bytes": 258,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/ship.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/ship.md",
+      "sha256": "93acb7350aef1f27bc2ccfc5f4991344fd54e213f586c4d3e4b0eaedad06d898",
+      "bytes": 269,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/triage.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/triage.md",
+      "sha256": "938a61249408894feec6c44010e9e02671d3a09432a5b7d07721aaa1ae9a1f69",
+      "bytes": 255,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/codex/websearch.md",
+      "source": "/.agents/skills/dev-loop/commands/codex/websearch.md",
+      "sha256": "2d3bed2ef5a0edf47781b374ac835ca1073f6b9ae539194b6c6d54b065d2914d",
+      "bytes": 235,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/audit.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/audit.md",
+      "sha256": "37ec6bd583b468ade9c8f5973d031c98aa4a85df59501def8f56a93168ec4fc4",
+      "bytes": 582,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/dev-loop.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/dev-loop.md",
+      "sha256": "15ddbc8cde92aa68abc66fe78bf2ce6f625b9bbfab691cf989d67caa4964a664",
+      "bytes": 2422,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/goal.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/goal.md",
+      "sha256": "6954b8ceb677911a72232f71633fced1d164d7811b6e9e640d5d076dbfe5d464",
+      "bytes": 1521,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/loop-grill.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/loop-grill.md",
+      "sha256": "3d81bda2c92096b67cfdfb3aa2d68ab49b87693ea00e2cec4fb3383c3656a031",
+      "bytes": 708,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/loop-review.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/loop-review.md",
+      "sha256": "a4d2626bdaf5d4a52ad298126a42add149880f2134010a09262f6284341b91da",
+      "bytes": 970,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/research.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/research.md",
+      "sha256": "0a92a6d66a98d33263a5f71219f9ad3a60d9425e6d1393d5d1ce24c21e835ae6",
+      "bytes": 786,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/review.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/review.md",
+      "sha256": "6a87fb76748f421024a1ea4d1085391a2125eeb145a8e189240c684cb9e2777b",
+      "bytes": 622,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/ship.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/ship.md",
+      "sha256": "5f69af07feb59ed0d17b4d62b23129a847c74baa068ac890076ab47d7841e674",
+      "bytes": 776,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/sync.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/sync.md",
+      "sha256": "727cdbea25cabc1875d597723c452278a491249dddd067356683fdedaf92e9b8",
+      "bytes": 493,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/triage.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/triage.md",
+      "sha256": "f15b1267ac54d9aa8e4f427556026f1f922ad0f20b97e4c65fa51469fe496597",
+      "bytes": 844,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/commands/spark/websearch.md",
+      "source": "/.agents/skills/dev-loop/commands/spark/websearch.md",
+      "sha256": "73cdf81bf2d04da42e89773604bdffd2b68e77a5310ad688fe2ed2cf494c6597",
+      "bytes": 570,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/adapters.py",
+      "source": "/.agents/skills/dev-loop/reference/adapters.py",
+      "sha256": "a5cf1b7816b1d54fd0a7018b3e55e0e6ca2c1c1e29478d7957902e2cae998a76",
+      "bytes": 6043,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/artifacts.py",
+      "source": "/.agents/skills/dev-loop/reference/artifacts.py",
+      "sha256": "bede333286a1acd2ff1828d9d0e37212cc573e324448d09dc7b9e2414159976a",
+      "bytes": 5347,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/audit.py",
+      "source": "/.agents/skills/dev-loop/reference/audit.py",
+      "sha256": "d61fd6240a3e580956230169f6b03f84f432c03e62fd63869b763f8c0409fdef",
+      "bytes": 10719,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/critic.py",
+      "source": "/.agents/skills/dev-loop/reference/critic.py",
+      "sha256": "bb798d0f771ea946437a7674d50eb69af9b2f8ff701c75b4c36b7a36386335d7",
+      "bytes": 6085,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/devloop.sh",
+      "source": "/.agents/skills/dev-loop/reference/devloop.sh",
+      "sha256": "0fd3e90e54eaa71f441d040729c495d9af72b3f57ed8c8ea246386f14085c9b6",
+      "bytes": 11169,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/devloop_worker.py",
+      "source": "/.agents/skills/dev-loop/reference/devloop_worker.py",
+      "sha256": "f5b0945ad1662b8d19bfd4093215ae83521e04f0fea499ea3a9bf32f80a3c050",
+      "bytes": 18492,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/goal.py",
+      "source": "/.agents/skills/dev-loop/reference/goal.py",
+      "sha256": "9b7b1f1e5856eb0bb12753887e9ecae380dc0bc8cfe7e094c04cadfcc841ce51",
+      "bytes": 8977,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/install.sh",
+      "source": "/.agents/skills/dev-loop/reference/install.sh",
+      "sha256": "6a7fdff8c6f763108d0bde65592e01aac37a0febaf3d633c8a88e260b6a38601",
+      "bytes": 13114,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/lane-schema.json",
+      "source": "/.agents/skills/dev-loop/reference/lane-schema.json",
+      "sha256": "3ab487b02d3af0b1546a83ea1c9bad0b68c8de50f01c7aec9ae2632823e9750d",
+      "bytes": 2998,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/lanes.example.json",
+      "source": "/.agents/skills/dev-loop/reference/lanes.example.json",
+      "sha256": "aaa84ce1f6facf3387d03c4b6b4b016e7178e8095515d3e05e7ee2cc4a1f4bfe",
+      "bytes": 1635,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/lifecycle.py",
+      "source": "/.agents/skills/dev-loop/reference/lifecycle.py",
+      "sha256": "247e5c3940104e9609143343a6b17f6421baa2d1fa1d985afb3e032f87a3804f",
+      "bytes": 7621,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/mcp.py",
+      "source": "/.agents/skills/dev-loop/reference/mcp.py",
+      "sha256": "96edeb7a3b6297e808e4ecb00609e3dfe66a0e0177e253fd4ffc49daed6a8bb4",
+      "bytes": 1765,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/mcp_profiles.json",
+      "source": "/.agents/skills/dev-loop/reference/mcp_profiles.json",
+      "sha256": "82963ada1ccf9481c2d63254783f7cd483489ae4f9249f5cdb86b74306382060",
+      "bytes": 868,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/openai-tools.json",
+      "source": "/.agents/skills/dev-loop/reference/openai-tools.json",
+      "sha256": "4df663de9a578882cafa3e02dbae91667073acf8489b7c1e57c312045c784f72",
+      "bytes": 2981,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/provenance.py",
+      "source": "/.agents/skills/dev-loop/reference/provenance.py",
+      "sha256": "6749f58e71bed63df2d3e268d14f855effbc57bbeee44f99e77cdf149fba93b9",
+      "bytes": 7335,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/ratchet.py",
+      "source": "/.agents/skills/dev-loop/reference/ratchet.py",
+      "sha256": "0fedcb0e7f53109ee7f7ab6558c19fe2340107405594fa006dcef4e7581c9c97",
+      "bytes": 4915,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/research.py",
+      "source": "/.agents/skills/dev-loop/reference/research.py",
+      "sha256": "afb4f380743c5aa420d5e4f852ca04dc99361e96dc0e855dca307d6253878d77",
+      "bytes": 9227,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/review.py",
+      "source": "/.agents/skills/dev-loop/reference/review.py",
+      "sha256": "0ea9341928c2725f5c5842fd087dd8ed74deaca5f82f84bb41f781bc2432206c",
+      "bytes": 7913,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/ship.py",
+      "source": "/.agents/skills/dev-loop/reference/ship.py",
+      "sha256": "04670edae128980760e2ff8ea262a32b9ddb2e9f0a1a5126c5e2a224e1d4705e",
+      "bytes": 6453,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/sync.py",
+      "source": "/.agents/skills/dev-loop/reference/sync.py",
+      "sha256": "f88f41dbef84366fbdb1b833cead8a06b7429f3fcfb99920526d085255fa999a",
+      "bytes": 3460,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/AGENTS.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/AGENTS.md",
+      "sha256": "78c75e83f0aa0805569cdc655b9b59e7068ca59e4a5abc766e8fd6bc81f7fe2b",
+      "bytes": 834,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/CHANGELOG.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/CHANGELOG.md",
+      "sha256": "454829f53e5f423fef3524208e02a06fc0b5618b7274e8414cf07a3bd4ff90a0",
+      "bytes": 839,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/CHECKLISTS.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/CHECKLISTS.md",
+      "sha256": "2e920e3ec0a6d01a703989ad588d817d46a9a2a7dcb158f10431b404dbe6f69f",
+      "bytes": 795,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/DOD.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/DOD.md",
+      "sha256": "849a36530a7c5aadae9ce88cd4f5b6017fdbaeeadf7fa01cca6a625d98cb9d6e",
+      "bytes": 1108,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/GOALS.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/GOALS.md",
+      "sha256": "eabd793283db3de96127d661a6b4c322647ff19b2bf109e9aa723702f66af0a2",
+      "bytes": 1004,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/HARNESS.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/HARNESS.md",
+      "sha256": "1ab6d2cca3ab87df401ab59f21eddb75109521fb52b66e543b0df3acb47edbcd",
+      "bytes": 736,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/LEDGER.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/LEDGER.md",
+      "sha256": "5702672fe2da09c3595c06995c0c3ddf65bb8c2a6ae72fd188ae956bf2a3d51a",
+      "bytes": 711,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/RELEASE_CHECKLIST.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/RELEASE_CHECKLIST.md",
+      "sha256": "ab7d0050bd18ec7e75f5467fca52170c97b105ab2d2f8991b5803108b8c98871",
+      "bytes": 1939,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/REVIEW_RUBRIC.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/REVIEW_RUBRIC.md",
+      "sha256": "b0c61c2a34ed394d7de57318877d58ec81fcd0e332be38e390c709a05ce495ad",
+      "bytes": 2738,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/ROADMAP.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/ROADMAP.md",
+      "sha256": "4ca244acbbb4e62ff1b119ae306208c8f1ea419e266285057328b75f296a3fb7",
+      "bytes": 657,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/SPIKE.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/SPIKE.md",
+      "sha256": "7f76d614b8d04099f3facd39659669e685bb56ff79ebee730985308f6dbf330b",
+      "bytes": 2810,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/TECH_EVAL.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/TECH_EVAL.md",
+      "sha256": "84a6b580a5ff4bc57ed77a9e9fb6711c4c7a76194ba07511a7157f57e9cebf10",
+      "bytes": 2927,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/TRIAGE_INCIDENT.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/TRIAGE_INCIDENT.md",
+      "sha256": "82b0ff7fe78d4188fa948ceb27a00f64e3355a8745c83b8194e2515251b27a82",
+      "bytes": 2053,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/UPSTREAM_AUDIT.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/UPSTREAM_AUDIT.md",
+      "sha256": "e4f6f89b2b47ed256ae4bb258c02de885490dc3789af4dbf171c22c00046efd1",
+      "bytes": 2689,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/adr.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/adr.md",
+      "sha256": "748dab5a83638beaac2daac58540fdb26f253f4a3f212e4d0c7e84954d9aea99",
+      "bytes": 1513,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/templates/progress.md",
+      "source": "/.agents/skills/dev-loop/reference/templates/progress.md",
+      "sha256": "2cbfa1bb25427e48e40ecd5ff95de98520c4c71424a6bead81e638e9ae85e379",
+      "bytes": 484,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-loop/reference/triage.py",
+      "source": "/.agents/skills/dev-loop/reference/triage.py",
+      "sha256": "5f3f1b8ae34c3b43a109e1c10a2a2543ba6db392b6ab86be4e2a81b41d96fd70",
+      "bytes": 8096,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/pipeline/SKILL.md",
+      "source": "/.agents/skills/pipeline/SKILL.md",
+      "sha256": "1af7ea9bd068bf654cd30fb4cc3ae852ab836f24aa39cdb04398fc4575d122b7",
+      "bytes": 1901,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/source-command-loop-grill/SKILL.md",
+      "source": "/.agents/skills/source-command-loop-grill/SKILL.md",
+      "sha256": "53ab0229631b4ab493d0763be8820859d9ea119c8386b1d8ffed8173cc637423",
+      "bytes": 427,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/dev-pipeline/SKILL.md",
+      "source": "/.agents/plugins/mios-cicd/skills/dev-pipeline/SKILL.md",
+      "sha256": "a61d2a812b9a3071c2ac11da530a2cb78cf8bde4b1b340f89e65279d30ba91d5",
+      "bytes": 1057,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/app-launch/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/app-launch/SKILL.md",
+      "sha256": "31dca9224fee2263f9260590b6442f95c38e80f0bab82e68fce2389ca89eab1b",
+      "bytes": 7875,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/find-files-and-apps/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/find-files-and-apps/SKILL.md",
+      "sha256": "a7725144b56df9524d42e86f44124d65493c64a7ea7e60127a192c024b1e34fa",
+      "bytes": 10222,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/linux-control/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/linux-control/SKILL.md",
+      "sha256": "963c84b78ab804427d90ec6b7638d5e94d085a72e0bc2ba80e7a5b44081954a4",
+      "bytes": 8310,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/mios-environment/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/mios-environment/SKILL.md",
+      "sha256": "921500b756751d9e004ab7503165b170a754c13525e844be332bcd0f57f04b9e",
+      "bytes": 5981,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/mios-skill-catalog/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/mios-skill-catalog/SKILL.md",
+      "sha256": "b9337d8eeea56798a6469b1d5fd23673b32d4cbbe1f77ddee005c32806dc2616",
+      "bytes": 3513,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/opencode-delegation/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/opencode-delegation/SKILL.md",
+      "sha256": "aac6040f9266742234b1b89a376457b7e17cd3e07af6317ef8c020e52b682551",
+      "bytes": 4051,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/package-management/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/package-management/SKILL.md",
+      "sha256": "9ddcdcb43064cba5b2341aa352ad680ba8beb657431f18936be69cbc40ccbec1",
+      "bytes": 4969,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/parallel-fanout/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/parallel-fanout/SKILL.md",
+      "sha256": "6f5e93d63435fa32a1174f383b89146918fc7c9f84be1d88c92ac283d743d39e",
+      "bytes": 6775,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/self-improvement/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/self-improvement/SKILL.md",
+      "sha256": "a48f2ce5c3d50007100cfc8fff1f5fed538b6856b50e6fb8a0ee61ae1cd3a86e",
+      "bytes": 4090,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "definitions/windows-control/SKILL.md",
+      "source": "/usr/share/mios/hermes/skills/windows-control/SKILL.md",
+      "sha256": "eff8d15f6b88bd95a5e5c5412baf475f701e6600db8286ab0da7efcacf29db14",
+      "bytes": 9536,
+      "kind": "instruction-skill"
+    },
+    {
+      "path": "catalog/install-flatpak-app.json",
+      "source": "/usr/share/mios/skills/install-flatpak-app.json",
+      "sha256": "77d0127ba6e79840b2046ab0618c08594ea372f57248546b76be60b8a8cd5055",
+      "bytes": 396,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/install-windows-app.json",
+      "source": "/usr/share/mios/skills/install-windows-app.json",
+      "sha256": "5a0f324344998ce18abcddc87e33f8fe9fc659071de443c9d0536c608a552c73",
+      "bytes": 304,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/open-and-focus.json",
+      "source": "/usr/share/mios/skills/open-and-focus.json",
+      "sha256": "ee4f189b17104bf15cbe94c71504e4cdefb013e6616c5392188bba0112df67fc",
+      "bytes": 258,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/open-url-fallback-chain.json",
+      "source": "/usr/share/mios/skills/open-url-fallback-chain.json",
+      "sha256": "a6563ebe6a243df4d94378848cfc412e66429c352b49ad0dd48dd72b129919c5",
+      "bytes": 628,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/open-url-resilient.json",
+      "source": "/usr/share/mios/skills/open-url-resilient.json",
+      "sha256": "3f2bc5bde3234cc15f308321fc6205314cfad983169d8f829b4b845a5b1dbc7b",
+      "bytes": 500,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/safe-open-flatpak.json",
+      "source": "/usr/share/mios/skills/safe-open-flatpak.json",
+      "sha256": "0e10869821d02f7576ee147c75df8b203605d836431c476690efb667de9f0338",
+      "bytes": 505,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/save-document.json",
+      "source": "/usr/share/mios/skills/save-document.json",
+      "sha256": "47d83d01a61a33851f4ee98bbcdcc3272813be9800730f0d1a76f587a75d80e4",
+      "bytes": 338,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/sync-to-root.json",
+      "source": "/usr/share/mios/skills/sync-to-root.json",
+      "sha256": "0dc2e8301de99c6794a06f7b73a995ad94762329ce39063342966f81a24fa276",
+      "bytes": 679,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/window-focus-mode.json",
+      "source": "/usr/share/mios/skills/window-focus-mode.json",
+      "sha256": "26071037406f3ce072ee7656fc080a368de05e4db3cb6e6f6edd6114c8c76014",
+      "bytes": 326,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/window-restore-and-focus.json",
+      "source": "/usr/share/mios/skills/window-restore-and-focus.json",
+      "sha256": "67b0e4c0b6412a85a458620247af116df6f293054d2d33f6975b34aa045650ee",
+      "bytes": 319,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/window-tile-side-by-side.json",
+      "source": "/usr/share/mios/skills/window-tile-side-by-side.json",
+      "sha256": "38700c81b47cf43122b43311b825713d4434db77158ef74f89eaa377d35ae276",
+      "bytes": 765,
+      "kind": "procedure"
+    },
+    {
+      "path": "catalog/write-text-file.json",
+      "source": "/usr/share/mios/skills/write-text-file.json",
+      "sha256": "bc095a223d72efd317b78eadd6a325fa4379d4aeec6998b6f14258ee6c88194b",
+      "bytes": 326,
+      "kind": "procedure"
+    },
+    {
+      "path": "context/AGENTS.md",
+      "source": "/AGENTS.md",
+      "sha256": "9a84482c04f64c2ab94f772e0f0d4208e0946845759e629e9b18ff6e2a69dd2c",
+      "bytes": 24869,
+      "kind": "context"
+    },
+    {
+      "path": "context/.agents/COORDINATION.md",
+      "source": "/.agents/COORDINATION.md",
+      "sha256": "1bf273eeed998ba8690b8914d1343ecb84d49b9a3446fba37185464ae41a889f",
+      "bytes": 6775,
+      "kind": "context"
+    },
+    {
+      "path": "context/usr/share/doc/mios/mcp-tmux.md",
+      "source": "/usr/share/doc/mios/mcp-tmux.md",
+      "sha256": "f0bf02686a5ce6789f5842f5421cc88a4d3db312ddd9e627ba3b21831d1c0137",
+      "bytes": 21980,
+      "kind": "context"
+    },
+    {
+      "path": "context/.agents/rules/AGENTS.md",
+      "source": "/.agents/rules/AGENTS.md",
+      "sha256": "ec2a6e7ba2a4a8e32e41eb3fa45b2d5804289f4fbd02b42134faf5d65676e1e2",
+      "bytes": 5167,
+      "kind": "context"
+    },
+    {
+      "path": "LICENSE",
+      "source": "/LICENSE",
+      "sha256": "9e2410107b864c8c561db0c7466e7b32d12ec3e18226cb9fed855e2358ca7e36",
+      "bytes": 1858,
+      "kind": "license"
+    }
+  ],
+  "publication": {
+    "repository_directory": "SKILLS",
+    "branch": "main",
+    "archive_path": "SKILLS/mios-global-skills.tar.gz",
+    "checksum_path": "SKILLS/mios-global-skills.tar.gz.sha256"
+  }
+}

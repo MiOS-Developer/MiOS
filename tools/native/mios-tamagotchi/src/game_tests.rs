@@ -279,6 +279,7 @@ fn schema_one_migration_keeps_state_and_schema_two_retains_identity() {
     let path = dir.path().join("pet.json");
     let mut legacy_game = serde_json::to_value(&game).unwrap();
     legacy_game.as_object_mut().unwrap().remove("character");
+    legacy_game.as_object_mut().unwrap().remove("progress");
     let original = serde_json::to_vec(&serde_json::json!({"schema":1,"game":legacy_game})).unwrap();
     std::fs::write(&path, &original).unwrap();
     let migrated = crate::save::load(&path).unwrap().unwrap();
@@ -289,7 +290,7 @@ fn schema_one_migration_keeps_state_and_schema_two_retains_identity() {
     store.save(&migrated).unwrap();
     let envelope: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(envelope["schema"], 2);
+    assert_eq!(envelope["schema"], 4);
     assert_eq!(store.load().unwrap().unwrap(), migrated);
     for seed in 0..512 {
         let pet = Game::new(&r, seed);

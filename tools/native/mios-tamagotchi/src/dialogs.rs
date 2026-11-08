@@ -65,6 +65,8 @@ pub enum Choice {
     Save,
     Quit,
     Back,
+    Habitat,
+    Training,
 }
 impl Choice {
     pub fn label(&self) -> &str {
@@ -82,6 +84,8 @@ impl Choice {
             Self::Save => "Save",
             Self::Quit => "Quit",
             Self::Back => "Back",
+            Self::Habitat => "Habitat / items",
+            Self::Training => "Training / stats",
         }
     }
     fn argument(self) -> &'static str {
@@ -99,6 +103,8 @@ impl Choice {
             Self::Save => "save",
             Self::Quit => "quit",
             Self::Back => "back",
+            Self::Habitat => "habitat",
+            Self::Training => "training",
         }
     }
 }
@@ -318,7 +324,12 @@ fn helper_exe() -> Result<PathBuf, String> {
 }
 fn validate_request(request: &DialogRequest, limit: usize) -> Result<(), String> {
     if request.choices.is_empty()
-        || request.choices.len() > 13
+        || request.choices.len() > Choice::value_variants().len()
+        || request
+            .choices
+            .iter()
+            .enumerate()
+            .any(|(index, choice)| request.choices[..index].contains(choice))
         || serde_json::to_vec(request)
             .map_err(|e| e.to_string())?
             .len()
@@ -810,7 +821,7 @@ pub fn popup_helper(path: &Path) -> Result<(), String> {
                 Some(HelperKey::ScrollUp) => scroll = scroll.saturating_sub(4),
                 Some(HelperKey::ScrollDown) => scroll = scroll.saturating_add(4),
                 Some(HelperKey::Accept) => {
-                    break reply_helper(&payload.reply, request.choices[selected])
+                    break reply_helper(&payload.reply, request.choices[selected]);
                 }
                 Some(HelperKey::Back) => break reply_helper(&payload.reply, Choice::Back),
                 None => {}
@@ -1130,5 +1141,26 @@ mod tests {
         tx.send(DialogEvent::Inline).unwrap();
         assert_eq!(dialogs.poll(), Some(DialogEvent::Inline));
         assert!(!dialogs.active());
+    }
+}
+
+#[cfg(test)]
+mod habitat_context_tests {
+    use super::*;
+
+    #[test]
+    fn all_declared_context_actions_fit_but_duplicate_actions_are_rejected() {
+        let mut request = DialogRequest {
+            title: "Pet".into(),
+            text: "Thought".into(),
+            choices: Choice::value_variants().to_vec(),
+            accept_hint: "Enter".into(),
+            back_hint: "Escape".into(),
+            ascii: true,
+        };
+        assert!(request.choices.contains(&Choice::Habitat));
+        assert!(validate_request(&request, 4096).is_ok());
+        request.choices[1] = request.choices[0];
+        assert!(validate_request(&request, 4096).is_err());
     }
 }

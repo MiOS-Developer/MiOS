@@ -1,0 +1,1 @@
+{"name":"save-document","description":"Focus a window matching `editor`, type `body` text into it, save via Ctrl+S.","source":"import","status":"promoted","body":{"steps":[{"verb":"focus_window","args":{"title":"$editor"}},{"verb":"pc_type","args":{"text":"$body"}},{"verb":"pc_key","args":{"key":"ctrl+s"}}],"params":["editor","body"]}}

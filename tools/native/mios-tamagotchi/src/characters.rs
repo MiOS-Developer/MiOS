@@ -193,6 +193,7 @@ mod tests {
             medicine_cost: 2,
             starting_coins: 10,
             memory_reveal_ticks: 2,
+            training: crate::config::Config::sample().unwrap().game.training,
         }
     }
 

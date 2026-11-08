@@ -1,0 +1,1 @@
+{"name":"window-focus-mode","description":"Maximize the window matching `focus`, minimize the window matching `distractor`.","source":"import","status":"promoted","body":{"steps":[{"verb":"maximize_window","args":{"title":"$focus"}},{"verb":"minimize_window","args":{"title":"$distractor"}}],"params":["focus","distractor"]}}

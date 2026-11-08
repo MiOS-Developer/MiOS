@@ -1,0 +1,1 @@
+{"name":"install-windows-app","description":"Search winget for `query`, then install the matched package by `id`.","source":"import","status":"promoted","body":{"steps":[{"verb":"winget_search","args":{"query":"$query","limit":5}},{"verb":"winget_install","args":{"id":"$id"}}],"params":["query","id"]}}

@@ -168,6 +168,7 @@ fn half_block_keeps_independent_colors_and_odd_height_padding() {
     let colors = Colors {
         palette: vec![Color::Red, Color::Blue, Color::Green, Color::White],
         background: Color::Black,
+        lighting: None,
     };
     let area = Rect::new(0, 0, 1, 2);
     let mut buf = Buffer::empty(area);

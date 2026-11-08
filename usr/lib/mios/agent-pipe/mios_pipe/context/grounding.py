@@ -444,19 +444,41 @@ _OWUI_VAR_KEYS = (
 _ENV_SENTINELS = frozenset({"", "unknown", "none", "null", "n/a", "undefined"})
 
 _PRINCIPAL_BIND_MODES = frozenset({"off", "verify", "enforce"})
+# "audit" is the vendor SSOT's word for observe mode (rule_of_two_mode and
+# quarantine_mode use it too): log a mismatch, keep the claimed value -- verify.
+_PRINCIPAL_BIND_ALIASES = {"audit": "verify"}
+_PRINCIPAL_BIND_REJECTED: set = set()
+
+def _parse_principal_bind_mode(value) -> str:
+    """The canonical bind mode for one configured value: off, verify or enforce,
+    with 'audit' an alias of verify and an unset or empty value meaning off.
+    Any other value raises ValueError naming it and the accepted spellings."""
+    mode = str(value if value is not None else "").strip().lower() or "off"
+    mode = _PRINCIPAL_BIND_ALIASES.get(mode, mode)
+    if mode not in _PRINCIPAL_BIND_MODES:
+        raise ValueError(
+            "[security].principal_bind_mode = %r is not a bind mode; use off, "
+            "verify (alias audit) or enforce" % (value,))
+    return mode
 
 def _principal_bind_mode() -> str:
     """V2 verified-principal binding mode from SSOT [security].principal_bind_mode
-    (env MIOS_PRINCIPAL_BIND_MODE wins). Returns one of off/verify/enforce; an
-    unrecognised value degrades to 'off' (the safe, byte-identical default). Read
-    per call so a live mios.toml edit takes effect, like the sibling rls_mode knob."""
+    (env MIOS_PRINCIPAL_BIND_MODE wins), parsed by _parse_principal_bind_mode.
+    An unknown value is rejected and FAILS CLOSED to 'enforce', logged once per
+    value: a misspelt mode never silently switches the binding off. Read per call
+    so a live mios.toml edit takes effect, like the sibling rls_mode knob."""
     try:
-        mode = str(os.environ.get("MIOS_PRINCIPAL_BIND_MODE")
-                   or (_toml_section("security") or {}).get("principal_bind_mode", "off")
-                   ).strip().lower()
-        return mode if mode in _PRINCIPAL_BIND_MODES else "off"
-    except Exception:  # noqa: BLE001 -- degrade-open: never break env assembly
+        raw = (os.environ.get("MIOS_PRINCIPAL_BIND_MODE")
+               or (_toml_section("security") or {}).get("principal_bind_mode"))
+    except Exception:  # noqa: BLE001 -- degrade-open: an unreadable SSOT never breaks env assembly
         return "off"
+    try:
+        return _parse_principal_bind_mode(raw)
+    except ValueError as exc:
+        if repr(raw) not in _PRINCIPAL_BIND_REJECTED:
+            _PRINCIPAL_BIND_REJECTED.add(repr(raw))
+            log.error("%s -- failing closed to enforce", exc)
+        return "enforce"
 
 def _bound_account(headers: Optional[Any]) -> "Optional[str]":
     try:

@@ -1,6 +1,6 @@
 {
   "version": "1.7.7",
   "source_sha256": "6f3716ebd951e101df883bb14922f067c023f11561aa088ef487814183727cf3",
-  "page_sha256": "de1ab274b3fc437775b669ca0895ab9ad31db5a29e5429dae2b6d265dc4240e0",
+  "page_sha256": "8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf",
   "terminal_rule": "#terminal-container .terminal{height:calc(100% - 0px);padding:0px}"
 }

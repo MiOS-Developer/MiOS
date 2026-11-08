@@ -3327,7 +3327,7 @@ so long. Let a run finish.
 ## 2026-10-11T19:57:04Z peer-lane: frozen current-source full CI replay completed RED
 - Required contracts/latestledger/live lease/journal and own authenticated empty inbox refreshed; integration last observede3ff9d06/seven dirty fingerprints unchanged. Renewed antigravity coordinator retained, no peer-lane takeover. Sanitized11 registrations/10 GLOBAL peers dormant inclzai-lane; consolidated peer_global_e1013126caeec477_* accepted/queued ALL10, no actual deliveryfailure/newrecipientACK/completion inferred. Journal peer-b606-ci-replay-completed-red exit0.
 - Frozen b606 full-history local replay exec8548 finished aggregate exit1; container mios-current-ci-audit removed normally by its --rm flag, no running replay remains. Final exact stages: bootstrap0/34s provision0/171s psmodules0/10s native0/368s freshness0/19s generated0/12s bootstrap_repo128/0s lint1/124s unit1/0s rust1/1s gate1/699s. Gate0passed2failed: automation/98-drift-checks.sh1/267s (38violation records across23checks), tests/drift-gate-negatives.sh1/432s (19named failures, potential baseline/cascade consequences). Receipt recovery/mios-session-continuity/mios-current-ci-final-receipt.json contains full command/head/image/bootstrap/baseline, exact results,19names and raw logSHA256s. Preserve local mount-trust fixture128 despite container-only repair, native scopedpass, unexecuted unit suites and RustClippy/tests behind fmt failure. No fullgreen/remotePR/image/install certification.
-- Postrun own ext4 verification clone gitstatus AD automation/mios-negtest-bulk.sh, index one staged insertion and worktree file absent; negative suite left fixture/index residue. No reset/cleanup; preserve failed evidence and use separately clean verification state for later justified replay. Shared source/index untouched. Runtime packed-boundary inventory retained: both tmux archives/notices, font,84wheel members and absent literal runtime mios-prompt.sh; staticinventory only, no install/test beyond existing firstfailure.
+- Postrun own ext4 verification clone gitstatus AD on the automation/ bulk probe that tests/drift-gate-negatives.sh plants, index one staged insertion and worktree file absent; negative suite left fixture/index residue. No reset/cleanup; preserve failed evidence and use separately clean verification state for later justified replay. Shared source/index untouched. Runtime packed-boundary inventory retained: both tmux archives/notices, font,84wheel members and absent literal runtime mios-prompt.sh; staticinventory only, no install/test beyond existing firstfailure.
 - Updated existing ACTIVE heartbeat through appAPI preserving schedule/name/thread/authorization, replacing stale running/awaiting-review snapshot with completed-red receipt and coordinator-integrated e3ff import. Await refreshed disjoint coordinator assignment while continuing justified audits; do not restart unchanged failed replay or repeated completed catalogbuilds. Windows30 private/catalog and previous endpoint/interop controls retain scope. Current-head green CI/images/PR merge/literalfullinstallation/functionalruntime/configured-home alignment/500files EACH remainopen; historical glibc/static-linkage/missingLinuxClippy and scoped remediation preserved. No modelworkers/cloudfallback, otherinbox/token access,sharedindex edits,push/merge/deployment/destructive operations.
 ## 2026-10-11T20:02:00Z peer-lane: negative fixture/index cleanup defect reproduced and isolated fix committed
 - Required contract hashes/content/latestledger/live lease/journal and own authenticated empty inbox/sanitized11registry refreshed. Renewed antigravity coordinator retained, integration e3ff9d06/seven dirty fingerprints unchanged. All10 GLOBAL peers dormant inclzai-lane. Original frozen b606 CI remains completedRED, no replay/repeated catalog build. Queue/claims/live dirty paths refreshed; self-claimed ci-negative-fixture-cleanup in own mios-ci-repair lane, no conflicting active test-file ownership observed.
@@ -3916,3 +3916,893 @@ Runtime evidence (local receipt path, SHA256):
 The standing goal remains open: full native 8B tool selection still fails; the complete native catalogue (37 declared binaries: 35 Linux and two Windows-only), fresh CI95, image builds and boot acceptance are not proved. The libexec budget remains 328/312 (16 migrations), and generic root-pull native publication remains unresolved. No reboot, service/compositor/input-daemon restart, controller certification or mobile-play certification is claimed.
 
 Count correction: earlier planning labels confused native build phase 55 with an artifact count. The source declares 37 binaries, of which 35 target Linux and two target Windows only. The verified five deployment binaries and their scoped receipts are unchanged.
+
+
+## 2026-11-05 · MiOS-Mon face, detail and localhost trial checkpoint
+
+Verified source82962b196402ac910e9142fccd91e31d18316174 in actual rootless
+MiOS-DEV4CPU/4GiB, source read-only, locked Rust1.99.1:224 pet+10 CLI+198 Inputd
++4 configurator+16 terminal-page checks =452 PASS. Warning-fatal Clippy, release
+and static PIE validation pass. The executable SHA256 is
+42aa2911dd070e8fcc67cf489464d5114f1713a7acf565cc041b16fac73686af.
+Its bytes equal the deployed d7d4bec045f1edc7648203ec6a64e9b3d6d8fcba app;
+continuing processes retain their actual launch-source identity. System executable
+f2a6ef9bdbbc51e658aa4e9bedc8d2ea5b880cc6608d32ec3bd1bc265bdbd774 unchanged.
+Four broader gates retain their pre-existing35/1/1/6 findings byte for byte.
+
+Six current sample processes on node mios, MiOS0.3.0 x86_64, are retained across
+four persistent pinned nested PiPs and user-local localhost play. Normal-user
+installation is /home/mios/.local/bin/mios-tamagotchi-sample with explicit
+independent save paths in the consolidated receipt. Native live Alacritty12pt
+153x26 AUTO16→24pt76x13 AUTO8→12pt153x26 AUTO16 proves global font-driven detail.
+Actual camera/zoom transitions and59 expressions from16 moods preserve paused
+Game state; tiny Bird12x6 now reserves a separate complete (+_+) face row.
+Eight current interactive-PTY/snapshot checks pass, including a real competing
+interactive writer refused before alternate screen, unchanged fixture/save bytes
+and termios restoration. These PTYs do not certify physical terminal hardware.
+
+| Route or seat | Continuing target | Scope |
+|---|---|---|
+| localhost8310 | mios-mon-localhost backend; mios-mon-local-play @9/%28 | Authenticated native ttyd user process, actual browser keyboard and reflow |
+| mios-mons-live | runtime200092, genuine Hiku tmux-os @3/%4; operator local play @9/%28 | Pinned parent PiP; separate saved pets |
+| mios-mons-shapes | runtime204092, tmux-os @6/%26 | Pinned parent PiP; preserved Haru |
+| mios-mons-verify | runtime238967, mios-mons-clarity-fixtures @38/%60 | Pinned parent PiP; paused Mio copy |
+| mios-mons-habitat | runtime252822, mios-mon-font-review @19/%34; adopted preview @16/%30 | Pinned parent PiP; paused Ramo and separate operator preview |
+| existing SSH | mios-mon-play in normal human tmux session | Attaches the same local game, one save writer |
+
+Native terminal page SHA25627d4abc0e98c492cdd6fb83288e76cffe2022bd6b49f0f85ca73060208449d76
+was projected inside DEV from verified pinned upstream html.h. Real browser
+CSS360x640/640x360/180x180 reflows correctly; actual native grim desktop captures
+show the full terminal top/header. CDP emulation screenshots crop the top despite
+correct DOM/buffer origins, so those images are retained as a capture limitation.
+Neither physical phone is attached. No ttyd Bash/PowerShell containers exist in
+the two inventoried Podman engines; PowerShell8320 is not live. External pinned
+ttyd is static ET_EXEC and does not pass the separate native static-PIE gate;
+its preserved failure must not be confused with the passing MiOS-Mon app.
+
+Source work and prior receipts from exited workers remain preserved in their
+isolated worktrees. Native recovery reviewer mios-mons-recovery-reviewer binds
+the actual outer human pane, not a claimed nested head. Original and adopted
+pets, all four launchers and ordinary tmux game/backend/browser windows survive
+helper cleanup. Coordinator retains launcher/session ownership. O opens menu,
+Esc backs, P pauses/resumes, +/- zooms,0 resets zoom,Z changes camera,D detail.
+The local operator has reset/played the browser pet; its current state is retained.
+
+Current evidence root: /home/mios/.local/state/mios/mios-mons-clarity-live
+- mios-proof-browser-responsive-final/mios-artifact-receipt.json
+- mios-responsive-live-handoff.json
+- mios-responsive-auto-{16-fine,8-coarse,16-restored}.json/png
+- /home/mios/.local/state/mios/mios-mons-responsive-terminal-checks/mios-final-failure-receipt.json
+- /home/mios/.local/state/mios/mios-mon-localhost-play/mios-native-responsive-receipt.json
+
+Current desktop/portrait/landscape/watch browser O/Escape navigation also passed,
+using the existing frozen Taya with exact save byte equality; no care/reset/save
+commands were sent. Native MAINMENU Enter/Esc frames are recorded in
+/home/mios/.local/state/mios/mios-mon-localhost-play/mios-browser-menu-current-receipt.json.
+Independent native reviewer accepted source/build/font and real viewport frames
+in /home/mios/.local/state/mios/mios-mons-recovery-review/mios-recovery-final-acceptance.json,
+SHA2563c2f6712ac989bf622e3b5c8699d6afe7f28f09510396f722e0e39627178c1b8.
+
+Primary3708 and physical mobile/controller acceptance remain open; no fleet/ARM64/physical VT/watch certification or global clean CI
+is claimed. Scoped3725/3728/3734/3735/3736 complete. Software verification and live localhost
+trial are ready for the authorized main publication; physical follow-ups remain open.
+
+
+## 2026-11-05 · Live MiOS-Mon native menu correction
+
+Operator correctly reported that Git publication and a separately opened trial
+did not make the new build the normal tmux-os menu target. The live vendor row
+still named /usr/bin/mios-tamagotchi. Created only the normal user's owned
+/home/mios/.config/mios/mios.d/60-mios-mon-live.toml from the canonical TOML
+template; preserved every other resolved TUI row. The existing mios-mons row
+now labels MiOS-Mon and invokes the verified42aa user-local sample with --sample
+and /home/mios/.local/state/mios/tamagotchi-blade-sample/mios-menu-pet.json.
+No host monolith or system executable was replaced. Native fresh-process
+tui-spec and visible launcher both resolve the new entry.
+
+Selected actual row4 in the habitat's visible native launcher using verified
+client /dev/pts/65 native input. The resulting PID812866@25/%41 executable
+matched42aa and hatched genuine Tamo. Saved/paused and quit the owned menu test
+normally, preserving its state and freeing its writer for the operator's next
+menu launch. Existing RamoPID12447@19/%34 was restored visibly; original games,
+other windows and four independent nested launchers remain alive.
+
+Receipt: /home/mios/.local/state/mios/mios-mons-clarity-live/mios-menu-install/mios-menu-install-receipt.json
+Actual menu/game PNGs and original catalogue snapshot are adjacent. The live
+menu path is Ctrl+B then Space, MiOS section, MiOS-Mon. This scoped follow-up
+is complete; image integration and physical device acceptance remain separate.
+
+## 2026-11-05 · Seed identities and rotating isometric world development
+
+Actual participant mios-mons-world-voxel used its verified habitat nested
+human head (@26/%42) and own relay inbox for sequential geometry and camera/UI
+assignments. The attempted separate camera registration hit the existing
+64-agent registry limit; it did not become a registered participant. Preserved
+its draft and stopped that head. Reused the registered world participant without
+changing admission or registry limits. Root alone owns canonical task updates,
+integration commits, builds, installation and publication.
+
+Geometry source delivered at2b869e9e; final UI source at6dc262ba. Root reviewed
+and integrated them, corrected viewport-relative pet height into world units,
+fixed compile fixtures, and applied the worker's independent findings for
+extra-hyphen code acceptance, generated snapshot voice, actual Room test coverage
+and faceless-egg authority. The final worker UI adds private catalogue refresh,
+16 selected-seed normalization and legacy-code handling. No worker ran Cargo on
+the host. Failed build receipts are retained alongside the subsequent checks.
+
+Source b934a4264f65a0e9fc9031ed458fe670f1dd31d1 is pinned in the isolated
+mios-mons-world-build worktree for actual MiOS-DEV verification. Save-free
+development and lossless version-one seed codes reproduce birth identity and
+hatch stats; optional mutable progress remains separate. All existing pet files
+and operator-adopted game processes are preserved. Live deployment/acceptance
+receipts will be recorded after verification rather than inferred from source.
+
+Completed-session cleanup receipt:
+ /home/mios/.local/state/mios/mios-mons-world-live/mios-session-cleanup/mios-session-cleanup-receipt.json
+Completed verified source panes and stale observers are grouped in native
+session mios-agents-completed-2026-11-04. Active worker, live game panes,
+worktrees, saves and registry lifecycle were retained.
+
+## 2026-11-05 · Verified voxel-world and seeded-identity live handoff
+
+Final executable source f54b6b57ac5c5f40d030bf34cb2e28733a03efe9; SHA256d8f7eae71d8400f6fc6f49a4db02b518c1b3274000690a8bc04792e35a1d07a9.
+Actual MiOS-DEV482 checks passed (251 pet unit,13CLI,198 Inputd,4HTML,16 portal),
+Clippy-Dwarnings and native static PIE passed. Broad gate findings match the
+previous baseline byte-for-byte. f54b6b57 fixes the reviewer's remaining mixed
+packed-cell foreground-plane overwrite and pre-roll sleeping-ground anchor,
+with native/atlas foreground-plane and posed-floor regression controls.
+
+Installed the separate user-local sample atomically with prior binaries retained.
+The owned user TUI catalogue entry is now save-free --sample; all other rows
+are preserved. Native tui-spec resolves the installed path. Native user-local
+ttyd Bash8310 serves the shared actual nested game, using the existing native
+authentication; no Bash/PowerShell container is claimed. Fixed its owned wrapper
+to use the installed ttyd's actual absolute path after PATH lookup failure.
+
+Actual browser input and nested grim captures verify code/menu at desktop,
+portrait,landscape and20x8 watch grids; no physical phone/watch result is inferred.
+Automated live native play reached a thriving adult at63 ticks with15 observed
+memory wins,full health and no edited needs/age/stat state. That game's window
+is retained. A separate fresh random-seed pet is paused for the operator in
+mios-mons-live @13/%33; code M19XXMCDP3CB87CR5; no save file.
+The shared window now sizes to the smallest client so the PiP is not cropped
+by a larger browser client. Nested launchers and original saves remain alive.
+
+Handoff/receipt: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json
+Human-readable table: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.md
+Primary3708 stays partial for physical controllers/phones/VT/fleet/ARM64.
+
+The finished native source head closed its own registration and its worker
+window is already gone; no active source pane was killed by cleanup. Its
+geometry,UI and review reports are combined in readonly native session
+mios-agents-completed-2026-11-05, alongside the retained November4 archive.
+Receipt:mios-session-cleanup/mios-final-source-archive.json under the handoff root.
+
+## 2026-11-05 · In-game shared birth-code replay
+
+Tasks3743/3744 continue MiOS-Mon development on isolated source1d65d4f8e.
+Actual registered native participant mios-mons-seed-editor owned only the
+scaffolded pure seed_entry.rs model in its own worktree and visible habitat head
+@27/%123, independently receiving/acknowledging its relay messages. Delivered
+frozen module424bb385b70d868ecf73b2246215e177d75e5b35e4595debbe8e8e024380aeda,
+nine model tests, and concrete read-only UI findings. Root owned UI/integration,
+canonical tasks, MiOS-DEV builds and user-local installation.
+
+Final executable source5a197bba7763f6d84e742b0f956561cc503abdf8, SHA256
+f2a579d74fa24c464fc213defff8e48acd0e747b72c177a8827fa24e3131427f.
+Actual sourceRO, locked/offline Rust1.99.1 rootless MiOS-DEV4CPU/4GiB passed
+498 checks (267 pet unit,13CLI,198Inputd,4HTML,16portal), Clippy-Dwarnings and
+native static PIE validation. All four broader gate finding outputs match the
+clean current upstream1d65 baseline byte-for-byte; gates were not weakened.
+
+Applied independent review fixes:20x8 outer/18x6 inner confirmation accounting,
+wheel-aware mouse caret movement, stale seed clearing on every tiny/cancel/reset
+exit, valid Ctrl+C/Escape hints in the tiniest editor and immutable drafts behind
+confirmation. Direct code letters cannot trigger care/reset/quit while editing.
+Seeded creation requires two explicit Enter actions and starts paused; saved
+sessions refuse the import flow.
+
+Actual nested20x8 play verified typed qfpn as text, refusal of escaped clipboard
+data, grouped/lowercase code preview, cancellation retaining the original177
+birth and confirmed512 birth. Actual browser keyboard and ClipboardEvent replay
+passed portrait513 and watch515 at localhost8310. These are automated desktop
+and browser-emulation results, not physical phone/controller certification.
+Disposable PTYs verified normal Ctrl+C cleanup and invalid-CLI termios equality;
+the initial harness assumed whole rendered labels in ANSI diffs, corrected in
+the retained terminal helper without changing application code.
+
+User-local sample replacement was atomic with the previous d8f7 executable
+retained. The system executable f2a6 remains unchanged. Existing Tato@13 and
+Noya@12 windows/processes remain available; the new owned replay window@14/%34
+shares the same still-live PiP/localhost/SSH session and has no save path.
+Receipts: /home/mios/.local/state/mios/mios-mons-seed-entry-live/
+ - mios-proof-seed-entry-final/mios-artifact-receipt.json
+ - mios-seed-live-replay-acceptance.json
+ - mios-seed-browser-receipt.json
+ - mios-seed-terminal-restoration.json
+
+Final independent native review:
+ /home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-editor/final-review.json
+The reviewer matched all24 crate files to sourceRO build, recomputed installed
+and artifact f2a579 hashes, inspected actual native/browser watch and portrait
+PNGs and found no remaining actionable seed-editor issue. Its own direct
+/proc/644001/exe access was denied; root's independently recorded process hash
+supplies that narrower proof. Physical devices remain unverified. The same
+participant resumed its own registration for final review and self-unregistered;
+no second worker identity or foreign inbox/token was used.
+
+The operator now requires live installation after every main push and excludes
+PR pushes. This standing rule is recorded in .agents/COORDINATION.md. The current
+publication will be followed by an atomic reinstallation and a fresh owned live
+main preview, retaining the prior operator/adopted windows. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-seed-entry-live/mios-post-main-live.json
+
+## 2026-11-05 · Compact touch seed entry and completed-session cleanup
+
+Task3745 adds visible draft-only caret, character-wheel and clear buttons at20x8
+through portrait and landscape viewports. Ctrl+U clears only a pressed editor
+draft; confirmation and saved sessions preserve their protections. Source and
+build receipts will pin the executable after actual MiOS-DEV verification.
+
+Task3746 inventory archived36 completed/idle sessions and46 windows, then the
+operator explicitly requested closing pets except development instances.
+Twelve obsolete/menu pets exited normally; four actual development pets remain
+in the existing live, shapes, verify and habitat PiPs. Save bytes were not
+deleted. The localhost8310 backend, native browser, SSH bridges and continuing
+nested launchers were preserved. Cleanup receipts:
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-tmux-cleanup-receipt.json
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-pet-cleanup-receipt.json
+
+Final executable sourcec37127bd1d098ac67c90f4c3ce2e8557952ba2a4, SHA256
+a3ca28dbcf0072189e89054e2eb84b8a85d8d1ec7343e04d4b269da632421c9d.
+Actual rootless MiOS-DEV4CPU/4GiB, locked/offline musl checks passed270 unit
+and13CLI tests, Clippy-Dwarnings and native staticPIE validation. Four broad
+gate finding files remain byte-identical to clean upstream1d65; no gates raised.
+The first fixture assumed one wheel edit made a valid checksum; corrected it
+to assert checksum refusal and restoration. Warning-fatal Clippy also required
+a simpler equivalent bounds assertion. All failed receipts remain archived.
+
+Native participant mios-mons-seed-editor reviewed exact source and build receipts
+using its own registration/token; root read and ACKed the addressed accepted
+result mios-mons-touch-final-review-c37127bd. The first resumed review lacked
+its separate private token-file path; its bounded report was preserved, the
+owned head closed, and its successor resumed the same identity with its own
+token. Root never registered or acknowledged on the child's behalf.
+The review's stronger per-button and protected-draft negative controls are in
+the final passing tests. Final review findings are empty within its stated scope.
+
+Actual native20x8 SGR/key tests passed Ctrl+U, character wheel, release filtering,
+Clear and cancellation preserving Mimo513. Actual localhost8310 browser clicks
+entered complete512/513 codes using only the wheel, checked/cancelled/cleared,
+and confirmed paused births through separate clicks at watch and portrait sizes.
+No physical phone/controller claim is made. Live input tracing exposed the
+MiOS-Tmux top-status row translation defect; disabling status only in the owned
+development game session makes emitted/received rows align. Task3747 remains
+pending for the general terminal correction. No global setting was changed.
+
+Build/native/browser/review receipts are under:
+ /home/mios/.local/state/mios/mios-mons-touch-live/
+The four existing development PiP parent windows remain mapped/pinned. Earlier
+menu and obsolete trial pets are now closed at the operator's explicit request;
+their prior success receipts and save files remain. This supersedes earlier
+handoff notes that those obsolete processes were kept running.
+
+This publication is followed by atomic user-local installation and a restart
+of only the owned main development preview in its same native pane. The dedicated
+game session retains status off and smallest-client sizing. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-touch-live/mios-post-main-live.json
+
+## 2026-11-05 · Complete menu and attached-controller input continuation
+
+Tasks3748/3749 extend3730/3731 without claiming their remaining physical
+acceptance. Native worker mios-mons-controller-prompts owns only input.rs in
+its isolated41519e8e base worktree; its independently registered habitat head
+uses its own relay token/inbox. Root owns ui.rs and canonical task publication.
+Delivered input file SHAa8badcd8e761ae8fe0b6061398d97d6d4669b835024b52d5da3fb241ff499f8c
+retains all verified eligible controller families and per-family resolved
+tap/hold labels. Root adds painted previous/next menu controls, Gallery stage
+buttons, and PageUp/PageDown/Home/End cursor navigation. All operations are
+draft/selection-only until an explicit accept.
+
+A preliminary actual CDP touchStart/touchEnd probe through the existing ttyd
+frontend passed complete watch/portrait wheel input against current installed
+41519e8e. No new web-input bridge was needed. This is browser touch emulation,
+not a physical phone result. No hardware controller is assigned to the four
+development seats; no parent input device was moved or borrowed.
+
+MiOS-DEV exact-source builds and live acceptance receipts follow under:
+ /home/mios/.local/state/mios/mios-mons-menu-input-live/
+
+Final source3732e2b5f75334dc2488ffc02e324075345a4a05 is a Rust2021
+formatting-only descendant of live-tested and peer-accepted01ab0144b399044ff9e88f93122058c843145a74.
+Final static musl SHA256b139a9078ea86f583dc5b71ee7d8013f2b27e8b63b5ae66ed80dabaa4d52be4c.
+Actual pinned rootless MiOS-DEV4CPU/4GiB passed282 unit+13CLI=295 scoped checks,
+Rust2021 format, warning-fatal Clippy, release and native staticPIE validation.
+Four broader gate diagnostic files still match clean1d65 baseline bytewise.
+No global CI cleanliness or physical-device acceptance is inferred.
+
+Source worker mios-mons-controller-prompts delivered sole input.rs change and
+read-only peer review of root's UI integration in actual habitat native heads
+%139 and%144, using its own addressed inbox. Root reviewed the input changes.
+The final closeout head%150 is inspecting final build and live receipts; it owns
+only its report and will close its own registration. No wrapper registered or
+acknowledged on the worker's behalf. Earlier bounded waits and failed proof
+directories remain available and are not represented as successes.
+
+All three actual localhost browser touchStart/touchEnd layouts passed complete
+menu traversal: watch20x9, portrait and landscape. Each has17 captures; all14
+Home choices are reachable, every submenu has painted previous/next, Gallery
+stage selectors work, and cancelling adoption preserves exact Mimo513 birth.
+Cursor-key harness initially omitted physical virtual-key codes for browser
+End/Home, and initially assumed literal Egg P in the condensed EP heading;
+corrected these test assumptions and retained both failed harness receipts.
+No application input rules were weakened.
+
+A real20x8 native tmux fixture ran ASCII/mono with DISPLAY,WAYLAND,HYPRLAND,
+XDG_RUNTIME_DIR,MIOS_NESTED_SEAT,TMUX andTMUX_PANE removed from its application
+environment. Raw CSI Home/End/PageUp/PageDown and SGR clicks navigated correctly,
+mouse release did not act, original birth was retained, Inputd reported no
+verified local session and kept keyboard fallback, and normal exit restored
+the parent shell with equal termios and exit0. Its disposable window closed;
+the existing Mio regression viewport was restored. This is headless terminal
+execution, not a physical-controller claim.
+
+Software tasks3748/3749 are complete. Tasks3730/3731 remain in progress for
+physical phone and multi-controller acceptance, with prior ownership preserved.
+Task3747 remains pending for the general MiOS-Tmux top-status pointer offset;
+only the dedicated game session uses statusoff. No daemon/global ownership
+policy, controller assignment, service, OS executable or live TOML was replaced.
+
+Summary: /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json
+Main publication will be followed by atomic user-local installation, same-pane
+restart and final actual input/process verification. Post-push receipt:
+ /home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json
+
+
+## MiOS-Mon console controls continuation
+
+The isolated input-completion lane contains source7558d12d7de8af1bc2e712b40f9953749b56a371:
+full-frame13-menu HUD, fixed controls/ranges, Face-relative orbit, and actual-head
+close-up fitting. Rootless MiOS-DEV verified304 scoped checks (291unit+13CLI),
+Rust2021 formatting, warning-fatal Clippy and the static x86_64 musl artifact.
+Candidate SHA256:d6a47d4ab4a367b9ff4a8e887d56624a48d553788359e999b50f662143f116a1.
+The four broader gate diagnostic streams match their known failing baseline;
+this is not global CI acceptance.
+
+Actual ASCII/mono20x8 PTY checks passed with display/session environment cleared:
+CSI paging, SGR navigation/release, retained birth, exit and termios restoration.
+The existing browser fixture was corrected to inspect actual xterm client cells,
+but real watch touch Back still failed; retain the failure and investigate the
+wire path before a production mouse translation change. Local registered
+participant mios-claude-continuation owns that coding follow-up under task3747.
+Task3750/3751 remain in progress, with no main push or candidate live install.
+
+The readable DualSense trial on the previous b139 artifact was confirmed by the
+operator: Down selected Games, Cross opened it, Circle returned. Initial failed
+UX was traced to click-to-focus Talk and a managed observer stealing pane focus.
+This narrow physical pass does not certify the new candidate, held keys, phones
+or simultaneous physical pads. Original nested sessions disappeared during the
+interruption; current registry is empty. Historical descriptors are not live
+viewports. The installed separate sample remains b139 until final acceptance.
+
+Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
+(mios-console-artifact.json, mios-controller-readable-human-result.json,
+mios-headless-console/, mios-browser-console-coordinates-watch-top/).
+
+## MiOS-Mon verified resize and live-route continuation
+
+Exact source7afa8035787929661f4c361af613ff3a6ea13e0e passes293 unit and13CLI
+checks (306 total), Rust2021 format, warning-fatal Clippy, release and static
+artifact validation in rootless podman-MiOS-DEV-mios-mons-resize-verified.
+Static musl artifact SHA256:
+ba5d2d3743b1a47e767650fecef247abb9b4fd07be4ce368b428b3fa2c3b4cc7.
+The four wider failing gates remain byte-identical to clean fbc1a259 baseline.
+
+Task3747 has two distinct findings. Browser capture could resize xterm before
+a touch; a geometry guard classifies that fixture error. Separately, an actual
+application click can arrive before its Resize event after tmux switches to the
+clicking client's size. Compare the current terminal size and repaint hitboxes
+before hit-testing that click. Two meaningful regressions cover the repaired
+path and stale-target negative control; no global row offset was introduced.
+
+The local registered coding participant delivered the complete ui.rs change
+in its isolated mios-mons-touch-back worktree. Root retained that history and
+adopted its source with neutral integration messages, then fixed a test setup
+that sent numbered navigation before the first Home paint. All failed build
+and browser receipts remain available.
+
+The old four PiPs and SSH bridge disappeared during interruptions. A newly
+admitted --no-devices development PiP now exists at seat mios-mons-console,
+runtime /run/user/1000/mios-nested-desktop-250199, parent0x55b22d56eb40 and
+served WAYLAND-1. Its persistent launcher is owned by the coordinator in
+mios-mon-console-dev. Verified candidate7afa803 runs in window@2/pane%2 with
+save-free Mimo513, paused after ordinary hatch. Authenticated localhost8310
+uses the native user-local ttyd Bash launcher, not a claimed container.
+The coding worker now exclusively owns live browser input for the nine-cell
+watch/portrait/landscape by top/bottom/off status matrix. Physical phones and
+current hardware controller acceptance are not inferred from that automation.
+The installed sample remains b139 until successful acceptance and main push.
+
+Receipts: /home/mios/.local/state/mios/mios-mons-input-completion/
+ mios-resize-artifact.json, mios-resize-verified/,
+ mios-console-current-preview.json, mios-console-current-localhost.json,
+ mios-camera-live-defaults/, mios-touch-back-result.json.
+
+## MiOS-Mon hidden browser input touch correction
+
+Live watch/top tracing found the remaining missed Back tap outside the game:
+Chrome touch adjustment selected xterm's invisible IME textarea beside the
+terminal cursor, changing intended SGR row9 to emitted row10. Radius-zero
+touches, zero page scroll and zero visual-viewport offset ruled out those
+alternatives. The source game resize repair remains required independently.
+
+The canonical portal_edge.py page generator now excludes only the hidden
+textarea from pointer targeting, preserving focusable markup and keyboard code.
+Actual rootless MiOS-DEV passed17 frontend tests, a planted old-page/new-golden
+refusal before output, all29 generation stages and canonical task validation.
+Four broad failing gate diagnostics remain byte-identical to fbc1a259.
+Generated page SHA256:
+8f455f27f72a8bab8f2a3f88d00a3a2b7beb920791382d76f516864e449497cf.
+The owned user-local page was atomically replaced with its original27d4 page
+backed up; the same337430 backend immediately served the exact new bytes with
+authenticatedHTTP200. No game input or backend restart interrupted worker QA.
+
+The local coding worker continues the nine-cell matrix, explicitly labeling
+diagnostic CSS injection. Final as-served no-injection touch and keyboard proof
+is still required before publication and installing the new game executable.
+Receipts: mios-browser-pointer-artifact.json, mios-browser-pointer-verify/,
+mios-browser-pointer-live-trial.json under the input-completion receipt root.
+
+## MiOS-Mon production console acceptance and publication
+
+Exact game source7afa8035 (static musl ba5d2d37) remains unchanged. The canonical
+browser page8f455f27 is served live, with no runtime CSS injection. Root's final
+watch/portrait/landscape x top/bottom/off matrix passed all9 cases and1314 actual
+touch presses: each emitted SGR press matched its intended cell, and the pane
+filled the focused browser at20x9/10,43x34/35 or78x19/20 cells. This closes the
+earlier smallest-client coverage gap. The separate real tap-to-focus check typed
+exact M1 into the seed draft, cancelled it and retained Mimo's birth identity.
+These are automated native-browser results, not physical phone certification.
+
+Root independently replayed the actual competing-client resize control:
+new ba5d returns from Care to Main; old d6a4 remains in Care. Both have matching
+baseline controls and exact artifact hashes. An initial fixture exceeded the
+Unix socket path limit before starting; the retained retry uses owned short
+runtime paths. Root's headless20x8 ASCII/mono test also passed CSI navigation,
+SGR/release filtering, no verified Inputd-session fallback and deterministic
+before/after stty equality with exit0. An earlier idle-readline attrs comparison
+was timing-sensitive and remains archived.
+
+Task3747 and the bounded camera task3751 are complete. Task3750 remains open
+for the known overlong room header and legibility follow-up3753. The local
+coding participant accepted separate task3752 in mios-mons-legible-render,
+owning only render.rs/sprite.rs for species outlines and voxel text shading.
+Root retains UI/HUD, canonical tasks, publication and live-install ownership.
+The parallel lane is not part of this verified artifact until separately built
+and reviewed. Physical phone/multi-pad/VT/ARM64/fleet and image integration remain
+separate; the old b139 physical DualSense Games/back proof is historical.
+
+Publication is followed immediately by atomic user-local sample replacement,
+normal-hatch visible preview and post-push checks in the still-open owned PiP.
+The normal OS executable and operator data remain outside this application trial.
+Acceptance receipts under /home/mios/.local/state/mios/mios-mons-input-completion/:
+ mios-production-matrix-result.json,
+ mios-browser-console-keyboard-production-watch-top/,
+ mios-resize-race-confirmed/, mios-headless-resize-stable/,
+ mios-resize-artifact.json, mios-browser-pointer-artifact.json.
+The final main/live identities are recorded in mios-post-main-live.json.
+
+## MiOS-Mon crate formatting and live HUD review
+
+The complete game crate now follows workspace Rust2021 formatting in the
+standalone format-only commit2547e614. The local coding participant independently
+reproduced all ten formatted files; no game-format change from c7970dde was
+blindly merged. The original six non-game CI commits through e737e341 are
+integrated by7d38043bb; newer non-game/chrony work remains in its owner's lane.
+
+Source ef699f02c combines compact essential-first frame headers, spare-row menu
+descriptions, saved-mode description corrections, tiny unhatched-Egg framing,
+monochrome reverse selection, screen-space outlines and shaded body ASCII texture.
+It also adopts e039f89ed's proportional face atlas and connected native expression
+run. Locked rootless MiOS-DEV passed307unit+13CLI tests, full-crate formatting,
+all-targets Clippy-Dwarnings, release and static artifact checks. Exact candidate
+SHA256 eadf989d589a5a570f0cc67f2486db757beda644b6f18afe1102873f489132ab.
+Four broader gate diagnostic streams remain identical to the published baseline.
+
+The live candidate runs normally hatched Mimo513, paused, with no save in the
+existing visible mios-mons-console PiP and authenticated native ttyd localhost8310.
+Its separate descriptor and current receipts are under
+/home/mios/.local/state/mios/mios-mons-face-live/. The original installed ba5d
+release remains available in the retained published window until the next
+verified main publication and immediate live installation.
+A20x8 ASCII/mono PTY with graphical identity removed passed actual CSI/SGR
+navigation, release filtering, retained birth identity and before/after stty
+equality with normal exit0. Current browser matrix and additional zoom captures
+are still running; their receipts, not this intermediate note, establish results.
+
+Large-face visual acceptance is still open: the first color captures showed
+connected small text but unclear enlarged facial ink. Initial filenames200/400
+were requested labels, while their actual headers were150/250: the script
+assumed50-point steps, but the embedded sample uses25-point steps. All six
+presses were accounted for. Those historical captures are preserved; new
+separately spaced keypresses assert the actual zoom before capture. No claim of
+physical phone, controller, VT, ARM64, fleet or image acceptance follows.
+
+## MiOS-Mon bounded HUD acceptance and fresh CI replay
+
+Sourceef699f02c's live save-free Mimo513 passed the complete9case production
+touch matrix again: watch/portrait/landscape by top/bottom/off status,1314
+exact SGR presses, no CSS injection. Actual tap-to-focus typed M1 and Cancel
+retained the birth identity. The20x8 ASCII/mono PTY controls and normal terminal
+restoration passed. Sequential single-key zoom captures now wait for smooth
+interpolation to settle and assert actual100/200/300/400 headers; the earlier
+800ms-only assertion failed at194while approaching200 and remains archived.
+
+In the same visible PiP, automated UI-only care and observed three-arrow memory
+answers produced6wins and normal Baby/Child/Adult progression in124.95real
+seconds, without state/RNG edits. Actual Status pages show age63,33coins,
+fullness98,happiness84,hygiene100,energy98,health100,healthy and paused. The
+adult development pet remains running in its owned nested window. This does not
+close task3754's enlarged-face visual defects, hardware or fleet acceptance.
+
+The new HUD checks also ran against the previous implementation in an isolated
+fresh-target negative fixtureabfe2e8d3:11selected checks pass and exactly3 fail
+for saved wording, tinyEgg framing and mono selection. The wrapper incorrectly
+expected4passing checks; its exit1 and raw output remain unchanged. A separate
+read-only receipt verifies actual11pass/3expectedfail,cargo101 and clean source.
+Tasks3750/3752/3753 are complete for their bounded implementation scopes;
+task3754 remains open for tracked-face scaling, intermediate ASCII and framing.
+
+After the host's independently approved clock correction, a completely empty
+target replay in actual rootless MiOS-DEV verified combined eb99387bd: both
+workspace cargo fmt checks, nativeCI Clippy excludingwallpaperd, systemworkspace
+Clippy,421mios-gen tests and322config/gate tests pass; sourceclean before/after.
+The existing PowerShell runtime is mounted read-only at/mios-powershell; explicit
+scratchHOME/cache prevents source pollution. Earlier read-only-fixture, stale
+generatedROADMAP, missingruntime mount and runtime-cache artifacts are preserved;
+their harness corrections did not weaken product checks. Four broader failing
+gate streams still match the published baseline, so this is not globalCI green.
+
+Receipts:
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-live-natural-play-receipt.json
+ /home/mios/.local/state/mios/mios-mons-face-live/mios-adult-status-receipt.json
+ /home/mios/.local/state/mios/mios-mons-input-completion/mios-hud-negative-receipt.json
+ /home/mios/.local/state/mios/mios-mons-input-completion/mios-ci-six-fresh-result.json
+
+
+### MiOS-Mon face and preview follow-up, 2026-11-06
+
+Source 09a6a08e0fec7c401c6d0c75f4b0d9aa8b1e215a adopts the renderer's
+reviewed 52ed108d5 cutoff through2814bdc03 and fixes the independent UI review's
+three cases: preview framing follows the displayed stage, hatch/resize animation
+begins at the previously drawn stage, and selected colored menu text retains
+the high-contrast palette pair. Monochrome reverse selection remains.
+
+Fresh isolated rootless MiOS-DEV verification processed317 unit and13 CLI tests,
+warning-fatal Clippy, crate/full-native-workspace formatting, release and static
+artifact checks with exit0. Artifact SHA-256:
+bd7e08f3fd53500d4b41e4089167f8a64e7ea56451298c2bca2c017ec7cf7549.
+The planted pre-fix preview/transition/contrast control processed18 selected
+tests:15 pass and the three intended assertions fail, cargo101 and wrapper0.
+Receipt paths are under
+/home/mios/.local/state/mios/mios-mons-input-completion/mios-face-preview-verify
+and mios-preview-negative. Renderer positive and planted UV/contrast/pivot
+receipts are mios-kaomoji-scale-revision-result.json in the same parent.
+
+The actual mios x86_64 guest, MiOS0.3.0, renders this preview in still-open PiP
+seat mios-mons-console, parent window0x55b22d56eb40, WAYLAND-1, nested tmux
+window@7/pane%7. Normal UI hatch, pause, adult Roster preview while liveEgg,
+and StudioEgg preview while liveBaby were exercised. Production localhost8310
+browser watch/top157, portrait/top146 and landscape/top146 touch actions pass
+without test CSS injection. Actual active-client geometry sets pane sizing.
+A separate20x8 TERM=linux ASCII/mono fixture with graphical and tmux identity
+unset passed raw cursor/SGR menus, release filtering, retained birth code,
+honest unverified-Inputd fallback and equal terminal attributes after quit.
+
+Actual nested captures cover settled Face100/150/200/300/400, three frames
+each; relative orbit0/45/90/135/180; and an unpaused Room pair with different
+frame hashes before repausing. Root inspected the native screenshots, and a
+parent desktop capture confirms the visible PiP beside the head. Small views
+show native facial characters; larger views show enlarged packed expressions.
+At300/400 percent the small PiP intentionally crops outer parentheses/eyes:
+zoom is not silently refitted. Full preview receipt:
+ /home/mios/.local/state/mios/mios-mons-face-preview-live/mios-preview-acceptance-summary.json.
+
+This is automated preview evidence, not an additional installed/main artifact.
+Main0275b6388 still has the verified installed EADF artifact. A bounded
+lighting-disabled face-contrast follow-up and independent09a review precede the
+next publication. Physical mobile clients, a controller assigned to this seat,
+VT0/tty0, ARM64 and other Blades remain unverified. Native ttyd Bash on
+http://localhost:8310 is used; no PowerShell/container deployment is claimed.
+
+
+### MiOS-Mon reviewed face release, 2026-11-06
+
+Final executable source0c6900b45c7f70ea8aba8c46cdd232d243ba93bd incorporates
+root UI0d8d8bbc0 and0c6900b45 plus the exact renderer9f20004d749b5cc3a76ac2d3f2f0d076b4f9e074
+adopted by5ba14c4e9. The independent09a review's cross-subject interpolation
+defect is fixed: Live(pet generation), Roster and Studio have distinct camera
+contexts; reset, adopt and seed import share generation advancement. Framing
+and voxel yaw both cut on a subject change. Same-subject hatching, Studio stage
+changes and explicit camera requests still ease. Roster cursor movement retains
+its camera. Four-colour selected/unselected dock text and navigation hints are
+readable. The independent0d8 review approved its bounded change with nits;
+root addressed its yaw, Roster-key and Tab-test findings in0c.
+
+Renderer contrast now measures actual lit or unlit material under each face tier.
+Two fixed256-bin stack histograms replace per-frame head-colour allocations.
+Current source has fresh empty-target rootless MiOS-DEV proof:324 unit plus13 CLI
+tests (337 total), warning-fatal Clippy, crate/native-workspace formatting,
+release and static-artifact validation all exit0; source clean before/after.
+SHA-256 fd9bccf2f2883cf408526a73165e14dd1282e9035814ce6495af6edabe2768ea.
+MiOS-DEV image e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf,
+UID1000,4CPU/4GiB, Rust1.99.1, locked x86_64-unknown-linux-musl static PIE.
+Proof: /home/mios/.local/state/mios/mios-mons-input-completion/mios-face-handoff-verify.
+
+Root planted controls retain the new assertions: d3a04bf5d has18 selected passes
+and4 intended failures (subject entry/return, reset, manual blend, dock).
+12cab17c0 has22 selected passes and2 intended failures (yaw and hint contrast).
+Both fresh-target wrappers exit0 with cargo101. The first yaw fixture0e3c1ff3f
+changed a hint branch outside the exercised geometry:23 passes/1 yaw failure,
+wrapper1; its raw logs remain preserved in mios-yaw-negative, not claimed green.
+The corrected fixture adds the exercised compact hint branch in
+mios-yaw-hints-negative. Renderer fresh310unit/13CLI proof and both planted
+lit/unlit contrast failures on9f20004 are independently recorded in
+mios-kaomoji-scale-revision-result.json.
+
+Actual final-binary QA is automated in still-open PiP mios-mons-console:
+production localhost browser watch157+portrait146+landscape146=449 touch actions,
+normal hatch and first preview entry/return,20x8 headless ASCII/mono with terminal
+restoration, isolated unlit ANSI16-entry Roster and four-colour dock/hints,
+settled Face100/150/200/300/400, relative orbit0/45/90/135/180, and different
+unpaused Room frames followed by pause. No age/need/coin/RNG edits, no saves.
+Consolidated source/hash/session/capture and limitation receipt:
+ /home/mios/.local/state/mios/mios-mons-handoff-live/mios-final-acceptance.json.
+The guarded publication helper verifies unchanged build-input Git objects and
+checksums, then immediately installs the user-local executable after main pushes.
+Runtime publication and installation receipts land in that same directory.
+
+Four broader gate stdout AND stderr streams match the actualf472 baseline.
+Template conformance has7 pre-existing findings (handoff6 was not the current
+baseline). Global CI is not asserted clean. Source workspace formatting from the
+original six-CI-fix fresh proof remains applicable: src/mios-rs is unchanged;
+current tools/native formatting passes. The additional eight non-game fixes and
+chrony work remain in their separate owned branches.
+
+Tasks3750/3753/3754 close only their bounded software scope. Existing rapid
+same-subject resize mid-blend discontinuity and a one-frame stale heading are
+tracked in3755. At high zoom in small PiP the outer facial expression crops.
+Physical mobile/Smartwatch clients, a controller assigned to this seat, VT0/tty0,
+ARM64 and other Blades remain unverified. Task3708 remains partial. Current
+localhost transport is native user-local ttyd Bash, not a PowerShell/container.
+
+
+Hosted status update: actual main0275 run42167741940, drift job127737671357,
+completed its behavioral tier with516 passing and48 failing suites; the Rust
+step was not reached. These failures are not certified host-only or baseline
+failures. A separately owned CI triage task3756 records this scope. It does not
+change the final Mon package's337 passing checks or its actual viewport receipts.
+
+## MiOS-Mon shaded face verification and live route recovery (2026-11-06)
+
+Task3757 adopts the frozen c0a24f7da render.rs/sprite.rs objects at source
+632f30e97082ee502ad4fd6ceba916b738b6794d. The intermediate shaded-character band
+extends until eight cells per glyph and eight mapped rows. Restored background
+alone cannot claim a rendered expression. Zero-stroke projections use a valid
+native face or caption; exact 90/270-degree profiles share the edge-on epsilon.
+The worker's old-atlas, old-cosine and restoration-as-face plants each fail
+their intended regression; root independently rebuilt the final source.
+
+Fresh empty-target rootless MiOS-DEV proof:326 unit plus13 CLI tests, fatal
+Clippy, crate/workspace formatting, release and static-artifact check pass.
+Image e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf,
+UID1000,4CPU/4GiB, Rust1.99.1, locked x86_64-unknown-linux-musl.
+Artifact SHA-256 4a2047a760c912ad67e8a59d97a23f2483233f3a5d2b58d0bd66dc2b1e8d1a06.
+Proof: /home/mios/.local/state/mios/mios-mons-input-completion/mios-shaded-verify.
+
+The previous console PiP compositor and localhost backend had exited; its
+retained tmux processes and stale registry were not current visual proof.
+After SSOT memory admission, root opened the unique device-isolated PiP
+mios-mons-graphics with the installed native launcher. Its actual compositor,
+nonzero WAYLAND-1 output, pinned parent window and native terminal were resolved
+from returned metadata. Localhost8310 now attaches to this actual nested socket
+using the existing runtime-resolved native authentication. No new service or
+PowerShell/container transport was installed.
+
+Automated actual-game QA passed449 production browser touches across watch,
+portrait and landscape, a normal hatch, settled requested Face100/150/200/300/400,
+all eight45-degree orbit positions, live Room frame changes followed by pause,
+an unlit ANSI16-entry Roster, four-colour dock/hints and20x8 headless ASCII/mono
+cursor navigation with terminal restoration. Initial stale-transport, automatic
+observer-split and camera-selection harness failures remain preserved. The
+camera helper now selects the requested panel view rather than mistaking the
+adaptive effective heading for an explicit Face request.
+
+Consolidated receipt, actual descriptor and captures:
+ /home/mios/.local/state/mios/mios-mons-shaded-live/mios-final-acceptance.json.
+The operator's actual59x30 SSH phone client is attached to this same live game;
+manual phone results are pending and are not certified by browser automation.
+Its adopted preview will be preserved when the published executable is opened.
+Task3755 camera/resize/heading and broader ASCII-overlay work remain separate.
+High zoom can crop the expression. No physical controller is assigned here;
+VT fonts, ARM64, other Blades and image integration remain unverified.
+Publication and immediate user-local installation are the next release steps.
+Hosted main e1da4f053 still reports the previously observed48 behavioral suite
+failures. Task3756 is active; global CI is not claimed clean.
+
+## Full rendering/camera continuation and parallel input review
+
+The local coding participant stopped at quota with clean source cutoffs.
+Root preserved those branches and adopted camera framing6cf7a38ad/24a319495,
+camera rules69758e124, fieldsetba32022c0 and structural-facee9decf048 into2a9cfd2f3.
+No main push occurred at that checkpoint. Root now owns game/HUD/renderer
+completion; task3759 is separately assigned to the ServerBox SSH reviewer,
+whose actual relay registration must be recorded before a participant is claimed.
+
+Root's fresh MiOS-DEV audit58d188281 proved the proposed camera cutoff still
+snapped actual yaw90 to0 on a half-finished Face transition. The identical
+regression now passes, including actual voxel-sprite equality at interruption.
+Yaw and pitch begin from the drawn pose. Shared pan/tilt/fine orbit/reset
+operate on live, Roster and Studio scenes, with bounded targets, subject-local
+pan, preview turntable hold, paged touch/menu commands and scoped Alt aliases.
+Releases/repeats cannot leak those camera controls into a menu or code editor.
+Default world geometry remains identical at zero camera offsets. The camera
+never changes pet state, visual RNG or saved progress.
+
+Auto HUD now keeps the configured golden vertical scene share rather than
+starving short-wide viewports with boxes; explicit Full remains available.
+Structural ASCII parens cannot become density marks in colored close-ups.
+The new fitted strokes eliminate the old census's native-fallback cases;
+the per-case no-false-face invariant and caption fallback remain enforced,
+and separate native-LOD eye/mouth tests retain coverage. Information-footer
+test bookkeeping is now compiled only in tests. The real configurator bool
+selects emit booleans, reject invalid values and retain empty-field inheritance.
+
+Pre-release source verification in rootless MiOS-DEV passes342unit+13CLI
+and4 real-JavaScript configurator tests, plus fatal Clippy and formatting.
+Proof /home/mios/.local/state/mios/mios-mons-input-completion/mios-camera-compile.
+Earlier attempts and genuine failures remain in the owned attempt folders;
+they are not certified passes. Immutable release/static checks, planted
+controls and full updated-binary live visual acceptance are still required.
+
+The earlier phone attached59x30 but its operator explicitly did not fully
+test, preferring to await the complete rendering update. Phone acceptance is
+unverified. That interactive session subsequently exited; root preserved its
+receipts and restored a bare native development terminal in the same live
+mios-mons-graphics PiP. Automated native care and six observed memory wins
+then reached a thriving adult in125.18seconds, age67, coins33, needs98/84/98/98,
+health100. It remains paused for preservation. There were no pet/RNG edits,
+save writes or gameplay timing overrides. Real source/hash/session captures:
+ /home/mios/.local/state/mios/mios-mons-shaded-live/mios-live-natural-play-receipt.json.
+This is the earlier4a2047a7 binary, not certification of the pending release.
+
+Root independently applied48 CI source commits throughd3adf1b6c onto4196e0180
+in a separate review worktree and regenerated inside MiOS-DEV. Seven focused
+suites pass; full MCP83/83 passes in the deployed agents Python3.13 runtime
+inside MiOS-DEV (the MCP-only interpreter first lacked FastAPI). Source was
+read-only for that corrected run and its diff was unchanged. Notification
+live cases remain skipped. This is not hosted/global CI certification.
+ /home/mios/.local/state/mios/mios-ci-source-review/mios-independent-result.json.
+
+
+## 2026-11-06: MiOS-Mon camera and viewport candidate
+
+Pinned source ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5, rootless MiOS-DEV x86_64 musl artifact SHA-256 7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323. Fresh locked/offline build passed 342 unit + 13 CLI + 4 actual JavaScript configurator tests, fatal Clippy, formatting and static-artifact validation. Five planted Rust defects each failed one intended assertion; the typed-boolean JavaScript negative also failed its assertion. Build and negative receipts: /home/mios/.local/state/mios/mios-mons-input-completion/mios-render-{release,controls}.
+
+Actual visible PiP mios-mons-graphics on node mios passed 449 automated production-browser touches across watch/portrait/landscape, a naturally grown healthy adult with six observed memory wins, shared Room/Pet/Face/Roster/Studio camera controls with unchanged age/coins/wins/needs, Face100-400 and full orbit captures, actual Alacritty font8/12/18/24/36 changes with A16/A8 transitions and font restoration, all16 unlit ANSI species previews, four-color controls, and20x8 ASCII cursor/mouse/terminal restoration. Exact59x49 browser Face100/200/400 and pose/reset checks passed. Parent PiP is mapped, unhidden, pinned on the live HDMI-A-1 output, with changing real compositor frames. Aggregate receipt: /home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json. Automation is labeled; physical phone/controller acceptance and ARM64 execution remain unverified. Failed menu/parser/grid harness attempts are archived and excluded from passes. No CPU/FPS certification is claimed; the independent review load spike is excluded from performance conclusions.
+
+Source follow-up tasks3755/3757/3758/3760 transferred by acknowledged native relay to the registered continuation participant in isolated mios-mons-render-continuation at the exact source above. Root keeps canonical task/projection/manifest ownership, publication and live verification. ServerBox Inputd3759 awaits its own native registration; no work or receipt is invented. Many-instance efficiency3761 and authoritative local/remote multiplayer3762 remain open, with bounded measurements and a design review before networking implementation. CI3756 remains open; broader gate failures are compared to the actual baseline without ratchet increases. Publication of this verified candidate and immediate user-local installation are the next release step.
+
+Actual59x49 portrait review also found an open essential-care HUD gap: training stats are shown while fullness/happiness/cleanliness/energy/health values are omitted. Task3763 owns that correction. Selected render/camera/menu passes above do not certify complete HUD acceptance.
+
+
+## 2026-11-06: verified Inputd application routing source
+
+Adopted the nine reviewed Inputd/gate/design files from source b8223be4aa6aec02fadc99bbe35bb3f3cabf771f (frozen pre-squash source e85c75142 retained). Root fixed a fatal callback type-complexity lint with a named lifetime-preserving type and strengthened the foreign process UID test independently of executable ownership. Fresh rootless MiOS-DEV passed527Rust tests (221Inputd plus306gate/integration), native/core formatting, fatalClippy, release and static-artifact validation. Inputd SHA256 2b11c3d36b20ab87f197cb40e12354ddc50010a97091664aad5bdb96ec13491d; gate SHA256 a0caf18d100e214e13458322da200fb4f3b10528be5f07d66aa106e25d6264f8. Four UID/cursor/nav-schema/gate-schema plants each ran one test and failed its intended assertion, with separate fresh targets; the earlier shared-target cursor observation was invalid and is preserved as a failed harness attempt. Actual node read-only check accepted the current config with no app error or unresolved action. Receipt: /home/mios/.local/state/mios/mios-inputd-validation/mios-validation-receipt.json.
+
+This integrates source only. G2 app tables remain absent, the live user Inputd daemon is unchanged, and game nav_profile prompts/menu aliases plus a reviewed live upgrade route remain open. Native device discovery currently finds no DualSense; the AnnePro2 controller-class interface was not substituted or assigned. Controller readiness: /home/mios/.local/state/mios/mios-inputd-validation/mios-controller-readiness.json. ServerBox has not self-registered or acknowledged a lane; no separate worker execution is claimed. Original worker branches/worktrees and all live MiOS-Mon instances remain intact. A combined-source build, generated receipts and immediate sample installation after the next main publication are still required.
+
+
+## 2026-11-06: independent I1 receipt reconciled
+
+The actual ServerBox participant opencode:serverbox-mios-inputd-focus-verify returned clean commit 04596bcbddba293dac7dd4cdcd2753bb73ab1b67 and independently verified 527 tests (221 Inputd, 206 gate units, 100 gate integration), formatting, fatal Clippy, release and static checks. Its Inputd SHA-256 is f04ac10c8ea61a1f1d8f85ba6c64afe77943ee359576be3945e746ea93e4773c and gate SHA-256 is 6a21f291d55c6c5c6f9dd63338f7918baa1a2388ef7ce9f91bf6627f031c1a32. It found the same callback lint and used an equivalent ValueCheck alias; root retains its already-integrated BindingValidator alias plus the strengthened UID regression, preserving the independent branch and all receipts. Eight of nine worker plants were caught as intended assertions; deleting the redundant set_app flush left nav_sync enforcing the invariant. That documented control miss is not reported as a caught defect. Receipt: /home/mios/.local/state/mios/mios-inputd-focus-verification/mios-inputd-verify/RECEIPTS.md.
+
+Task3759 closes only its verified I1/gate-mirror scope. Task3764 owns live upgrade ordering, accurate focused prompts/menu aliases, G2 policy activation and controller acceptance. No Inputd service, live policy or device assignment changed. The worker registered in the MCP server root relay, while the active coordinator uses the desktop-user relay; earlier unregistered observations referred to the desktop-user namespace. An own-identity receipt bridge now addresses the actual worker natively, without registering or acknowledging on its behalf. The original final message to another namespace identity is not falsely acknowledged. Root maintains the current coordinator lease and publication responsibility.
+
+
+## 2026-11-06: combined game and I1 source validation
+
+Frozen combined source 3b73dc04c0e16b9fe3319465885808839b9e5139 passed a fresh rootless MiOS-DEV locked/offline x86_64-musl run: 882 Rust tests plus four actual JavaScript checks, native and core workspace formatting, fatal Clippy, three release builds and static-artifact validation. Source remained clean. Game SHA-256 7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323 is identical to the installed ae4 release. Combined Inputd SHA-256 72428ed1dba29190a02a3787015b3f03f5ed8506558d1e2863b5c2f27b2e0538; gate SHA-256 9b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11. Receipt: /home/mios/.local/state/mios/mios-mons-controller-integration/mios-combined-receipt.json.
+
+Task3759 is complete only for verified I1/gate source. Task3764 retains G2 activation, accurate controller/profile prompts, menu alias precedence, a reviewable compatible-daemon upgrade route and actual attached-controller acceptance. No live daemon, policy, service or device changed. The existing main848d19e10 sample and visible mios-mons-graphics PiP remain available. Current hosted drift-gate still fails at the pre-existing 48-suite baseline; smoke-test has not reached a terminal result. Rendering and CI continuation owns its acknowledged source lanes; its next fixes have no verified cutoff yet.
+
+
+## 2026-11-06: quota handoff and phone care HUD
+
+The source continuation reached its quota at a clean ae4 render tree; root preserved that tree, screenshots lane and dirty CI contributions. Native replacement attempts did not certify workers: one exited1 before coding because 51,654 request tokens exceeded the32,768 model context; the other call timed out, and its actual process/pane subsequently disappeared with source unchanged. A tool-filtered replacement also stalled in its inference-readiness probe and ended without a source receipt. No child registration or coding completion is invented. The registered SSH participant received a separate input.rs-only coding assignment for task3764; root retains ui.rs/hud.rs ownership. Existing relay tokens remain private.
+
+Root implemented care HUD source9146a587f4e082b8be71590759c0aba4e28245e9. Rechecking the actual59x49 text capture corrects the earlier assessment: all five values were present as F94H80C96E94+*. Wide care rows now show named fields with stable widths; smaller rows add spaces when they fit and keep exact compact paging otherwise. Tests inspect the actual information pane before training, across all four renderers and mono/RGB, rather than accepting the duplicate outer-border summary. MiOS-DEV passed344unit+13CLI tests, fatalClippy, formatting and static validation. SHA-25636733f44e0210d39f1628ea2cf00b2ff25f538e45baf677023983c953655a5ff. Disposable source7cebb49622268c8c7093a35a36738f8ddc56214d removes only the pane care row and fails its one intended assertion, with no compile error. Receipt: /home/mios/.local/state/mios/mios-mons-care-hud-check/mios-care-hud-receipt.json. The first formatting attempt hit an existing container-name collision before execution; the existing container was preserved and the separately named admitted attempt passed. Live verification/publication of this change remains pending.
+
+Multiplayer design files are readable on disk. The operator's four answers are authoritative: game clients own registration, the monitoring utility is renamed; one password works for permitted Linux/Windows OS logons with no default elevated groups; v1 includes visits/co-care/duels/trading/leaderboards plus social rooms; exposure is LAN and mesh only. These still need design integration, with no live identity/database change. Read-only source inspection confirms unvalidated account rows reach privileged account tools and is_admin adds wheel. The existing tracked unit has ProtectSystem=full and other restrictions, while its SSOT block omits them; therefore a universal live escalation is not claimed. Actual service remains disabled/inactive and /run/userdb absent on this node. Containment and reviewed authority boundaries are prerequisites for any account deployment.
+
+
+## 2026-11-06: verified profile hints and menu/UI integration
+
+Root retained the SSH worker input.rs source02f8505cb08ea3c404e618988674323e6c3eea68 and its failed earlier build receipts without rewriting the original branch. Isolated source932130552 fixes the moved test value and production-unused helper, derives camera/menu hints from actual selected bindings (including remaps, missing actions and hold semantics), and makes metadata getters share poll's cached generation. Source880dcc22fb42716adad4721d87aee951bc5d4044 wires those getters into the real loop and displays menu versus camera hints only in the appropriate UI ownership scope. Narrow focused menus preserve their actual controller back button. Menu Alt8/Alt2 navigation precedes camera dispatch in ordinary menus; Seed, confirmation, memory and native-dialog isolation remain guarded.
+
+Fresh rootless MiOS-DEV passed356unit+13CLI tests, fatal Clippy, formatting, release and static validation. Four separately built plants each failed one intended assertion with no compile error: missing information-pane care, disabled menu aliases, hardcoded camera claims and mixed cache generations. Receipt: /home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json. No live daemon, G2 table or device changed. A compatible PATH-resolved Inputd CLI as well as a compatible daemon is a prerequisite before G2 policy can land. Physical controller/phone checks remain unverified. Main publication and immediate sample installation are still pending for this source.
+
+Multiplayer revision3 incorporates the operator's four answers and preserves revision2. The scope now explicitly includes all v1 social gameplay and real standard-user Linux/Windows OS logons under root-owned enrollment policy, with LAN/mesh exposure only. It distinguishes native Windows verifier storage from application-owned NT-hash replication, and corrects the overbroad unsandboxed/live-fleet claim for account-sync. Architectural alternatives and credential-store law changes remain unapproved proposals. Canonical containment follow-up records the trust-boundary work before any account enablement.
+
+
+## MiOS-Mon camera input verification and visible graphics re-handoff (2026-11-07T01:04:13.396623+00:00)
+
+- Graphics ownership was explicitly acknowledged through native relay by mios-claude-continuation. Current worktree /.worktrees/mios-mons-voxel-overlay starts at c1e55b758; the unbuilt sprite.rs voxel-identity partial is preserved. Targeted ownership repair changed no source bytes and did not chown shared Git metadata. F2 voxel ASCII overlay, F1 eye whites and F3 transitions remain unshipped; the original ae4 worktrees are retained.
+- Root source bf73b3aad5ab58041ded152c1b3989fccda2d9b8 fixes plain Shift+arrow fall-through outside camera scope and replaces stale camera/wheel Help. Fresh MiOS-DEV check: 360 Rust unit plus13 CLI tests, workspace formatting, fatal Clippy, release/static artifact validation, clean source. Artifact SHA256 9f9450d8f6745fb6bb40178e573ba950de268f4e37b92ba48a19282ae1189751; proof /home/mios/.local/state/mios/mios-mons-camera-precedence-check.
+- Disposable negative source39946c7a4ec12a5a8b9010fec4d218eb8ef09f68 restores the swallowed Shift navigation and stale Help. Both selected tests compiled, ran exactly one test and failed their intended assertion with101; wrapper host/inside0 and fresh target. Proof /home/mios/.local/state/mios/mios-mons-camera-precedence-control.
+- Candidate actual keyboard play in a separate window of the new visible PiP: Shift+Down selectsGames, Enter opensGames, Esc returns; Seed cursor2/2->1/2->2/2 via shifted arrows. Three real changed parent PNGs, native text and exact source/hash in /home/mios/.local/state/mios/mios-mons-camera-precedence-live/mios-camera-live-receipt.json. This source is not yet main/installed.
+- The old nested launcher3332462 and compositor3332522 exited; retained pets, old tmux namespace and ttyd backend were preserved. New admitted persistent PiP seat mios-mons-graphics-live: launcher971442/compositor971477, parent0x55b22d6b7400 pinned/mapped/unhidden onHDMI-A-1; descriptor /run/user/1000/mios-nested-desktop-971442/session.json. Current installed game1151501@1/%1 is paused Baby Himo/tanuki after an explicit disposable UI reset. The uncared initial development pet's death is retained as evidence; no natural-growth pass is claimed.
+- Browser localhost8310 backend3393809 was preserved and its launcher retargeted to the new actual descriptor; unauthenticated HTTP401 still enforced. New current operational descriptors preserve the previous bytes in /home/mios/.local/state/mios/mios-mons-graphics-session. Current birth identity code M14C0EQGG7415HT58 was read from the actual UI; no care/save editing occurred.
+- DualSense event14/js1 is currently detected but unassigned. No Inputd restart, policy activation, G2 tables, OS binary replacement or physical controller/phone acceptance. New graphics builds, full face/zoom acceptance, hosted CI and safe daemon/CLI rollout remain open.
+
+
+## MiOS-Mon voxel groundwork and authoritative Portal saves (2026-11-07T02:38:28.411701+00:00)
+
+- Source coordinator mios-claude-continuation delivered foundation6a99682b6c08201b8b229a8463c711f228515658 in its owned graphics tree. Root read its source and immutable verification receipts:363unit+13CLI, fmt/fatalClippy/release/static, host/inside0 and clean source. Artifacte95bdf263ae02279df56bcd105f83facdb011eac2cd2c486dff880491f6c5cec; proof /home/mios/.local/state/mios/mios-voxel-overlay/proof-verify-6a99682b. This per-pixel voxel identity is NONVISUAL groundwork; no new shading, eye whites or transitions are claimed deployed.
+- F2 renderer implementation is running under the source coordinator. Root review caught the proposed persistent-key error: a quantized view normal rotates with the camera; stable facet identity must use the original model-space face axis. This and nonzero vertical-face comparison requirements were sent through native relay. Root has made no renderer/world edits; proposed world.rs-only parallel ownership remains unacknowledged.
+- Root isolated client-only sourceba7f4f24c6a69ebe164541badd81780fee85169b fixes a separate real safety gap in performSave: only422 used to block local fallback, so409/500/auth/network outcomes could overwrite a bound file. The client now uses lossless JSON{toml}, keeps embedded failures/unconfirmed results open without local writes/pickers/downloads, and preserves standalone offline saves. It does not falsely promise that an unknown network result means the server wrote nothing.
+- Fresh admitted immutable MiOS-DEV client check ran7realJS tests, including14async scenarios; host/inside0 and clean source. Negative sourceb64bfc608961c9a89a7356a4d8a74d17e73bb1bd restored only the old performSave: the selected envelope test failed1assertion; refusal matrix failed9assertions. Both ran exactly1test without JS/syntax errors; negative wrapper0. Receipt /home/mios/.local/state/mios/mios-configurator-save-check/mios-configurator-save-receipt.json. This source is isolated, not published against an incompatible server.
+- Portal source review retained the peer's confirmed e068d73c5 evidence but requires follow-up before publication: destination-prefix restoration excludes user.d; ambiguous edited/reordered redacted arrays must not copy inherited credentials upward; raw secret-bearing resolver/parse values must not appear in HTTP bodies or normal logs. No workflow-env broadening or false rc77 pass is authorized.
+- Live user-local release remains mainc1e55b758/source880dcc22/artifact82e65781 in mios-mons-graphics-live. The new graphics foundation and client source are unpushed. Actual phone/controller routing, global hosted CI, world overlay and final graphics visual acceptance remain open.
+
+
+## Boot health shell-policy coverage (2026-11-07T03:44:52.523427+00:00)
+
+- Root sourceb288169bac8277b30869264e0c0dfef10f045f37 adds usr/lib/greenboot/check/required.d and wanted.d to the existing SSOT shell_directories. No severity or exclusion was weakened; no live boot/service files changed.
+- Native shell-lint in admitted MiOS-DEV now selects395subjects (previous380). The clean committed source passes0. The same tracked SC2034 mutation in 10-mios-composefs.sh is missed by old-policy source86ccb10294acca9dbdf856c8a52185d71a24990f (0) and detected by new-policy source581c2492e9405cde63bffead9a77a9bf367947c1 (1), naming the exact path/code at changed-filewarning. Wrapperhost/inside0; all three immutable source statuses clean.
+- Test binary is the already-verified static gate from3b73dc04c0e16b9fe3319465885808839b9e5139, SHA2569b1ceb40d3916dacc7e9f396d6f8410b71892ecb2ce184ba4515097aa0a8ae11. Entire src/mios-rs tree8bc125ad5ca391f88ce3d0754aaebdcf9abda938 and native lockfile940ac3b1f91bf8be0d955f62ef86338afa5e1d30 match the current integration inputs; this is artifact reuse, not a claimed new build.
+- Receipt /home/mios/.local/state/mios/mios-lint-greenboot-check/mios-greenboot-lint-receipt.json. Source-only integration; projections/publication remain gated on pending graphics and CI cutoffs. Hosted CI and actual controller/phone acceptance are not claimed.
+- Source coordinator's latest graphics progress confirms only foundation6a99682b as verified; F2 sprite/render edits and development builds are in progress. Critical model-axis, portal-array/error and live-checkpoint messages remain queued in native relay without addressed acknowledgements. Their delivery is not assumed; Root will enforce these reviews before publication.
+
+
+## Live voxel overlay and natural adult play (2026-11-07T05:45:58.671373+00:00)
+
+- Root integrated reviewed model-voxel identity source6a99682b as0c73c3c4308e1210fd2b5f27e6cc478ae241f33e. Entire game source tree matches the verified foundation input; this is source integration, not a claimed new combined build.
+- A consistent earlier F2 source snapshot01793ed9530b3349d6f41e655cde656de425114e plus local lint-only0341412b4b08f4e0659bfc569636b85d609e2062 was verified from a fresh immutable source/target in MiOS-DEV:371unit+13CLI, workspace fmt, fatal Clippy, release/static all0. ArtifactSHA256 aab7be35a5e23a5e196fbd9047b319a09b3b19ed5d9e7448ee66e128898aced1. Raw proof /home/mios/.local/state/mios/mios-mons-overlay-preview-check.
+- Actual normal-user /home/mios/.local/bin/mios-tamagotchi-overlay-preview PID3537099 @4/%4 is visible in the retained mios-mons-graphics-live pinned PiP, launcher971442/compositor971477/parent0x55b22d6b7400 onHDMI-A-1. Descriptor /run/user/1000/mios-nested-desktop-971442/session.json; actual native127x29. Current localhost8310 user-local ttyd Bash launcher validates exact window/PID before attaching. Stable Apps sample82e65781 and OS executable remain unchanged; no new push.
+- Automated real UI care observed the displayed memory pattern, waited for its disappearance and sent actual arrow inputs for5wins; natural2s clock reachedAdult tick60, pausedtick62, coins29, needsFood82/Happy85/Clean94/Energy92/Health100. No save/state editing. A first harness expected the other WATCH layout and failed; raw failure preserved, corrected harness recognizes the actual compact U/D/L/R layout. Receipt /home/mios/.local/state/mios/mios-mons-overlay-live-play-retry/mios-live-play-receipt.json and real changed parent PNGs, final-paused.png viewed. Illness was not needed; physical phone/controller/VT/persistence/ARM64/othernodes not certified.
+- CORRECTION to the earlier facet concern: current F2 voxel_hash uses only model-lattice coordinates. View-normal facet grouping inside a frame is valid. Independent source585f040/repro proves that raw(viewnormal,voxel) tuple changes across40->41degrees (867verticalvoxels, zero exact tuple intersections), NOT measured glyph drift in the current model-voxel-only hash. Require nonzero vertical-face correspondence checks without demanding an unnecessary model-axis array.
+- Source peer now committed4ffa2ee50 and has further uncommitted renderer/docs work. Its source/worktree were preserved; F1 eye whites, F3 transitions, world overlay and final visual/performance review remain open. Actual live capture still has weak facial contrast. Native independent reviewer workflow timed out300s without a verified participant/completion receipt, so no independent review pass is claimed.
+- Latest native portal/layout/checkers/SearXNG rulings remain queued to the source coordinator until its own inbox is consumed. SearXNG should have one SSOT internal listening port projected through quadlet/gateway/Hermes, host bind separate; no live service changes authorized by that source-only ruling. Hosted CI is not claimed green.
+
+
+## Tracked overlay integration and rotating-face coverage (2026-11-07T06:00:17.358647+00:00)
+
+- Root integrated source4ffa2ee50924b6c8b6932533b518308389f77d33 as80ef8eae09e3ed9e22f05e3fe1e6be7310b3e68c, preserving the source-owner worktree and its uncommitted F1 eye-white work. Immutable peer proof-verify-4ffa2ee5 has371unit+13CLI/fmt/fatalClippy/static release, sourceclean and host/inside0, artifact7773567bd0eb04a55d47efbb0c4379d07b74ff673d01823c98f0ea46512082e1. proof-mut-f2 records6compiled intended assertion failures (pixel pitch, overlay background, face overpaint, erased floor, disabled-light packing); wrapper0. Not a global CI or final graphics pass.
+- Root test-only integration3567180805963e7220ded309c5018ff2822c10bf explicitly requires nonzero rotating vertical-face correspondence for each renderer, so aggregate matches cannot silently omit one renderer's vertical faces. Source797f0b98699482cc53c973cd021deb9565fe939c passes workspacefmt, selected1test and fatalClippy in fresh admitted MiOS-DEV: ASCII5876/5888, HalfBlock7945/7957, Quadrant10142/10156; aggregate24238/24280,worststep.960.
+- Negative source515a49935cef70803348edb94a5640a818bc5671 replaces normal-tolerance correspondence with exact view-normal equality. It compiles, runs1test and fails the intended vertical-coverage assertion101 with0/0; negativehost/inside wrappers0, sourcesclean. This is a verification mutant, not proof the real renderer drifts. The first Root classifier assumedzero pitch and failed; the actual fixture uses0.32rad, corrected without production changes. Initial preflight/run failures remain retained.
+- Receipt /home/mios/.local/state/mios/mios-mons-orbit-verification-final/mios-orbit-receipt.json; negative proof /home/mios/.local/state/mios/mios-mons-orbit-control. No new release artifact was built for this test-only delta and no new main push occurred.
+- Actual034/AAB preview remains paused Adult Mimo, Face100, PID3537099 @4/%4 in the visible mios-mons-graphics-live PiP; new face-adult-paused.png was viewed and current operational descriptor updated. Its five real memory wins and natural growth receipt remain bounded gameplay proof. F1 eye whites/F3 transitions/world overlay/full acceptance remain open.
+
+
+## Eye-white preview live, adult care and bounded viewport acceptance (2026-11-07T06:37:10.670852+00:00)
+
+- Root pinned consistent source-owner F1 renderer/docs bytes on base4ffa2ee50 as2e22bf54419e434b89dafaf2512c351ccf850ffe in isolated /.worktrees/mios-mons-eyes-preview. Active source worktree was not modified. Snapshot provenance /home/mios/.local/state/mios/mios-mons-eyes-preview-check/mios-source-provenance.json. This is a development preview; no final F1/source-owner delivery or independent review is implied.
+- Fresh admitted immutable MiOS-DEV:375unit+13CLI=388PASS, workspacefmt, fatalClippy, release/static all0, clean source and host/inside0. ArtifactSHA25685e2e6b00f872aa2f729f355f542259752d6750a8d43ee186a0d33cc4128b116 was compared after normal-user installation at /home/mios/.local/bin/mios-tamagotchi-eyes-preview and against runningPID3830500. Stable sample82e65781/OS executable retained.
+- Actual current PiP mios-mons-graphics-live, descriptor /run/user/1000/mios-nested-desktop-971442/session.json, parent0x55b22d6b7400 pinned/mapped/unhidden onHDMI-A-1, tmux-os@5/%5 PID3830500. Alacrittyclient127x29, current application127x28. Authenticated user-local ttydBash localhost8310 backend3393809 was preserved; unauthenticated401 rechecked, launcher validates and attaches exact current window. Earlier healthy034Adult@4/%4 preserved.
+- Automated real displayed memory patterns plus normalcare reached naturalAdult tick60 with6wins, coins33 andFood96/Happy90/Clean96/Energy84/Health100; paused afterward, no save/state/clock manipulation. Receipt /home/mios/.local/state/mios/mios-mons-eyes-live-play/mios-live-play-receipt.json. This is the latest eye-white artifact's own gameplay result, not reuse of the older artifact's adult evidence.
+- Real parent frames show face100/zoom/orbit/reset, Main/Games/back. Actual application terminal viewports20x26portrait,20x8 and12x6 rendered, openedmenus and navigatedGames; nativewindowmode/dimensions restored, age60stillpaused. Tiny test uses shortened MAIN heading, not full MAIN MENU. First helpers incorrectly required P in an overlay heading and mishandled inherited tmux window-size; correctedrawlogs retained. Firstmanual20x29 exceeded usable28rows andclippedbottom, so onlyfinal20x26 is claimed as fullportraitframe. Actual screenshots were viewed; no physical phone/watch/VT/controller pass implied.
+- Consolidated receipt /home/mios/.local/state/mios/mios-mons-eyes-preview-check/mios-eyes-handoff.json; live/menu and resize receipts in same directory. Still-open current game is AdultMimo, Face100paused; pressP to resume. F1negativecontrols/finalindependentreview,F3smoothLOD,worldoverlay,physicalinput/mobile/fleet and globalCI remainopen. Nothing new was pushed to main.
+
+
+## Native three-lane continuation and Portal safeguards (2026-11-07T17:23:37.041522+00:00)
+
+- Actual live participants were discovered in both relay namespaces. Desktop renderer mios-claude-continuation and ROOT-relay opencode:serverbox-mios-inputd-focus-verify received native updates. ServerBox own-token ACK task3766-ack-0001 confirms its Rust-only assignment; Root bridge read/ACKed prior c1review/02fcompile-failure/S1ports host-only receipts. No queued message was claimed completed. Renderer later reconciled/ACKed all24pending messages and granted Root world.rs-only ownership.
+- Task3766 /task_01M6VCXG5VZ5VB4Y6T8QMXBV9V: ServerBox owns only src/mios-rs/miosd/src/lib.rs/tests in isolated mios-portal-marker-safety frome068. Task3767 /task_01M6VCXGCHFXFQDWR3VJZ3DW4M: Root Python parity in mios-portal-array-safety, source758a38c3048ac92bb6760e5c17af737cec88d3c9. Typed opaque-array equality prevents index guessing/copy-up, explicit marker-free array edits keep TOML types, malformed lower layers refuse and diagnostics are generic.
+- Fresh MiOS-DEV40tests PASS including all13security methods. Existing approved Python3.13.16 agent runtime was used read-only inside DEV; bare3.14 lackedFastAPI. A preexisting module-wide DBhook caused0unitcases toexecute; removed that redundant hook while preserving the auditclass connection probe. Only that DBintegrationclass is skipped. Four final-source isolated mutants eachran1test andfailed1intendedassertion with0errors/skips; wrappers0. Receipt /home/mios/.local/state/mios/mios-portal-array-safety-typed-check/mios-portal-array-safety-receipt.json. No hosttests, newnativebinary, liveTOML/service mutation or publication.
+- Round1graphics was rejected by its verifier; round2 quality/transitions source61f2a8e1 had389unit+13CLI/fmt/Clippy/static pass and compiled adversarial controls. Root's isolated58bff54db vertical correspondence followup also passed. Verified61artifact403f2c9b... was reused for a separate functional trial, no unnecessary release rebuild. Known518 ancestry was proved after safe fetch--deepen128 (the earlier false result was shallow history).
+- Live61trial @6/%6 PID2702881 naturally reachedAdulttick60/6wins/coins34/needs88,88,94,82,100; native SGRemulated mouse/menu/release and automaticA8/A16 resizing passed with11realparentframes. This calmstyle was then explicitly superseded by the operator direction relayed inb943: boldcolouredASCII pervoxel andblack-backed grey/lightfacialshapes withopeneyewhites. SourceR3isactive, observed45f3756ef checkpoint; no newR3build/source was integrated orpublished byRoot.
+- Default retained PiP mios-mons-graphics-live andlocalhost8310 nowshow older BOLDeye2e22@5/%5 PID3830500 AdultpausedFace100, automaticdetail enabled; calm61@6 remainspausedforhistoricalfunctionalreview. Native launchers971442/971477 andbackend3393809 persist; stableApps82e/mainc1 unchanged. No physicalphone/controller/VT/ARM64/fleetclaim.
+- Native auditworkerprocess failure is nowconcrete:51611-token request exceeds32768localcontext, exit1verified, no registeredreviewer/completedreview; /home/mios/.local/state/mios/mios-mons-quality-preview/mios-native-review-failure.json. No model/context thresholds changed.
+- SearXNG decisionD approved after documentedhost-network conflict: oneexisting [ports].searxng listenkey, retireinternalkey, no validatoralias/network/listenerchange; preserve higher-layerendpoint overrides and verifydefaultconsumers/networkcontexts/resolvedoverrides. Sourceonly. A narrow portal.py SearXNG-region lease is separate fromRoot's config handlers; native lib.rs remains ServerBox-owned. World.rs transfer accepted; Root worldmetadata lane follows Portal. Mainpublication/globalCI/fullgraphics/G2hardware remainopen.

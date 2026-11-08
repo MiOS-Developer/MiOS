@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -124,6 +125,7 @@ def _exe(d, name, body):
 class _DS(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-rdp-ds-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.cfg = {"mode": "virtual", "virtual_output": VOUT, "virtual_attach": "below-center",
                     "virtual_workspace": "remote", "virtual_initial_mode": "1280x720", "linger_seconds": 0,
                     "target_hz": 90, "min_hz": 30, "refresh_pacing": "adaptive", "output_scale": True,
@@ -251,6 +253,7 @@ else:
 class TestBackendSelection(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="mios-rdp-be-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.toml = _exe(self.tmp, "mios-toml-get", FAKE_TOML)
         # Backend controls must not masquerade as real listener switches in the host journal.
         _exe(self.tmp, "logger", "pass\n")

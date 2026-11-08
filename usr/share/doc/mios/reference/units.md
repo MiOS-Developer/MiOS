@@ -187,6 +187,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-sync-theme.service` | `usr/lib/systemd/system` | MiOS theme bridge -- regenerate /etc/mios/theme from mios.toml [colors] |
 | `mios-sys-env-refresh.service` | `usr/lib/systemd/system` | MiOS' refresh the live system/environment cache (sys_env) in pgvector |
 | `mios-sys-env-refresh.timer` | `usr/lib/systemd/system` | MiOS' refresh cadence for the sys_env environment cache |
+| `mios-tailscale-sync.service` | `usr/lib/systemd/system` | MiOS' Tailscale SSOT sync and exit-node failover |
+| `mios-tailscale-sync.timer` | `usr/lib/systemd/system` | MiOS' Tailscale SSOT sync schedule |
 | `mios-thermald.service` | `usr/lib/systemd/system` | MiOS Proactive PID Thermal Daemon and Dynamic Power Cap Modulator |
 | `mios-tmpfs-spill.service` | `usr/lib/systemd/system` | MiOS Automated tmpfs Spill-to-NVMe Manager |
 | `mios-tmpfs-spill.timer` | `usr/lib/systemd/system` | MiOS Periodic Memory Pressure & tmpfs Spillover Monitor Timer |
@@ -232,5 +234,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (224 unit(s)) -->
+<!-- derived from tracked unit files (226 unit(s)) -->
 <!-- /MIOS-GEN:units -->
