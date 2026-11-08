@@ -752,7 +752,6 @@ artifacts have been renamed or removed in the live tree).
 |  |  |  |  +- required.d/
 |  |  |  |  |  +- 10-mios-composefs.sh
 |  |  |  |  |  +- 10-mios-role.sh
-|  |  |  |  |  +- 15-composefs-verity.sh
 |  |  |  |  |  +- 20-podman.sh
 |  |  |  |  |  `- 30-network.sh
 |  |  |  |  `- wanted.d/

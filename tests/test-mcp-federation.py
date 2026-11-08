@@ -24,7 +24,15 @@ def _sdk_python():
     return tomllib.loads(SSOT.read_text())["mcp"]["python"]
 
 
-if importlib.util.find_spec("mcp") is None:
+def _isolated_sdk(python):
+    """True when `python -I` imports the SDK 2.x, as every fixture child runs. -I drops the
+    user and the Fedora /usr/local site-packages, so an SDK pip-installed there is visible to
+    this process but not to its isolated children: use [mcp].python then."""
+    probe = subprocess.run([python, "-I", "-c", "import mcp.server.mcpserver"], capture_output=True)
+    return probe.returncode == 0
+
+
+if importlib.util.find_spec("mcp") is None or not _isolated_sdk(sys.executable):
     PY = _sdk_python()
     if os.path.realpath(PY) != os.path.realpath(sys.executable) and os.access(PY, os.X_OK):
         os.execv(PY, [PY, *sys.argv])

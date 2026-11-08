@@ -535,6 +535,13 @@ class Sampler(unittest.TestCase):
         for name in ("Sysmon.qml", "Theme.qml"):
             shutil.copy(os.path.join(QS_DIR, name), self.qs)
         write(os.path.join(self.qs, "shell.qml"), SHELL)
+        # Quickshell keeps its instance registry and IPC socket under $XDG_RUNTIME_DIR. Without one (a CI container)
+        # it falls back to a literal "/run/user/$1" and its `ipc` client prints the QString::arg warning on STDOUT
+        # ahead of the reply (root), or cannot create the directory and crashes (non-root); with the caller's
+        # session it would register this fixture beside the live desktop's instances. A private 0700 runtime
+        # directory, shared by the instance and its ipc client, keeps the fixture hermetic.
+        self.runtime = os.path.join(self.tmp, "runtime")
+        os.makedirs(self.runtime, mode=0o700)
         self.procs = []
         self.logs = []
 
@@ -557,7 +564,7 @@ class Sampler(unittest.TestCase):
     def start(self, root: str | None, cfg: dict) -> str:
         resolver = os.path.join(self.tmp, "toml-get")
         write(resolver, "#!/bin/sh\ncat <<'EOF'\n" + json.dumps(cfg) + "\nEOF\n", 0o755)
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MIOS_TOML_GET=resolver,
+        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MIOS_TOML_GET=resolver, XDG_RUNTIME_DIR=self.runtime,
                    MIOS_THEME_BRIDGE=os.path.join(self.tmp, "no-bridge.json"))
         if root is not None:
             env["MIOS_SYSMON_ROOT"] = root
@@ -571,7 +578,7 @@ class Sampler(unittest.TestCase):
 
     def state(self) -> dict:
         r = subprocess.run([QS, "ipc", "--path", os.path.join(self.qs, "shell.qml"), "--any-display", "call", "sysmon", "state"],
-                           capture_output=True, text=True, timeout=20)
+                           env=dict(os.environ, XDG_RUNTIME_DIR=self.runtime), capture_output=True, text=True, timeout=20)
         return json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
 
     def wait(self, cond, timeout=12.0) -> dict:

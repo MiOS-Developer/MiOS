@@ -69,6 +69,15 @@ if isinstance(apps, list):
         roles.add(role)
         if app_cfg.get("default") is True or role not in role_app:
             role_app[role] = aid.split(".")[-1].lower()
+    # [aliases].<role> (e.g. [aliases].browser, the ONE default-browser key, as in
+    # mios-open-url) outranks the flatpak list: the default may be a native app
+    # (MiOS-Portal) that no [[desktop.apps]] entry names.
+    role_defaults = d.get("aliases", {})
+    if isinstance(role_defaults, dict):
+        for role in roles:
+            v = role_defaults.get(role)
+            if isinstance(v, str) and v:
+                role_app[role] = v
     last_word = norm.split("-")[-1] if norm else ""
     head = "-".join(norm.split("-")[:-1])
     head = re.sub(r"^(my|the|a|an)-", "", head)

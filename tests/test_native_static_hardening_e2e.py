@@ -503,11 +503,19 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         ssot = load_ssot()
         raw_list = ssot.get("build", {}).get("phases", {}).get("list", [])
         registered_phases = set()
+        # An entry with `native = "<handler>"` keeps its registry identity but runs
+        # through `miosd build-phase`, so it has no script on disk -- and must not
+        # have one (mios-gate phase-registry: "native phase has a competing shell
+        # implementation").
+        native_phases = set()
         for item in raw_list:
             if isinstance(item, dict):
                 s = item.get("script", "")
                 if s:
-                    registered_phases.add(f"automation/{s}" if not s.startswith("automation/") else s)
+                    rel = f"automation/{s}" if not s.startswith("automation/") else s
+                    registered_phases.add(rel)
+                    if item.get("native"):
+                        native_phases.add(rel)
             elif isinstance(item, str):
                 registered_phases.add(f"automation/{item}" if not item.startswith("automation/") else item)
 
@@ -519,8 +527,10 @@ class TestTier1FeatureCoverage(unittest.TestCase):
             if re.match(r"^\d{2}-.+\.sh$", fn):
                 disk_phases.add(f"automation/{fn}")
 
-        missing_from_disk = registered_phases - disk_phases
+        missing_from_disk = registered_phases - native_phases - disk_phases
         self.assertEqual(len(missing_from_disk), 0, f"Registered phases missing on disk: {missing_from_disk}")
+        competing = native_phases & disk_phases
+        self.assertEqual(len(competing), 0, f"Native phases with a competing shell script: {competing}")
 
     def test_f4_02_phase_count_within_ratchet_limit(self):
         """F4.2: Total phase script count complies with max_automation_phases limit."""

@@ -57,7 +57,7 @@ echo "--- Test 3: Systemd socket unit validation ---"
 [ -f "${SOCKET_UNIT}" ] || { echo "ERROR: ${SOCKET_UNIT} missing"; exit 1; }
 # Render the unit as the bake does: ${MIOS_*} placeholders from the resolver's exports of the SSOT.
 RENDERED_SOCKET="${MOCK_DIR}/mios-agent-pipe.socket"
-AGENT_PIPE_PORT="$(MIOS_TOML_ROOT="${MIOS_TOML_ROOT:-$ROOT}" python3 - "${SOCKET_UNIT}" "${RENDERED_SOCKET}" "${ROOT}" <<'PY'
+AGENT_PIPE_LISTEN="$(MIOS_TOML_ROOT="${MIOS_TOML_ROOT:-$ROOT}" python3 - "${SOCKET_UNIT}" "${RENDERED_SOCKET}" "${ROOT}" <<'PY'
 import os, re, sys
 sys.path.insert(0, os.path.join(sys.argv[3], "usr", "lib", "mios"))
 import mios_toml
@@ -67,16 +67,17 @@ missing = sorted(set(re.findall(r"\$\{(MIOS_[A-Z0-9_]+)\}", text)) - set(exports
 if missing:
     sys.exit("unrendered placeholder(s): " + ", ".join(missing))
 open(sys.argv[2], "w", encoding="utf-8").write(re.sub(r"\$\{(MIOS_[A-Z0-9_]+)\}", lambda m: exports[m.group(1)], text))
-print(exports["MIOS_PORTS_AGENT_PIPE"])
+print(exports["MIOS_NETWORK_LOOPBACK"] + ":" + exports["MIOS_PORTS_AGENT_PIPE"])
 PY
 )"
-grep -qx "ListenStream=${AGENT_PIPE_PORT}" "${RENDERED_SOCKET}" || { echo "ERROR: socket unit does not listen on SSOT [ports].agent_pipe (${AGENT_PIPE_PORT})"; exit 1; }
+# The TCP listener is loopback-only (task_3562): [network].loopback + [ports].agent_pipe.
+grep -qx "ListenStream=${AGENT_PIPE_LISTEN}" "${RENDERED_SOCKET}" || { echo "ERROR: socket unit does not listen on SSOT [network].loopback:[ports].agent_pipe (${AGENT_PIPE_LISTEN})"; exit 1; }
 grep -q "ListenStream=/run/mios/agent-pipe.sock" "${SOCKET_UNIT}"
 if command -v systemd-analyze >/dev/null 2>&1; then
     cp "${ROOT}/usr/lib/systemd/system/mios-agent-pipe.service" "${MOCK_DIR}/"
     systemd-analyze verify --man=no "${RENDERED_SOCKET}" || { echo "ERROR: systemd-analyze verify rejected the rendered socket unit"; exit 1; }
 fi
-echo "  [PASS] Socket unit directives validated (TCP ${AGENT_PIPE_PORT} from [ports].agent_pipe)"
+echo "  [PASS] Socket unit directives validated (TCP ${AGENT_PIPE_LISTEN} from [network].loopback:[ports].agent_pipe)"
 
 # Test 4: Mock end-to-end socket swap lifecycle (--mock)
 echo "--- Test 4: Mock end-to-end socket swap lifecycle ---"

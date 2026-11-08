@@ -15,6 +15,35 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# Law 7: an endpoint or model variable, under any name the installer or a wrapper
+# gives it (MIOS_AI_ENDPOINT, MIOS_AI_MODEL, or a local such as ENDPOINT or MODEL).
+_AI_NAME = r"\w*(?:endpoint|model)\w*"
+_LITERAL_AI_DEFAULTS = (
+    # ${NAME:-lit} ${NAME-lit} ${NAME:=lit} ${NAME=lit}, where lit is neither empty
+    # nor itself an expansion ("$(...)" / "${...}" / "$VAR"). A "$" followed by a
+    # quote is not an expansion but a literal: ANSI-C $'lit' or locale $"lit".
+    re.compile(r"\$\{(" + _AI_NAME + r")(:?[-=])(?![\"']?\$(?![\"']))(?![\"']*\})", re.IGNORECASE),
+    # NAME=lit and NAME+=lit, bare or after export/local/declare/readonly, and as --name=lit.
+    re.compile(r"(?<![\w$])(" + _AI_NAME + r")\+?=(?!=)(?![\"']?\$(?![\"']))(?![\"']*(?:[\s;&|)]|$))",
+               re.IGNORECASE | re.MULTILINE),
+)
+
+
+def _literal_ai_defaults(text):
+    """Every literal default or assignment of an endpoint/model variable in text."""
+    return sorted({m.group(0) for rx in _LITERAL_AI_DEFAULTS for m in rx.finditer(text)})
+
+
+def _stage_installer(testcase, tmpdir):
+    """Runs install-mios-agents.sh into a DESTDIR under tmpdir; returns (bindir, env)."""
+    stage = Path(tmpdir) / "root"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+    env.update(DESTDIR=str(stage), MIOS_AGREEMENT_BANNER="off")
+    res = subprocess.run([shutil.which("bash") or "bash", (REPO_ROOT / "install-mios-agents.sh").as_posix()],
+                         capture_output=True, text=True, env=env, cwd=tmpdir)
+    testcase.assertEqual(res.returncode, 0, f"installer failed: {res.stdout}\n{res.stderr}")
+    return stage / "usr" / "local" / "bin", {k: v for k, v in env.items() if k != "DESTDIR"}
+
 
 class TestAgyAgentPipeline(unittest.TestCase):
     """Verifies AGY agent and subagents configuration files for MiOS development and CI/CD."""
@@ -167,6 +196,302 @@ class TestAgyAgentPipeline(unittest.TestCase):
         bash_bin = shutil.which("bash") or "bash"
         res = subprocess.run([bash_bin, "-n", cicd_runner.as_posix()], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, f"Syntax error in {cicd_runner}: {res.stderr}")
+        res = subprocess.run([bash_bin, "-n", installer_path.as_posix()], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Syntax error in {installer_path}: {res.stderr}")
+
+    def test_installer_stages_wrappers_against_the_current_tree(self):
+        """Runs install-mios-agents.sh into a DESTDIR and drives the staged mios-agent-agy."""
+        installer_path = REPO_ROOT / "install-mios-agents.sh"
+        installer_txt = installer_path.read_text(encoding="utf-8")
+        # Law 7: the endpoint and model are never literal defaults in the installer or its wrappers.
+        self.assertIsNone(re.search(r"MIOS_AI_(ENDPOINT|MODEL):-[^$]", installer_txt),
+                          "install-mios-agents.sh hardcodes an endpoint/model default")
+        bash_bin = shutil.which("bash") or "bash"
+        wrappers = ["mios-agent-claude", "mios-agent-gemini", "mios-agent-agy", "mios-llm"]
+        with tempfile.TemporaryDirectory(prefix="mios-agents-stage-") as tmpdir:
+            stage = Path(tmpdir) / "root"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(DESTDIR=str(stage), MIOS_AGREEMENT_BANNER="off")
+            res = subprocess.run([bash_bin, installer_path.as_posix()], capture_output=True,
+                                 text=True, env=env, cwd=tmpdir)
+            self.assertEqual(res.returncode, 0, f"installer failed: {res.stdout}\n{res.stderr}")
+
+            # The staged prompt is the canonical one, not the root redirector, and the
+            # /etc host-override tier is left to the operator.
+            prompt = stage / "usr" / "share" / "mios" / "ai" / "system.md"
+            self.assertEqual(prompt.read_bytes(),
+                             (REPO_ROOT / "usr" / "share" / "mios" / "ai" / "system.md").read_bytes())
+            self.assertFalse((stage / "etc").exists(), "installer wrote the /etc host-override tier")
+
+            bindir = stage / "usr" / "local" / "bin"
+            for name in wrappers:
+                wrapper = bindir / name
+                self.assertTrue(wrapper.is_file(), f"installer did not stage {wrapper}")
+                self.assertTrue(os.access(wrapper, os.X_OK) or os.name == "nt", f"{wrapper} not executable")
+                self.assertTrue(wrapper.read_text(encoding="utf-8").startswith("#!/usr/bin/env bash\n"),
+                                f"{wrapper} has no shebang")
+                res = subprocess.run([bash_bin, "-n", wrapper.as_posix()], capture_output=True, text=True)
+                self.assertEqual(res.returncode, 0, f"Syntax error in {wrapper}: {res.stderr}")
+
+            # mios-agent-agy resolves the endpoint and model from install.env, lets a
+            # caller's export win, and refuses to run agy when neither supplies them.
+            mock_dir = Path(tmpdir) / "bin"
+            mock_dir.mkdir()
+            marker = Path(tmpdir) / "agy-ran"
+            mock = mock_dir / "agy"
+            mock.write_text("#!/bin/sh\n"
+                            f"echo \"$MIOS_AI_ENDPOINT|$MIOS_AI_MODEL|$*\" > '{marker.as_posix()}'\n",
+                            encoding="utf-8")
+            os.chmod(mock, 0o755)
+            etc_fixture = Path(tmpdir) / "etc-mios"
+            etc_fixture.mkdir()
+            (etc_fixture / "install.env").write_text(
+                "MIOS_AI_ENDPOINT=http://ssot.invalid/v1\nMIOS_AI_MODEL=ssot-model\n", encoding="utf-8")
+            etc_empty = Path(tmpdir) / "etc-empty"
+            etc_empty.mkdir()
+            run_env = {k: v for k, v in env.items() if k != "DESTDIR"}
+            run_env.update(PATH=f"{mock_dir}{os.pathsep}{env.get('PATH', '')}",
+                           DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
+            agy = [bash_bin, (bindir / "mios-agent-agy").as_posix(), "-p", "task"]
+
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_fixture)})
+            self.assertEqual(res.returncode, 0, f"mios-agent-agy failed: {res.stderr}")
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), "http://ssot.invalid/v1|ssot-model|-p task")
+
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_fixture),
+                                      "MIOS_AI_ENDPOINT": "http://caller.invalid/v1",
+                                      "MIOS_AI_MODEL": "caller-model"})
+            self.assertEqual(res.returncode, 0, f"mios-agent-agy failed: {res.stderr}")
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), "http://caller.invalid/v1|caller-model|-p task")
+
+            marker.unlink()
+            res = subprocess.run(agy, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_empty)})
+            self.assertNotEqual(res.returncode, 0, "mios-agent-agy ran with no resolvable endpoint")
+            self.assertIn("MIOS_AI_ENDPOINT is unset", res.stderr)
+            self.assertFalse(marker.exists(), "agy was executed without a resolved endpoint")
+
+    def test_mios_llm_resolves_install_env_and_sends_only_the_ssot_request(self):
+        """Drives the staged mios-llm against a mock curl: the endpoint and model come from
+        install.env (a caller's export wins), the request body carries no sampling literal
+        such as a temperature, and with neither source the wrapper fails before any request."""
+        installer_path = REPO_ROOT / "install-mios-agents.sh"
+        bash_bin = shutil.which("bash") or "bash"
+        jq_bin = shutil.which("jq")
+        self.assertIsNotNone(jq_bin, "jq is required: mios-llm builds its request body with it")
+        with tempfile.TemporaryDirectory(prefix="mios-llm-stage-") as tmpdir:
+            stage = Path(tmpdir) / "root"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(DESTDIR=str(stage), MIOS_AGREEMENT_BANNER="off")
+            res = subprocess.run([bash_bin, installer_path.as_posix()], capture_output=True,
+                                 text=True, env=env, cwd=tmpdir)
+            self.assertEqual(res.returncode, 0, f"installer failed: {res.stdout}\n{res.stderr}")
+            llm = stage / "usr" / "local" / "bin" / "mios-llm"
+
+            # The mock records its argv NUL-separated and answers like /v1/chat/completions.
+            mock_dir = Path(tmpdir) / "bin"
+            mock_dir.mkdir()
+            calls = Path(tmpdir) / "curl-argv"
+            mock = mock_dir / "curl"
+            mock.write_text("#!/bin/sh\n"
+                            f"printf '%s\\0' \"$@\" > '{calls.as_posix()}'\n"
+                            "printf '%s\\n' '{\"choices\":[{\"message\":{\"content\":\"mock-reply\"}}]}'\n",
+                            encoding="utf-8")
+            os.chmod(mock, 0o755)
+            etc_fixture = Path(tmpdir) / "etc-mios"
+            etc_fixture.mkdir()
+            (etc_fixture / "install.env").write_text(
+                "MIOS_AI_ENDPOINT=http://ssot.invalid/v1\nMIOS_AI_MODEL=ssot-model\n", encoding="utf-8")
+            etc_empty = Path(tmpdir) / "etc-empty"
+            etc_empty.mkdir()
+            run_env = {k: v for k, v in env.items() if k != "DESTDIR"}
+            run_env["PATH"] = f"{mock_dir}{os.pathsep}{env.get('PATH', '')}"
+            cmd = [bash_bin, llm.as_posix(), "which", "law?"]
+
+            def request(extra):
+                if calls.exists():
+                    calls.unlink()
+                res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT,
+                                     env={**run_env, **extra})
+                self.assertEqual(res.returncode, 0, f"mios-llm failed: {res.stderr}")
+                self.assertEqual(res.stdout, "mock-reply\n")
+                found = re.search(r"prompt: (.+)$", res.stderr.strip())
+                self.assertIsNotNone(found, f"mios-llm named no prompt file: {res.stderr}")
+                argv = calls.read_bytes().decode("utf-8").split("\0")[:-1]
+                self.assertEqual(argv[:5], ["-sS", argv[1], "-H", "Content-Type: application/json", "-d"])
+                self.assertEqual(len(argv), 6, f"unexpected curl argv: {argv[:5]}")
+                return argv[1], json.loads(argv[5]), Path(found.group(1)).read_text(encoding="utf-8")
+
+            def body(model, system):
+                return {"model": model,
+                        "messages": [{"role": "system", "content": system},
+                                     {"role": "user", "content": "which law?"}],
+                        "stream": False}
+
+            url, sent, system = request({"MIOS_ETC_DIR": str(etc_fixture)})
+            self.assertEqual(url, "http://ssot.invalid/v1/chat/completions")
+            self.assertEqual(sent, body("ssot-model", system.rstrip("\n")))
+
+            url, sent, system = request({"MIOS_ETC_DIR": str(etc_fixture),
+                                         "MIOS_AI_ENDPOINT": "http://caller.invalid/v1",
+                                         "MIOS_AI_MODEL": "caller-model"})
+            self.assertEqual(url, "http://caller.invalid/v1/chat/completions")
+            self.assertEqual(sent, body("caller-model", system.rstrip("\n")))
+
+            calls.unlink()
+            res = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT,
+                                 env={**run_env, "MIOS_ETC_DIR": str(etc_empty)})
+            self.assertNotEqual(res.returncode, 0, "mios-llm ran with no resolvable endpoint")
+            self.assertIn("MIOS_AI_ENDPOINT is unset", res.stderr)
+            self.assertFalse(calls.exists(), "mios-llm sent a request without a resolved endpoint")
+
+    def test_the_literal_default_scan_tells_a_literal_from_an_expansion(self):
+        """Controls for the scan below: every literal-default shape is flagged, and the
+        shapes the wrappers legitimately use (an SSOT lookup, a :? guard) are not."""
+        planted = [
+            'MODEL="${MODEL:-literal-model}"',
+            'ENDPOINT="${MIOS_AI_ENDPOINT-http://literal.invalid/v1}"',
+            ': "${MIOS_AI_MODEL:=literal-model}"',
+            ": ${ENDPOINT=http://literal.invalid/v1}",
+            'MODEL="${MODEL:-"literal-model"}"',
+            "[[ -n $MODEL ]] || MODEL=literal-model",
+            "export MIOS_AI_ENDPOINT='http://literal.invalid/v1'",
+            'local model="literal-model"',
+            "agy --model=literal-model",
+            "export MIOS_AI_ENDPOINT=$'http://literal.invalid/v1'",
+            'MODEL="${MODEL:-$\'literal-model\'}"',
+            'MODEL=$"literal-model"',
+            "MIOS_AI_MODEL+=literal-model",
+        ]
+        for line in planted:
+            self.assertTrue(_literal_ai_defaults(line), f"scan missed a literal default: {line}")
+        legitimate = [
+            'ENDPOINT="${MIOS_AI_ENDPOINT:-$(_mios_env MIOS_AI_ENDPOINT)}"',
+            'export MIOS_AI_MODEL="${MIOS_AI_MODEL:-$(_mios_env MIOS_AI_MODEL)}"',
+            'MODEL="${MIOS_AI_MODEL:-${resolved_model}}"',
+            ': "${MODEL:?MIOS_AI_MODEL is unset -- install.env is missing or stale}"',
+            'jq -n --arg model "$MODEL" \'{model:$model}\'',
+            'local f="${MIOS_ETC_DIR:-/etc/mios}/install.env"',
+            'sed -n "s/^$1=//p" "$f"',
+            '[[ $MODEL == "$want" ]]',
+            "MODEL=",
+            'MODEL=""; ENDPOINT=$(_mios_env MIOS_AI_ENDPOINT)',
+            "MODEL+=$suffix",
+        ]
+        for line in legitimate:
+            self.assertEqual(_literal_ai_defaults(line), [], f"scan flagged a non-literal: {line}")
+
+    def test_no_literal_endpoint_or_model_default_under_any_name(self):
+        """Law 7 across the installer, its heredocs, the wrappers it stages and the CI agy
+        runner (which the hardcode lint does not reach): no endpoint/model variable, under
+        any name, takes a literal default or value."""
+        installer_txt = (REPO_ROOT / "install-mios-agents.sh").read_text(encoding="utf-8")
+        self.assertEqual(_literal_ai_defaults(installer_txt), [],
+                         "install-mios-agents.sh gives an endpoint/model variable a literal default")
+        runner_txt = (REPO_ROOT / "automation" / "cicd" / "05-run-agy-pipeline-agent.sh").read_text(encoding="utf-8")
+        self.assertEqual(_literal_ai_defaults(runner_txt), [],
+                         "05-run-agy-pipeline-agent.sh gives an endpoint/model variable a literal default")
+        with tempfile.TemporaryDirectory(prefix="mios-agents-literal-") as tmpdir:
+            bindir, _ = _stage_installer(self, tmpdir)
+            staged = sorted(bindir.iterdir())
+            self.assertEqual([p.name for p in staged],
+                             ["mios-agent-agy", "mios-agent-claude", "mios-agent-gemini", "mios-llm"])
+            for wrapper in staged:
+                self.assertEqual(_literal_ai_defaults(wrapper.read_text(encoding="utf-8")), [],
+                                 f"staged {wrapper.name} gives an endpoint/model variable a literal default")
+
+    def test_wrappers_refuse_a_half_resolved_endpoint_or_model(self):
+        """Drives the staged mios-llm and mios-agent-agy with only one of the endpoint and
+        the model resolvable. Each key resolves on its own, from install.env or a caller's
+        export, so a mix of the two sources works; a key that resolves from neither is a
+        named error before any request is sent or agy is run, so a literal default for
+        one key cannot hide behind the other key resolving."""
+        bash_bin = shutil.which("bash") or "bash"
+        self.assertIsNotNone(shutil.which("jq"), "jq is required: mios-llm builds its request body with it")
+        endpoint, model = "http://ssot.invalid/v1", "ssot-model"
+        caller_endpoint, caller_model = "http://caller.invalid/v1", "caller-model"
+        with tempfile.TemporaryDirectory(prefix="mios-agents-half-") as tmpdir:
+            tmp = Path(tmpdir)
+            bindir, run_env = _stage_installer(self, tmpdir)
+
+            # Recording fakes: each leaves its argv (agy also the endpoint/model it was
+            # handed), NUL-separated, and answers like /v1/chat/completions.
+            mock_dir = tmp / "bin"
+            mock_dir.mkdir()
+            records = {"curl": tmp / "curl-argv", "agy": tmp / "agy-argv"}
+            for tool, record in records.items():
+                handed = '"$MIOS_AI_ENDPOINT" "$MIOS_AI_MODEL" ' if tool == "agy" else ""
+                (mock_dir / tool).write_text(
+                    "#!/bin/sh\n"
+                    f"printf '%s\\0' {handed}\"$@\" > '{record.as_posix()}'\n"
+                    "printf '%s\\n' '{\"choices\":[{\"message\":{\"content\":\"mock-reply\"}}]}'\n",
+                    encoding="utf-8")
+                os.chmod(mock_dir / tool, 0o755)
+            run_env.update(PATH=f"{mock_dir}{os.pathsep}{run_env.get('PATH', '')}",
+                           DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent")
+
+            def etc(name, install_env):
+                etc_dir = tmp / name
+                etc_dir.mkdir()
+                if install_env is not None:
+                    (etc_dir / "install.env").write_text(install_env, encoding="utf-8")
+                return etc_dir
+
+            etc_endpoint = etc("etc-endpoint-only", f"MIOS_AI_ENDPOINT={endpoint}\n")
+            etc_model = etc("etc-model-only", f"MIOS_AI_MODEL={model}\n")
+            etc_blank_model = etc("etc-blank-model", f"MIOS_AI_ENDPOINT={endpoint}\nMIOS_AI_MODEL=\n")
+            etc_none = etc("etc-no-install-env", None)
+
+            def run(wrapper, etc_dir, export):
+                for record in records.values():
+                    record.unlink(missing_ok=True)
+                args = ["which", "law?"] if wrapper == "mios-llm" else ["-p", "task"]
+                return subprocess.run([bash_bin, (bindir / wrapper).as_posix(), *args],
+                                      capture_output=True, text=True, cwd=REPO_ROOT,
+                                      env={**run_env, "MIOS_ETC_DIR": str(etc_dir), **export})
+
+            def recorded(tool):
+                return records[tool].read_bytes().decode("utf-8").split("\0")[:-1]
+
+            keys = {"MIOS_AI_ENDPOINT", "MIOS_AI_MODEL"}
+            half_resolved = [
+                # (install.env, the caller's export, the key that resolves from neither)
+                (etc_endpoint, {}, "MIOS_AI_MODEL"),
+                (etc_none, {"MIOS_AI_ENDPOINT": caller_endpoint}, "MIOS_AI_MODEL"),
+                (etc_blank_model, {}, "MIOS_AI_MODEL"),
+                (etc_model, {}, "MIOS_AI_ENDPOINT"),
+                (etc_none, {"MIOS_AI_MODEL": caller_model}, "MIOS_AI_ENDPOINT"),
+            ]
+            mixed = [
+                # (install.env, the caller's export, the endpoint and model that must win)
+                (etc_model, {"MIOS_AI_ENDPOINT": caller_endpoint}, caller_endpoint, model),
+                (etc_endpoint, {"MIOS_AI_MODEL": caller_model}, endpoint, caller_model),
+            ]
+            for wrapper in ("mios-llm", "mios-agent-agy"):
+                for etc_dir, export, missing in half_resolved:
+                    with self.subTest(wrapper=wrapper, install_env=etc_dir.name, export=sorted(export)):
+                        res = run(wrapper, etc_dir, export)
+                        self.assertNotEqual(res.returncode, 0, f"{wrapper} ran with {missing} unresolved")
+                        self.assertIn(f"{missing} is unset", res.stderr)
+                        self.assertNotIn(f"{(keys - {missing}).pop()} is unset", res.stderr)
+                        for tool, record in records.items():
+                            self.assertFalse(record.exists(), f"{wrapper} ran {tool} with {missing} unresolved")
+
+                for etc_dir, export, want_endpoint, want_model in mixed:
+                    with self.subTest(wrapper=wrapper, install_env=etc_dir.name, export=sorted(export)):
+                        res = run(wrapper, etc_dir, export)
+                        self.assertEqual(res.returncode, 0, f"{wrapper} failed: {res.stderr}")
+                        if wrapper == "mios-llm":
+                            self.assertEqual(res.stdout, "mock-reply\n")
+                            argv = recorded("curl")
+                            self.assertEqual(argv[1], f"{want_endpoint}/chat/completions")
+                            self.assertEqual(json.loads(argv[5])["model"], want_model)
+                            self.assertFalse(records["agy"].exists(), "mios-llm ran agy")
+                        else:
+                            self.assertEqual(recorded("agy"), [want_endpoint, want_model, "-p", "task"])
+                            self.assertFalse(records["curl"].exists(), "mios-agent-agy ran curl")
 
     def test_agents_command_definitions(self):
         """Verifies canonical commands/antigravity/agents.toml and agents workflow."""
@@ -249,23 +574,30 @@ class TestAgyAgentPipeline(unittest.TestCase):
 
         # 4. Behavioral test for 05: Failure propagation (Negative Control)
         # When agy exits non-zero, 05-run-agy-pipeline-agent.sh MUST fail (non-zero returncode).
+        # The endpoint and model are exported and install.env is absent, so the run
+        # reaches agy and its exit status, not the runner's unresolved-key guard.
         with tempfile.TemporaryDirectory(prefix="mock-agy-") as tmpdir:
             tmp_path = Path(tmpdir)
+            ran = tmp_path / "agy-ran"
             mock_sh = tmp_path / "agy"
-            mock_sh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+            mock_sh.write_text(f"#!/bin/sh\n: > '{ran.as_posix()}'\nexit 1\n", encoding="utf-8")
             os.chmod(mock_sh, 0o755)
             if os.name == "nt":
                 mock_bat = tmp_path / "agy.bat"
                 mock_bat.write_text("@echo off\nexit /b 1\n", encoding="utf-8")
 
-            env = dict(os.environ)
-            env["PATH"] = f"{tmpdir}{os.pathsep}{env.get('PATH', '')}"
+            env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            env.update(PATH=f"{tmpdir}{os.pathsep}{env.get('PATH', '')}",
+                       MIOS_ETC_DIR=str(tmp_path / "etc-no-install-env"),
+                       MIOS_AI_ENDPOINT="http://caller.invalid/v1", MIOS_AI_MODEL="caller-model")
             res_fail = subprocess.run(
                 [bash_bin, scripts[4].as_posix()],
                 capture_output=True,
                 text=True,
                 env=env,
             )
+            self.assertTrue(ran.exists() or os.name == "nt",
+                            f"05-run-agy-pipeline-agent.sh stopped before agy: {res_fail.stderr}")
             self.assertNotEqual(
                 res_fail.returncode,
                 0,
@@ -285,6 +617,109 @@ class TestAgyAgentPipeline(unittest.TestCase):
             )
             self.assertEqual(res_ok.returncode, 0, f"05 failed with mock agy: {res_ok.stderr}")
             self.assertIn("Completed Successfully", res_ok.stdout)
+
+    def test_cicd_agy_runner_refuses_a_half_resolved_endpoint_or_model(self):
+        """Drives automation/cicd/05-run-agy-pipeline-agent.sh with only one of the endpoint
+        and the model resolvable. As in the wrappers, each key resolves on its own, from a
+        caller's export or install.env; a key that resolves from neither is a named error
+        before agy is run. The control is a copy with a literal model default planted back
+        in: it runs agy on that literal, which is exactly what the checks below reject."""
+        bash_bin = shutil.which("bash") or "bash"
+        runner = REPO_ROOT / "automation" / "cicd" / "05-run-agy-pipeline-agent.sh"
+        runner_txt = runner.read_text(encoding="utf-8")
+        endpoint, model = "http://ssot.invalid/v1", "ssot-model"
+        caller_endpoint, caller_model = "http://caller.invalid/v1", "caller-model"
+        keys = {"MIOS_AI_ENDPOINT", "MIOS_AI_MODEL"}
+        with tempfile.TemporaryDirectory(prefix="mios-cicd-half-") as tmpdir:
+            tmp = Path(tmpdir)
+
+            # The runner writes its artifact under the checkout it lives in, so each copy
+            # runs from a scratch tree rather than this one.
+            def stage(name, text):
+                script = tmp / name / "automation" / "cicd" / runner.name
+                script.parent.mkdir(parents=True)
+                script.write_text(text, encoding="utf-8")
+                return script
+
+            entry = "run_pipeline_agent() {\n"
+            self.assertEqual(runner_txt.count(entry), 1, "the runner no longer defines run_pipeline_agent")
+            real = stage("real", runner_txt)
+            planted = stage("planted", runner_txt.replace(
+                entry, entry + '    MIOS_AI_MODEL="${MIOS_AI_MODEL:-literal-model}"\n'))
+
+            # A recording fake for the agy the runner prefers: it leaves the endpoint and
+            # model it was handed, then its argv, NUL-separated.
+            mock_dir = tmp / "bin"
+            mock_dir.mkdir()
+            record = tmp / "agy-argv"
+            fake = mock_dir / "mios-agent-agy"
+            fake.write_text("#!/bin/sh\n"
+                            f"printf '%s\\0' \"$MIOS_AI_ENDPOINT\" \"$MIOS_AI_MODEL\" \"$@\" > '{record.as_posix()}'\n"
+                            "echo '{}'\n", encoding="utf-8")
+            os.chmod(fake, 0o755)
+            base_env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+            base_env["PATH"] = f"{mock_dir}{os.pathsep}{base_env.get('PATH', '')}"
+
+            def etc(name, install_env):
+                etc_dir = tmp / name
+                etc_dir.mkdir()
+                if install_env is not None:
+                    (etc_dir / "install.env").write_text(install_env, encoding="utf-8")
+                return etc_dir
+
+            etc_both = etc("etc-both", f"MIOS_AI_ENDPOINT={endpoint}\nMIOS_AI_MODEL={model}\n")
+            etc_endpoint = etc("etc-endpoint-only", f"MIOS_AI_ENDPOINT={endpoint}\n")
+            etc_model = etc("etc-model-only", f"MIOS_AI_MODEL={model}\n")
+            etc_blank_model = etc("etc-blank-model", f"MIOS_AI_ENDPOINT={endpoint}\nMIOS_AI_MODEL=\n")
+            etc_none = etc("etc-no-install-env", None)
+
+            def run(script, etc_dir, export):
+                record.unlink(missing_ok=True)
+                return subprocess.run([bash_bin, script.as_posix(), "task"],
+                                      capture_output=True, text=True, cwd=tmpdir,
+                                      env={**base_env, "MIOS_ETC_DIR": str(etc_dir), **export})
+
+            def recorded():
+                return record.read_bytes().decode("utf-8").split("\0")[:-1]
+
+            half_resolved = [
+                # (install.env, the caller's export, the key that resolves from neither)
+                (etc_endpoint, {}, "MIOS_AI_MODEL"),
+                (etc_none, {"MIOS_AI_ENDPOINT": caller_endpoint}, "MIOS_AI_MODEL"),
+                (etc_blank_model, {}, "MIOS_AI_MODEL"),
+                (etc_model, {}, "MIOS_AI_ENDPOINT"),
+                (etc_none, {"MIOS_AI_MODEL": caller_model}, "MIOS_AI_ENDPOINT"),
+            ]
+            for etc_dir, export, missing in half_resolved:
+                with self.subTest(install_env=etc_dir.name, export=sorted(export)):
+                    res = run(real, etc_dir, export)
+                    self.assertNotEqual(res.returncode, 0, f"the runner ran with {missing} unresolved")
+                    self.assertIn(f"{missing} is unset", res.stderr)
+                    self.assertNotIn(f"{(keys - {missing}).pop()} is unset", res.stderr)
+                    self.assertFalse(record.exists(), f"the runner ran agy with {missing} unresolved")
+
+            resolved = [
+                # (install.env, the caller's export, the endpoint and model agy must be handed)
+                (etc_both, {}, endpoint, model),
+                (etc_both, {"MIOS_AI_ENDPOINT": caller_endpoint, "MIOS_AI_MODEL": caller_model},
+                 caller_endpoint, caller_model),
+                (etc_model, {"MIOS_AI_ENDPOINT": caller_endpoint}, caller_endpoint, model),
+                (etc_endpoint, {"MIOS_AI_MODEL": caller_model}, endpoint, caller_model),
+            ]
+            for etc_dir, export, want_endpoint, want_model in resolved:
+                with self.subTest(install_env=etc_dir.name, export=sorted(export)):
+                    res = run(real, etc_dir, export)
+                    self.assertEqual(res.returncode, 0, f"the runner failed: {res.stderr}")
+                    self.assertEqual(recorded(), [want_endpoint, want_model, "-p", "task", "--output-format", "json"])
+
+            # The control: a literal model default hides behind the endpoint resolving,
+            # so this half-resolved run succeeds on the literal instead of naming the key.
+            res = run(planted, etc_endpoint, {})
+            self.assertEqual(res.returncode, 0, f"the planted control did not run: {res.stderr}")
+            self.assertNotIn("MIOS_AI_MODEL is unset", res.stderr)
+            self.assertEqual(recorded()[:2], [endpoint, "literal-model"])
+            self.assertTrue(_literal_ai_defaults(planted.read_text(encoding="utf-8")),
+                            "the literal-default scan missed the planted runner default")
 
 
 if __name__ == "__main__":

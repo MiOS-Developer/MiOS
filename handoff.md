@@ -1,3 +1,190 @@
+<!-- AI-hint: API-published source snapshot and exact Git-history bundle for remote continuation. -->
+# Recover this handoff after Git transport failures
+
+Authenticated Git push failed with HTTP408 and moved no refs. This checkpoint
+was published through the repository Git objects API instead. The source
+snapshot is the prepared local checkpoint
+fc89aae34d836f4902c6ccd40341fa0c3db87e89. The API commit has a different SHA;
+use the current origin/main SHA as the publication receipt.
+
+The bundle contains the EXACT original commits and seven lane histories.
+It also contains the local checkpoint's WIP patches, design context and
+root-change patches. It is an incremental bundle against the previous
+origin/main history at c1e55b7582e7335b5f504b393416573b2e34d5d6.
+
+In a clone containing that history, restore the source objects:
+
+    git fetch origin main
+    sha256sum -c .devloop/handoff/mios-source-checkpoints.bundle.sha256
+    git bundle verify .devloop/handoff/mios-source-checkpoints.bundle
+    git fetch .devloop/handoff/mios-source-checkpoints.bundle 'refs/heads/*:refs/remotes/mios-handoff/*'
+    git show mios-handoff/mios-cloud-handoff:handoff.md
+
+If bundle verification reports missing prerequisites in a shallow clone,
+fetch the full main history first. Do not reset the current branch or overwrite
+uncommitted work. Create collision-checked worktrees from the recovered refs.
+
+The original source refs are recovered under refs/remotes/mios-handoff/.
+They are not claimed as successfully pushed origin branches. Main contains
+the Root integration snapshot; renderer/ports conflict resolution and camera/
+HUD review remain pending. The original local f576f22 and all source lane
+commits become locally inspectable after the bundle fetch.
+
+This is an engineering source handoff, not a certified release. Do not claim
+combined CI, visual acceptance, or live deployment merely from this publication.
+
+---
+
+<!-- AI-hint: Portable engineering handoff for repository-based continuation; current checkpoint is not a certified release. -->
+<!-- AI-related: AGENTS.md, .agents/COORDINATION.md, tasks.jsonl, .devloop/handoff/mios-wip-manifest.json -->
+# Current portable engineering handoff
+
+This checkpoint answers the operator's request to make all current source and
+unfinished work recoverable by a remote engineering session. Read this section
+before the historical Blade installation prompt below. The publication is a
+source handoff; combined CI, visual acceptance and live rollout are unfinished.
+
+## Recover the exact source
+
+Main contains the source snapshot of Root's seven local main commits through
+f576f22f1b91c9cffa1070dd55b6eb5c296b6a01 and integration
+fb49657e85fbbe13d8620b6c8e674223e25a558e. Original commit ancestry and all
+seven source refs are preserved in the Git bundle described above. Branch
+names in this table identify bundled refs; remote branch creation did not
+succeed through the timed-out Git transport.
+
+| Branch | Exact source | Disposition |
+| --- | --- | --- |
+| mios-mons-input-completion | fb49657e85fbbe13d8620b6c8e674223e25a558e | Included in main; application/Inputd/Portal/CI integration |
+| mios-mons-voxel-overlay | 6b20513e1f657f5159c02384552d7b2294f585bc | Preserved branch; main merge conflicted in render.rs, sprite.rs, ui.rs and game documentation and was aborted |
+| mios-ci3756-ports | 58b3752d415806f7cd9d43a6d04090757434eb3e | Preserved branch; main merge conflicted in roadmap, GUI test, manifest, blade.sh, tool registry, SSOT and corpus projection and was aborted |
+| mios-mons-menu-geometry | 26eb01d492382da7a59d7b17cf5e24af6be55f27 | HUD geometry/painter implementation; integration and independent review pending |
+| mios-mons-camera-follow | 0e7c693b8242d0342049cfd90b659ab2da1301a3 | Camera settings/follower implementation; integration and independent review pending |
+| mios-inputd-focus-gesture | 3f3dac3beab2f2a6bb7efe009753c2a23daa49ee | Gesture implementation; configurator integration and final verification pending |
+
+Use new isolated worktrees and merge/reconcile those branches. Do not assume
+that a branch's implementation report certifies the combined tree. Preserve
+the additional assertions in the integration branch when reconciling the game.
+
+## Preserved unfinished work
+
+Files in .devloop/handoff are tracked, portable inputs. Patches are losslessly
+compressed to preserve unified-diff context bytes without whitespace damage:
+
+- mios-render-r4.patch.gz: the actual uncommitted render.rs performance work,
+  +1080/-89, based on renderer 6b20513e. Only render_cost checks were reported;
+  full verification is pending and the 1.15x target remains unmet.
+- mios-menu-navigation.patch.gz: ui.rs/input.rs cardinal menu navigation and
+  actual-binding hints based on fb49657e. This is WIP, not a complete HUD.
+  Its MiOS-DEV formatting job was queued by memory admission; no pass claimed.
+- mios-root-tracked.patch.gz: the actual local .gitignore, chrony.conf and
+  hyprland.lua changes against f576f22. Review ownership and correctness before
+  applying; the deployed root was not reset, rebased or overwritten.
+- mios-root-untracked-code.patch.gz: three dispatcher symlinks and the container
+  engine CDI unit drop-in from the deployed root, preserved for review.
+- mios-wip-manifest.json: exact bases, file lists and payload SHA-256 hashes.
+- mios-multiplayer-design.md, mios-multiplayer-task-proposal.md and
+  mios-mon-world-research.md: the operator's design/research context copied from
+  local state. Proposals are not canonical completed tasks or implemented code.
+
+Apply a patch only to its recorded base after checking it:
+
+    gzip -dc /path/to/mios-render-r4.patch.gz | git apply --check
+    gzip -dc /path/to/mios-render-r4.patch.gz | git apply
+
+Do not apply all patches blindly to main. Untracked runtime models, agent
+datastores, first-boot progress/lock files, credentials and relay leases were
+excluded. Live sockets, pane IDs and runtime paths from older receipts are
+historical observations, not valid remote targets.
+
+## Verification state and remaining work
+
+Renderer R3 was reported build-green in MiOS-DEV: 409 unit checks (2 ignored)
+and 13 CLI checks, fmt, fatal Clippy and static artifact validation. Its binary
+SHA-256 is f8656074db8ea767112c35cd475448210bff70370d342ae550db7393e0bb59f0.
+Visual acceptance remains PARTIAL/FAIL: smallest ASCII/8-bit and monochrome
+legibility, face quiet zones, braille ring, fox brows, oblique cat eyes and
+sleeping-face strokes need work. Room cost was 0.88..1.08x baseline; Pet/Face
+1.25..1.94x misses the required <=1.15x bound. Preserve the good half-block and
+quadrant cases while fixing those failures. No successful R4 final build or
+visual cutoff is claimed.
+
+D4's cached implementation and entry-point fixes are at 58b3752d4. Earlier
+reports caught 77 planted failures and fixed Setup's param-block ordering.
+The remote importing session reports the final adversarial verifier completed,
+but its final verdict has not been independently recovered for this handoff;
+do not substitute that report for the final raw receipt. Retain shipped-layout
+SearXNG value-or-skip resolution, loopback-only reachability, skipped direct
+LAN forwarding and sandboxed firewall exit-78 propagation.
+
+HUD lane reports 384 passing checks, fmt/clippy/static build, artifact
+e75a5cdda418c436060ba28b3a6bf205deb56c9d8b4e5c990a9ec94b3a128f6e.
+The pure geometry/painter API still needs Root's menu consumer. Inspect actual
+ratio types, complete off-page navigation, selected-item reveal, bounded
+portrait/tiny layouts and disabled/focus rendering before merging.
+
+Camera lane reports 383 unit plus 13 CLI checks, fmt/clippy/static build,
+artifact 3a76fb8665b2b4a8ab241ce495b7846b63c3c28dc0ca9d61ec41cfe74af4a0c5.
+Review the first-order follower, shortest yaw, frame-time clamp, bounds,
+reset behavior, idle cadence, paused/sleep invariance and output identity.
+This is not proof of proportional analog control or physical acceptance.
+
+The gesture review found missing configurator fields. Inspect the actual
+focus_gesture parser/table: reports disagree about the number/names of its
+parameters. Do not copy an invented six-field UI. Complete native
+capture/release and parent-session return, actual controller prompts,
+keyboard/mouse/touch navigation and focused/headless behavior.
+
+Inputd common app-action isolation at26641b342 was verified with232 native
+checks and compiled negative controls and installed user-locally as artifact
+ebc8f7b9aae632e9dbcac863bb5a1a1b8bd7de43de2d0bdac0d330a5e0409793.
+The public absolute Inputd entrypoints were still older at the last receipt.
+Before applying new G2 vendor policy to live /, upgrade and verify every
+absolute entrypoint, then deploy policy in the documented order. Temporary
+right-stick focus suppression stays until the deliberate-flick path passes.
+
+Physical menu Down/Cross/Circle passed earlier. Capture release transitioned,
+but full nested controller return failed; an operational parent handoff was
+performed separately. Physical cursor retest was unavailable. Phone, ARM,
+VT/watch and multiplayer acceptance are not certified. Most recently the
+native nested-session registry was empty: earlier retained PiP receipts do
+not establish a viewport still running now. Reopen an admitted, labelled PiP
+and verify live frames before claiming live acceptance.
+
+## Continue and publish
+
+1. Read AGENTS.md, .agents/COORDINATION.md, tasks.jsonl and the application docs.
+   Use native per-participant registration and addressed receive/ACK. Root is
+   the sole canonical task-list/integration publisher; obtain current ownership
+   before writing shared source.
+2. Reconcile finite renderer/ports cuts, HUD/camera and menu WIP in disjoint
+   worktrees; keep failures and unfinished work explicit.
+3. Build only in MiOS-DEV using the pinned toolchain/lockfile and actual source.
+   Run SSOT memory admission and session/device inventory before builds/sessions.
+   Honor the heavy-build lock and resource limits. Never lower admission gates.
+4. From tools/native, run locked musl tests, fatal Clippy, release build and
+   native-artifact-check, plus meaningful compiled negative controls. Use the
+   root-level PowerShell mount and writable HOME for relevant fixtures.
+5. Run projections and required combined gates. Baseline global findings
+   previously included rust-categories35, module coverage1, inert SSOT1 and
+   template6; report actual current results without increasing ratchets.
+6. The operator authorizes main publication and requires immediate live
+   installation after each MiOS main push. Preserve user changes and adopted
+   pets, verify checksums, open actual visible PiPs and record each real node's
+   outcome. A repository push is not live installation.
+
+The build filesystem was98% full. Selective cleanup recovered11.7GiB from
+inactive Cargo intermediates older than14days while retaining executable and
+release outputs. Its last observed free space was about22GiB; the main root
+had about123GiB. Recheck rather than assuming these resource observations persist.
+
+Local model/API connectivity failures and queued memory admission interrupted
+the local workflow. The remote importing session can continue source work
+from these Git objects without access to that machine. No tool here certifies
+that a message through MiOS relay reaches a different remote-session transport.
+
+---
+
 <!-- AI-hint: Operator handoff prompt for remote agents and subagents installing the playable Tamagotchi sample on real MiOS Blade environments. -->
 <!-- AI-related: AGENTS.md, .agents/COORDINATION.md, tasks.jsonl, usr/share/doc/mios/tamagotchi-tui.md, task_3708 -->
 # Remote MiOS Blade agents/subagents: playable Tamagotchi handoff

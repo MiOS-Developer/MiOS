@@ -8,13 +8,14 @@
 # --mouse-rows: app-independent raw SGR translation and painted-cell regression
 # for status off/top/bottom (one, two and five lines) and single/split panes.
 # MIOS_MOUSE_ROWS_RECEIPT_DIR retains client/pane byte traces and JSON evidence.
-import os, pty, select, shutil, subprocess, sys, tempfile, time
+import atexit, os, pty, select, shutil, subprocess, sys, tempfile, time
 import fcntl, json, re, shlex, struct, termios, tty
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONF = Path(os.environ.get('MIOS_TMUX_CONF', ROOT / 'usr/share/mios/tmux/mios-keys.tmux.conf'))
 MENU_TEXT = b'Apps and TUIs'   # the root menu's first item ([[keybindings.tmux.menus]] id = "root")
+LAUNCHER_OPEN = 'launcher open --client #{q:client_name}'   # [keybindings.tmux.launcher] enabled: prefix + menu_key
 res = []
 
 
@@ -62,7 +63,10 @@ class Server:
     def __init__(self, tmp, name, conf, term='xterm-256color', clients=1):
         self.name = name
         self.env = {k: v for k, v in os.environ.items() if k not in ('TMUX', 'TMUX_PANE')}
-        self.env.update(TMUX_TMPDIR=tmp, TERM=term)
+        # MIOS_SKIP_MOTD: the panes stay plain shells. Otherwise the ambient login profile (zz-mios-motd) runs the
+        # installed workspace hook in every pane, which lays a whole MiOS workspace (observer, btop) into this
+        # private server and streams its redraws to the clients whose bytes the checks read.
+        self.env.update(TMUX_TMPDIR=tmp, TERM=term, MIOS_SKIP_MOTD='1')
         self.clients = [Client(self.env, ['tmux', '-L', name, '-f', str(conf), 'new-session', '-s', 'u1'])]
         for _ in range(clients - 1):
             self.clients.append(Client(self.env, ['tmux', '-L', name, 'attach', '-t', 'u1']))
@@ -74,6 +78,35 @@ class Server:
         """client_name per Client, matched by client_pid."""
         rows = dict(l.split(' ', 1) for l in self.t('list-clients', '-F', '#{client_pid} #{client_name}').stdout.split('\n') if l)
         return [rows.get(str(c.pid), '') for c in self.clients]
+
+    def launcher_clients(self, wait=0.0):
+        """Clients with a `miosd launcher pick` popup running under THIS server (the launcher route's target)."""
+        server = self.t('display', '-p', '#{pid}').stdout.strip()
+        end = time.time() + wait
+        while True:
+            kids = {}
+            for p in Path('/proc').iterdir():
+                if p.name.isdigit():
+                    try:
+                        kids.setdefault((p / 'stat').read_text().rsplit(') ', 1)[1].split()[1], []).append(p.name)
+                    except (OSError, IndexError):
+                        pass
+            tree, todo = set(), [server]
+            while todo:
+                for k in kids.get(todo.pop(), []):
+                    if k not in tree:
+                        tree.add(k); todo.append(k)
+            found = []
+            for pid in tree:
+                try:
+                    argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+                except OSError:
+                    continue
+                if argv[1:3] == [b'launcher', b'pick'] and b'--client' in argv[:-1]:
+                    found.append(argv[argv.index(b'--client') + 1].decode())
+            if found or time.time() >= end:
+                return sorted(found)
+            time.sleep(0.1)
 
     def zoomed(self):
         return self.t('display', '-p', '-t', 'u1', '#{window_zoomed_flag}').stdout.strip()
@@ -109,17 +142,34 @@ def main():
         check('two clients attached', na and nb and na != nb, (na, nb))
         keys = s.t('show', '-sv', '@mios-menu-keys').stdout.split()
         check('@mios-menu-keys publishes the route key words', keys == ['C-b', 'Space'], keys)
-        # The client-exact route: send-keys -c B -K <prefix> <menu_key>.
+        # The client-exact route: send-keys -c B -K <prefix> <menu_key>. With [keybindings.tmux.launcher] enabled the
+        # MiOS menu is the miosd launcher popup (display-popup -c CLIENT ... miosd launcher pick --client CLIENT),
+        # whose rows skip the root menu's own items; otherwise it is the root display-menu.
+        launcher = any(l.split()[2:4] == ['prefix', keys[-1]] and LAUNCHER_OPEN in l
+                       for l in s.t('list-keys', '-T', 'prefix').stdout.splitlines())
         a.take(0.3); b.take(0.3)
         r = s.t('send-keys', '-c', nb, '-K', *keys)
-        ob, oa = b.take(), a.take(0.3)
-        check('route: the MiOS menu opens on client B', r.returncode == 0 and MENU_TEXT in ob, r.stderr.strip())
-        check('route: client A shows no menu', MENU_TEXT not in oa, f'{len(oa)} bytes')
+        if launcher:
+            on = s.launcher_clients(wait=5.0)
+            ob, oa = b.take(), a.take(0.3)
+            check('route: the MiOS launcher opens on client B', r.returncode == 0 and on == [nb], f'{r.stderr.strip()} popups for {on}')
+            check('route: client A shows no menu', na not in on and MENU_TEXT not in oa, f'{len(oa)} bytes')
+        else:
+            ob, oa = b.take(), a.take(0.3)
+            check('route: the MiOS menu opens on client B', r.returncode == 0 and MENU_TEXT in ob, r.stderr.strip())
+            check('route: client A shows no menu', MENU_TEXT not in oa, f'{len(oa)} bytes')
         s.t('split-window', '-d', '-t', 'u1')   # zoom needs a second pane
         z0 = s.zoomed()
         s.t('send-keys', '-c', nb, '-K', 'P'); b.take(0.5)
         s.t('send-keys', '-c', nb, '-K', 'z'); b.take(0.5)
         check('route: B drives the menu (Pane > Zoom acts)', z0 == '0' and s.zoomed() == '1', f'{z0} -> {s.zoomed()}')
+        if launcher:
+            # A popup left open on B would keep drawing into B's stream and void the alias checks below.
+            end = time.time() + 3
+            while s.launcher_clients() and time.time() < end:
+                time.sleep(0.1)
+            left = s.launcher_clients()
+            check('route: the launcher popup closes once its row ran', not left, f'still open for {left}' if left else '')
         s.t('resize-pane', '-Z', '-t', 'u1')
         # Negative control (tmux-os verify defect 1): the alias cannot be aimed at B. tmux appends the CLI
         # arguments to the alias expansion, so `-c B` never reaches display-menu.
@@ -269,12 +319,15 @@ def painted_cells(data, width=80, height=24):
 
 
 def mouse_rows_main():
-    """Use private sockets only; retain positive and wrong-client-row traces."""
+    """Use private sockets only; retain positive and wrong-client-row traces in a
+    caller-supplied MIOS_MOUSE_ROWS_RECEIPT_DIR (the temporary default is removed at exit)."""
     if not shutil.which('tmux') or not CONF.is_file():
         print('FAIL mouse rows require tmux and the generated MiOS configuration')
         return 1
     receipt_dir = os.environ.get('MIOS_MOUSE_ROWS_RECEIPT_DIR')
     out = Path(receipt_dir or tempfile.mkdtemp(prefix='mios-mouse-row-receipts-'))
+    if not receipt_dir:
+        atexit.register(shutil.rmtree, out, True)
     out.mkdir(parents=True, exist_ok=True)
     receipt = {'tmux': subprocess.check_output(['tmux', '-V'], text=True).strip(),
                'configuration': str(CONF), 'physical_input_tested': False, 'cases': []}
@@ -367,7 +420,8 @@ def mouse_rows_main():
         receipt['error'] = repr(error)
     receipt.update(checks=len(res), passed_checks=sum(res), passed=bool(res) and all(res))
     (out / 'mios-mouse-rows.json').write_text(json.dumps(receipt, indent=2) + '\n')
-    print(f'{sum(res)}/{len(res)} mouse row checks passed; receipt {out}', flush=True)
+    note = out if receipt_dir else 'removed at exit; set MIOS_MOUSE_ROWS_RECEIPT_DIR=<dir> to keep it'
+    print(f'{sum(res)}/{len(res)} mouse row checks passed; receipt {note}', flush=True)
     return 0 if receipt['passed'] else 1
 
 

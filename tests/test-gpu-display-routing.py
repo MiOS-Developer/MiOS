@@ -94,9 +94,13 @@ def hermetic_root(ssot_text, extra=None):
 
 
 def run(binary, *args, env=None, check=True):
-    e = dict(CLEAN, HOME=tempfile.mkdtemp(prefix="mios-routing-home-"))
-    e.update(env or {})
-    r = subprocess.run([binary, *args], capture_output=True, text=True, env=e, timeout=120)
+    home = tempfile.mkdtemp(prefix="mios-routing-home-")
+    try:
+        e = dict(CLEAN, HOME=home)
+        e.update(env or {})
+        r = subprocess.run([binary, *args], capture_output=True, text=True, env=e, timeout=120)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
     if check and r.returncode != 0:
         raise AssertionError(f"{binary} {' '.join(args)} -> {r.returncode}\n{r.stdout}\n{r.stderr}")
     return r
@@ -171,8 +175,10 @@ class NestedRender(unittest.TestCase):
         bad = NEW_SSOT.replace('\nrender_node = "auto"', '\nrender_node = "/dev/dri/card0"', 1)
         root = hermetic_root(bad)
         self.addCleanup(shutil.rmtree, root, True)
+        rt = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, rt, True)
         r = run(GEN, "nested-session", "--root", root, "--no-devices", "--plan", check=False,
-                env={"XDG_RUNTIME_DIR": tempfile.mkdtemp(), "MIOS_DESKTOP_HARDWARE_PROFILE": "dgpu"})
+                env={"XDG_RUNTIME_DIR": rt, "MIOS_DESKTOP_HARDWARE_PROFILE": "dgpu"})
         self.assertNotEqual(r.returncode, 0)
 
     def test_negative_control_pre_change_nested_session_has_no_render_choice(self):
@@ -478,7 +484,9 @@ class HostedGreeter(unittest.TestCase):
         self.assertIn("not a character device", r.output())
 
     def test_negative_control_pre_change_launcher_never_hosts_the_text_greeter(self):
-        old = os.path.join(tempfile.mkdtemp(prefix="mios-old-launcher-"), "mios-greeter-session")
+        old_dir = tempfile.mkdtemp(prefix="mios-old-launcher-")
+        self.addCleanup(shutil.rmtree, old_dir, True)
+        old = os.path.join(old_dir, "mios-greeter-session")
         with open(old, "w") as f:
             f.write(git_show(BASE, "usr/libexec/mios/mios-greeter-session"))
         r = self.rig(launcher=old, env={"MIOS_GREETER_QS": "/nonexistent/qs"})

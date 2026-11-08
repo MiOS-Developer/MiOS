@@ -2041,14 +2041,31 @@ def _project_agent_clients(home=None):
     if text.startswith(legacy_header):
         text = text[len(legacy_header):]
     selected = tomllib.loads(text).get("model_provider") if text.strip() else None
-    text = re.sub(r"(?ms)^\[model_providers\.mios(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
-    text = re.sub(r"(?ms)^\[mcp_servers\.mios-control(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", "", text)
-    text = text.rstrip() + "\n\n[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"TMUX\", \"TMUX_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n"
+
+    def owned_table(text, header, block):
+        # Refresh an owned table (and drop its subtables) where it already stands; append
+        # it only when absent. Re-appending moved it behind tables the interaction
+        # projection added after it, such as the [agents] that provider-scoped values add
+        # once a legacy header has migrated to the mios provider, so every second launch
+        # rewrote the file.
+        placed = []
+
+        def place(match):
+            placed.append(match)
+            if len(placed) > 1:
+                return ""
+            region = match.group(0)
+            return block.rstrip("\n") + (region[len(region.rstrip()):] or "\n")
+
+        text = re.sub(r"(?ms)^\[" + re.escape(header) + r"(?:\.[^\]]+)?\]\r?\n.*?(?=^\[|\Z)", place, text)
+        return text if placed else text.rstrip() + "\n\n" + block
+
+    text = owned_table(text, "mcp_servers.mios-control", "[mcp_servers.mios-control]\ncommand = " + json.dumps(entry["command"]) + "\nargs = " + json.dumps(entry["args"]) + "\nenabled = true\nenv_vars = [\"MIOS_TMUX_UI_SOCKET\", \"MIOS_TMUX_UI_PANE\", \"TMUX\", \"TMUX_PANE\", \"MIOS_AGENT_RELAY_STATE\", \"MIOS_AI_ENDPOINT\", \"MIOS_AI_MODEL\"]\n")
     if selected is None:
         text = 'model_provider = "mios"\n' + text
         if "model" not in tomllib.loads(text):
             text = 'model = ' + json.dumps(model) + '\n' + text
-    text += '\n[model_providers.mios]\nname = "MiOS"\nbase_url = ' + json.dumps(endpoint) + '\nwire_api = "responses"\nrequires_openai_auth = false\n'
+    text = owned_table(text, "model_providers.mios", '[model_providers.mios]\nname = "MiOS"\nbase_url = ' + json.dumps(endpoint) + '\nwire_api = "responses"\nrequires_openai_auth = false\n')
     codex.parent.mkdir(parents=True, exist_ok=True)
     if not codex.exists() or codex.read_text() != text:
         mios_toml.write_atomic(str(codex), text)
@@ -2405,6 +2422,50 @@ def _agent_cli_main(args):
     return 0 if all(row["installed"] for row in rows) else 1
 
 
+def _unpack_vendored_bundles(vdir):
+    """Unpack only the vendored bundle members the tree does not carry yet.
+
+    A checkout tracks every vendored file unpacked as well as packed, and a
+    bundle can be older than the file it duplicates (bin.tar's VERSIONS.txt
+    predates the tracked wheel provenance block), so an existing file is never
+    overwritten: a bundle-only tree still gets its members, a full checkout is
+    left byte-identical. Each member is judged by the path it would really
+    write: the data filter strips a leading "/" (so "/x" names the in-tree
+    "x") and refuses members, links or targets that would leave the tree and
+    device nodes; the name is then normalised (so "d/../x" is judged as "x")
+    and presence is tested without following links, so neither form can
+    overwrite a tracked "x". A refused
+    member or an unreadable bundle is reported and skipped, never silently
+    aborting the members after it.
+    """
+    root = os.path.realpath(vdir)
+    for bundle in sorted(vdir.glob("*.tar")):
+        if not bundle.is_file():
+            continue
+        try:
+            with tarfile.open(bundle) as tf:
+                for member in tf.getmembers():
+                    try:
+                        safe = tarfile.data_filter(member, root)
+                    except tarfile.FilterError as error:
+                        print(f"[mios-mcp] vendored {bundle.name}: refused {member.name!r}: {error}",
+                              file=sys.stderr)
+                        continue
+                    target = os.path.normpath(os.path.join(root, safe.name))
+                    if target == root or os.path.commonpath([root, target]) != root:
+                        continue
+                    if os.path.lexists(target):
+                        continue
+                    try:
+                        tf.extract(safe.replace(name=os.path.relpath(target, root), deep=False),
+                                   root, filter="data")
+                    except (OSError, tarfile.TarError) as error:
+                        print(f"[mios-mcp] vendored {bundle.name}: {member.name!r} not unpacked: {error}",
+                              file=sys.stderr)
+        except (OSError, tarfile.TarError) as error:
+            print(f"[mios-mcp] vendored bundle {bundle.name} unreadable: {error}", file=sys.stderr)
+
+
 def _install_native(source_root, target_root):
     """One offline payload installer for bootc, dev, service and agent images.
 
@@ -2415,13 +2476,7 @@ def _install_native(source_root, target_root):
     target = Path(target_root).resolve()
     vdir = source / "usr/share/mios/vendored"
     if vdir.is_dir():
-        for bundle in sorted(vdir.glob("*.tar")):
-            if bundle.is_file():
-                try:
-                    with tarfile.open(bundle) as tf:
-                        tf.extractall(vdir)
-                except Exception:
-                    pass
+        _unpack_vendored_bundles(vdir)
     with (source / "usr/share/mios/mios.toml").open("rb") as handle:
         import tomllib
         config = tomllib.load(handle)["mcp"]

@@ -14,11 +14,11 @@
 #   MIOS_PACING_SO       candidate mios-pacing.so (default: the installed one, which then fails the positive pass)
 #   MIOS_PACING_OLD      plugin for the negative pass (default /usr/lib64/mios/mios-pacing.so; "" skips it)
 #   MIOS_VENDOR_TOML     SSOT the test copies (default: this tree's); MIOS_TOML is ignored
-#   MIOS_WINDOW_FPS_OUT  directory for the screenshots (default: a temp dir)
+#   MIOS_WINDOW_FPS_OUT  directory for the screenshots, kept (default: a temp dir removed at exit)
 # Known Hypr3D limit (not the meter's): a waylandsink video subsurface stops presenting when the room opens (with the
 # installed plugin too), so the room is measured with root-surface clients (the paced terminal and vkcube).
 # The primary compositor is never addressed; one nested session at a time, its Hyprland SIGTERMed at the end.
-import json, os, re, shutil, signal, subprocess, sys, tempfile, time
+import atexit, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,13 @@ SSOT = os.environ.get('MIOS_VENDOR_TOML', str(ROOT / 'usr/share/mios/mios.toml')
 SHELL = str(ROOT / 'usr/share/mios/quickshell/Nested.qml')
 CAND = os.environ.get('MIOS_PACING_SO', '/usr/lib64/mios/mios-pacing.so')
 OLD = os.environ.get('MIOS_PACING_OLD', '/usr/lib64/mios/mios-pacing.so')
+# Evidence is opt-in: a caller-supplied MIOS_WINDOW_FPS_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_WINDOW_FPS_OUT'))
 OUT = Path(os.environ.get('MIOS_WINDOW_FPS_OUT') or tempfile.mkdtemp(prefix='mios-window-fps-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_WINDOW_FPS_OUT=<dir> to keep it'
 # Redraws one terminal line at absolute deadlines 1/rate apart (no drift); bounded to two minutes.
 PRINTER = ('import sys,time\nr=float(sys.argv[1]);t=time.monotonic()\nfor i in range(int(r*120)):\n'
            ' sys.stdout.write("\\r%06d"%i);sys.stdout.flush();t+=1/r;time.sleep(max(0,t-time.monotonic()))\n')
@@ -293,7 +299,7 @@ def main():
     after = json.loads(sh(['hyprctl', '-j', 'instances']).stdout or '[]')
     primary = [i.get('pid') for i in before if i.get('instance') == os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')]
     check('primary compositor untouched (same pid)', primary and primary == [i.get('pid') for i in after if i.get('instance') == os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')], primary)
-    print(f'screenshots: {OUT}')
+    print(f'screenshots: {OUT_NOTE}')
     print(f'{sum(res)}/{len(res)} passed')
     return 0 if all(res) else 1
 

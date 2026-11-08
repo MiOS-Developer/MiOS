@@ -382,6 +382,42 @@ mod render_desktop {
             );
         }
 
+        // 3b. Negative control: a hand edit that makes Zen the http(s) default in the projected
+        // etc/xdg/mimeapps.list ([desktop.default_applications]) is drift, not a new default.
+        let mimeapps = root.join("etc/xdg/mimeapps.list");
+        {
+            let _restorer = Restorer::new(&mimeapps);
+            let original = fs::read_to_string(&mimeapps).expect("Read mimeapps.list");
+            assert!(
+                original.contains("\nx-scheme-handler/https=mios-portal.desktop;\n"),
+                "Expected MiOS-Portal as the projected https default:\n{original}"
+            );
+            let mutated = original.replace(
+                "x-scheme-handler/https=mios-portal.desktop;",
+                "x-scheme-handler/https=app.zen_browser.zen.desktop;",
+            );
+            fs::write(&mimeapps, &mutated).expect("Write mutated mimeapps.list");
+
+            let output_neg = Command::new(bin())
+                .args([
+                    "render-desktop",
+                    "--root",
+                    &root.to_string_lossy(),
+                    "--check",
+                ])
+                .output()
+                .expect("Failed to execute mios-gen on mutated mimeapps.list");
+            let stderr_neg = String::from_utf8_lossy(&output_neg.stderr);
+            assert!(
+                !output_neg.status.success(),
+                "Expected failure on a Zen-default mimeapps.list, got success:\n{stderr_neg}"
+            );
+            assert!(
+                stderr_neg.contains("etc/xdg/mimeapps.list content drifted"),
+                "Expected mimeapps.list drift in stderr, got:\n{stderr_neg}"
+            );
+        }
+
         // 4. Negative control: inject unmanaged .desktop file
         let unmanaged_desktop =
             root.join("usr/share/applications/mios-unmanaged-rogue-test.desktop");

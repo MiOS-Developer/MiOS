@@ -23,7 +23,10 @@ mount -t tmpfs tmpfs /tmp
 mkdir -p "$T"/{bin,http,git,root/usr/share/mios,sbom,work,libexec,fonts,vendored}
 mount --bind "$T/libexec" /usr/libexec/mios
 mount --bind "$T/fonts" /usr/share/fonts
-mount --bind "$T/vendored" /usr/share/mios/vendored
+# Hidden, not written: an image without vendored payloads (the CI container) already has nothing to fall back on.
+if [[ -d /usr/share/mios/vendored ]]; then
+    mount --bind "$T/vendored" /usr/share/mios/vendored
+fi
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 HOME="$T/home"; mkdir -p "$HOME"

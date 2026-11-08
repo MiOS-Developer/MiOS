@@ -278,7 +278,13 @@ class TestQuickshellNeverOpensVfioInputs(unittest.TestCase):
             resolver = f"{tmp}/toml-get"
             write_file(resolver, "#!/bin/sh\ncat <<'EOF'\n{\"interval_ms\": 500}\nEOF\n", 0o755)
 
-            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MIOS_TOML_GET=resolver,
+            # A private 0700 runtime directory for the instance and its ipc client: without $XDG_RUNTIME_DIR (a CI
+            # container) Quickshell falls back to a literal "/run/user/$1" and its ipc client prints the QString::arg
+            # warning on STDOUT ahead of the reply (root) or crashes (non-root); the caller's own would put this
+            # fixture beside the live desktop's instances.
+            runtime = os.path.join(tmp, "runtime")
+            os.makedirs(runtime, mode=0o700)
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", MIOS_TOML_GET=resolver, XDG_RUNTIME_DIR=runtime,
                        MIOS_SYSMON_ROOT=root, MIOS_THEME_BRIDGE=f"{tmp}/no-bridge.json")
 
             log_path = f"{tmp}/qs.log"
@@ -287,7 +293,7 @@ class TestQuickshellNeverOpensVfioInputs(unittest.TestCase):
                 try:
                     time.sleep(3.0)
                     res = subprocess.run([QS, "ipc", "--path", f"{qs_dir}/shell.qml", "call", "sysmon", "state"],
-                                         capture_output=True, text=True, timeout=10)
+                                         env=env, capture_output=True, text=True, timeout=10)
                     state = json.loads(res.stdout)
 
                     # Drain inotify events

@@ -15,7 +15,7 @@
 # AI-related: usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch, usr/share/mios/mios.toml
 #             [desktop.hyprland.compositor] [desktop.nested].compositor, tools/native/mios-gen/src/hyprland_build.rs,
 #             tools/native/mios-gen/src/nested_session.rs
-import argparse, json, os, signal, subprocess, sys, tempfile, time
+import argparse, atexit, json, os, shutil, signal, subprocess, sys, tempfile, time
 
 HARNESS = r'''
 import QtQuick
@@ -164,8 +164,12 @@ def main():
     ap.add_argument("--seat", required=True)
     ap.add_argument("--scenario", choices=["orphan", "closed", "both"], default="both")
     ap.add_argument("--expect", choices=["crash", "survive", "report"], default="report")
-    ap.add_argument("--logdir", default=tempfile.mkdtemp(prefix="capguard-"))
+    ap.add_argument("--logdir", help="keep the harness and its logs here (default: a temporary "
+                    "directory removed at exit)")
     a = ap.parse_args()
+    if not a.logdir:
+        a.logdir = tempfile.mkdtemp(prefix="capguard-")
+        atexit.register(shutil.rmtree, a.logdir, True)
     n = Nest(session(a.seat))
     os.makedirs(a.logdir, exist_ok=True)
     qml = os.path.join(a.logdir, "harness.qml")
@@ -189,4 +193,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # The unit tier runs every registered suite with no arguments and no compositor. This reproduction needs a nested
+    # Hyprland the caller owns (never the operator's), named by --seat, so like every other live suite it is opt-in:
+    # MIOS_LIVE_NESTED=1 or an explicit argument runs it (a missing --seat then fails), otherwise it reports the skip.
+    if len(sys.argv) == 1 and os.environ.get("MIOS_LIVE_NESTED") != "1":
+        print("skip: live nested capture reproduction (set MIOS_LIVE_NESTED=1 and pass --seat <owned nested seat>)")
+        sys.exit(0)
     main()

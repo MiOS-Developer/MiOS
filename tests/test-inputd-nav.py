@@ -131,6 +131,105 @@ class Grammar(Base):
         self.assertEqual(self.actions('terminal', tap(SOUTH)), ['key:ENTER'], 'per-key table merge keeps terminal on nav')
 
 
+class MonProfiles(Base):
+    """Exercise the shipped G2 policy with real, non-executing native replay."""
+
+    def test_mon_default_policy_and_all_four_context_profiles(self):
+        checked = self.run_bin('check')
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertEqual(json.loads(checked.stdout)['nav_apps'], ['mon'])
+        for context, prefix in [('terminal', 'mon'), ('console', 'mon_console')]:
+            for tmux in (False, True):
+                with self.subTest(context=context, tmux=tmux):
+                    result = self.replay(context, tap(SOUTH) + tap(EAST), app='mon',
+                                         **({'tmux_client': '/dev/pts/fixture'} if tmux else {}))
+                    self.assertEqual(result['profile'], prefix + ('_tmux' if tmux else '_plain'))
+                    self.assertTrue(result['camera'])
+                    self.assertEqual(result['output']['actions'], ['key:ENTER', 'key:ESC'])
+                    self.assertFalse(result['executed'])
+
+    def test_mon_sticks_camera_and_triggers_never_move_the_pet(self):
+        for context in ('terminal', 'console'):
+            with self.subTest(context=context):
+                script = ab(0, -32768) + ab(0, 0) + ab(3, 32767) + ab(3, 0) + tap(LT) + tap(RT) + tap(L3) + tap(R3)
+                result = self.replay(context, script, app='mon')
+                self.assertEqual(result['output']['actions'],
+                                 ['key:ALT+4', 'key:ALT+9', 'key:ALT+MINUS',
+                                  'key:ALT+EQUAL', 'key:ALT+z', 'key:ALT+5'])
+                self.assertFalse(result['executed'])
+
+    def test_mon_defocus_flushes_held_directions_and_rearms_after_release(self):
+        result = self.replay('terminal', ab(0, -32768) + wait(200) +
+                             [dict(app=None)] + wait(1000) + ab(0, 0) +
+                             [dict(app='mon')] + ab(0, -32768), app='mon')
+        self.assertEqual(result['output']['actions'], ['key:ALT+4'] * 3,
+                         'initial press, one repeat, then a fresh deflection after refocus')
+        self.assertEqual(result['profile'], 'mon_plain')
+        for context in ('desktop-2d', 'game', 'vm-passthrough', 'shell'):
+            with self.subTest(context=context):
+                result = self.replay(context, [], app='mon')
+                self.assertFalse(result['camera'], 'Mon cannot refine this context')
+                self.assertFalse((result['profile'] or '').startswith('mon'))
+
+    @unittest.skipUnless(os.environ.get('MIOS_GATE_BIN'), 'requires the compatible native gate')
+    def test_mon_malformed_app_policy_is_rejected_by_the_gate(self):
+        vendor = self.root / 'usr/share/mios/mios.toml'
+        original = vendor.read_text()
+        lua = self.root / 'usr/share/mios/hyprland/hyprland.lua'
+        lua.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / 'usr/share/mios/hyprland/hyprland.lua', lua)
+        def audit():
+            return subprocess.run([os.environ['MIOS_GATE_BIN'], 'keybind-collisions',
+                '--root', str(self.root), '--format', 'json'], text=True, capture_output=True,
+                env=self.env, timeout=20)
+        good = audit()
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        try:
+            for old, new, why in [
+                ('exe = ["/usr/bin/mios-tamagotchi"]', 'exe = ["sample"]', 'absolute paths'),
+                ('contexts = { terminal = "mon", console = "mon_console" }',
+                 'contexts = { terminal = "missing", console = "mon_console" }', 'missing'),
+                ('[keybindings.global.controller.nav.mon_tmux]',
+                 '[keybindings.global.controller.nav.mon_tmux]\nBTN_START = "key:ENTER"', 'capture contract'),
+            ]:
+                with self.subTest(why=why):
+                    self.assertEqual(original.count(old), 1)
+                    vendor.write_text(original.replace(old, new))
+                    bad = audit()
+                    self.assertNotEqual(bad.returncode, 0)
+                    result = json.loads(bad.stdout)
+                    self.assertNotEqual(result['status'], 'could_not_run', result)
+                    self.assertTrue(any(why in row for row in result['findings']), result)
+        finally:
+            vendor.write_text(original)
+
+    def test_mon_release_only_and_explicit_repeat_buttons_do_not_act(self):
+        result = self.replay('terminal', [key(SOUTH, 0), key(EAST, 0),
+                             key(L3, 0), key(R3, 0), key(LT, 0), key(RT, 0),
+                             key(SOUTH, 2), key(EAST, 2)], app='mon')
+        self.assertEqual(result['output']['actions'], [])
+
+    def test_mon_user_registration_and_malformed_policy_fail_closed(self):
+        self.host_layer('[keybindings.global.controller.nav.apps.mon]\n'
+                        'user_exe = ["/home/fixture/.local/bin/mios-tamagotchi-sample"]\n')
+        good = self.run_bin('check')
+        self.assertEqual(good.returncode, 0, good.stderr)
+        for body, why in [('user_exe = ["sample"]', 'absolute path'),
+                          ('contexts = { terminal = "missing" }', 'missing'),
+                          ('camera = false', 'only a camera app')]:
+            with self.subTest(body=body):
+                self.host_layer('[keybindings.global.controller.nav.apps.mon]\n' + body + '\n')
+                bad = self.run_bin('check')
+                self.assertEqual(bad.returncode, 0, bad.stderr)
+                checked = json.loads(bad.stdout)
+                self.assertEqual(checked['nav_apps'], [], 'malformed apps never select a profile')
+                self.assertIn(why, checked['nav_app_error'])
+                fallback = self.replay('terminal', tap(SOUTH), app='mon')
+                self.assertFalse(fallback['camera'])
+                self.assertEqual(fallback['profile'], 'terminal_plain')
+                self.assertEqual(fallback['output']['actions'], ['key:ENTER'])
+
+
 class Timing(Base):
     def test_c08_tap_hold_and_no_repeat_of_holds(self):
         self.assertEqual(self.actions('desktop-2d', tap(SOUTH, 100)), ['key:ENTER'])

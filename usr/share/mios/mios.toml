@@ -107,7 +107,7 @@ unconsumed = [
 # ----------------------------------------------------------------------------
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
-max_drift = 55
+max_drift = 52
 max_undeclared = 161
 max_undeclared_user = 19
 strict_no_write = [
@@ -2731,6 +2731,7 @@ surfaces = [
   { generator = "usr/libexec/mios/mios-manual", check = "check_comment_landing", output = "usr/share/doc/mios/ (harvested passages + mios-src anchors)" },
   { generator = "usr/libexec/mios/mios-manual", check = "check_docs_ratchet_monotone", output = "usr/share/mios/reference/doc-ratchet-floor.tsv" },
   { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "usr/share/applications/*.desktop" },
+  { generator = "tools/native/mios-gen/src/render.rs", check = "check_desktop_launchers", output = "etc/xdg/mimeapps.list (from [desktop.default_applications])" },
   { generator = "tools/native/mios-gen/src/ai.rs", check = "check_ai_manifests_fresh", output = "automation/manifest.json" },
   { generator = "tools/native/mios-gen/src/ai_metadata.rs", check = "check_ai_metadata_fresh", output = "usr/share/mios/ai/v1/metadata.json" },
   { generator = "tools/native/mios-unit-gen/src/lib.rs", check = "check_blade_dropins", output = "usr/share/mios/dropins/" },
@@ -2898,7 +2899,6 @@ keys = [
 [security.nohc_allowlist]
 # SSOT Allowlist for legitimate exceptions to the ports/IPs hardcode check (task_126).
 exempt_files = [
-    "install-mios-agents\\.sh$",
     "usr/lib/mios/agent-pipe/server\\.py$",
     "usr/lib/mios/gateway-agent/.*\\.py$",
     "test_.*\\.py$",
@@ -4997,6 +4997,8 @@ RS_DOWN = "hypr:movewindow down"
 enabled = true
 flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
 flick_off = 0.3                     # the stick must fall below this before it can flick again
+app_poll_ms = 250                   # recheck the verified foreground executable without blocking input
+app_query_timeout_ms = 150          # a failed/late query restores the ordinary context profile
 # tmux servers (-L names) whose clients select a *_tmux profile; the verbs reach exactly that client and server.
 tmux_sockets = ["mios-human", "mios-nested"]
 
@@ -5148,6 +5150,87 @@ BTN_MODE = "none"
 BTN_THUMBL = "none"
 BTN_THUMBR = "none"
 TOGGLE_CHORD = "mios:graphical-vt"
+
+# Focused MiOS-Mon uses the verified foreground executable, not a title or window class.
+# User-local samples register their exact absolute user_exe paths in the user TOML tier.
+# Sticks and triggers operate the HUD/camera; movement and pet simulation stay autonomous.
+# The app profiles inherit menu, capture/release, cursor and system-layer ownership.
+[keybindings.global.controller.nav.apps.mon]
+exe = ["/usr/bin/mios-tamagotchi"]
+camera = true
+contexts = { terminal = "mon", console = "mon_console" }
+
+[keybindings.global.controller.nav.apps.mon.repeat]
+LS_LEFT = [200, 70]
+LS_RIGHT = [200, 70]
+LS_UP = [200, 70]
+LS_DOWN = [200, 70]
+RS_LEFT = [200, 70]
+RS_RIGHT = [200, 70]
+RS_UP = [200, 70]
+RS_DOWN = [200, 70]
+BTN_TL2 = [250, 90]
+BTN_TR2 = [250, 90]
+
+[keybindings.global.controller.nav.mon_tmux]
+inherits = "terminal_tmux"
+LS_LEFT = "key:ALT+4"
+LS_RIGHT = "key:ALT+6"
+LS_UP = "key:ALT+8"
+LS_DOWN = "key:ALT+2"
+RS_LEFT = "key:ALT+7"
+RS_RIGHT = "key:ALT+9"
+RS_UP = "key:ALT+3"
+RS_DOWN = "key:ALT+1"
+BTN_TL2 = "key:ALT+MINUS"
+BTN_TR2 = "key:ALT+EQUAL"
+BTN_THUMBL = "key:ALT+z"
+BTN_THUMBR = "key:ALT+5"
+
+[keybindings.global.controller.nav.mon_plain]
+inherits = "terminal_plain"
+LS_LEFT = "key:ALT+4"
+LS_RIGHT = "key:ALT+6"
+LS_UP = "key:ALT+8"
+LS_DOWN = "key:ALT+2"
+RS_LEFT = "key:ALT+7"
+RS_RIGHT = "key:ALT+9"
+RS_UP = "key:ALT+3"
+RS_DOWN = "key:ALT+1"
+BTN_TL2 = "key:ALT+MINUS"
+BTN_TR2 = "key:ALT+EQUAL"
+BTN_THUMBL = "key:ALT+z"
+BTN_THUMBR = "key:ALT+5"
+
+[keybindings.global.controller.nav.mon_console_tmux]
+inherits = "console_tmux"
+LS_LEFT = "key:ALT+4"
+LS_RIGHT = "key:ALT+6"
+LS_UP = "key:ALT+8"
+LS_DOWN = "key:ALT+2"
+RS_LEFT = "key:ALT+7"
+RS_RIGHT = "key:ALT+9"
+RS_UP = "key:ALT+3"
+RS_DOWN = "key:ALT+1"
+BTN_TL2 = "key:ALT+MINUS"
+BTN_TR2 = "key:ALT+EQUAL"
+BTN_THUMBL = "key:ALT+z"
+BTN_THUMBR = "key:ALT+5"
+
+[keybindings.global.controller.nav.mon_console_plain]
+inherits = "console_plain"
+LS_LEFT = "key:ALT+4"
+LS_RIGHT = "key:ALT+6"
+LS_UP = "key:ALT+8"
+LS_DOWN = "key:ALT+2"
+RS_LEFT = "key:ALT+7"
+RS_RIGHT = "key:ALT+9"
+RS_UP = "key:ALT+3"
+RS_DOWN = "key:ALT+1"
+BTN_TL2 = "key:ALT+MINUS"
+BTN_TR2 = "key:ALT+EQUAL"
+BTN_THUMBL = "key:ALT+z"
+BTN_THUMBR = "key:ALT+5"
 
 # I3 (C-18): mios-terminal runs a local VT tmux client under `mios-inputd console-bridge`, a pty wrapper that owns the
 # mouse modes the client asks for: while tmux has mouse mode on, pointer events reach it as SGR 1006 reports (the VT
@@ -5619,11 +5702,12 @@ cmd        = "mios-open-url {url}{mode?--mode}{browser?--browser}{private?--priv
   desc    = "Reuse the already-running browser instance (open a TAB) rather than cold-launching a new one. false = force a new instance/window."
 
 [browser.family]
-firefox  = ["firefox", "mozilla", "librewolf", "waterfox", "zen", "floorp"]
+firefox  = ["firefox", "mozilla", "librewolf", "waterfox", "zen", "floorp", "mios-portal"]
 chromium = ["chrome", "chromium", "brave", "edge", "vivaldi", "opera"]
 epiphany = ["epiphany", "gnome.web", "gnome.epiphany"]
 
-# Zen is the native MiOS browser on every platform (Linux: Flathub; Windows: [browser_ai]).
+# Zen is a secondary MiOS browser on Linux (Flathub) and the Windows browser ([browser_ai]); the
+# Linux default browser is MiOS-Portal ([aliases].browser, [desktop.portal.gecko]).
 # mios-theme-render --web projects into each Gecko profile under profile_roots:
 # chrome/userContent.css (dotfiles "web"), chrome/userChrome.css (dotfiles "gecko-chrome")
 # and a MiOS-managed user.js block from prefs ("name|type|value", type = bool|string|int).
@@ -7784,12 +7868,14 @@ ask_clarify_judge   = false
 # Gated build catalog authority (V3 Build Catalog): when true, the clean build
 # container materializes package sets and phase order from the seeded DB.
 build_catalog_authoritative = false
-# #62 out-of-process policy arbiter: when set, a high-risk action (tier >=
-# hitl_threshold) is POSTed to this URL ({verb,tier,args}) for an {allow,reason}
-# verdict, on top of the in-process gate above. Empty (default) -> no arbiter, no
-# overhead. hitl_arbiter_fail = open (default; a down/erroring arbiter proceeds)
-# or closed (fail-safe-deny).
-hitl_arbiter_url    = "http://127.0.0.1:8760"
+# #62 out-of-process policy arbiter: a high-risk action (tier >= hitl_threshold)
+# is POSTed to this URL ({verb,tier,args}) for an {allow,reason} verdict, on top
+# of the in-process gate above. Empty (default) -> the local mios-policy-arbiter
+# at http://127.0.0.1:[ports].arbiter, so an /etc/mios overlay moves it by moving
+# the port; set a full URL only to point at an arbiter elsewhere.
+# hitl_arbiter_fail = open (a down/erroring arbiter proceeds) or closed
+# (default; fail-safe-deny).
+hitl_arbiter_url    = ""
 hitl_arbiter_fail   = "closed"
 pdp_audit_allow     = false
 tokenizer_backend   = "tiktoken"
@@ -7951,7 +8037,7 @@ flatpaks      = [
     # carry Nautilus.
     "gnome-nightly:org.gnome.Nautilus.Devel",
     "fedora:org.gnome.Epiphany",                       # 50.x current (vs. potentially-stale Flathub)
-    "flathub:app.zen_browser.zen",                     # Zen -- the native MiOS browser ([browser.zen])
+    "flathub:app.zen_browser.zen",                     # Zen -- secondary browser ([browser.zen])
     "com.github.tchx84.Flatseal",                      # Flatpak permissions UI
     "com.mattjakeman.ExtensionManager",                # GNOME shell extensions
     "com.google.ChromeDev",                           # secondary browser and agent CDP target
@@ -7975,9 +8061,9 @@ WEBKIT_DISABLE_DMABUF_RENDERER           = 1
 id          = "app.zen_browser.zen"
 remote      = "flathub"
 role        = "browser"
-default     = true
+default     = false
 desktop     = "mios-zen"
-description = "Zen -- the native MiOS browser on every platform; SSOT web/chrome CSS and prefs from [browser.zen] via mios-theme-render --web; launched through mios-flatpak-run."
+description = "Zen -- secondary MiOS flatpak browser; SSOT web/chrome CSS and prefs from [browser.zen] via mios-theme-render --web; launched through mios-flatpak-run."
 
 [[desktop.apps]]
 id          = "org.gnome.Nautilus.Devel"
@@ -10472,11 +10558,12 @@ piper              = 8179     # mios-piper: Piper streaming TTS engine (audio ba
 stale_fallbacks = []
 
 # Allocated ports nothing references yet. SHRINK-ONLY (gate: check_ports_bound).
-# Per-key reasons: TASKS.jsonl task_261. chrome_cdp_worker's only binder is an
-# `Environment=` literal in a shipped .service -- systemd does not expand ${} in
-# Environment=, and the [units] block that WOULD render the placeholder is inert
-# until task_267 makes mios-unit-gen faithful.
-unbound = ["chrome_cdp_worker", "ai_legacy", "field_live_chat"]
+# Per-key reasons: TASKS.jsonl task_261. ai_legacy (mios-ai-legacy-forward.service
+# ExecStart) and chrome_cdp_worker (hermes-worker.service) left once their units
+# named MIOS_PORTS_<KEY>. chrome_cdp_worker's binder is an `Environment=` line,
+# which systemd does not expand; that is a binding-correctness question (shared
+# with llm_heavy in the same unit) this register does not measure.
+unbound = ["field_live_chat"]
 
 [ports.categories.edge]
 base    = 8050
@@ -10618,11 +10705,16 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # hermes MIOS_HERMES_ENDPOINT, crawl4ai MIOS_CRAWL_SERVICE_URL, otelcol_otlp
 # [observability].otel_endpoint, llm_igpu [nodes.local-igpu].endpoint. headscale
 # is the mesh control API and rpc_igpu a llama.cpp RPC socket: neither is a page.
+# devpod_agent is the DevPod agent transport, which miosd rde reads from
+# [ports].devpod_agent and forwards; igpu and win_llm_light are the Windows
+# host's iGPU Vulkan llama.cpp listener and llama-swap proxy. All three serve an
+# API, not a page.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
   "cockpit_internal", "crawl4ai", "crawl4ai_internal", "field_live_chat", "firecrawl_internal",
   "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
+  "devpod_agent", "igpu", "win_llm_light",
   "firecrawl",
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
@@ -10966,9 +11058,9 @@ launcher_socket = "/run/mios-launcher/launcher.sock"
 [[desktop.app_types]]
 type            = "browser"
 os_pref         = "linux-first"
-default         = "zen"
+default         = "mios-portal"
 windows_default = "zen"
-description     = "Web browser -- Linux flatpak by default; Zen (the Windows default browser) on Windows / 'my browser' intent."
+description     = "Web browser -- MiOS-Portal (the native Gecko build, [desktop.portal.gecko]) on Linux; Zen (the Windows default browser) on Windows / 'my browser' intent."
 [[desktop.app_types]]
 type        = "files"
 os_pref     = "linux-first"
@@ -11007,7 +11099,7 @@ description = "System / OS apps -- assume either side; agent discerns from conte
 # ----------------------------------------------------------------------------
 [mios-find.aliases]
 # Canonical Linux/freedesktop role -> app id. ONE word per role.
-web        = "zen"
+web        = "mios-portal"
 files      = "nautilus"
 terminal   = "ptyxis"
 editor     = "gedit"
@@ -11410,9 +11502,11 @@ core_subnet = "10.89.0.0/24"
 core_gateway = "10.89.0.1"
 
 [aliases]
-# browser: the ONE default-browser key (mios-browser, mios-open-url). The
-# freedesktop role -> app ids (web, files, terminal) are [mios-find.aliases].
-browser         = "zen"
+# browser: the ONE default-browser key (mios-browser, mios-open-url, mios-launch). It names
+# MiOS-Portal's launcher ([desktop.portal].launcher), a native app, so no flatpak in
+# [[desktop.apps]] carries a browser default. The freedesktop role -> app ids (web,
+# files, terminal) are [mios-find.aliases].
+browser         = "mios-portal"
 editor          = "code"
 
 [colors]
@@ -12160,7 +12254,7 @@ power_interval_s    = 1                                     # CPU package watts:
 # (EdgeReveal) and hides again afterwards. Material: the island's (Glass.qml fill over the hyprglass mios preset on the
 # glass-covered "mios-notifications" layer); corner radius: the global window rounding. Never anywhere else on screen.
 [desktop.notifications]
-position            = "top-center"   # placement: top-centered horizontally below the TopBar/HUD
+position            = "island"   # the only placement: out of the status island (no island on the output: its place, top centre)
 timeout_ms          = 5000       # expiry when the app leaves it to the server (expire_timeout -1); 0 from the app = never; critical/resident stay
 max_visible         = 4          # cards in the stack; a new one past this expires the oldest
 width_px            = 0          # card width (logical px); 0 = [theme.shell] notification_width_px; clamped to the output minus the edge margins
@@ -14145,7 +14239,7 @@ os_priority = "both"
 [[desktop.app_types]]
 type = "browser"
 os_priority = "linux-first"
-linux_default = "mios-zen"
+linux_default = "mios-portal"
 windows_default = "zen"
 
 [[desktop.app_types]]
@@ -15934,6 +16028,7 @@ miosd                          = ["service-plane"]   # supervises the AI plane
 mios-webtools-firecrawl-api    = ["service-plane"]
 mios-webtools-firecrawl-worker = ["service-plane"]
 mios-webtools-redis            = ["service-plane"]
+mios-enforcer                  = ["service-plane"]   # Tetragon egress quarantine of the agent namespaces, which only a blade runs
 # Native (non-Quadlet) long-running units. Same rule: a seat offloads them.
 hermes-worker                  = ["service-plane"]
 mios-searxng                   = ["service-plane"]
@@ -15950,6 +16045,9 @@ mios-policy-arbiter            = ["service-plane"]
 mios-attest        = ["controller", "service-plane"]   # TPM-quote verifier + onboarding: controller blades only
 mios-registry                  = ["service-plane"]   # local OCI registry
 mios-thermald                  = ["service-plane"]   # CPU/GPU power caps, like mios-powerd: the blade owns the hardware
+mios-power-sampler             = ["service-plane"]   # root RAPL sampler, like mios-thermald: the blade owns the hardware
+ventulusd                      = ["service-plane"]   # fan control (alias mios-fan-control), like mios-thermald: the blade owns the hardware
+mios-fhs-sync                  = ["service-plane"]   # FHS overlay + host-guest topology sync, like mios-thermald: the blade owns the hardware
 mios-wol-proxy                 = ["service-plane"]   # wake-on-LAN relay for the fleet
 # Units that activate a gated unit and cannot work without it. See ADR-0016 D4.
 mios-embed-backfill            = ["service-plane"]
@@ -17049,7 +17147,7 @@ bands = [
 python = "python3"
 shellcheck = "shellcheck"
 shell_severity = "error"
-shell_directories = ["", "automation", "automation/tests", "automation/support", "automation/lib", "tools", "tools/lib", "installation", "tests", "usr/lib/mios", "usr/libexec/mios"]
+shell_directories = ["", "automation", "automation/tests", "automation/support", "automation/lib", "tools", "tools/lib", "installation", "tests", "usr/lib/mios", "usr/libexec/mios", "usr/lib/greenboot/check/required.d", "usr/lib/greenboot/check/wanted.d"]
 shell_exclude = ["automation/lib/globals.sh"]
 # Files changed since the first ratchet base that resolves (MIOS_RATCHET_BASE wins) are
 # also held to this severity: new shell meets the stricter bar, the backlog does not block.
@@ -17727,19 +17825,23 @@ trailing_comments = [
 ]
 
 [desktop.launchers.mios-portal]
-exec_cmd = "/usr/bin/mios-portal"
+# %u: the default browser receives the URL it is opened for (xdg-open, gio open, the portal's OpenURI).
+exec_cmd = "/usr/bin/mios-portal %u"
 title = "MiOS Portal"
-generic_name = "Agent Portal"
-comment = "The MiOS Portal (agents, services, settings) in a native glass window"
+generic_name = "Web Browser"
+comment = "The MiOS web browser, with the agent Portal, services and settings, in a native glass window"
 icon = "/usr/share/mios/portal/icon-192.png"
-categories = "Network;System;Utility;"
-keywords = "mios;portal;agent;ai;services;dashboard;"
+categories = "Network;WebBrowser;System;Utility;"
+keywords = "mios;portal;agent;ai;services;dashboard;web;browser;internet;"
 startup_wm_class = "mios-portal"
+# Web content only (http, https, HTML, XHTML), the [desktop.default_applications] scope. Feeds, XML,
+# PDF and mailto stay with mios-zen; another scheme needs proof that /usr/bin/mios-portal serves it.
+mime_type = "text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;"
 port_key = "agent_pipe"
 scheme = "http"
 path = "/"
-ai_hint = "Desktop entry for the native MiOS Portal window. Launches /usr/bin/mios-portal, which shows the agent-pipe Portal (http://localhost:{port}/) in a transparent QtWebEngine window with Hyprglass behind the page; the window class is startup_wm_class, the size and glass come from [desktop.portal]."
-ai_related = "/usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, mios.toml [desktop.portal], http://localhost:{port}/"
+ai_hint = "Desktop entry for MiOS-Portal, the default MiOS web browser. Launches /usr/bin/mios-portal, which runs the native Gecko build ([desktop.portal.gecko]) on the URL it is given, or on the agent-pipe Portal (http://localhost:{port}/) without one, and falls back to the QtWebEngine Host.qml window when the Gecko build is absent. It is the default handler for web content only, http, https, HTML and XHTML (its mime_type, projected to etc/xdg/mimeapps.list by [desktop.default_applications]); mailto, PDF and feeds keep their own handlers. The window class is startup_wm_class, the size and glass come from [desktop.portal]."
+ai_related = "/usr/bin/mios-portal, /usr/share/mios/portal/Host.qml, /etc/xdg/mimeapps.list, mios.toml [desktop.portal], [desktop.default_applications], http://localhost:{port}/"
 
 [desktop.launchers.mios-xbox]
 exec_cmd = "/usr/libexec/mios/vfio/setup-looking-glass.py --launch"
@@ -17810,18 +17912,33 @@ flatpak_app_id = "app.zen_browser.zen"
 exec_cmd = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh --file-forwarding app.zen_browser.zen @@u %u @@"
 title = "Zen Browser"
 generic_name = "Web Browser"
-comment = "MiOS web browser with SSOT theme and window glass"
+comment = "Secondary MiOS web browser with SSOT theme and window glass"
 icon = "app.zen_browser.zen"
 categories = "Network;WebBrowser;"
 keywords = "web;browser;internet;zen;"
 startup_wm_class = "zen"
-mime_type = "text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;"
+# Only its non-web types (XML, feeds, PDF, mailto), which it declared before MiOS-Portal; the web
+# types are MiOS-Portal's. Its Exec still takes %u for a URL it is asked to open by name.
+mime_type = "text/xml;application/xml;application/rss+xml;application/rdf+xml;application/pdf;x-scheme-handler/mailto;"
 actions = [
   { id = "new-window", name = "New Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --new-window" },
   { id = "new-private-window", name = "New Private Window", exec = "/usr/libexec/mios/mios-flatpak-run --branch=stable --arch=x86_64 --command=launch-script.sh app.zen_browser.zen --private-window" },
 ]
-ai_hint = "Zen, the native MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it."
+ai_hint = "Zen, a secondary MiOS browser (mios.toml [browser.zen]). Launches through mios-flatpak-run so terminals, keybinds and other apps carrying the full MIOS_* session environment can open it."
 ai_related = "/usr/libexec/mios/mios-flatpak-run, /usr/libexec/mios/mios-theme-render (apply_web)"
+
+# System-wide default applications: mios-gen render-desktop writes etc/xdg/mimeapps.list from this
+# table, and check_desktop_launchers diffs it. Each named launcher is the [Default Applications] entry
+# for every type its mime_type declares; a type two launchers declare lists both, in table order. A
+# named launcher must exist, declare a mime_type and take %u/%U/%f/%F, or the render fails.
+
+# Web content only (http, https, text/html, application/xhtml+xml): the default browser never takes
+# mailto, PDF or another user handler. tests/test-flatpak-bake.sh holds both lists to that.
+
+# /etc/xdg, a Law 1 exception: $XDG_CONFIG_DIRS outranks the RPM-owned /usr/share/applications
+# lists and Flatpak exports; ~/.config/mimeapps.list still overrides per user.
+[desktop.default_applications]
+launchers = ["mios-portal"]         # MiOS-Portal, the default browser ([aliases].browser)
 
 # Native MiOS Portal window (usr/bin/mios-portal -> usr/share/mios/portal/Host.qml in the qml runtime;
 # never inside Quickshell). Name, app id (startup_wm_class), URL scheme/port_key/path come from the
@@ -18321,9 +18438,15 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # package used by the Xbox firmware regression. A suite that cannot run its live
 # tier exits 77, which fails unless [ci.tool_skips] registers it: provide the tool here.
 # Desktop resilience runs real offscreen QML/lint and a non-activating GObject D-Bus fixture.
+# The MiOS-Xbox gates build a real offline image: regf hives filled by hivexregedit (perl-hivex) and captured
+# with wimlib-imagex (wimlib-utils).
+# test-flatpak-bake resolves the default browser the way a session does: gio (glib2) and xdg-mime
+# (xdg-utils) over isolated XDG dirs whose association caches update-desktop-database
+# (desktop-file-utils) builds.
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
-            "quickshell", "qt6-qtdeclarative-devel", "python3-gobject"]
+            "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
+            "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.

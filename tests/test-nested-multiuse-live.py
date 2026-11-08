@@ -4,7 +4,7 @@
 # AI-functions: Session, Live
 # Env: MIOS_GEN (candidate launcher), MIOS_NESTED_H3D_SO (plugin loaded ONLY into the owned parent; default the installed
 # /usr/lib64/mios/hypr3d.so), MIOS_LIVE_OUT (evidence directory). Positive and negative control for every behaviour.
-import hashlib, importlib.util, json, math, os, re, select, signal, struct, subprocess, sys, tempfile, time, unittest
+import atexit, hashlib, importlib.util, json, math, os, re, select, shutil, signal, struct, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -15,7 +15,12 @@ spec.loader.exec_module(nm)
 LIVE = os.environ.get('MIOS_LIVE_NESTED') == '1' and os.environ.get('HYPRLAND_INSTANCE_SIGNATURE') and os.environ.get('WAYLAND_DISPLAY')
 GEN = os.environ.get('MIOS_GEN', '/usr/bin/mios-gen')
 H3D_SO = os.environ.get('MIOS_NESTED_H3D_SO', '/usr/lib64/mios/hypr3d.so')
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-nested-multiuse-live-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
 STATUS = Path('/tmp/hypr3d-status.txt')
 
 

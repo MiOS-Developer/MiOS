@@ -18,7 +18,8 @@
     env -u MIOS_TOML python3 tests/test-quickshell-candidate-live.py
 Optional: MIOS_QUICKSHELL_OLD (default /usr/bin/quickshell), MIOS_QUICKSHELL_UNPATCHED (the same upstream ref built
 without the reconnect patch: negative control), MIOS_QUICKSHELL_QML (default the live Nested.qml),
-MIOS_LIVE_OUT (evidence dir), MIOS_CHURN_SECONDS (per round, default 15), MIOS_CHURN_ROUNDS (default 3)."""
+MIOS_LIVE_OUT (evidence dir, kept; default: a temp dir removed at exit), MIOS_CHURN_SECONDS (per round, default 15), MIOS_CHURN_ROUNDS (default 3)."""
+import atexit
 import json
 import os
 import random
@@ -35,7 +36,13 @@ if os.environ.get('MIOS_LIVE_NESTED') != '1':
     print('SKIP: set MIOS_LIVE_NESTED=1 to run against an owned nested MiOS session')
     sys.exit(0)
 
+# Evidence is opt-in: a caller-supplied MIOS_LIVE_OUT is kept; the temporary default is
+# removed when the run exits, so a skipped or finished run leaves nothing behind.
+KEEP_OUT = bool(os.environ.get('MIOS_LIVE_OUT'))
 OUT = Path(os.environ.get('MIOS_LIVE_OUT') or tempfile.mkdtemp(prefix='mios-qs-candidate-'))
+if not KEEP_OUT:
+    atexit.register(shutil.rmtree, OUT, True)
+OUT_NOTE = str(OUT) if KEEP_OUT else 'removed at exit; set MIOS_LIVE_OUT=<dir> to keep it'
 OUT.mkdir(parents=True, exist_ok=True)
 OLD = os.environ.get('MIOS_QUICKSHELL_OLD', '/usr/bin/quickshell')
 NEW = os.environ.get('MIOS_QUICKSHELL_CANDIDATE', '')
@@ -352,7 +359,7 @@ def main():
             launcher.wait(timeout=15)
         except subprocess.TimeoutExpired:
             launcher.terminate()
-    print(f'evidence: {OUT}')
+    print(f'evidence: {OUT_NOTE}')
 
 
 main()

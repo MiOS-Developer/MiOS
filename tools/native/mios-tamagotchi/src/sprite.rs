@@ -164,6 +164,9 @@ pub struct Sprite {
     face_overlay: Option<FaceOverlay>,
     face_mapping: Option<FaceMapping>,
     surface_shading: Option<Vec<[i8; 4]>>,
+    surface_voxels: Option<Vec<[i32; 3]>>,
+    // Q8 source pixels per model-lattice cell along the projected axes.
+    voxel_pixels: Option<u16>,
     // Q8 packed-pixel camera depth relative to the physical ground anchor.
     voxel_depth: Option<Vec<i32>>,
     voxel_ground: Option<[i32; 2]>,
@@ -215,6 +218,15 @@ mod profile_symmetry_tests {
 
 #[cfg(test)]
 impl Sprite {
+    /// The same sprite without voxel identity: renderers fall back to the
+    /// legacy lit packing, the overlay-off reference for renderer tests.
+    pub(crate) fn without_voxel_identity(&self) -> Self {
+        let mut sprite = self.clone();
+        sprite.surface_voxels = None;
+        sprite.voxel_pixels = None;
+        sprite
+    }
+
     /// A flat, fully authorized face plane of `columns` x `rows` texels in
     /// material `index`, inside a one-texel empty border. Its UV is affine in
     /// the texel grid with the given per-texel `step`, centred on (0.5, 0.5)
@@ -254,6 +266,8 @@ impl Sprite {
                     .min(u32::from(u16::MAX)) as u16,
             }),
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -325,6 +339,35 @@ impl Sprite {
         ))
     }
 
+    /// Stable model-lattice identity of the winning visible voxel. This
+    /// follows the depth winner through orbit, occlusion and downsampling.
+    /// Legacy pixels and transparent/untagged samples have no voxel identity.
+    pub fn surface_voxel(&self, x: u32, y: u32) -> Option<[i32; 3]> {
+        self.surface_shading(x, y)?;
+        self.surface_voxels
+            .as_ref()?
+            .get(y as usize * usize::from(self.width) + x as usize)
+            .copied()
+    }
+
+    /// One exposed cube face: the winning voxel and its quantized view
+    /// normal. Every pixel of one face carries the same integer normal, so
+    /// facet equality is exact. Gated exactly like `surface_voxel`.
+    pub fn surface_facet(&self, x: u32, y: u32) -> Option<([i32; 3], [i8; 3])> {
+        let voxel = self.surface_voxel(x, y)?;
+        let sample = self
+            .surface_shading
+            .as_ref()?
+            .get(y as usize * usize::from(self.width) + x as usize)?;
+        Some((voxel, [sample[0], sample[1], sample[2]]))
+    }
+
+    /// Source pixels per model-lattice cell (the voxel pitch on screen
+    /// before camera scaling). Legacy pixel sprites and eggs have none.
+    pub fn voxel_extent_pixels(&self) -> Option<f64> {
+        self.voxel_pixels.map(|pitch| f64::from(pitch) / 256.0)
+    }
+
     /// Camera depth in source-pixel units. Transparent and legacy pixel
     /// sprites have no depth; a missing sample never wins room occlusion.
     pub fn depth_pixels(&self, x: u32, y: u32) -> Option<f64> {
@@ -358,6 +401,11 @@ impl Sprite {
                     }
                     if let Some(m) = result.surface_shading.as_mut() {
                         m[i] = [0; 4];
+                    }
+                    // Hidden material keeps no identity, independent of the
+                    // shading gate in surface_voxel.
+                    if let Some(m) = result.surface_voxels.as_mut() {
+                        m[i] = [0; 3];
                     }
                 }
             }
@@ -528,6 +576,8 @@ impl Sprite {
                 face_overlay: None,
                 face_mapping: None,
                 surface_shading: None,
+                surface_voxels: None,
+                voxel_pixels: None,
                 voxel_depth: None,
                 voxel_ground: None,
             };
@@ -584,6 +634,17 @@ impl Sprite {
             }
             mapped
         });
+        let surface_voxels = self.surface_voxels.as_ref().map(|samples| {
+            let mut mapped = Vec::with_capacity(usize::from(width) * usize::from(height));
+            for y in 0..u32::from(height) {
+                let sy = ((2 * y + 1) * sh / (2 * u32::from(height))).min(sh - 1);
+                for x in 0..u32::from(width) {
+                    let sx = ((2 * x + 1) * sw / (2 * u32::from(width))).min(sw - 1);
+                    mapped.push(samples[sy as usize * usize::from(self.width) + sx as usize]);
+                }
+            }
+            mapped
+        });
         let voxel_depth = self.voxel_depth.as_ref().map(|samples| {
             let mut mapped = Vec::with_capacity(usize::from(width) * usize::from(height));
             for y in 0..u32::from(height) {
@@ -599,6 +660,10 @@ impl Sprite {
                 }
             }
             mapped
+        });
+        // The lattice pitch shrinks with the single rational scale.
+        let voxel_pixels = self.voxel_pixels.map(|pitch| {
+            (u32::from(pitch) * u32::from(width) / u32::from(self.width)).clamp(1, 65535) as u16
         });
         let voxel_ground = self.voxel_ground.map(|[x, y]| {
             [
@@ -619,6 +684,8 @@ impl Sprite {
             face_overlay,
             face_mapping,
             surface_shading,
+            surface_voxels,
+            voxel_pixels,
             voxel_depth,
             voxel_ground,
         }
@@ -766,6 +833,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
             pixels: rows
@@ -1200,6 +1269,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         })
@@ -1245,6 +1316,8 @@ impl Sprite {
             pixels,
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
             face_overlay: Some(FaceOverlay {
@@ -1276,6 +1349,8 @@ impl Sprite {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -1307,6 +1382,8 @@ impl Sprite {
             }),
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         }
@@ -1764,10 +1841,13 @@ impl VoxelModel {
             face_overlay: None,
             face_mapping: None,
             surface_shading: None,
+            surface_voxels: None,
+            voxel_pixels: None,
             voxel_depth: None,
             voxel_ground: None,
         };
         sprite.surface_shading = Some(vec![[0; 4]; sprite.pixels.len()]);
+        sprite.surface_voxels = Some(vec![[0; 3]; sprite.pixels.len()]);
         let mut depth = vec![f32::NEG_INFINITY; sprite.pixels.len()];
         let mut face_layer = vec![false; sprite.pixels.len()];
         let angle = f32::from(yaw % 360).to_radians();
@@ -1818,6 +1898,7 @@ impl VoxelModel {
             // Resolve detailed contours across the actual canvas; do not leave
             // half of a high-resolution sprite unused after chibi limb changes.
             .min(if k > 1 { f32::MAX } else { kf });
+        sprite.voxel_pixels = Some((fit / kf * 256.0).round().clamp(1.0, 65535.0) as u16);
         let project = |v: [f32; 3]| {
             let [x, y, z] = transform(v);
             // Align lattice centers with pixel centers at zero yaw. Otherwise
@@ -1914,6 +1995,7 @@ impl VoxelModel {
                     }
                 }
                 let surface = SurfaceTag {
+                    voxel: [x, y, z],
                     is_face: matches!(material, 18..=20),
                     normal: n.map(|value| (value.clamp(-1.0, 1.0) * 127.0).round() as i8),
                     occlusion: contacts * 25,
@@ -2083,6 +2165,7 @@ fn raster_triangle(sprite: &mut Sprite, depth: &mut [f32], v: [[f32; 3]; 3], col
 
 #[derive(Clone, Copy)]
 struct SurfaceTag {
+    voxel: [i32; 3],
     is_face: bool,
     normal: [i8; 3],
     occlusion: u8,
@@ -2148,6 +2231,9 @@ fn raster_triangle_tagged(
                         tag.normal[2],
                         tag.occlusion as i8,
                     ];
+                }
+                if let (Some(samples), Some(tag)) = (sprite.surface_voxels.as_mut(), surface) {
+                    samples[i] = tag.voxel;
                 }
                 if let Some(layer) = face_layer.as_deref_mut() {
                     layer[i] = surface.is_some_and(|s| s.is_face);
@@ -3892,11 +3978,13 @@ mod surface_lighting_tests {
         let triangle = |z| [[0.0, 0.0, z], [4.0, 0.0, z], [0.0, 4.0, z]];
         let front = SurfaceTag {
             is_face: true,
+            voxel: [0; 3],
             normal: [0, 0, 127],
             occlusion: 25,
         };
         let hidden = SurfaceTag {
             is_face: false,
+            voxel: [0; 3],
             normal: [127, 0, 0],
             occlusion: 100,
         };
@@ -4096,5 +4184,209 @@ mod face_aspect_tests {
             Sprite::new(1, 1, vec![Some(1)]).unwrap().face_aspect(),
             None
         );
+    }
+}
+
+#[cfg(test)]
+mod voxel_identity_tests {
+    use super::*;
+    use crate::game::Stage;
+
+    fn voxel_ids(sprite: &Sprite) -> std::collections::BTreeSet<[i32; 3]> {
+        let mut ids = std::collections::BTreeSet::new();
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                if let Some(id) = sprite.surface_voxel(x, y) {
+                    ids.insert(id);
+                }
+            }
+        }
+        ids
+    }
+
+    fn adult(style: SpriteStyle, yaw: u16) -> Sprite {
+        Sprite::voxel_with_appearance(
+            Stage::Adult,
+            Expression::Idle,
+            style,
+            0,
+            yaw,
+            false,
+            Appearance::default(),
+        )
+    }
+
+    #[test]
+    fn real_voxel_identities_survive_orbit_and_nearest_surface_downsampling() {
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            for yaw in [0, 45, 90, 180] {
+                let sprite = adult(style, yaw);
+                let ids = voxel_ids(&sprite);
+                assert!(
+                    ids.len() > 20,
+                    "{style:?} yaw {yaw}: {} unique voxels",
+                    ids.len()
+                );
+                // Every shaded pixel carries an identity and vice versa.
+                for y in 0..u32::from(sprite.height()) {
+                    for x in 0..u32::from(sprite.width()) {
+                        assert_eq!(
+                            sprite.surface_voxel(x, y).is_some(),
+                            sprite.surface_shading(x, y).is_some(),
+                            "{style:?} yaw {yaw}: identity gate at ({x}, {y})"
+                        );
+                    }
+                }
+                // Lattice keys belong to the model, not to the screen: a
+                // small orbit keeps most visible voxels visible.
+                let nudged = voxel_ids(&adult(style, yaw + 5));
+                let kept = ids.intersection(&nudged).count();
+                assert!(
+                    kept * 2 >= ids.len().min(nudged.len()),
+                    "{style:?} yaw {yaw}: only {kept} of {} voxels persist over 5 degrees",
+                    ids.len()
+                );
+                let small = sprite.downsample_to_fit(17, 23);
+                let (sw, sh) = (u32::from(sprite.width()), u32::from(sprite.height()));
+                let (dw, dh) = (u32::from(small.width()), u32::from(small.height()));
+                for y in 0..dh {
+                    for x in 0..dw {
+                        let sx = ((2 * x + 1) * sw / (2 * dw)).min(sw - 1);
+                        let sy = ((2 * y + 1) * sh / (2 * dh)).min(sh - 1);
+                        assert_eq!(
+                            small.surface_voxel(x, y),
+                            sprite.surface_voxel(sx, sy),
+                            "{style:?} yaw {yaw}: downsampled identity at ({x}, {y})"
+                        );
+                    }
+                }
+                assert!(sprite.surface_voxel(u32::MAX, u32::MAX).is_none());
+                assert!(small.surface_voxel(dw, 0).is_none());
+                assert!(small.surface_voxel(0, dh).is_none());
+            }
+        }
+        let pixels = Sprite::new(2, 2, vec![Some(1); 4]).unwrap();
+        assert!(pixels.surface_voxel(0, 0).is_none());
+        assert!(Sprite::egg().surface_voxel(0, 0).is_none());
+    }
+
+    #[test]
+    fn voxel_extent_matches_lattice_pitch_and_scales() {
+        for style in [SpriteStyle::EightBit, SpriteStyle::SixteenBit] {
+            let sprite = adult(style, 0);
+            let extent = sprite
+                .voxel_extent_pixels()
+                .expect("voxel sprites carry their lattice pitch");
+            // Frontal rows: the mean run of one identity is one voxel wide
+            // (a voxel smaller than a pixel still covers a whole pixel).
+            let (mut runs, mut covered) = (0u32, 0u32);
+            for y in 0..u32::from(sprite.height()) {
+                let mut previous = None;
+                for x in 0..u32::from(sprite.width()) {
+                    let id = sprite.surface_voxel(x, y);
+                    if id.is_some() {
+                        covered += 1;
+                        if id != previous {
+                            runs += 1;
+                        }
+                    }
+                    previous = id;
+                }
+            }
+            let measured = f64::from(covered) / f64::from(runs.max(1));
+            let expected = extent.max(1.0);
+            assert!(
+                (measured - expected).abs() <= 0.3 * expected,
+                "{style:?}: measured voxel run {measured:.2} px against pitch {extent:.2} px"
+            );
+            let small = sprite.downsample_to_fit(sprite.width() / 2, sprite.height() / 2);
+            let ratio = f64::from(small.width()) / f64::from(sprite.width());
+            let scaled = small
+                .voxel_extent_pixels()
+                .expect("downsampling keeps the pitch");
+            assert!(
+                (scaled - extent * ratio).abs() <= 0.02 * extent + 1.0 / 256.0,
+                "{style:?}: downsampled pitch {scaled:.3} px, expected {:.3} px",
+                extent * ratio
+            );
+        }
+        let pixels = Sprite::new(2, 2, vec![Some(1); 4]).unwrap();
+        assert!(pixels.voxel_extent_pixels().is_none());
+        assert!(pixels.surface_facet(0, 0).is_none());
+        assert!(Sprite::egg().voxel_extent_pixels().is_none());
+        // A facet is the voxel plus its exact integer view normal.
+        let sprite = adult(SpriteStyle::SixteenBit, 30);
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..u32::from(sprite.width()) {
+                let facet = sprite.surface_facet(x, y);
+                assert_eq!(facet.map(|f| f.0), sprite.surface_voxel(x, y));
+                if let (Some((_, normal)), Some((shading, _))) =
+                    (facet, sprite.surface_shading(x, y))
+                {
+                    assert_eq!(normal.map(|v| f32::from(v) / 127.0), shading);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hidden_pixels_drop_their_voxel_identity() {
+        let sprite = adult(SpriteStyle::SixteenBit, 45);
+        let width = u32::from(sprite.width());
+        let target = (0..u32::from(sprite.height()))
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .find(|&(x, y)| sprite.surface_voxel(x, y).is_some_and(|id| id != [0; 3]))
+            .expect("a visible non-origin voxel");
+        let hidden = sprite.retain_visible_pixels(|x, y| (x, y) != target);
+        let i = target.1 as usize * width as usize + target.0 as usize;
+        assert!(hidden.surface_voxel(target.0, target.1).is_none());
+        assert_eq!(
+            hidden.surface_voxels.as_ref().map(|ids| ids[i]),
+            Some([0; 3]),
+            "hidden pixel keeps a stored voxel identity"
+        );
+        for y in 0..u32::from(sprite.height()) {
+            for x in 0..width {
+                if (x, y) != target {
+                    assert_eq!(hidden.surface_voxel(x, y), sprite.surface_voxel(x, y));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_occluded_triangle_cannot_replace_the_winning_voxel_identity() {
+        let mut sprite = Sprite::new(4, 4, vec![None; 16]).unwrap();
+        sprite.surface_shading = Some(vec![[0; 4]; 16]);
+        sprite.surface_voxels = Some(vec![[0; 3]; 16]);
+        let mut depth = vec![f32::NEG_INFINITY; 16];
+        let triangle = |z: f32| [[0.0, 0.0, z], [3.0, 0.0, z], [0.0, 3.0, z]];
+        let tag = |voxel, normal| SurfaceTag {
+            voxel,
+            is_face: false,
+            normal,
+            occlusion: 0,
+        };
+        for (z, voxel) in [(3.0, [9, 2, 1]), (1.0, [-9, 0, 0])] {
+            raster_triangle_tagged(
+                &mut sprite,
+                &mut depth,
+                None,
+                Some(tag(voxel, [0, 0, 127])),
+                triangle(z),
+                1,
+            );
+        }
+        assert_eq!(sprite.surface_voxel(0, 0), Some([9, 2, 1]));
+        raster_triangle_tagged(
+            &mut sprite,
+            &mut depth,
+            None,
+            Some(tag([5, 4, 3], [0, 127, 0])),
+            triangle(4.0),
+            2,
+        );
+        assert_eq!(sprite.surface_voxel(0, 0), Some([5, 4, 3]));
+        assert!(sprite.surface_voxel(3, 3).is_none());
     }
 }

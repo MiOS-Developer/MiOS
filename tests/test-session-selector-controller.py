@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Real-binary test of M1 (C-33): in the miosd session selector the controller's West button (Tab, nav grammar) opens a new session like `n`; the TUI runs in a private tmux server with an isolated filesystem and fake mios-terminal and tailscale, so nothing reaches the operator's tmux-os. Negative control (MIOSD_OLD, a pre-C-33 miosd) ignores Tab; `n` proves the harness on it.
 # AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
-# Env: MIOSD = the candidate miosd (explicit, otherwise built/installed native catalog); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
+# Env: MIOSD = the candidate miosd and MIOS_GEN the catalogue producer (each explicit, otherwise built/installed native catalog); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
 # deployed miosd already carries C-33 from main, so it is no control any more).
 import json, os, re, shlex, shutil, socket, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -20,7 +20,25 @@ def candidate():
     return ''
 
 
+def generator():
+    """The native catalogue producer (mios-gen): explicit MIOS_GEN, else a source build, else the installed one.
+
+    The unit tier cannot pass MIOS_GEN (run-suites scrubs MIOS_*); CI's native-catalog step builds this tree and
+    installs it as /usr/bin/mios-gen before the tier runs, so the installed producer there is the source-current one.
+    """
+    explicit = os.environ.get('MIOS_GEN')
+    if explicit:
+        return explicit  # An explicit missing candidate fails; never silently run another binary.
+    for path in (ROOT / 'tools/native/target/x86_64-unknown-linux-musl/release/mios-gen',
+                 ROOT / 'tools/native/target/release/mios-gen',
+                 Path('/usr/bin/mios-gen')):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return ''
+
+
 CAND = candidate()
+GEN = generator()
 OLD = os.environ.get('MIOSD_OLD', '')
 TERMINAL = '/usr/libexec/mios/mios-terminal'
 res = []
@@ -58,9 +76,9 @@ def copy_executable(source, root, destination):
 
 def global_menu_fixture(root, fixture, uid, gid, scenario):
     """Native catalogue and owned UNIX compositor fixture; every exec stays in this root."""
-    gen = os.environ.get('MIOS_GEN')
+    gen = GEN
     if not gen or not os.access(gen, os.X_OK):
-        raise RuntimeError('MIOS_GEN must select the source-current native catalogue producer')
+        raise RuntimeError(f'no executable native catalogue producer (MIOS_GEN={gen!r})')
     copy_executable(gen, root, '/fixture/bin/mios-gen')
     apps = fixture / 'apps'
     apps.mkdir()
@@ -255,8 +273,8 @@ def native_tui_client_cases():
     canonical = Path(TERMINAL)
     check('native app fixture uses the exact canonical terminal wrapper',
           canonical.read_bytes() == (ROOT / TERMINAL.lstrip('/')).read_bytes())
-    gen = os.environ.get('MIOS_GEN', '')
-    check('native app fixture selects an explicit executable native executor',
+    gen = GEN
+    check('native app fixture selects an executable native executor',
           bool(gen) and Path(gen).is_file() and os.access(gen, os.X_OK))
     for case, attached, unrelated in (('single', 1, False), ('zero', 0, False),
                                       ('ambiguous', 2, False), ('other-session', 1, True)):

@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1749 |
-| in_progress | 86 |
-| completed | 1890 |
-| incomplete | 19 |
+| pending | 1751 |
+| in_progress | 90 |
+| completed | 1897 |
+| incomplete | 20 |
 | cancelled | 21 |
-| total | 3765 |
+| total | 3779 |
 
 0 record(s) carry at least one override.
 
@@ -951,6 +951,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3502` Schema-generated configurator (WS-CONFIG | P2 | M) -- pending · P2 · size M · depends_on task_3500, task_3487
 - `task_3523` M4: mios.html is the setup interface, edited through key-level patches into each key's tier (WS-CONFIG | P1 | L) -- pending · P1 · size L
 - `task_3577` P2-8: config writes are atomic, 0600 and versioned, and can be rolled back (WS-CONFIG | P2 | S) -- pending · P2 · size S
+- `task_3766` Refuse ambiguous redacted arrays and redact native Portal failures -- incomplete · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size M
+- `task_3767` Apply safe array restoration and private errors to the agent Portal -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3769` Review and finish the preserved native Portal guard candidate -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3770` Update the HTTP privacy fixture for the guarded Portal API -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ### Epic task_3523
 
@@ -2658,7 +2662,15 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3761` Bound MiOS-Mon per-instance idle cost and controller context polling -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3762` Design and implement authoritative local and remote MiOS-Mon multiplayer hosting -- in_progress · owner mios-claude-continuation · P1 · size L
 - `task_3763` Keep essential pet needs visible in compact portrait HUDs -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
+- `task_3764` Activate verified Inputd app profiles with accurate focused controls and a reversible live upgrade -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L · depends_on task_3759
+- `task_3771` Preserve typed controller arrays through the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3773` Require deliberate short stick gestures for desktop focus changes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3778` Content-fit menus and spatial controller navigation -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3779` Textured shaded menu panels with shared content-fit geometry -- pending · owner mios-tamagotchi-live-coordinator · P1 · size L
 
 ## WS-MIOSSYS
 
@@ -2666,6 +2678,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 - `task_228` task_3193: Collapse the ~18-image sidecar fleet onto the `mios-sys` + `mios-cuda` shared-base lineage -- completed · P1 · size XL
 - `task_1104` Collapse the sidecar fleet onto a shared MiOS-Sys base to shrink the bake -- completed · P1 · size L
+
+## WS-MON
+
+### No epic
+
+- `task_3768` Expose camera-independent room surface metadata for voxel texture tracking -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## WS-NAME
 
@@ -4437,6 +4455,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### No epic
 
 - `task_3731` Verify Inputd controller isolation across concurrent nested seats -- in_progress · owner mios-tamagotchi-live-coordinator · P1
+
+## inputd
+
+### No epic
+
+- `task_3772` Keep cursor-owned stick axes out of window and app focus navigation -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 
 ## runtime
 

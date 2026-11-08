@@ -160,6 +160,9 @@ pub struct NavConfig {
     pub apps: BTreeMap<String, NavApp>,
     /// Why the app layer was rejected (it is then empty); the base navigation is unaffected.
     pub app_error: Option<String>,
+    /// Profiles reachable only through app contexts; base/shared profiles are never removed.
+    #[serde(skip)]
+    app_only_profiles: BTreeSet<String>,
 }
 const RESERVED: [&str; 9] = [
     "enabled",
@@ -309,6 +312,34 @@ pub struct Ctx<'a> {
     pub deadzone: f64,
 }
 
+/// Follow declared profile roots and inheritance without trusting any action grammar.
+/// A base reference always wins when a profile is shared with an app.
+fn profile_closure(t: &toml::value::Table, roots: Vec<String>) -> BTreeSet<String> {
+    let mut pending = Vec::new();
+    for root in roots {
+        if t.contains_key(&root) && !RESERVED.contains(&root.as_str()) {
+            pending.push(root);
+        } else {
+            pending.push(format!("{root}_plain"));
+            pending.push(format!("{root}_tmux"));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Some(parent) = t
+            .get(&name)
+            .and_then(|body| body.get("inherits"))
+            .and_then(toml::Value::as_str)
+        {
+            pending.push(parent.to_owned());
+        }
+    }
+    seen
+}
+
 impl NavConfig {
     pub fn from_value(v: Option<&toml::Value>, ctx: &Ctx) -> Result<Self, String> {
         let Some(v) = v else {
@@ -388,90 +419,142 @@ impl NavConfig {
                 cfg.tmux_sockets.push(n.into());
             }
         }
+        // Classify ownership before parsing actions: an app-only typo must never stop base input.
+        let base_roots = cfg.contexts.values().cloned().collect();
+        let base_profiles = profile_closure(t, base_roots);
+        let app_roots = t
+            .get("apps")
+            .and_then(toml::Value::as_table)
+            .into_iter()
+            .flat_map(|apps| apps.values())
+            .filter_map(|app| app.get("contexts").and_then(toml::Value::as_table))
+            .flat_map(|contexts| contexts.values())
+            .filter_map(toml::Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        let app_profiles = profile_closure(t, app_roots);
+        let app_only: BTreeSet<_> = app_profiles.difference(&base_profiles).cloned().collect();
+        cfg.app_only_profiles = app_only.clone();
+        let mut app_profile_error = None;
+        let mut dropped = BTreeMap::new();
         let mut raw: BTreeMap<String, (Option<String>, Profile)> = BTreeMap::new();
         for (name, body) in t {
             if RESERVED.contains(&name.as_str()) {
                 continue;
             }
-            if name == "vpad"
-                || name.is_empty()
-                || !name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            {
-                return Err(format!(
-                    "nav profile name {name:?} must be [a-z0-9_] and not \"vpad\""
-                ));
-            }
-            let body = body
-                .as_table()
-                .ok_or_else(|| format!("nav.{name} must be a table"))?;
-            let mut inherits = None;
-            let mut map = Profile::new();
-            for (input, value) in body {
-                if input == "inherits" {
-                    inherits = Some(
-                        value
-                            .as_str()
-                            .ok_or_else(|| format!("nav.{name}.inherits names a profile"))?
-                            .to_owned(),
-                    );
-                    continue;
-                }
-                let what = format!("nav.{name}.{input}");
-                let i = Input::parse(input).map_err(|e| format!("{what}: {e}"))?;
-                let v = Value::parse(value, &what)?;
-                for a in v.actions() {
-                    validate_value(a, i, ctx).map_err(|e| format!("{what}: {e}"))?;
-                }
-                if i == Input::Button(0x13c) && matches!(v, Value::TapHold(..)) {
-                    return Err(format!("{what}: Guide hold is the system layer modifier; BTN_MODE takes one tap action"));
-                }
-                if matches!(i, Input::Stick { .. }) && matches!(v, Value::TapHold(..)) {
-                    return Err(format!(
-                        "{what}: a stick direction takes one action (a flick has no hold)"
-                    ));
-                }
-                if matches!(v, Value::TapHold(..))
-                    && v.actions()
-                        .iter()
-                        .any(|a| a.starts_with("pointer:") && *a != CURSOR)
+            let parsed = (|| -> Result<(Option<String>, Profile), String> {
+                if name == "vpad"
+                    || name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
                 {
                     return Err(format!(
-                        "{what}: pointer: is analog and cannot be a tap or hold"
+                        "nav profile name {name:?} must be [a-z0-9_] and not \"vpad\""
                     ));
                 }
-                if i == Input::ToggleChord && matches!(v, Value::TapHold(..)) {
-                    return Err(format!("{what}: the toggle chord takes one action (its hold is the capture release)"));
+                let body = body
+                    .as_table()
+                    .ok_or_else(|| format!("nav.{name} must be a table"))?;
+                let mut inherits = None;
+                let mut map = Profile::new();
+                for (input, value) in body {
+                    if input == "inherits" {
+                        inherits = Some(
+                            value
+                                .as_str()
+                                .ok_or_else(|| format!("nav.{name}.inherits names a profile"))?
+                                .to_owned(),
+                        );
+                        continue;
+                    }
+                    let what = format!("nav.{name}.{input}");
+                    let i = Input::parse(input).map_err(|e| format!("{what}: {e}"))?;
+                    let v = Value::parse(value, &what)?;
+                    for a in v.actions() {
+                        validate_value(a, i, ctx).map_err(|e| format!("{what}: {e}"))?;
+                    }
+                    if i == Input::Button(0x13c) && matches!(v, Value::TapHold(..)) {
+                        return Err(format!("{what}: Guide hold is the system layer modifier; BTN_MODE takes one tap action"));
+                    }
+                    if matches!(i, Input::Stick { .. }) && matches!(v, Value::TapHold(..)) {
+                        return Err(format!(
+                            "{what}: a stick direction takes one action (a flick has no hold)"
+                        ));
+                    }
+                    if matches!(v, Value::TapHold(..))
+                        && v.actions()
+                            .iter()
+                            .any(|a| a.starts_with("pointer:") && *a != CURSOR)
+                    {
+                        return Err(format!(
+                            "{what}: pointer: is analog and cannot be a tap or hold"
+                        ));
+                    }
+                    if i == Input::ToggleChord && matches!(v, Value::TapHold(..)) {
+                        return Err(format!("{what}: the toggle chord takes one action (its hold is the capture release)"));
+                    }
+                    map.insert(i, v);
                 }
-                map.insert(i, v);
-            }
+                Ok((inherits, map))
+            })();
+            let (inherits, map) = match parsed {
+                Ok(profile) => profile,
+                Err(error) if app_only.contains(name) => {
+                    dropped.insert(name.clone(), error.clone());
+                    app_profile_error.get_or_insert(error);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             raw.insert(name.clone(), (inherits, map));
         }
         for name in raw.keys() {
-            let mut chain = vec![name.clone()];
-            let mut merged = Profile::new();
-            let mut cur = name.clone();
-            loop {
-                let (parent, map) = &raw[&cur];
-                for (k, v) in map {
-                    merged.entry(*k).or_insert_with(|| v.clone());
+            let resolved = (|| -> Result<Profile, String> {
+                let mut chain = vec![name.clone()];
+                let mut merged = Profile::new();
+                let mut cur = name.clone();
+                loop {
+                    let (parent, map) = &raw[&cur];
+                    for (k, v) in map {
+                        merged.entry(*k).or_insert_with(|| v.clone());
+                    }
+                    match parent {
+                        None => break,
+                        Some(p) if !raw.contains_key(p) => {
+                            if let Some(error) = dropped.get(p) {
+                                return Err(format!("nav.{cur}.inherits: {p} is invalid: {error}"));
+                            }
+                            return Err(format!("nav.{cur}.inherits: unknown profile {p}"));
+                        }
+                        Some(p) if chain.contains(p) || chain.len() > 8 => {
+                            return Err(format!("nav.{name}: inherits cycle through {p}"))
+                        }
+                        Some(p) => {
+                            chain.push(p.clone());
+                            cur = p.clone();
+                        }
+                    }
                 }
-                match parent {
-                    None => break,
-                    Some(p) if !raw.contains_key(p) => {
-                        return Err(format!("nav.{cur}.inherits: unknown profile {p}"))
-                    }
-                    Some(p) if chain.contains(p) || chain.len() > 8 => {
-                        return Err(format!("nav.{name}: inherits cycle through {p}"))
-                    }
-                    Some(p) => {
-                        chain.push(p.clone());
-                        cur = p.clone();
-                    }
+                Ok(merged)
+            })();
+            match resolved {
+                Ok(profile) => {
+                    cfg.profiles.insert(name.clone(), profile);
                 }
+                Err(error) if app_only.contains(name) => {
+                    app_profile_error.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
             }
-            cfg.profiles.insert(name.clone(), merged);
+        }
+        // Backward compatibility: an invalid app layer is reported and dropped; the base navigation stays live.
+        let app_result = match app_profile_error {
+            Some(error) => Err(error),
+            None => cfg.load_apps(t),
+        };
+        if let Err(error) = app_result {
+            cfg.app_failed(error);
         }
         for (context, p) in &cfg.contexts {
             if p == "vpad" {
@@ -483,10 +566,6 @@ impl NavConfig {
                 continue;
             }
             cfg.context_profiles(context, p, &format!("nav.contexts.{context}"))?;
-        }
-        // Backward compatibility: an invalid app layer is reported and dropped; the base navigation stays live.
-        if let Err(e) = cfg.load_apps(t) {
-            cfg.app_failed(e);
         }
         let _ = ctx.deadzone;
         Ok(cfg)
@@ -570,6 +649,28 @@ impl NavConfig {
         self.app_poll_ms = 0;
         self.app_query_timeout_ms = 0;
         self.app_error = Some(error);
+        self.profiles
+            .retain(|name, _| !self.app_only_profiles.contains(name));
+    }
+    /// Resolve app-only verbs with the same pure resolver used by bridge startup.
+    /// Shared/base actions remain visible to the existing fatal bridge validation.
+    pub fn unresolved_app_action(&self, supported: impl Fn(&str) -> bool) -> Option<String> {
+        if self.apps.is_empty() {
+            return None;
+        }
+        for name in &self.app_only_profiles {
+            let Some(profile) = self.profiles.get(name) else {
+                continue;
+            };
+            for (input, value) in profile {
+                for action in value.actions() {
+                    if !supported(action) {
+                        return Some(format!("nav.{name}.{}: {action} unresolved", input.name()));
+                    }
+                }
+            }
+        }
+        None
     }
     /// The per-context rules for the profile(s) one context name selects; returns those profile names.
     fn context_profiles(&self, context: &str, p: &str, what: &str) -> Result<Vec<String>, String> {
@@ -1403,13 +1504,182 @@ mod tests {
         .unwrap();
         assert!(c.controller.nav.app_error.is_none() && c.controller.nav.apps.contains_key("mon"));
         assert!(crate::config::tests::try_fixture_nav_with(|v| {
-            v["keybindings"]["global"]["controller"]["nav"]
+            let nav = v["keybindings"]["global"]["controller"]["nav"]
                 .as_table_mut()
-                .unwrap()
-                .insert("app_poll_ms".into(), 250.into());
+                .unwrap();
+            // Explicitly model the legacy policy: the vendor now ships the Mon app.
+            nav.remove("apps");
+            nav.insert("app_poll_ms".into(), 250.into());
         })
         .is_ok_and(|(c, _)| c.controller.nav.apps.is_empty()));
     }
+    #[test]
+    fn malformed_app_only_profiles_keep_base_navigation_live() {
+        for (profile, input, value) in [
+            ("mon_tmux", "LS_UP", "key:HYPER+a"),
+            ("mon_tmux", "LS_UP", "keyALT+8"),
+            ("mon_tmux", "inherits", "terminal_missing"),
+            ("mon_tmux", "inherits", "mon_tmux"),
+            ("mon_plain", "inherits", "mon_tmux"),
+        ] {
+            let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
+                let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+                nav[profile][input] = value.into();
+                if profile == "mon_plain" {
+                    nav["mon_tmux"]["inherits"] = "mon_plain".into();
+                }
+            })
+            .unwrap_or_else(|e| panic!("{profile}.{input}: base input stopped: {e}"));
+            let nav = cfg.controller.nav;
+            assert!(nav.apps.is_empty());
+            assert!(nav.app_error.is_some());
+            assert_eq!(
+                nav.profile_name("terminal", true).as_deref(),
+                Some("terminal_tmux")
+            );
+            assert_eq!(
+                nav.profile_name("desktop-2d", false).as_deref(),
+                Some("desktop")
+            );
+            assert!(nav.profiles.contains_key("terminal_tmux"));
+            assert!(!nav.profiles.contains_key("mon_tmux"));
+            assert!(nav.actions().iter().all(|a| !a.contains("HYPER")));
+        }
+    }
+
+    #[test]
+    fn shared_and_unreferenced_invalid_profiles_still_fail_closed() {
+        for shared in [false, true] {
+            let result = crate::config::tests::try_fixture_mon_with(|v| {
+                let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+                nav["mon_tmux"]["LS_UP"] = "key:HYPER+a".into();
+                if shared {
+                    nav["contexts"]["terminal"] = "mon".into();
+                } else {
+                    nav.as_table_mut().unwrap().remove("apps");
+                }
+            });
+            assert!(
+                result.is_err(),
+                "base or unreferenced invalid profiles must stay fatal"
+            );
+        }
+        let result = crate::config::tests::try_fixture_mon_with(|v| {
+            let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+            nav["terminal_tmux"]["RS_LEFT"] = "key:HYPER+a".into();
+        });
+        assert!(
+            result.is_err(),
+            "an inherited base defect is never swallowed as an app error"
+        );
+    }
+
+    #[test]
+    fn transitive_app_parent_errors_are_reported_and_base_parents_stay_fatal() {
+        for shared in [false, true] {
+            let result = crate::config::tests::try_fixture_mon_with(|v| {
+                let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+                nav.as_table_mut()
+                    .unwrap()
+                    .insert("mon_lib".into(), "LS_UP='key:HYPER+a'".parse().unwrap());
+                nav[if shared { "terminal_tmux" } else { "mon_tmux" }]["inherits"] =
+                    "mon_lib".into();
+            });
+            if shared {
+                let error = result.unwrap_err();
+                assert!(
+                    error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"),
+                    "{error}"
+                );
+            } else {
+                let (cfg, _) = result.unwrap();
+                let error = cfg.controller.nav.app_error.as_deref().unwrap();
+                assert!(
+                    error.contains("nav.mon_lib.LS_UP") && error.contains("HYPER"),
+                    "{error}"
+                );
+                assert!(cfg.controller.nav.profiles.contains_key("terminal_tmux"));
+                assert!(!cfg.controller.nav.profiles.contains_key("mon_lib"));
+            }
+        }
+    }
+
+    #[test]
+    fn unreferenced_child_reports_the_invalid_parent_instead_of_an_unknown_profile() {
+        let error = crate::config::tests::try_fixture_mon_with(|v| {
+            let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+            nav["mon_tmux"]["LS_UP"] = "key:HYPER+a".into();
+            nav.as_table_mut()
+                .unwrap()
+                .insert("mon_extra".into(), "inherits='mon_tmux'".parse().unwrap());
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("mon_tmux is invalid") && error.contains("HYPER"),
+            "{error}"
+        );
+        assert!(!error.contains("unknown profile mon_tmux"), "{error}");
+    }
+
+    #[test]
+    fn reserved_root_names_keep_both_base_context_profiles_after_app_failure() {
+        let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
+            let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+            let plain = nav["terminal_plain"].clone();
+            let tmux = nav["terminal_tmux"].clone();
+            nav.as_table_mut()
+                .unwrap()
+                .insert("repeat_plain".into(), plain);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("repeat_tmux".into(), tmux);
+            nav["contexts"]["terminal"] = "repeat".into();
+            nav["apps"]["mon"]["contexts"]["terminal"] = "repeat_tmux".into();
+            nav["mon_console_plain"]["LS_UP"] = "key:HYPER+a".into();
+        })
+        .unwrap();
+        let nav = cfg.controller.nav;
+        assert!(nav.apps.is_empty() && nav.app_error.is_some());
+        assert!(nav.profiles.contains_key("repeat_tmux"));
+        assert!(nav.profiles.contains_key("repeat_plain"));
+        assert_eq!(
+            nav.profile_name("terminal", true).as_deref(),
+            Some("repeat_tmux")
+        );
+        assert_eq!(
+            nav.profile_name("terminal", false).as_deref(),
+            Some("repeat_plain")
+        );
+    }
+
+    #[test]
+    fn disabling_two_apps_keeps_the_all_or_nothing_contract_and_base_navigation() {
+        let (cfg, _) = crate::config::tests::try_fixture_mon_with(|v| {
+            let nav = &mut v["keybindings"]["global"]["controller"]["nav"];
+            let mut other = nav["apps"]["mon"].clone();
+            other["contexts"]["terminal"] = "other".into();
+            nav["apps"]
+                .as_table_mut()
+                .unwrap()
+                .insert("other".into(), other);
+            let mut broken = nav["mon_tmux"].clone();
+            broken["LS_UP"] = "key:HYPER+a".into();
+            let plain = nav["mon_plain"].clone();
+            nav.as_table_mut()
+                .unwrap()
+                .insert("other_tmux".into(), broken);
+            nav.as_table_mut()
+                .unwrap()
+                .insert("other_plain".into(), plain);
+        })
+        .unwrap();
+        let nav = cfg.controller.nav;
+        assert!(nav.apps.is_empty());
+        assert!(nav.app_error.as_deref().unwrap().contains("other_tmux"));
+        assert!(nav.profiles.contains_key("terminal_tmux"));
+        assert!(nav.profiles.contains_key("desktop"));
+    }
+
     #[test]
     fn vt_bytes_follow_the_linux_console_keymap() {
         let b = |s: &str| vt_bytes(&parse_key_chord(s).unwrap());

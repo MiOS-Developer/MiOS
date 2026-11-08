@@ -157,6 +157,134 @@ class ttfc_TestCleanupGate(unittest.TestCase):
                 continue
             if ttfc_MOD.tfc_MAKER in s and not rel.endswith("check-testhygiene.py"):
                 self.assertTrue(any(m in s for m in ttfc_MOD.tfc_MARKERS), rel)
+                # ...and per call: a marker elsewhere in the file is no cleanup.
+                self.assertEqual(ttfc_MOD.tfc_uncleaned(s), [], rel)
+
+
+def ttfc__case(*lines):
+    return "".join(l + "\n" for l in ("import atexit, os, shutil, tempfile, unittest",
+                                       "from pathlib import Path") + lines)
+
+
+class ttfc_TestPerCall(unittest.TestCase):
+    """Each mkdtemp() call must be removed itself; line numbers count the two
+    import lines ttfc__case prepends."""
+
+    # The planted negative: an rmtree of one directory used to mask another.
+    MASKED = ttfc__case(
+        "class T(unittest.TestCase):",
+        "    def setUp(self):",
+        "        self.tmp = tempfile.mkdtemp()",
+        "        self.addCleanup(shutil.rmtree, self.tmp, True)",
+        "    def test_x(self):",
+        "        out = tempfile.mkdtemp()",
+        "        self.assertTrue(out)")
+
+    def uncleaned(self, src):
+        return ttfc_MOD.tfc_uncleaned(src)
+
+    def test_an_rmtree_of_another_directory_does_not_mask_a_leak(self):
+        self.assertEqual(self.uncleaned(self.MASKED), [8])
+        fixed = self.MASKED.replace("        self.assertTrue(out)\n",
+                                    "        self.addCleanup(shutil.rmtree, out, True)\n")
+        self.assertEqual(self.uncleaned(fixed), [])
+
+    def test_each_removal_idiom_counts(self):
+        cases = {
+            "addCleanup": ("def t(self):", "    d = tempfile.mkdtemp()",
+                           "    self.addCleanup(shutil.rmtree, d, True)"),
+            "opt-in atexit": ("OUT = Path(os.environ.get('X') or tempfile.mkdtemp())",
+                              "if not os.environ.get('X'):",
+                              "    atexit.register(shutil.rmtree, OUT, True)"),
+            "tearDown attribute": ("class T(unittest.TestCase):", "    def setUp(self):",
+                                   "        self.tmp = Path(tempfile.mkdtemp()).resolve()",
+                                   "    def tearDown(self):", "        shutil.rmtree(self.tmp)"),
+            "class cleanup": ("class T(unittest.TestCase):", "    @classmethod",
+                              "    def setUpClass(cls):", "        cls.out = tempfile.mkdtemp()",
+                              "        cls.addClassCleanup(shutil.rmtree, cls.out, True)"),
+            "finally": ("def run():", "    home = tempfile.mkdtemp()", "    try:", "        pass",
+                        "    finally:", "        shutil.rmtree(home, ignore_errors=True)"),
+            "inside a removed dir": ("class T(unittest.TestCase):", "    def setUp(self):",
+                                     "        self.tmp = tempfile.mkdtemp()",
+                                     "        self.addCleanup(shutil.rmtree, self.tmp)",
+                                     "    def test(self):",
+                                     "        d = tempfile.mkdtemp(dir=self.tmp)"),
+            "parent of a joined path": ("def t(self):",
+                                        "    hang = os.path.join(tempfile.mkdtemp(), 'qs')",
+                                        "    self.addCleanup(shutil.rmtree, os.path.dirname(hang), True)"),
+            "helper remover": ("def _rm(path):", "    shutil.rmtree(path, ignore_errors=True)",
+                               "def t(self):", "    d = tempfile.mkdtemp()", "    self.addCleanup(_rm, d)"),
+            "empty dir rmdir": ("def t(self):", "    d = tempfile.mkdtemp()",
+                                "    self.addCleanup(lambda: os.rmdir(d))"),
+            "returned and removed by its caller": (
+                "def _new():", "    return tempfile.mkdtemp()",
+                "def t(self):", "    d = _new()", "    self.addCleanup(shutil.rmtree, d)"),
+            "container": ("_DIRS = []", "def _clean():", "    for d in _DIRS:",
+                          "        shutil.rmtree(d, True)", "atexit.register(_clean)",
+                          "def t():", "    d = tempfile.mkdtemp()", "    _DIRS.append(d)"),
+            "module wrapper": ("_orig = tempfile.mkdtemp", "def _cleaned(*a, **kw):",
+                               "    d = _orig(*a, **kw)", "    atexit.register(shutil.rmtree, d, True)",
+                               "    return d", "tempfile.mkdtemp = _cleaned",
+                               "def t():", "    d = tempfile.mkdtemp()"),
+        }
+        for name, lines in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.uncleaned(ttfc__case(*lines)), [], name)
+
+    def test_near_misses_still_fail(self):
+        cases = {
+            # The same local name removed in ANOTHER function.
+            "other function": (("def a():", "    d = tempfile.mkdtemp()", "    shutil.rmtree(d)",
+                                "def b():", "    d = tempfile.mkdtemp()"), [7]),
+            # Made inside a directory nothing removes; `self` alone is not a removal.
+            "kept parent": (("class T(unittest.TestCase):", "    def setUp(self):",
+                             "        self.tmp = tempfile.mkdtemp()",
+                             "        self.addCleanup(shutil.rmtree, self.tmp)",
+                             "    def test(self):", "        d = tempfile.mkdtemp(dir=self.keep)"), [8]),
+            "returned, caller keeps it": (("def _new():", "    return tempfile.mkdtemp()",
+                                           "def t(self):", "    d = _new()",
+                                           "    shutil.rmtree(tempfile.gettempdir() + '/x')"), [4]),
+            "never bound": (("def t(run):", "    shutil.rmtree('/nonexistent', True)",
+                             "    run(env={'XDG_RUNTIME_DIR': tempfile.mkdtemp()})"), [5]),
+            "wrapper that removes nothing": (("_orig = tempfile.mkdtemp", "def _cleaned(*a, **kw):",
+                                              "    return _orig(*a, **kw)", "tempfile.mkdtemp = _cleaned",
+                                              "def t():", "    d = tempfile.mkdtemp()",
+                                              "    shutil.rmtree('/nonexistent', True)"), [8]),
+        }
+        for name, (lines, want) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.uncleaned(ttfc__case(*lines)), want, name)
+
+    def test_the_gate_fails_a_tracked_file_whose_rmtree_masks_a_leak(self):
+        import contextlib
+        import io
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="ttfc-per-call-") as root:
+            os.makedirs(os.path.join(root, "tests"))
+            probe = os.path.join(root, "tests", "test-masked.py")
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(self.MASKED)
+            subprocess.run(["git", "init", "-q", root], check=True)
+            subprocess.run(["git", "-C", root, "add", "-A"], check=True)
+            saved = os.environ.get("MIOS_DRIFT_ROOT")
+            os.environ["MIOS_DRIFT_ROOT"] = root
+            try:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                    rc = ttfc_MOD.tfc_main()
+                self.assertEqual(rc, 1)
+                self.assertIn("tests/test-masked.py:8 makes a temporary directory nothing removes",
+                              out.getvalue())
+                with open(probe, "a", encoding="utf-8") as fh:
+                    fh.write("        self.addCleanup(shutil.rmtree, out, True)\n")
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(ttfc_MOD.tfc_main(), 0)
+            finally:
+                if saved is None:
+                    os.environ.pop("MIOS_DRIFT_ROOT", None)
+                else:
+                    os.environ["MIOS_DRIFT_ROOT"] = saved
 
 
 import importlib.util

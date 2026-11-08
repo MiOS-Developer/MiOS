@@ -315,6 +315,23 @@ def quote_key(k: str) -> str:
     escaped = k.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
     return f'"{escaped}"'
 
+def _toml_inline(v) -> str:
+    """v in TOML inline syntax; arrays nest and may hold inline tables."""
+    import datetime
+    if isinstance(v, bool):
+        return str(v).lower()
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, str):
+        return '"' + v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
+    if isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
+        return v.isoformat()
+    if isinstance(v, list):
+        return "[" + ", ".join(_toml_inline(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{quote_key(k)} = {_toml_inline(x)}" for k, x in v.items()) + " }"
+    raise TypeError(f"Unsupported list item type: {type(v)}")
+
 def to_toml(d: dict, prefix: list = None) -> str:
     import datetime
     if prefix is None:
@@ -339,20 +356,7 @@ def to_toml(d: dict, prefix: list = None) -> str:
         elif isinstance(v, (datetime.datetime, datetime.date, datetime.time)):
             lines.append(f"{k_str} = {v.isoformat()}")
         elif isinstance(v, list):
-            list_str = []
-            for item in v:
-                if isinstance(item, str):
-                    escaped_item = item.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-                    list_str.append(f'"{escaped_item}"')
-                elif isinstance(item, bool):
-                    list_str.append(str(item).lower())
-                elif isinstance(item, (int, float)):
-                    list_str.append(str(item))
-                elif isinstance(item, (datetime.datetime, datetime.date, datetime.time)):
-                    list_str.append(item.isoformat())
-                else:
-                    raise TypeError(f"Unsupported list item type: {type(item)}")
-            lines.append(f"{k_str} = [{', '.join(list_str)}]")
+            lines.append(f"{k_str} = {_toml_inline(v)}")
         elif v is None:
             continue
         else:
@@ -397,8 +401,8 @@ def validate_config(toml_text: str, live_config: dict = None):
         size = len(toml_text or "")
     try:
         max_bytes = _validate_max_bytes()
-    except Exception as e:  # noqa: BLE001 -- no ceiling resolved: refuse
-        log.warning("Portal configuration safety cap unavailable: %s", e)
+    except Exception:  # noqa: BLE001 -- no ceiling resolved: refuse
+        log.warning("Portal configuration safety cap unavailable")
         return (False, ["[portal].config_max_body_bytes did not resolve"])
     if size > max_bytes:
         return (False, [f"Config too large: {size} bytes exceeds the "
@@ -410,8 +414,8 @@ def validate_config(toml_text: str, live_config: dict = None):
         import tomli as _toml  # type: ignore
     try:
         parsed = _toml.loads(toml_text)
-    except Exception as e:
-        log.warning("Configuration TOML parse failed: %s", e)
+    except Exception:
+        log.warning("Configuration TOML parse failed")
         return (False, ["Invalid TOML syntax"])
 
     live = live_config if isinstance(live_config, dict) else {}
@@ -439,32 +443,188 @@ def validate_config(toml_text: str, live_config: dict = None):
                 continue  # nested table -- not a port scalar; leave it alone
             if isinstance(v, bool) or not isinstance(v, int):
                 errors.append(
-                    f"[ports].{k} must be an integer 1-65535 (got {v!r}).")
+                    f"[ports].{k} must be an integer 1-65535.")
             elif not (1 <= v <= 65535):
                 errors.append(
-                    f"[ports].{k} = {v} is out of the valid 1-65535 range.")
+                    f"[ports].{k} is out of the valid 1-65535 range.")
 
     return (len(errors) == 0, errors)
 
-def write_user_config(cfg: dict, dest_path: str = None) -> None:
-    """Atomically write the dictionary to the user-layer config file."""
+# What miosd's GET /portal/config serves in place of every secret value.
+REDACTED = "<redacted>"
+
+UNRESOLVED_REFUSAL = ("Refusing the save: the current config did not resolve, so it cannot be"
+                      " diffed or its <redacted> markers restored; nothing was written")
+
+def portal_post_toml(content_type: str, body: bytes):
+    """A POST /portal/config body's TOML: raw, or miosd's lossless JSON envelope
+    {"toml": "<text>"}; None for a malformed envelope."""
+    if content_type.split(";")[0].strip().lower() != "application/json":
+        return body.decode("utf-8")
+    import json
+    try:
+        envelope = json.loads(body.decode("utf-8"))
+    except ValueError as e:
+        log.warning("Invalid JSON posted to /portal/config: %s", e)
+        return None
+    toml_text = envelope.get("toml") if isinstance(envelope, dict) else None
+    return toml_text if isinstance(toml_text, str) else None
+
+class TiersUnresolved(RuntimeError):
+    """The tiers a save diffs against, or restores its REDACTED markers from,
+    did not resolve: write_user_config refuses and writes nothing."""
+
+def _ascii_eq(a: str, b: str) -> bool:
+    return a.encode("utf-8").lower() == b.encode("utf-8").lower()
+
+def _redact_matches(value, secret_keys) -> None:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "keys" and isinstance(v, list):
+                continue
+            if any(_ascii_eq(sk, k) or (sk.startswith("MIOS_") and _ascii_eq(sk[5:], k))
+                   for sk in secret_keys):
+                value[k] = REDACTED
+            else:
+                _redact_matches(v, secret_keys)
+    elif isinstance(value, list):
+        for item in value:
+            _redact_matches(item, secret_keys)
+
+def redact_secrets(merged: dict) -> dict:
+    """A copy of merged with each secret REDACTED exactly as miosd's GET does."""
+    import copy
+    out = copy.deepcopy(merged)
+    for table, key in (("portal", "password"), ("portal", "secret"), ("ai", "api_key")):
+        if isinstance(out.get(table), dict) and key in out[table]:
+            out[table][key] = REDACTED
+    security = out.get("security")
+    secret_keys = security.get("secret_keys") if isinstance(security, dict) else None
+    keys = secret_keys.get("keys") if isinstance(secret_keys, dict) else None
+    _redact_matches(out, [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else [])
+    return out
+
+def has_redacted(value) -> bool:
+    """True when value holds a REDACTED marker anywhere."""
+    if isinstance(value, dict):
+        return any(has_redacted(v) for v in value.values())
+    if isinstance(value, list):
+        return any(has_redacted(v) for v in value)
+    return isinstance(value, str) and value == REDACTED
+
+REDACTED_ARRAY_REFUSAL = (
+    "Refusing the save: a redacted array was edited or cannot be matched to its "
+    "destination layer. Reload or supply explicit values; nothing was written.")
+
+class AmbiguousRedactedArray(ValueError):
+    """An opaque array edit cannot identify the secrets it would restore."""
+
+def _same_config_value(left, right) -> bool:
+    """TOML equality without Python's bool/int or int/float coercions."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_config_value(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_config_value(a, b) for a, b in zip(left, right))
+    return left == right
+
+def validate_redacted_arrays(posted, redacted_prefix) -> None:
+    """Opaque arrays must be an unchanged echo of the destination prefix.
+
+    Matching indexes cannot identify a secret after an insertion, reorder or
+    edit. Compare the complete redacted array before the old restoration walk,
+    including outer arrays with nested markers. Explicit marker-free arrays
+    remain ordinary edits. This check neither mutates nor reveals either input.
+    """
+    if isinstance(posted, list) and has_redacted(posted):
+        if not isinstance(redacted_prefix, list) or not _same_config_value(posted, redacted_prefix):
+            raise AmbiguousRedactedArray(REDACTED_ARRAY_REFUSAL)
+    elif isinstance(posted, dict):
+        for key, value in posted.items():
+            prefix = redacted_prefix.get(key) if isinstance(redacted_prefix, dict) else None
+            validate_redacted_arrays(value, prefix)
+
+def restore_redacted(posted, live):
+    """Each REDACTED marker takes back the live value at its path, or is dropped
+    where live has none. The input is not mutated."""
+    if isinstance(posted, dict):
+        out = {}
+        for k, v in posted.items():
+            has_live = isinstance(live, dict) and k in live
+            if isinstance(v, str) and v == REDACTED:
+                if has_live:
+                    out[k] = live[k]
+                continue
+            out[k] = restore_redacted(v, live[k] if has_live else None)
+        return out
+    if isinstance(posted, list):
+        out = []
+        for i, item in enumerate(posted):
+            has_live = isinstance(live, list) and i < len(live)
+            if isinstance(item, str) and item == REDACTED:
+                if has_live:
+                    out.append(live[i])
+                continue
+            out.append(restore_redacted(item, live[i] if has_live else None))
+        return out
+    return posted
+
+def _unparsed_layers(paths) -> list:
+    """The layer files in paths that exist but do not parse as TOML."""
+    try:
+        import tomllib as _toml
+    except ImportError:
+        import tomli as _toml  # type: ignore
+    bad = []
+    for p in paths:
+        if p and os.path.isfile(p):
+            try:
+                with open(p, "rb") as fh:
+                    _toml.load(fh)
+            except Exception:  # noqa: BLE001 -- any unreadable layer is unresolved
+                bad.append(p)
+    return bad
+
+def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
+    """Atomically write what cfg changes over vendor..host.d to the user tier.
+
+    cfg's REDACTED markers restore from vendor..host.d plus that user tier, so a
+    secret stays in its own layer. TiersUnresolved, writing nothing: a tier does
+    not parse, or live_config (the handler's merged load) is None."""
+    import sys
+    if "/usr/lib/mios" not in sys.path:
+        sys.path.insert(0, "/usr/lib/mios")
     base_cfg = {}
     try:
-        import sys
-        if "/usr/lib/mios" not in sys.path:
-            sys.path.insert(0, "/usr/lib/mios")
         import mios_toml
         vendor, vendor_d, host, host_d, user, user_d = mios_toml._tier_dirs()
         paths = ([vendor] + mios_toml._frags(vendor_d)
                  + [host] + mios_toml._frags(host_d))
+        if _unparsed_layers(paths):
+            raise TiersUnresolved("the lower tiers did not parse; nothing was written")
         for p in paths:
             mios_toml.deep_merge(base_cfg, mios_toml._load_one(p))
         # The posted config carries [ports] derived from [ports.categories]
         # (GET serves load_merged); derive the base the same way so a derived
         # value is not frozen into the user tier. miosd's save does the same.
         mios_toml.derive_ports(base_cfg)
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 -- an empty base would copy every tier upward
+        raise TiersUnresolved("the tiers below the user tier did not resolve; nothing was written") from None
+    if dest_path is None:
+        dest_path = user
+    if has_redacted(cfg):
+        unparsed = _unparsed_layers(paths + [user, dest_path] + mios_toml._frags(user_d))
+        if live_config is None or unparsed:
+            raise TiersUnresolved("the save carries REDACTED markers but the live config"
+                                  " did not resolve; nothing was written")
+        own = {}
+        for p in paths + [dest_path]:
+            mios_toml.deep_merge(own, mios_toml._load_one(p))
+        validate_redacted_arrays(cfg, redact_secrets(own))
+        cfg = restore_redacted(cfg, own)
 
     def _dict_diff(new_dict: dict, base_dict: dict) -> dict:
         diff = {}
@@ -475,18 +635,11 @@ def write_user_config(cfg: dict, dest_path: str = None) -> None:
                 sub_diff = _dict_diff(v, base_dict[k])
                 if sub_diff:
                     diff[k] = sub_diff
-            elif v != base_dict[k]:
+            elif not _same_config_value(v, base_dict[k]):
                 diff[k] = v
         return diff
 
     delta_cfg = _dict_diff(cfg, base_cfg)
-
-    if dest_path is None:
-        try:
-            import mios_toml
-            dest_path = mios_toml.USER
-        except Exception:
-            dest_path = os.path.expanduser("~/.config/mios/mios.toml")
 
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     temp_path = dest_path + ".tmp"

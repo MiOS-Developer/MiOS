@@ -3719,6 +3719,84 @@
         <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
         <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
         <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <details>
+          <summary>Focused MiOS-Mon controls</summary>
+          <p class="hint">Inputd verifies the foreground executable in the focused terminal or console. These bindings navigate menus and the camera; the pet moves autonomously. Blank fields inherit the vendor policy. User-local samples require their exact absolute executable paths in the user configuration. Install a compatible Inputd daemon and command before applying these profiles.</p>
+          <label>Foreground app poll interval (ms) <input data-key="keybindings.global.controller.nav.app_poll_ms" data-inherit="true" data-type="int" type="number" min="50" max="2000"></label>
+          <label>Foreground app query timeout (ms) <input data-key="keybindings.global.controller.nav.app_query_timeout_ms" data-inherit="true" data-type="int" type="number" min="20" max="1000"></label>
+          <label>MiOS-Mon system executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>MiOS-Mon user executable paths (comma separated) <input data-key="keybindings.global.controller.nav.apps.mon.user_exe" data-inherit="true" data-array="csv" type="text"></label>
+          <label>Terminal app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.terminal" data-inherit="true" type="text"></label>
+          <label>Console app profile prefix <input data-key="keybindings.global.controller.nav.apps.mon.contexts.console" data-inherit="true" type="text"></label>
+          <details><summary>mon_tmux (inherits terminal_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_plain (inherits terminal_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_tmux (inherits console_tmux)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_tmux.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_tmux.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_tmux.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>mon_console_plain (inherits console_plain)</summary>
+            <label>Left stick left / camera pan left <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_LEFT" data-inherit="true" type="text"></label>
+            <label>Left stick right / camera pan right <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_UP" data-inherit="true" type="text"></label>
+            <label>Left stick down / menu next / camera pan down <input data-key="keybindings.global.controller.nav.mon_console_plain.LS_DOWN" data-inherit="true" type="text"></label>
+            <label>Right stick left / orbit left <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_LEFT" data-inherit="true" type="text"></label>
+            <label>Right stick right / orbit right <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_RIGHT" data-inherit="true" type="text"></label>
+            <label>Right stick up / tilt up <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_UP" data-inherit="true" type="text"></label>
+            <label>Right stick down / tilt down <input data-key="keybindings.global.controller.nav.mon_console_plain.RS_DOWN" data-inherit="true" type="text"></label>
+            <label>Left trigger / zoom out <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TL2" data-inherit="true" type="text"></label>
+            <label>Right trigger / zoom in <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_TR2" data-inherit="true" type="text"></label>
+            <label>Left stick press / camera view <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBL" data-inherit="true" type="text"></label>
+            <label>Right stick press / camera reset <input data-key="keybindings.global.controller.nav.mon_console_plain.BTN_THUMBR" data-inherit="true" type="text"></label>
+          </details>
+          <details><summary>MiOS-Mon held camera repeat timing</summary>
+            <label>Left stick left / camera pan left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick right / camera pan right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick up / menu previous / camera pan up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left stick down / menu next / camera pan down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.LS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick left / orbit left delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_LEFT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick right / orbit right delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_RIGHT" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick up / tilt up delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_UP" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right stick down / tilt down delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.RS_DOWN" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Left trigger / zoom out delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TL2" data-inherit="true" data-array="csv-int" type="text"></label>
+            <label>Right trigger / zoom in delay, interval (ms) <input data-key="keybindings.global.controller.nav.apps.mon.repeat.BTN_TR2" data-inherit="true" data-array="csv-int" type="text"></label>
+          </details>
+        </details>
         <label>2D controller cursor shape <input data-key="keybindings.global.controller.cursor_shape" type="text" pattern="[A-Za-z0-9_-]{0,64}" placeholder="crosshair"></label>
         <label>Controller virtual pointer device <input data-key="keybindings.global.controller.virtual_pointer" type="text" maxlength="79" placeholder="mios-vctl-pointer"></label>
         <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>
@@ -6256,22 +6334,39 @@ function gatherFromForm() {
       DATA[sec][key] = accounts;
     }
     else if (el.dataset.type === "json-array") {
-      const bindings = JSON.parse(el.value);
-      if (!Array.isArray(bindings) || bindings.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
-      DATA[sec][key] = bindings;
+      const values = JSON.parse(el.value);
+      if (!Array.isArray(values)) throw new Error("Setting requires a JSON array: " + el.dataset.key);
+      if (el.dataset.key === "keybindings.global.bindings" && values.some(b => !b || typeof b.id !== "string" || typeof b.chord !== "string" || typeof b.action !== "string")) throw new Error("Global bindings require an array of binding objects");
+      DATA[sec][key] = values;
     }
     else if (el.type === "checkbox") DATA[sec][key] = el.checked;
     else if (el.dataset.array === "csv") {
       DATA[sec][key] = el.value.split(",").map(s => s.trim()).filter(Boolean);
     }
     else if (el.dataset.array === "csv-int") {
-      DATA[sec][key] = el.value.split(",")
-        .map(s => s.trim()).filter(Boolean)
-        .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      const parts = el.value.split(",").map(s => s.trim());
+      if (el.dataset.key.startsWith("keybindings.global.controller.nav.apps.") && el.dataset.key.includes(".repeat.")) {
+        const pair = parts.map(Number);
+        if (parts.length !== 2 || parts.some(s => !/^[0-9]+$/.test(s)) || pair.some(n => !Number.isSafeInteger(n)) || pair[0] < 50 || pair[0] > 5000 || pair[1] < 16 || pair[1] > 5000) throw new Error("Controller repeat requires delay 50..5000 and interval 16..5000 ms: " + el.dataset.key);
+        DATA[sec][key] = pair;
+      } else {
+        DATA[sec][key] = parts.filter(Boolean)
+          .map(s => { const n = parseInt(s, 10); return Number.isFinite(n) ? n : s; });
+      }
     }
     else if (el.dataset.type === "int") {
-      const n = parseInt(el.value, 10);
-      DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      const timing = {
+        "keybindings.global.controller.nav.app_poll_ms": [50, 2000],
+        "keybindings.global.controller.nav.app_query_timeout_ms": [20, 1000]
+      }[el.dataset.key];
+      if (timing) {
+        const n = Number(el.value);
+        if (!/^[0-9]+$/.test(el.value.trim()) || !Number.isSafeInteger(n) || n < timing[0] || n > timing[1]) throw new Error("Controller timing outside supported range: " + el.dataset.key);
+        DATA[sec][key] = n;
+      } else {
+        const n = parseInt(el.value, 10);
+        DATA[sec][key] = Number.isFinite(n) ? n : el.value;
+      }
     }
     else if (el.dataset.type === "float") {
       const n = parseFloat(el.value);
@@ -6288,6 +6383,8 @@ function gatherFromForm() {
     }
     else DATA[sec][key] = el.value;
   });
+  const nav = DATA["keybindings.global.controller.nav"];
+  if (nav && Number.isInteger(nav.app_poll_ms) && Number.isInteger(nav.app_query_timeout_ms) && nav.app_query_timeout_ms > nav.app_poll_ms) throw new Error("Controller app query timeout must not exceed poll interval");
 }
 
 function renderRaw() {
@@ -6698,7 +6795,7 @@ function renderSaveErrors(errs) {
   const box = document.getElementById("save-preview-errors");
   if (!box) return;
   if (!errs || !errs.length) { box.style.display = "none"; box.innerHTML = ""; return; }
-  box.innerHTML = "<b>The Portal rejected this config (nothing was written):</b>" +
+  box.innerHTML = "<b>The save was not confirmed:</b>" +
     "<ul>" + errs.map(e => `<li>${escapeHtml(e)}</li>`).join("") + "</ul>";
   box.style.display = "block";
 }
@@ -6735,47 +6832,40 @@ function showSavePreview() {
   if (panel) panel.classList.add("open");
 }
 
-// The actual write. Behaviour is the pre-WS-CONFIG one-click Save, EXCEPT a 422
-// (safety-validation failure) is surfaced inline in the panel and does NOT fall
-// through to a local write -- the operator fixes it and retries. Any other
-// non-2xx / network error still degrades to the FSA / download paths.
+// Embedded saves are authoritative Portal requests. A refusal or uncertain
+// network result stays in the preview; it must never overwrite a local file
+// through an offline fallback. Standalone file:// saves use the paths below.
 async function performSave(toml) {
   const finishSave = () => { LOADED_TOML = toml; hideSavePreview(); };
 
-  // Path 0 (STEP 6): embedded behind the Portal -- POST the serialized TOML to
-  // the live layered config. POST /portal/config (relative to location.origin;
-  // no hardcoded host). A 422 means the server's safety net rejected it (no
-  // write happened) -> show the errors inline and stop. Other non-2xx / network
-  // errors fall THROUGH to the FSA / <a download> paths (graceful degrade).
-  // NEVER attempted under file:// (offline USB fallback, ADR-0008).
+  // The lossless JSON envelope preserves TOML text for both config servers.
+  // Offline saves continue writing the TOML text itself.
   if (MIOS_EMBEDDED) {
     try {
       const resp = await fetch("/portal/config", {
         method: "POST",
         credentials: "same-origin",
-        headers: { "Content-Type": "application/toml" },
-        body: toml
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toml: toml })
       });
       if (resp.ok) {
         finishSave();
         showStatus(`Saved to MiOS — wrote the live mios.toml via the Portal (${toml.length} bytes).`, "ok");
         return;
       }
-      if (resp.status === 422) {
-        let errs = ["The server rejected the config."];
-        try {
-          const data = await resp.json();
-          if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
-          else if (data && data.error) errs = [String(data.error)];
-        } catch (e) { /* non-JSON body -> keep the generic message */ }
-        renderSaveErrors(errs);
-        showStatus("Portal rejected the config — see the validation errors.", "err");
-        return;   // stay open; nothing written
-      }
-      showStatus(`Portal save unavailable (HTTP ${resp.status}) — saving locally instead.`, "info");
+      let errs = [`Portal save was not confirmed (HTTP ${resp.status}).`];
+      try {
+        const data = await resp.json();
+        if (data && Array.isArray(data.errors) && data.errors.length) errs = data.errors;
+        else if (data && data.error) errs = [String(data.error)];
+      } catch (e) { /* non-JSON body -> keep the generic message */ }
+      renderSaveErrors(errs);
+      showStatus("Portal save was not confirmed — see the errors before retrying.", "err");
     } catch (err) {
-      showStatus("Portal save route unreachable — saving locally instead.", "info");
+      renderSaveErrors(["Portal response unavailable. Check the live configuration before retrying."]);
+      showStatus("Portal save result is unknown — check the live configuration.", "err");
     }
+    return; // No bound-file write, picker or download after an embedded failure.
   }
 
   // Path 1: bound file handle -- direct in-place overwrite.
