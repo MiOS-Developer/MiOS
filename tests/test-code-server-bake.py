@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -73,7 +74,7 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.root = _bash_directory(self.tmp)
         self.log = os.path.join(self.tmp, "calls.log")
-        for directory in ("bin", "src/mios-rs", "tools/native", "runtime"):
+        for directory in ("bin", "src/mios-rs", "tools/native", "runtime", ".devcontainer"):
             os.makedirs(os.path.join(self.tmp, directory), exist_ok=True)
         with open(os.path.join(self.tmp, "src/mios-rs/Cargo.toml"), "w") as fh:
             fh.write("# fixture\n")
@@ -132,6 +133,50 @@ class TestDevcontainerLifecycle(unittest.TestCase):
         self.assertEqual(1, result.returncode)
         self.assertIn("Missing agent-pipe runtime", result.stderr)
         self.assertEqual([], calls)
+
+    def run_post_start(self, gateway_status=0):
+        """Run the real post-start body without installs or background servers."""
+        source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
+        source = source.split('case "${1:-start}" in', 1)[0]
+        source = "set -euo pipefail\n" + source[source.index("mios_platform() {"):]
+        source = source.replace("/workspaces/MiOS", self.root)
+        source = source.replace("/workspaces/-dev-loop", self.root + "/missing-dev-loop")
+        self.shim("bin/agy", "exit 0\n")
+        # A listening socket takes the existing-server branch without launching
+        # a process. No HTTP/application readiness is inferred from this socket.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            port = listener.getsockname()[1]
+            self.shim("bin/python3",
+                      'printf "python3 %s\\n" "$*" >> "$CORE_LOG"\n'
+                      'case "$1" in */mios-toml-get) printf "%s\\n" "' + str(port) + '" ;;\n'
+                      '*) echo "unexpected Python entrypoint: $1" >&2; exit 72 ;; esac\n')
+            self.shim(".devcontainer/mios-agent-pipe-dev",
+                      'printf "gateway %s\\n" "$*" >> "$CORE_LOG"\n'
+                      '[[ "$1" == check ]] || exit 73\n'
+                      'exit "${GATEWAY_STATUS}"\n')
+            env = dict(os.environ, PATH=self.root + "/bin:" + os.environ["PATH"],
+                       CORE_LOG=self.root + "/calls.log", GATEWAY_STATUS=str(gateway_status))
+            result = subprocess.run(["bash", "-s"],
+                                    input=(source + "\nmios_post_start\n").encode(),
+                                    capture_output=True, env=env)
+        result.stdout = result.stdout.decode()
+        result.stderr = result.stderr.decode()
+        calls = _read(self.log).splitlines() if os.path.isfile(self.log) else []
+        return result, calls
+
+    def test_post_start_checks_shipped_gateway_without_missing_harness(self):
+        result, calls = self.run_post_start()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("gateway check", calls[-1])
+        self.assertIn("Ready for agent dispatch", result.stdout)
+
+    def test_post_start_gateway_failure_is_fatal(self):
+        result, calls = self.run_post_start(gateway_status=74)
+        self.assertEqual(74, result.returncode, result.stderr)
+        self.assertEqual("gateway check", calls[-1])
+        self.assertNotIn("Ready for agent dispatch", result.stdout)
 
 
 class TestCodeServerBake(unittest.TestCase):

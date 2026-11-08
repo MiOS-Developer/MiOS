@@ -170,7 +170,9 @@ mios_post_start() {
         exit 1
     fi
 
-    python3 harness/verification_gates.py --quick
+    # Use the gateway's shipped readiness probe. The former harness/ gate was
+    # never part of this checkout and failed every otherwise successful start.
+    bash /workspaces/MiOS/.devcontainer/mios-agent-pipe-dev check
 
     echo "[devcontainer:post-start] Ready for agent dispatch."
 }
