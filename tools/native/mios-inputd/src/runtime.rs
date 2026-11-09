@@ -2441,17 +2441,23 @@ type Discovery = (DeviceCandidates, std::thread::JoinHandle<()>);
 /// Nodes the host bridge must leave alone: assigned to a live nested session (path -> seat). Refreshed every scan.
 type Assigned = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
 type RawConsumers = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
+type ReleasedDevices = std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>;
 
 fn update_active_manifest(
     runtime: &Path,
     devices: &BTreeMap<PathBuf, RunningDevice>,
     raw_consumers: &BTreeMap<PathBuf, String>,
+    bridge: bool,
 ) {
     let path = runtime.join("mios-inputd-active.json");
-    let tmp = runtime.join("mios-inputd-active.json.tmp");
     let me = std::process::id();
+    let start_ticks = crate::nested::start_time(Path::new("/proc"), me).unwrap_or(0);
+    let now_dur = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let devs: Vec<serde_json::Value> = devices
         .iter()
+        .filter(|(_, d)| !d.suspended && !d.dropped && (!bridge || d.device.grabbed()))
         .map(|(p, d)| {
             serde_json::json!({
                 "path": p,
@@ -2471,17 +2477,419 @@ fn update_active_manifest(
         .collect();
     let manifest = serde_json::json!({
         "pid": me,
-        "start_time": crate::nested::start_time(Path::new("/proc"), me).unwrap_or(0),
+        "bridge_pid": me,
+        "start_time": start_ticks,
+        "bridge_start": start_ticks,
         "devices": devs,
         "raw_consumers": raws,
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+        "timestamp": now_dur.as_secs(),
+        "timestamp_ms": now_dur.as_millis() as u64,
     });
-    if let Ok(mut f) = std::fs::File::create(&tmp) {
-        use std::io::Write;
-        if f.write_all(format!("{manifest}\n").as_bytes()).is_ok() && f.sync_all().is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
-        } else {
-            let _ = std::fs::remove_file(&tmp);
+    let _ = write_private(&path, format!("{manifest}\n").as_bytes());
+}
+
+fn socket_peercred_linux(stream: &std::os::unix::net::UnixStream) -> Result<(u32, u32), String> {
+    use std::os::fd::AsRawFd;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: u32::MAX,
+        gid: u32::MAX,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+            &mut len,
+        )
+    };
+    if rc != 0
+        || len as usize != std::mem::size_of::<libc::ucred>()
+        || cred.pid <= 0
+    {
+        return Err("unauthorized: SO_PEERCRED failed".into());
+    }
+    Ok((cred.uid, cred.pid as u32))
+}
+
+fn read_bounded_control_json(
+    stream: &mut std::os::unix::net::UnixStream,
+    timeout: Duration,
+    max_bytes: usize,
+) -> Result<serde_json::Value, String> {
+    use std::io::{BufRead, Read};
+    stream
+        .set_nonblocking(false)
+        .map_err(|e| format!("socket nonblocking setup failed: {e}"))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| format!("socket read timeout setup failed: {e}"))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|e| format!("socket write timeout setup failed: {e}"))?;
+    let mut reader = std::io::BufReader::new(stream.take((max_bytes + 1) as u64));
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| format!("control socket read failed: {e}"))?;
+    if line.is_empty() {
+        return Err("empty control request".into());
+    }
+    if line.len() > max_bytes || !line.ends_with('\n') {
+        return Err("control request exceeds maximum length or is unterminated".into());
+    }
+    if line.trim().is_empty() {
+        return Err("blank control request".into());
+    }
+    serde_json::from_str(&line).map_err(|e| format!("invalid control request json: {e}"))
+}
+
+fn extract_control_nonce(req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    match req.get("nonce") {
+        Some(v) if v.is_string() && !v.as_str().unwrap_or("").trim().is_empty() => Ok(v.clone()),
+        Some(v) if v.is_u64() || v.is_i64() => Ok(v.clone()),
+        _ => Err("missing or empty nonce".into()),
+    }
+}
+
+fn paths_match_exact_or_canonical(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
+}
+
+fn resolve_leased_controller_path(
+    req_device: &str,
+    session_controllers: &[PathBuf],
+    active_devices: &BTreeSet<PathBuf>,
+) -> Result<PathBuf, String> {
+    if req_device.trim().is_empty() {
+        return Err("missing device path".into());
+    }
+    let target_path = PathBuf::from(req_device);
+    if !target_path.is_absolute() {
+        return Err(format!(
+            "device path {} must be absolute",
+            target_path.display()
+        ));
+    }
+    if std::fs::symlink_metadata(&target_path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "device path {} must not be a symlink",
+            target_path.display()
+        ));
+    }
+    if !session_controllers
+        .iter()
+        .any(|c| paths_match_exact_or_canonical(c, &target_path))
+    {
+        return Err(format!(
+            "device {} is not leased to this nested session",
+            target_path.display()
+        ));
+    }
+    active_devices
+        .iter()
+        .find(|p| paths_match_exact_or_canonical(p, &target_path))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "device {} not owned by child inputd",
+                target_path.display()
+            )
+        })
+}
+
+fn physical_controls_neutral(
+    keys: &BTreeSet<u16>,
+    axes: &BTreeMap<u16, crate::router::Axis>,
+    stick_deadzone: f64,
+    trigger_threshold: f64,
+) -> Result<(), (Vec<u16>, Vec<u16>)> {
+    let buttons: Vec<u16> = keys.iter().copied().collect();
+    let mut deflected_axes = Vec::new();
+    for (code, axis) in axes {
+        if [2, 5].contains(code) {
+            if axis.trigger() > trigger_threshold {
+                deflected_axes.push(*code);
+            }
+        } else if axis.centered().abs() > stick_deadzone {
+            deflected_axes.push(*code);
+        }
+    }
+    if buttons.is_empty() && deflected_axes.is_empty() {
+        Ok(())
+    } else {
+        Err((buttons, deflected_axes))
+    }
+}
+
+fn step_neutral_rearming(
+    rearming: &mut bool,
+    router: &mut Router,
+    snapshot: std::io::Result<(BTreeSet<u16>, BTreeMap<u16, crate::router::Axis>)>,
+    stick_deadzone: f64,
+    trigger_threshold: f64,
+) -> bool {
+    if !*rearming {
+        return false;
+    }
+    let Ok((keys, axes)) = snapshot else {
+        return true;
+    };
+    if physical_controls_neutral(&keys, &axes, stick_deadzone, trigger_threshold).is_ok()
+        && physical_controls_neutral(&BTreeSet::new(), &router.axes, stick_deadzone, trigger_threshold)
+            .is_ok()
+    {
+        *rearming = false;
+        let _ = router.reset();
+        let _ = router.resync(keys, axes);
+        false
+    } else {
+        true
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_child_control_connection<F>(
+    mut stream: std::os::unix::net::UnixStream,
+    session: &crate::nested::Session,
+    proc_root: &Path,
+    expected_uid: u32,
+    peer_override: Option<(u32, u32)>,
+    stick_deadzone: f64,
+    trigger_threshold: f64,
+    active_devices: &BTreeSet<PathBuf>,
+    known_devices: &std::sync::Mutex<BTreeSet<PathBuf>>,
+    released_devices: &std::sync::Mutex<BTreeSet<PathBuf>>,
+    mut inspect_and_release: F,
+) -> serde_json::Value
+where
+    F: FnMut(&Path) -> Result<Result<(), (Vec<u16>, Vec<u16>)>, String>,
+{
+    use std::io::Write;
+    let peer = match peer_override {
+        Some(p) => Ok(p),
+        None => socket_peercred_linux(&stream),
+    };
+    let req = match read_bounded_control_json(&mut stream, Duration::from_millis(500), 4096) {
+        Ok(v) => v,
+        Err(e) => {
+            let resp = serde_json::json!({
+                "ok": false,
+                "error": e,
+            });
+            let _ = writeln!(stream, "{resp}");
+            return resp;
+        }
+    };
+    let nonce = match extract_control_nonce(&req) {
+        Ok(n) => n,
+        Err(e) => {
+            let resp = serde_json::json!({
+                "ok": false,
+                "error": e,
+            });
+            let _ = writeln!(stream, "{resp}");
+            return resp;
+        }
+    };
+    let (peer_uid, peer_pid) = match peer {
+        Ok(p) => p,
+        Err(e) => {
+            let resp = serde_json::json!({
+                "ok": false,
+                "nonce": nonce,
+                "error": e,
+            });
+            let _ = writeln!(stream, "{resp}");
+            return resp;
+        }
+    };
+    let req_seat = match req.get("seat") {
+        Some(v) => match v.as_str() {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => {
+                let resp = serde_json::json!({
+                    "ok": false,
+                    "nonce": nonce,
+                    "error": "invalid seat in control request",
+                });
+                let _ = writeln!(stream, "{resp}");
+                return resp;
+            }
+        },
+        None => None,
+    };
+    let req_pid = match req.get("launcher_pid") {
+        Some(v) => match v.as_u64().and_then(|n| u32::try_from(n).ok()) {
+            Some(p) => Some(p),
+            None => {
+                let resp = serde_json::json!({
+                    "ok": false,
+                    "nonce": nonce,
+                    "error": "invalid launcher_pid in control request",
+                });
+                let _ = writeln!(stream, "{resp}");
+                return resp;
+            }
+        },
+        None => None,
+    };
+    let req_start = match req.get("launcher_start") {
+        Some(v) => match v.as_u64() {
+            Some(st) => Some(st),
+            None => {
+                let resp = serde_json::json!({
+                    "ok": false,
+                    "nonce": nonce,
+                    "error": "invalid launcher_start in control request",
+                });
+                let _ = writeln!(stream, "{resp}");
+                return resp;
+            }
+        },
+        None => None,
+    };
+    if let Err(e) = session.verify_launcher_peer(
+        proc_root,
+        expected_uid,
+        peer_uid,
+        peer_pid,
+        req_seat,
+        req_pid,
+        req_start,
+    ) {
+        let resp = serde_json::json!({
+            "ok": false,
+            "nonce": nonce,
+            "error": e,
+        });
+        let _ = writeln!(stream, "{resp}");
+        return resp;
+    }
+
+    match req["action"].as_str() {
+        Some("release_device") => {
+            let dev_req = req["device"].as_str().unwrap_or("");
+            let matched = match resolve_leased_controller_path(
+                dev_req,
+                &session.controllers,
+                active_devices,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    let resp = serde_json::json!({
+                        "ok": false,
+                        "nonce": nonce,
+                        "seat": session.seat,
+                        "error": e,
+                    });
+                    let _ = writeln!(stream, "{resp}");
+                    return resp;
+                }
+            };
+            match inspect_and_release(&matched) {
+                Ok(Ok(())) => {
+                    {
+                        let mut rel = released_devices.lock().unwrap();
+                        rel.insert(matched.clone());
+                        if let Ok(canon) = std::fs::canonicalize(&matched) {
+                            rel.insert(canon);
+                        }
+                    }
+                    known_devices.lock().unwrap().remove(&matched);
+                    let resp = serde_json::json!({
+                        "ok": true,
+                        "nonce": nonce,
+                        "seat": session.seat,
+                        "launcher_pid": session.launcher_pid,
+                        "launcher_start": session.launcher_start,
+                        "device": matched.display().to_string(),
+                    });
+                    let _ = writeln!(stream, "{resp}");
+                    resp
+                }
+                Ok(Err((buttons, axes))) => {
+                    let resp = serde_json::json!({
+                        "ok": false,
+                        "nonce": nonce,
+                        "seat": session.seat,
+                        "reason": "controls_held",
+                        "deferred": true,
+                        "buttons": buttons,
+                        "axes": axes,
+                        "error": "physical buttons, triggers, or sticks currently held; release deferred",
+                    });
+                    let _ = writeln!(stream, "{resp}");
+                    resp
+                }
+                Err(e) => {
+                    let resp = serde_json::json!({
+                        "ok": false,
+                        "nonce": nonce,
+                        "seat": session.seat,
+                        "reason": "ioctl_failed",
+                        "error": e,
+                    });
+                    let _ = writeln!(stream, "{resp}");
+                    resp
+                }
+            }
+        }
+        Some("reacquire_device") | Some("abort_release") => {
+            let dev_req = req["device"].as_str().unwrap_or("");
+            let target_path = PathBuf::from(dev_req);
+            if !target_path.is_absolute()
+                || !session
+                    .controllers
+                    .iter()
+                    .any(|c| paths_match_exact_or_canonical(c, &target_path))
+            {
+                let resp = serde_json::json!({
+                    "ok": false,
+                    "nonce": nonce,
+                    "seat": session.seat,
+                    "error": format!("device {} is not leased to this nested session", target_path.display()),
+                });
+                let _ = writeln!(stream, "{resp}");
+                return resp;
+            }
+            {
+                let mut rel = released_devices.lock().unwrap();
+                rel.retain(|p| !paths_match_exact_or_canonical(p, &target_path));
+            }
+            {
+                let mut known = known_devices.lock().unwrap();
+                known.retain(|p| !paths_match_exact_or_canonical(p, &target_path));
+            }
+            let resp = serde_json::json!({
+                "ok": true,
+                "nonce": nonce,
+                "seat": session.seat,
+                "device": target_path.display().to_string(),
+                "reacquisi_armed": true,
+            });
+            let _ = writeln!(stream, "{resp}");
+            resp
+        }
+        _ => {
+            let resp = serde_json::json!({
+                "ok": false,
+                "nonce": nonce,
+                "error": "unsupported control action",
+            });
+            let _ = writeln!(stream, "{resp}");
+            resp
         }
     }
 }
@@ -2496,6 +2904,7 @@ fn discovery_worker(
     assigned: Assigned,
     nested: bool,
     raw_consumers: RawConsumers,
+    released: ReleasedDevices,
 ) -> Result<Discovery, String> {
     use std::os::unix::fs::MetadataExt;
     let (sender, receiver) = std::sync::mpsc::sync_channel(16);
@@ -2514,12 +2923,28 @@ fn discovery_worker(
             sent.retain(|path,_| current.contains(path));
             let paths=if !explicit.is_empty() {Ok(explicit.clone())}else{linux::discover().map_err(|e|e.to_string())};
             let held=assigned.lock().map(|a|a.clone()).unwrap_or_default();
+            if !nested {
+                for h in held.keys() {
+                    rejected.remove(h);
+                    sent.remove(h);
+                    raw_consumers.lock().unwrap().remove(h);
+                }
+            }
             skipped.retain(|p|held.contains_key(p));
             let paths=match paths {Ok(v)=>v,Err(e)=>{let _=sender.try_send(Err(e));break}};
             rejected.retain(|path,_|paths.contains(path));sent.retain(|path,_|paths.contains(path));
+            let released_now = if nested {
+                released.lock().map(|r| r.clone()).unwrap_or_default()
+            } else {
+                BTreeSet::new()
+            };
             for path in paths {
                 if stop.load(Ordering::Relaxed) {break;}
                 if current.contains(&path) {continue;}
+                if nested && released_now.iter().any(|r| paths_match_exact_or_canonical(r, &path)) {
+                    sent.remove(&path);
+                    continue;
+                }
                 // I4: a node a live nested session holds belongs to that session (and its own `bridge --nested`).
                 if let Some(seat)=held.get(&path) {
                     if skipped.insert(path.clone()) { eprintln!("{}",serde_json::json!({"nested":"skipped","device":path,"seat":seat})); }
@@ -2557,8 +2982,8 @@ fn discovery_worker(
                             raw_consumers.lock().unwrap().insert(path.clone(), "device held by raw consumer (EBUSY)".into());
                         }
                         if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
-                        // logind may grant this same node an ACL after the service starts; retry permission failures.
-                        if e.kind()!=std::io::ErrorKind::PermissionDenied {
+                        // logind may grant this same node an ACL after the service starts, and EBUSY clears once a raw holder closes; retry both.
+                        if e.kind()!=std::io::ErrorKind::PermissionDenied && e.raw_os_error()!=Some(libc::EBUSY) {
                             if let Some(id)=identity {rejected.insert(path,id);}
                         }}
                 }
@@ -3026,6 +3451,8 @@ pub fn run(
     };
     let known_devices = std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
     let raw_consumers: RawConsumers = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
+    let released_devices: ReleasedDevices =
+        std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
     // The registry lives in the host runtime (a nested bridge already switched XDG_RUNTIME_DIR to its session's).
     let registry = if nested {
         None
@@ -3052,6 +3479,7 @@ pub fn run(
         assigned.clone(),
         nested,
         raw_consumers.clone(),
+        released_devices.clone(),
     )?;
     let mut ctx = focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
@@ -3089,79 +3517,70 @@ pub fn run(
     };
 
     if !nested {
-        update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+        update_active_manifest(
+            &runtime,
+            &devices,
+            &raw_consumers.lock().unwrap(),
+            opt.bridge,
+        );
     }
 
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) && opt.duration.is_none_or(|d| start.elapsed() < d) {
-            if let Some(ref l) = child_control_listener {
-                if let Ok((mut stream, _)) = l.accept() {
-                    use std::io::{BufRead, Write};
-                    let mut reader = std::io::BufReader::new(&mut stream);
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).is_ok() && !line.trim().is_empty() {
-                        if let Ok(req) = serde_json::from_str::<serde_json::Value>(&line) {
-                            if req["action"].as_str() == Some("release_device") {
-                                let dev_req = req["device"].as_str().unwrap_or("");
-                                let target_path = PathBuf::from(dev_req);
-                                let canonical_target = std::fs::canonicalize(&target_path)
-                                    .unwrap_or_else(|_| target_path.clone());
-                                let found = devices
-                                    .keys()
-                                    .find(|p| {
-                                        let cp = std::fs::canonicalize(p)
-                                            .unwrap_or_else(|_| (*p).clone());
-                                        cp == canonical_target
-                                            || **p == target_path
-                                            || p.file_name() == target_path.file_name()
-                                    })
-                                    .cloned();
-
-                                if let Some(p) = found {
-                                    let dev = devices.get(&p).unwrap();
-                                    let held = dev.device.held_keys().unwrap_or_default();
-                                    let trigger_held = dev.device.axes.iter().any(|(code, a)| {
-                                        [2, 5].contains(code) && a.trigger() > 0.15
-                                    });
-                                    if !held.is_empty() || trigger_held {
-                                        let buttons: Vec<u16> = held.into_iter().collect();
-                                        let resp = serde_json::json!({
-                                            "ok": false,
-                                            "reason": "controls_held",
-                                            "deferred": true,
-                                            "buttons": buttons,
-                                            "error": "physical buttons or triggers currently held; release deferred",
-                                        });
-                                        let _ = writeln!(stream, "{resp}");
-                                    } else {
-                                        let mut dev = devices.remove(&p).unwrap();
-                                        let out = dev.router.reset();
-                                        let _ = emit(out, &mut dev, &mut sinks, &focus);
-                                        dev.device.release();
-                                        known_devices.lock().unwrap().remove(&p);
-                                        if selected.as_ref() == Some(&p) {
-                                            selected = None;
-                                        }
-                                        eprintln!(
-                                            "{}",
-                                            serde_json::json!({"nested":"released","device":p,"cooperative":true})
-                                        );
-                                        let resp = serde_json::json!({
-                                            "ok": true,
-                                            "device": p.display().to_string(),
-                                        });
-                                        let _ = writeln!(stream, "{resp}");
-                                    }
-                                } else {
-                                    let resp = serde_json::json!({
-                                        "ok": false,
-                                        "error": format!("device {} not found in child inputd", target_path.display()),
-                                    });
-                                    let _ = writeln!(stream, "{resp}");
-                                }
+            if let (Some(ref l), Some(ref nested_session)) = (&child_control_listener, &opt.nested)
+            {
+                if let Ok((stream, _)) = l.accept() {
+                    let active_keys: BTreeSet<PathBuf> = devices.keys().cloned().collect();
+                    let stick_dz = global.controller.stick_deadzone;
+                    let trig_th = legacy.trigger_threshold;
+                    let expected_uid = unsafe { libc::geteuid() };
+                    let _ = handle_child_control_connection(
+                        stream,
+                        nested_session,
+                        Path::new("/proc"),
+                        expected_uid,
+                        None,
+                        stick_dz,
+                        trig_th,
+                        &active_keys,
+                        &known_devices,
+                        &released_devices,
+                        |matched_path| {
+                            let dev = devices.get(matched_path).ok_or_else(|| {
+                                format!(
+                                    "device {} not owned by child inputd",
+                                    matched_path.display()
+                                )
+                            })?;
+                            let (keys, axes) = dev.device.snapshot().map_err(|e| {
+                                format!(
+                                    "physical state query failed for {}: {e}",
+                                    matched_path.display()
+                                )
+                            })?;
+                            let mut combined_axes = dev.router.axes.clone();
+                            for (code, axis) in axes {
+                                combined_axes.insert(code, axis);
                             }
-                        }
-                    }
+                            if let Err(held) =
+                                physical_controls_neutral(&keys, &combined_axes, stick_dz, trig_th)
+                            {
+                                return Ok(Err(held));
+                            }
+                            let mut dev = devices.remove(matched_path).unwrap();
+                            let out = dev.router.reset();
+                            let _ = emit(out, &mut dev, &mut sinks, &focus);
+                            dev.device.release();
+                            if selected.as_ref() == Some(&matched_path.to_path_buf()) {
+                                selected = None;
+                            }
+                            eprintln!(
+                                "{}",
+                                serde_json::json!({"nested":"released","device":matched_path,"cooperative":true})
+                            );
+                            Ok(Ok(()))
+                        },
+                    );
                 }
             }
 
@@ -3182,6 +3601,13 @@ pub fn run(
                             .cloned()
                             .collect();
                         for path in removed {
+                            {
+                                let mut rel = released_devices.lock().unwrap();
+                                rel.insert(path.clone());
+                                if let Ok(canon) = std::fs::canonicalize(&path) {
+                                    rel.insert(canon);
+                                }
+                            }
                             if let Some(mut dev) = devices.remove(&path) {
                                 let out = dev.router.reset();
                                 emit(out, &mut dev, &mut sinks, &focus)?;
@@ -3199,7 +3625,12 @@ pub fn run(
                     }
                 }
                 if !nested {
-                    update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+                    update_active_manifest(
+                        &runtime,
+                        &devices,
+                        &raw_consumers.lock().unwrap(),
+                        opt.bridge,
+                    );
                 }
                 if let Some(r) = &registry {
                     let now = crate::nested::assigned_nodes(r, Path::new("/proc"));
@@ -3223,6 +3654,14 @@ pub fn run(
                                 serde_json::json!({"nested":"released","device":path,"seat":now[&path]})
                             );
                         }
+                    }
+                    if !nested {
+                        update_active_manifest(
+                            &runtime,
+                            &devices,
+                            &raw_consumers.lock().unwrap(),
+                            opt.bridge,
+                        );
                     }
                     if let Ok(mut a) = assigned.lock() {
                         *a = now;
@@ -3378,6 +3817,14 @@ pub fn run(
                 if devices.contains_key(&path) {
                     continue;
                 }
+                if nested
+                    && released_devices
+                        .lock()
+                        .map(|r| r.iter().any(|p| paths_match_exact_or_canonical(p, &path)))
+                        .unwrap_or(true)
+                {
+                    continue;
+                }
                 // A nested claim can arrive while discovery has a validated handle queued.
                 if !nested
                     && assigned
@@ -3420,9 +3867,24 @@ pub fn run(
                 );
                 router.tmux = session.is_some() || target_focus.tmux_client.is_some();
                 router.set_context(&target_focus.name);
-                if let Ok((keys, axes)) = device.snapshot() {
-                    router.resync(keys, axes);
-                }
+                let neutral_rearming = match device.snapshot() {
+                    Ok((keys, axes)) => {
+                        let not_neutral = physical_controls_neutral(
+                            &keys,
+                            &axes,
+                            global.controller.stick_deadzone,
+                            legacy.trigger_threshold,
+                        )
+                        .is_err();
+                        if !nested && not_neutral {
+                            true
+                        } else {
+                            router.resync(keys, axes);
+                            false
+                        }
+                    }
+                    Err(_) => !nested,
+                };
                 // A pad that joins while a capture is pending follows the session's ownership at once.
                 if session.is_none() && session_error.is_none() {
                     if let Some(owned) = devices
@@ -3451,9 +3913,23 @@ pub fn run(
                 }
                 let output = if opt.bridge {
                     if !suspended {
-                        device
-                            .grab()
-                            .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
+                        if let Err(e) = device.grab() {
+                            if !nested && e.raw_os_error() == Some(libc::EBUSY) {
+                                raw_consumers.lock().unwrap().insert(
+                                    path.clone(),
+                                    format!("device held by raw consumer (EBUSY): {e}"),
+                                );
+                                update_active_manifest(
+                                    &runtime,
+                                    &devices,
+                                    &raw_consumers.lock().unwrap(),
+                                    opt.bridge,
+                                );
+                                continue;
+                            }
+                            return Err(format!("{}: cannot own input: {e}", path.display()));
+                        }
+                        raw_consumers.lock().unwrap().remove(&path);
                     }
                     // A nested session sees only its own /dev/input: no clone (it would appear on the host).
                     if nested || session.is_some() || session_error.is_some() || suspended {
@@ -3463,14 +3939,6 @@ pub fn run(
                     }
                 } else {
                     None
-                };
-                let neutral_rearming = if !nested {
-                    device
-                        .axes
-                        .iter()
-                        .any(|(code, a)| [0, 1, 3, 4].contains(code) && a.centered().abs() > 0.20)
-                } else {
-                    false
                 };
                 eprintln!(
                     "{}",
@@ -3501,7 +3969,12 @@ pub fn run(
                     },
                 );
                 if !nested {
-                    update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+                    update_active_manifest(
+                        &runtime,
+                        &devices,
+                        &raw_consumers.lock().unwrap(),
+                        opt.bridge,
+                    );
                 }
             }
             if let Ok(snapshot) = shared_focus.try_lock() {
@@ -3543,6 +4016,7 @@ pub fn run(
                         dev.capture = None;
                         dev.device.release();
                         dev.suspended = true;
+                        manifest_dirty = true;
                         eprintln!(
                             "{}",
                             serde_json::json!({"seat":"released","device":path,"reason":reason})
@@ -3550,14 +4024,36 @@ pub fn run(
                     }
                     (None, true) => {
                         if opt.bridge {
-                            dev.device.grab().map_err(|e| {
-                                format!("{}: cannot own input: {e}", path.display())
-                            })?;
+                            if let Err(e) = dev.device.grab() {
+                                if !nested && e.raw_os_error() == Some(libc::EBUSY) {
+                                    raw_consumers.lock().unwrap().insert(
+                                        path.clone(),
+                                        format!("device held by raw consumer (EBUSY): {e}"),
+                                    );
+                                    manifest_dirty = true;
+                                    continue;
+                                }
+                                return Err(format!("{}: cannot own input: {e}", path.display()));
+                            }
+                            raw_consumers.lock().unwrap().remove(&path);
                         }
                         let (keys, axes) = dev.device.snapshot().map_err(|e| e.to_string())?;
-                        let out = dev.router.resync(keys, axes);
-                        emit(out, dev, &mut sinks, focus)?;
+                        if !nested
+                            && physical_controls_neutral(
+                                &keys,
+                                &axes,
+                                global.controller.stick_deadzone,
+                                legacy.trigger_threshold,
+                            )
+                            .is_err()
+                        {
+                            dev.neutral_rearming = true;
+                        } else {
+                            let out = dev.router.resync(keys, axes);
+                            emit(out, dev, &mut sinks, focus)?;
+                        }
                         dev.suspended = false;
+                        manifest_dirty = true;
                         dev.session_worker = if sinks.execute_actions && !dev.suspended {
                             dev.session
                                 .clone()
@@ -3645,37 +4141,41 @@ pub fn run(
                         for event in events {
                             if event.kind == EV_SYN && event.code == SYN_DROPPED {
                                 dev.dropped = true;
+                                manifest_dirty = true;
                             }
                             if dev.dropped && event.kind == EV_SYN && event.code == SYN_REPORT {
                                 let (keys, axes) =
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
                                 let out = dev.router.resync(keys, axes);
                                 dev.dropped = false;
+                                manifest_dirty = true;
                                 emit(out, dev, &mut sinks, focus)?;
                             } else {
                                 if dev.neutral_rearming {
-                                    let is_neutral = dev.router.axes.iter().all(|(code, a)| {
-                                        ![0, 1, 3, 4].contains(code) || a.centered().abs() <= 0.20
-                                    });
-                                    if is_neutral {
-                                        dev.neutral_rearming = false;
+                                    if event.kind == crate::router::EV_ABS {
+                                        if let Some(a) = dev.router.axes.get_mut(&event.code) {
+                                            a.value = event.value;
+                                        }
+                                    }
+                                    let still_rearming = step_neutral_rearming(
+                                        &mut dev.neutral_rearming,
+                                        &mut dev.router,
+                                        dev.device.snapshot(),
+                                        global.controller.stick_deadzone,
+                                        legacy.trigger_threshold,
+                                    );
+                                    if !still_rearming {
                                         eprintln!(
                                             "{}",
                                             serde_json::json!({"rearmed": true, "device": path})
                                         );
                                         manifest_dirty = true;
                                     }
+                                    continue;
                                 }
-                                let mut out = dev
+                                let out = dev
                                     .router
                                     .event(event, (linux::monotonic_ns() / 1_000_000) as u64);
-                                if dev.neutral_rearming {
-                                    out.pointer.clear();
-                                    out.app.retain(|e| {
-                                        e.kind != crate::router::EV_ABS
-                                            || ![0, 1, 3, 4].contains(&e.code)
-                                    });
-                                }
                                 if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                                     adopt.push((path.clone(), owned));
                                 }
@@ -3696,7 +4196,13 @@ pub fn run(
                 }
             }
             if manifest_dirty && !nested {
-                update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+                update_active_manifest(
+                    &runtime,
+                    &devices,
+                    &raw_consumers.lock().unwrap(),
+                    opt.bridge,
+                );
+                manifest_dirty = false;
             }
             let now = Instant::now();
             let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
@@ -3707,6 +4213,24 @@ pub fn run(
                 last_reconcile = now;
             }
             for (path, dev) in devices.iter_mut().filter(|(_, d)| !d.suspended) {
+                if dev.neutral_rearming {
+                    let still_rearming = step_neutral_rearming(
+                        &mut dev.neutral_rearming,
+                        &mut dev.router,
+                        dev.device.snapshot(),
+                        global.controller.stick_deadzone,
+                        legacy.trigger_threshold,
+                    );
+                    if !still_rearming {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"rearmed": true, "device": path})
+                        );
+                        manifest_dirty = true;
+                    } else {
+                        continue;
+                    }
+                }
                 let target_focus =
                     session_focus(&focus, dev.session.is_some(), dev.session_error.as_deref());
                 let focus = &target_focus;
@@ -3743,6 +4267,14 @@ pub fn run(
                         );
                     }
                 }
+            }
+            if manifest_dirty && !nested {
+                update_active_manifest(
+                    &runtime,
+                    &devices,
+                    &raw_consumers.lock().unwrap(),
+                    opt.bridge,
+                );
             }
             for (source, owned) in adopt {
                 for (path, dev) in devices.iter_mut() {
