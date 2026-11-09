@@ -3876,178 +3876,6 @@ impl Ui {
         pages[frame / 28 % pages.len()].clone()
     }
 
-    fn draw_training(
-        &self,
-        screen: &mut Frame,
-        config: &Config,
-        colors: &Colors,
-        renderer: Renderer,
-    ) {
-        let area = screen.area();
-        screen.render_widget(Clear, area);
-        let selected = self.menu_selected.min(5);
-        let title = if area.width < 20 {
-            format!("{} T{}/6", self.detail_tag(), selected + 1)
-        } else {
-            format!(
-                " TRAINING / {} / {} / Lv/value ",
-                self.detail_label(),
-                self.name()
-            )
-        };
-        let block = self.menu_panel(&title, colors, renderer == Renderer::Ascii);
-        let inner = block.inner(area);
-        screen.render_widget(block, area);
-        let micro = inner.height < 10 || inner.width < 28;
-        let header_rows = if micro { 0 } else { 2 };
-        let detail_rows = if micro { 1 } else { 3 };
-        let [header, list, detail, controls] = Layout::vertical([
-            Constraint::Length(header_rows),
-            Constraint::Min(1),
-            Constraint::Length(detail_rows),
-            Constraint::Length(2),
-        ])
-        .areas(inner);
-        screen.render_widget(
-            Paragraph::new(format!(
-                "Food -{} / Energy -{} / Happy +{}\n{} coins per level / innate grades E..A",
-                config.game.training.fullness_cost,
-                config.game.training.energy_cost,
-                config.game.training.happiness_gain,
-                config.game.training.level_coin_reward
-            ))
-            .style(Style::default().fg(colors.ink(7))),
-            header,
-        );
-        let window = crate::hud::menu_window(selected, 6, list.height);
-        let rows = window.count;
-        let start = window.start;
-        self.menu_number_start.set(start);
-        self.menu_number_count.set(rows.min(6 - start));
-        self.menu_controls(controls);
-        let lines = (start..6)
-            .take(rows)
-            .map(|index| {
-                let text = if index == 5 {
-                    "Back".to_string()
-                } else {
-                    let stat = self.game.progress.stats[index];
-                    if micro {
-                        format!(
-                            "{}{}/{}",
-                            ["Swim", "Fly", "Run", "Pwr", "Stam"][index],
-                            stat.level,
-                            stat.value
-                        )
-                    } else {
-                        format!(
-                            "{}: level {} / value {} / aptitude {}",
-                            crate::progression::TrainingRules::label(index),
-                            stat.level,
-                            stat.value,
-                            stat.grade()
-                        )
-                    }
-                };
-                self.menu_targets.borrow_mut().push((
-                    Rect::new(list.x, list.y + (index - start) as u16, list.width, 1),
-                    index,
-                ));
-                let text = format!(
-                    "{}{} {text}",
-                    if index == selected { ">" } else { " " },
-                    index - start + 1
-                );
-                Line::from(text).style(if index == selected {
-                    selected_style(colors)
-                } else {
-                    Style::default().fg(colors.ink(2))
-                })
-            })
-            .collect::<Vec<_>>();
-        screen.render_widget(Paragraph::new(lines), list);
-        let r = &config.game.training;
-        let reason = if self.game.stage(&config.game) == crate::game::Stage::Egg {
-            Some("Egg: wait")
-        } else if self.game.health == 0 {
-            Some("Pet died")
-        } else if !self.game.progress.hatched {
-            Some("Stats: wait")
-        } else if self.game.paused {
-            Some("Paused: P")
-        } else if self.game.sleeping {
-            Some("Rest: R")
-        } else if self.game.ill {
-            Some("Ill: M")
-        } else if self.game.challenge.is_some() {
-            Some("Memory: G")
-        } else if self.game.energy < r.energy_cost {
-            Some("Rest: R")
-        } else if self.game.fullness < r.fullness_cost {
-            Some("Feed: F")
-        } else if self
-            .game
-            .progress
-            .last_train_tick
-            .is_some_and(|last| self.game.age_ticks.saturating_sub(last) < r.cooldown_ticks)
-        {
-            Some("Wait: Esc")
-        } else if selected < 5 && self.game.progress.stats[selected].level >= r.max_level {
-            Some("Level cap")
-        } else {
-            None
-        };
-        let text = if selected >= 5 {
-            "Keep pet".to_owned()
-        } else if micro {
-            if let Some(reason) = reason {
-                reason.to_owned()
-            } else {
-                let stat = self.game.progress.stats[selected];
-                format!("{}/{}XP{}", stat.xp, r.xp_needed(stat.level), stat.grade())
-            }
-        } else {
-            let stat = self.game.progress.stats[selected];
-            format!(
-                "XP {} / {} | aptitude {}\n{}\n{}",
-                stat.xp,
-                r.xp_needed(stat.level),
-                stat.grade(),
-                reason.unwrap_or("Ready: training spends food and energy."),
-                self.notice
-            )
-        };
-        screen.render_widget(
-            Paragraph::new(text).style(Style::default().fg(colors.ink(7))),
-            detail,
-        );
-        let hints = self.controller.as_ref().map_or_else(
-            || {
-                if micro {
-                    "Ent train\nEsc Back".to_owned()
-                } else {
-                    "1..6 / Enter: train / Tab: next\nEscape: Back / L: training".to_owned()
-                }
-            },
-            |pad| {
-                format!(
-                    "{} {}\n{} Back",
-                    tiny_button(&pad.accept),
-                    if micro {
-                        "train"
-                    } else {
-                        "train / D-pad select"
-                    },
-                    tiny_button(&pad.back)
-                )
-            },
-        );
-        screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(7))),
-            controls,
-        );
-    }
-
     fn draw_habitat_menu(
         &self,
         screen: &mut Frame,
@@ -4792,6 +4620,78 @@ impl Ui {
         ));
     }
 
+    fn training_reason(&self, config: &Config) -> &'static str {
+        let r = &config.game.training;
+        if self.menu_selected >= 5 {
+            "Keep pet"
+        } else if self.game.stage(&config.game) == crate::game::Stage::Egg {
+            "Egg: wait"
+        } else if self.game.health == 0 {
+            "Pet died"
+        } else if self.game.paused {
+            "Paused: P"
+        } else if self.game.sleeping {
+            "Rest: R"
+        } else if self.game.ill {
+            "Ill: M"
+        } else if self.game.challenge.is_some() {
+            "Memory: G"
+        } else if !self.game.progress.hatched {
+            "Stats: wait"
+        } else if self.game.progress.stats[self.menu_selected].level >= r.max_level {
+            "Level cap"
+        } else if self.game.energy < r.energy_cost {
+            "Rest: R"
+        } else if self.game.fullness < r.fullness_cost {
+            "Feed: F"
+        } else if self.game.progress.total_training >= crate::progression::MAX_TRAINING {
+            "Limit reached"
+        } else if self
+            .game
+            .progress
+            .last_train_tick
+            .is_some_and(|last| self.game.age_ticks.saturating_sub(last) < r.cooldown_ticks)
+        {
+            "Wait: Esc"
+        } else {
+            "Ready"
+        }
+    }
+
+    fn training_description(&self, config: &Config, width: u16) -> String {
+        let r = &config.game.training;
+        let reason = self.training_reason(config);
+        let progress = if self.menu_selected < 5 {
+            let stat = self.game.progress.stats[self.menu_selected];
+            let full = format!(
+                "XP{}/{} {} / {reason}",
+                stat.xp,
+                r.xp_needed(stat.level),
+                stat.grade()
+            );
+            let compact = format!("{reason} XP{}/{}", stat.xp, r.xp_needed(stat.level));
+            if full.len() <= usize::from(width) {
+                full
+            } else if compact.len() <= usize::from(width) {
+                compact
+            } else {
+                reason.to_owned()
+            }
+        } else {
+            reason.to_owned()
+        };
+        let costs = format!(
+            "F-{} E-{} H+{} +{}$/Lv",
+            r.fullness_cost, r.energy_cost, r.happiness_gain, r.level_coin_reward
+        );
+        let costs = if costs.len() <= usize::from(width) {
+            costs
+        } else {
+            format!("F-{} E-{}", r.fullness_cost, r.energy_cost)
+        };
+        format!("{progress}\n{costs}\n{reason} / {}", self.notice)
+    }
+
     fn draw_choice_menu(
         &self,
         screen: &mut Frame,
@@ -4823,7 +4723,18 @@ impl Ui {
                         format!("[{key}] ")
                     }
                 });
-                format!("{binding}{short}")
+                if menu == Menu::Training && index < 5 {
+                    let stat = self.game.progress.stats[index];
+                    if bounds.width < 18 {
+                        format!("{short}{}", stat.level)
+                    } else if bounds.width < 32 {
+                        format!("{short} L{}/{} {}", stat.level, stat.value, stat.grade())
+                    } else {
+                        format!("{short} L{} V{} {}", stat.level, stat.value, stat.grade())
+                    }
+                } else {
+                    format!("{binding}{short}")
+                }
             })
             .collect();
         // Keep the full Enter/Back captions when an 18-cell footer fits. A
@@ -4839,8 +4750,20 @@ impl Ui {
                     .max(minimum_width)
             })
             .collect();
-        let description = self.menu_description(menu);
-        let description_rows = u16::from(bounds.height >= 10 && description.is_some());
+        let description = if menu == Menu::Training {
+            Some(if bounds.height < 8 {
+                self.training_reason(config).to_owned()
+            } else {
+                self.training_description(config, bounds.width.saturating_sub(2))
+            })
+        } else {
+            self.menu_description(menu).map(str::to_owned)
+        };
+        let description_rows = if menu == Menu::Training {
+            bounds.height.saturating_sub(6).min(3)
+        } else {
+            u16::from(bounds.height >= 10 && description.is_some())
+        };
         let geometry = crate::hud::menu_geometry(
             bounds,
             &widths,
@@ -4861,9 +4784,14 @@ impl Ui {
         self.menu_number_count.set(numbered.count);
         self.menu_visible_rows.set(geometry.visible);
         crate::hud::paint_menu_panel(screen.buffer_mut(), geometry.panel, colors, ascii);
+        let caption = if menu == Menu::Training && bounds.width < 18 && self.menu_selected < 5 {
+            let stat = self.game.progress.stats[self.menu_selected];
+            format!("T{}/{}{}", stat.level, stat.value, stat.grade())
+        } else {
+            self.menu_caption(menu_title(menu), geometry.panel.width)
+        };
         screen.render_widget(
-            Paragraph::new(self.menu_caption(menu_title(menu), geometry.panel.width))
-                .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+            Paragraph::new(caption).style(Style::default().fg(colors.ink(7)).bg(colors.background)),
             Rect::new(
                 geometry.panel.x + 1,
                 geometry.panel.y,
@@ -4917,16 +4845,27 @@ impl Ui {
                     geometry.footer.x,
                     geometry.footer.y,
                     geometry.footer.width,
-                    1,
+                    description_rows,
                 ),
             );
         }
         let hint = self.controller.as_ref().map_or_else(
-            || "Enter: OK\nEsc: Back".into(),
+            || {
+                if menu == Menu::Training && bounds.width < 18 {
+                    "Ent train\nEsc Back".into()
+                } else {
+                    "Enter: OK\nEsc: Back".into()
+                }
+            },
             |pad| {
                 format!(
-                    "{}: OK\n{}: Back",
+                    "{}: {}\n{}: Back",
                     tiny_button(&pad.accept),
+                    if menu == Menu::Training {
+                        "train"
+                    } else {
+                        "OK"
+                    },
                     tiny_button(&pad.back)
                 )
             },
@@ -4963,10 +4902,6 @@ impl Ui {
         }
         if menu == Menu::Seed {
             self.draw_seed_entry(screen, colors, renderer);
-            return;
-        }
-        if menu == Menu::Training {
-            self.draw_training(screen, config, colors, renderer);
             return;
         }
         if menu == Menu::Habitat {
@@ -5191,11 +5126,14 @@ impl Ui {
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
+            Menu::Training => (
+                " TRAINING ",
+                vec!["Swim", "Flight", "Run", "Power", "Stamina", "Back"],
+            ),
             Menu::Gallery
             | Menu::Talk
             | Menu::Roster
             | Menu::Habitat
-            | Menu::Training
             | Menu::Identity
             | Menu::Seed => {
                 unreachable!("special menus draw their own view")
@@ -5549,7 +5487,10 @@ fn selected_style(colors: &Colors) -> Style {
 }
 
 fn choice_menu(menu: Menu) -> bool {
-    matches!(menu, Menu::Home | Menu::Care | Menu::Games | Menu::Graphics)
+    matches!(
+        menu,
+        Menu::Home | Menu::Care | Menu::Games | Menu::Graphics | Menu::Training
+    )
 }
 
 /// Navigate the complete painted grid, including positions outside its current
@@ -5640,6 +5581,10 @@ fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
             21 => Some("]"),
             _ => None,
         },
+        Menu::Training => [None, None, None, None, None, Some("Esc")]
+            .get(index)
+            .copied()
+            .flatten(),
         _ => None,
     }
 }
@@ -5716,6 +5661,9 @@ fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
         .get(index)
         .copied(),
         Menu::Games if index == 0 => Some("Memory"),
+        Menu::Training => ["Swim", "Fly", "Run", "Pwr", "Stam", "Back"]
+            .get(index)
+            .copied(),
         _ => None,
     }
 }
@@ -7136,7 +7084,8 @@ mod progression_training_navigation_review {
                 );
                 assert_eq!(ui.game, before);
                 if selected < 5 {
-                    ui.handle(key(KeyCode::Down), &config.game);
+                    // Tab traverses every entry regardless of the painted grid columns.
+                    ui.handle(key(KeyCode::Tab), &config.game);
                 }
             }
             ui.handle(key(KeyCode::Enter), &config.game);
@@ -10997,7 +10946,13 @@ mod choice_menu_geometry_tests {
     fn choice_panels_share_nonoverlapping_in_bounds_targets_across_depths_and_sizes() {
         let (config, mut ui) = fixture();
         for depth in [Depth::Rgb, Depth::Indexed, Depth::Ansi, Depth::Mono] {
-            for menu in [Menu::Home, Menu::Care, Menu::Games, Menu::Graphics] {
+            for menu in [
+                Menu::Home,
+                Menu::Care,
+                Menu::Games,
+                Menu::Graphics,
+                Menu::Training,
+            ] {
                 ui.open(menu);
                 ui.menu_selected = ui.menu_len(menu) - 1;
                 for (width, height) in [(12, 6), (20, 8), (59, 49), (127, 29), (320, 90)] {
@@ -11026,6 +10981,140 @@ mod choice_menu_geometry_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn training_menu_multi_aspect_buffer_and_spatial_navigation() {
+        let (config, mut ui) = fixture();
+        let before_stats = ui.game.progress.stats;
+        let before_coins = ui.game.coins;
+        for (width, height) in [(12, 6), (20, 8), (20, 26), (59, 49), (130, 29)] {
+            ui.open(Menu::Training);
+            ui.menu_selected = 0;
+            let buffer = draw(&ui, &config, width, height, Depth::Mono);
+            let layout = geometry(&ui);
+            let content = text(&buffer);
+            assert!(content.is_ascii());
+            assert!(
+                ui.pet_area.get().height > 0,
+                "scene must be retained at {width}x{height}"
+            );
+            assert_eq!(layout.navigation.len(), 6);
+            assert!(layout.items.iter().any(|item| item.index == 0));
+            assert!(
+                content.contains("train") && content.contains("Back"),
+                "{width}x{height}: {content}"
+            );
+            assert!(
+                layout.panel.y > 0,
+                "Training must retain an actual scene row at {width}x{height}"
+            );
+            for (index, item) in layout.items.iter().enumerate() {
+                assert_eq!(item.area.intersection(layout.body), item.area);
+                assert!(item.area.intersection(layout.footer).is_empty());
+                assert!(ui.menu_targets.borrow().contains(&(item.area, item.index)));
+                for other in &layout.items[index + 1..] {
+                    assert!(item.area.intersection(other.area).is_empty());
+                }
+            }
+            ui.handle(
+                key(if layout.columns > 1 {
+                    KeyCode::Right
+                } else {
+                    KeyCode::Down
+                }),
+                &config.game,
+            );
+            assert_ne!(
+                ui.menu_selected, 0,
+                "Down arrow must navigate choice at {width}x{height}"
+            );
+            ui.menu_selected = 5;
+            let pre_back = ui.game.clone();
+            ui.handle(key(KeyCode::Enter), &config.game);
+            assert_eq!(ui.menu, None, "Back must return to game scene");
+            assert_eq!(
+                ui.game, pre_back,
+                "Back must never spend coins or alter pet"
+            );
+            assert_eq!(ui.game.progress.stats, before_stats);
+            assert_eq!(ui.game.coins, before_coins);
+        }
+    }
+
+    #[test]
+    fn training_off_page_navigation_reveals_selection_and_keeps_simulation() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Training);
+        let before = ui.game.clone();
+        draw(&ui, &config, 20, 8, Depth::Mono);
+        assert!(geometry(&ui).visible < 6, "fixture must exercise scrolling");
+        for expected in 1..6 {
+            ui.handle(key(KeyCode::Down), &config.game);
+            let buffer = draw(&ui, &config, 20, 8, Depth::Mono);
+            let layout = geometry(&ui);
+            assert_eq!(ui.menu_selected, expected);
+            let selected = layout
+                .items
+                .iter()
+                .find(|item| item.index == expected)
+                .expect("selected training option must be painted, even off the previous page");
+            assert_eq!(buffer[(selected.area.x, selected.area.y)].symbol(), ">");
+        }
+        assert_eq!(
+            ui.game, before,
+            "menu navigation must not train or consume RNG"
+        );
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.menu, None);
+        assert_eq!(ui.game, before);
+    }
+
+    #[test]
+    fn training_panel_preserves_stats_xp_costs_and_rejection_reasons() {
+        let (config, mut ui) = fixture();
+        ui.game.age_ticks = config.game.hatch_ticks;
+        ui.game.prepare_progress(&config.game).unwrap();
+        ui.game.progress.stats[0].level = 3;
+        ui.game.progress.stats[0].value = 42;
+        ui.game.progress.stats[0].xp = 7;
+        ui.open(Menu::Training);
+        let before = ui.game.clone();
+        let content = text(&draw(&ui, &config, 130, 29, Depth::Mono));
+        for caption in [
+            "L3 V42".to_owned(),
+            format!("XP7/{}", config.game.training.xp_needed(3)),
+            format!("F-{}", config.game.training.fullness_cost),
+            format!("E-{}", config.game.training.energy_cost),
+            format!("H+{}", config.game.training.happiness_gain),
+            format!("+{}$/Lv", config.game.training.level_coin_reward),
+            "Ready".to_owned(),
+        ] {
+            assert!(content.contains(&caption), "{caption}: {content}");
+        }
+        assert_eq!(
+            ui.game, before,
+            "painting must never spend costs or draw RNG"
+        );
+        ui.game.paused = true;
+        let paused = text(&draw(&ui, &config, 20, 8, Depth::Mono));
+        assert!(paused.contains("Paused: P"), "{paused}");
+        assert!(paused.contains("XP7/"), "{paused}");
+        assert!(paused.contains("F-") && paused.contains("E-"), "{paused}");
+        ui.game.paused = false;
+        ui.game.progress.last_train_tick = Some(ui.game.age_ticks);
+        assert_eq!(ui.training_reason(&config), "Wait: Esc");
+        ui.game.progress.last_train_tick = None;
+        ui.game.fullness = 0;
+        assert_eq!(ui.training_reason(&config), "Feed: F");
+        ui.game.energy = 0;
+        assert_eq!(ui.training_reason(&config), "Rest: R");
+        ui.game.fullness = 100;
+        ui.game.energy = 100;
+        ui.game.progress.total_training = crate::progression::MAX_TRAINING;
+        assert_eq!(ui.training_reason(&config), "Limit reached");
+        let capped = text(&draw(&ui, &config, 20, 8, Depth::Mono));
+        assert!(capped.contains("Limit reached"), "{capped}");
     }
 }
 

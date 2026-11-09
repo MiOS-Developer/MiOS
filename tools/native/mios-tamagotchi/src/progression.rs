@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_XP: u32 = 1_000_000;
-const MAX_TRAINING: u32 = 1_000_000;
+pub(crate) const MAX_TRAINING: u32 = 1_000_000;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
