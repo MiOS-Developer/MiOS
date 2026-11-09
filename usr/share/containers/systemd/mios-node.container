@@ -12,7 +12,6 @@ ContainerName=mios-node
 Environment=MIOS_NODE_ID=101
 Environment=MIOS_PORT=8650
 Environment=MIOS_AI_ENDPOINT=http://127.0.0.1:8700/v1
-GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=830
 Image=ghcr.io/mios-dev/mios-node:latest
 Label=org.opencontainers.image.title=mios-node

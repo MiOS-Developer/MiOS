@@ -116,6 +116,83 @@ mios_create() {
     echo "[devcontainer:post-create] Full MiOS workspace and harness are ready."
 }
 
+start_tailscale_mesh() {
+    command -v tailscaled >/dev/null 2>&1 || return 0
+    local ts_state="${XDG_STATE_HOME:-${HOME}/.local/state}/mios/tailscale"
+    mkdir -p "$ts_state"
+    if ! pgrep -x tailscaled >/dev/null 2>&1; then
+        local tun_arg=()
+        [[ -e /dev/net/tun ]] || tun_arg=(--tun=userspace-networking)
+        setsid tailscaled "${tun_arg[@]}" \
+            --statedir="$ts_state" \
+            --socket="$ts_state/tailscaled.sock" \
+            >"$ts_state/tailscaled.log" 2>&1 </dev/null &
+    fi
+    if [[ -x /usr/libexec/mios/mios-tailscale-sync ]]; then
+        MIOS_TAILSCALE_AUTHKEY="${MIOS_TAILSCALE_AUTHKEY:-${TS_AUTHKEY:-${TAILSCALE_AUTHKEY:-}}}" \
+            /usr/libexec/mios/mios-tailscale-sync >/dev/null 2>&1 || true
+    fi
+}
+
+start_mios_mcp_gateway() {
+    local root="${1:-/workspaces/MiOS}"
+    local mcp_py="/usr/lib/mios/mcp/.venv/bin/python3"
+    [[ -x "$mcp_py" ]] || return 0
+    local toml_get="${root}/usr/libexec/mios/mios-toml-get"
+    [[ -f "$toml_get" ]] || toml_get=/usr/libexec/mios/mios-toml-get
+    local mcp_port
+    mcp_port="$("$mcp_py" "$toml_get" ports mcp 2>/dev/null || echo 8770)"
+    local pipe_port
+    pipe_port="$("$mcp_py" "$toml_get" ports agent_pipe 2>/dev/null || echo 8700)"
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/${mcp_port}") 2>/dev/null; then
+        local mcp_log="${XDG_STATE_HOME:-${HOME}/.local/state}/mios/mios-mcp-http.log"
+        mkdir -p "$(dirname "$mcp_log")"
+        MIOS_MCP_TAILNET_DISCOVER=1 MIOS_A2A_TAILNET_DISCOVER=1 \
+            setsid "$mcp_py" /usr/libexec/mios/mios-mcp-server --http --host 127.0.0.1 --port "$mcp_port" \
+            >"$mcp_log" 2>&1 </dev/null &
+    fi
+    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+        tailscale serve --bg "$pipe_port" >/dev/null 2>&1 || true
+        tailscale serve --bg "$mcp_port" >/dev/null 2>&1 || true
+    fi
+    if [[ -x /usr/libexec/mios/mios-a2a-discover ]]; then
+        MIOS_A2A_TAILNET_DISCOVER=1 "$mcp_py" /usr/libexec/mios/mios-a2a-discover >/dev/null 2>&1 || true
+    fi
+}
+
+connect_remote_agy_blade() {
+    local mcp_py="/usr/lib/mios/mcp/.venv/bin/python3"
+    local state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/mios"
+    mkdir -p "$state_dir"
+    local blade_host="${MIOS_BLADE_HOST:-}"
+    if [[ -z "$blade_host" ]] && command -v tailscale >/dev/null 2>&1 && [[ -x "$mcp_py" ]]; then
+        blade_host="$(MIOS_MCP_TAILNET_DISCOVER=1 "$mcp_py" -c '
+import sys
+sys.path.insert(0, "/workspaces/MiOS/usr/lib/mios")
+import mios_mcp_federation as fed
+peers = fed.discover_tailnet_upstreams()
+print(peers[0]["ip"] if peers else "")
+' 2>/dev/null || true)"
+    fi
+    if [[ -n "$blade_host" ]]; then
+        local blade_mcp="${MIOS_BLADE_MCP_URL:-http://${blade_host}:8770/mcp}"
+        local blade_ai="http://${blade_host}:8700/v1"
+        {
+            printf 'export MIOS_BLADE_HOST=%q\n' "$blade_host"
+            printf 'export MIOS_BLADE_MCP_URL=%q\n' "$blade_mcp"
+            printf 'export MIOS_BLADE_AI_ENDPOINT=%q\n' "$blade_ai"
+        } > "$state_dir/blade-session.env"
+    fi
+    if [[ -x /usr/libexec/mios/mios-agent-relay ]]; then
+        /usr/libexec/mios/mios-agent-relay register --agent-id "codespace-$(hostname -s 2>/dev/null || echo dev)" --kind agy >/dev/null 2>&1 || true
+    fi
+    local agy_host="/workspaces/-dev-loop/skills/dev-loop/scripts/agy_host.sh"
+    if [[ "${MIOS_AGY_REMOTE_CONTROL:-0}" == "1" && -f "$agy_host" ]] && command -v agy >/dev/null 2>&1; then
+        pgrep -f "agy.*--remote-control" >/dev/null 2>&1 || \
+            setsid bash "$agy_host" --session --remote-control >"$state_dir/agy-remote-control.log" 2>&1 </dev/null &
+    fi
+}
+
 mios_start() {
     readonly ROOT=/workspaces/MiOS
 
@@ -137,7 +214,10 @@ mios_start() {
     echo "[devcontainer:boot] Reconciling MiOS development core..."
     mios_core
     mios_platform
+    start_tailscale_mesh
     bash "${ROOT}/.devcontainer/mios-agent-pipe-dev" start
+    start_mios_mcp_gateway "$ROOT"
+    connect_remote_agy_blade
     /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --project-agent-clients
 
     # Re-seed the live editor Machine/settings.json from .dotfiles on every start:

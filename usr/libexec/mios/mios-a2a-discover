@@ -98,6 +98,41 @@ def _cidr_hosts(cidr, port):
     return [f"http://{ip}:{port}" for ip in list(net.hosts())[:256]]
 
 
+def _tailnet_candidates(cfg, port):
+    """Discover online Tailscale peers via `tailscale status --json` when
+    [a2a].tailnet_discover or MIOS_A2A_TAILNET_DISCOVER is enabled. Degrade-open."""
+    if not port:
+        return []
+    a2a = cfg.get("a2a", {}) or {}
+    env_flag = os.environ.get("MIOS_A2A_TAILNET_DISCOVER", "").strip().lower()
+    enabled = (
+        env_flag in ("1", "true", "yes")
+        if env_flag
+        else bool(a2a.get("tailnet_discover", True))
+    )
+    if not enabled:
+        return []
+    import subprocess
+    out = []
+    try:
+        proc = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return []
+        data = json.loads(proc.stdout)
+        for peer in (data.get("Peer") or {}).values():
+            if not isinstance(peer, dict) or not peer.get("Online"):
+                continue
+            for ip in (peer.get("TailscaleIPs") or [])[:1]:
+                if isinstance(ip, str) and ip.strip():
+                    out.append(f"http://{ip.strip()}:{port}")
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
 def main():
     cfg = _load_toml()
     a2a = cfg.get("a2a", {}) or {}
@@ -113,6 +148,9 @@ def main():
             if u not in cands:
                 cands.append(u)
     for u in _mdns_candidates(cfg):
+        if u and u not in cands:
+            cands.append(u)
+    for u in _tailnet_candidates(cfg, port):
         if u and u not in cands:
             cands.append(u)
 

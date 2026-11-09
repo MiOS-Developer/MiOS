@@ -1079,6 +1079,7 @@ mcp.federation.catalog_cache  MIOS_MCP_FEDERATION_CATALOG_CACHE
 mcp.federation.idle_stop_s  MIOS_MCP_FEDERATION_IDLE_STOP_S
 mcp.federation.max_tools_per_server  MIOS_MCP_FEDERATION_MAX_TOOLS_PER_SERVER
 mcp.federation.log_directory  MIOS_MCP_FEDERATION_LOG_DIRECTORY
+mcp.federation.tailnet_discover  MIOS_MCP_FEDERATION_TAILNET_DISCOVER
 keybindings.enabled  MIOS_KEYBINDINGS_ENABLED
 keybindings.tmux_prefix  MIOS_KEYBINDINGS_TMUX_PREFIX
 keybindings.vscode_prefix  MIOS_KEYBINDINGS_VSCODE_PREFIX
@@ -5514,6 +5515,8 @@ build.bake.firstboot_justifications.sglang  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICAT
 build.bake.firstboot_justifications.vllm  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICATIONS_VLLM
 build.bake.firstboot_justifications.crawl4ai  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICATIONS_CRAWL4AI
 build.bake.firstboot_justifications.firecrawl  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICATIONS_FIRECRAWL
+build.bake.firstboot_justifications.mios-node  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICATIONS_MIOS_NODE
+build.bake.firstboot_justifications.mios-micro  MIOS_BUILD_BAKE_FIRSTBOOT_JUSTIFICATIONS_MIOS_MICRO
 build.bake.group_members.sys  MIOS_BUILD_BAKE_GROUP_MEMBERS_SYS
 build.bake.group_members.cuda  MIOS_BUILD_BAKE_GROUP_MEMBERS_CUDA
 build.bake.group_members.heavy  MIOS_BUILD_BAKE_GROUP_MEMBERS_HEAVY

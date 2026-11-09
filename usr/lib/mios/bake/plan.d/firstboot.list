@@ -1,3 +1,5 @@
 docker.io/vllm/vllm-openai:latest
+ghcr.io/mios-dev/mios-micro:latest
+ghcr.io/mios-dev/mios-node:latest
 localhost/mios-crawl4ai-slim:latest
 localhost/mios-firecrawl:v1.0.0

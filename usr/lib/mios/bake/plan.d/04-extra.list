@@ -1,15 +1,13 @@
 quay.io/centos-bootc/bootc-image-builder:latest
 docker.io/adguard/adguardhome:latest
 ghcr.io/mostlygeek/llama-swap:cpu
-quay.io/cilium/tetragon:v1.4.2
-codeberg.org/forgejo/forgejo:latest
+quay.io/cilium/tetragon:v1.8.0
+codeberg.org/forgejo/forgejo:17.0.1
 code.forgejo.org/forgejo/runner:latest
 docker.io/guacamole/guacamole:latest
 docker.io/guacamole/guacd:latest
 docker.io/headscale/headscale:latest
 docker.io/rancher/k3s:latest
-ghcr.io/mios-dev/mios-micro:latest
-ghcr.io/mios-dev/mios-node:latest
 docker.io/jaegertracing/all-in-one:latest
 docker.io/pgvector/pgvector:pg18
 quay.io/poseidon/matchbox:latest

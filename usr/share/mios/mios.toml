@@ -4309,6 +4309,7 @@ catalog_cache = true                # list cached tools without starting the ser
 idle_stop_s = 600                   # stop a started server after this many seconds without a call (0 = never)
 max_tools_per_server = 256
 log_directory = "mios/mcp-federation"  # child stderr, under $XDG_STATE_HOME, 0700/0600
+tailnet_discover = true             # discover online MiOS Blade MCP gateways via tailscale status --json
 
 # Shared human interface. SSH receives plain Ctrl-b + one ordinary key;
 # Desktop shortcuts use Ctrl+Alt+Shift plus the same letter, avoiding OS Super shortcuts.
@@ -8150,7 +8151,7 @@ remote      = "flathub"
 description = "adw-gtk3 theme extension (light variant, kept for apps that auto-switch)."
 
 [image]
-ref            = "ghcr.io/mios-dev/mios:latest"
+ref            = "ghcr.io/mios-developer/mios:latest"
 branch         = "main"
 # Base OCI image. The script auto-picks NVIDIA vs non-NVIDIA at install
 # time based on detected GPU; both variants are listed here so operators
@@ -8441,7 +8442,7 @@ pkgs = [
     "sudo", "zsh",
     "findutils", "grep", "sed", "gawk", "diffutils", "patch",
     "ripgrep", "tar", "gzip", "unzip", "zip",
-    "openssl", "qemu-img", "attr",
+    "openssl", "qemu-img", "attr", "tailscale",
     "btop", "fastfetch", "oh-my-posh",
 ]
 
@@ -11315,17 +11316,19 @@ core = [
   "ghcr.io/open-webui/open-webui:main",
   "quay.io/centos-bootc/bootc-image-builder:latest",
   "quay.io/ceph/ceph:latest",
-  "quay.io/cilium/tetragon:v1.4.2",
+  "quay.io/cilium/tetragon:v1.8.0",
   "quay.io/poseidon/matchbox:latest"
 ]
 groups = ["sys", "cuda", "heavy", "extra"]
-firstboot_tokens = ["vllm", "sglang", "crawl4ai", "firecrawl"]
+firstboot_tokens = ["vllm", "sglang", "crawl4ai", "firecrawl", "mios-node", "mios-micro"]
 
 [build.bake.firstboot_justifications]
 "sglang" = "Heavy GPU inference image (~20GB)"
 "vllm" = "Heavy GPU inference image (~27GB)"
 "crawl4ai" = "Webtools heavy crawl runtime deferred from Day-0 bake"
 "firecrawl" = "Webtools heavy crawl runtime deferred from Day-0 bake"
+"mios-node" = "Edge micro-node image deferred to firstboot"
+"mios-micro" = "Resident miniature model OCI artifact deferred to firstboot"
 
 [build.bake.group_members]
 # localhost/mios-piper is built by 57-mios-sys-build.sh with mios-sys, so it
@@ -14768,7 +14771,7 @@ AutoUpdate = "registry"
 ContainerName = "mios-enforcer"
 Exec = "--bpf-lib=/var/lib/tetragon/bpf --tracing-policy-dir=/etc/tetragon/tetragon.tp.d --export-filename=/var/run/tetragon/tetragon.log"
 Group = "mios-enforcer"
-Image = "quay.io/cilium/tetragon:v1.4.2"
+Image = "quay.io/cilium/tetragon:v1.8.0"
 Network = "host"
 PID = "host"
 SecurityLabelDisable = true
@@ -18268,7 +18271,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 684
+max_tracked_mb    = 693
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -18370,7 +18373,7 @@ since = "76f7042fff67542bc7bdfb8eb743bb9a64ad8db6"  # main's tree when the file-
 author = "mios-gen archive <archive@mios.localhost>"  # fixed author and committer; the date is SOURCE_DATE_EPOCH or the since commit's
 # Dropped paths never re-tracked (keys, tokens, credentials, valued .env, leaks), as globs with a reason each.
 # Screening all 315 dropped paths found none. Vendored assets are consolidated into bundles in-tree (task_3662).
-exclude = ["usr/share/mios/vendored/*"]
+exclude = ["usr/share/mios/vendored/*", "usr/lib/bootc/bound-images.d/*"]
 
 # --- Firstboot Models (task_180) ---
 [[ai.firstboot_models]]

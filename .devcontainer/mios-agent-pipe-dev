@@ -38,7 +38,9 @@ start() {
     umask 077
     install -d -m 0700 "$STATE"
     cd "$ROOT"
-    MIOS_TOML_ROOT="$ROOT" MIOS_BIND_HOST=127.0.0.1 \
+    export MIOS_A2A_TAILNET_DISCOVER="${MIOS_A2A_TAILNET_DISCOVER:-1}"
+    export MIOS_MCP_TAILNET_DISCOVER="${MIOS_MCP_TAILNET_DISCOVER:-1}"
+    MIOS_TOML_ROOT="$ROOT" MIOS_BIND_HOST="${MIOS_BIND_HOST:-127.0.0.1}" \
         setsid "$PYTHON" "$SERVER" >"$STATE/gateway.log" 2>&1 </dev/null &
     local pid=$!
     printf '%s\n' "$pid" > "$STATE/gateway.pid"

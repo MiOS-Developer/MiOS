@@ -32,18 +32,24 @@ def _isolated_sdk(python):
     return probe.returncode == 0
 
 
+_SDK_FREE_SUITES = {"PolicyTests", "OwnershipTests", "TailnetDiscoveryTests"}
 if importlib.util.find_spec("mcp") is None or not _isolated_sdk(sys.executable):
     PY = _sdk_python()
     if os.path.realpath(PY) != os.path.realpath(sys.executable) and os.access(PY, os.X_OK):
         os.execv(PY, [PY, *sys.argv])
-    raise SystemExit("the MCP Python SDK 2.x ([mcp].python) is required")
+    _req_suites = [a.split(".")[0] for a in sys.argv[1:] if not a.startswith("-")]
+    if not _req_suites and not os.path.exists(PY):
+        sys.argv.extend(sorted(_SDK_FREE_SUITES))
+        _req_suites = sorted(_SDK_FREE_SUITES)
+    if not (_req_suites and all(s in _SDK_FREE_SUITES for s in _req_suites)):
+        raise SystemExit("the MCP Python SDK 2.x ([mcp].python) is required")
 
 sys.path.insert(0, str(ROOT / "usr/lib/mios"))
 import mios_mcp_federation as fed  # noqa: E402
 
 POLICY = {"enabled": True, "serve_http": False, "startup_timeout_s": 30, "call_timeout_s": 30,
           "restart_backoff_s": 0, "max_tools_per_server": 16, "log_directory": "mios/mcp-federation",
-          "max_restarts": 5, "catalog_cache": True, "idle_stop_s": 0}
+          "max_restarts": 5, "catalog_cache": True, "idle_stop_s": 0, "tailnet_discover": False}
 
 FIXTURE = textwrap.dedent('''
     import os, sys
@@ -468,6 +474,122 @@ class FrontDoorTests(Base):
         self.assertIn("fx_echo", status["tools"])
         rows = {row["id"]: row["status"] for row in status["servers"]}
         self.assertEqual(rows, {"fixture": "ready", "broken": "config-error"})
+
+
+class TailnetDiscoveryTests(unittest.TestCase):
+    """Two-sided controls for Tailscale CGNAT MCP upstream discovery and SSRF validation."""
+
+    def test_positive_discovers_online_tailnet_blade_peers(self):
+        sample = {
+            "Peer": {
+                "nodekey:1": {
+                    "HostName": "mios-blade-01",
+                    "DNSName": "mios-blade-01.tailnet.ts.net.",
+                    "Online": True,
+                    "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"],
+                }
+            }
+        }
+        peers = fed.discover_tailnet_upstreams(port=8770, status_json=sample)
+        self.assertEqual(len(peers), 1)
+        self.assertEqual(peers[0]["name"], "mios_blade_01")
+        self.assertEqual(peers[0]["url"], "http://100.101.102.103:8770/mcp")
+        self.assertEqual(peers[0]["namespace"], "remote__mios_blade_01__")
+
+        import io
+
+        class _Resp:
+            def __init__(self, body: dict):
+                self._raw = json.dumps(body).encode("utf-8")
+
+            def read(self):
+                return self._raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_opener(req, timeout=5.0):
+            req_body = json.loads(req.data.decode("utf-8"))
+            if req_body["method"] == "tools/list":
+                return _Resp({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "tools": [
+                            {"name": "mios_agent_send", "description": "Send message to Blade agent"},
+                            {"name": "mios_agent_list", "description": "List Blade agents"},
+                        ]
+                    },
+                })
+            if req_body["method"] == "tools/call":
+                return _Resp({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "delivered": True,
+                        "tool": req_body["params"]["name"],
+                        "arguments": req_body["params"]["arguments"],
+                    },
+                })
+            raise AssertionError(f"Unexpected JSON-RPC method: {req_body}")
+
+        tools = fed.discover_federated_tools(status_json=sample, opener=fake_opener)
+        self.assertEqual(
+            [t["name"] for t in tools],
+            ["remote__mios_blade_01__mios_agent_send", "remote__mios_blade_01__mios_agent_list"],
+        )
+        res = fed.call_federated_tool(
+            "remote__mios_blade_01__mios_agent_send",
+            {"recipient": "blade-agy", "message": "sync"},
+            upstreams=peers,
+            opener=fake_opener,
+        )
+        self.assertTrue(res["delivered"])
+        self.assertEqual(res["tool"], "mios_agent_send")
+
+    def test_negative_rejects_offline_loopback_metadata_and_rfc1918_peers(self):
+        sample = {
+            "Peer": {
+                "offline": {
+                    "HostName": "mios-blade-offline",
+                    "Online": False,
+                    "TailscaleIPs": ["100.101.102.104"],
+                },
+                "loopback": {
+                    "HostName": "spoof-local",
+                    "Online": True,
+                    "TailscaleIPs": ["127.0.0.1"],
+                },
+                "metadata": {
+                    "HostName": "spoof-meta",
+                    "Online": True,
+                    "TailscaleIPs": ["169.254.169.254"],
+                },
+                "rfc1918": {
+                    "HostName": "lan-only",
+                    "Online": True,
+                    "TailscaleIPs": ["192.168.1.50"],
+                },
+            }
+        }
+        peers = fed.discover_tailnet_upstreams(port=8770, status_json=sample)
+        self.assertEqual(peers, [])
+        for bad_url in (
+            "http://127.0.0.1:8770/mcp",
+            "http://localhost:8770/mcp",
+            "http://169.254.169.254:8770/mcp",
+            "http://192.168.1.10:8770/mcp",
+            "ftp://100.64.0.1:8770/mcp",
+        ):
+            with self.assertRaises(ValueError, msg=bad_url):
+                fed.validate_upstream_url(bad_url, allow_private=False)
+        with self.assertRaises(ValueError):
+            fed.call_federated_tool("mios_agent_send", {}, upstreams=[])
+        with self.assertRaises(LookupError):
+            fed.call_federated_tool("remote__absent_blade__mios_agent_send", {}, upstreams=[])
 
 
 if __name__ == "__main__":

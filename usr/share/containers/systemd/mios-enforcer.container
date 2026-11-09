@@ -22,7 +22,7 @@ ContainerName=mios-enforcer
 Exec=--bpf-lib=/var/lib/tetragon/bpf --tracing-policy-dir=/etc/tetragon/tetragon.tp.d --export-filename=/var/run/tetragon/tetragon.log
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=mios-enforcer
-Image=quay.io/cilium/tetragon:v1.4.2
+Image=quay.io/cilium/tetragon:v1.8.0
 Network=host
 PID=host
 SecurityLabelDisable=true

@@ -257,7 +257,7 @@ class TestMilestoneM4TetragonQuarantine(unittest.TestCase):
 
         # Quadlet unit validation
         self.assertIn("ContainerName=mios-enforcer", content)
-        self.assertIn("Image=quay.io/cilium/tetragon:v1.4.2", content)
+        self.assertIn("Image=quay.io/cilium/tetragon:v1.8.0", content)
         self.assertIn("User=mios-enforcer", content, "Must declare User=mios-enforcer for Law-6 compliance")
         self.assertIn("ConditionVirtualization=!wsl", content, "Must be inert on WSL2 dev VM")
         self.assertIn("ConditionPathExists=/sys/kernel/debug", content)

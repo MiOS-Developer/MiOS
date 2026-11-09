@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -77,6 +78,12 @@ def load_config(merged: dict) -> dict:
         if type(table.get(key)) is not bool:
             raise ValueError(f"[mcp.federation].{key} must be true or false")
         out[key] = table[key]
+    if "tailnet_discover" in table:
+        if type(table.get("tailnet_discover")) is not bool:
+            raise ValueError("[mcp.federation].tailnet_discover must be true or false")
+        out["tailnet_discover"] = table["tailnet_discover"]
+    else:
+        out["tailnet_discover"] = False
     for key, (low, high) in _NUMBER_KEYS.items():
         value = table.get(key)
         integral = key in _INTEGRAL
@@ -91,6 +98,183 @@ def load_config(merged: dict) -> dict:
         raise ValueError("[mcp.federation].log_directory must be a relative path under $XDG_STATE_HOME")
     out["log_directory"] = log_directory
     return out
+
+
+_TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def validate_upstream_url(url: str, allow_private: bool = False) -> str:
+    """Validate an HTTP(S) MCP upstream URL. Allows Tailscale CGNAT (100.64.0.0/10)
+    and .ts.net / .mios.internal hostnames while blocking loopback, link-local,
+    metadata (169.254.0.0/16), and RFC1918 private addresses when allow_private is False."""
+    import urllib.parse
+
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("MCP upstream URL must be a non-empty string")
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"MCP upstream URL must use http or https with a host: {url!r}")
+    host = parsed.hostname.lower().rstrip(".")
+    if host in ("localhost", "localhost.localdomain") or host.endswith(".localhost"):
+        raise ValueError(f"MCP upstream URL must not target loopback host {host!r}")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        if not allow_private and "." not in host:
+            raise ValueError(f"MCP upstream hostname {host!r} must be qualified or a Tailscale CGNAT IP")
+        return url.strip()
+    if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+        raise ValueError(f"MCP upstream IP {ip} is forbidden (loopback/link-local/unspecified)")
+    if isinstance(ip, ipaddress.IPv4Address) and ip in _TAILSCALE_CGNAT:
+        return url.strip()
+    if ip.is_private and not allow_private:
+        raise ValueError(f"MCP upstream private IP {ip} requires allow_private=True")
+    return url.strip()
+
+
+def discover_tailnet_upstreams(port: int = 8770, status_json: str | dict | None = None) -> list[dict]:
+    """Discover online MiOS Blade MCP gateways from `tailscale status --json`."""
+    import subprocess
+
+    data: dict = {}
+    if isinstance(status_json, dict):
+        data = status_json
+    elif isinstance(status_json, str):
+        try:
+            data = json.loads(status_json) if status_json.strip() else {}
+        except Exception:
+            data = {}
+    else:
+        try:
+            proc = subprocess.run(
+                ["tailscale", "status", "--json"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                data = json.loads(proc.stdout)
+        except Exception:
+            data = {}
+    if not isinstance(data, dict):
+        return []
+    upstreams: list[dict] = []
+    seen_urls: set[str] = set()
+    peers = data.get("Peer") or {}
+    if not isinstance(peers, dict):
+        return []
+    for peer in peers.values():
+        if not isinstance(peer, dict) or not peer.get("Online"):
+            continue
+        raw_name = str(peer.get("HostName") or peer.get("DNSName") or "blade").split(".")[0]
+        slug = re.sub(r"[^a-zA-Z0-9_]", "_", raw_name).strip("_").lower() or "blade"
+        if not slug[0].isalpha():
+            slug = "blade_" + slug
+        for ip in (peer.get("TailscaleIPs") or []):
+            if not isinstance(ip, str) or not ip.strip():
+                continue
+            candidate = f"http://{ip.strip()}:{int(port)}/mcp"
+            try:
+                validated = validate_upstream_url(candidate, allow_private=False)
+            except ValueError:
+                continue
+            if validated in seen_urls:
+                continue
+            seen_urls.add(validated)
+            upstreams.append({
+                "id": slug,
+                "name": slug,
+                "ip": ip.strip(),
+                "url": validated,
+                "namespace": f"remote__{slug}__",
+            })
+            break
+    return upstreams
+
+
+def _http_jsonrpc(url: str, method: str, params: dict | None = None,
+                  timeout_s: float = 5.0, opener=None) -> dict:
+    """Invoke a JSON-RPC 2.0 method on a remote MiOS-MCP HTTP endpoint."""
+    import urllib.request
+
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or {},
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    bearer = os.environ.get("MIOS_MCP_REMOTE_BEARER_TOKEN", "").strip()
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+    open_fn = opener if opener is not None else urllib.request.urlopen
+    with open_fn(req, timeout=timeout_s) as resp:
+        raw = resp.read()
+        data = json.loads(raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else raw)
+    if not isinstance(data, dict):
+        raise ValueError("Invalid JSON-RPC response from upstream")
+    if "error" in data and data["error"]:
+        raise RuntimeError(str(data["error"]))
+    return data.get("result") or {}
+
+
+def discover_federated_tools(upstreams: list[dict] | None = None, port: int = 8770,
+                             status_json: str | dict | None = None,
+                             allow_private: bool = False, opener=None) -> list[dict]:
+    """Discover and namespace tools (`remote__<peer>__<tool>`) from online tailnet
+    or configured MiOS-MCP HTTP upstreams."""
+    if upstreams is None:
+        upstreams = discover_tailnet_upstreams(port=port, status_json=status_json)
+    federated: list[dict] = []
+    for peer in upstreams:
+        if not isinstance(peer, dict) or not peer.get("url"):
+            continue
+        url = validate_upstream_url(str(peer["url"]), allow_private=allow_private)
+        slug = re.sub(r"[^a-zA-Z0-9_]", "_", str(peer.get("name") or peer.get("id") or "blade")).strip("_").lower() or "blade"
+        namespace = str(peer.get("namespace") or f"remote__{slug}__")
+        try:
+            res = _http_jsonrpc(url, "tools/list", {}, opener=opener)
+        except Exception:
+            continue
+        tools = res.get("tools") if isinstance(res, dict) else []
+        if not isinstance(tools, list):
+            continue
+        for tool in tools:
+            if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+                continue
+            upstream_name = tool["name"]
+            full_name = f"{namespace}{upstream_name}"
+            if not _TOOL_NAME.fullmatch(full_name):
+                continue
+            row = dict(tool)
+            row["name"] = full_name
+            row["description"] = f"[{slug}] " + str(tool.get("description") or upstream_name)
+            row["upstream_url"] = url
+            row["upstream_tool"] = upstream_name
+            federated.append(row)
+    return federated
+
+
+def call_federated_tool(full_name: str, arguments: dict | None = None,
+                        upstreams: list[dict] | None = None,
+                        allow_private: bool = False, opener=None) -> dict:
+    """Dispatch a namespaced `remote__<peer>__<tool>` call to its remote MiOS-MCP HTTP upstream."""
+    if not isinstance(full_name, str) or not full_name.startswith("remote__"):
+        raise ValueError(f"Not a federated remote tool name: {full_name!r}")
+    parts = full_name.split("__", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        raise ValueError(f"Invalid federated remote tool name: {full_name!r}")
+    peer_slug, upstream_tool = parts[1], parts[2]
+    peers = upstreams if upstreams is not None else discover_tailnet_upstreams()
+    target = next((p for p in peers if (p.get("name") == peer_slug or p.get("id") == peer_slug)), None)
+    if target is None or not target.get("url"):
+        raise LookupError(f"Unknown or offline federated peer: {peer_slug!r}")
+    url = validate_upstream_url(str(target["url"]), allow_private=allow_private)
+    return _http_jsonrpc(
+        url,
+        "tools/call",
+        {"name": upstream_tool, "arguments": arguments or {}},
+        opener=opener,
+    )
 
 
 def _servers(paths) -> dict:

@@ -100,7 +100,7 @@ def _ssot_protocol_version() -> str:
     env = os.environ.get("MIOS_MCP_PROTOCOL_VERSION")
     if env and env.strip():
         return env.strip()
-    layers = [os.environ.get("MIOS_TOML", "/usr/share/mios/mios.toml"),
+    layers = [os.environ.get("MIOS_TOML") or os.environ.get("MIOS_VENDOR_TOML") or "/usr/share/mios/mios.toml",
               "/etc/mios/mios.toml",
               os.path.expanduser("~/.config/mios/mios.toml")]
     val = mios_toml.get("mcp", "protocol_version", None,
@@ -237,7 +237,7 @@ def _build_mcp_tools(data: dict) -> list:
     return out
 
 
-MIOS_TOML = os.environ.get("MIOS_TOML", "/usr/share/mios/mios.toml")
+MIOS_TOML = os.environ.get("MIOS_TOML") or os.environ.get("MIOS_VENDOR_TOML") or "/usr/share/mios/mios.toml"
 
 
 def _verb_row_ssot(vname: str, vcfg: dict) -> dict:
@@ -1855,7 +1855,7 @@ async def _serve_stdio(server) -> None:
         )
 
 
-def _serve_http(server, port: int) -> None:
+def _serve_http(server, port: int, host: str = "127.0.0.1") -> None:
     import uvicorn
     from starlette.responses import JSONResponse
     from starlette.routing import Route
@@ -1871,16 +1871,16 @@ def _serve_http(server, port: int) -> None:
         streamable_http_path="/mcp",
         json_response=True,
         stateless_http=False,
-        host="127.0.0.1",
+        host=host,
         custom_starlette_routes=[
             Route("/health", health), Route("/healthz", health),
         ],
     )
     sys.stderr.write(
-        f"[mios-mcp] SDK Streamable HTTP on 127.0.0.1:{port}/mcp "
+        f"[mios-mcp] SDK Streamable HTTP on {host}:{port}/mcp "
         f"(verb relay -> {AGENT_PIPE_URL})\n"
     )
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 FORBIDDEN_SINGLE_FLAGS = {
@@ -2741,11 +2741,23 @@ def main() -> int:
             or os.environ.get("MIOS_MCP_HTTP", "").strip().lower() in {"1", "true", "yes"})
     server = _sdk_server(terminal_only=terminal_only, http=http)
     if http:
-        port = int(os.environ.get("MIOS_PORTS_MCP")
+        host = os.environ.get("MIOS_MCP_BIND_HOST", "127.0.0.1")
+        port_arg = None
+        argv = sys.argv[1:]
+        for idx, tok in enumerate(argv):
+            if tok == "--host" and idx + 1 < len(argv):
+                host = argv[idx + 1]
+            elif tok.startswith("--host="):
+                host = tok.split("=", 1)[1]
+            elif tok == "--port" and idx + 1 < len(argv):
+                port_arg = argv[idx + 1]
+            elif tok.startswith("--port="):
+                port_arg = tok.split("=", 1)[1]
+        port = int(port_arg
                    or os.environ.get("MIOS_PORTS_MCP")
-                   or os.environ.get("MIOS_PORTS_MCP")
-                   or (mios_toml.load_merged().get("ports") or {}).get("mcp"))
-        _serve_http(server, port)
+                   or (mios_toml.load_merged().get("ports") or {}).get("mcp")
+                   or 8770)
+        _serve_http(server, port, host=host)
     else:
         asyncio.run(_serve_stdio(server))
     return 0

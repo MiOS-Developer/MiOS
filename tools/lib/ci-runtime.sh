@@ -208,9 +208,9 @@ PY
         podman-MiOS-DEV bash --noprofile --norc -c '
             set -euo pipefail
             mkdir -p /run/systemd/system
-            ln -sf /dev/null /run/systemd/system/systemd-tmpfiles-setup.service \
-                /run/systemd/system/systemd-tmpfiles-clean.service \
-                /run/systemd/system/systemd-tmpfiles-clean.timer
+            for u in systemd-tmpfiles-setup.service systemd-tmpfiles-clean.service systemd-tmpfiles-clean.timer; do
+                ln -sf /dev/null "/run/systemd/system/$u"
+            done
             systemctl daemon-reload 2>/dev/null || true
             systemctl stop systemd-tmpfiles-setup.service systemd-tmpfiles-clean.timer systemd-tmpfiles-clean.service 2>/dev/null || true
             systemd-tmpfiles --create --prefix=/var/home --prefix=/var/roothome \

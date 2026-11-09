@@ -2,7 +2,7 @@
 # The OS pipeline owns packages, toolchains and payloads. This stage materializes
 # boot-time account/tmpfiles state before an editor or lifecycle command attaches.
 # Mirrored byte-identical into mios-bootstrap and -dev-loop; edit this source only.
-ARG MIOS_IMAGE_REF=ghcr.io/mios-dev/mios:latest
+ARG MIOS_IMAGE_REF=ghcr.io/mios-developer/mios:latest
 FROM ${MIOS_IMAGE_REF}
 
 # The checkout projects this from [identity].username together with remoteUser.
