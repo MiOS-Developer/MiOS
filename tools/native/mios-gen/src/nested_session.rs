@@ -2731,4 +2731,70 @@ mod tests {
             );
         }
     }
+    fn root_review_claim(t: &tempfile::TempDir) -> (PathBuf, PathBuf, PathBuf, devices::Claim) {
+        let registry = t.path().join("registry");
+        let parent = t.path().join("parent");
+        let owned = t.path().join("owned");
+        for p in [&registry, &parent, &owned] { fs::create_dir(p).unwrap(); }
+        let device = Device {
+            path: "/dev/input/event42".into(), spec: "pad".into(), name: "review-pad".into(),
+            kind: "controller".into(), virtual_node: false, siblings: vec![],
+        };
+        let descriptor = owned.join("session.json");
+        fs::write(&descriptor, json!({"seat":"review","devices":[device.to_json()]}).to_string()).unwrap();
+        let claim = devices::Claim::take(&registry, "review", &[device], false,
+            json!({"descriptor":descriptor,"runtime":owned,"state":"running"})).unwrap();
+        (registry,parent,owned,claim)
+    }
+
+    fn root_review_request(claim: &mut devices::Claim, registry: &Path, parent: &Path, owned: &Path) -> Json {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let peer = thread::spawn(move || {
+            writeln!(client, "{}", json!({"action":"return_controller","seat":"review","device":"/dev/input/event42"})).unwrap();
+            let mut s=String::new(); BufReader::new(client).read_line(&mut s).unwrap();
+            serde_json::from_str::<Json>(&s).unwrap()
+        });
+        handle_control_connection(server,claim,registry,parent,owned).unwrap();
+        peer.join().unwrap()
+    }
+
+    #[test]
+    fn root_return_review_missing_child_must_preserve_claim_despite_stale_parent_success() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let before=fs::read(registry.join("review.json")).unwrap();
+        fs::write(parent.join("mios-inputd-active.json"),
+            json!({"devices":[{"path":"/dev/input/event42","rearmed":true}],"raw_consumers":[]}).to_string()).unwrap();
+        let result=root_review_request(&mut claim,&registry,&parent,&owned);
+        assert_eq!(result["ok"],false,"missing child release acknowledgement must never certify a return: {result}");
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before,"missing child must leave claim unchanged");
+    }
+
+    #[test]
+    fn root_return_review_missing_parent_must_not_report_success() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let child=UnixListener::bind(owned.join("inputd-control.sock")).unwrap();
+        let worker=thread::spawn(move || {
+            let (mut s,_)=child.accept().unwrap();
+            let mut request=String::new();BufReader::new(&s).read_line(&mut request).unwrap();
+            writeln!(s,"{}",json!({"ok":true,"device":"/dev/input/event42"})).unwrap();
+        });
+        let result=root_review_request(&mut claim,&registry,&parent,&owned);
+        worker.join().unwrap();
+        assert_eq!(result["ok"],false,"missing parent acknowledgement must never report success: {result}");
+    }
+
+    #[test]
+    fn root_return_review_descriptor_failure_must_leave_registry_unchanged() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,_parent,owned,mut claim)=root_review_claim(&t);
+        let invalid=owned.join("descriptor-is-directory");fs::create_dir(&invalid).unwrap();
+        claim.update(json!({"descriptor":invalid})).unwrap();
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let result=claim.return_controller(&registry,Path::new("/dev/input/event42"));
+        assert!(result.is_err(),"descriptor failure must refuse the registry transaction");
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
+    }
+
 }
