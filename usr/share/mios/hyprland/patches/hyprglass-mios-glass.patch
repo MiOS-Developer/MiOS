@@ -25,29 +25,10 @@ index 82a582a..f8981ef 100644
      [[nodiscard]] std::string presetName() const { return resolvePresetName(); }
  
 diff --git a/src/GlassRenderer.cpp b/src/GlassRenderer.cpp
-index 250cfa5..c73f4b2 100644
+index 250cfa5..d52a94e 100644
 --- a/src/GlassRenderer.cpp
 +++ b/src/GlassRenderer.cpp
-@@ -398,6 +398,18 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
-     shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
-     shader->setUniformInt(SHADER_TEX, 0);
-     glUniform1f(blurUniforms.radius, radius);
-+    // MiOS: set every draw (the program's uniforms persist across the window, layer and item draws)
-+    static const SMiosGlassOptions NONE;
-+    const SMiosGlassOptions&       o = mios ? *mios : NONE;
-+    glUniform1i(uniforms.edgePass, o.edgePass ? 1 : 0);
-+    glUniform1f(uniforms.edgeGain, o.edgeGain);
-+    glUniform1i(uniforms.shapeMode, o.shapeMode);
-+    glUniform4f(uniforms.tabBox, o.tabBox[0], o.tabBox[1], o.tabBox[2], o.tabBox[3]);
-+    glUniform4f(uniforms.tabShape, o.tabShape[0], o.tabShape[1], o.tabShape[2], o.tabShape[3]);
-+    glUniform2f(uniforms.tabSpread, o.tabSpread[0], o.tabSpread[1]);
-+    glUniform1f(uniforms.tabFlip, o.tabFlip);
-+    glUniform2f(uniforms.sampleYClamp, o.sampleYClamp[0], o.sampleYClamp[1]);
-+
-     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
-     g_pHyprOpenGL->setViewport(0, 0, width, height);
-     glActiveTexture(GL_TEXTURE0);
-@@ -493,8 +505,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -493,8 +493,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                         CBox& rawBox, CBox& transformedBox,
                         float alpha, const std::array<float, 4>& radii, float roundingPower,
                         const Vector2D& paddingRatio, const SResolveContext& resolveContext,
@@ -60,7 +41,7 @@ index 250cfa5..c73f4b2 100644
          return;
  
      Diagnostics::CScopedStageTimer stageTimer(Diagnostics::EStage::ApplyGlassEffect);
-@@ -522,13 +536,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -522,13 +524,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
          Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
  
      Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox, transform);
@@ -76,7 +57,7 @@ index 250cfa5..c73f4b2 100644
  
      if (frosted) {
          glActiveTexture(GL_TEXTURE0 + FROST_TEXTURE_UNIT);
-@@ -597,7 +611,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -597,7 +599,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
          monitorScale, minDimensionPx);
      const float lensDistortionValue = resolvePresetFloat(resolveContext, &SPresetValues::lensDistortion, &SOverridableConfig::lensDistortion);
      // Epsilon guard matches the shader's own degenerate-size behaviour (bezelWidthPx == 0 would divide by zero).
@@ -85,7 +66,7 @@ index 250cfa5..c73f4b2 100644
      glUniform1f(uniforms.lensMaxPx, lensDistortionValue * minDimensionPx * 0.006f);
  
      // inf * 0 at a square lens corner would give NaN offsets
-@@ -657,7 +671,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -657,7 +659,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
  
      uploadThemeUniforms(resolveContext, program);
  
@@ -95,6 +76,25 @@ index 250cfa5..c73f4b2 100644
      glUniform3f(uniforms.tintColor,
          static_cast<float>((tintColorValue >> 24) & 0xFF) / 255.0f,
          static_cast<float>((tintColorValue >> 16) & 0xFF) / 255.0f,
+@@ -724,6 +727,18 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+     glUniform4f(uniforms.radii, radii[0], radii[1], radii[2], radii[3]);
+     shader->setUniformFloat(SHADER_ROUNDING_POWER, safeRoundingPower);
+ 
++    // MiOS: set every draw (the program's uniforms persist across the window, layer and item draws)
++    static const SMiosGlassOptions NONE;
++    const SMiosGlassOptions&       o = mios ? *mios : NONE;
++    glUniform1i(uniforms.edgePass, o.edgePass ? 1 : 0);
++    glUniform1f(uniforms.edgeGain, o.edgeGain);
++    glUniform1i(uniforms.shapeMode, o.shapeMode);
++    glUniform4f(uniforms.tabBox, o.tabBox[0], o.tabBox[1], o.tabBox[2], o.tabBox[3]);
++    glUniform4f(uniforms.tabShape, o.tabShape[0], o.tabShape[1], o.tabShape[2], o.tabShape[3]);
++    glUniform2f(uniforms.tabSpread, o.tabSpread[0], o.tabSpread[1]);
++    glUniform1f(uniforms.tabFlip, o.tabFlip);
++    glUniform2f(uniforms.sampleYClamp, o.sampleYClamp[0], o.sampleYClamp[1]);
++
+     glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+ 
+     // Only finalDamage is copied to the screen, and elementDamage (which finalDamage is a
 diff --git a/src/GlassRenderer.hpp b/src/GlassRenderer.hpp
 index c4f098d..404f762 100644
 --- a/src/GlassRenderer.hpp
