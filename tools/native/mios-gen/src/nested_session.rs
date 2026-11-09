@@ -2528,6 +2528,7 @@ mod tests {
 
     fn return_test_manifest(parent: &Path, devices: Json, raw: Json) {
         fs::write(parent.join("mios-inputd-active.json"), json!({
+            "controller_return_protocol_version":1,
             "bridge_pid":std::process::id(),"bridge_start":devices::start_time(std::process::id()).unwrap(),
             "timestamp_ms":return_time_ms(),"devices":devices,"raw_consumers":raw
         }).to_string()).unwrap();
@@ -2646,6 +2647,52 @@ mod tests {
         worker.join().unwrap();
     }
 
+    fn reject_parent_before_child_contact(changes: Json) {
+        let t = tempfile::tempdir().unwrap();
+        let (registry, parent, owned, mut claim) = root_review_claim(&t);
+        let manifest = parent.join("mios-inputd-active.json");
+        let mut record: Json = serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+        for (key, value) in changes.as_object().unwrap() {
+            if value.is_null() {
+                record.as_object_mut().unwrap().remove(key);
+            } else {
+                record[key] = value.clone();
+            }
+        }
+        fs::write(&manifest, record.to_string()).unwrap();
+        let claim_before = fs::read(registry.join("review.json")).unwrap();
+        let descriptor_before = fs::read(owned.join("session.json")).unwrap();
+        let child = UnixListener::bind(owned.join("inputd-control.sock")).unwrap();
+        child.set_nonblocking(true).unwrap();
+        let response = root_review_request(&mut claim, &registry, &parent, &owned);
+        assert_eq!(response["ok"], false);
+        assert!(
+            child.accept().is_err(),
+            "an unsupported or dead parent must be rejected before contacting the child: {response}"
+        );
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(), claim_before);
+        assert_eq!(fs::read(owned.join("session.json")).unwrap(), descriptor_before);
+    }
+
+    #[test]
+    fn return_parent_compatibility_refuses_unsupported_parent_before_child_contact() {
+        for version in [Json::Null, json!(0), json!(2), json!("1")] {
+            reject_parent_before_child_contact(json!({"controller_return_protocol_version":version}));
+        }
+    }
+
+    #[test]
+    fn return_parent_compatibility_refuses_missing_or_recycled_parent_identity() {
+        for identity in [
+            json!({"bridge_pid":null}),
+            json!({"bridge_start":null}),
+            json!({"bridge_pid":0}),
+            json!({"bridge_start":u64::MAX}),
+        ] {
+            reject_parent_before_child_contact(identity);
+        }
+    }
+
     #[test]
     fn return_defers_held_controls_without_changing_the_claim() {
         let t = tempfile::tempdir().unwrap();
@@ -2730,6 +2777,7 @@ mod tests {
         for p in [&registry, &parent, &owned] {
             fs::create_dir(p).unwrap();
         }
+        return_test_manifest(&parent, json!([]), json!([]));
         let device = Device {
             path: "/dev/input/event42".into(),
             spec: "pad".into(),

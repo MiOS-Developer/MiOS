@@ -6170,6 +6170,24 @@ mod app_detection {
     use super::*;
     use crate::nav::NavApp;
     use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn controller_return_manifest_advertises_supported_protocol() {
+        let runtime = tempfile::tempdir().unwrap();
+        super::update_active_manifest(
+            runtime.path(),
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeMap::new(),
+            true,
+        );
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(runtime.path().join("mios-inputd-active.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["controller_return_protocol_version"].as_u64(), Some(1));
+        assert_eq!(record["bridge_pid"].as_u64(), Some(u64::from(std::process::id())));
+        assert!(record["bridge_start"].as_u64().is_some_and(|start| start > 0));
+    }
+
     fn apps(exe: &[&Path], user_exe: &[&Path]) -> BTreeMap<String, NavApp> {
         let s = |v: &[&Path]| v.iter().map(|p| p.to_string_lossy().into_owned()).collect();
         BTreeMap::from([(
