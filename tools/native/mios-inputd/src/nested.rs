@@ -30,12 +30,18 @@ fn alive(proc_root: &Path, entry: &Json) -> bool {
         == Some(st)
 }
 
-/// Live entries of `<runtime>/<registry_dir>/*.json`; unreadable or stale files are ignored (never removed here).
+/// Live entries of `<runtime>/<registry_dir>/*.json`; unreadable, symlinked or stale files are ignored (never removed here).
 pub fn live_sessions(registry: &Path, proc_root: &Path) -> Vec<(PathBuf, Json)> {
     let mut out = vec![];
     for e in std::fs::read_dir(registry).into_iter().flatten().flatten() {
         let p = e.path();
         if p.extension().is_none_or(|x| x != "json") {
+            continue;
+        }
+        if std::fs::symlink_metadata(&p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(true)
+        {
             continue;
         }
         if let Some(j) = std::fs::read(&p)
@@ -92,10 +98,145 @@ pub struct Session {
     pub wayland_display: String,
     pub pad_state: PathBuf,
     pub controllers: Vec<PathBuf>,
+    pub control_socket: Option<PathBuf>,
 }
 impl Session {
     pub fn alive(&self, proc_root: &Path) -> bool {
         start_time(proc_root, self.launcher_pid) == Some(self.launcher_start)
+    }
+
+    /// Verify that a control-socket peer (`peer_uid`, `peer_pid`) is the continuing launcher of this session,
+    /// and that any optional request-level seat / launcher_pid / launcher_start claims match.
+    pub fn verify_launcher_peer(
+        &self,
+        proc_root: &Path,
+        expected_uid: u32,
+        peer_uid: u32,
+        peer_pid: u32,
+        req_seat: Option<&str>,
+        req_pid: Option<u32>,
+        req_start: Option<u64>,
+    ) -> Result<(), String> {
+        if peer_uid != expected_uid {
+            return Err(format!(
+                "unauthorized: peer UID {peer_uid} does not match expected UID {expected_uid}"
+            ));
+        }
+        if peer_pid == 0 || peer_pid != self.launcher_pid {
+            return Err(format!(
+                "unauthorized: peer PID {peer_pid} is not session launcher PID {}",
+                self.launcher_pid
+            ));
+        }
+        let actual_start = start_time(proc_root, peer_pid).ok_or_else(|| {
+            format!("unauthorized: peer process {peer_pid} not found in proc")
+        })?;
+        if actual_start != self.launcher_start {
+            return Err(format!(
+                "unauthorized: peer PID {peer_pid} start ticks {actual_start} != launcher start {}",
+                self.launcher_start
+            ));
+        }
+        if let Some(s) = req_seat {
+            if s != self.seat {
+                return Err(format!(
+                    "unauthorized: request seat {s:?} does not match session seat {:?}",
+                    self.seat
+                ));
+            }
+        }
+        if let Some(p) = req_pid {
+            if p != self.launcher_pid {
+                return Err(format!(
+                    "unauthorized: request launcher_pid {p} does not match session launcher_pid {}",
+                    self.launcher_pid
+                ));
+            }
+        }
+        if let Some(st) = req_start {
+            if st != self.launcher_start {
+                return Err(format!(
+                    "unauthorized: request launcher_start {st} does not match session launcher_start {}",
+                    self.launcher_start
+                ));
+            }
+        }
+        let meta = std::fs::symlink_metadata(&self.entry).map_err(|e| {
+            format!(
+                "cannot stat registry entry {}: {e}",
+                self.entry.display()
+            )
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "registry entry {} is a symlink",
+                self.entry.display()
+            ));
+        }
+        let bytes = std::fs::read(&self.entry)
+            .map_err(|e| format!("cannot read registry entry {}: {e}", self.entry.display()))?;
+        let j: Json = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("corrupt registry entry {}: {e}", self.entry.display()))?;
+        if j["seat"].as_str() != Some(self.seat.as_str())
+            || j["launcher_pid"].as_u64() != Some(u64::from(self.launcher_pid))
+            || j["launcher_start"].as_u64() != Some(self.launcher_start)
+        {
+            return Err(format!(
+                "registry entry {} identity changed on disk",
+                self.entry.display()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Refresh the controllers assigned to this session by re-reading the authoritative registry entry on disk.
+    /// Returns the updated list of controller event nodes.
+    pub fn refresh_controllers(&mut self, proc_root: &Path) -> Result<Vec<PathBuf>, String> {
+        if !self.alive(proc_root) {
+            return Err(format!(
+                "launcher PID {} has exited or was recycled",
+                self.launcher_pid
+            ));
+        }
+        let meta = std::fs::symlink_metadata(&self.entry).map_err(|e| {
+            format!(
+                "cannot stat registry entry {}: {e}",
+                self.entry.display()
+            )
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "registry entry {} is a symlink",
+                self.entry.display()
+            ));
+        }
+        let bytes = std::fs::read(&self.entry)
+            .map_err(|e| format!("cannot read registry entry {}: {e}", self.entry.display()))?;
+        let j: Json = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("corrupt registry entry {}: {e}", self.entry.display()))?;
+        if j["seat"].as_str() != Some(self.seat.as_str())
+            || j["launcher_pid"].as_u64() != Some(u64::from(self.launcher_pid))
+            || j["launcher_start"].as_u64() != Some(self.launcher_start)
+        {
+            return Err(format!(
+                "registry entry {} identity mismatch on refresh",
+                self.entry.display()
+            ));
+        }
+        let controllers: Vec<PathBuf> = entry_nodes(&j)
+            .into_iter()
+            .filter(|(p, kind)| {
+                kind == "controller"
+                    && p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("event"))
+            })
+            .map(|(p, _)| p)
+            .collect();
+        self.controllers = controllers.clone();
+        if let Some(cs) = j["control_socket"].as_str() {
+            self.control_socket = Some(PathBuf::from(cs));
+        }
+        Ok(controllers)
     }
 }
 
@@ -158,6 +299,7 @@ pub fn session(registry: &Path, proc_root: &Path, seat: &str) -> Result<Session,
         })
         .map(|(p, _)| p)
         .collect();
+    let control_socket = j["control_socket"].as_str().map(PathBuf::from);
     Ok(Session {
         seat: seat.into(),
         launcher_pid: j["launcher_pid"]
@@ -173,6 +315,7 @@ pub fn session(registry: &Path, proc_root: &Path, seat: &str) -> Result<Session,
         wayland_display: s("wayland_display")?,
         pad_state,
         controllers,
+        control_socket,
     })
 }
 
@@ -403,5 +546,111 @@ mod tests {
             Some("pet-two")
         );
         assert_eq!(session(&registry, &proc_root, "pet-two").unwrap(), second);
+    }
+
+    #[test]
+    fn session_refresh_controllers_and_control_socket() {
+        let t = tempfile::tempdir().unwrap();
+        let (proc_root, reg) = (t.path().join("proc"), t.path().join("reg"));
+        std::fs::create_dir_all(&reg).unwrap();
+        fake_proc(&proc_root, 50, 1000);
+
+        let mut record: Json = serde_json::from_str(&entry(
+            "p3",
+            50,
+            1000,
+            "running",
+            Some("/tmp/mios-hypr3d-pad.bin"),
+        ))
+        .unwrap();
+        record["control_socket"] = "/run/user/1000/mios-nested-p3/control.sock".into();
+        std::fs::write(reg.join("p3.json"), record.to_string()).unwrap();
+
+        let mut s = session(&reg, &proc_root, "p3").unwrap();
+        assert_eq!(
+            s.control_socket,
+            Some(PathBuf::from("/run/user/1000/mios-nested-p3/control.sock"))
+        );
+        assert_eq!(s.controllers, vec![PathBuf::from("/dev/input/event30")]);
+
+        // When a controller is returned, registry devices array is updated on disk
+        record["devices"] = serde_json::json!([
+            {"path": "/dev/input/event31", "kind": "keyboard", "siblings": []}
+        ]);
+        std::fs::write(reg.join("p3.json"), record.to_string()).unwrap();
+
+        // Refresh picks up the return and updates controllers
+        let updated = s.refresh_controllers(&proc_root).unwrap();
+        assert!(updated.is_empty(), "controller should be removed");
+        assert!(s.controllers.is_empty());
+
+        // When launcher dies / recycled PID, refresh fails
+        fake_proc(&proc_root, 50, 1001);
+        assert!(s.refresh_controllers(&proc_root).is_err());
+    }
+
+    #[test]
+    fn verify_launcher_peer_and_symlink_hardening() {
+        let t = tempfile::tempdir().unwrap();
+        let (proc_root, reg) = (t.path().join("proc"), t.path().join("reg"));
+        std::fs::create_dir_all(&reg).unwrap();
+        fake_proc(&proc_root, 77, 2000);
+        fake_proc(&proc_root, 78, 2000);
+
+        let record = entry(
+            "p4",
+            77,
+            2000,
+            "running",
+            Some("/tmp/mios-hypr3d-pad.bin"),
+        );
+        std::fs::write(reg.join("p4.json"), &record).unwrap();
+
+        let s = session(&reg, &proc_root, "p4").unwrap();
+        assert!(
+            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), Some(77), Some(2000))
+                .is_ok()
+        );
+        // Wrong UID refuses
+        assert!(
+            s.verify_launcher_peer(&proc_root, 1000, 1001, 77, Some("p4"), Some(77), Some(2000))
+                .unwrap_err()
+                .contains("peer UID")
+        );
+        // Same-UID non-launcher PID refuses
+        assert!(
+            s.verify_launcher_peer(&proc_root, 1000, 1000, 78, Some("p4"), Some(77), Some(2000))
+                .unwrap_err()
+                .contains("not session launcher PID")
+        );
+        // Wrong request seat refuses
+        assert!(
+            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p5"), Some(77), Some(2000))
+                .unwrap_err()
+                .contains("request seat")
+        );
+        // Recycled start ticks refuses
+        fake_proc(&proc_root, 77, 2001);
+        assert!(
+            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), Some(77), Some(2000))
+                .unwrap_err()
+                .contains("start ticks")
+        );
+        fake_proc(&proc_root, 77, 2000);
+
+        // Symlinked registry entry is ignored by live_sessions and refused by verify_launcher_peer
+        std::fs::remove_file(reg.join("p4.json")).unwrap();
+        let outside = t.path().join("outside.json");
+        std::fs::write(&outside, &record).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, reg.join("p4.json")).unwrap();
+            assert!(live_sessions(&reg, &proc_root).is_empty());
+            assert!(
+                s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), None, None)
+                    .unwrap_err()
+                    .contains("symlink")
+            );
+        }
     }
 }
