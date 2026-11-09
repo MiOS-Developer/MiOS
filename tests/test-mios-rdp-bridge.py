@@ -14,6 +14,7 @@ import socket
 import struct
 import subprocess
 import tempfile
+import threading
 import sys
 import time
 import unittest
@@ -543,6 +544,7 @@ class StatefulHypr:
         self.rules: dict[str, dict] = {}
         self.evals: list[str] = []
         self.size_file = size_file
+        self._lock = threading.Lock()
         self.env = dict(os.environ)
         self.cursor = (900, 500)
         self.warps: list = []
@@ -558,13 +560,14 @@ class StatefulHypr:
     def config_reload(self, name):
         """What a Hyprland config reload did to the bridge's output: its runtime rule is gone and the
         projection's catch-all ("preferred, auto, 1") puts it right of the layout at 1920x1080."""
-        self.rules.pop(name, None)
-        m = next(m for m in self.mons if m["name"] == name)
-        m.update(width=1920, height=1080, scale=1.0, x=1920, y=0, transform=0, refreshRate=60.0)
-        if self.size_file:
-            with open(self.size_file + ".tmp", "w") as f:
-                f.write("1920x1080")
-            os.replace(self.size_file + ".tmp", self.size_file)
+        with self._lock:
+            self.rules.pop(name, None)
+            m = next(m for m in self.mons if m["name"] == name)
+            m.update(width=1920, height=1080, scale=1.0, x=1920, y=0, transform=0, refreshRate=60.0)
+            if self.size_file:
+                with open(self.size_file + ".tmp", "w") as f:
+                    f.write("1920x1080")
+                os.replace(self.size_file + ".tmp", self.size_file)
 
     def monitors(self):
         return [dict(m) for m in self.mons]
@@ -580,15 +583,16 @@ class StatefulHypr:
         return True
 
     def _apply(self, name):
-        r = self.rules.get(name)
-        m = next((m for m in self.mons if m["name"] == name), None)
-        if r is None or m is None:
-            return
-        m.update(r)
-        if self.size_file and name.startswith("HEADLESS-"):
-            with open(self.size_file + ".tmp", "w") as f:
-                f.write(f"{m['width']}x{m['height']}")
-            os.replace(self.size_file + ".tmp", self.size_file)
+        with self._lock:
+            r = self.rules.get(name)
+            m = next((m for m in self.mons if m["name"] == name), None)
+            if r is None or m is None:
+                return
+            m.update(r)
+            if self.size_file and name.startswith("HEADLESS-"):
+                with open(self.size_file + ".tmp", "w") as f:
+                    f.write(f"{m['width']}x{m['height']}")
+                os.replace(self.size_file + ".tmp", self.size_file)
 
     def eval(self, lua):
         self.evals.append(lua)

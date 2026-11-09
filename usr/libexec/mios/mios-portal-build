@@ -159,9 +159,9 @@ SCOPE_CG="/sys/fs/cgroup$(awk -F: '$1=="0"{print $3}' /proc/self/cgroup)"
 [ -r "$SCOPE_CG/memory.max" ] || die "not inside a memory-capped cgroup ($SCOPE_CG)"
 log "scope $SCOPE_CG memory.max=$(cat "$SCOPE_CG/memory.max") swap.max=$(cat "$SCOPE_CG/memory.swap.max")"
 TS=${MIOS_PORTAL_BUILD_TS:?}
-STORE="$PB_WORK/storage"; RUNROOT="${XDG_RUNTIME_DIR:?}/mios-portal-build"
-mkdir -p "$STORE" "$RUNROOT" "$PB_WORK/work/inputs"
-PODMAN=(env -u CONTAINER_HOST -u DOCKER_HOST podman --root "$STORE" --runroot "$RUNROOT")
+STORE="$PB_WORK/storage"; RUNROOT="${XDG_RUNTIME_DIR:?}/mios-portal-build"; BUILD_TMP="$PB_WORK/tmp"
+mkdir -p "$STORE" "$RUNROOT" "$BUILD_TMP" "$PB_WORK/work/inputs"
+PODMAN=(env -u CONTAINER_HOST -u DOCKER_HOST TMPDIR="$BUILD_TMP" podman --root "$STORE" --runroot "$RUNROOT")
 RUN_ARGS=(--rm --cgroups=split --memory "$PB_CMEM" --memory-swap "$PB_CMEMSWAP" --cpus "$PB_CPUS"
     --user "$(id -u):$(id -g)" -e HOME=/work/home)
 # Root already has the enclosing development container's namespace. keep-id
