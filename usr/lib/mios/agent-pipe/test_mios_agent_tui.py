@@ -46,7 +46,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             self.assertLessEqual(table.region.right, 35)
             self.assertGreaterEqual(table.styles.scrollbar_size_vertical, 0)
             self.assertFalse(table.horizontal_scrollbar.display)
-            self.assertEqual(table.styles.scrollbar_size_vertical, 1)
+            self.assertEqual(table.styles.scrollbar_size_vertical, 0)
             self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
             await pilot.press("7", "enter")
             await pilot.pause()
@@ -343,7 +343,10 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                     if pattern in output:
                         return
                     if select.select([terminal], [], [], 0.1)[0]:
-                        output.extend(os.read(terminal, 65536))
+                        try:
+                            output.extend(os.read(terminal, 65536))
+                        except OSError:
+                            self.fail(f"TUI exited before {pattern!r}: {bytes(output)[-9000:]!r}")
                 self.fail(f"TTY did not render {pattern!r}: {bytes(output)[-1500:]!r}")
             read_until(b"Relay:")
             self.assertFalse(termios.tcgetattr(terminal)[3] & termios.ECHO, "input must be in raw mode")

@@ -84,7 +84,7 @@ fn socket_candidates(root: &Path, human: &str, depth: usize) -> Vec<PathBuf> {
 
 fn pane_metadata(socket: &Path, budget: u64) -> Result<Vec<Value>, String> {
     let mut child = Command::new("tmux").args(["-S"]).arg(socket)
-        .args(["list-panes", "-a", "-F", "#{session_id}\t#{window_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{@mios-agent-kind}\t#{session_name}\t#{@mios-workspace-anchor-for}\t#{@mios-workspace-observer-for}\t#{@mios-workspace-slot}\t#{@mios-workspace-head}"])
+        .args(["list-panes", "-a", "-F", "#{session_id}\t#{window_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{@mios-agent-kind}\t#{session_name}\t#{@mios-workspace-anchor-for}\t#{@mios-workspace-observer-for}\t#{@mios-workspace-slot}\t#{@mios-workspace-head}\t#{@mcp_slot}\t#{@mios-workspace-worker}"])
         .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
     let stdout = child.stdout.take().ok_or("missing tmux stdout")?;
     // Drain while waiting: a large session inventory otherwise fills the pipe
@@ -122,21 +122,25 @@ fn parse_pane_metadata(socket: &Path, output: &str) -> Vec<Value> {
         .lines()
         .filter_map(|line| {
             let fields: Vec<&str> = line.split('\t').collect();
-            if fields.len() != 12 {
+            if fields.len() != 12 && fields.len() != 14 {
                 return None;
             }
+            let slot = if !fields[10].is_empty() { fields[10] } else { fields.get(12).copied().unwrap_or("") };
+            let parent = if !fields[8].is_empty() { fields[8] } else if !fields[9].is_empty() { fields[9] }
+                else if let Some(worker) = fields.get(13).filter(|v| !v.is_empty()) { worker }
+                else if fields[2]!=fields[11] { fields[11] } else { "" };
             let role = if !fields[8].is_empty() { "Anchor".to_string() }
                 else if !fields[9].is_empty() { "Observer".to_string() }
                 else if fields[2] == fields[11] { "Head".to_string() }
-                else if !fields[10].is_empty() { format!("W{}", fields[10]) }
+                else if !slot.is_empty() { format!("W{slot}") }
                 else { "Shell".to_string() };
             Some(
                 json!({"socket":display_text(&json!(socket.to_string_lossy())),
             "session":display_text(&json!(fields[0])), "session_name":display_text(&json!(fields[7])), "window":display_text(&json!(fields[1])),
             "pane":display_text(&json!(fields[2])), "pid":fields[3].parse::<u32>().ok(),
             "command":display_text(&json!(fields[4])), "dead":fields[5]=="1", "agent_kind":display_text(&json!(fields[6])), "role":role,
-            "parent_pane":display_text(&json!(if !fields[8].is_empty() { fields[8] } else if !fields[9].is_empty() { fields[9] } else if fields[2]!=fields[11] { fields[11] } else { "" })),
-            "slot":display_text(&json!(fields[10]))}),
+            "parent_pane":display_text(&json!(parent)),
+            "slot":display_text(&json!(slot))}),
             )
         })
         .collect()

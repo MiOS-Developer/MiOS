@@ -321,11 +321,10 @@ class AgentView(Vertical):
 
     def show_detail(self):
         table = self.query_one("#peer-table", DataTable)
-        try:
-            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
-            detail = self.inventory[key]["detail"]
-        except (KeyError, IndexError):
-            detail = "No matching rows · F6 scope · Ctrl+F search"
+        detail = "No matching rows · F6 scope · Ctrl+F search"
+        if table.row_count and 0 <= table.cursor_row < table.row_count:
+            key = table.ordered_rows[table.cursor_row].key.value
+            detail = self.inventory.get(key, {}).get("detail", detail)
         self.query_one("#agent-detail", Static).update(clean(detail, 1000))
 
     def adapt_columns(self, width):

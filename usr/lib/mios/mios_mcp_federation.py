@@ -720,6 +720,9 @@ class AgentObservationCache:
         self.cache = {}
         self.states = {m.spec.id: "pending" for m in federation.members} if federation else {}
         self.task = None
+        if federation:
+            self.states.update({row["id"]: "unavailable" if row.get("status") == "config-error" else "unsupported"
+                                for row in getattr(federation, "skipped", [])})
 
     def start_background(self):
         if self.federation and self.task is None:
@@ -774,7 +777,14 @@ class AgentObservationCache:
                     rows = data.get(key, [])
                     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                         raise ValueError("invalid observation rows")
-                    clean[key] = [{k: v for k, v in row.items() if k in fields and type(v) in (str, int, bool, float, type(None))} for row in rows]
+                    clean[key] = []
+                    for row in rows:
+                        if "online" in row and type(row["online"]) is not bool:
+                            raise ValueError("invalid presence")
+                        public = {k: v for k, v in row.items() if k in fields and type(v) in (str, int, bool, float, type(None))}
+                        if isinstance(row.get("source"), str):
+                            public["origin_source"] = row["source"]
+                        clean[key].append(public)
                 self.cache[source] = clean
                 self.states[source] = "partial" if data["errors"] else "ready"
             except asyncio.CancelledError:
@@ -795,7 +805,9 @@ class AgentObservationCache:
                 result["errors"].append({"source": source, "error": "remote observation incomplete"})
             for key, rows in self.cache.get(source, {}).items():
                 for row in rows:
-                    result[key].append({**row, "source": source, "stale": state != "ready"})
+                    public = dict(row)
+                    origin = public.pop("origin_source", "")
+                    result[key].append({**public, "source": source + ("/" + origin if origin else ""), "stale": state != "ready"})
         result["agent_total"] = len(result["agents"])
         result["online_total"] = sum(row.get("online") is True and not row.get("stale") for row in result["agents"])
         return result
