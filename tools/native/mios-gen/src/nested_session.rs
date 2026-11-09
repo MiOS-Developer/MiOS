@@ -1347,9 +1347,10 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
             }
         };
         descriptor["control_socket"] = json!(control_socket_path);
+        descriptor["control_protocol_version"] = json!(1);
         fs::write(owned.0.join("session.json"), format!("{descriptor}\n"))
             .map_err(|e| e.to_string())?;
-        claim.update(json!({"state":"running","runtime":owned.0,"control_socket":control_socket_path,"instance":inst["instance"],"wayland_display":inst["wl_socket"],"compositor_pid":pid,"parent_window_pid":wpid,"parent_window":address,"output":descriptor.get("output").cloned().unwrap_or(Json::Null),"tmp":descriptor["tmp"].clone(),"pad_state":descriptor["pad_state"].clone(),"descriptor":owned.0.join("session.json")}))?;
+        claim.update(json!({"state":"running","runtime":owned.0,"control_socket":control_socket_path,"control_protocol_version":1,"instance":inst["instance"],"wayland_display":inst["wl_socket"],"compositor_pid":pid,"parent_window_pid":wpid,"parent_window":address,"output":descriptor.get("output").cloned().unwrap_or(Json::Null),"tmp":descriptor["tmp"].clone(),"pad_state":descriptor["pad_state"].clone(),"descriptor":owned.0.join("session.json")}))?;
         println!("{descriptor}");
         let mut parent_events = ParentEvents::connect(&parent, &signature);
         loop {
@@ -1531,7 +1532,12 @@ pub fn handle_control_connection(
         let started = return_time_ms();
         let manifest = parent.join("mios-inputd-active.json");
         let expected_parent = devices::read_return_json(&manifest).ok().and_then(|record| manifest_identity(&record));
-        let (released, child_peer) = match child_return_exchange(owned, &original, &target, "release_device", None) {
+        // Probe before any ownership mutation: older child daemons ignore nonce fields.
+        let (capabilities, probed_peer) = child_return_exchange(owned, &original, &target, "return_capabilities", None)?;
+        if capabilities["protocol_version"].as_u64() != Some(1) || capabilities["ok"].as_bool() != Some(true) {
+            return Err("child does not support the authenticated controller return protocol".into());
+        }
+        let (released, child_peer) = match child_return_exchange(owned, &original, &target, "release_device", Some(probed_peer)) {
             Ok(reply) => reply,
             Err(error) => {
                 let recovery = child_return_exchange(owned, &original, &target, "abort_release", None);
@@ -1627,6 +1633,9 @@ pub fn return_controller(_parent: &Path, registry: &Path, o: &Options) -> Result
         ));
     }
 
+    if entry["control_protocol_version"].as_u64() != Some(1) {
+        return Err("session uses an older controller return protocol; preserve it and start a new session before returning its controller".into());
+    }
     let control_socket_str = entry["control_socket"]
         .as_str()
         .ok_or("session control socket not published")?;
@@ -2406,7 +2415,7 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         thread::spawn(move || {
             let mut actions = Vec::new();
-            for _ in 0..count {
+            while actions.len() < count {
                 let deadline = Instant::now() + Duration::from_secs(5);
                 let mut socket = loop {
                     if let Ok((socket, _)) = listener.accept() { break socket; }
@@ -2414,10 +2423,14 @@ mod tests {
                     thread::sleep(Duration::from_millis(2));
                 };
                 let request = read_control_frame(&mut socket, Duration::from_secs(2)).unwrap();
-                actions.push(request["action"].as_str().unwrap().to_owned());
                 let mut response = json!({"ok":true,"nonce":request["nonce"],"seat":request["seat"],
                     "launcher_pid":request["launcher_pid"],"launcher_start":request["launcher_start"],"device":request["device"]});
-                for (key,value) in reply(&request).as_object().unwrap() { response[key] = value.clone(); }
+                if request["action"] == "return_capabilities" {
+                    response["protocol_version"] = json!(1);
+                } else {
+                    actions.push(request["action"].as_str().unwrap().to_owned());
+                    for (key,value) in reply(&request).as_object().unwrap() { response[key] = value.clone(); }
+                }
                 writeln!(socket, "{response}").unwrap();
             }
             actions
@@ -2438,6 +2451,12 @@ mod tests {
         let (registry,parent,owned,mut claim) = root_review_claim(&t);
         let listener = UnixListener::bind(owned.join("control.sock")).unwrap();
         claim.update(json!({"control_socket":owned.join("control.sock")})).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let legacy_options = Options {seat:Some("review".into()),..Default::default()};
+        assert!(return_controller(&parent,&registry,&legacy_options).unwrap_err().contains("older controller return protocol"));
+        assert!(listener.accept().is_err(),"legacy sessions receive no mutating request");
+        listener.set_nonblocking(false).unwrap();
+        claim.update(json!({"control_protocol_version":1})).unwrap();
         let seat_file = registry.join("review.json");
         let original = fs::read(&seat_file).unwrap();
         let mut recycled: Json = serde_json::from_slice(&original).unwrap();
@@ -2479,6 +2498,24 @@ mod tests {
             assert!(record["devices"].as_array().unwrap().is_empty());
             assert_eq!(record["seat"],"review");
         }
+    }
+
+    #[test]
+    fn return_rejects_legacy_child_without_releasing_its_controller() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let listener=UnixListener::bind(owned.join("inputd-control.sock")).unwrap();
+        let worker=thread::spawn(move || {
+            let (mut stream,_)=listener.accept().unwrap();
+            let request=read_control_frame(&mut stream,RETURN_IO_TIMEOUT).unwrap();
+            assert_eq!(request["action"],"return_capabilities");
+            writeln!(stream,"{}",json!({"ok":false,"error":"unsupported action"})).unwrap();
+        });
+        let response=root_review_request(&mut claim,&registry,&parent,&owned);
+        assert_eq!(response["ok"],false);
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
+        worker.join().unwrap();
     }
 
     #[test]

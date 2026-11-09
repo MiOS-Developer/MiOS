@@ -2774,6 +2774,20 @@ where
     }
 
     match req["action"].as_str() {
+        Some("return_capabilities") => {
+            let target = match resolve_leased_controller_path(req["device"].as_str().unwrap_or(""), &session.controllers, active_devices) {
+                Ok(path) => path,
+                Err(error) => {
+                    let resp = serde_json::json!({"ok":false,"nonce":nonce,"seat":session.seat,"error":error});
+                    let _ = writeln!(stream, "{resp}");
+                    return resp;
+                }
+            };
+            let resp = serde_json::json!({"ok":true,"protocol_version":1,"nonce":nonce,"seat":session.seat,
+                "launcher_pid":session.launcher_pid,"launcher_start":session.launcher_start,"device":target});
+            let _ = writeln!(stream, "{resp}");
+            resp
+        }
         Some("release_device") => {
             let dev_req = req["device"].as_str().unwrap_or("");
             let matched = match resolve_leased_controller_path(
@@ -6666,6 +6680,11 @@ mod app_detection {
         let (_dir,session,proc_root)=controller_return_fixture();
         let known=std::sync::Mutex::new(session.controllers.iter().cloned().collect());
         let released=std::sync::Mutex::new(BTreeSet::new());
+        let capabilities=controller_return_call(&session,&proc_root,&known,&released,
+            controller_return_request(&session,"return_capabilities"),|_|panic!("capability probes never release devices"));
+        assert_eq!(capabilities["protocol_version"],1);
+        assert!(released.lock().unwrap().is_empty());
+        assert!(known.lock().unwrap().contains(&session.controllers[0]));
         let reply=controller_return_call(&session,&proc_root,&known,&released,
             controller_return_request(&session,"release_device"),|_|Ok(Ok(())));
         assert_eq!(reply["ok"],true);
