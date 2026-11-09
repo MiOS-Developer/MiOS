@@ -4816,3 +4816,10 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Receipt .devloop/handoff/mios-blade-main-integration.json records source/artifact/log provenance. Task3775 remains in_progress pending physical return on a new protocol-v1 seat; existing game/PiP/bridge sessions are preserved. Publication and live installation are the next serialized steps.
 
 - Recovery packing correction: fetched complete5399-commit main ancestry from the shallow Blade checkout. Published archive is9206697bytes,296exported refs plus164already-main targets, with all460target mappings and58source snapshots unchanged. The original79437878-byte archive remains private and intact.
+
+
+## Blade main publication and verified native installation (2026-11-09)
+
+- Main checkpoint5282e413d85fb2246d43bee79cc87b6e43824e38 was pushed fast-forward and verified through ls-remote. Explicit binary attributes preserve the exact9206697-byte recovery bundle SHA256, verified from both staged bytes and the original bundle. Final candidate secret scan reports0findings; historical archive flags retain their separate complete review receipt.
+- Installed static mios-gen, mios-inputd and miosd in /usr/bin, plus the identical Inputd artifact at the active user-local entrypoint. Installed policy validation and private kernel fixture pass; installed miosd reproduces exact live Chrony bytes. Old binaries are backed up privately. Live bridgePID2137102, host monitor projection and adopted nested game/PiP sessions remain intact.
+- Deployment provenance is tracked in .devloop/handoff/mios-blade-main-integration.json. Task3775 remains in_progress pending physical return acceptance with a newly launched protocol-v1 seat. This metadata-only receipt adds no source or artifact changes.

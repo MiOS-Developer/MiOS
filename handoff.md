@@ -37,9 +37,18 @@ on Blade. The editor was gracefully restarted with operator authorization to
 meet the unchanged12288MiB build-admission floor.
 
 Task3775 remains in progress. Next acceptance: use a newly launched protocol-v1
-seat to test physical controller return, parent neutral rearming and visible
+parent/child preview to test physical controller return, parent neutral rearming and visible
 game/PiP continuity. Preserve the existing bridge and adopted nested sessions.
-Publication and exact installed-artifact evidence follow in the receipt.
+Main publication checkpoint `5282e413d85fb2246d43bee79cc87b6e43824e38` was verified against
+the remote. Static `mios-gen`, `mios-inputd` and `miosd` artifacts are installed
+under `/usr/bin`; the active policy's user-local Inputd entrypoint is updated
+to the identical verified Inputd bytes. Installed policy validation and the
+private kernel fixture pass. The installed Chrony renderer emits byte-identical
+live configuration. Existing bridge PID2137102 and nested game/PiP sessions
+remain running; no physical controller was detached. Exact checksums, previous
+binary backups and installed-path evidence are recorded in the integration
+receipt. All original worktrees remain available; physical return acceptance
+on a fresh protocol-v1 parent/child preview remains open.
 
 
 PR #65 merged as `69fa06efe04f6422bbaec8b4ea0b953c24df2dd5`; PR #66 merged as

@@ -215,7 +215,7 @@
         "sha256": "0810b5cca3fde8f9c02a2f324d638ca51db596cccea2fba8950f1affa926479e"
       }
     },
-    "source_secret_scan": "gitleaks 8.30.1, candidate history through source commit, zero findings",
+    "source_secret_scan": "gitleaks 8.30.1, final candidate history including publication metadata, zero findings; archive contents reviewed separately",
     "projection_checks": {
       "ai_metadata_entries": 3442,
       "ai_metadata_fresh": "passed",
@@ -229,7 +229,29 @@
       "preserved_ref_targets": 460,
       "snapshots": 58,
       "note": "Complete public main history removes redundant historical objects; original archive/worktrees remain intact."
-    }
+    },
+    "archive_committed_bytes_match": true,
+    "cloud_recovery_check": {
+      "verified_main": "5282e413d85fb2246d43bee79cc87b6e43824e38",
+      "verified_utc": "2026-11-09T18:32:15.721103+00:00",
+      "archive_bytes": 9206697,
+      "archive_sha256": "c3794e5549dff19e0d4f16d6a5a4446a4f8818bd89a4721b61bd0476bb360c9f",
+      "ref_targets_verified": 460,
+      "original_worktrees_mapped": 402,
+      "source_snapshots_verified": 58,
+      "untracked_source_bytes_or_symlinks_verified": 26,
+      "exported_refs": 296,
+      "already_public_main_targets": 164,
+      "private_import_namespace": "refs/mios-recovery-verify/mios-blade-main-integration/",
+      "bundle_integrity_and_prerequisites": "passed in cloud checkout from public main"
+    },
+    "source_preservation_recheck": {
+      "checked_utc": "2026-11-09T18:35:55.372055+00:00",
+      "original_nonroot_worktrees_checked": 401,
+      "changes_since_preservation": [],
+      "root_scope": "checked separately during deployment against private root snapshot; host monitor projection must remain byte-identical"
+    },
+    "binary_bundle_attributes": "*.bundle binary prevents text conversion and false text diffs for large ref headers"
   },
   "artifacts": {
     "mios-gen": {
@@ -267,14 +289,102 @@
     }
   },
   "deployment": {
-    "status": "prepared; publication and installation receipt will follow",
+    "status": "installed_and_verified",
+    "published_main": "5282e413d85fb2246d43bee79cc87b6e43824e38",
+    "source": "49db801c4a705bd6d3374c35472b29e16d9b4c3c",
+    "installed_utc": "2026-11-09T18:33:12.771614+00:00",
+    "artifacts": [
+      {
+        "path": "/usr/bin/mios-gen",
+        "binary": "mios-gen",
+        "previous_sha256": "e7171335fdc66ec238d6c89525c4bb0aa931214d7fe4f039a1fa55a17204280e",
+        "sha256": "cfdc44bc0b785bf682d2082393b3bc628fd97e618e0cd9661d1e7fe571f0dc78",
+        "backup": "/home/mios/.local/state/mios/mios-blade-main-integration/install-backup/0-mios-gen"
+      },
+      {
+        "path": "/usr/bin/mios-inputd",
+        "binary": "mios-inputd",
+        "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb",
+        "sha256": "b2641e0a82cf26488bc8c9f2f3c44621966bf6d15d5f4dbffd1dc84870a8a273",
+        "backup": "/home/mios/.local/state/mios/mios-blade-main-integration/install-backup/1-mios-inputd"
+      },
+      {
+        "path": "/usr/bin/miosd",
+        "binary": "miosd",
+        "previous_sha256": "9371d661f4c3bff15a036a4672e5f92306b9e3e6da9c8e839967c59918ae5818",
+        "sha256": "f7382d36b1378a2519853b6d47a2f45931c57ae706011f8d9b1c54fed54f3398",
+        "backup": "/home/mios/.local/state/mios/mios-blade-main-integration/install-backup/2-miosd"
+      },
+      {
+        "path": "/home/mios/.local/libexec/mios/mios-inputd",
+        "binary": "mios-inputd",
+        "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb",
+        "sha256": "b2641e0a82cf26488bc8c9f2f3c44621966bf6d15d5f4dbffd1dc84870a8a273",
+        "backup": "/home/mios/.local/state/mios/mios-blade-main-integration/install-backup/3-mios-inputd"
+      }
+    ],
+    "checks": [
+      {
+        "name": "installed-inputd-policy",
+        "exit": 0,
+        "stdout_sha256": "3fbe43bd047b390061ff094c13d3d444e48375a15771b3580c3bd70dbf4fd961",
+        "result": {
+          "valid": true,
+          "bindings": 19,
+          "controller": true,
+          "exclusive_grab": true,
+          "unresolved_actions": [],
+          "nav_apps": [
+            "mon"
+          ],
+          "nav_app_error": null
+        }
+      },
+      {
+        "name": "installed-inputd-kernel",
+        "exit": 0,
+        "stdout_sha256": "81da64623854860c17e6337624d1b09e8b7ad4416e4dcf18dbb4e056169d678f",
+        "result": {
+          "fixture": "private-uinput",
+          "isolated_from_live_bridge": true,
+          "grab_owner_received": true,
+          "other_reader_blocked": true,
+          "release_restored_reader": true,
+          "replay_loop_rejected": true,
+          "grab_lost_fails_closed": true,
+          "duplicate_owner_rejected": true,
+          "typing_keyboard_rejected": true,
+          "keyboard_aux_joystick_rejected": true,
+          "virtual_app_grab_preserves_host_input": true,
+          "ordinary_input_replayed": true,
+          "release_after_signals": [
+            15,
+            9
+          ]
+        }
+      },
+      {
+        "name": "installed-gen-help",
+        "exit": 0,
+        "stdout_sha256": "ffec9db63202527aedc233343a79e2516208306a0378f4ea7c77d90c4ad5e66c"
+      },
+      {
+        "name": "installed-chrony-render",
+        "exit": 0,
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "chrony_generated_bytes_match": true,
     "preserved_live_inputd_pid": 2137102,
-    "preserve_existing_nested_sessions": true
+    "preserved_live_executable": "/home/mios/.local/libexec/mios/mios-inputd (deleted)",
+    "host_monitor_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
+    "existing_nested_sessions": "retained without restart; physical return acceptance requires a fresh protocol-v1 parent/child preview while the adopted bridge retains its existing mapped binary",
+    "root_main": "5282e413d85fb2246d43bee79cc87b6e43824e38"
   },
   "remaining": [
-    "Task 3775 remains in_progress: perform physical controller return with a newly launched protocol-v1 seat, verify parent neutral rearming and unchanged visible game/PiP.",
+    "Task3775 remains in_progress: use a fresh protocol-v1 parent/child preview for physical controller return, parent neutral rearming and unchanged visible game/PiP. The retained live parent bridge continues using its existing mapped binary.",
     "Historical recovery snapshots are source archives, not globally runtime-certified code.",
     "Existing running bridge and nested launchers are retained; new launchers receive the new protocol."
   ],
-  "resume_action": "Fetch main; verify recovery bundle checksum and prerequisites; import selected refs into an unused private namespace. Use a fresh protocol-v1 nested seat for physical return acceptance; preserve existing game and PiP."
+  "resume_action": "Fetch full main; verify recovery checksum and prerequisites; import selected refs into an unused private namespace. Use a fresh protocol-v1 parent/child preview for physical acceptance while preserving the adopted game, PiP and live bridge."
 }
