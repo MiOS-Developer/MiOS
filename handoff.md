@@ -1,6 +1,47 @@
 <!-- AI-hint: Authoritative compiled milestone; global recovery and all remote publication use main. -->
 # Verified source and global pickup on main
 
+## Current Blade merge and controller-return continuation (2026-11-09)
+
+This checkpoint supersedes the historical live-target blockers below for the
+authorized Blade. Tailscale SSH carries the configured MiOS-MCP stdio transport;
+native relay coordination and the publisher lease were verified. All four
+MiOS repositories were fetched. Blade root main was safely advanced to
+`0b282465db5d764aac0396fd5a7f9fffb672d29e`, retaining its host monitor projection.
+
+The paused controller-return lane, its original commit ancestry and the dirty
+generator lane are merged with current main. Continued source
+`49db801c4a705bd6d3374c35472b29e16d9b4c3c` adds bounded authenticated release,
+fresh parent acknowledgement, ownership rollback, authoritative neutral
+rearming and read-only protocol negotiation. Legacy running sessions are
+rejected before mutation. The local Chrony fix and authoritative renderer now
+use the conditional PHC drop-in directory.
+
+Admitted MiOS-DEV verification passes348 generator tests,253 Inputd tests,
+the Chrony renderer integration test, strict all-target Clippy, static release
+builds, the573-suite registry and five applicable standing gates. Two baseline
+behavior regressions were reproduced. Compiled stale-axis and unconditional
+PHC mutations each fail their intended assertion and pass after restoration.
+The final Inputd artifact passes the private kernel/uinput fixture without
+touching the live bridge. Source/artifact hashes and log receipts are in
+`.devloop/handoff/mios-blade-main-integration.json`.
+
+Exact heads for402 original worktrees and58 dirty source snapshots (including
+26 untracked source files) are preserved in
+`.devloop/handoff/mios-blade-recovery.bundle`. Verify its SHA256 sidecar from
+the repository root, run `git bundle verify`, then import selected refs into a
+fresh private namespace. The manifest maps source locations and refs. These
+historical snapshots are recoverable source, not a claim of runtime acceptance.
+Original worktrees, staged state, runtime/model data and editor backups remain
+on Blade. The editor was gracefully restarted with operator authorization to
+meet the unchanged12288MiB build-admission floor.
+
+Task3775 remains in progress. Next acceptance: use a newly launched protocol-v1
+seat to test physical controller return, parent neutral rearming and visible
+game/PiP continuity. Preserve the existing bridge and adopted nested sessions.
+Publication and exact installed-artifact evidence follow in the receipt.
+
+
 PR #65 merged as `69fa06efe04f6422bbaec8b4ea0b953c24df2dd5`; PR #66 merged as
 `375aefba6c2de84b3d380864159a9e27045fb3ec`. Source repairs and all declared
 projections are on main through `8d2e899ee693b5deb2293e65a7223a443bfd3ff4`.

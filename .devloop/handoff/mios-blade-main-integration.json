@@ -1,0 +1,280 @@
+{
+  "milestone": "mios-blade-main-integration",
+  "created_utc": "2026-11-09T17:48:04.812668+00:00",
+  "source_commit": "49db801c4a705bd6d3374c35472b29e16d9b4c3c",
+  "upstream_base": "0b282465db5d764aac0396fd5a7f9fffb672d29e",
+  "owned_paths": [
+    "etc/chrony.conf",
+    "src/mios-rs/miosd/src/main.rs",
+    "src/mios-rs/miosd/tests/integration.rs",
+    "tools/native/mios-gen/src/main.rs",
+    "tools/native/mios-gen/src/nested_devices.rs",
+    "tools/native/mios-gen/src/nested_session.rs",
+    "tools/native/mios-inputd/src/nested.rs",
+    "tools/native/mios-inputd/src/runtime.rs"
+  ],
+  "recovery_manifest": ".devloop/handoff/mios-blade-recovery.json",
+  "changes": [
+    "Conditional Chrony PHC drop-in instead of unconditional missing /dev/ptp0, including authoritative Rust renderer.",
+    "Authenticated bounded controller-return protocol with fresh child/parent acknowledgement, exact ownership checks, transaction rollback and complete neutral-state rearming.",
+    "Read-only protocol capability negotiation rejects legacy running launchers before ownership mutation."
+  ],
+  "verification": {
+    "builder": "MiOS-DEV rootless Podman, pinned local image e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "memory_admission": {
+      "admitted": true,
+      "available_mb": 15942,
+      "min_available_mb": 12288
+    },
+    "native_tests": {
+      "mios-gen": 348,
+      "mios-inputd": 253,
+      "failed": 0
+    },
+    "chrony_integration_tests": 1,
+    "chrony_generated_bytes_match": true,
+    "strict_clippy": "passed, both native packages all targets, -D warnings",
+    "release_build": "passed, x86_64-unknown-linux-musl",
+    "suite_registry": {
+      "registered": 573,
+      "exemptions_covered": 6,
+      "check": "passed"
+    },
+    "standing_gates": {
+      "credential-literals": "passed",
+      "phase-registry": "passed",
+      "ratchet-direction": "passed",
+      "signature-policy": "passed",
+      "version-literals-ssot": "passed"
+    },
+    "initial_regressions": {
+      "tests": 3,
+      "failed_behavior_assertions": 2,
+      "passed": 1,
+      "source": "b8621cf78"
+    },
+    "compiled_negative_controls": [
+      {
+        "name": "inputd-rearming-planted-negative",
+        "exit": 101,
+        "log_sha256": "ada53883316a8d37d947198e53775e7b7a3a2fbf6c85f827d7aa64ad524134fb"
+      },
+      {
+        "name": "inputd-rearming-restored",
+        "exit": 0,
+        "log_sha256": "ff99497678063c1937f04f4a7082e481c2c1b7be3eca5a832f78bf865301f862"
+      },
+      {
+        "name": "chrony-planted-negative",
+        "exit": 101,
+        "log_sha256": "6c1a5fbb75fe90858c3924152e5718187c338b1b480547fdcb4a4a90877a178f"
+      },
+      {
+        "name": "chrony-restored",
+        "exit": 0,
+        "log_sha256": "df0ff7ccb6b5db81c73e4bb07fd0ab2065e11bc3c39bf520c04d0a256d99feaf"
+      }
+    ],
+    "inputd_config": {
+      "valid": true,
+      "bindings": 19,
+      "controller": true,
+      "exclusive_grab": true,
+      "unresolved_actions": [],
+      "nav_apps": [
+        "mon"
+      ],
+      "nav_app_error": null
+    },
+    "inputd_private_kernel_fixture": {
+      "fixture": "private-uinput",
+      "isolated_from_live_bridge": true,
+      "grab_owner_received": true,
+      "other_reader_blocked": true,
+      "release_restored_reader": true,
+      "replay_loop_rejected": true,
+      "grab_lost_fails_closed": true,
+      "duplicate_owner_rejected": true,
+      "typing_keyboard_rejected": true,
+      "keyboard_aux_joystick_rejected": true,
+      "virtual_app_grab_preserves_host_input": true,
+      "ordinary_input_replayed": true,
+      "release_after_signals": [
+        15,
+        9
+      ]
+    },
+    "log_directory": "/home/mios/.local/state/mios/mios-blade-main-integration",
+    "logs": {
+      "gen-compatible.log": {
+        "bytes": 30598,
+        "sha256": "6e2f2d09ff350eecd100cc85e05c0781b771dda0d0ad75a87cfe2d39e8bc58f7"
+      },
+      "inputd-compatible.log": {
+        "bytes": 21615,
+        "sha256": "3dd4bfda86cc80fc33baadda5fb907cc2dfe583c095a2a633a0ec2fdb1db4358"
+      },
+      "clippy-compatible.log": {
+        "bytes": 218,
+        "sha256": "2b1b93999ab16c4a7bea814f1824f4a094b86dd6fbcaba788bacfe1d8c02a036"
+      },
+      "release-compatible.log": {
+        "bytes": 223,
+        "sha256": "ee11a27f1b0618d3dccce808477183e74839f0f9480edfffc636b9fb0b913008"
+      },
+      "chrony-positive.log": {
+        "bytes": 6974,
+        "sha256": "8ce9e7296dd6a73bcbc0736479b449aa73414c089ea9a6fc668eaa73197af0af"
+      },
+      "suite-registry.log": {
+        "bytes": 66,
+        "sha256": "b182e98835609d0446e5242d0a165bcd98b857cb47e64a74905db996d4dae85b"
+      },
+      "return-regressions-baseline.log": {
+        "bytes": 2926,
+        "sha256": "fa5126888c61ff97b49789afebb359a858c329afe65d642851e2748dcc1c40e9"
+      },
+      "inputd-rearming-planted-negative.log": {
+        "bytes": 1153,
+        "sha256": "ada53883316a8d37d947198e53775e7b7a3a2fbf6c85f827d7aa64ad524134fb"
+      },
+      "inputd-rearming-restored.log": {
+        "bytes": 488,
+        "sha256": "ff99497678063c1937f04f4a7082e481c2c1b7be3eca5a832f78bf865301f862"
+      },
+      "chrony-planted-negative.log": {
+        "bytes": 1103,
+        "sha256": "6c1a5fbb75fe90858c3924152e5718187c338b1b480547fdcb4a4a90877a178f"
+      },
+      "chrony-restored.log": {
+        "bytes": 489,
+        "sha256": "df0ff7ccb6b5db81c73e4bb07fd0ab2065e11bc3c39bf520c04d0a256d99feaf"
+      },
+      "gate-credential-literals.log": {
+        "bytes": 111,
+        "sha256": "5a4230870bf6ac387ba20b33e4c959ddf9d5fc9a5fcb99918fde1addb1575249"
+      },
+      "gate-phase-registry.log": {
+        "bytes": 102,
+        "sha256": "8540bd7f1cd1f388f26299e3ff4e23000fb9a33ba5a7ae0897582835fa2dd066"
+      },
+      "gate-ratchet-direction.log": {
+        "bytes": 142,
+        "sha256": "40b901975eee965120b3b328420e88b29b1bab1d2b188b4d222e44eaca3e2b5c"
+      },
+      "gate-signature-policy.log": {
+        "bytes": 153,
+        "sha256": "c42fbfbfeba63883d7fe03a444bb28af5c3f921938755fbc2aae6408ae3982b8"
+      },
+      "gate-version-literals-ssot.log": {
+        "bytes": 145,
+        "sha256": "0810b5cca3fde8f9c02a2f324d638ca51db596cccea2fba8950f1affa926479e"
+      },
+      "miosd-release-final.log": {
+        "bytes": 6617,
+        "sha256": "1d9af33a91dbdaf0a8af25942ff21498b2d492f948689a7e2d61c91a19801f2b"
+      },
+      "ai-manifest-generated.log": {
+        "bytes": 124,
+        "sha256": "d0657a547bb61b811e90d4dfb2b2119d3d3a803560994b92e50b3dffa766f3fa"
+      },
+      "ai-metadata-generated.log": {
+        "bytes": 117,
+        "sha256": "051e3413f26d1da3d485ed8ce786fd64712d42d2f64afdc6d337be57334a5db3"
+      },
+      "ai-manifest-check.log": {
+        "bytes": 50,
+        "sha256": "a325c8501c731c54e5c3f36e8d9a159f42783d8909cd93c00ffcb6602fbe7aec"
+      },
+      "ai-metadata-check.log": {
+        "bytes": 107,
+        "sha256": "8cd8331daa3ae11b0d43a60813315eb47343269b23e76a86f961b860092383e7"
+      },
+      "suite-registry-final.log": {
+        "bytes": 66,
+        "sha256": "b182e98835609d0446e5242d0a165bcd98b857cb47e64a74905db996d4dae85b"
+      },
+      "gate-final-credential-literals.log": {
+        "bytes": 111,
+        "sha256": "5a4230870bf6ac387ba20b33e4c959ddf9d5fc9a5fcb99918fde1addb1575249"
+      },
+      "gate-final-phase-registry.log": {
+        "bytes": 102,
+        "sha256": "8540bd7f1cd1f388f26299e3ff4e23000fb9a33ba5a7ae0897582835fa2dd066"
+      },
+      "gate-final-ratchet-direction.log": {
+        "bytes": 142,
+        "sha256": "40b901975eee965120b3b328420e88b29b1bab1d2b188b4d222e44eaca3e2b5c"
+      },
+      "gate-final-signature-policy.log": {
+        "bytes": 153,
+        "sha256": "c42fbfbfeba63883d7fe03a444bb28af5c3f921938755fbc2aae6408ae3982b8"
+      },
+      "gate-final-version-literals-ssot.log": {
+        "bytes": 145,
+        "sha256": "0810b5cca3fde8f9c02a2f324d638ca51db596cccea2fba8950f1affa926479e"
+      }
+    },
+    "source_secret_scan": "gitleaks 8.30.1, candidate history through source commit, zero findings",
+    "projection_checks": {
+      "ai_metadata_entries": 3442,
+      "ai_metadata_fresh": "passed",
+      "ai_manifest_fresh": "passed"
+    },
+    "release_chrony_generated_bytes_match": true,
+    "recovery_base": {
+      "full_main_commits": 5399,
+      "original_shallow_archive_bytes": 79437878,
+      "published_archive_bytes": 9206697,
+      "preserved_ref_targets": 460,
+      "snapshots": 58,
+      "note": "Complete public main history removes redundant historical objects; original archive/worktrees remain intact."
+    }
+  },
+  "artifacts": {
+    "mios-gen": {
+      "source": "49db801c4a705bd6d3374c35472b29e16d9b4c3c",
+      "bytes": 11881416,
+      "sha256": "cfdc44bc0b785bf682d2082393b3bc628fd97e618e0cd9661d1e7fe571f0dc78",
+      "static_linkage": {
+        "check": "static-linkage",
+        "findings": [],
+        "status": "clean",
+        "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-gen verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+      }
+    },
+    "mios-inputd": {
+      "source": "49db801c4a705bd6d3374c35472b29e16d9b4c3c",
+      "bytes": 7621376,
+      "sha256": "b2641e0a82cf26488bc8c9f2f3c44621966bf6d15d5f4dbffd1dc84870a8a273",
+      "static_linkage": {
+        "check": "static-linkage",
+        "findings": [],
+        "status": "clean",
+        "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-inputd verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+      }
+    },
+    "miosd": {
+      "source": "49db801c4a705bd6d3374c35472b29e16d9b4c3c",
+      "bytes": 20921320,
+      "sha256": "f7382d36b1378a2519853b6d47a2f45931c57ae706011f8d9b1c54fed54f3398",
+      "static_linkage": {
+        "check": "static-linkage",
+        "findings": [],
+        "status": "clean",
+        "summary": "binary /mios-proof/target-daemon/x86_64-unknown-linux-musl/release/miosd verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+      }
+    }
+  },
+  "deployment": {
+    "status": "prepared; publication and installation receipt will follow",
+    "preserved_live_inputd_pid": 2137102,
+    "preserve_existing_nested_sessions": true
+  },
+  "remaining": [
+    "Task 3775 remains in_progress: perform physical controller return with a newly launched protocol-v1 seat, verify parent neutral rearming and unchanged visible game/PiP.",
+    "Historical recovery snapshots are source archives, not globally runtime-certified code.",
+    "Existing running bridge and nested launchers are retained; new launchers receive the new protocol."
+  ],
+  "resume_action": "Fetch main; verify recovery bundle checksum and prerequisites; import selected refs into an unused private namespace. Use a fresh protocol-v1 nested seat for physical return acceptance; preserve existing game and PiP."
+}

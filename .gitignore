@@ -1195,3 +1195,9 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-continuation-milestones.json
 
 !/.devloop/handoff/mios-inputd-test-portability.md
+
+# Exact Blade source recovery and verified active-lane integration.
+!/.devloop/handoff/mios-blade-recovery.bundle
+!/.devloop/handoff/mios-blade-recovery.bundle.sha256
+!/.devloop/handoff/mios-blade-recovery.json
+!/.devloop/handoff/mios-blade-main-integration.json
