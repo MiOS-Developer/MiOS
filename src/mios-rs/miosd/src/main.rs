@@ -3622,8 +3622,9 @@ fn run_render_chrony(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std:
     body.push_str("# if its offset is larger than 1 second. (Disabled in WSL2 where Hyper-V handles coarse sync)\n");
     body.push_str("makestep 0 0\n");
     body.push_str("maxslewrate 500\n\n");
-    body.push_str("# Hyper-V PTP clock reference when available (WSL2 / VM container host)\n");
-    body.push_str("refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0 minsamples 4 prefer trust\n\n");
+    body.push_str("# Runtime drop-ins: mios-chrony-ptp-dropin writes 10-ptp.conf with a PHC\n");
+    body.push_str("# refclock only when a Hyper-V PTP clock is present (WSL2 / Hyper-V guest).\n");
+    body.push_str("confdir /etc/chrony.d\n\n");
     body.push_str("# Enable kernel synchronization of the real-time clock (RTC).\n");
     body.push_str("rtcsync\n\n");
     body.push_str("# Specify directory for log files.\n");

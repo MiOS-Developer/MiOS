@@ -753,6 +753,12 @@ mod typed_build_phases {
                 .output().unwrap();
             assert!(direct.status.success());
             let expected = fs::read(&chrony).unwrap();
+            let config = std::str::from_utf8(&expected).unwrap();
+            assert!(config.lines().any(|line| line == "confdir /etc/chrony.d"));
+            assert!(
+                !config.lines().any(|line| line.starts_with("refclock PHC ")),
+                "PHC hardware is optional; only its runtime drop-in may open the device"
+            );
             fs::remove_file(&chrony).unwrap();
             let phase = cli(temp.path(), "42-chrony-render.sh", &toml, &chrony);
             assert!(phase.status.success(), "{}", String::from_utf8_lossy(&phase.stderr));
