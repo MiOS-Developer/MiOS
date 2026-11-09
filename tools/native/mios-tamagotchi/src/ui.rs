@@ -3876,148 +3876,6 @@ impl Ui {
         pages[frame / 28 % pages.len()].clone()
     }
 
-    fn draw_habitat_menu(
-        &self,
-        screen: &mut Frame,
-        config: &Config,
-        colors: &Colors,
-        renderer: Renderer,
-    ) {
-        let area = screen.area();
-        screen.render_widget(Clear, area);
-        let title = if area.width < 24 {
-            format!("{} ITEMS", self.detail_tag())
-        } else {
-            format!("{} HABITAT / ITEMS", self.detail_label())
-        };
-        let block = self.menu_panel(&title, colors, renderer == Renderer::Ascii);
-        let inner = block.inner(area);
-        screen.render_widget(block, area);
-        let micro = inner.width < 18 || inner.height <= 5;
-        let [header, notice, list, controls] = Layout::vertical([
-            Constraint::Length(if micro { 1 } else { 2 }),
-            Constraint::Length(if micro { 0 } else { 1 }),
-            Constraint::Min(1),
-            Constraint::Length(2),
-        ])
-        .areas(inner);
-        let rules = &config.habitat;
-        let theme = rules
-            .theme(self.game.habitat.theme)
-            .map_or("Unknown", |t| t.name.as_str());
-        screen.render_widget(
-            Paragraph::new(if micro {
-                if (self.frame / 14).is_multiple_of(2) {
-                    format!(
-                        "{}c {}p",
-                        crate::hud::counter(self.game.coins),
-                        self.game.habitat.placed.count_ones()
-                    )
-                } else {
-                    frame_label(&self.notice, inner.width, self.frame / 28)
-                }
-            } else {
-                format!(
-                    "{theme}\n{}c | {} placed",
-                    self.game.coins,
-                    self.game.habitat.placed.count_ones()
-                )
-            })
-            .style(Style::default().fg(colors.ink(7))),
-            header,
-        );
-        screen.render_widget(
-            Paragraph::new(self.notice.clone()).style(Style::default().fg(colors.ink(7))),
-            notice,
-        );
-        let mut entries = Vec::new();
-        for item in &rules.items {
-            let placed = self.game.habitat.placed & (1u64 << item.id) != 0;
-            let owns = self
-                .game
-                .habitat
-                .owns(item.id, self.game.wins, self.game.age_ticks, rules);
-            entries.push(if placed {
-                format!("HIDE {}", item.name)
-            } else if owns {
-                format!("PLACE {}", item.name)
-            } else if item.earned() {
-                format!(
-                    "EARN {}w {}t {}",
-                    item.reward_wins, item.reward_age, item.name
-                )
-            } else {
-                format!("{}c BUY {}", item.price, item.name)
-            });
-        }
-        entries.push("0c NEXT THEME".into());
-        entries.push("Back".into());
-        let window = crate::hud::menu_window(self.menu_selected, entries.len(), list.height);
-        let rows = window.count;
-        let start = window.start;
-        self.menu_number_start.set(start);
-        self.menu_number_count
-            .set(rows.min(entries.len().saturating_sub(start)));
-        self.menu_controls(controls);
-        let lines: Vec<Line> = entries
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(rows)
-            .map(|(index, text)| {
-                let selected = index == self.menu_selected;
-                let text = text
-                    .chars()
-                    .take(usize::from(list.width.saturating_sub(3)))
-                    .collect::<String>();
-                self.menu_targets.borrow_mut().push((
-                    Rect::new(list.x, list.y + (index - start) as u16, list.width, 1),
-                    index,
-                ));
-                Line::from(format!(
-                    "{}{} {text}",
-                    if selected { ">" } else { " " },
-                    index - start + 1
-                ))
-                .style(if selected {
-                    selected_style(colors)
-                } else {
-                    Style::default().fg(colors.ink(2))
-                })
-            })
-            .collect();
-        screen.render_widget(Paragraph::new(lines), list);
-        let hints = self.controller.as_ref().map_or_else(
-            || {
-                if micro {
-                    "Ent use\nEsc Back".into()
-                } else {
-                    "Enter: buy/place\nEsc: Back / Tab".into()
-                }
-            },
-            |p| {
-                if micro {
-                    format!(
-                        "{} use\n{} Back",
-                        tiny_button(&p.accept),
-                        tiny_button(&p.back)
-                    )
-                } else {
-                    format!(
-                        "{}: buy/place\n{}: Back / {}",
-                        tiny_button(&p.accept),
-                        tiny_button(&p.back),
-                        tiny_button(&p.navigate)
-                    )
-                }
-            },
-        );
-        screen.render_widget(
-            Paragraph::new(hints).style(Style::default().fg(colors.ink(7))),
-            controls,
-        );
-    }
-
     fn draw_roster(
         &self,
         screen: &mut Frame,
@@ -4692,6 +4550,27 @@ impl Ui {
         format!("{progress}\n{costs}\n{reason} / {}", self.notice)
     }
 
+    fn habitat_description(&self, config: &Config, width: u16) -> String {
+        let rules = self.habitat_rules.as_ref().unwrap_or(&config.habitat);
+        let theme = rules
+            .theme(self.game.habitat.theme)
+            .map_or("Unknown", |t| t.name.as_str());
+        let placed = self.game.habitat.placed.count_ones();
+        let full = format!("{theme} | {}c | {placed} placed", self.game.coins);
+        let compact = format!(
+            "{theme} {}c {placed}p",
+            crate::hud::counter(self.game.coins)
+        );
+        let summary = if full.len() <= usize::from(width) {
+            full
+        } else if compact.len() <= usize::from(width) {
+            compact
+        } else {
+            format!("{}c {placed}p", crate::hud::counter(self.game.coins))
+        };
+        format!("{summary}\n{}", self.notice)
+    }
+
     fn draw_choice_menu(
         &self,
         screen: &mut Frame,
@@ -4756,11 +4635,15 @@ impl Ui {
             } else {
                 self.training_description(config, bounds.width.saturating_sub(2))
             })
+        } else if menu == Menu::Habitat {
+            Some(self.habitat_description(config, bounds.width.saturating_sub(2)))
         } else {
             self.menu_description(menu).map(str::to_owned)
         };
         let description_rows = if menu == Menu::Training {
             bounds.height.saturating_sub(6).min(3)
+        } else if menu == Menu::Habitat {
+            bounds.height.saturating_sub(6).min(2)
         } else {
             u16::from(bounds.height >= 10 && description.is_some())
         };
@@ -4853,6 +4736,8 @@ impl Ui {
             || {
                 if menu == Menu::Training && bounds.width < 18 {
                     "Ent train\nEsc Back".into()
+                } else if menu == Menu::Habitat && bounds.width < 18 {
+                    "Ent use\nEsc Back".into()
                 } else {
                     "Enter: OK\nEsc: Back".into()
                 }
@@ -4863,6 +4748,8 @@ impl Ui {
                     tiny_button(&pad.accept),
                     if menu == Menu::Training {
                         "train"
+                    } else if menu == Menu::Habitat {
+                        "use"
                     } else {
                         "OK"
                     },
@@ -4902,10 +4789,6 @@ impl Ui {
         }
         if menu == Menu::Seed {
             self.draw_seed_entry(screen, colors, renderer);
-            return;
-        }
-        if menu == Menu::Habitat {
-            self.draw_habitat_menu(screen, config, colors, renderer);
             return;
         }
         if menu == Menu::Roster {
@@ -5058,6 +4941,35 @@ impl Ui {
             self.menu_controls(controls);
             return;
         }
+        let habitat_entries = if menu == Menu::Habitat {
+            let mut list = Vec::new();
+            if let Some(rules) = &self.habitat_rules {
+                for item in &rules.items {
+                    let placed = self.game.habitat.placed & (1u64 << item.id) != 0;
+                    let owns =
+                        self.game
+                            .habitat
+                            .owns(item.id, self.game.wins, self.game.age_ticks, rules);
+                    list.push(if placed {
+                        format!("HIDE {}", item.name)
+                    } else if owns {
+                        format!("PLACE {}", item.name)
+                    } else if item.earned() {
+                        format!(
+                            "EARN {}w {}t {}",
+                            item.reward_wins, item.reward_age, item.name
+                        )
+                    } else {
+                        format!("{}c BUY {}", item.price, item.name)
+                    });
+                }
+            }
+            list.push("0c NEXT THEME".into());
+            list.push("Back".into());
+            list
+        } else {
+            Vec::new()
+        };
         let (title, entries) = match menu {
             Menu::Home => (
                 " MAIN MENU ",
@@ -5126,16 +5038,15 @@ impl Ui {
                 ],
             ),
             Menu::Help => (" HOW TO PLAY ", vec!["Back"]),
+            Menu::Habitat => (
+                " HABITAT / ITEMS ",
+                habitat_entries.iter().map(String::as_str).collect(),
+            ),
             Menu::Training => (
                 " TRAINING ",
                 vec!["Swim", "Flight", "Run", "Power", "Stamina", "Back"],
             ),
-            Menu::Gallery
-            | Menu::Talk
-            | Menu::Roster
-            | Menu::Habitat
-            | Menu::Identity
-            | Menu::Seed => {
+            Menu::Gallery | Menu::Talk | Menu::Roster | Menu::Identity | Menu::Seed => {
                 unreachable!("special menus draw their own view")
             }
         };
@@ -5489,7 +5400,7 @@ fn selected_style(colors: &Colors) -> Style {
 fn choice_menu(menu: Menu) -> bool {
     matches!(
         menu,
-        Menu::Home | Menu::Care | Menu::Games | Menu::Graphics | Menu::Training
+        Menu::Home | Menu::Care | Menu::Games | Menu::Graphics | Menu::Training | Menu::Habitat
     )
 }
 
@@ -10952,6 +10863,7 @@ mod choice_menu_geometry_tests {
                 Menu::Games,
                 Menu::Graphics,
                 Menu::Training,
+                Menu::Habitat,
             ] {
                 ui.open(menu);
                 ui.menu_selected = ui.menu_len(menu) - 1;
@@ -10980,6 +10892,65 @@ mod choice_menu_geometry_tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn habitat_menu_multi_aspect_buffer_and_spatial_navigation() {
+        let (config, mut ui) = fixture();
+        let before = ui.game.clone();
+        let count = ui.menu_len(Menu::Habitat);
+        for (width, height) in [(12, 6), (20, 8), (20, 26), (59, 49), (130, 29)] {
+            ui.open(Menu::Habitat);
+            ui.menu_selected = 0;
+            let buffer = draw(&ui, &config, width, height, Depth::Mono);
+            let layout = geometry(&ui);
+            let content = text(&buffer);
+            assert!(content.is_ascii());
+            assert!(
+                ui.pet_area.get().height > 0,
+                "scene must be retained at {width}x{height}"
+            );
+            assert_eq!(layout.navigation.len(), count);
+            assert!(layout.items.iter().any(|item| item.index == 0));
+            assert!(
+                (content.contains("use") || content.contains("buy/place"))
+                    && content.contains("Back"),
+                "{width}x{height}: {content}"
+            );
+            assert!(
+                layout.panel.y > 0,
+                "Habitat must retain an actual scene row at {width}x{height}"
+            );
+            for (index, item) in layout.items.iter().enumerate() {
+                assert_eq!(item.area.intersection(layout.body), item.area);
+                assert!(item.area.intersection(layout.footer).is_empty());
+                assert!(ui.menu_targets.borrow().contains(&(item.area, item.index)));
+                for other in &layout.items[index + 1..] {
+                    assert!(item.area.intersection(other.area).is_empty());
+                }
+            }
+            ui.handle(
+                key(if layout.columns > 1 {
+                    KeyCode::Right
+                } else {
+                    KeyCode::Down
+                }),
+                &config.game,
+            );
+            assert_ne!(
+                ui.menu_selected, 0,
+                "directional navigation must move choice at {width}x{height}"
+            );
+            ui.menu_selected = count - 1;
+            let pre_back = ui.game.clone();
+            ui.handle(key(KeyCode::Enter), &config.game);
+            assert_eq!(ui.menu, None, "Back must return to game scene");
+            assert_eq!(
+                ui.game, pre_back,
+                "Back must never spend coins or alter pet"
+            );
+            assert_eq!(ui.game, before);
         }
     }
 
