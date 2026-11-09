@@ -33,20 +33,29 @@ fn observation(state: &Value, request: &Value, now: u64) -> Result<Value, String
     let messages = state["messages"]
         .as_array()
         .ok_or("invalid relay messages")?;
-    let agents: Vec<Value> = state["agents"]
+    let mut agents: Vec<Value> = state["agents"]
         .as_object()
         .ok_or("invalid relay agents")?
         .iter()
-        .take(max_rows)
         .map(|(id, a)| {
             json!({
                 "agent_id":display_text(&json!(id)), "kind":display_text(&a["kind"]),
                 "label":display_text(&a["label"]), "expires":a["expires"].as_u64().unwrap_or(0),
                 "online":a["expires"].as_u64().unwrap_or(0)>now,
-                "pending":messages.iter().filter(|m| m["to"]==*id && m["status"]=="queued").count()
+                "pending":messages.iter().filter(|m| m["to"]==*id && m["status"]=="queued").count(),
+                "parent_agent_id":display_text(&a["parent_agent_id"]),
+                "session_name":display_text(&a["session_name"]),
+                "node":display_text(&a["node"]),
+                "runtime_pid":a["runtime_pid"].as_u64(),
+                "runtime_start":a["runtime_start"].as_u64()
             })
         })
         .collect();
+    agents.sort_by(|a, b| {
+        (b["online"].as_bool().unwrap_or(false))
+            .cmp(&a["online"].as_bool().unwrap_or(false))
+            .then_with(|| a["agent_id"].as_str().cmp(&b["agent_id"].as_str()))
+    });
     let receipts: Vec<Value> = messages
         .iter()
         .rev()
@@ -60,7 +69,9 @@ fn observation(state: &Value, request: &Value, now: u64) -> Result<Value, String
         })
         .collect();
     Ok(json!({"schema":"mios.agents.observation.v1", "ts":now,
-        "agents":agents, "messages":receipts, "panes":[], "errors":[]}))
+        "agent_total":agents.len(),"online_total":agents.iter().filter(|a|a["online"]==true).count(),
+        "message_total":messages.len(), "agents":agents, "messages":receipts,
+        "panes":[], "sessions":[], "subagents":[], "sources":[], "errors":[]}))
 }
 
 fn owned_path(path: &Path) -> bool {
@@ -71,10 +82,17 @@ fn socket_candidates(root: &Path, human: &str, depth: usize) -> Vec<PathBuf> {
     mios_service_core::socket::socket_candidates(root, human, depth)
 }
 
-fn pane_metadata(socket: &Path) -> Result<Vec<Value>, String> {
+fn pane_metadata(socket: &Path, budget: u64) -> Result<Vec<Value>, String> {
     let mut child = Command::new("tmux").args(["-S"]).arg(socket)
         .args(["list-panes", "-a", "-F", "#{session_id}\t#{window_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{@mios-agent-kind}\t#{session_name}\t#{@mios-workspace-anchor-for}\t#{@mios-workspace-observer-for}\t#{@mios-workspace-slot}\t#{@mios-workspace-head}"])
         .stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    let stdout = child.stdout.take().ok_or("missing tmux stdout")?;
+    // Drain while waiting: a large session inventory otherwise fills the pipe
+    // and makes a healthy tmux client look like a timeout.
+    let reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        stdout.take(budget + 1).read_to_string(&mut output).map(|_| output)
+    });
     let start = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
@@ -83,40 +101,45 @@ fn pane_metadata(socket: &Path) -> Result<Vec<Value>, String> {
         if start.elapsed() > Duration::from_millis(500) {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = reader.join();
             return Err("tmux metadata probe timed out".into());
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    let output = reader.join().map_err(|_| "tmux metadata reader failed")?
+        .map_err(|error| error.to_string())?;
+    if output.len() as u64 > budget {
+        return Err("tmux metadata exceeds the configured observation byte budget".into());
+    }
     if !status.success() {
         return Err("tmux socket unavailable".into());
     }
-    let mut output = String::new();
-    child
-        .stdout
-        .take()
-        .ok_or("missing tmux stdout")?
-        .take(65536)
-        .read_to_string(&mut output)
-        .map_err(|e| e.to_string())?;
-    Ok(output
+    Ok(parse_pane_metadata(socket, &output))
+}
+
+fn parse_pane_metadata(socket: &Path, output: &str) -> Vec<Value> {
+    output
         .lines()
-        .take(256)
         .filter_map(|line| {
             let fields: Vec<&str> = line.split('\t').collect();
-            if fields.len() != 12 || fields[7] == "mios-anchor" || !fields[8].is_empty() || !fields[9].is_empty() {
+            if fields.len() != 12 {
                 return None;
             }
-            let role = if fields[2] == fields[11] { "Head".to_string() }
+            let role = if !fields[8].is_empty() { "Anchor".to_string() }
+                else if !fields[9].is_empty() { "Observer".to_string() }
+                else if fields[2] == fields[11] { "Head".to_string() }
                 else if !fields[10].is_empty() { format!("W{}", fields[10]) }
                 else { "Shell".to_string() };
             Some(
                 json!({"socket":display_text(&json!(socket.to_string_lossy())),
             "session":display_text(&json!(fields[0])), "session_name":display_text(&json!(fields[7])), "window":display_text(&json!(fields[1])),
             "pane":display_text(&json!(fields[2])), "pid":fields[3].parse::<u32>().ok(),
-            "command":display_text(&json!(fields[4])), "dead":fields[5]=="1", "agent_kind":display_text(&json!(fields[6])), "role":role}),
+            "command":display_text(&json!(fields[4])), "dead":fields[5]=="1", "agent_kind":display_text(&json!(fields[6])), "role":role,
+            "parent_pane":display_text(&json!(if !fields[8].is_empty() { fields[8] } else if !fields[9].is_empty() { fields[9] } else if fields[2]!=fields[11] { fields[11] } else { "" })),
+            "slot":display_text(&json!(fields[10]))}),
             )
         })
-        .collect())
+        .collect()
 }
 
 /// Registry size the observer accepts and every send keeps within. Clients
@@ -161,68 +184,161 @@ fn fit_state_budget(state: &mut Value, budget: u64) -> bool {
     }
 }
 
-fn observe(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::Error>> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+/// Caller-owned tmux servers can use arbitrary socket names and runtime roots.
+/// Only sockets witnessed on a live tmux server's descriptors are probed.
+#[cfg(target_os = "linux")]
+fn process_inventory(request: &Value) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<Value>) {
+    use std::{collections::HashSet, os::unix::fs::MetadataExt};
+    let mut inodes = HashSet::new();
+    let mut registries = Vec::new();
+    let mut processes = Vec::new();
+    let Ok(caller) = fs::metadata("/proc/self") else { return (vec![], registries, processes) };
+    let Ok(entries) = fs::read_dir("/proc") else { return (vec![], registries, processes) };
+    let kinds: Vec<&str> = request["observation"]["agent_kinds"].as_array()
+        .map(|rows| rows.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else { continue };
+        if !fs::metadata(&path).is_ok_and(|m| m.uid() == caller.uid()) { continue; }
+        let comm = fs::read_to_string(path.join("comm")).unwrap_or_default();
+        if comm.trim() == "tmux: server" {
+            if let Ok(fds) = fs::read_dir(path.join("fd")) {
+                for fd in fds.flatten() {
+                    if let Ok(link) = fs::read_link(fd.path()) {
+                        let text = link.to_string_lossy();
+                        if let Some(inode) = text.strip_prefix("socket:[").and_then(|s| s.strip_suffix(']')) {
+                            inodes.insert(inode.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let args = fs::read(path.join("cmdline")).unwrap_or_default();
+        let names: Vec<String> = args.split(|b| *b == 0).take(3).filter_map(|v| {
+            Path::new(std::str::from_utf8(v).ok()?).file_name()?.to_str().map(str::to_owned)
+        }).collect();
+        let relay = names.iter().any(|n| n == "mios-mcp-server");
+        let kind = names.iter().find(|n| kinds.contains(&n.as_str()));
+        if relay {
+            // Read only relay location keys; never expose command arguments or environment.
+            let env = fs::read(path.join("environ")).unwrap_or_default();
+            let get = |key: &str| env.split(|b| *b == 0).find_map(|item| {
+                let (k, v) = std::str::from_utf8(item).ok()?.split_once('=')?;
+                (k == key).then(|| v.to_string())
+            });
+            let directory = get("MIOS_AGENT_RELAY_STATE").map(PathBuf::from).or_else(|| {
+                let state = get("XDG_STATE_HOME").map(PathBuf::from)
+                    .or_else(|| get("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+                let relative = request["config"]["state_directory"].as_str()?;
+                let relative = Path::new(relative);
+                if relative.is_absolute() || relative.components().any(|p| p == std::path::Component::ParentDir) { return None; }
+                Some(state.join(relative))
+            });
+            if let Some(directory) = directory.filter(|p| p.is_absolute()) { registries.push(directory); }
+        }
+        if relay || kind.is_some() {
+            let stat = fs::read_to_string(path.join("stat")).unwrap_or_default();
+            let fields: Vec<&str> = stat.rsplit_once(") ").map(|(_, s)| s.split_whitespace().collect()).unwrap_or_default();
+            processes.push(json!({"session_id":format!("process:{pid}:{}",fields.get(19).unwrap_or(&"?")),
+                "kind":if relay { "mcp" } else { kind.unwrap().as_str() },
+                "pid":pid,"parent_pid":fields.get(1).and_then(|v|v.parse::<u32>().ok()),
+                "runtime_start":fields.get(19).and_then(|v|v.parse::<u64>().ok()),
+                "session_name":if relay { "MiOS-MCP connection" } else { kind.unwrap().as_str() },
+                "state":"Detected","evidence":"process"}));
+        }
+    }
+    let mut sockets = Vec::new();
+    if let Ok(table) = fs::read_to_string("/proc/net/unix") {
+        for line in table.lines().skip(1) {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            if fields.len() >= 8 && fields[3] == "00010000" && inodes.contains(fields[6]) {
+                let socket = PathBuf::from(fields[7]);
+                if socket.is_absolute() && owned_path(&socket) { sockets.push(socket); }
+            }
+        }
+    }
+    (sockets, registries, processes)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_inventory(_: &Value) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<Value>) { (vec![], vec![], vec![]) }
+
+fn registry_observation(directory: &Path, request: &Value, now: u64) -> Result<Value, Box<dyn std::error::Error>> {
     let path = directory.join("state.json");
     let exists = path.exists();
-    if directory.exists() && !owned_path(directory) {
-        return Err("unsafe agent state directory".into());
-    }
+    if directory.exists() && !owned_path(directory) { return Err("unsafe agent state directory".into()); }
     let state: Value = if exists {
-        if !owned_path(&path) {
-            return Err("unsafe agent state file".into());
-        }
+        if !owned_path(&path) { return Err("unsafe agent state file".into()); }
         let budget = state_budget(&request["config"]);
         let size = fs::metadata(&path)?.len();
-        if size > budget {
-            return Err(format!(
-                "agent state exceeds observer limit ({size} > {budget} bytes, [mcp.agents].max_state_bytes)"
-            )
-            .into());
-        }
+        if size > budget { return Err(format!("agent state exceeds observer limit ({size} > {budget} bytes, [mcp.agents].max_state_bytes)").into()); }
         serde_json::from_slice(&fs::read(&path)?)?
-    } else {
-        json!({"agents":{},"messages":[]})
-    };
+    } else { json!({"agents":{},"messages":[]}) };
     let mut result = observation(&state, request, now).map_err(std::io::Error::other)?;
     result["registry"] = json!(if exists { "present" } else { "missing" });
+    Ok(result)
+}
+
+fn observe(directory: &Path, request: &Value) -> Result<Value, Box<dyn std::error::Error>> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let mut result = registry_observation(directory, request, now)?;
     let human = string(&request["observation"], "human_socket")?;
     identifier(human)?;
-    if human.contains(':') {
-        return Err("invalid human socket name".into());
-    }
-    let roots = request["observation"]["socket_roots"]
-        .as_array()
-        .ok_or("missing socket roots")?;
-    let mut sockets = Vec::new();
-    for root in roots.iter().take(8).filter_map(Value::as_str) {
+    if human.contains(':') { return Err("invalid human socket name".into()); }
+    let roots = request["observation"]["socket_roots"].as_array().ok_or("missing socket roots")?;
+    let (mut sockets, mut registries, mut sessions) = process_inventory(request);
+    for root in roots.iter().filter_map(Value::as_str) {
         let root = Path::new(root);
-        if root.is_absolute() {
-            sockets.extend(socket_candidates(root, human, 0));
-        }
+        if root.is_absolute() { sockets.extend(socket_candidates(root, human, 0)); }
     }
-    sockets.sort();
-    sockets.dedup();
-    // A busy headless fleet must not hide the desktop the operator is viewing.
-    sockets.sort_by_key(|p| {
-        (
-            p.file_name().and_then(|s| s.to_str()) != Some(human),
-            p.clone(),
-        )
-    });
-    sockets.truncate(16);
+    sockets.sort(); sockets.dedup();
     let mut panes = Vec::new();
     let mut errors = Vec::new();
     for socket in sockets {
-        match pane_metadata(&socket) {
+        match pane_metadata(&socket, state_budget(&request["config"])) {
             Ok(rows) => panes.extend(rows),
-            Err(error) => errors.push(
-                json!({"socket":display_text(&json!(socket.to_string_lossy())),"error":error}),
-            ),
+            Err(error) => errors.push(json!({"socket":display_text(&json!(socket.to_string_lossy())),"error":error})),
         }
     }
-    panes.truncate(request["observation"]["max_rows"].as_u64().unwrap_or(32) as usize);
-    result["panes"] = json!(panes);
+    registries.push(directory.to_path_buf()); registries.sort(); registries.dedup();
+    let mut agents = Vec::new(); let mut messages = Vec::new(); let mut sources = Vec::new();
+    for registry in registries {
+        let source = display_text(&json!(registry.to_string_lossy()));
+        let snapshot = if registry == directory { Ok(result.clone()) } else { registry_observation(&registry, request, now) };
+        match snapshot {
+            Ok(snapshot) => {
+                for (key, rows) in [("agents", &mut agents), ("messages", &mut messages)] {
+                    for mut row in snapshot[key].as_array().unwrap().iter().cloned() { row["source"] = json!(source); rows.push(row); }
+                }
+                sources.push(json!({"source":source,"state":if snapshot["registry"]=="missing" {"missing"} else {"ready"},"kind":"relay"}));
+            }
+            Err(_) => {
+                errors.push(json!({"source":source,"error":"caller-owned relay unavailable"}));
+                sources.push(json!({"source":source,"state":"unavailable","kind":"relay"}));
+            }
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut subagents = Vec::new();
+    for pane in &panes {
+        let id = format!("{}:{}", pane["socket"].as_str().unwrap_or(""),pane["session"].as_str().unwrap_or(""));
+        if seen.insert(id.clone()) {
+            sessions.push(json!({"session_id":id,"session_name":pane["session_name"],"socket":pane["socket"],"kind":"tmux","state":"Detected","evidence":"tmux"}));
+        }
+        if pane["role"].as_str().is_some_and(|v|v.starts_with('W')) {
+            let mut child = pane.clone(); child["evidence"] = json!("tmux slot"); subagents.push(child);
+        }
+    }
+    for agent in &agents {
+        if agent["parent_agent_id"].as_str().is_some_and(|v| !v.is_empty()) {
+            let mut child = agent.clone(); child["evidence"] = json!("reported parent"); subagents.push(child);
+        }
+    }
+    result["agent_total"] = json!(agents.len());
+    result["online_total"] = json!(agents.iter().filter(|a| a["online"]==true).count());
+    result["agents"] = json!(agents); result["messages"] = json!(messages);
+    result["panes"] = json!(panes); result["sessions"] = json!(sessions);
+    result["subagents"] = json!(subagents); result["sources"] = json!(sources);
     result["errors"] = json!(errors);
     Ok(result)
 }
@@ -369,6 +485,13 @@ fn observation_lines(
                 .collect(),
         ),
     ];
+    for (key, title) in [("sessions", "Sessions"), ("subagents", "Subagents")] {
+        let rows = snapshot[key].as_array().cloned().unwrap_or_default();
+        groups.push((format!("{title}: {}", rows.len()), rows.iter().map(|row| {
+            format!("{} {} {}", display_text(&row["session_name"]),
+                display_text(&row["agent_id"]), display_text(&row["pane"]))
+        }).collect()));
+    }
     let mut lines = vec![if snapshot["registry"] == "missing" {
         "MiOS Agents (no registry)".into()
     } else {
@@ -379,8 +502,10 @@ fn observation_lines(
         .unwrap_or(2)
         .max(1);
     let tick = snapshot["ts"].as_u64().unwrap_or(0) / (refresh * 3);
+    let mut page_tick = tick as usize;
     if height < 10 {
         let selected = tick as usize % groups.len();
+        page_tick /= groups.len();
         groups = vec![groups.remove(selected)];
     } else {
         lines.push("Ctrl-b o: next | z: zoom".into());
@@ -392,7 +517,7 @@ fn observation_lines(
         .max(1);
     for (title, rows) in groups {
         let pages = rows.len().div_ceil(quota).max(1);
-        let index = tick as usize % pages;
+        let index = page_tick % pages;
         lines.push(if pages > 1 {
             format!("{title} {}/{}", index + 1, pages)
         } else {
@@ -1333,10 +1458,24 @@ fn dispatch_relay(
         if label.len() > max_bytes as usize {
             return Err("agent label is too long".into());
         }
-        agents.insert(
-            id.into(),
-            json!({"kind":kind,"label":label,"token_hash":digest(token),"expires":now+ttl}),
-        );
+        let mut metadata = agents.get(id).cloned().unwrap_or_else(|| json!({}));
+        for key in ["parent_agent_id", "session_name", "node"] {
+            if let Some(value) = request[key].as_str() {
+                if value.len() > 160 { return Err("agent metadata is too long".into()); }
+                if key == "parent_agent_id" && !value.is_empty() {
+                    identifier(value)?;
+                    if value == id { return Err("agent cannot be its own parent".into()); }
+                }
+                metadata[key] = json!(value);
+            }
+        }
+        for key in ["runtime_pid", "runtime_start"] {
+            if let Some(value) = request[key].as_str().and_then(|v| v.parse::<u64>().ok()) { metadata[key] = json!(value); }
+        }
+        metadata["kind"] = json!(kind); metadata["label"] = json!(label);
+        metadata["token_hash"] = json!(digest(token)); metadata["expires"] = json!(now+ttl);
+        metadata.as_object_mut().unwrap().remove("closed");
+        agents.insert(id.into(), metadata);
         return Ok(json!({"agent_id":id,"expires":now+ttl}));
     }
     let agent = &state["agents"][id];
@@ -3893,6 +4032,69 @@ mod tests {
         json!({"action":"observe","observation":{"max_rows":32,"human_socket":"mios-human",
             "socket_roots":[],"colors":{"fg":"#E7DFD3"}}})
     }
+    #[test]
+    fn global_observation_keeps_every_registered_agent_beyond_receipt_window() {
+        let agents: serde_json::Map<String, Value> = (0..96).map(|i| (
+            format!("agent:{i:03}"), json!({"kind":"codex","label":format!("agent {i}"),"expires":if i==95 {500} else {0}})
+        )).collect();
+        let state = json!({"agents":agents,"messages":[]});
+        let view = observation(&state, &observer_request(), 100).unwrap();
+        assert_eq!(view["agents"].as_array().unwrap().len(), 96);
+        assert_eq!(view["online_total"], 1);
+        assert_eq!(view["agents"][0]["agent_id"], "agent:095");
+    }
+
+    #[test]
+    fn global_pane_inventory_keeps_hidden_sessions_and_large_servers() {
+        let text: String = (0..512).map(|i| format!("$1\t0\t%{i}\t123\tpython3\t0\tcodex\tmios-anchor\t%head\t\t1\t%head\n")).collect();
+        assert!(text.len()>16384);
+        let panes = parse_pane_metadata(Path::new("/private/tmux"), &text);
+        assert_eq!(panes.len(),512);
+        assert_eq!(panes[511]["pane"],"%511");
+        assert_eq!(panes[0]["role"],"Anchor");
+        assert_eq!(panes[0]["parent_pane"],"%head");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn global_socket_inventory_keeps_more_than_sixteen_servers() {
+        use std::os::unix::net::UnixListener;
+        let temp = tempfile::tempdir().unwrap();
+        let mut listeners = Vec::new();
+        for i in 0..40 {
+            let dir = temp.path().join(format!("tmux-{i}"));
+            fs::create_dir(&dir).unwrap();
+            listeners.push(UnixListener::bind(dir.join("mcp-headless")).unwrap());
+        }
+        assert_eq!(socket_candidates(temp.path(), "mios-human", 0).len(),40);
+    }
+
+    #[test]
+    fn compact_global_inventory_eventually_visits_every_page() {
+        let mut snapshot = json!({"registry":"present","agents":[],"panes":[],"messages":[],"sessions":[],"subagents":[],"errors":[]});
+        for i in 0..10 { snapshot["sessions"].as_array_mut().unwrap().push(json!({"session_name":format!("session-{i}")})); }
+        let mut seen = std::collections::HashSet::new();
+        for tick in 0..300 {
+            snapshot["ts"] = json!(tick * 6);
+            let text = observation_lines(&snapshot, &observer_request(), 60, 6).unwrap().join("\n");
+            for i in 0..10 { if text.contains(&format!("session-{i}")) { seen.insert(i); } }
+        }
+        assert_eq!(seen.len(),10);
+    }
+
+    #[test]
+    fn registered_subagent_ancestry_is_authenticated_and_preserved() {
+        let mut state = json!({"agents":{},"messages":[]});
+        let mut child = request("register", "child");
+        child["parent_agent_id"] = json!("head"); child["session_name"] = json!("worker one");
+        dispatch(&mut state, &child, 1).unwrap();
+        assert_eq!(observation(&state,&observer_request(),2).unwrap()["agents"][0]["parent_agent_id"],"head");
+        dispatch(&mut state, &request("register","child"), 3).unwrap();
+        assert_eq!(state["agents"]["child"]["parent_agent_id"], "head");
+        child["parent_agent_id"] = json!("child");
+        assert!(dispatch(&mut state,&child,4).is_err());
+    }
+
     #[test]
     fn observation_is_sanitized_and_does_not_certify_delivery() {
         let state = json!({"agents":{"head":{"kind":"codex","label":"safe\u{001b}\n\u{202e}label",

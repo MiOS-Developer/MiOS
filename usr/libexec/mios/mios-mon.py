@@ -469,13 +469,9 @@ def _collect_agent_and_mcp_data():
         if result.returncode:
             return [], [], []
         snapshot = json.loads(result.stdout)
-        if snapshot.get("errors"):
-            return [], [], []
         agents = [{**a, "id": a["agent_id"]} for a in snapshot.get("agents", [])]
         panes = []
         for p in snapshot.get("panes", []):
-            if p.get("session") == "mios-anchor":
-                continue
             command = p.get("agent_kind") or p.get("command", "")
             panes.append({"socket": p.get("socket", ""), "pane": f"{p.get('session', '')}:{p.get('window', '')}:{p.get('pane', '')}",
                           "identity": str(p.get("socket", "")) + ":" + str(p.get("pane", "")), "pid": p.get("pid", 0), "cmd": command,
@@ -643,6 +639,9 @@ if TEXTUAL_AVAILABLE:
             self.collectors_enabled = collectors
             self.collectors_started = False
             self.observer = observer or self.observe_agents
+            self.agent_inventory = None
+            self.agent_federation = None
+            self.enable_agent_federation = observer is None and collectors
 
         def observe_agents(self):
             request = self.ui_request.get("observation_request")
@@ -669,7 +668,7 @@ if TEXTUAL_AVAILABLE:
                 if any(not isinstance(snapshot.get(key), list)
                        for key in ("agents", "panes", "messages", "errors")):
                     raise RuntimeError("Invalid native observation snapshot")
-                return snapshot
+                return self.agent_inventory.snapshot(snapshot) if self.agent_inventory else snapshot
             except Exception as e:
                 # AgentView displays refresh failures without clearing its last
                 # successful snapshot, rows, cursor or message receipt counts.
@@ -953,6 +952,20 @@ if TEXTUAL_AVAILABLE:
             yield Static("F1–F5 views · Ctrl+←/→ · Esc quit", id="monitor-help", markup=False)
 
         def on_mount(self) -> None:
+            if self.enable_agent_federation:
+                try:
+                    import mios_mcp_federation
+                    self.agent_federation = mios_mcp_federation.Federation.from_ssot(load_merged())
+                    if self.agent_federation:
+                        cfg = self.ui_request.get("observation_request", {}).get("config", {})
+                        self.agent_inventory = mios_mcp_federation.AgentObservationCache(self.agent_federation,
+                            cfg.get("observation", {}).get("refresh_s", 2), cfg.get("max_state_bytes", 2097152))
+                        self.agent_inventory.start_background()
+                except (ImportError, ValueError, OSError):
+                    # Keep the native inventory available, while showing incomplete coverage.
+                    from mios_mcp_federation import AgentObservationCache
+                    self.agent_inventory = AgentObservationCache(None)
+                    self.agent_inventory.states["federation"] = "unavailable"
             self.dark = True
             self.console.push_theme(_rich_theme)
             custom_theme = Theme(
@@ -1622,8 +1635,12 @@ if TEXTUAL_AVAILABLE:
         def action_toggle_dark(self) -> None:
             self.dark = not self.dark
 
-        def on_unmount(self) -> None:
+        async def on_unmount(self) -> None:
             self.tailing = False
+            if self.agent_inventory:
+                await self.agent_inventory.close()
+            if self.agent_federation:
+                await self.agent_federation.close()
             for proc in list(getattr(self, "journal_procs", [])):
                 try: proc.terminate()
                 except OSError: pass

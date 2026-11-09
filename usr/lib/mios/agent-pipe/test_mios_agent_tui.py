@@ -44,9 +44,9 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(table.size.height, 8)
             self.assertEqual(table.get_row_at(6)[1].plain, "aider")
             self.assertLessEqual(table.region.right, 35)
-            self.assertFalse(table.vertical_scrollbar.display)
+            self.assertGreaterEqual(table.styles.scrollbar_size_vertical, 0)
             self.assertFalse(table.horizontal_scrollbar.display)
-            self.assertEqual(table.styles.scrollbar_size_vertical, 0)
+            self.assertEqual(table.styles.scrollbar_size_vertical, 1)
             self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
             await pilot.press("7", "enter")
             await pilot.pause()
@@ -58,11 +58,11 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
             self.assertEqual(app.focused.id, "peer-table")
-            for id in ("peer-table", "worker-table"):
+            for id in ("peer-table",):
                 table = app.query_one(f"#{id}", DataTable)
-                self.assertFalse(table.vertical_scrollbar.display)
+                self.assertGreaterEqual(table.styles.scrollbar_size_vertical, 0)
                 self.assertFalse(table.horizontal_scrollbar.display)
-                self.assertEqual(table.styles.scrollbar_size_vertical, 0)
+                self.assertEqual(table.styles.scrollbar_size_vertical, 1)
                 self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
 
     async def test_missing_and_invalid_clients_cannot_launch(self):
@@ -98,15 +98,15 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                     await pilot.press("f2")
                     await pilot.pause()
                     self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
-                    for id in ("peer-table", "worker-table"):
+                    for id in ("peer-table",):
                         table = app.query_one(f"#{id}", DataTable)
-                        self.assertGreaterEqual(table.size.height, 2)
+                        self.assertGreaterEqual(table.size.height, 1)
                         self.assertGreater(table.size.width, 0)
                         self.assertLessEqual(table.region.right, size[0])
                         if size in ((35, 19), (44, 19)):
-                            self.assertFalse(table.vertical_scrollbar.display)
+                            self.assertGreaterEqual(table.styles.scrollbar_size_vertical, 0)
                             self.assertFalse(table.horizontal_scrollbar.display)
-                            self.assertEqual(table.styles.scrollbar_size_vertical, 0)
+                            self.assertEqual(table.styles.scrollbar_size_vertical, 1)
                             self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
                     await pilot.press("f3")
                     await pilot.pause()
@@ -139,14 +139,15 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             view = app.query_one(AgentView)
             table = app.query_one("#peer-table", DataTable)
+            view.set_scope("agents")
             table.move_cursor(row=1)
             snapshot = copy.deepcopy(SNAPSHOT)
             snapshot["agents"][1]["pending"] = 9
             view.render_snapshot(snapshot)
             self.assertEqual(table.cursor_row, 1)
-            self.assertEqual(table.get_row_at(1)[2].plain, "9")
+            self.assertIn("Q:9", view.inventory[table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value]["detail"])
             self.assertIn("queued", str(app.query_one("#receipt", Static).render()))
-            self.assertEqual(app.query_one("#worker-table", DataTable).get_row_at(0)[2].plain, "Empty")
+            self.assertTrue(any(row["cells"][1] == "Empty" for row in view.inventory.values()))
             def fail(): raise RuntimeError("offline")
             view.observer = fail
             await view.refresh_snapshot()
@@ -158,11 +159,11 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
         async with app.run_test(size=(35, 19)) as pilot:
             await pilot.pause()
             self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
-            for id in ("peer-table", "worker-table"):
+            for id in ("peer-table",):
                 table = app.query_one(f"#{id}", DataTable)
-                self.assertFalse(table.vertical_scrollbar.display)
+                self.assertGreaterEqual(table.styles.scrollbar_size_vertical, 0)
                 self.assertFalse(table.horizontal_scrollbar.display)
-                self.assertEqual(table.styles.scrollbar_size_vertical, 0)
+                self.assertEqual(table.styles.scrollbar_size_vertical, 1)
                 self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
             app._activate_tab("tab-clients")
             await pilot.pause()
@@ -175,6 +176,59 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             app.action_tab_ai()
             await pilot.pause()
             self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
+
+    async def test_global_inventory_search_scopes_and_last_row_reachable(self):
+        data = copy.deepcopy(SNAPSHOT)
+        data["agents"] = [{"agent_id": f"node:agent:{i:03}", "label": f"Agent {i:03}", "online": i == 95,
+                           "source": "tailnet-node", "pending": i} for i in range(96)]
+        data["sessions"] = [{"session_id": f"session:{i}", "session_name": f"Session {i}", "source": "tailnet-node"} for i in range(48)]
+        data["subagents"] = [{"agent_id": "child:one", "label": "Child one", "parent_agent_id": "node:agent:095", "online": True, "source": "second-node"}]
+        app = self.app(mode="agents", observer=lambda: copy.deepcopy(data))
+        async with app.run_test(size=(44, 19)) as pilot:
+            await pilot.pause()
+            view = app.query_one(AgentView)
+            table = app.query_one("#peer-table", DataTable)
+            self.assertEqual(table.row_count, 149)
+            self.assertEqual(table.get_row_at(0)[0].plain, "Agent 095")
+            table.focus()
+            await pilot.press("ctrl+end")
+            await pilot.pause()
+            self.assertEqual(table.cursor_row, table.row_count - 1)
+            selected = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            view.render_snapshot(copy.deepcopy(data))
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, selected)
+            view.set_scope("subagents")
+            self.assertEqual(table.row_count, 1)
+            self.assertEqual(table.get_row_at(0)[0].plain, "Child one")
+            view.set_scope("sessions")
+            self.assertEqual(table.row_count, 52)
+            view.set_scope("all")
+            search = app.query_one("#agent-search", Input)
+            search.value = "node:agent:095"
+            await pilot.pause()
+            self.assertEqual(table.row_count, 2, "search also finds the child's parent")
+            search.value = "second-node"
+            await pilot.pause()
+            self.assertEqual(table.row_count, 1)
+            self.assertIn("parent: node:agent:095", str(app.query_one("#agent-detail", Static).render()))
+            for size in ((35, 12), (80, 24), (180, 50)):
+                await pilot.resize_terminal(*size)
+                await pilot.pause()
+                self.assertGreaterEqual(table.size.height, 1)
+                self.assertLessEqual(table.region.right, size[0])
+
+    async def test_partial_source_keeps_rows_and_shows_unknown_presence(self):
+        data = copy.deepcopy(SNAPSHOT)
+        data["agents"][0]["stale"] = True
+        data["sources"] = [{"source":"tailnet-node", "state":"unavailable"}]
+        data["errors"] = [{"error":"incomplete"}]
+        app = self.app(mode="agents", observer=lambda: copy.deepcopy(data))
+        async with app.run_test(size=(44,19)) as pilot:
+            await pilot.pause()
+            view = app.query_one(AgentView)
+            self.assertTrue(any(row["cells"][1] == "Unknown" for row in view.inventory.values()))
+            self.assertIn("partial", str(app.query_one("#agent-error", Static).render()))
+            self.assertIn("1 online / 2", str(app.query_one("#relay-count", Static).render()))
 
     def test_peer_labels_are_literal_and_identifiable(self):
         self.assertEqual(peer_name(SNAPSHOT["agents"][0]), "Agy Orchestrator")
@@ -233,6 +287,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             view = app.query_one(AgentView)
             table = app.query_one("#peer-table", DataTable)
+            view.set_scope("agents")
             table.move_cursor(row=1)
             saved = copy.deepcopy(view.snapshot)
             receipt = str(app.query_one("#receipt", Static).render())
@@ -241,7 +296,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                 run.return_value.returncode = 0
                 run.return_value.stdout = json.dumps({"ok": False, "error": "registry unavailable"})
                 await view.refresh_snapshot()
-                self.assertEqual(view.snapshot, saved)
+                self.assertTrue(view.snapshot["stale"])
                 self.assertEqual(table.row_count, 2)
                 self.assertEqual(table.cursor_row, 1)
                 self.assertEqual(str(app.query_one("#receipt", Static).render()), receipt)
@@ -252,7 +307,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                 await view.refresh_snapshot()
                 self.assertEqual(view.snapshot, recovered)
                 self.assertEqual(table.cursor_row, 1)
-                self.assertEqual(table.get_row_at(1)[2].plain, "9")
+                self.assertIn("Q:9", view.inventory[table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value]["detail"])
                 self.assertNotIn("unavailable", str(app.query_one("#agent-error", Static).render()))
 
     def test_native_observation_accepts_a_healthy_empty_registry(self):

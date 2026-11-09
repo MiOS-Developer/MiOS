@@ -9,9 +9,9 @@ import unicodedata
 from mios_toml import colors, load_merged
 from rich.text import Text
 from textual import on
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 
 def _theme_css(css):
@@ -168,89 +168,49 @@ class ClientView(Vertical):
 
 
 class AgentView(Vertical):
-    """Separate registered peers from detected tmux processes and receipts."""
+    """Search every reported registration, session and child without row caps."""
     DEFAULT_CSS = _theme_css("""
-    AgentView {
-        height: 1fr;
-        padding: 0 1;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-size-vertical: 1;
-        scrollbar-size-horizontal: 0;
-        scrollbar-background: transparent;
-        scrollbar-color: @MIOS:accent@;
-        background: transparent;
-    }
-    ScrollBar {
-        width: 1;
-        min-width: 1;
-        max-width: 1;
-        background: transparent;
-    }
-    ScrollBar.-horizontal {
-        height: 0;
-        min-height: 0;
-        display: none;
-    }
-    ScrollBar.-vertical {
-        width: 1;
-        min-width: 1;
-        max-width: 1;
-        background: transparent;
-    }
-    ScrollBarCorner {
-        display: none;
-        background: transparent;
-    }
-    ScrollBarThumb {
-        background: @MIOS:accent@;
-        color: @MIOS:accent@;
-    }
-    ScrollBarThumb:hover {
-        background: @MIOS:warning@;
-    }
-    DataTable {
-        height: auto;
-        scrollbar-size: 0 0;
-        scrollbar-size-vertical: 0;
-        scrollbar-size-horizontal: 0;
-        overflow-x: hidden;
-        overflow-y: hidden;
-        background: transparent;
-    }
-    DataTable > .datatable--header { background: @MIOS:accent@; color: @MIOS:fg@; text-style: bold; }
-    DataTable > .datatable--odd-row { background: transparent; }
-    DataTable > .datatable--even-row { background: transparent; }
-    DataTable > .datatable--cursor { background: @MIOS:accent@; color: @MIOS:fg@; }
-    #relay-count, #worker-count, #receipt, #agent-error { height: 1; }
-    #peer-table { height: auto; min-height: 2; }
-    #worker-table { height: auto; min-height: 2; }
-    #receipt { color: @MIOS:muted@; }
-    #agent-error { color: @MIOS:warning@; }
+    AgentView { height: 1fr; padding: 0 1; overflow: hidden; background: transparent; }
+    AgentView #relay-count, AgentView #worker-count, AgentView #receipt,
+    AgentView #agent-error { height: 1; }
+    AgentView #inventory-scopes { height: 1; }
+    AgentView Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent; }
+    AgentView Button.-active { background: @MIOS:accent@; color: @MIOS:fg@; }
+    AgentView #agent-search { height: 1; border: none; padding: 0; background: transparent; }
+    AgentView #peer-table { height: 1fr; min-height: 1; overflow-y: auto; overflow-x: hidden;
+        scrollbar-size-vertical: 1; scrollbar-size-horizontal: 0; background: transparent; }
+    AgentView DataTable > .datatable--header { background: @MIOS:accent@; color: @MIOS:fg@; text-style: bold; }
+    AgentView DataTable > .datatable--cursor { background: @MIOS:accent@; color: @MIOS:fg@; }
+    AgentView #agent-detail { height: 2; color: @MIOS:muted@; overflow: hidden; }
+    AgentView #receipt { color: @MIOS:muted@; }
+    AgentView #agent-error { color: @MIOS:warning@; }
     """)
+    BINDINGS = [("ctrl+f", "search", "Search"), ("f6", "next_scope", "Inventory scope")]
 
     def __init__(self, observer, refresh_s=2, **kwargs):
         super().__init__(**kwargs)
-        self.observer = observer
-        self.refresh_s = refresh_s
+        self.observer, self.refresh_s = observer, refresh_s
         self.refreshing = False
         self.snapshot = {}
+        self.scope = "all"
+        self.inventory = {}
 
     def compose(self):
         yield Static("Relay: loading", id="relay-count", markup=False)
+        yield Static("Sessions and subagents: loading", id="worker-count", markup=False)
+        with Horizontal(id="inventory-scopes"):
+            for scope in ("all", "agents", "sessions", "subagents"):
+                yield Button(scope.capitalize(), id="scope-" + scope, classes="-active" if scope == "all" else "")
+        yield Input(placeholder="Search name, ID, source or parent", id="agent-search")
         yield DataTable(id="peer-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
-        yield Static("Tmux workers", id="worker-count", markup=False)
-        yield DataTable(id="worker-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
+        yield Static("Arrows / PgUp / PgDn / Home / End · F6 scope", id="agent-detail", markup=False)
         yield Static("Receipts: read does not mean done", id="receipt", markup=False)
         yield Static("", id="agent-error", markup=False)
 
     def on_mount(self):
-        peers = self.query_one("#peer-table", DataTable)
-        for title, width in (("Agent", 18), ("State", 7), ("Q", 2)):
-            peers.add_column(title, width=width)
-        workers = self.query_one("#worker-table", DataTable)
-        for title, width in (("Pane", 6), ("Client", 12), ("State", 7)):
-            workers.add_column(title, width=width)
+        table = self.query_one("#peer-table", DataTable)
+        for title, width in (("Agent / session", 18), ("State", 8), ("Type", 8)):
+            table.add_column(title, width=width)
         self.set_interval(self.refresh_s, self.refresh_snapshot)
         self.call_after_refresh(self.refresh_snapshot)
 
@@ -259,44 +219,126 @@ class AgentView(Vertical):
             return
         self.refreshing = True
         try:
-            snapshot = await asyncio.to_thread(self.observer)
-            self.render_snapshot(snapshot)
-        except Exception as exc:
-            self.query_one("#agent-error", Static).update(f"Relay unavailable: {clean(exc, 60)}")
+            self.render_snapshot(await asyncio.to_thread(self.observer))
+        except Exception:
+            # Never retain green live indicators when the source can no longer be read.
+            stale = dict(self.snapshot)
+            stale["stale"] = True
+            self.render_snapshot(stale)
+            self.query_one("#agent-error", Static).update("Relay unavailable · last snapshot; presence unknown")
         finally:
             self.refreshing = False
 
     def render_snapshot(self, snapshot):
         self.snapshot = snapshot
         agents = snapshot.get("agents", [])
-        online = sum(bool(row.get("online")) for row in agents)
-        self.query_one("#relay-count", Static).update(f"Relay: {online} online / {len(agents)}")
-        sync_rows(self.query_one("#peer-table", DataTable), [(row["agent_id"], (
-            peer_name(row), "Online" if row.get("online") else "Offline", row.get("pending", 0))) for row in agents])
-        panes = sorted(snapshot.get("panes", []), key=lambda row: (row.get("role", ""), row.get("pane", "")))
-        self.query_one("#worker-count", Static).update(f"Tmux: {len(panes)} panes · not peers")
-        sync_rows(self.query_one("#worker-table", DataTable), [(str(row.get("socket", "")) + row["pane"], (
-            row.get("role") or row["pane"], row.get("agent_kind") or row.get("command", ""),
-            "Exited" if row.get("dead") else "Empty" if row.get("command") == "sleep" else "Running")) for row in panes])
+        online = sum(row.get("online") is True and not row.get("stale") and not snapshot.get("stale") for row in agents)
+        self.query_one("#relay-count", Static).update(f"Relay: {online} online / {len(agents)} registered")
+        self.query_one("#worker-count", Static).update(
+            f"Sessions: {len(snapshot.get('sessions', []))} · Subagents: {len(snapshot.get('subagents', []))} · Panes: {len(snapshot.get('panes', []))}")
         messages = snapshot.get("messages", [])
         queued = sum(row.get("status") == "queued" for row in messages)
         read = sum(row.get("status") == "received" for row in messages)
-        self.query_one("#receipt", Static).update(f"Messages: {queued} queued / {read} read")
+        self.query_one("#receipt", Static).update(f"Receipt window: {queued} queued / {read} read")
+        sources = snapshot.get("sources", [])
+        unavailable = sum(row.get("state") not in ("ready", "missing", "unsupported") for row in sources)
         errors = snapshot.get("errors", [])
-        self.query_one("#agent-error", Static).update(clean(errors[0]) if errors else "Read receipts do not certify work")
+        self.query_one("#agent-error", Static).update(
+            f"Coverage partial · {unavailable} pending/unavailable sources · {len(errors)} errors" if unavailable or errors
+            else f"Sources: {len(sources)} · F6 scope · Ctrl+F search")
+        self.render_rows()
         self.adapt_columns(self.size.width)
 
+    def render_rows(self):
+        query = self.query_one("#agent-search", Input).value.casefold().strip()
+        rows = {}
+        snapshot = self.snapshot
+        for category, key in (("agents", "agents"), ("sessions", "sessions"), ("sessions", "panes"), ("subagents", "subagents"), ("sources", "sources")):
+            for row in snapshot.get(key, []):
+                source = str(row.get("source", "local"))
+                identity = row.get("agent_id") or row.get("session_id") or (row.get("source") if key == "sources" else None) or str(row.get("socket", "")) + str(row.get("pane", ""))
+                row_key = source + ":" + ("agents" if row.get("agent_id") else "pane" if row.get("pane") else "session") + ":" + str(identity)
+                parent = row.get("parent_agent_id") or row.get("parent_pane") or row.get("parent_pid") or "unknown"
+                name = ("Source " + source if key == "sources" else "") or row.get("label") or row.get("session_name") or row.get("agent_kind") or row.get("command") or identity
+                if row.get("pane"):
+                    name = f"{row.get('role', 'Pane')} {row['pane']} {name}"
+                stale = snapshot.get("stale") or row.get("stale")
+                state = row.get("state", "Unknown").capitalize() if key == "sources" else "Unknown" if stale else ("Online" if row.get("online") else "Offline") if row.get("agent_id") else "Exited" if row.get("dead") else "Empty" if row.get("command") == "sleep" else "Detected"
+                child = category == "subagents" or bool(row.get("parent_agent_id"))
+                kind = "Source" if key == "sources" else "Subagent" if child else "Agent" if row.get("agent_id") else "Pane" if row.get("pane") else "Session"
+                scopes = {category}
+                if child: scopes.add("subagents")
+                if row_key in rows: scopes |= rows[row_key]["scopes"]
+                detail = f"{identity} · source: {source} · parent: {parent} · Q:{row.get('pending', 0)} · {row.get('evidence', 'registration' if row.get('agent_id') else 'detected')}"
+                rows[row_key] = {"cells": (name, state, kind), "detail": detail, "scopes": scopes, "search": f"{name} {detail}".casefold()}
+        self.inventory = rows
+        wanted = [(key, row["cells"]) for key, row in rows.items()
+                  if (self.scope == "all" or self.scope in row["scopes"]) and (not query or query in row["search"])]
+        wanted.sort(key=lambda item: (item[1][1] != "Online", item[1][1] == "Offline", str(item[1][0]).casefold(), item[0]))
+        table = self.query_one("#peer-table", DataTable)
+        old_order = [key.value for key in table.rows]
+        selected = old_order[table.cursor_row] if old_order and table.cursor_row < len(old_order) else None
+        scroll_y = table.scroll_y
+        if old_order != [key for key, _ in wanted]:
+            table.clear()
+        sync_rows(table, wanted)
+        if selected in table.rows:
+            table.move_cursor(row=table.get_row_index(selected), animate=False, scroll=False)
+            table.scroll_to(y=scroll_y, animate=False, force=True)
+        self.show_detail()
+
+    @on(Button.Pressed)
+    def select_scope(self, event):
+        if event.button.id and event.button.id.startswith("scope-"):
+            event.stop()
+            self.set_scope(event.button.id.removeprefix("scope-"))
+
+    def set_scope(self, scope):
+        self.scope = scope
+        for button in self.query("#inventory-scopes Button"):
+            button.set_class(button.id == "scope-" + scope, "-active")
+        self.render_rows()
+        self.query_one("#peer-table", DataTable).focus()
+
+    def action_next_scope(self):
+        scopes = ("all", "agents", "sessions", "subagents")
+        self.set_scope(scopes[(scopes.index(self.scope) + 1) % len(scopes)])
+
+    def action_search(self):
+        self.query_one("#agent-search", Input).focus()
+
+    @on(Input.Changed, "#agent-search")
+    def search_changed(self, event):
+        self.render_rows()
+
+    @on(Input.Submitted, "#agent-search")
+    def search_submitted(self, event):
+        self.query_one("#peer-table", DataTable).focus()
+
+    @on(DataTable.RowHighlighted, "#peer-table")
+    def highlighted(self, event):
+        self.show_detail()
+
+    def show_detail(self):
+        table = self.query_one("#peer-table", DataTable)
+        try:
+            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            detail = self.inventory[key]["detail"]
+        except (KeyError, IndexError):
+            detail = "No matching rows · F6 scope · Ctrl+F search"
+        self.query_one("#agent-detail", Static).update(clean(detail, 1000))
+
     def adapt_columns(self, width):
-        # Responsive column widths keep every status visible, without word-wrap.
-        peer = self.query_one("#peer-table", DataTable)
-        worker = self.query_one("#worker-table", DataTable)
-        list(peer.columns.values())[0].width = max(8, width - 17)
-        list(worker.columns.values())[1].width = max(7, width - 21)
-        peer.refresh(layout=True)
-        worker.refresh(layout=True)
+        table = self.query_one("#peer-table", DataTable)
+        if table.columns:
+            list(table.columns.values())[0].width = max(8, width - 25)
+            table.refresh(layout=True)
+        compact = self.size.height < 12
+        self.query_one("#receipt").display = not compact
+        self.query_one("#agent-detail").display = self.size.height >= 8
 
     def on_resize(self, event):
-        if self.is_mounted and self.query_one("#peer-table", DataTable).columns:
+        if self.is_mounted:
             self.adapt_columns(event.size.width)
 
 

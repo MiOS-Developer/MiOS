@@ -426,7 +426,7 @@ pub mod socket {
         let Ok(entries) = fs::read_dir(root) else {
             return sockets;
         };
-        for entry in entries.flatten().take(128) {
+        for entry in entries.flatten() {
             let path = entry.path();
             if !owned_path(&path) || !path.is_dir() {
                 continue;
@@ -455,11 +455,9 @@ pub mod socket {
             } else if depth < 2 && (name.starts_with("uid-") || name.starts_with("mios-tmux-")) {
                 sockets.extend(socket_candidates(&path, human, depth + 1));
             }
-            if sockets.len() >= 16 {
-                break;
-            }
         }
-        sockets.truncate(16);
+        sockets.sort();
+        sockets.dedup();
         sockets
     }
 

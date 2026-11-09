@@ -697,3 +697,111 @@ class Federation:
         if self.warm is not None and not self.warm.done():
             self.warm.cancel()
         await asyncio.gather(*(member.halt() for member in self.members), return_exceptions=True)
+
+
+class AgentObservationCache:
+    """Poll declared MiOS-MCP relays independently of terminal refreshes.
+
+    Observation calls explicitly request local scope to prevent federation cycles.
+    Failed peers retain their last inventory with unknown presence; no credentials,
+    message bodies or arbitrary remote fields cross into the public snapshot.
+    """
+    FIELDS = {
+        "agents": {"agent_id", "kind", "label", "expires", "online", "pending", "parent_agent_id", "session_name", "node", "runtime_pid", "runtime_start"},
+        "messages": {"message_id", "from", "to", "status", "created", "received"},
+        "panes": {"socket", "session", "session_name", "window", "pane", "pid", "command", "dead", "agent_kind", "role", "parent_pane", "slot"},
+        "sessions": {"session_id", "session_name", "socket", "kind", "state", "evidence", "pid", "parent_pid", "runtime_start"},
+        "subagents": {"agent_id", "label", "kind", "online", "pending", "parent_agent_id", "session_name", "socket", "session", "window", "pane", "pid", "command", "dead", "agent_kind", "role", "parent_pane", "slot", "evidence"},
+    }
+
+    def __init__(self, federation, refresh_s=2, max_bytes=2097152):
+        self.federation = federation
+        self.refresh_s, self.max_bytes = refresh_s, max_bytes
+        self.cache = {}
+        self.states = {m.spec.id: "pending" for m in federation.members} if federation else {}
+        self.task = None
+
+    def start_background(self):
+        if self.federation and self.task is None:
+            self.task = asyncio.create_task(self._poll(), name="mios-global-agent-observation")
+
+    async def _poll(self):
+        while True:
+            await self.refresh()
+            await asyncio.sleep(self.refresh_s)
+
+    async def refresh(self):
+        if not self.federation:
+            return
+        async def read(member):
+            source = member.spec.id
+            try:
+                # Cached catalogs avoid starting unrelated tools merely to draw the TUI.
+                if member.cached is None and not member.tools:
+                    await member.ensure()
+                tool = next((row for row in member.catalog() if row.get("name") == "mios_agent_observe"), None)
+                if tool is None:
+                    self.states[source] = "unsupported" if member.catalog() else "unavailable"
+                    return
+                if member.spec.allowed_tools and "mios_agent_observe" not in member.spec.allowed_tools:
+                    self.states[source] = "unsupported"
+                    return
+                await member.ensure()
+                if member.session is None:
+                    raise RuntimeError("relay unavailable")
+                member.inflight += 1
+                member.last_used = time.monotonic()
+                try:
+                    properties = tool.get("inputSchema", {}).get("properties", {})
+                    # Older MiOS observers are local-only and accept no scope argument.
+                    args = {"scope": "local"} if "scope" in properties else {}
+                    reply = await member.session.call_tool("mios_agent_observe", args,
+                        read_timeout_seconds=self.federation.config["call_timeout_s"])
+                finally:
+                    member.inflight -= 1
+                    member.last_used = time.monotonic()
+                if reply.isError:
+                    raise ValueError("relay observation failed")
+                data = reply.structuredContent
+                if data is None:
+                    data = json.loads(next(part.text for part in reply.content if part.type == "text"))
+                if not isinstance(data, dict) or len(json.dumps(data).encode()) > self.max_bytes:
+                    raise ValueError("invalid or oversized observation")
+                if any(not isinstance(data.get(key), list) for key in ("agents", "messages", "panes", "errors")):
+                    raise ValueError("invalid observation")
+                clean = {}
+                for key, fields in self.FIELDS.items():
+                    rows = data.get(key, [])
+                    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                        raise ValueError("invalid observation rows")
+                    clean[key] = [{k: v for k, v in row.items() if k in fields and type(v) in (str, int, bool, float, type(None))} for row in rows]
+                self.cache[source] = clean
+                self.states[source] = "partial" if data["errors"] else "ready"
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.states[source] = "unavailable"
+        await asyncio.gather(*(read(member) for member in self.federation.members))
+
+    def snapshot(self, local):
+        result = dict(local)
+        for key in self.FIELDS:
+            result[key] = [dict(row) for row in local.get(key, [])]
+        result["sources"] = list(local.get("sources", []))
+        result["errors"] = list(local.get("errors", []))
+        for source, state in list(self.states.items()):
+            result["sources"].append({"source": source, "kind": "mcp", "state": state})
+            if state in ("unavailable", "partial"):
+                result["errors"].append({"source": source, "error": "remote observation incomplete"})
+            for key, rows in self.cache.get(source, {}).items():
+                for row in rows:
+                    result[key].append({**row, "source": source, "stale": state != "ready"})
+        result["agent_total"] = len(result["agents"])
+        result["online_total"] = sum(row.get("online") is True and not row.get("stale") for row in result["agents"])
+        return result
+
+    async def close(self):
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+            self.task = None

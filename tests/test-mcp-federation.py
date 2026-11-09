@@ -32,7 +32,7 @@ def _isolated_sdk(python):
     return probe.returncode == 0
 
 
-_SDK_FREE_SUITES = {"PolicyTests", "OwnershipTests", "TailnetDiscoveryTests"}
+_SDK_FREE_SUITES = {"PolicyTests", "OwnershipTests", "TailnetDiscoveryTests", "GlobalInventoryTests"}
 if importlib.util.find_spec("mcp") is None or not _isolated_sdk(sys.executable):
     PY = _sdk_python()
     if os.path.realpath(PY) != os.path.realpath(sys.executable) and os.access(PY, os.X_OK):
@@ -591,6 +591,60 @@ class TailnetDiscoveryTests(unittest.TestCase):
             fed.call_federated_tool("mios_agent_send", {}, upstreams=[])
         with self.assertRaises(LookupError):
             fed.call_federated_tool("remote__absent_blade__mios_agent_send", {}, upstreams=[])
+
+
+class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_global_sources_are_qualified_sanitized_and_nonrecursive(self):
+        from types import SimpleNamespace
+        calls = []
+        snapshot = {"agents":[{"agent_id":"same", "online":True, "token":"PRIVATE", "label":"Remote"}],
+                    "messages":[{"message_id":"one", "status":"queued", "message":"PRIVATE-BODY"}],
+                    "panes":[], "sessions":[], "subagents":[], "errors":[]}
+        class Session:
+            async def call_tool(self, name, args, **kwargs):
+                calls.append((name,args))
+                return SimpleNamespace(isError=False, structuredContent=snapshot)
+        class Member:
+            def __init__(self, identity):
+                self.spec = SimpleNamespace(id=identity, allowed_tools=[])
+                self.cached, self.tools, self.inflight, self.session = {}, [], 0, Session()
+            def catalog(self):
+                return [{"name":"mios_agent_observe", "inputSchema":{"properties":{"scope":{"type":"string"}}}}]
+            async def ensure(self): pass
+        federation = SimpleNamespace(members=[Member("blade-one"),Member("blade-two")], config={"call_timeout_s":3})
+        inventory = fed.AgentObservationCache(federation)
+        await inventory.refresh()
+        local = {"agents":[{"agent_id":"same", "online":True}], "messages":[], "panes":[], "errors":[]}
+        result = inventory.snapshot(local)
+        self.assertEqual(len(result["agents"]),3)
+        self.assertEqual({row.get("source", "local") for row in result["agents"]}, {"local","blade-one","blade-two"})
+        self.assertEqual(calls, [("mios_agent_observe", {"scope":"local"})]*2)
+        self.assertNotIn("PRIVATE",json.dumps(result))
+        self.assertEqual(result["online_total"],3)
+        federation.members[0].session = None
+        await inventory.refresh()
+        result = inventory.snapshot(local)
+        self.assertEqual(result["online_total"],2)
+        self.assertTrue(next(row for row in result["agents"] if row.get("source")=="blade-one")["stale"])
+        self.assertEqual(result["sources"][0]["state"],"unavailable")
+
+    async def test_global_sources_reject_oversize_and_invalid_reply_without_clearing_cache(self):
+        from types import SimpleNamespace
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                return SimpleNamespace(isError=False, structuredContent={"agents":"invalid"})
+        class Member:
+            spec = SimpleNamespace(id="bad-peer", allowed_tools=[])
+            cached,tools,inflight,session = {},[],0,Session()
+            def catalog(self): return [{"name":"mios_agent_observe","inputSchema":{}}]
+            async def ensure(self): pass
+        inventory = fed.AgentObservationCache(SimpleNamespace(members=[Member()],config={"call_timeout_s":3}))
+        inventory.cache["bad-peer"] = {"agents":[{"agent_id":"saved", "online":True}]}
+        await inventory.refresh()
+        result = inventory.snapshot({"agents":[],"panes":[],"messages":[],"errors":[]})
+        self.assertEqual(len(result["agents"]),1)
+        self.assertEqual(result["online_total"],0)
+        self.assertEqual(result["sources"][0]["state"],"unavailable")
 
 
 if __name__ == "__main__":

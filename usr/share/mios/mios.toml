@@ -4078,7 +4078,7 @@ state_directory = "mios/agent-relay"
 lease_s = 3600
 queue_offline = true
 mailbox_retention_s = 86400
-max_agents = 64
+max_agents = 256
 max_pending = 1024
 max_message_bytes = 32768
 max_receipts = 4096
@@ -4089,6 +4089,7 @@ max_state_bytes = 2097152
 
 [mcp.agents.observation]
 refresh_s = 2
+# Receipt window only; agent/session/subagent inventories are never truncated.
 max_rows = 32
 window_name = "MiOS Agents"
 
