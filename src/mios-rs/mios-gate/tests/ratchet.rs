@@ -190,3 +190,58 @@ fn a_head_ssot_that_does_not_parse_cannot_run() {
     assert_eq!(code, 2, "{text}");
     assert!(text.contains("does not parse"), "{text}");
 }
+
+
+fn capacity_policy(limit: u32, reason: &str) -> String {
+    format!("[drift.bounded_capacities.\"mcp.agents.max_agents\"]\nlimit={limit}\nreason=\"{reason}\"\n")
+}
+
+#[test]
+fn capacity_expansion_is_bounded_and_other_ratchets_hold() {
+    let d = tempfile::tempdir().unwrap();
+    let base = "[mcp.agents]\nmax_agents=64\n[docs]\nmax_a=5\n";
+    let policy = capacity_policy(256, "Global relay sessions and subagents");
+    let expanded = format!("[mcp.agents]\nmax_agents=256\n[docs]\nmax_a=5\n{policy}");
+    repo(d.path(), base, &expanded);
+    let (code, text) = run(d.path());
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("1 explicitly bounded capacity"), "{text}");
+    for (work, expected) in [
+        (expanded.replace("max_agents=256", "max_agents=257"), "approved integer range"),
+        (expanded.replace("max_a=5", "max_a=6"), "docs.max_a"),
+        (expanded.replace("max_agents=256", "max_agents=0"), "approved integer range"),
+    ] {
+        fs::write(d.path().join("usr/share/mios/mios.toml"), work).unwrap();
+        let (code,text) = run(d.path());
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains(expected), "{text}");
+    }
+}
+
+#[test]
+fn capacity_approval_bound_itself_cannot_expand_silently() {
+    let d = tempfile::tempdir().unwrap();
+    let base = format!("[mcp.agents]\nmax_agents=256\n{}", capacity_policy(256,"Reviewed capacity"));
+    repo(d.path(), &base, &base.replace("limit=256", "limit=512"));
+    let (code,text) = run(d.path());
+    assert_eq!(code, 1, "{text}");
+    assert!(text.contains("approved capacity bound"), "{text}");
+}
+
+#[test]
+fn capacity_policies_require_known_integer_ceiling_and_reason() {
+    let base = "[mcp.agents]\nmax_agents=64\n";
+    for policy in [
+        capacity_policy(256, ""),
+        capacity_policy(256,"Reviewed capacity").replace("max_agents", "max_missing"),
+        capacity_policy(256,"Reviewed capacity").replace("limit=256", "limit=1.5"),
+        capacity_policy(256,"Reviewed capacity").replace("limit=256", "limit=-1"),
+        format!("{}[drift.generated_ceilings]\n\"mcp.agents.max_agents\"=\"overlap\"\n",capacity_policy(256,"Reviewed capacity")),
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        repo(d.path(), base, &format!("{base}{policy}"));
+        let (code,text) = run(d.path());
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains("capacity"), "{text}");
+    }
+}

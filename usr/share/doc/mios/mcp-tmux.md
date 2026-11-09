@@ -139,6 +139,12 @@ CLI/MCP processes, and detected worker slots. Registered children may report
 token; workers never inherit a parent's token. Unreported internal harness threads
 cannot be enumerated by the relay. Detection alone never proves registration.
 
+The default registry admits up to 256 retained identities. Its operational capacity
+is declared in `[drift.bounded_capacities."mcp.agents.max_agents"]`; the gate permits
+scaling within that explicit integer bound, rejects values above it and rejects
+silent bound increases against the immutable baseline. Other ceilings retain their
+existing ratchet policy, and the saved-state byte budget still applies.
+
 Declared caller-owned MiOS-MCP federation members contribute their local snapshots.
 The observer calls `scope="local"` on capable peers to prevent federation cycles;
 older local-only peers accept the original empty argument object. Global observation

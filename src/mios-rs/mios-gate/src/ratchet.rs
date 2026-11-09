@@ -1,4 +1,4 @@
-// AI-hint: Asserts shrink-only ceilings in mios.toml never increase over HEAD, and that a ceiling exempted as a generated budget says so in SSOT rather than by being quietly skipped.
+// AI-hint: Compare shrink-only ceilings with the immutable baseline, with explicit generated budgets and bounded operational capacities declared in SSOT.
 // AI-related: usr/share/mios/mios.toml, src/mios-rs/mios-gate/tests/ratchet.rs, automation/98-drift-checks.sh
 
 use crate::Report;
@@ -115,6 +115,30 @@ fn exempt(ssot: &toml::Value) -> (BTreeMap<String, String>, Vec<String>) {
         map.insert(key.clone(), reason.to_string());
     }
     (map, findings)
+}
+
+/// Operational capacities may scale within an explicitly reviewed SSOT bound.
+/// The bound itself cannot rise against the immutable comparison baseline.
+fn capacities(ssot: &toml::Value) -> (BTreeMap<String, f64>, Vec<String>) {
+    let mut limits = BTreeMap::new();
+    let mut findings = Vec::new();
+    let Some(value) = ssot.get("drift").and_then(|v| v.get("bounded_capacities")) else {
+        return (limits, findings);
+    };
+    let Some(rows) = value.as_table() else {
+        return (limits, vec!["[drift.bounded_capacities] must be a table".into()]);
+    };
+    for (key, value) in rows {
+        let limit = value.get("limit").and_then(toml::Value::as_integer).filter(|n| *n > 0);
+        let reason = value.get("reason").and_then(toml::Value::as_str).unwrap_or("").trim();
+        let valid_keys = value.as_table().is_some_and(|v| v.keys().all(|k| k == "limit" || k == "reason"));
+        if limit.is_none() || reason.is_empty() || !valid_keys {
+            findings.push(format!("bounded capacity '{key}' requires a positive integer limit and a reason"));
+            continue;
+        }
+        limits.insert(key.clone(), limit.unwrap() as f64);
+    }
+    (limits, findings)
 }
 
 /// The commit the ceilings are compared against.
@@ -266,6 +290,22 @@ pub fn check(root: &Path) -> Report {
     }
 
     let (exempted, mut findings) = exempt(&work_val);
+    let (bounded, policy_findings) = capacities(&work_val);
+    let (old_bounded, _) = capacities(&head_val);
+    findings.extend(policy_findings);
+    for (key, limit) in &bounded {
+        if key == "legibility.max_tracked_files" || exempted.contains_key(key) {
+            findings.push(format!("bounded capacity '{key}' conflicts with the existing ratchet policy"));
+        }
+        match work.get(key) {
+            Some(value) if *value >= 1.0 && value.fract() == 0.0 && value <= limit => {},
+            Some(value) => findings.push(format!("capacity '{key}' value {value} exceeds its approved integer range 1..={limit}")),
+            None => findings.push(format!("bounded capacity '{key}' is not a ceiling in {rel}")),
+        }
+        if old_bounded.get(key).is_some_and(|old| limit > old) {
+            findings.push(format!("approved capacity bound '{key}' INCREASED -- the bound itself only comes down"));
+        }
+    }
     let mut baseline_note = String::new();
     // ADR-0030 counts generated files too. The old generated-budget number
     // measured a different set; compare the immutable baseline tree's TOTAL
@@ -330,6 +370,9 @@ pub fn check(root: &Path) -> Report {
                 raised += 1;
                 continue;
             }
+            if bounded.get(key).is_some_and(|limit| w <= limit) {
+                continue;
+            }
             findings.push(format!(
                 "ratchet ceiling '{key}' INCREASED from {h} to {w} -- this ceiling only comes down"
             ));
@@ -345,10 +388,13 @@ pub fn check(root: &Path) -> Report {
             exempted.len()
         )
     };
+    let capacity_note = if bounded.is_empty() { String::new() } else {
+        format!(", {} explicitly bounded capacity ceiling(s)", bounded.len())
+    };
     report(
         ok,
         format!(
-            "{} shrink-only ceiling(s) are <= {}{note}{baseline_note}",
+            "{} ceiling(s) checked against {}{note}{capacity_note}{baseline_note}",
             work.len(),
             describe_baseline(&compared_to)
         ),

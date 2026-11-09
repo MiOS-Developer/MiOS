@@ -4078,7 +4078,7 @@ state_directory = "mios/agent-relay"
 lease_s = 3600
 queue_offline = true
 mailbox_retention_s = 86400
-max_agents = 64
+max_agents = 256
 max_pending = 1024
 max_message_bytes = 32768
 max_receipts = 4096
@@ -17237,6 +17237,12 @@ suppress_hint = "quiet flags only (dnf5 -q, buildah --quiet, cargo -q). Never pa
 "legibility.max_ps_lines" = "Re-baselined to 27878 following approved merges on main"
 "legibility.max_tooling_python_lines" = "Re-baselined to 81188 following approved merges on main (ADR-0026 task store, operator-approved 2026-09-26)"
 "laws.projection_registry.max_exempt" = "Exempts tools/native/mios-gen/src/hyprland_build.rs from Law 8 projection coverage as it builds an RPM in --out rather than a tracked file"
+
+# Global relay capacity can scale within this explicit bound. The ratchet gate
+# rejects larger values, silent bound increases, and missing policy reasons.
+[drift.bounded_capacities."mcp.agents.max_agents"]
+limit = 256
+reason = "Global relay registrations include remote sessions and subagents; the saved-state byte budget remains independently enforced."
 
 [drift.budget_keys]
 # task_984. Budget keys that MUST exist in [agent_pipe] or [dispatch].
