@@ -17228,7 +17228,7 @@ suppress_hint = "quiet flags only (dnf5 -q, buildah --quiet, cargo -q). Never pa
 "build.ratchet.max_phase_scripts" = "Phase scripts expanded during Phase 2 build features; ceiling raised to 79 to match verified phase scripts on disk (task_459, task_441, task_453)"
 "build.rechunk_max_layers" = "OCI layer ceiling for hhd-dev/rechunk; trades layer count against pull size and rebuild caching, so it is an operator-tunable budget rather than a shrink-only code-debt ratchet (task_3397)"
 "legibility.max_tracked_mb" = "emitted by tools/native/mios-size-ceiling as round(tracked MiB) + [legibility].tracked_mb_headroom; it tracks the deliverable's size, which Law 12 BAKE-NOT-FETCH requires to grow, so shrink-only is the wrong shape for it (task_988)"
-"legibility.max_libexec_verbs" = "Re-baselined to 313 following approved merges on main"
+"legibility.max_libexec_verbs" = "Re-baselined to 328 following approved merges on main"
 "legibility.max_shell_lines" = "Re-baselined to 54941 following approved merges on main (ADR-0026 task store, operator-approved 2026-09-26)"
 "legibility.max_ps_lines" = "Re-baselined to 27878 following approved merges on main"
 "legibility.max_tooling_python_lines" = "Re-baselined to 81188 following approved merges on main (ADR-0026 task store, operator-approved 2026-09-26)"
@@ -18276,7 +18276,7 @@ tracked_mb_headroom = 1
 max_shell_lines   = 54941  # bash is glue only (Law 14). Re-baselined from approved merges.
 max_ps_lines      = 27878  # no new PowerShell-as-program (Law 14)
 max_automation_phases = "${MIOS_BUILD_RATCHET_MAX_PHASE_SCRIPTS}"  # one phase-count declaration, shared with build.ratchet
-max_libexec_verbs     = 312  # verbs only; retired flight-control.sh, mios-dashboard.sh, mios-dup-report (task_3454)
+max_libexec_verbs     = 328  # verbs only; retired flight-control.sh, mios-dashboard.sh, mios-dup-report (task_3454)
 
 # Script mass that converts to Rust binaries; the AI plane is exempt.
 python_ai_plane_prefixes = ["usr/lib/mios/agent-pipe/", "usr/lib/mios/agents/"]

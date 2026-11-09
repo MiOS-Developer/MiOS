@@ -184,6 +184,8 @@ def main():
         except subprocess.TimeoutExpired:
             p.kill()
         # ... while the bare alias works: it opens the menu on a client tmux picks (not one the caller chose).
+        s.t('new-session', '-d', '-s', 'u2')
+        s.t('switch-client', '-c', na, '-t', 'u2')
         a.take(0.3); b.take(0.3)
         p = subprocess.Popen(['tmux', '-L', s.name, 'mios-menu'], env=s.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         ob, oa = b.take(), a.take(0.3)

@@ -1195,4 +1195,3 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-continuation-milestones.json
 
 !/.devloop/handoff/mios-inputd-test-portability.md
-!/.devloop/handoff/mios-native-verification.tar.gz

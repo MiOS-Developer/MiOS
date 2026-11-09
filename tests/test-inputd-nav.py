@@ -299,8 +299,9 @@ class Timing(Base):
         wheel = sum(e['value'] for e in out['output']['pointer'] if e['kind'] == 2 and e['code'] == 8)
         self.assertGreater(wheel, 0)
         self.assertEqual(out['output']['actions'], [])
-        self.assertEqual(self.actions('desktop-2d', ab(3, 30000) + wait(1500) + ab(3, 0) + ab(3, 30000)),
-                         ['hypr:movefocus right', 'hypr:movefocus right'], 'one flick per deflection, never a repeat')
+        flick_r = ab(3, 32000) + wait(40) + ab(3, 0)
+        self.assertEqual(self.actions('desktop-2d', wait(100) + flick_r + wait(1500) + flick_r),
+                         ['hypr:movefocus right', 'hypr:movefocus right'], 'one flick per out-and-return gesture, never a repeat')
 
     def test_analog_only_triggers_are_digital_in_nav(self):
         self.assertEqual(self.actions('desktop-2d', ab(5, 200) + ab(5, 0), analog_triggers=True), ['key:CTRL+TAB'])
@@ -309,7 +310,7 @@ class Timing(Base):
 
 class Projection(Base):
     def test_c09_c30_terminal_profile_and_tmux_argv(self):
-        out = self.replay('terminal', tap(LT) + tap(SELECT) + ab(3, -30000), tmux_client='/dev/pts/7')
+        out = self.replay('terminal', tap(LT) + tap(SELECT) + ab(3, -32000) + wait(40) + ab(3, 0), tmux_client='/dev/pts/7')
         self.assertEqual(out['profile'], 'terminal_tmux')
         self.assertEqual(out['output']['actions'], ['tmux:key p', 'tmux:key w', 'tmux:focus left'])
         self.assertEqual(out['resolved'][0]['projection'][3:], ['send-keys', '-c', '/dev/pts/7', '-K', 'C-b', 'p'])
@@ -555,7 +556,7 @@ class Bridge(Base):
         self.assertNotEqual(win(), before, f'LT = tmux previous window ({log[-4:]})')
         self.assertTrue(any(v.get('tmux') == 'key p' and v['ok'] for v in self.lines(log, 'tmux')))
         # One pane: a left flick is at the edge, so the compositor moves focus and tmux does nothing.
-        self.send((3, 3, -30000), hold=0.3)
+        self.send((3, 3, -32000), hold=0.08)
         self.send((3, 3, 0), hold=0.4)
         self.assertIn(('focus', 'left'), fake.calls)
         # Two panes, the right one active: the flick selects the left pane and never reaches the compositor.
@@ -563,7 +564,7 @@ class Bridge(Base):
         pane = lambda: self.tmux('display', '-p', '-t', 't', '#{pane_index}').stdout.strip()
         right = pane()
         focus_before = fake.calls.count(('focus', 'left'))
-        self.send((3, 3, -30000), hold=0.3)
+        self.send((3, 3, -32000), hold=0.08)
         self.send((3, 3, 0), hold=0.5)
         self.assertNotEqual(pane(), right, log[-4:])
         self.assertEqual(fake.calls.count(('focus', 'left')), focus_before, 'inside the window tmux owns the flick')
