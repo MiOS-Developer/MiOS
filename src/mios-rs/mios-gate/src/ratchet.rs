@@ -132,11 +132,10 @@ fn capacities(ssot: &toml::Value) -> (BTreeMap<String, f64>, Vec<String>) {
         let limit = value.get("limit").and_then(toml::Value::as_integer).filter(|n| *n > 0);
         let reason = value.get("reason").and_then(toml::Value::as_str).unwrap_or("").trim();
         let valid_keys = value.as_table().is_some_and(|v| v.keys().all(|k| k == "limit" || k == "reason"));
-        if limit.is_none() || reason.is_empty() || !valid_keys {
-            findings.push(format!("bounded capacity '{key}' requires a positive integer limit and a reason"));
-            continue;
+        match limit {
+            Some(limit) if !reason.is_empty() && valid_keys => { limits.insert(key.clone(), limit as f64); },
+            _ => findings.push(format!("bounded capacity '{key}' requires a positive integer limit and a reason")),
         }
-        limits.insert(key.clone(), limit.unwrap() as f64);
     }
     (limits, findings)
 }
