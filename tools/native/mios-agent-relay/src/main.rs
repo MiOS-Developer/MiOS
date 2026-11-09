@@ -4077,14 +4077,14 @@ mod tests {
     #[test]
     fn compact_global_inventory_eventually_visits_every_page() {
         let mut snapshot = json!({"registry":"present","agents":[],"panes":[],"messages":[],"sessions":[],"subagents":[],"errors":[]});
-        for i in 0..10 { snapshot["sessions"].as_array_mut().unwrap().push(json!({"session_name":format!("session-{i}")})); }
+        for i in 0..15 { snapshot["sessions"].as_array_mut().unwrap().push(json!({"session_name":format!("session-{i}")})); }
         let mut seen = std::collections::HashSet::new();
         for tick in 0..300 {
             snapshot["ts"] = json!(tick * 6);
             let text = observation_lines(&snapshot, &observer_request(), 60, 6).unwrap().join("\n");
-            for i in 0..10 { if text.contains(&format!("session-{i}")) { seen.insert(i); } }
+            for i in 0..15 { if text.contains(&format!("session-{i}")) { seen.insert(i); } }
         }
-        assert_eq!(seen.len(),10);
+        assert_eq!(seen.len(),15);
     }
 
     #[test]
