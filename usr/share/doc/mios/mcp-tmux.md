@@ -129,15 +129,36 @@ ADR-0029) is separate, and every number and name it uses comes from
 - **A fresh install has an unheld lease** derived from SSOT. A listed successor
   or the preferred holder acquires it first; reading it writes nothing.
 
-`mios_agent_observe` and `mios agents --observe` provide the same sanitized,
-read-only snapshot. `mios agents --watch` renders a resizing native view in the
-MiOS Agents pane. In an AI workspace, the SSOT global G action focuses that
-existing pane without adding a tab. Compact output uses short labels and identity
-references; the JSON snapshot retains full identities. Inactive worker panes and
-the desktop observer are parked in a managed session outside the human tab list.
-Registrations, queued/received receipts and detected pane identities are
-distinct; message bodies, leases, command arguments and screen contents are
-omitted. Registry files remain private (`0600` in a `0700` caller-owned directory).
+`mios_agent_observe` and `mios agents --observe` provide a sanitized,
+read-only global inventory. Every registration is returned; `max_rows` controls
+only the recent receipt window. The inventory includes caller-owned relay
+registries witnessed on live MiOS-MCP processes, all witnessed tmux servers and
+sessions (including hidden anchor, observer and headless sessions), live catalogued
+CLI/MCP processes, and detected worker slots. Registered children may report
+`parent_agent_id`, `session_name` and `node` with their own private registration
+token; workers never inherit a parent's token. Unreported internal harness threads
+cannot be enumerated by the relay. Detection alone never proves registration.
+
+Declared caller-owned MiOS-MCP federation members contribute their local snapshots.
+The observer calls `scope="local"` on capable peers to prevent federation cycles;
+older local-only peers accept the original empty argument object. Global observation
+is the default. No extra endpoints are guessed and HTTP federation retains its
+existing opt-in policy. The TUI polls remote sources in the background, identifies
+pending/unavailable sources and marks cached presence unknown after a failed poll.
+Source qualification keeps equal IDs on different relays distinct. Sources without
+an agent observation tool are explicitly marked unsupported.
+
+`mios agents --watch` and Monitor's Agents & AI view share a scrollable inventory
+with All / Agents / Sessions / Subagents filters (F6), search by name, full ID,
+source or parent (Ctrl+F), and full selected details (Enter; Esc closes details).
+Arrow keys, Page Up/Down and Ctrl+Home/End reach every row without resetting the
+cursor on refresh. The small native terminal fallback rotates through every group
+and page. In an AI workspace, the SSOT global G action focuses the existing pane
+without adding a tab. Compact labels do not limit the JSON inventory.
+
+Registrations, sessions, subagents and queued/received receipts remain distinct;
+message bodies, leases, command arguments and terminal contents are omitted.
+Registry files remain private (`0600` in a `0700` caller-owned directory).
 
 A local live CLI test used an Antigravity head in an MCP tmux pane to launch
 another Antigravity CLI, send it a task, and receive its reply through these

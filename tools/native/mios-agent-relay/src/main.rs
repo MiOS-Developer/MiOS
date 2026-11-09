@@ -221,7 +221,8 @@ fn process_inventory(request: &Value) -> (Vec<PathBuf>, Vec<PathBuf>, Vec<Value>
         let names: Vec<String> = args.split(|b| *b == 0).take(3).filter_map(|v| {
             Path::new(std::str::from_utf8(v).ok()?).file_name()?.to_str().map(str::to_owned)
         }).collect();
-        let relay = names.iter().any(|n| n == "mios-mcp-server");
+        let relay = names.iter().any(|n| n == "mios-mcp-server")
+            && !names.iter().any(|n| n == "--agent-cli");
         let kind = names.iter().find(|n| kinds.contains(&n.as_str()));
         if relay {
             // Read only relay location keys; never expose command arguments or environment.

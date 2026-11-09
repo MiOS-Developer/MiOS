@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "usr/lib/mios"))
-from mios_agent_tui import AgentView, clean, peer_name
+from mios_agent_tui import AgentView, InventoryDetails, clean, peer_name
 from textual.widgets import DataTable, Input, Static, TabbedContent
 
 monitor = importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")).load_module()
@@ -211,6 +211,15 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(table.row_count, 1)
             self.assertIn("parent: node:agent:095", str(app.query_one("#agent-detail", Static).render()))
+            table.focus()
+            await pilot.press("enter")
+            await pilot.pause()
+            self.assertIsInstance(app.screen, InventoryDetails)
+            self.assertIn("second-node", app.screen.detail)
+            self.assertIn("node:agent:095", app.screen.detail)
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertNotIsInstance(app.screen, InventoryDetails)
             for size in ((35, 12), (80, 24), (180, 50)):
                 await pilot.resize_terminal(*size)
                 await pilot.pause()

@@ -9,7 +9,9 @@ import unicodedata
 from mios_toml import colors, load_merged
 from rich.text import Text
 from textual import on
-from textual.containers import Horizontal, Vertical
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.screen import ModalScreen
 from textual.message import Message
 from textual.widgets import Button, DataTable, Input, Static
 
@@ -167,6 +169,34 @@ class ClientView(Vertical):
             event.prevent_default()
 
 
+class InventoryDetails(ModalScreen):
+    """Full selected identities and parent/source metadata at any viewport size."""
+    BINDINGS = [Binding("escape", "close", "Close", priority=True)]
+    DEFAULT_CSS = _theme_css("""
+    InventoryDetails { align: center middle; background: transparent; }
+    InventoryDetails > Vertical { width: 90%; height: 80%; border: solid @MIOS:accent@; background: @MIOS:bg@; }
+    InventoryDetails VerticalScroll { height: 1fr; padding: 1; }
+    InventoryDetails Static { height: auto; }
+    InventoryDetails Button { height: 1; min-height: 1; border: none; }
+    """)
+    def __init__(self, detail):
+        super().__init__()
+        self.detail = detail
+
+    def compose(self):
+        with Vertical():
+            with VerticalScroll():
+                yield Static(clean(self.detail, 4000).replace(" · ", "\n"), markup=False)
+            yield Button("Close (Esc)", id="close-inventory-detail")
+
+    def action_close(self):
+        self.dismiss()
+
+    @on(Button.Pressed, "#close-inventory-detail")
+    def close_pressed(self, event):
+        self.dismiss()
+
+
 class AgentView(Vertical):
     """Search every reported registration, session and child without row caps."""
     DEFAULT_CSS = _theme_css("""
@@ -318,6 +348,13 @@ class AgentView(Vertical):
     @on(DataTable.RowHighlighted, "#peer-table")
     def highlighted(self, event):
         self.show_detail()
+
+    @on(DataTable.RowSelected, "#peer-table")
+    def inspect_row(self, event):
+        event.stop()
+        row = self.inventory.get(event.row_key.value)
+        if row:
+            self.app.push_screen(InventoryDetails(row["detail"]))
 
     def show_detail(self):
         table = self.query_one("#peer-table", DataTable)
