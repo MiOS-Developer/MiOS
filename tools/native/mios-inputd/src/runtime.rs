@@ -2485,7 +2485,7 @@ fn update_active_manifest(
         "timestamp": now_dur.as_secs(),
         "timestamp_ms": now_dur.as_millis() as u64,
     });
-    let _ = write_private(&path, format!("{manifest}\n").as_bytes());
+    let _ = write_private(&path, &format!("{manifest}\n"));
 }
 
 fn socket_peercred_linux(stream: &std::os::unix::net::UnixStream) -> Result<(u32, u32), String> {
@@ -2646,10 +2646,8 @@ fn step_neutral_rearming(
     let Ok((keys, axes)) = snapshot else {
         return true;
     };
-    if physical_controls_neutral(&keys, &axes, stick_deadzone, trigger_threshold).is_ok()
-        && physical_controls_neutral(&BTreeSet::new(), &router.axes, stick_deadzone, trigger_threshold)
-            .is_ok()
-    {
+    // The complete ioctl snapshot supersedes cached axes, including after SYN_DROPPED.
+    if physical_controls_neutral(&keys, &axes, stick_deadzone, trigger_threshold).is_ok() {
         *rearming = false;
         let _ = router.reset();
         let _ = router.resync(keys, axes);
@@ -2666,8 +2664,6 @@ fn handle_child_control_connection<F>(
     proc_root: &Path,
     expected_uid: u32,
     peer_override: Option<(u32, u32)>,
-    stick_deadzone: f64,
-    trigger_threshold: f64,
     active_devices: &BTreeSet<PathBuf>,
     known_devices: &std::sync::Mutex<BTreeSet<PathBuf>>,
     released_devices: &std::sync::Mutex<BTreeSet<PathBuf>>,
@@ -2849,8 +2845,15 @@ where
         Some("reacquire_device") | Some("abort_release") => {
             let dev_req = req["device"].as_str().unwrap_or("");
             let target_path = PathBuf::from(dev_req);
+            // Rollback may restore a claim after the scan observed its temporary removal.
+            let mut current = session.clone();
+            if let Err(error) = current.refresh_controllers(proc_root) {
+                let resp = serde_json::json!({"ok":false,"nonce":nonce,"error":error});
+                let _ = writeln!(stream, "{resp}");
+                return resp;
+            }
             if !target_path.is_absolute()
-                || !session
+                || !current
                     .controllers
                     .iter()
                     .any(|c| paths_match_exact_or_canonical(c, &target_path))
@@ -2877,7 +2880,9 @@ where
                 "nonce": nonce,
                 "seat": session.seat,
                 "device": target_path.display().to_string(),
-                "reacquisi_armed": true,
+                "launcher_pid": session.launcher_pid,
+                "launcher_start": session.launcher_start,
+                "reacquire_armed": true,
             });
             let _ = writeln!(stream, "{resp}");
             resp
@@ -3531,8 +3536,6 @@ pub fn run(
             {
                 if let Ok((stream, _)) = l.accept() {
                     let active_keys: BTreeSet<PathBuf> = devices.keys().cloned().collect();
-                    let stick_dz = global.controller.stick_deadzone;
-                    let trig_th = legacy.trigger_threshold;
                     let expected_uid = unsafe { libc::geteuid() };
                     let _ = handle_child_control_connection(
                         stream,
@@ -3540,8 +3543,6 @@ pub fn run(
                         Path::new("/proc"),
                         expected_uid,
                         None,
-                        stick_dz,
-                        trig_th,
                         &active_keys,
                         &known_devices,
                         &released_devices,
@@ -3563,7 +3564,7 @@ pub fn run(
                                 combined_axes.insert(code, axis);
                             }
                             if let Err(held) =
-                                physical_controls_neutral(&keys, &combined_axes, stick_dz, trig_th)
+                                physical_controls_neutral(&keys, &combined_axes, global.controller.stick_deadzone, legacy.trigger_threshold)
                             {
                                 return Ok(Err(held));
                             }
@@ -6620,4 +6621,112 @@ mod app_detection {
         let routed = session_focus(&snap, true, None);
         assert!(routed.app.is_none() && routed.app_target.is_none() && routed.suspended.is_some());
     }
+    fn controller_return_fixture() -> (tempfile::TempDir, crate::nested::Session, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let pid = std::process::id();
+        let start = crate::nested::start_time(Path::new("/proc"),pid).unwrap();
+        let proc_root = dir.path().join("proc");
+        std::fs::create_dir_all(proc_root.join(pid.to_string())).unwrap();
+        std::fs::copy(format!("/proc/{pid}/stat"),proc_root.join(pid.to_string()).join("stat")).unwrap();
+        let device = dir.path().join("event42");
+        std::fs::write(&device,[]).unwrap();
+        let entry = dir.path().join("seat.json");
+        std::fs::write(&entry,serde_json::json!({"seat":"owned","launcher_pid":pid,"launcher_start":start,
+            "devices":[{"path":device,"kind":"controller","siblings":[]}]}).to_string()).unwrap();
+        let session = crate::nested::Session {seat:"owned".into(),entry,launcher_pid:pid,launcher_start:start,
+            runtime:dir.path().into(),instance:"fixture".into(),wayland_display:"fixture".into(),
+            pad_state:dir.path().join("packet"),controllers:vec![device],control_socket:None};
+        (dir,session,proc_root)
+    }
+
+    fn controller_return_request(session: &crate::nested::Session, action: &str) -> serde_json::Value {
+        serde_json::json!({"action":action,"nonce":"current-request","seat":session.seat,
+            "launcher_pid":session.launcher_pid,"launcher_start":session.launcher_start,"device":session.controllers[0]})
+    }
+
+    fn controller_return_call(
+        session: &crate::nested::Session, proc_root: &Path,
+        known: &std::sync::Mutex<BTreeSet<PathBuf>>, released: &std::sync::Mutex<BTreeSet<PathBuf>>,
+        request: serde_json::Value,
+        release: impl FnMut(&Path) -> Result<Result<(),(Vec<u16>,Vec<u16>)>,String>,
+    ) -> serde_json::Value {
+        let (mut client,server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            writeln!(client,"{request}").unwrap();
+            read_bounded_control_json(&mut client,Duration::from_secs(2),4096).unwrap()
+        });
+        let active = session.controllers.iter().cloned().collect();
+        let response = handle_child_control_connection(server,session,proc_root,unsafe{libc::geteuid()},None,
+            &active,known,released,release);
+        assert_eq!(writer.join().unwrap(),response);
+        response
+    }
+
+    #[test]
+    fn controller_return_release_and_rollback_use_current_lease_and_nonce() {
+        let (_dir,session,proc_root)=controller_return_fixture();
+        let known=std::sync::Mutex::new(session.controllers.iter().cloned().collect());
+        let released=std::sync::Mutex::new(BTreeSet::new());
+        let reply=controller_return_call(&session,&proc_root,&known,&released,
+            controller_return_request(&session,"release_device"),|_|Ok(Ok(())));
+        assert_eq!(reply["ok"],true);
+        assert_eq!(reply["nonce"],"current-request");
+        assert!(released.lock().unwrap().contains(&session.controllers[0]));
+        assert!(known.lock().unwrap().is_empty());
+        // A scan may have observed the temporary claim removal. Rollback reads the restored lease.
+        let mut stale=session.clone();stale.controllers.clear();
+        let reply=controller_return_call(&stale,&proc_root,&known,&released,
+            controller_return_request(&session,"abort_release"),|_|panic!("rollback must not release again"));
+        assert_eq!(reply["ok"],true);
+        assert_eq!(reply["launcher_pid"],session.launcher_pid);
+        assert_eq!(reply["launcher_start"],session.launcher_start);
+        assert_eq!(reply["reacquire_armed"],true);
+        assert!(released.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn controller_return_refuses_bad_nonce_foreign_paths_and_held_controls() {
+        let (dir,session,proc_root)=controller_return_fixture();
+        let known=std::sync::Mutex::new(session.controllers.iter().cloned().collect());
+        let released=std::sync::Mutex::new(BTreeSet::new());
+        for field in ["nonce","seat","device"] {
+            let mut request=controller_return_request(&session,"release_device");
+            request[field]=match field {
+                "nonce"=>serde_json::json!(""),"seat"=>serde_json::json!("foreign"),
+                _=>serde_json::json!(dir.path().join("foreign/event42")),
+            };
+            let reply=controller_return_call(&session,&proc_root,&known,&released,request,
+                |_|panic!("invalid requests must not query or release a device"));
+            assert_eq!(reply["ok"],false,"{field}");
+            assert!(released.lock().unwrap().is_empty());
+            assert!(known.lock().unwrap().contains(&session.controllers[0]));
+        }
+        let held=controller_return_call(&session,&proc_root,&known,&released,
+            controller_return_request(&session,"release_device"),|_|Ok(Err((vec![304],vec![0,2]))));
+        assert_eq!(held["reason"],"controls_held");assert_eq!(held["deferred"],true);
+        let failed=controller_return_call(&session,&proc_root,&known,&released,
+            controller_return_request(&session,"release_device"),|_|Err("ioctl failed".into()));
+        assert_eq!(failed["reason"],"ioctl_failed");
+        assert!(released.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn controller_return_rearms_only_after_authoritative_neutral_snapshot() {
+        let (global,legacy)=crate::config::tests::fixture();
+        let mut router=Router::new(global,legacy,BTreeMap::new());
+        let moving=crate::router::Axis{min:-100,max:100,value:80};
+        let neutral=crate::router::Axis{value:0,..moving};
+        let pressed=crate::router::Axis{min:0,max:255,value:200};
+        assert!(physical_controls_neutral(&BTreeSet::from([304]),&BTreeMap::new(),0.2,0.5).is_err());
+        assert!(physical_controls_neutral(&BTreeSet::new(),&BTreeMap::from([(0,moving),(2,pressed)]),0.2,0.5).is_err());
+        let mut rearming=true;
+        assert!(step_neutral_rearming(&mut rearming,&mut router,Err(std::io::Error::other("ioctl")),0.2,0.5));
+        assert!(step_neutral_rearming(&mut rearming,&mut router,Ok((BTreeSet::new(),BTreeMap::from([(0,moving)]))),0.2,0.5));
+        router.axes.insert(0,moving);
+        assert!(!step_neutral_rearming(&mut rearming,&mut router,Ok((BTreeSet::new(),BTreeMap::from([(0,neutral)]))),0.2,0.5));
+        assert!(!rearming,"a fresh neutral ioctl snapshot replaces stale cached axis state");
+        assert_eq!(router.axes[&0].value,0);
+    }
+
+
 }

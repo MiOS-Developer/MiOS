@@ -1404,6 +1404,95 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     result
 }
 
+// Fixed private IPC envelope bounds; these are not controller tuning values.
+const RETURN_FRAME_BYTES: u64 = 4096;
+const RETURN_IO_TIMEOUT: Duration = Duration::from_millis(500);
+
+fn return_nonce() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|error| error.to_string())?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn return_peer(stream: &UnixStream) -> Result<(u32, u64), String> {
+    let peer = rustix::net::sockopt::socket_peercred(stream)
+        .map_err(|error| format!("control peer credentials unavailable: {error}"))?;
+    if peer.uid != rustix::process::getuid() || peer.pid.as_raw_pid() <= 0 {
+        return Err("unauthorized control peer".into());
+    }
+    let pid = peer.pid.as_raw_pid() as u32;
+    let start = devices::start_time(pid).ok_or("control peer no longer exists")?;
+    Ok((pid, start))
+}
+
+fn read_control_frame(stream: &mut UnixStream, timeout: Duration) -> Result<Json, String> {
+    stream.set_nonblocking(false).map_err(|error| error.to_string())?;
+    stream.set_read_timeout(Some(timeout)).map_err(|error| error.to_string())?;
+    stream.set_write_timeout(Some(RETURN_IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    let mut line = String::new();
+    BufReader::new(stream.take(RETURN_FRAME_BYTES + 1))
+        .read_line(&mut line).map_err(|error| format!("control read failed: {error}"))?;
+    if line.len() as u64 > RETURN_FRAME_BYTES || !line.ends_with('\n') {
+        return Err("control frame is missing, unterminated or oversized".into());
+    }
+    serde_json::from_str(&line).map_err(|error| format!("invalid control frame: {error}"))
+}
+
+fn return_same_path(left: &str, right: &Path) -> bool {
+    let left = Path::new(left);
+    left == right || matches!((fs::canonicalize(left), fs::canonicalize(right)), (Ok(a), Ok(b)) if a == b)
+}
+
+fn child_return_exchange(
+    owned: &Path,
+    entry: &Json,
+    device: &Path,
+    action: &str,
+    expected_peer: Option<(u32, u64)>,
+) -> Result<(Json, (u32, u64)), String> {
+    use std::os::unix::fs::FileTypeExt;
+    let socket = owned.join("inputd-control.sock");
+    let metadata = fs::symlink_metadata(&socket).map_err(|error| format!("child control unavailable: {error}"))?;
+    if !metadata.file_type().is_socket() || metadata.uid() != rustix::process::getuid().as_raw()
+        || metadata.mode() & 0o022 != 0 {
+        return Err("unsafe child control socket".into());
+    }
+    let mut stream = UnixStream::connect(&socket).map_err(|error| error.to_string())?;
+    let peer = return_peer(&stream)?;
+    if expected_peer.is_some_and(|expected| expected != peer) {
+        return Err("child control process changed during return".into());
+    }
+    stream.set_write_timeout(Some(RETURN_IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    let nonce = return_nonce()?;
+    let request = json!({"action":action,"device":device,"nonce":nonce,
+        "seat":entry["seat"],"launcher_pid":entry["launcher_pid"],"launcher_start":entry["launcher_start"]});
+    writeln!(stream, "{request}").map_err(|error| error.to_string())?;
+    let response = read_control_frame(&mut stream, RETURN_IO_TIMEOUT)?;
+    if response["nonce"] != nonce || response["seat"] != entry["seat"] {
+        return Err("child response does not match this return request".into());
+    }
+    if response["ok"].as_bool() == Some(true)
+        && (!response["device"].as_str().is_some_and(|path| return_same_path(path, device))
+            || response["launcher_pid"] != entry["launcher_pid"]
+            || response["launcher_start"] != entry["launcher_start"]) {
+        return Err("child acknowledgement has the wrong device or launcher identity".into());
+    }
+    Ok((response, peer))
+}
+
+fn manifest_identity(record: &Json) -> Option<(u32, u64)> {
+    let pid = u32::try_from(record["bridge_pid"].as_u64()?).ok()?;
+    let start = record["bridge_start"].as_u64()?;
+    (devices::start_time(pid) == Some(start)).then_some((pid, start))
+}
+
+fn return_time_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default().as_millis() as u64
+}
+
 /// Handle a connection on the continuing launcher's control socket.
 pub fn handle_control_connection(
     mut stream: UnixStream,
@@ -1412,215 +1501,87 @@ pub fn handle_control_connection(
     parent: &Path,
     owned: &Path,
 ) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(peercred) = rustix::net::sockopt::socket_peercred(&stream) {
-            if peercred.uid.as_raw() != rustix::process::getuid().as_raw() {
-                let resp = json!({
-                    "ok": false,
-                    "error": "unauthorized: peer UID mismatch",
-                });
-                let _ = writeln!(stream, "{resp}");
-                return Ok(());
-            }
-            let pid_num = peercred.pid.as_raw_pid();
-            if pid_num > 0 && !Path::new(&format!("/proc/{pid_num}")).exists() {
-                let resp = json!({
-                    "ok": false,
-                    "error": "unauthorized: peer process not found",
-                });
-                let _ = writeln!(stream, "{resp}");
-                return Ok(());
-            }
-        }
-    }
-
-    let mut reader = BufReader::new(&stream);
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
-        return Ok(());
-    }
-    let req: Json = match serde_json::from_str(&line) {
-        Ok(v) => v,
-        Err(e) => {
-            let resp = json!({"ok": false, "error": format!("invalid request json: {e}")});
-            let _ = writeln!(stream, "{resp}");
+    let peer = return_peer(&stream);
+    let request = match read_control_frame(&mut stream, RETURN_IO_TIMEOUT) {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = writeln!(stream, "{}", json!({"ok":false,"error":error}));
             return Ok(());
         }
     };
-    if req["action"].as_str() != Some("return_controller") {
-        let resp = json!({"ok": false, "error": "unsupported action"});
-        let _ = writeln!(stream, "{resp}");
-        return Ok(());
-    }
-    let req_seat = req["seat"].as_str().unwrap_or("");
-    if req_seat != claim.seat() {
-        let resp = json!({
-            "ok": false,
-            "error": format!("mismatched seat: request for {:?} but session is {:?}", req_seat, claim.seat()),
-        });
-        let _ = writeln!(stream, "{resp}");
-        return Ok(());
-    }
-
-    let req_dev = req["device"].as_str().filter(|s| !s.is_empty());
-    let claimed_devices = claim.entry()["devices"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let target_node = if let Some(d) = req_dev {
-        let p = PathBuf::from(d);
-        let found = claimed_devices.iter().find(|dev| {
-            let dp = dev["path"].as_str().unwrap_or("");
-            dp == d
-                || Path::new(dp) == p
-                || dev["siblings"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .any(|s| s.as_str() == Some(d) || Path::new(s.as_str().unwrap_or("")) == p)
-        });
-        if found.is_none() {
-            let resp = json!({
-                "ok": false,
-                "error": format!("device {d} not claimed by seat {}", claim.seat()),
-            });
-            let _ = writeln!(stream, "{resp}");
-            return Ok(());
+    let result = (|| -> Result<Json, String> {
+        peer?;
+        if request["action"].as_str() != Some("return_controller") {
+            return Err("unsupported action".into());
         }
-        p
-    } else {
-        let first_ctrl = claimed_devices
-            .iter()
-            .find(|dev| dev["kind"].as_str() == Some("controller"));
-        if let Some(dev) = first_ctrl {
-            if let Some(n) = dev["path"].as_str() {
-                PathBuf::from(n)
-            } else {
-                let resp = json!({
-                    "ok": false,
-                    "error": "no valid controller nodes found in claim",
-                });
-                let _ = writeln!(stream, "{resp}");
-                return Ok(());
+        if request["seat"].as_str() != Some(claim.seat()) {
+            return Err("mismatched seat in controller return request".into());
+        }
+        if !request["nonce"].as_str().is_some_and(|value| !value.trim().is_empty()) {
+            return Err("missing return request nonce".into());
+        }
+        let original = claim.entry().clone();
+        let requested = request["device"].as_str().filter(|value| !value.is_empty());
+        let device = original["devices"].as_array().ok_or("claim devices missing")?.iter()
+            .find(|device| device["kind"].as_str() == Some("controller") && requested.is_none_or(|requested| {
+                std::iter::once(&device["path"]).chain(device["siblings"].as_array().into_iter().flatten())
+                    .filter_map(Json::as_str).any(|path| return_same_path(path, Path::new(requested)))
+            })).ok_or("requested controller is not assigned to this session")?;
+        let target = PathBuf::from(device["path"].as_str().ok_or("controller path missing")?);
+        let started = return_time_ms();
+        let manifest = parent.join("mios-inputd-active.json");
+        let expected_parent = devices::read_return_json(&manifest).ok().and_then(|record| manifest_identity(&record));
+        let (released, child_peer) = match child_return_exchange(owned, &original, &target, "release_device", None) {
+            Ok(reply) => reply,
+            Err(error) => {
+                let recovery = child_return_exchange(owned, &original, &target, "abort_release", None);
+                return Err(format!("{error}; child recovery: {}",
+                    recovery.map(|(reply,_)| reply["ok"].to_string()).unwrap_or_else(|error| error)));
             }
-        } else {
-            let resp = json!({
-                "ok": false,
-                "error": format!("no controllers currently claimed by seat {}", claim.seat()),
-            });
-            let _ = writeln!(stream, "{resp}");
-            return Ok(());
+        };
+        if released["ok"].as_bool() != Some(true) { return Ok(released); }
+        if let Err(error) = claim.return_controller(registry, &target) {
+            let recovery = child_return_exchange(owned, &original, &target, "abort_release", Some(child_peer));
+            return Err(format!("claim commit failed: {error}; child recovery: {}",
+                recovery.map(|(reply,_)| reply["ok"].to_string()).unwrap_or_else(|error| error)));
         }
-    };
-
-    let child_sock = owned.join("inputd-control.sock");
-    if child_sock.exists() {
-        match UnixStream::connect(&child_sock) {
-            Ok(mut child_stream) => {
-                let release_req = json!({
-                    "action": "release_device",
-                    "device": target_node.display().to_string(),
-                });
-                if writeln!(child_stream, "{release_req}").is_ok() {
-                    let mut child_reader = BufReader::new(&child_stream);
-                    let mut child_line = String::new();
-                    if child_reader.read_line(&mut child_line).is_ok() {
-                        if let Ok(child_resp) = serde_json::from_str::<Json>(&child_line) {
-                            if child_resp["ok"].as_bool() != Some(true) {
-                                let _ = writeln!(stream, "{child_resp}");
-                                return Ok(());
-                            }
-                        }
+        let mut failure = "parent did not acknowledge a fresh, owned and neutral controller".to_string();
+        for _ in 0..20 {
+            if let Ok(record) = devices::read_return_json(&manifest) {
+                let identity = manifest_identity(&record);
+                let stamp = record["timestamp_ms"].as_u64().unwrap_or(0);
+                if identity.is_some() && expected_parent.is_none_or(|expected| identity == Some(expected))
+                    && stamp >= started && stamp <= return_time_ms() {
+                    if let Some(raw) = record["raw_consumers"].as_array().into_iter().flatten()
+                        .find(|raw| raw["path"].as_str().is_some_and(|path| return_same_path(path, &target))) {
+                        failure = format!("device held by raw consumer: {}", raw["error"].as_str().unwrap_or("EBUSY"));
+                        break;
+                    }
+                    if record["devices"].as_array().into_iter().flatten().any(|device| {
+                        device["path"].as_str().is_some_and(|path| return_same_path(path, &target))
+                            && device["rearmed"].as_bool() == Some(true)
+                    }) {
+                        return Ok(json!({"ok":true,"seat":claim.seat(),"returned_device":target,
+                            "parent_acknowledged":true,"rearmed":true,"timestamp_ms":stamp}));
                     }
                 }
             }
-            Err(e) => {
-                eprintln!("warning: could not connect to child inputd control socket: {e}");
-            }
+            thread::sleep(Duration::from_millis(100));
         }
-    }
-
-    let returned_device = match claim.return_controller(registry, &target_node) {
-        Ok(d) => d,
-        Err(e) => {
-            let resp = json!({
-                "ok": false,
-                "error": format!("claim commit failed: {e}"),
-            });
-            let _ = writeln!(stream, "{resp}");
-            return Ok(());
-        }
-    };
-
-    let active_manifest_path = parent.join("mios-inputd-active.json");
-    let mut parent_acknowledged = false;
-    let mut rearmed = false;
-    let mut raw_consumer_error = None;
-
-    for _ in 0..20 {
-        if let Ok(content) = fs::read_to_string(&active_manifest_path) {
-            if let Ok(val) = serde_json::from_str::<Json>(&content) {
-                if let Some(raws) = val["raw_consumers"].as_array() {
-                    for r in raws {
-                        let rp = r["path"].as_str().unwrap_or("");
-                        if rp == target_node.to_string_lossy() || rp == returned_device.name {
-                            raw_consumer_error = Some(
-                                r["error"]
-                                    .as_str()
-                                    .unwrap_or("device held by raw consumer")
-                                    .to_owned(),
-                            );
-                            break;
-                        }
-                    }
-                }
-                if raw_consumer_error.is_some() {
-                    break;
-                }
-                if let Some(devs) = val["devices"].as_array() {
-                    for d in devs {
-                        let dp = d["path"].as_str().unwrap_or("");
-                        if dp == target_node.to_string_lossy() {
-                            parent_acknowledged = true;
-                            if d["rearmed"].as_bool().unwrap_or(false) {
-                                rearmed = true;
-                            }
-                            break;
-                        }
-                    }
-                }
-                if rearmed {
-                    break;
-                }
-            }
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-
-    if let Some(err) = raw_consumer_error {
-        let resp = json!({
-            "ok": false,
-            "seat": claim.seat(),
-            "device": target_node.display().to_string(),
-            "status": "unrevoked",
-            "error": err,
-        });
-        let _ = writeln!(stream, "{resp}");
-        return Ok(());
-    }
-
-    let resp = json!({
-        "ok": true,
-        "seat": claim.seat(),
-        "returned_device": target_node.display().to_string(),
-        "parent_acknowledged": parent_acknowledged,
-        "rearmed": rearmed,
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-    });
-    let _ = writeln!(stream, "{resp}");
+        let restore = claim.restore_return(registry, &original);
+        let recovery = if restore.is_ok() {
+            child_return_exchange(owned, &original, &target, "abort_release", Some(child_peer))
+                .map(|(reply,_)| reply["ok"].to_string()).unwrap_or_else(|error| error)
+        } else { "not attempted: claim rollback failed".into() };
+        Err(format!("{failure}; claim rollback: {}; child recovery: {recovery}",
+            restore.err().unwrap_or_else(|| "restored".into())))
+    })();
+    let mut response = result.unwrap_or_else(|error| json!({"ok":false,"error":error}));
+    response["nonce"] = request["nonce"].clone();
+    let _ = writeln!(stream, "{response}");
     Ok(())
 }
+
 
 /// Request a controller return from a live nested session's continuing launcher.
 pub fn return_controller(_parent: &Path, registry: &Path, o: &Options) -> Result<Json, String> {
@@ -1694,21 +1655,25 @@ pub fn return_controller(_parent: &Path, registry: &Path, o: &Options) -> Result
         )
     })?;
 
+    let expected_peer = (launcher_pid, launcher_start);
+    if return_peer(&stream)? != expected_peer {
+        return Err("session control peer is not the registered launcher".into());
+    }
+    stream.set_write_timeout(Some(RETURN_IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    let nonce = return_nonce()?;
     let req_device = o.devices.first().cloned();
     let req = json!({
+        "nonce": nonce,
         "action": "return_controller",
         "seat": seat,
         "device": req_device,
     });
     writeln!(stream, "{req}").map_err(|e| format!("failed to write request: {e}"))?;
 
-    let mut reader = BufReader::new(&stream);
-    let mut resp_line = String::new();
-    reader
-        .read_line(&mut resp_line)
-        .map_err(|e| format!("failed to read response: {e}"))?;
-    let resp: Json = serde_json::from_str(&resp_line)
-        .map_err(|e| format!("invalid response from session control: {resp_line} ({e})"))?;
+    let resp = read_control_frame(&mut stream, Duration::from_secs(4))?;
+    if resp["nonce"] != nonce {
+        return Err("session response nonce does not match this request".into());
+    }
 
     if resp["ok"].as_bool() != Some(true) {
         return Err(resp["error"]
@@ -2432,305 +2397,146 @@ mod tests {
         );
     }
 
+    fn return_test_child(
+        owned: &Path,
+        count: usize,
+        mut reply: impl FnMut(&Json) -> Json + Send + 'static,
+    ) -> thread::JoinHandle<Vec<String>> {
+        let listener = UnixListener::bind(owned.join("inputd-control.sock")).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        thread::spawn(move || {
+            let mut actions = Vec::new();
+            for _ in 0..count {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    if let Ok((socket, _)) = listener.accept() { break socket; }
+                    assert!(Instant::now() < deadline, "expected child control request");
+                    thread::sleep(Duration::from_millis(2));
+                };
+                let request = read_control_frame(&mut socket, Duration::from_secs(2)).unwrap();
+                actions.push(request["action"].as_str().unwrap().to_owned());
+                let mut response = json!({"ok":true,"nonce":request["nonce"],"seat":request["seat"],
+                    "launcher_pid":request["launcher_pid"],"launcher_start":request["launcher_start"],"device":request["device"]});
+                for (key,value) in reply(&request).as_object().unwrap() { response[key] = value.clone(); }
+                writeln!(socket, "{response}").unwrap();
+            }
+            actions
+        })
+    }
+
+    fn return_test_manifest(parent: &Path, devices: Json, raw: Json) {
+        fs::write(parent.join("mios-inputd-active.json"), json!({
+            "bridge_pid":std::process::id(),"bridge_start":devices::start_time(std::process::id()).unwrap(),
+            "timestamp_ms":return_time_ms(),"devices":devices,"raw_consumers":raw
+        }).to_string()).unwrap();
+    }
+
     #[test]
     fn return_controller_positive_and_negative_controls() {
+        // Actual frontend, Unix sockets and registry/descriptor transaction.
         let t = tempfile::tempdir().unwrap();
-        let registry = t.path().join("nested");
-        fs::create_dir(&registry).unwrap();
-        let parent = t.path().join("parent-runtime");
-        fs::create_dir(&parent).unwrap();
-        let owned = t.path().join("session-runtime");
-        fs::create_dir(&owned).unwrap();
-
-        let dev_path = PathBuf::from("/dev/input/event42");
-        let device = Device {
-            path: dev_path.clone(),
-            spec: "/dev/input/event42".into(),
-            name: "Test Gamepad 1".into(),
-            kind: "controller".into(),
-            virtual_node: false,
-            siblings: vec![],
-        };
-        let dev_path2 = PathBuf::from("/dev/input/event43");
-        let device2 = Device {
-            path: dev_path2.clone(),
-            spec: "/dev/input/event43".into(),
-            name: "Test Gamepad 2".into(),
-            kind: "controller".into(),
-            virtual_node: false,
-            siblings: vec![],
-        };
-
-        // 1. Establish claim with two controllers
-        let mut claim = devices::Claim::take(
-            &registry,
-            "p2",
-            &[device.clone(), device2.clone()],
-            false,
-            json!({"state": "running", "runtime": owned}),
-        )
-        .unwrap();
-
-        let desc_path = owned.join("session.json");
-        fs::write(
-            &desc_path,
-            json!({
-                "devices": [device.to_json(), device2.to_json()],
-                "seat": "p2"
-            })
-            .to_string(),
-        )
-        .unwrap();
-        claim
-            .update(json!({"descriptor": desc_path.clone()}))
-            .unwrap();
-
-        // Bind control socket in owned runtime
-        let control_socket_path = owned.join("control.sock");
-        let listener = UnixListener::bind(&control_socket_path).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        claim
-            .update(json!({"control_socket": control_socket_path.clone()}))
-            .unwrap();
-
-        // Negative Control 1: Reused / stale PID rejection
-        {
-            let seat_file = registry.join("p2.json");
-            let orig_content = fs::read_to_string(&seat_file).unwrap();
-            let mut bad_entry: Json = serde_json::from_str(&orig_content).unwrap();
-            // Mutate launcher_start to simulate PID reuse/stale session
-            bad_entry["launcher_start"] = json!(9999999999u64);
-            fs::write(&seat_file, bad_entry.to_string()).unwrap();
-
-            let opts = Options {
-                seat: Some("p2".into()),
-                ..Default::default()
-            };
-            let err = return_controller(&parent, &registry, &opts).unwrap_err();
-            assert!(
-                err.contains("start time mismatch"),
-                "expected start time mismatch, got: {err}"
-            );
-
-            // Restore seat file
-            fs::write(&seat_file, orig_content).unwrap();
-        }
-
-        // Negative Control 2: Symlink rejection
-        {
-            let link_seat = registry.join("p3.json");
-            let _ = std::os::unix::fs::symlink(registry.join("p2.json"), &link_seat);
-            let opts = Options {
-                seat: Some("p3".into()),
-                ..Default::default()
-            };
-            let err = return_controller(&parent, &registry, &opts).unwrap_err();
-            assert!(
-                err.contains("is a symlink"),
-                "expected symlink error, got: {err}"
-            );
-            let _ = fs::remove_file(link_seat);
-        }
-
-        // Negative Control 3: Mismatched seat rejection
-        {
-            let (mut client, server) = UnixStream::pair().unwrap();
-            let d = dev_path.clone();
-            let client_thread = thread::spawn(move || {
-                writeln!(
-                    client,
-                    "{}",
-                    json!({
-                        "action": "return_controller",
-                        "seat": "wrong_seat",
-                        "device": d.display().to_string(),
-                    })
-                )
-                .unwrap();
-                let mut reader = BufReader::new(client);
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                serde_json::from_str::<Json>(&line).unwrap()
-            });
-
-            handle_control_connection(server, &mut claim, &registry, &parent, &owned).unwrap();
-            let resp = client_thread.join().unwrap();
-            assert_eq!(resp["ok"], false);
-            assert!(
-                resp["error"].as_str().unwrap().contains("mismatched seat"),
-                "expected mismatched seat, got: {resp}"
-            );
-        }
-
-        // Negative Control 4: Child inputd held buttons/triggers deferral
-        {
-            let child_sock = owned.join("inputd-control.sock");
-            let child_listener = UnixListener::bind(&child_sock).unwrap();
-            let child_thread = thread::spawn(move || {
-                let (mut stream, _) = child_listener.accept().unwrap();
-                let mut line = String::new();
-                let mut reader = BufReader::new(&mut stream);
-                reader.read_line(&mut line).unwrap();
-                let req: Json = serde_json::from_str(&line).unwrap();
-                assert_eq!(req["action"], "release_device");
-                // Respond with controls_held deferral
-                writeln!(
-                    stream,
-                    "{}",
-                    json!({
-                        "ok": false,
-                        "reason": "controls_held",
-                        "deferred": true,
-                        "error": "physical buttons or triggers currently held; release deferred",
-                    })
-                )
-                .unwrap();
-            });
-
-            let (mut client, server) = UnixStream::pair().unwrap();
-            let d = dev_path.clone();
-            let client_thread = thread::spawn(move || {
-                writeln!(
-                    client,
-                    "{}",
-                    json!({
-                        "action": "return_controller",
-                        "seat": "p2",
-                        "device": d.display().to_string(),
-                    })
-                )
-                .unwrap();
-                let mut reader = BufReader::new(client);
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                serde_json::from_str::<Json>(&line).unwrap()
-            });
-
-            handle_control_connection(server, &mut claim, &registry, &parent, &owned).unwrap();
-            child_thread.join().unwrap();
-            let resp = client_thread.join().unwrap();
-            assert_eq!(resp["ok"], false);
-            assert_eq!(resp["reason"], "controls_held");
-            assert_eq!(resp["deferred"], true);
-            let _ = fs::remove_file(child_sock);
-        }
-
-        // Negative Control 5: Raw consumer conflict reporting (unrevoked)
-        {
-            // Simulate parent inputd finding raw consumer (EBUSY)
-            fs::write(
-                parent.join("mios-inputd-active.json"),
-                json!({
-                    "devices": [],
-                    "raw_consumers": [
-                        {
-                            "path": dev_path.display().to_string(),
-                            "error": "device held by raw consumer (EBUSY)",
-                        }
-                    ]
-                })
-                .to_string(),
-            )
-            .unwrap();
-
-            let (mut client, server) = UnixStream::pair().unwrap();
-            let d = dev_path.clone();
-            let client_thread = thread::spawn(move || {
-                writeln!(
-                    client,
-                    "{}",
-                    json!({
-                        "action": "return_controller",
-                        "seat": "p2",
-                        "device": d.display().to_string(),
-                    })
-                )
-                .unwrap();
-                let mut reader = BufReader::new(client);
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                serde_json::from_str::<Json>(&line).unwrap()
-            });
-
-            handle_control_connection(server, &mut claim, &registry, &parent, &owned).unwrap();
-            let resp = client_thread.join().unwrap();
-            assert_eq!(resp["ok"], false);
-            assert_eq!(resp["status"], "unrevoked");
-            assert!(
-                resp["error"]
-                    .as_str()
-                    .unwrap()
-                    .contains("held by raw consumer"),
-                "expected raw consumer error, got: {resp}"
-            );
-        }
-
-        // Positive Control: Successful return with parent active ACK and neutral rearming
-        {
-            // Parent inputd active manifest reports device active and rearmed
-            fs::write(
-                parent.join("mios-inputd-active.json"),
-                json!({
-                    "devices": [
-                        {
-                            "path": dev_path2.display().to_string(),
-                            "name": "Test Gamepad 2",
-                            "rearmed": true,
-                        }
-                    ],
-                    "raw_consumers": []
-                })
-                .to_string(),
-            )
-            .unwrap();
-
-            // Spawn client thread that uses return_controller
-            let p_clone = parent.clone();
-            let r_clone = registry.clone();
-            let opts = Options {
-                seat: Some("p2".into()),
-                devices: vec![dev_path2.display().to_string()],
-                ..Default::default()
-            };
-
-            let client_handle = thread::spawn(move || return_controller(&p_clone, &r_clone, &opts));
-
-            // Server accepts and handles connection
-            let mut stream = None;
-            for _ in 0..50 {
-                if let Ok((s, _)) = listener.accept() {
-                    stream = Some(s);
-                    break;
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-            let stream = stream.expect("client did not connect to control socket");
-            handle_control_connection(stream, &mut claim, &registry, &parent, &owned).unwrap();
-
-            let resp = client_handle.join().unwrap().unwrap();
-            assert_eq!(resp["ok"], true);
-            assert_eq!(resp["seat"], "p2");
-            assert_eq!(resp["returned_device"], dev_path2.display().to_string());
-            assert_eq!(resp["parent_acknowledged"], true);
-            assert_eq!(resp["rearmed"], true);
-
-            // Verify claim and descriptor were updated atomically
-            let fresh_entry: Json =
-                serde_json::from_str(&fs::read_to_string(registry.join("p2.json")).unwrap())
-                    .unwrap();
-            assert!(
-                fresh_entry["devices"].as_array().unwrap().is_empty(),
-                "all devices must now be removed from registry claim"
-            );
-
-            let fresh_desc: Json =
-                serde_json::from_str(&fs::read_to_string(&desc_path).unwrap()).unwrap();
-            assert!(
-                fresh_desc["devices"].as_array().unwrap().is_empty(),
-                "all devices must now be removed from session descriptor"
-            );
+        let (registry,parent,owned,mut claim) = root_review_claim(&t);
+        let listener = UnixListener::bind(owned.join("control.sock")).unwrap();
+        claim.update(json!({"control_socket":owned.join("control.sock")})).unwrap();
+        let seat_file = registry.join("review.json");
+        let original = fs::read(&seat_file).unwrap();
+        let mut recycled: Json = serde_json::from_slice(&original).unwrap();
+        recycled["launcher_start"] = json!(u64::MAX);
+        fs::write(&seat_file,recycled.to_string()).unwrap();
+        let options = Options {seat:Some("review".into()),..Default::default()};
+        assert!(return_controller(&parent,&registry,&options).unwrap_err().contains("start time mismatch"));
+        fs::write(&seat_file,&original).unwrap();
+        symlink(&seat_file,registry.join("foreign.json")).unwrap();
+        let foreign = Options {seat:Some("foreign".into()),..Default::default()};
+        assert!(return_controller(&parent,&registry,&foreign).unwrap_err().contains("symlink"));
+        let wrong_seat = root_review_request_with(&mut claim,&registry,&parent,&owned,
+            json!({"action":"return_controller","nonce":"wrong-seat","seat":"foreign"}));
+        assert_eq!(wrong_seat["ok"],false);
+        assert!(wrong_seat["error"].as_str().unwrap().contains("mismatched seat"));
+        let parent_copy = parent.clone();
+        let child = return_test_child(&owned,1,move |request| {
+            assert_eq!(request["action"],"release_device");
+            assert_eq!(request["seat"],"review");
+            assert_eq!(request["launcher_pid"],std::process::id());
+            assert!(request["nonce"].as_str().is_some_and(|nonce| !nonce.is_empty()));
+            return_test_manifest(&parent_copy,json!([{"path":"/dev/input/event42","rearmed":true}]),json!([]));
+            json!({})
+        });
+        let client = thread::spawn(move || return_controller(&parent,&registry,&options));
+        let (socket,_) = listener.accept().unwrap();
+        // The caller's paths moved into its thread; the claim keeps authoritative paths.
+        let registry = seat_file.parent().unwrap();
+        let parent = t.path().join("parent");
+        handle_control_connection(socket,&mut claim,registry,&parent,&owned).unwrap();
+        let response = client.join().unwrap().unwrap();
+        assert_eq!(response["ok"],true);
+        assert_eq!(response["returned_device"],"/dev/input/event42");
+        assert_eq!(response["parent_acknowledged"],true);
+        assert_eq!(response["rearmed"],true);
+        assert_eq!(child.join().unwrap(),vec!["release_device"]);
+        for record in [&seat_file,&owned.join("session.json")] {
+            let record: Json = serde_json::from_slice(&fs::read(record).unwrap()).unwrap();
+            assert!(record["devices"].as_array().unwrap().is_empty());
+            assert_eq!(record["seat"],"review");
         }
     }
+
+    #[test]
+    fn return_defers_held_controls_without_changing_the_claim() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let child=return_test_child(&owned,1,|_|json!({"ok":false,"reason":"controls_held","deferred":true}));
+        let response=root_review_request(&mut claim,&registry,&parent,&owned);
+        assert_eq!(response["ok"],false);
+        assert_eq!(response["reason"],"controls_held");
+        assert_eq!(response["deferred"],true);
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
+        assert_eq!(child.join().unwrap(),vec!["release_device"]);
+    }
+
+    #[test]
+    fn return_raw_consumer_conflict_restores_claim_and_reacquires_child() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let parent_copy=parent.clone();
+        let child=return_test_child(&owned,2,move |_| {
+            return_test_manifest(&parent_copy,json!([]),json!([{"path":"/dev/input/event42","error":"EBUSY"}]));
+            json!({})
+        });
+        let response=root_review_request(&mut claim,&registry,&parent,&owned);
+        assert_eq!(response["ok"],false);
+        assert!(response["error"].as_str().unwrap().contains("raw consumer"));
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
+        assert_eq!(child.join().unwrap(),vec!["release_device","abort_release"]);
+    }
+
+    #[test]
+    fn return_rejects_stale_nonce_and_recovers_the_child() {
+        let t=tempfile::tempdir().unwrap();
+        let (registry,parent,owned,mut claim)=root_review_claim(&t);
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let child=return_test_child(&owned,2,|request| {
+            if request["action"]=="release_device" {json!({"nonce":"stale-reply"})}else{json!({})}
+        });
+        let response=root_review_request(&mut claim,&registry,&parent,&owned);
+        assert_eq!(response["ok"],false);
+        assert!(response["error"].as_str().unwrap().contains("does not match"));
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
+        assert_eq!(child.join().unwrap(),vec!["release_device","abort_release"]);
+    }
+
+    #[test]
+    fn return_control_frames_are_bounded_and_require_a_complete_line() {
+        for bytes in [b"{}".to_vec(),vec![b'x';RETURN_FRAME_BYTES as usize+2]] {
+            let (mut writer,mut reader)=UnixStream::pair().unwrap();
+            writer.write_all(&bytes).unwrap();
+            drop(writer);
+            assert!(read_control_frame(&mut reader,RETURN_IO_TIMEOUT).is_err());
+        }
+    }
+
     fn root_review_claim(t: &tempfile::TempDir) -> (PathBuf, PathBuf, PathBuf, devices::Claim) {
         let registry = t.path().join("registry");
         let parent = t.path().join("parent");
@@ -2747,15 +2553,19 @@ mod tests {
         (registry,parent,owned,claim)
     }
 
-    fn root_review_request(claim: &mut devices::Claim, registry: &Path, parent: &Path, owned: &Path) -> Json {
+    fn root_review_request_with(claim: &mut devices::Claim, registry: &Path, parent: &Path, owned: &Path, request: Json) -> Json {
         let (mut client, server) = UnixStream::pair().unwrap();
         let peer = thread::spawn(move || {
-            writeln!(client, "{}", json!({"action":"return_controller","seat":"review","device":"/dev/input/event42"})).unwrap();
+            writeln!(client, "{request}").unwrap();
             let mut s=String::new(); BufReader::new(client).read_line(&mut s).unwrap();
             serde_json::from_str::<Json>(&s).unwrap()
         });
         handle_control_connection(server,claim,registry,parent,owned).unwrap();
         peer.join().unwrap()
+    }
+
+    fn root_review_request(claim: &mut devices::Claim, registry: &Path, parent: &Path, owned: &Path) -> Json {
+        root_review_request_with(claim,registry,parent,owned,json!({"action":"return_controller","nonce":"review-request","seat":"review","device":"/dev/input/event42"}))
     }
 
     #[test]
@@ -2774,14 +2584,11 @@ mod tests {
     fn root_return_review_missing_parent_must_not_report_success() {
         let t=tempfile::tempdir().unwrap();
         let (registry,parent,owned,mut claim)=root_review_claim(&t);
-        let child=UnixListener::bind(owned.join("inputd-control.sock")).unwrap();
-        let worker=thread::spawn(move || {
-            let (mut s,_)=child.accept().unwrap();
-            let mut request=String::new();BufReader::new(&s).read_line(&mut request).unwrap();
-            writeln!(s,"{}",json!({"ok":true,"device":"/dev/input/event42"})).unwrap();
-        });
+        let before=fs::read(registry.join("review.json")).unwrap();
+        let worker=return_test_child(&owned,2,|_|json!({}));
         let result=root_review_request(&mut claim,&registry,&parent,&owned);
-        worker.join().unwrap();
+        assert_eq!(worker.join().unwrap(),vec!["release_device","abort_release"]);
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(),before);
         assert_eq!(result["ok"],false,"missing parent acknowledgement must never report success: {result}");
     }
 
