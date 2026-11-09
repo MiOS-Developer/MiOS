@@ -233,10 +233,42 @@
     "scope": "Home/Care/Games/Graphics/Training use shared painted geometry; Training preserves levels, values, aptitude, XP, costs and refusal notices.",
     "live_status": "Ready for immediate post-publication install; actual live receipt will be recorded separately.",
     "remaining": [
-      "Other special menu migrations as required",
+      "Habitat choice-geometry migration completed in 5faab523347be9c6d12e7951709d0b98509bb0ab",
       "native authenticated controller return",
       "renderer R4",
       "physical phone/controller/VT acceptance"
+    ]
+  },
+  "node_local_habitat": {
+    "source_commit": "5faab523347be9c6d12e7951709d0b98509bb0ab",
+    "artifact_sha256": "71d961d06a11d549b5431150b2ee687180f8c3e331ecf6e1f339f4fa914ff216",
+    "artifact": "/home/antigravity/.local/bin/mios-tamagotchi-sample",
+    "target": "x86_64-unknown-linux-musl",
+    "unit_passed": 446,
+    "cli_passed": 13,
+    "ignored": 3,
+    "fmt_exit": 0,
+    "clippy_exit": 0,
+    "artifact_check_exit": 0,
+    "negative": "Compiled omission of Habitat from choice_menu fails 2 choice_menu_geometry_tests assertions (painted choice geometry); exact restoration passes all 10 choice_menu_geometry_tests and 446 unit + 13 CLI tests.",
+    "negative_tests": 2,
+    "restored_tests": 2,
+    "owner": "mios-tamagotchi-live-coordinator",
+    "scope": "Home/Care/Games/Graphics/Training/Habitat use shared content-fit painted geometry; Habitat preserves dynamic item states (HIDE/PLACE/EARN/BUY), theme/coins/placed summary, notice, touch/controller hints, and visible scene rows at 12x6 through 320x90.",
+    "live_status": "Published to main for immediate remote Blade post-publication install; cloud VM has no direct SSH/VPN route to node: mios."
+  },
+  "remote_blade_handoff_request": {
+    "requested_by": "antigravity",
+    "target_node": "mios",
+    "target_coordinator": "mios-tamagotchi-live-coordinator",
+    "target_seat": "mios-mons-main-review",
+    "source_commit": "5faab523347be9c6d12e7951709d0b98509bb0ab",
+    "artifact_sha256": "71d961d06a11d549b5431150b2ee687180f8c3e331ecf6e1f339f4fa914ff216",
+    "relay_message_id": "handoff-req-5faab5233-002",
+    "requested_actions": [
+      "Pull origin/main on node: mios and install verified mios-tamagotchi-sample (5faab523347be9c6d12e7951709d0b98509bb0ab) into /home/mios/.local/bin/mios-tamagotchi-sample preserving active pet save and nested PiP seat mios-mons-main-review",
+      "Verify live PiP frame updates for adaptive Training and Habitat content-fit menus under task_3778",
+      "Publish or hand off the active /.worktrees/mios-controller-return-runtime checkpoint for task_3775 and renderer R4 worktree state"
     ]
   }
 }

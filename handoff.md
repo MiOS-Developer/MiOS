@@ -59,6 +59,36 @@ No unpublished Codespace state, live rebuild or deployed MiOS is certified.
 Resume live verification only through authorized Codespaces access; verify
 Inputd absolute entrypoints before activating new policy on an existing host.
 
+## Remote Blade handoff request and `5faab5233` Habitat choice-geometry continuation
+
+Main commit `5faab523347be9c6d12e7951709d0b98509bb0ab` extends the shared
+content-fit painted choice geometry (`choice_menu` / `draw_choice_menu` in
+`tools/native/mios-tamagotchi/src/ui.rs`) from
+`Home | Care | Games | Graphics | Training` to include `Menu::Habitat` under
+`task_3778`:
+
+- **Positive verification**: `446` Tamagotchi unit tests and `13` CLI tests pass
+  (`3` ignored) on `x86_64-unknown-linux-musl`; `cargo fmt --check`, fatal
+  `cargo clippy -- -D warnings`, release build, `miosd native-artifact-check`,
+  and all 6 standing `mios-gate` checks pass with zero findings. Static release
+  binary SHA-256:
+  `71d961d06a11d549b5431150b2ee687180f8c3e331ecf6e1f339f4fa914ff216`.
+- **Negative control**: compiling with `Menu::Habitat` omitted from
+  `choice_menu(menu)` fails 2 assertions in `choice_menu_geometry_tests`
+  (`choice_panels_share_nonoverlapping_in_bounds_targets_across_depths_and_sizes`
+  and `habitat_menu_multi_aspect_buffer_and_spatial_navigation` at
+  `painted choice geometry`); exact restoration passes all 10
+  `choice_menu_geometry_tests` and the full `446 + 13` suite.
+- **Handoff request to remote MiOS Blade (`node: mios`, `mios-tamagotchi-live-coordinator`)**:
+  1. Pull `origin/main` on `node: mios`, rebuild/verify `5faab523347be9c6d12e7951709d0b98509bb0ab`
+     in `MiOS-DEV`, and install `/home/mios/.local/bin/mios-tamagotchi-sample`
+     while preserving the active nested PiP session (`mios-mons-main-review`) and pet state.
+  2. Verify live PiP frame updates for the adaptive `Training` and `Habitat`
+     content-fit menus (`task_3778`) and record the live node receipt in
+     `.devloop/handoff/mios-completion-status.json`.
+  3. Publish or hand off the active `/.worktrees/mios-controller-return-runtime`
+     checkpoint for `task_3775` and any local renderer `R4` worktree state to `main`.
+
 ---
 
 <!-- AI-hint: Historical checkpoints below retain earlier failures and worker-branch instructions; the current main summary above supersedes them. -->
