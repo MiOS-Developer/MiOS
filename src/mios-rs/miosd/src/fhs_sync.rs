@@ -1546,7 +1546,11 @@ mod tests {
         }
         let bench_duration = bench_start.elapsed();
         let nanos_per_call = bench_duration.as_nanos() / 20_000;
-        let max_ns: u128 = if cfg!(debug_assertions) { 10_000 } else { 1_000 };
+        let max_ns: u128 = if cfg!(debug_assertions) {
+            10_000
+        } else {
+            1_000
+        };
         assert!(
             nanos_per_call < max_ns,
             "Prefix check took {}ns/call, expected < {}ns",

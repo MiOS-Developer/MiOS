@@ -128,9 +128,8 @@ impl Session {
                 self.launcher_pid
             ));
         }
-        let actual_start = start_time(proc_root, peer_pid).ok_or_else(|| {
-            format!("unauthorized: peer process {peer_pid} not found in proc")
-        })?;
+        let actual_start = start_time(proc_root, peer_pid)
+            .ok_or_else(|| format!("unauthorized: peer process {peer_pid} not found in proc"))?;
         if actual_start != self.launcher_start {
             return Err(format!(
                 "unauthorized: peer PID {peer_pid} start ticks {actual_start} != launcher start {}",
@@ -161,12 +160,8 @@ impl Session {
                 ));
             }
         }
-        let meta = std::fs::symlink_metadata(&self.entry).map_err(|e| {
-            format!(
-                "cannot stat registry entry {}: {e}",
-                self.entry.display()
-            )
-        })?;
+        let meta = std::fs::symlink_metadata(&self.entry)
+            .map_err(|e| format!("cannot stat registry entry {}: {e}", self.entry.display()))?;
         if meta.file_type().is_symlink() {
             return Err(format!(
                 "registry entry {} is a symlink",
@@ -198,12 +193,8 @@ impl Session {
                 self.launcher_pid
             ));
         }
-        let meta = std::fs::symlink_metadata(&self.entry).map_err(|e| {
-            format!(
-                "cannot stat registry entry {}: {e}",
-                self.entry.display()
-            )
-        })?;
+        let meta = std::fs::symlink_metadata(&self.entry)
+            .map_err(|e| format!("cannot stat registry entry {}: {e}", self.entry.display()))?;
         if meta.file_type().is_symlink() {
             return Err(format!(
                 "registry entry {} is a symlink",
@@ -597,45 +588,69 @@ mod tests {
         fake_proc(&proc_root, 77, 2000);
         fake_proc(&proc_root, 78, 2000);
 
-        let record = entry(
-            "p4",
-            77,
-            2000,
-            "running",
-            Some("/tmp/mios-hypr3d-pad.bin"),
-        );
+        let record = entry("p4", 77, 2000, "running", Some("/tmp/mios-hypr3d-pad.bin"));
         std::fs::write(reg.join("p4.json"), &record).unwrap();
 
         let s = session(&reg, &proc_root, "p4").unwrap();
-        assert!(
-            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), Some(77), Some(2000))
-                .is_ok()
-        );
+        assert!(s
+            .verify_launcher_peer(
+                &proc_root,
+                1000,
+                (1000, 77),
+                Some("p4"),
+                Some(77),
+                Some(2000)
+            )
+            .is_ok());
         // Wrong UID refuses
-        assert!(
-            s.verify_launcher_peer(&proc_root, 1000, (1001, 77), Some("p4"), Some(77), Some(2000))
-                .unwrap_err()
-                .contains("peer UID")
-        );
+        assert!(s
+            .verify_launcher_peer(
+                &proc_root,
+                1000,
+                (1001, 77),
+                Some("p4"),
+                Some(77),
+                Some(2000)
+            )
+            .unwrap_err()
+            .contains("peer UID"));
         // Same-UID non-launcher PID refuses
-        assert!(
-            s.verify_launcher_peer(&proc_root, 1000, (1000, 78), Some("p4"), Some(77), Some(2000))
-                .unwrap_err()
-                .contains("not session launcher PID")
-        );
+        assert!(s
+            .verify_launcher_peer(
+                &proc_root,
+                1000,
+                (1000, 78),
+                Some("p4"),
+                Some(77),
+                Some(2000)
+            )
+            .unwrap_err()
+            .contains("not session launcher PID"));
         // Wrong request seat refuses
-        assert!(
-            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p5"), Some(77), Some(2000))
-                .unwrap_err()
-                .contains("request seat")
-        );
+        assert!(s
+            .verify_launcher_peer(
+                &proc_root,
+                1000,
+                (1000, 77),
+                Some("p5"),
+                Some(77),
+                Some(2000)
+            )
+            .unwrap_err()
+            .contains("request seat"));
         // Recycled start ticks refuses
         fake_proc(&proc_root, 77, 2001);
-        assert!(
-            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), Some(77), Some(2000))
-                .unwrap_err()
-                .contains("start ticks")
-        );
+        assert!(s
+            .verify_launcher_peer(
+                &proc_root,
+                1000,
+                (1000, 77),
+                Some("p4"),
+                Some(77),
+                Some(2000)
+            )
+            .unwrap_err()
+            .contains("start ticks"));
         fake_proc(&proc_root, 77, 2000);
 
         // Symlinked registry entry is ignored by live_sessions and refused by verify_launcher_peer
@@ -646,11 +661,10 @@ mod tests {
         {
             std::os::unix::fs::symlink(&outside, reg.join("p4.json")).unwrap();
             assert!(live_sessions(&reg, &proc_root).is_empty());
-            assert!(
-                s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), None, None)
-                    .unwrap_err()
-                    .contains("symlink")
-            );
+            assert!(s
+                .verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), None, None)
+                .unwrap_err()
+                .contains("symlink"));
         }
     }
 }

@@ -2505,10 +2505,7 @@ fn socket_peercred_linux(stream: &std::os::unix::net::UnixStream) -> Result<(u32
             &mut len,
         )
     };
-    if rc != 0
-        || len as usize != std::mem::size_of::<libc::ucred>()
-        || cred.pid <= 0
-    {
+    if rc != 0 || len as usize != std::mem::size_of::<libc::ucred>() || cred.pid <= 0 {
         return Err("unauthorized: SO_PEERCRED failed".into());
     }
     Ok((cred.uid, cred.pid as u32))
@@ -2601,12 +2598,7 @@ fn resolve_leased_controller_path(
         .iter()
         .find(|p| paths_match_exact_or_canonical(p, &target_path))
         .cloned()
-        .ok_or_else(|| {
-            format!(
-                "device {} not owned by child inputd",
-                target_path.display()
-            )
-        })
+        .ok_or_else(|| format!("device {} not owned by child inputd", target_path.display()))
 }
 
 fn physical_controls_neutral(
@@ -2775,7 +2767,11 @@ where
 
     match req["action"].as_str() {
         Some("return_capabilities") => {
-            let target = match resolve_leased_controller_path(req["device"].as_str().unwrap_or(""), &session.controllers, active_devices) {
+            let target = match resolve_leased_controller_path(
+                req["device"].as_str().unwrap_or(""),
+                &session.controllers,
+                active_devices,
+            ) {
                 Ok(path) => path,
                 Err(error) => {
                     let resp = serde_json::json!({"ok":false,"nonce":nonce,"seat":session.seat,"error":error});
@@ -2790,23 +2786,21 @@ where
         }
         Some("release_device") => {
             let dev_req = req["device"].as_str().unwrap_or("");
-            let matched = match resolve_leased_controller_path(
-                dev_req,
-                &session.controllers,
-                active_devices,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    let resp = serde_json::json!({
-                        "ok": false,
-                        "nonce": nonce,
-                        "seat": session.seat,
-                        "error": e,
-                    });
-                    let _ = writeln!(stream, "{resp}");
-                    return resp;
-                }
-            };
+            let matched =
+                match resolve_leased_controller_path(dev_req, &session.controllers, active_devices)
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let resp = serde_json::json!({
+                            "ok": false,
+                            "nonce": nonce,
+                            "seat": session.seat,
+                            "error": e,
+                        });
+                        let _ = writeln!(stream, "{resp}");
+                        return resp;
+                    }
+                };
             match inspect_and_release(&matched) {
                 Ok(Ok(())) => {
                     {
@@ -3576,9 +3570,12 @@ pub fn run(
                             for (code, axis) in axes {
                                 combined_axes.insert(code, axis);
                             }
-                            if let Err(held) =
-                                physical_controls_neutral(&keys, &combined_axes, global.controller.stick_deadzone, legacy.trigger_threshold)
-                            {
+                            if let Err(held) = physical_controls_neutral(
+                                &keys,
+                                &combined_axes,
+                                global.controller.stick_deadzone,
+                                legacy.trigger_threshold,
+                            ) {
                                 return Ok(Err(held));
                             }
                             let mut dev = devices.remove(matched_path).unwrap();
@@ -4236,10 +4233,7 @@ pub fn run(
                         legacy.trigger_threshold,
                     );
                     if !still_rearming {
-                        eprintln!(
-                            "{}",
-                            serde_json::json!({"rearmed": true, "device": path})
-                        );
+                        eprintln!("{}", serde_json::json!({"rearmed": true, "device": path}));
                         manifest_dirty = true;
                     } else {
                         continue;
@@ -6637,114 +6631,216 @@ mod app_detection {
     fn controller_return_fixture() -> (tempfile::TempDir, crate::nested::Session, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
         let pid = std::process::id();
-        let start = crate::nested::start_time(Path::new("/proc"),pid).unwrap();
+        let start = crate::nested::start_time(Path::new("/proc"), pid).unwrap();
         let proc_root = dir.path().join("proc");
         std::fs::create_dir_all(proc_root.join(pid.to_string())).unwrap();
-        std::fs::copy(format!("/proc/{pid}/stat"),proc_root.join(pid.to_string()).join("stat")).unwrap();
+        std::fs::copy(
+            format!("/proc/{pid}/stat"),
+            proc_root.join(pid.to_string()).join("stat"),
+        )
+        .unwrap();
         let device = dir.path().join("event42");
-        std::fs::write(&device,[]).unwrap();
+        std::fs::write(&device, []).unwrap();
         let entry = dir.path().join("seat.json");
-        std::fs::write(&entry,serde_json::json!({"seat":"owned","launcher_pid":pid,"launcher_start":start,
-            "devices":[{"path":device,"kind":"controller","siblings":[]}]}).to_string()).unwrap();
-        let session = crate::nested::Session {seat:"owned".into(),entry,launcher_pid:pid,launcher_start:start,
-            runtime:dir.path().into(),instance:"fixture".into(),wayland_display:"fixture".into(),
-            pad_state:dir.path().join("packet"),controllers:vec![device],control_socket:None};
-        (dir,session,proc_root)
+        std::fs::write(
+            &entry,
+            serde_json::json!({"seat":"owned","launcher_pid":pid,"launcher_start":start,
+            "devices":[{"path":device,"kind":"controller","siblings":[]}]})
+            .to_string(),
+        )
+        .unwrap();
+        let session = crate::nested::Session {
+            seat: "owned".into(),
+            entry,
+            launcher_pid: pid,
+            launcher_start: start,
+            runtime: dir.path().into(),
+            instance: "fixture".into(),
+            wayland_display: "fixture".into(),
+            pad_state: dir.path().join("packet"),
+            controllers: vec![device],
+            control_socket: None,
+        };
+        (dir, session, proc_root)
     }
 
-    fn controller_return_request(session: &crate::nested::Session, action: &str) -> serde_json::Value {
+    fn controller_return_request(
+        session: &crate::nested::Session,
+        action: &str,
+    ) -> serde_json::Value {
         serde_json::json!({"action":action,"nonce":"current-request","seat":session.seat,
             "launcher_pid":session.launcher_pid,"launcher_start":session.launcher_start,"device":session.controllers[0]})
     }
 
     fn controller_return_call(
-        session: &crate::nested::Session, proc_root: &Path,
-        known: &std::sync::Mutex<BTreeSet<PathBuf>>, released: &std::sync::Mutex<BTreeSet<PathBuf>>,
+        session: &crate::nested::Session,
+        proc_root: &Path,
+        known: &std::sync::Mutex<BTreeSet<PathBuf>>,
+        released: &std::sync::Mutex<BTreeSet<PathBuf>>,
         request: serde_json::Value,
-        release: impl FnMut(&Path) -> Result<Result<(),(Vec<u16>,Vec<u16>)>,String>,
+        release: impl FnMut(&Path) -> Result<Result<(), (Vec<u16>, Vec<u16>)>, String>,
     ) -> serde_json::Value {
-        let (mut client,server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (mut client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         let writer = std::thread::spawn(move || {
-            writeln!(client,"{request}").unwrap();
-            read_bounded_control_json(&mut client,Duration::from_secs(2),4096).unwrap()
+            writeln!(client, "{request}").unwrap();
+            read_bounded_control_json(&mut client, Duration::from_secs(2), 4096).unwrap()
         });
         let active = session.controllers.iter().cloned().collect();
-        let response = handle_child_control_connection(server,session,proc_root,unsafe{libc::geteuid()},None,
-            &active,known,released,release);
-        assert_eq!(writer.join().unwrap(),response);
+        let response = handle_child_control_connection(
+            server,
+            session,
+            proc_root,
+            unsafe { libc::geteuid() },
+            None,
+            &active,
+            known,
+            released,
+            release,
+        );
+        assert_eq!(writer.join().unwrap(), response);
         response
     }
 
     #[test]
     fn controller_return_release_and_rollback_use_current_lease_and_nonce() {
-        let (_dir,session,proc_root)=controller_return_fixture();
-        let known=std::sync::Mutex::new(session.controllers.iter().cloned().collect());
-        let released=std::sync::Mutex::new(BTreeSet::new());
-        let capabilities=controller_return_call(&session,&proc_root,&known,&released,
-            controller_return_request(&session,"return_capabilities"),|_|panic!("capability probes never release devices"));
-        assert_eq!(capabilities["protocol_version"],1);
+        let (_dir, session, proc_root) = controller_return_fixture();
+        let known = std::sync::Mutex::new(session.controllers.iter().cloned().collect());
+        let released = std::sync::Mutex::new(BTreeSet::new());
+        let capabilities = controller_return_call(
+            &session,
+            &proc_root,
+            &known,
+            &released,
+            controller_return_request(&session, "return_capabilities"),
+            |_| panic!("capability probes never release devices"),
+        );
+        assert_eq!(capabilities["protocol_version"], 1);
         assert!(released.lock().unwrap().is_empty());
         assert!(known.lock().unwrap().contains(&session.controllers[0]));
-        let reply=controller_return_call(&session,&proc_root,&known,&released,
-            controller_return_request(&session,"release_device"),|_|Ok(Ok(())));
-        assert_eq!(reply["ok"],true);
-        assert_eq!(reply["nonce"],"current-request");
+        let reply = controller_return_call(
+            &session,
+            &proc_root,
+            &known,
+            &released,
+            controller_return_request(&session, "release_device"),
+            |_| Ok(Ok(())),
+        );
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["nonce"], "current-request");
         assert!(released.lock().unwrap().contains(&session.controllers[0]));
         assert!(known.lock().unwrap().is_empty());
         // A scan may have observed the temporary claim removal. Rollback reads the restored lease.
-        let mut stale=session.clone();stale.controllers.clear();
-        let reply=controller_return_call(&stale,&proc_root,&known,&released,
-            controller_return_request(&session,"abort_release"),|_|panic!("rollback must not release again"));
-        assert_eq!(reply["ok"],true);
-        assert_eq!(reply["launcher_pid"],session.launcher_pid);
-        assert_eq!(reply["launcher_start"],session.launcher_start);
-        assert_eq!(reply["reacquire_armed"],true);
+        let mut stale = session.clone();
+        stale.controllers.clear();
+        let reply = controller_return_call(
+            &stale,
+            &proc_root,
+            &known,
+            &released,
+            controller_return_request(&session, "abort_release"),
+            |_| panic!("rollback must not release again"),
+        );
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["launcher_pid"], session.launcher_pid);
+        assert_eq!(reply["launcher_start"], session.launcher_start);
+        assert_eq!(reply["reacquire_armed"], true);
         assert!(released.lock().unwrap().is_empty());
     }
 
     #[test]
     fn controller_return_refuses_bad_nonce_foreign_paths_and_held_controls() {
-        let (dir,session,proc_root)=controller_return_fixture();
-        let known=std::sync::Mutex::new(session.controllers.iter().cloned().collect());
-        let released=std::sync::Mutex::new(BTreeSet::new());
-        for field in ["nonce","seat","device"] {
-            let mut request=controller_return_request(&session,"release_device");
-            request[field]=match field {
-                "nonce"=>serde_json::json!(""),"seat"=>serde_json::json!("foreign"),
-                _=>serde_json::json!(dir.path().join("foreign/event42")),
+        let (dir, session, proc_root) = controller_return_fixture();
+        let known = std::sync::Mutex::new(session.controllers.iter().cloned().collect());
+        let released = std::sync::Mutex::new(BTreeSet::new());
+        for field in ["nonce", "seat", "device"] {
+            let mut request = controller_return_request(&session, "release_device");
+            request[field] = match field {
+                "nonce" => serde_json::json!(""),
+                "seat" => serde_json::json!("foreign"),
+                _ => serde_json::json!(dir.path().join("foreign/event42")),
             };
-            let reply=controller_return_call(&session,&proc_root,&known,&released,request,
-                |_|panic!("invalid requests must not query or release a device"));
-            assert_eq!(reply["ok"],false,"{field}");
+            let reply =
+                controller_return_call(&session, &proc_root, &known, &released, request, |_| {
+                    panic!("invalid requests must not query or release a device")
+                });
+            assert_eq!(reply["ok"], false, "{field}");
             assert!(released.lock().unwrap().is_empty());
             assert!(known.lock().unwrap().contains(&session.controllers[0]));
         }
-        let held=controller_return_call(&session,&proc_root,&known,&released,
-            controller_return_request(&session,"release_device"),|_|Ok(Err((vec![304],vec![0,2]))));
-        assert_eq!(held["reason"],"controls_held");assert_eq!(held["deferred"],true);
-        let failed=controller_return_call(&session,&proc_root,&known,&released,
-            controller_return_request(&session,"release_device"),|_|Err("ioctl failed".into()));
-        assert_eq!(failed["reason"],"ioctl_failed");
+        let held = controller_return_call(
+            &session,
+            &proc_root,
+            &known,
+            &released,
+            controller_return_request(&session, "release_device"),
+            |_| Ok(Err((vec![304], vec![0, 2]))),
+        );
+        assert_eq!(held["reason"], "controls_held");
+        assert_eq!(held["deferred"], true);
+        let failed = controller_return_call(
+            &session,
+            &proc_root,
+            &known,
+            &released,
+            controller_return_request(&session, "release_device"),
+            |_| Err("ioctl failed".into()),
+        );
+        assert_eq!(failed["reason"], "ioctl_failed");
         assert!(released.lock().unwrap().is_empty());
     }
 
     #[test]
     fn controller_return_rearms_only_after_authoritative_neutral_snapshot() {
-        let (global,legacy)=crate::config::tests::fixture();
-        let mut router=Router::new(global,legacy,BTreeMap::new());
-        let moving=crate::router::Axis{min:-100,max:100,value:80};
-        let neutral=crate::router::Axis{value:0,..moving};
-        let pressed=crate::router::Axis{min:0,max:255,value:200};
-        assert!(physical_controls_neutral(&BTreeSet::from([304]),&BTreeMap::new(),0.2,0.5).is_err());
-        assert!(physical_controls_neutral(&BTreeSet::new(),&BTreeMap::from([(0,moving),(2,pressed)]),0.2,0.5).is_err());
-        let mut rearming=true;
-        assert!(step_neutral_rearming(&mut rearming,&mut router,Err(std::io::Error::other("ioctl")),0.2,0.5));
-        assert!(step_neutral_rearming(&mut rearming,&mut router,Ok((BTreeSet::new(),BTreeMap::from([(0,moving)]))),0.2,0.5));
-        router.axes.insert(0,moving);
-        assert!(!step_neutral_rearming(&mut rearming,&mut router,Ok((BTreeSet::new(),BTreeMap::from([(0,neutral)]))),0.2,0.5));
-        assert!(!rearming,"a fresh neutral ioctl snapshot replaces stale cached axis state");
-        assert_eq!(router.axes[&0].value,0);
+        let (global, legacy) = crate::config::tests::fixture();
+        let mut router = Router::new(global, legacy, BTreeMap::new());
+        let moving = crate::router::Axis {
+            min: -100,
+            max: 100,
+            value: 80,
+        };
+        let neutral = crate::router::Axis { value: 0, ..moving };
+        let pressed = crate::router::Axis {
+            min: 0,
+            max: 255,
+            value: 200,
+        };
+        assert!(
+            physical_controls_neutral(&BTreeSet::from([304]), &BTreeMap::new(), 0.2, 0.5).is_err()
+        );
+        assert!(physical_controls_neutral(
+            &BTreeSet::new(),
+            &BTreeMap::from([(0, moving), (2, pressed)]),
+            0.2,
+            0.5
+        )
+        .is_err());
+        let mut rearming = true;
+        assert!(step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Err(std::io::Error::other("ioctl")),
+            0.2,
+            0.5
+        ));
+        assert!(step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((BTreeSet::new(), BTreeMap::from([(0, moving)]))),
+            0.2,
+            0.5
+        ));
+        router.axes.insert(0, moving);
+        assert!(!step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((BTreeSet::new(), BTreeMap::from([(0, neutral)]))),
+            0.2,
+            0.5
+        ));
+        assert!(
+            !rearming,
+            "a fresh neutral ioctl snapshot replaces stale cached axis state"
+        );
+        assert_eq!(router.axes[&0].value, 0);
     }
-
-
 }

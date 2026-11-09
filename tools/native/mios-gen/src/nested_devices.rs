@@ -493,23 +493,32 @@ fn lock(dir: &Path) -> Result<Lock, String> {
     }
 }
 
-
 // These are fixed private-record integrity bounds, not input tuning controls.
 const RETURN_RECORD_MAX_BYTES: u64 = 1024 * 1024;
 
 pub(crate) fn read_return_json(path: &Path) -> Result<Json, String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
-    let file = fs::OpenOptions::new().read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32).open(path)
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)
         .map_err(|e| format!("read {}: {e}", path.display()))?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
-    if !metadata.is_file() || metadata.uid() != rustix::process::getuid().as_raw()
-        || metadata.mode() & 0o022 != 0 || metadata.len() > RETURN_RECORD_MAX_BYTES {
-        return Err(format!("unsafe controller return record {}", path.display()));
+    if !metadata.is_file()
+        || metadata.uid() != rustix::process::getuid().as_raw()
+        || metadata.mode() & 0o022 != 0
+        || metadata.len() > RETURN_RECORD_MAX_BYTES
+    {
+        return Err(format!(
+            "unsafe controller return record {}",
+            path.display()
+        ));
     }
     let mut bytes = Vec::new();
-    file.take(RETURN_RECORD_MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    file.take(RETURN_RECORD_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
     if bytes.len() as u64 > RETURN_RECORD_MAX_BYTES {
         return Err("controller return record grew beyond its bound".into());
     }
@@ -521,21 +530,39 @@ fn write_return_json(path: &Path, value: &Json) -> Result<(), String> {
     use std::os::unix::fs::OpenOptionsExt;
     // Recheck the destination, including its owner and symlink status.
     read_return_json(path)?;
-    let parent = path.parent().ok_or("controller return record has no parent")?;
+    let parent = path
+        .parent()
+        .ok_or("controller return record has no parent")?;
     let mut random = [0u8; 16];
-    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut random)).map_err(|e| e.to_string())?;
+    fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut random))
+        .map_err(|e| e.to_string())?;
     let suffix: String = random.iter().map(|b| format!("{b:02x}")).collect();
     let temporary = parent.join(format!(".mios-return-{suffix}.tmp"));
     let result = (|| -> Result<(), String> {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32).open(&temporary).map_err(|e| e.to_string())?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(&temporary)
+            .map_err(|e| e.to_string())?;
         let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > RETURN_RECORD_MAX_BYTES { return Err("controller return record too large".into()); }
-        file.write_all(&bytes).and_then(|_| file.write_all(b"\n")).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > RETURN_RECORD_MAX_BYTES {
+            return Err("controller return record too large".into());
+        }
+        file.write_all(&bytes)
+            .and_then(|_| file.write_all(b"\n"))
+            .and_then(|_| file.sync_all())
+            .map_err(|e| e.to_string())?;
         fs::rename(&temporary, path).map_err(|e| e.to_string())?;
-        fs::File::open(parent).and_then(|f| f.sync_all()).map_err(|e| e.to_string())
+        fs::File::open(parent)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| e.to_string())
     })();
-    if temporary.exists() { let _ = fs::remove_file(&temporary); }
+    if temporary.exists() {
+        let _ = fs::remove_file(&temporary);
+    }
     result
 }
 impl Claim {
@@ -620,7 +647,6 @@ impl Claim {
         self.entry["seat"].as_str().unwrap_or("")
     }
 
-
     /// Commit both private records while holding the registry lock. The registry
     /// remains the authoritative commit point; compensate both records on error.
     fn replace_return_records(&mut self, entry: Json, descriptor: Json) -> Result<(), String> {
@@ -629,7 +655,9 @@ impl Claim {
             return Err("controller claim changed during return".into());
         }
         let descriptor_path = PathBuf::from(
-            self.entry["descriptor"].as_str().ok_or("session descriptor missing")?
+            self.entry["descriptor"]
+                .as_str()
+                .ok_or("session descriptor missing")?,
         );
         let previous_descriptor = read_return_json(&descriptor_path)?;
         let previous_entry = self.entry.clone();
@@ -650,17 +678,30 @@ impl Claim {
 
     pub fn return_controller(&mut self, dir: &Path, device_path: &Path) -> Result<Device, String> {
         let _lock = lock(dir)?;
-        let devices = self.entry["devices"].as_array().ok_or("claim devices missing")?;
-        let canonical_target = fs::canonicalize(device_path).unwrap_or_else(|_| device_path.to_path_buf());
-        let pos = devices.iter().position(|d| {
-            std::iter::once(&d["path"])
-                .chain(d["siblings"].as_array().into_iter().flatten())
-                .filter_map(Json::as_str)
-                .any(|p| {
-                    let p = Path::new(p);
-                    p == device_path || fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()) == canonical_target
-                })
-        }).ok_or_else(|| format!("device {} is not assigned to this session", device_path.display()))?;
+        let devices = self.entry["devices"]
+            .as_array()
+            .ok_or("claim devices missing")?;
+        let canonical_target =
+            fs::canonicalize(device_path).unwrap_or_else(|_| device_path.to_path_buf());
+        let pos = devices
+            .iter()
+            .position(|d| {
+                std::iter::once(&d["path"])
+                    .chain(d["siblings"].as_array().into_iter().flatten())
+                    .filter_map(Json::as_str)
+                    .any(|p| {
+                        let p = Path::new(p);
+                        p == device_path
+                            || fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+                                == canonical_target
+                    })
+            })
+            .ok_or_else(|| {
+                format!(
+                    "device {} is not assigned to this session",
+                    device_path.display()
+                )
+            })?;
         let d = &devices[pos];
         if d["kind"].as_str() != Some("controller") {
             return Err("only an assigned controller may be returned".into());
@@ -671,15 +712,33 @@ impl Claim {
             name: d["name"].as_str().unwrap_or("").into(),
             kind: "controller".into(),
             virtual_node: d["virtual"].as_bool().unwrap_or(false),
-            siblings: d["siblings"].as_array().into_iter().flatten().filter_map(Json::as_str).map(PathBuf::from).collect(),
+            siblings: d["siblings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .map(PathBuf::from)
+                .collect(),
         };
-        let descriptor_path = PathBuf::from(self.entry["descriptor"].as_str().ok_or("session descriptor missing")?);
+        let descriptor_path = PathBuf::from(
+            self.entry["descriptor"]
+                .as_str()
+                .ok_or("session descriptor missing")?,
+        );
         let mut descriptor = read_return_json(&descriptor_path)?;
-        let listed = descriptor["devices"].as_array().ok_or("descriptor devices missing")?;
-        if !listed.iter().any(|d| d["path"].as_str() == returned.path.to_str()) {
+        let listed = descriptor["devices"]
+            .as_array()
+            .ok_or("descriptor devices missing")?;
+        if !listed
+            .iter()
+            .any(|d| d["path"].as_str() == returned.path.to_str())
+        {
             return Err("controller claim and descriptor disagree".into());
         }
-        descriptor["devices"].as_array_mut().unwrap().retain(|d| d["path"].as_str() != returned.path.to_str());
+        descriptor["devices"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|d| d["path"].as_str() != returned.path.to_str());
         let mut entry = self.entry.clone();
         entry["devices"].as_array_mut().unwrap().remove(pos);
         self.replace_return_records(entry, descriptor)?;
@@ -694,7 +753,11 @@ impl Claim {
                 return Err("controller return rollback belongs to another launcher".into());
             }
         }
-        let path = PathBuf::from(self.entry["descriptor"].as_str().ok_or("session descriptor missing")?);
+        let path = PathBuf::from(
+            self.entry["descriptor"]
+                .as_str()
+                .ok_or("session descriptor missing")?,
+        );
         let mut descriptor = read_return_json(&path)?;
         descriptor["devices"] = original["devices"].clone();
         self.replace_return_records(original.clone(), descriptor)
