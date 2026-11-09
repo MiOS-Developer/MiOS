@@ -566,6 +566,150 @@ impl Claim {
             .and_then(|_| fs::rename(&tmp, &self.path))
             .map_err(|e| format!("nested-session registry {}: {e}", self.path.display()))
     }
+
+    pub fn entry(&self) -> &Json {
+        &self.entry
+    }
+
+    pub fn seat(&self) -> &str {
+        self.entry["seat"].as_str().unwrap_or("")
+    }
+
+    /// Atomically return a controller from this claim: acquires `.claim.lock`, removes the device
+    /// (and any of its siblings) from the registry entry and descriptor, fsyncs to temporary storage,
+    /// and commits via atomic rename with safe rollback on failure.
+    pub fn return_controller(&mut self, dir: &Path, device_path: &Path) -> Result<Device, String> {
+        let _lock = lock(dir)?;
+        let devices = self
+            .entry
+            .get_mut("devices")
+            .and_then(Json::as_array_mut)
+            .ok_or_else(|| "claim entry has no devices array".to_string())?;
+
+        let canonical_target =
+            fs::canonicalize(device_path).unwrap_or_else(|_| device_path.to_path_buf());
+        let pos = devices
+            .iter()
+            .position(|d| {
+                let path_str = d["path"].as_str().unwrap_or("");
+                let p = Path::new(path_str);
+                let canonical_p = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                if canonical_p == canonical_target || p == device_path {
+                    return true;
+                }
+                if let Some(siblings) = d["siblings"].as_array() {
+                    for s in siblings {
+                        if let Some(s_str) = s.as_str() {
+                            let sp = Path::new(s_str);
+                            let canonical_sp =
+                                fs::canonicalize(sp).unwrap_or_else(|_| sp.to_path_buf());
+                            if canonical_sp == canonical_target || sp == device_path {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            })
+            .ok_or_else(|| {
+                format!(
+                    "device {} is not assigned to this session",
+                    device_path.display()
+                )
+            })?;
+
+        let d_json = &devices[pos];
+        let returned_device = Device {
+            path: PathBuf::from(d_json["path"].as_str().unwrap_or("")),
+            spec: d_json["spec"].as_str().unwrap_or("").to_string(),
+            name: d_json["name"].as_str().unwrap_or("").to_string(),
+            kind: d_json["kind"].as_str().unwrap_or("").to_string(),
+            virtual_node: d_json["virtual"].as_bool().unwrap_or(false),
+            siblings: d_json["siblings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Json::as_str)
+                .map(PathBuf::from)
+                .collect(),
+        };
+
+        let backup_entry = self.entry.clone();
+        let devices_mut = self.entry["devices"].as_array_mut().unwrap();
+        devices_mut.remove(pos);
+
+        let tmp = self.path.with_extension("json.tmp");
+        let write_res = (|| -> Result<(), std::io::Error> {
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&tmp)?;
+            f.write_all(format!("{}\n", self.entry).as_bytes())?;
+            f.sync_all()?;
+            fs::rename(&tmp, &self.path)?;
+            if let Ok(dir_f) = fs::File::open(dir) {
+                let _ = dir_f.sync_all();
+            }
+            Ok(())
+        })();
+
+        if let Err(e) = write_res {
+            self.entry = backup_entry;
+            let _ = fs::remove_file(&tmp);
+            return Err(format!(
+                "failed to commit updated registry {}: {e}",
+                self.path.display()
+            ));
+        }
+
+        if let Some(desc_path_str) = self.entry["descriptor"].as_str() {
+            let desc_path = PathBuf::from(desc_path_str);
+            if desc_path.exists() {
+                if let Ok(content) = fs::read_to_string(&desc_path) {
+                    if let Ok(mut desc_json) = serde_json::from_str::<Json>(&content) {
+                        if let Some(desc_devices) =
+                            desc_json.get_mut("devices").and_then(Json::as_array_mut)
+                        {
+                            desc_devices.retain(|d| {
+                                d["path"].as_str() != Some(&returned_device.path.to_string_lossy())
+                            });
+                            let desc_tmp = desc_path.with_extension("json.tmp");
+                            if let Ok(mut df) = fs::File::create(&desc_tmp) {
+                                if df.write_all(format!("{desc_json}\n").as_bytes()).is_ok()
+                                    && df.sync_all().is_ok()
+                                {
+                                    let _ = fs::rename(&desc_tmp, &desc_path);
+                                } else {
+                                    let _ = fs::remove_file(&desc_tmp);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(returned_device)
+    }
+
+    /// Return the first controller assigned to this claim.
+    #[allow(dead_code)]
+    pub fn return_first_controller(&mut self, dir: &Path) -> Result<Device, String> {
+        let target = {
+            let devices = self
+                .entry
+                .get("devices")
+                .and_then(Json::as_array)
+                .ok_or_else(|| "claim entry has no devices array".to_string())?;
+            let d = devices
+                .iter()
+                .find(|d| d["kind"].as_str() == Some("controller"))
+                .ok_or_else(|| "no controller assigned to this session".to_string())?;
+            PathBuf::from(d["path"].as_str().unwrap_or(""))
+        };
+        self.return_controller(dir, &target)
+    }
 }
 impl Drop for Claim {
     fn drop(&mut self) {
@@ -915,5 +1059,89 @@ pub(crate) mod tests {
         for bad in ["", "-x", "P2", "a b", "a/b", "../x", &"x".repeat(33)] {
             assert!(!valid_seat(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn claim_return_controller_atomic_and_negative_controls() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("reg");
+        fs::create_dir_all(&dir).unwrap();
+
+        let pad = Device {
+            path: "/dev/input/event5".into(),
+            spec: "pad".into(),
+            name: "Xbox Pad".into(),
+            kind: "controller".into(),
+            virtual_node: false,
+            siblings: vec!["/dev/input/js0".into()],
+        };
+        let kb = Device {
+            path: "/dev/input/event6".into(),
+            spec: "kb".into(),
+            name: "Keyboard".into(),
+            kind: "keyboard".into(),
+            virtual_node: false,
+            siblings: vec![],
+        };
+
+        let desc_path = t.path().join("session.json");
+        let initial_desc = json!({
+            "seat": "p1",
+            "devices": [pad.to_json(), kb.to_json()],
+        });
+        fs::write(&desc_path, format!("{initial_desc}\n")).unwrap();
+
+        let mut claim = Claim::take(
+            &dir,
+            "p1",
+            &[pad.clone(), kb.clone()],
+            true,
+            json!({"descriptor": desc_path.to_str().unwrap()}),
+        )
+        .unwrap();
+
+        // Negative Control: Attempting to return a non-assigned device fails gracefully
+        let err = claim
+            .return_controller(&dir, Path::new("/dev/input/event99"))
+            .unwrap_err();
+        assert!(
+            err.contains("not assigned"),
+            "non-assigned device must error: {err}"
+        );
+        assert_eq!(
+            claim.entry()["devices"].as_array().unwrap().len(),
+            2,
+            "claim must retain devices after failed return"
+        );
+
+        // Positive Control: Returning an assigned controller succeeds atomically
+        let returned = claim
+            .return_controller(&dir, Path::new("/dev/input/event5"))
+            .unwrap();
+        assert_eq!(returned.path, PathBuf::from("/dev/input/event5"));
+        assert_eq!(returned.siblings, vec![PathBuf::from("/dev/input/js0")]);
+
+        // Verify in-memory claim updated
+        let remaining_devices = claim.entry()["devices"].as_array().unwrap();
+        assert_eq!(remaining_devices.len(), 1);
+        assert_eq!(remaining_devices[0]["path"], "/dev/input/event6");
+
+        // Verify disk registry file updated atomically
+        let on_disk: Json = serde_json::from_slice(&fs::read(&claim.path).unwrap()).unwrap();
+        assert_eq!(on_disk["devices"].as_array().unwrap().len(), 1);
+        assert_eq!(on_disk["devices"][0]["path"], "/dev/input/event6");
+
+        // Verify session.json descriptor updated atomically
+        let desc_on_disk: Json = serde_json::from_slice(&fs::read(&desc_path).unwrap()).unwrap();
+        assert_eq!(desc_on_disk["devices"].as_array().unwrap().len(), 1);
+        assert_eq!(desc_on_disk["devices"][0]["path"], "/dev/input/event6");
+
+        // Negative Control: Attempting to return the same device again fails (no resurrection)
+        assert!(claim
+            .return_controller(&dir, Path::new("/dev/input/event5"))
+            .is_err());
+
+        // Negative Control: return_first_controller fails when no controller remains
+        assert!(claim.return_first_controller(&dir).is_err());
     }
 }

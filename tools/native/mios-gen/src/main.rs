@@ -531,6 +531,9 @@ enum Commands {
         /// List live nested sessions from the registry (JSON).
         #[arg(long)]
         list_sessions: bool,
+        /// Return an assigned controller from a live nested session back to the parent desktop.
+        #[arg(long, requires = "seat")]
+        return_controller: bool,
     },
 
     /// Generic USB forwarding ([remote.device_forwarding]): capability report for RDP URBDRC (USB/IP vhci), USB/IP, SPICE usbredir and nested sessions; per-session target selection; the SPICE usbredir filter from the shared policy.
@@ -2100,6 +2103,7 @@ fn main() -> ExitCode {
             plan,
             list_devices,
             list_sessions,
+            return_controller,
         } => (
             "nested-session",
             "desktop",
@@ -2116,6 +2120,7 @@ fn main() -> ExitCode {
                     plan,
                     list_devices,
                     list_sessions,
+                    return_controller,
                 },
             )
             .map_err(|e| (e, 1)),

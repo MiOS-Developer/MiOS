@@ -59,6 +59,8 @@ struct RunningDevice {
     capture_recovery_at: Instant,
     /// INV-8: another session owns the seat; the grab is released and nothing is routed until it returns.
     suspended: bool,
+    /// Deflected stick suppression until neutral zero-crossing.
+    neutral_rearming: bool,
 }
 #[derive(Clone)]
 struct CapturedTmux {
@@ -2438,6 +2440,52 @@ type DeviceCandidates = std::sync::mpsc::Receiver<Result<Device, String>>;
 type Discovery = (DeviceCandidates, std::thread::JoinHandle<()>);
 /// Nodes the host bridge must leave alone: assigned to a live nested session (path -> seat). Refreshed every scan.
 type Assigned = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
+type RawConsumers = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
+
+fn update_active_manifest(
+    runtime: &Path,
+    devices: &BTreeMap<PathBuf, RunningDevice>,
+    raw_consumers: &BTreeMap<PathBuf, String>,
+) {
+    let path = runtime.join("mios-inputd-active.json");
+    let tmp = runtime.join("mios-inputd-active.json.tmp");
+    let me = std::process::id();
+    let devs: Vec<serde_json::Value> = devices
+        .iter()
+        .map(|(p, d)| {
+            serde_json::json!({
+                "path": p,
+                "name": d.device.name,
+                "rearmed": !d.neutral_rearming,
+            })
+        })
+        .collect();
+    let raws: Vec<serde_json::Value> = raw_consumers
+        .iter()
+        .map(|(p, err)| {
+            serde_json::json!({
+                "path": p,
+                "error": err,
+            })
+        })
+        .collect();
+    let manifest = serde_json::json!({
+        "pid": me,
+        "start_time": crate::nested::start_time(Path::new("/proc"), me).unwrap_or(0),
+        "devices": devs,
+        "raw_consumers": raws,
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+    });
+    if let Ok(mut f) = std::fs::File::create(&tmp) {
+        use std::io::Write;
+        if f.write_all(format!("{manifest}\n").as_bytes()).is_ok() && f.sync_all().is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        } else {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn discovery_worker(
     explicit: Vec<PathBuf>,
@@ -2447,6 +2495,7 @@ fn discovery_worker(
     stop: std::sync::Arc<AtomicBool>,
     assigned: Assigned,
     nested: bool,
+    raw_consumers: RawConsumers,
 ) -> Result<Discovery, String> {
     use std::os::unix::fs::MetadataExt;
     let (sender, receiver) = std::sync::mpsc::sync_channel(16);
@@ -2495,12 +2544,19 @@ fn discovery_worker(
                         drop(device);
                         if let Some(id)=identity {rejected.insert(path,id);}
                     }
-                    Ok(device)=> {if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}}
+                    Ok(device)=> {
+                        raw_consumers.lock().unwrap().remove(&path);
+                        if sender.try_send(Ok(device)).is_ok() {if let Some(id)=identity {sent.insert(path,id);}}
+                    }
                     Err(e) if nested && first_seen.contains_key(&path) && (e.kind()==std::io::ErrorKind::NotFound || e.raw_os_error()==Some(libc::ENODEV)) => {
                         gone.insert(path.clone());
                         eprintln!("{}",serde_json::json!({"nested":"gone","device":path}));
                     }
-                    Err(e)=> {if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
+                    Err(e)=> {
+                        if e.raw_os_error() == Some(libc::EBUSY) {
+                            raw_consumers.lock().unwrap().insert(path.clone(), "device held by raw consumer (EBUSY)".into());
+                        }
+                        if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
                         // logind may grant this same node an ACL after the service starts; retry permission failures.
                         if e.kind()!=std::io::ErrorKind::PermissionDenied {
                             if let Some(id)=identity {rejected.insert(path,id);}
@@ -2666,7 +2722,11 @@ pub fn serve(
         },
     )
 }
-pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> Result<(), String> {
+pub fn run(
+    mut global: GlobalConfig,
+    mut legacy: LegacyConfig,
+    mut opt: Options,
+) -> Result<(), String> {
     if opt.bridge && !opt.fixture_only {
         // SAFETY: geteuid has no memory/ownership effects.
         if unsafe { libc::geteuid() } == 0 {
@@ -2965,6 +3025,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         None
     };
     let known_devices = std::sync::Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let raw_consumers: RawConsumers = std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()));
     // The registry lives in the host runtime (a nested bridge already switched XDG_RUNTIME_DIR to its session's).
     let registry = if nested {
         None
@@ -2990,6 +3051,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         context_stop.clone(),
         assigned.clone(),
         nested,
+        raw_consumers.clone(),
     )?;
     let mut ctx = focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
@@ -2998,18 +3060,146 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     } else {
         None
     };
+
+    let child_control_sock = opt
+        .nested
+        .as_ref()
+        .map(|n| n.runtime.join("inputd-control.sock"));
+    let child_control_listener = if let Some(p) = &child_control_sock {
+        let _ = std::fs::remove_file(p);
+        match std::os::unix::net::UnixListener::bind(p) {
+            Ok(l) => {
+                let _ = l.set_nonblocking(true);
+                let _ = std::fs::set_permissions(
+                    p,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o600),
+                );
+                Some(l)
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: cannot bind child inputd control socket {}: {e}",
+                    p.display()
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    if !nested {
+        update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+    }
+
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) && opt.duration.is_none_or(|d| start.elapsed() < d) {
+            if let Some(ref l) = child_control_listener {
+                if let Ok((mut stream, _)) = l.accept() {
+                    use std::io::{BufRead, Write};
+                    let mut reader = std::io::BufReader::new(&mut stream);
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_ok() && !line.trim().is_empty() {
+                        if let Ok(req) = serde_json::from_str::<serde_json::Value>(&line) {
+                            if req["action"].as_str() == Some("release_device") {
+                                let dev_req = req["device"].as_str().unwrap_or("");
+                                let target_path = PathBuf::from(dev_req);
+                                let canonical_target = std::fs::canonicalize(&target_path)
+                                    .unwrap_or_else(|_| target_path.clone());
+                                let found = devices
+                                    .keys()
+                                    .find(|p| {
+                                        let cp = std::fs::canonicalize(p)
+                                            .unwrap_or_else(|_| (*p).clone());
+                                        cp == canonical_target
+                                            || **p == target_path
+                                            || p.file_name() == target_path.file_name()
+                                    })
+                                    .cloned();
+
+                                if let Some(p) = found {
+                                    let dev = devices.get(&p).unwrap();
+                                    let held = dev.device.held_keys().unwrap_or_default();
+                                    let trigger_held = dev.device.axes.iter().any(|(code, a)| {
+                                        [2, 5].contains(code) && a.trigger() > 0.15
+                                    });
+                                    if !held.is_empty() || trigger_held {
+                                        let buttons: Vec<u16> = held.into_iter().collect();
+                                        let resp = serde_json::json!({
+                                            "ok": false,
+                                            "reason": "controls_held",
+                                            "deferred": true,
+                                            "buttons": buttons,
+                                            "error": "physical buttons or triggers currently held; release deferred",
+                                        });
+                                        let _ = writeln!(stream, "{resp}");
+                                    } else {
+                                        let mut dev = devices.remove(&p).unwrap();
+                                        let out = dev.router.reset();
+                                        let _ = emit(out, &mut dev, &mut sinks, &focus);
+                                        dev.device.release();
+                                        known_devices.lock().unwrap().remove(&p);
+                                        if selected.as_ref() == Some(&p) {
+                                            selected = None;
+                                        }
+                                        eprintln!(
+                                            "{}",
+                                            serde_json::json!({"nested":"released","device":p,"cooperative":true})
+                                        );
+                                        let resp = serde_json::json!({
+                                            "ok": true,
+                                            "device": p.display().to_string(),
+                                        });
+                                        let _ = writeln!(stream, "{resp}");
+                                    }
+                                } else {
+                                    let resp = serde_json::json!({
+                                        "ok": false,
+                                        "error": format!("device {} not found in child inputd", target_path.display()),
+                                    });
+                                    let _ = writeln!(stream, "{resp}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if scan.elapsed() >= Duration::from_millis(global.controller.scan_ms) {
                 scan = Instant::now();
                 if opt.bridge && !opt.fixture_only && !nested {
                     local_sink_error = uinput_unavailable();
                 }
-                if let Some(n) = &opt.nested {
+                if let Some(n) = &mut opt.nested {
                     if !n.alive(Path::new("/proc")) {
                         eprintln!("{}", serde_json::json!({"nested":"ended","seat":n.seat}));
                         break;
                     }
+                    if let Ok(current_controllers) = n.refresh_controllers(Path::new("/proc")) {
+                        let removed: Vec<PathBuf> = devices
+                            .keys()
+                            .filter(|p| !current_controllers.contains(*p))
+                            .cloned()
+                            .collect();
+                        for path in removed {
+                            if let Some(mut dev) = devices.remove(&path) {
+                                let out = dev.router.reset();
+                                emit(out, &mut dev, &mut sinks, &focus)?;
+                                dev.device.release();
+                                known_devices.lock().unwrap().remove(&path);
+                                if selected.as_ref() == Some(&path) {
+                                    selected = None;
+                                }
+                                eprintln!(
+                                    "{}",
+                                    serde_json::json!({"nested":"released","device":path,"seat":n.seat,"refreshed":true})
+                                );
+                            }
+                        }
+                    }
+                }
+                if !nested {
+                    update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
                 }
                 if let Some(r) = &registry {
                     let now = crate::nested::assigned_nodes(r, Path::new("/proc"));
@@ -3274,13 +3464,21 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 } else {
                     None
                 };
+                let neutral_rearming = if !nested {
+                    device
+                        .axes
+                        .iter()
+                        .any(|(code, a)| [0, 1, 3, 4].contains(code) && a.centered().abs() > 0.20)
+                } else {
+                    false
+                };
                 eprintln!(
                     "{}",
                     serde_json::json!({"mode":if opt.bridge{"bridge"}else{"observe"},"device":path,"name":device.name})
                 );
                 known_devices.lock().unwrap().insert(path.clone());
                 devices.insert(
-                    path,
+                    path.clone(),
                     RunningDevice {
                         device,
                         output,
@@ -3299,8 +3497,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         capture: None,
                         capture_recovery_at: Instant::now() - Duration::from_secs(10),
                         suspended,
+                        neutral_rearming,
                     },
                 );
+                if !nested {
+                    update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
+                }
             }
             if let Ok(snapshot) = shared_focus.try_lock() {
                 focus = snapshot.clone();
@@ -3317,6 +3519,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             ctx = focus.name.clone();
             // Ownership is per session: a capture/release requested by one pad applies to every pad (INV-7).
             let mut adopt: Vec<(PathBuf, bool)> = vec![];
+            let mut manifest_dirty = false;
             let paths: Vec<_> = devices.keys().cloned().collect();
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
@@ -3375,6 +3578,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         if selected.as_ref() == Some(&path) {
                             selected = None;
                         }
+                        manifest_dirty = true;
                     }
                     continue;
                 }
@@ -3449,9 +3653,29 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 dev.dropped = false;
                                 emit(out, dev, &mut sinks, focus)?;
                             } else {
-                                let out = dev
+                                if dev.neutral_rearming {
+                                    let is_neutral = dev.router.axes.iter().all(|(code, a)| {
+                                        ![0, 1, 3, 4].contains(code) || a.centered().abs() <= 0.20
+                                    });
+                                    if is_neutral {
+                                        dev.neutral_rearming = false;
+                                        eprintln!(
+                                            "{}",
+                                            serde_json::json!({"rearmed": true, "device": path})
+                                        );
+                                        manifest_dirty = true;
+                                    }
+                                }
+                                let mut out = dev
                                     .router
                                     .event(event, (linux::monotonic_ns() / 1_000_000) as u64);
+                                if dev.neutral_rearming {
+                                    out.pointer.clear();
+                                    out.app.retain(|e| {
+                                        e.kind != crate::router::EV_ABS
+                                            || ![0, 1, 3, 4].contains(&e.code)
+                                    });
+                                }
                                 if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                                     adopt.push((path.clone(), owned));
                                 }
@@ -3467,8 +3691,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         if selected.as_ref() == Some(&path) {
                             selected = None;
                         }
+                        manifest_dirty = true;
                     }
                 }
+            }
+            if manifest_dirty && !nested {
+                update_active_manifest(&runtime, &devices, &raw_consumers.lock().unwrap());
             }
             let now = Instant::now();
             let dt = now.duration_since(last_tick).as_secs_f64().min(0.05);
@@ -3670,6 +3898,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         let _ = worker.join();
     }
     let _ = discovery.join();
+    if !nested {
+        let _ = std::fs::remove_file(runtime.join("mios-inputd-active.json"));
+    }
+    if let Some(p) = &child_control_sock {
+        let _ = std::fs::remove_file(p);
+    }
     drop(sinks);
     result
 }
