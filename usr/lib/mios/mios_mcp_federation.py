@@ -243,7 +243,7 @@ def discover_federated_tools(upstreams: list[dict] | None = None, port: int = 87
                 continue
             upstream_name = tool["name"]
             full_name = f"{namespace}{upstream_name}"
-            if not _TOOL_NAME.fullmatch(full_name):
+            if not _TOOL_NAME.fullmatch(upstream_name) or not _TOOL_NAME.fullmatch(full_name):
                 continue
             row = dict(tool)
             row["name"] = full_name

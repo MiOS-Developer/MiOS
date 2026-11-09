@@ -519,6 +519,7 @@ class TailnetDiscoveryTests(unittest.TestCase):
                     "id": 1,
                     "result": {
                         "tools": [
+                            {"name": "", "description": "Empty tool name must be ignored"},
                             {"name": "mios_agent_send", "description": "Send message to Blade agent"},
                             {"name": "mios_agent_list", "description": "List Blade agents"},
                         ]

@@ -151,9 +151,12 @@ start_mios_mcp_gateway() {
             setsid "$mcp_py" /usr/libexec/mios/mios-mcp-server --http --host 127.0.0.1 --port "$mcp_port" \
             >"$mcp_log" 2>&1 </dev/null &
     fi
-    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
-        tailscale serve --bg "$pipe_port" >/dev/null 2>&1 || true
-        tailscale serve --bg "$mcp_port" >/dev/null 2>&1 || true
+    local ts_sock="${XDG_STATE_HOME:-${HOME}/.local/state}/mios/tailscale/tailscaled.sock"
+    local ts_args=()
+    [[ -S "$ts_sock" ]] && ts_args=(--socket="$ts_sock")
+    if command -v tailscale >/dev/null 2>&1 && tailscale "${ts_args[@]}" status >/dev/null 2>&1; then
+        tailscale "${ts_args[@]}" serve --bg "$pipe_port" >/dev/null 2>&1 || true
+        tailscale "${ts_args[@]}" serve --bg "$mcp_port" >/dev/null 2>&1 || true
     fi
     if [[ -x /usr/libexec/mios/mios-a2a-discover ]]; then
         MIOS_A2A_TAILNET_DISCOVER=1 "$mcp_py" /usr/libexec/mios/mios-a2a-discover >/dev/null 2>&1 || true
@@ -187,7 +190,7 @@ print(peers[0]["ip"] if peers else "")
         /usr/libexec/mios/mios-agent-relay register --agent-id "codespace-$(hostname -s 2>/dev/null || echo dev)" --kind agy >/dev/null 2>&1 || true
     fi
     local agy_host="/workspaces/-dev-loop/skills/dev-loop/scripts/agy_host.sh"
-    if [[ "${MIOS_AGY_REMOTE_CONTROL:-0}" == "1" && -f "$agy_host" ]] && command -v agy >/dev/null 2>&1; then
+    if [[ "${MIOS_BLADE_REMOTE_CONTROL:-${AGY_REMOTE_CONTROL:-0}}" == "1" && -f "$agy_host" ]] && command -v agy >/dev/null 2>&1; then
         pgrep -f "agy.*--remote-control" >/dev/null 2>&1 || \
             setsid bash "$agy_host" --session --remote-control >"$state_dir/agy-remote-control.log" 2>&1 </dev/null &
     fi

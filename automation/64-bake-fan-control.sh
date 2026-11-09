@@ -22,8 +22,7 @@ fi
 URL="${MIOS_URL_VENTULUSD:-https://github.com/Plan-B-Development/ventulusd.git}"
 # "latest" (or unset) floats to the newest upstream release, resolved here;
 # the resolved tag + commit are build output, never written back to the SSOT.
-PIN_REF="${MIOS_BUILD_BAKE_REFS_VENTULUSD:-$(get build.bake_refs ventulusd 2>/dev/null || true)}"
-PIN_REF="${PIN_REF:-latest}"
+PIN_REF="${MIOS_BUILD_BAKE_REFS_VENTULUSD:-latest}"
 CHANNEL="$(get build.toolchain channel)"
 TARGET="$(get build.native.linux.targets "$(uname -m)")"
 RUSTUP_HOME="$(get build.toolchain rustup_home)"
