@@ -597,7 +597,7 @@ class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
     async def test_global_sources_are_qualified_sanitized_and_nonrecursive(self):
         from types import SimpleNamespace
         calls = []
-        snapshot = {"agents":[{"agent_id":"same", "online":True, "token":"PRIVATE", "label":"Remote"}],
+        snapshot = {"agent_total":1, "agents":[{"agent_id":"same", "online":True, "token":"PRIVATE", "label":"Remote"}],
                     "messages":[{"message_id":"one", "status":"queued", "message":"PRIVATE-BODY"}],
                     "panes":[], "sessions":[], "subagents":[], "errors":[]}
         class Session:
@@ -627,6 +627,11 @@ class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["online_total"],2)
         self.assertTrue(next(row for row in result["agents"] if row.get("source")=="blade-one")["stale"])
         self.assertEqual(result["sources"][0]["state"],"unavailable")
+        snapshot.pop("agent_total")
+        await inventory.refresh()
+        result = inventory.snapshot(local)
+        self.assertEqual(result["sources"][1]["state"], "partial", "legacy cutoffs cannot masquerade as complete")
+        self.assertEqual(result["online_total"],1)
 
     async def test_global_sources_reject_oversize_and_invalid_reply_without_clearing_cache(self):
         from types import SimpleNamespace

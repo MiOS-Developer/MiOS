@@ -779,6 +779,9 @@ class AgentObservationCache:
                         raise ValueError("invalid observation rows")
                     clean[key] = []
                     for row in rows:
+                        identity = row.get("agent_id") if key == "agents" else row.get("session_id") if key == "sessions" else (row.get("agent_id") or row.get("pane")) if key == "subagents" else row.get("pane") if key == "panes" else row.get("message_id")
+                        if not isinstance(identity, str) or not identity:
+                            raise ValueError("missing observation identity")
                         if "online" in row and type(row["online"]) is not bool:
                             raise ValueError("invalid presence")
                         public = {k: v for k, v in row.items() if k in fields and type(v) in (str, int, bool, float, type(None))}
@@ -786,7 +789,9 @@ class AgentObservationCache:
                             public["origin_source"] = row["source"]
                         clean[key].append(public)
                 self.cache[source] = clean
-                self.states[source] = "partial" if data["errors"] else "ready"
+                complete = data.get("agent_total") == len(data["agents"]) and all(
+                    isinstance(data.get(key), list) for key in ("sessions", "subagents"))
+                self.states[source] = "ready" if complete and not data["errors"] else "partial"
             except asyncio.CancelledError:
                 raise
             except Exception:
