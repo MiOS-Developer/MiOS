@@ -1561,9 +1561,13 @@ pub fn handle_control_connection(
         let target = PathBuf::from(device["path"].as_str().ok_or("controller path missing")?);
         let started = return_time_ms();
         let manifest = parent.join("mios-inputd-active.json");
-        let expected_parent = devices::read_return_json(&manifest)
-            .ok()
-            .and_then(|record| manifest_identity(&record));
+        let parent_record = devices::read_return_json(&manifest)
+            .map_err(|error| format!("parent bridge readiness unavailable: {error}"))?;
+        if parent_record["controller_return_protocol_version"].as_u64() != Some(1) {
+            return Err("parent bridge does not support the authenticated controller return protocol; preserve the adopted session and use a compatible parent/child preview".into());
+        }
+        let expected_parent = manifest_identity(&parent_record)
+            .ok_or("parent bridge readiness has a missing or recycled process identity")?;
         // Probe before any ownership mutation: older child daemons ignore nonce fields.
         let (capabilities, probed_peer) =
             child_return_exchange(owned, &original, &target, "return_capabilities", None)?;
@@ -1612,8 +1616,8 @@ pub fn handle_control_connection(
             if let Ok(record) = devices::read_return_json(&manifest) {
                 let identity = manifest_identity(&record);
                 let stamp = record["timestamp_ms"].as_u64().unwrap_or(0);
-                if identity.is_some()
-                    && expected_parent.is_none_or(|expected| identity == Some(expected))
+                if identity == Some(expected_parent)
+                    && record["controller_return_protocol_version"].as_u64() == Some(1)
                     && stamp >= started
                     && stamp <= return_time_ms()
                 {
@@ -2670,14 +2674,22 @@ mod tests {
             child.accept().is_err(),
             "an unsupported or dead parent must be rejected before contacting the child: {response}"
         );
-        assert_eq!(fs::read(registry.join("review.json")).unwrap(), claim_before);
-        assert_eq!(fs::read(owned.join("session.json")).unwrap(), descriptor_before);
+        assert_eq!(
+            fs::read(registry.join("review.json")).unwrap(),
+            claim_before
+        );
+        assert_eq!(
+            fs::read(owned.join("session.json")).unwrap(),
+            descriptor_before
+        );
     }
 
     #[test]
     fn return_parent_compatibility_refuses_unsupported_parent_before_child_contact() {
         for version in [Json::Null, json!(0), json!(2), json!("1")] {
-            reject_parent_before_child_contact(json!({"controller_return_protocol_version":version}));
+            reject_parent_before_child_contact(
+                json!({"controller_return_protocol_version":version}),
+            );
         }
     }
 
@@ -2691,6 +2703,39 @@ mod tests {
         ] {
             reject_parent_before_child_contact(identity);
         }
+    }
+
+    #[test]
+    fn return_parent_protocol_change_rolls_back_instead_of_certifying_success() {
+        let t = tempfile::tempdir().unwrap();
+        let (registry, parent, owned, mut claim) = root_review_claim(&t);
+        let before = fs::read(registry.join("review.json")).unwrap();
+        let parent_copy = parent.clone();
+        let child = return_test_child(&owned, 2, move |request| {
+            if request["action"] == "release_device" {
+                return_test_manifest(
+                    &parent_copy,
+                    json!([{"path":"/dev/input/event42","rearmed":true}]),
+                    json!([]),
+                );
+                let manifest = parent_copy.join("mios-inputd-active.json");
+                let mut record: Json =
+                    serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+                record["controller_return_protocol_version"] = json!(2);
+                fs::write(manifest, record.to_string()).unwrap();
+            }
+            json!({})
+        });
+        let response = root_review_request(&mut claim, &registry, &parent, &owned);
+        assert_eq!(
+            response["ok"], false,
+            "an incompatible parent acknowledgement must never certify a return"
+        );
+        assert_eq!(fs::read(registry.join("review.json")).unwrap(), before);
+        assert_eq!(
+            child.join().unwrap(),
+            vec!["release_device", "abort_release"]
+        );
     }
 
     #[test]

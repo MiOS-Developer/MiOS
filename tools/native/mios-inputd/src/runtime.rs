@@ -2480,6 +2480,7 @@ fn update_active_manifest(
         "bridge_pid": me,
         "start_time": start_ticks,
         "bridge_start": start_ticks,
+        "controller_return_protocol_version": 1,
         "devices": devs,
         "raw_consumers": raws,
         "timestamp": now_dur.as_secs(),
@@ -6183,9 +6184,17 @@ mod app_detection {
             &std::fs::read(runtime.path().join("mios-inputd-active.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(record["controller_return_protocol_version"].as_u64(), Some(1));
-        assert_eq!(record["bridge_pid"].as_u64(), Some(u64::from(std::process::id())));
-        assert!(record["bridge_start"].as_u64().is_some_and(|start| start > 0));
+        assert_eq!(
+            record["controller_return_protocol_version"].as_u64(),
+            Some(1)
+        );
+        assert_eq!(
+            record["bridge_pid"].as_u64(),
+            Some(u64::from(std::process::id()))
+        );
+        assert!(record["bridge_start"]
+            .as_u64()
+            .is_some_and(|start| start > 0));
     }
 
     fn apps(exe: &[&Path], user_exe: &[&Path]) -> BTreeMap<String, NavApp> {
