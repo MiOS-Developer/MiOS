@@ -126,15 +126,31 @@ fn capacities(ssot: &toml::Value) -> (BTreeMap<String, f64>, Vec<String>) {
         return (limits, findings);
     };
     let Some(rows) = value.as_table() else {
-        return (limits, vec!["[drift.bounded_capacities] must be a table".into()]);
+        return (
+            limits,
+            vec!["[drift.bounded_capacities] must be a table".into()],
+        );
     };
     for (key, value) in rows {
-        let limit = value.get("limit").and_then(toml::Value::as_integer).filter(|n| *n > 0);
-        let reason = value.get("reason").and_then(toml::Value::as_str).unwrap_or("").trim();
-        let valid_keys = value.as_table().is_some_and(|v| v.keys().all(|k| k == "limit" || k == "reason"));
+        let limit = value
+            .get("limit")
+            .and_then(toml::Value::as_integer)
+            .filter(|n| *n > 0);
+        let reason = value
+            .get("reason")
+            .and_then(toml::Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let valid_keys = value
+            .as_table()
+            .is_some_and(|v| v.keys().all(|k| k == "limit" || k == "reason"));
         match limit {
-            Some(limit) if !reason.is_empty() && valid_keys => { limits.insert(key.clone(), limit as f64); },
-            _ => findings.push(format!("bounded capacity '{key}' requires a positive integer limit and a reason")),
+            Some(limit) if !reason.is_empty() && valid_keys => {
+                limits.insert(key.clone(), limit as f64);
+            }
+            _ => findings.push(format!(
+                "bounded capacity '{key}' requires a positive integer limit and a reason"
+            )),
         }
     }
     (limits, findings)
@@ -294,15 +310,23 @@ pub fn check(root: &Path) -> Report {
     findings.extend(policy_findings);
     for (key, limit) in &bounded {
         if key == "legibility.max_tracked_files" || exempted.contains_key(key) {
-            findings.push(format!("bounded capacity '{key}' conflicts with the existing ratchet policy"));
+            findings.push(format!(
+                "bounded capacity '{key}' conflicts with the existing ratchet policy"
+            ));
         }
         match work.get(key) {
-            Some(value) if *value >= 1.0 && value.fract() == 0.0 && value <= limit => {},
-            Some(value) => findings.push(format!("capacity '{key}' value {value} exceeds its approved integer range 1..={limit}")),
-            None => findings.push(format!("bounded capacity '{key}' is not a ceiling in {rel}")),
+            Some(value) if *value >= 1.0 && value.fract() == 0.0 && value <= limit => {}
+            Some(value) => findings.push(format!(
+                "capacity '{key}' value {value} exceeds its approved integer range 1..={limit}"
+            )),
+            None => findings.push(format!(
+                "bounded capacity '{key}' is not a ceiling in {rel}"
+            )),
         }
         if old_bounded.get(key).is_some_and(|old| limit > old) {
-            findings.push(format!("approved capacity bound '{key}' INCREASED -- the bound itself only comes down"));
+            findings.push(format!(
+                "approved capacity bound '{key}' INCREASED -- the bound itself only comes down"
+            ));
         }
     }
     let mut baseline_note = String::new();
@@ -387,7 +411,9 @@ pub fn check(root: &Path) -> Report {
             exempted.len()
         )
     };
-    let capacity_note = if bounded.is_empty() { String::new() } else {
+    let capacity_note = if bounded.is_empty() {
+        String::new()
+    } else {
         format!(", {} explicitly bounded capacity ceiling(s)", bounded.len())
     };
     report(
