@@ -77,7 +77,7 @@ try:
     from textual.reactive import reactive
     from textual.theme import Theme
     from textual import on
-    from mios_agent_tui import ClientView, AgentView, SystemSummary
+    from mios_agent_tui import ClientView, AgentView, InventoryDetails, SystemSummary
     import psutil
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -849,7 +849,7 @@ if TEXTUAL_AVAILABLE:
             ("2", "tab_build", "2:Build"),
             ("3", "tab_flash", "3:Flash"),
             ("4", "tab_agents", "4:Agents & AI"),
-            Binding("escape", "quit", "Quit", priority=True),
+            Binding("escape", "close_or_quit", "Close / Quit", priority=True),
             Binding("f1", "tab_clients", "Clients", priority=True),
             Binding("f2", "tab_agents", "Agents & AI", priority=True),
             Binding("f3", "tab_global", "System", priority=True),
@@ -881,6 +881,12 @@ if TEXTUAL_AVAILABLE:
                 except Exception: pass
 
         def action_tab_global(self): self._activate_tab("tab-global")
+        def action_close_or_quit(self):
+            if isinstance(self.screen, InventoryDetails):
+                self.screen.dismiss()
+            else:
+                self.exit()
+
         def action_tab_build(self): self._activate_tab("tab-build")
         def action_tab_flash(self): self._activate_tab("tab-flash")
         def action_tab_ai(self): self._activate_tab("tab-agents")
