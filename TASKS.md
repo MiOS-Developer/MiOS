@@ -16,8 +16,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1749 |
-| in_progress | 92 |
+| pending | 1748 |
+| in_progress | 93 |
 | completed | 1897 |
 | incomplete | 20 |
 | cancelled | 21 |
@@ -2666,7 +2666,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3771` Preserve typed controller arrays through the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 - `task_3773` Require deliberate short stick gestures for desktop focus changes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3775` Return owned nested controllers to parent without trapping the operator -- pending · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3775` Return owned nested controllers to parent without trapping the operator -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3778` Content-fit menus and spatial controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L

@@ -205,5 +205,38 @@
     "installed_inputd_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb",
     "code_source_commit": "00f1472016b1ef5bbedb54a3d2050bebf6851530",
     "prior_live_section_is_historical": true
+  },
+  "node_local_training": {
+    "source_commit": "1ac9ed040a20374fc4dd6c971adb3227190c5dd1",
+    "artifact_sha256": "c12dabbb347f749d6e50d8a6ed0be38d092db396097ff7954888994f0f287ea4",
+    "artifact": "/home/mios/.local/state/mios/mios-training-reconciliation/target-native/x86_64-unknown-linux-musl/release/mios-tamagotchi",
+    "builder": "MiOS-DEV",
+    "image": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "target": "x86_64-unknown-linux-musl",
+    "unit_passed": 445,
+    "cli_passed": 13,
+    "ignored": 3,
+    "fmt_exit": 0,
+    "clippy_exit": 0,
+    "artifact_check_exit": 0,
+    "negative": "Compiled omission of Training choice geometry fails the real UI navigation assertion; exact restoration passes.",
+    "negative_tests": 1,
+    "restored_tests": 1,
+    "source_memory_admission": {
+      "admitted": true,
+      "available_mb": 17979,
+      "min_available_mb": 12288
+    },
+    "owner": "mios-tamagotchi-live-coordinator",
+    "worker_original": "mios-worker-lane-a-1; original WIP preserved in mios-training-reconciliation",
+    "review": "Independent review by mios-mons-teamwork-continuation-r2; actual scene-row reservation and training cap addressed.",
+    "scope": "Home/Care/Games/Graphics/Training use shared painted geometry; Training preserves levels, values, aptitude, XP, costs and refusal notices.",
+    "live_status": "Ready for immediate post-publication install; actual live receipt will be recorded separately.",
+    "remaining": [
+      "Other special menu migrations as required",
+      "native authenticated controller return",
+      "renderer R4",
+      "physical phone/controller/VT acceptance"
+    ]
   }
 }
