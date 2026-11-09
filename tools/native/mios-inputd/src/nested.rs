@@ -111,12 +111,12 @@ impl Session {
         &self,
         proc_root: &Path,
         expected_uid: u32,
-        peer_uid: u32,
-        peer_pid: u32,
+        peer: (u32, u32),
         req_seat: Option<&str>,
         req_pid: Option<u32>,
         req_start: Option<u64>,
     ) -> Result<(), String> {
+        let (peer_uid, peer_pid) = peer;
         if peer_uid != expected_uid {
             return Err(format!(
                 "unauthorized: peer UID {peer_uid} does not match expected UID {expected_uid}"
@@ -608,31 +608,31 @@ mod tests {
 
         let s = session(&reg, &proc_root, "p4").unwrap();
         assert!(
-            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), Some(77), Some(2000))
+            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), Some(77), Some(2000))
                 .is_ok()
         );
         // Wrong UID refuses
         assert!(
-            s.verify_launcher_peer(&proc_root, 1000, 1001, 77, Some("p4"), Some(77), Some(2000))
+            s.verify_launcher_peer(&proc_root, 1000, (1001, 77), Some("p4"), Some(77), Some(2000))
                 .unwrap_err()
                 .contains("peer UID")
         );
         // Same-UID non-launcher PID refuses
         assert!(
-            s.verify_launcher_peer(&proc_root, 1000, 1000, 78, Some("p4"), Some(77), Some(2000))
+            s.verify_launcher_peer(&proc_root, 1000, (1000, 78), Some("p4"), Some(77), Some(2000))
                 .unwrap_err()
                 .contains("not session launcher PID")
         );
         // Wrong request seat refuses
         assert!(
-            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p5"), Some(77), Some(2000))
+            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p5"), Some(77), Some(2000))
                 .unwrap_err()
                 .contains("request seat")
         );
         // Recycled start ticks refuses
         fake_proc(&proc_root, 77, 2001);
         assert!(
-            s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), Some(77), Some(2000))
+            s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), Some(77), Some(2000))
                 .unwrap_err()
                 .contains("start ticks")
         );
@@ -647,7 +647,7 @@ mod tests {
             std::os::unix::fs::symlink(&outside, reg.join("p4.json")).unwrap();
             assert!(live_sessions(&reg, &proc_root).is_empty());
             assert!(
-                s.verify_launcher_peer(&proc_root, 1000, 1000, 77, Some("p4"), None, None)
+                s.verify_launcher_peer(&proc_root, 1000, (1000, 77), Some("p4"), None, None)
                     .unwrap_err()
                     .contains("symlink")
             );

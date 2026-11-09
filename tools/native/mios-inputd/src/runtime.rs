@@ -2759,8 +2759,7 @@ where
     if let Err(e) = session.verify_launcher_peer(
         proc_root,
         expected_uid,
-        peer_uid,
-        peer_pid,
+        (peer_uid, peer_pid),
         req_seat,
         req_pid,
         req_start,
