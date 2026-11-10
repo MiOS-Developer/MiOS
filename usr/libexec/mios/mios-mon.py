@@ -962,8 +962,11 @@ if TEXTUAL_AVAILABLE:
                 try:
                     import mios_mcp_federation
                     cfg = self.ui_request["observation_request"]["config"]
+                    command = self.ui_request["observation_command"]
+                    if IS_WINDOWS:
+                        command = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "mios", "--", *command]
                     self.agent_inventory = mios_mcp_federation.AgentObservationProcess(
-                        self.ui_request["observation_command"], cfg["max_state_bytes"])
+                        command, cfg["max_state_bytes"])
                     self.agent_inventory.start_background()
                 except (ImportError, ValueError, OSError, KeyError):
                     # Keep the native inventory available, while showing incomplete coverage.

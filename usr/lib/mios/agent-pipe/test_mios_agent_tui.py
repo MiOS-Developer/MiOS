@@ -31,6 +31,29 @@ SNAPSHOT = {"agents": [{"agent_id": "agy:unique", "kind": "agy", "label": "Antig
 
 
 class TestAgentTui(unittest.IsolatedAsyncioTestCase):
+    async def test_system_python_ui_receives_global_rows_from_mcp_interpreter(self):
+        from types import SimpleNamespace
+        local={"agents":[{"agent_id":"local","source":"local-relay","online":True}],
+               "messages":[],"panes":[],"sessions":[],"subagents":[],"errors":[],
+               "sources":[{"source":"local-relay","state":"ready"}]}
+        frame={**local,"agents":[*local["agents"],{"agent_id":"system","source":"system/root-relay","online":True}],
+               "sources":[*local["sources"],{"source":"system","state":"ready"}]}
+        command=[sys.executable,"-I","-c","import time;print("+repr(json.dumps(frame))+",flush=True);time.sleep(30)"]
+        request={"state":"/private","observation_command":command,"observation_request":{
+                 "config":{"binary":"/native-relay","max_state_bytes":65536},"observation":{"refresh_s":.05}}}
+        app=monitor.MiosMonitorApp(ui_request=request,ui_mode="agents",collectors=False)
+        app.enable_agent_federation=True
+        with patch.object(monitor.subprocess,"run",return_value=SimpleNamespace(returncode=0,
+                stdout=json.dumps({"ok":True,"result":local}),stderr="")):
+            async with app.run_test(size=(80,24)) as pilot:
+                for _ in range(20):
+                    await pilot.pause(.05)
+                    if app.agent_inventory and len(app.observe_agents()["agents"])==2:break
+                result=app.observe_agents()
+                self.assertEqual([row["agent_id"] for row in result["agents"]],["local","system"])
+                self.assertEqual(result["online_total"],2)
+                self.assertEqual(app.query_one("#peer-table",DataTable).row_count,2)
+
     def app(self, mode="clients", observer=None, agents=None):
         return monitor.MiosMonitorApp(ui_request={"agents": agents or CLIENTS}, ui_mode=mode,
                                       observer=observer or (lambda: copy.deepcopy(SNAPSHOT)), collectors=False)
