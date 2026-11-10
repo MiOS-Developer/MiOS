@@ -531,6 +531,32 @@ fn logind_id_ok(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 const GRAPHICAL: [&str; 3] = ["wayland", "x11", "mir"];
+fn explicit_console(f: &BTreeMap<String, String>) -> bool {
+    f.get("DESKTOP").map(String::as_str) == Some("tmux-console")
+}
+fn console_seat(f: &BTreeMap<String, String>) -> Seat {
+    match f
+        .get("VTNR")
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|v| (1..=63).contains(v))
+    {
+        Some(vt) => {
+            let tty = f
+                .get("TTY")
+                .filter(|t| {
+                    t.starts_with("tty")
+                        && t[3..].bytes().all(|b| b.is_ascii_digit())
+                        && t.len() > 3
+                })
+                .map_or_else(
+                    || PathBuf::from(format!("/dev/tty{vt}")),
+                    |t| Path::new("/dev").join(t),
+                );
+            Seat::Console { vt, tty }
+        }
+        None => Seat::Foreign("the active tty session has no VT".into()),
+    }
+}
 /// C-16 / INV-8: the seat view of `uid` from logind's runtime state (users/<uid>, sessions/<id>, seats/<seat>).
 pub fn seat_view(state: &Path, uid: u32) -> SeatView {
     let foreign = |r: &str| SeatView {
@@ -564,6 +590,7 @@ pub fn seat_view(state: &Path, uid: u32) -> SeatView {
         .iter()
         .find(|(_, f)| {
             f.get("SEAT") == Some(&seat)
+                && !explicit_console(f)
                 && f.get("TYPE")
                     .is_some_and(|t| GRAPHICAL.contains(&t.as_str()))
                 && f.get("UID").and_then(|u| u.parse().ok()) == Some(uid)
@@ -593,30 +620,11 @@ pub fn seat_view(state: &Path, uid: u32) -> SeatView {
             seat: Seat::Foreign(format!("another session is active on {seat}")),
             graphical_vt,
         };
-    }
+    };
     let seat = match f.get("TYPE").map(String::as_str) {
-        Some("tty") => match f
-            .get("VTNR")
-            .and_then(|v| v.parse::<u32>().ok())
-            .filter(|v| (1..=63).contains(v))
-        {
-            Some(vt) => {
-                let tty = f
-                    .get("TTY")
-                    .filter(|t| {
-                        t.starts_with("tty")
-                            && t[3..].bytes().all(|b| b.is_ascii_digit())
-                            && t.len() > 3
-                    })
-                    .map_or_else(
-                        || PathBuf::from(format!("/dev/tty{vt}")),
-                        |t| Path::new("/dev").join(t),
-                    );
-                Seat::Console { vt, tty }
-            }
-            None => Seat::Foreign("the active tty session has no VT".into()),
-        },
-        Some(t) if GRAPHICAL.contains(&t) => Seat::Graphical,
+        Some("tty") => console_seat(&f),
+        Some(t) if GRAPHICAL.contains(&t) && !explicit_console(&f) => Seat::Graphical,
+        _ if explicit_console(&f) => console_seat(&f),
         _ => Seat::Foreign("the active session is neither graphical nor a VT".into()),
     };
     SeatView { seat, graphical_vt }
@@ -5029,6 +5037,88 @@ mod tests {
         assert!(
             matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no seated session"))
         );
+        // Actual Blade physical VT tmux-os state (session 345): TYPE=wayland with explicit DESKTOP=tmux-console
+        // must be classified as Seat::Console and excluded from graphical_vt return discovery.
+        let blade_console = (
+            "sessions/345",
+            "UID=1000\nACTIVE=1\nIS_DISPLAY=1\nSTATE=active\nREMOTE=0\nUSER=mios\nTYPE=wayland\nORIGINAL_TYPE=wayland\nCLASS=user\nSCOPE=session-345.scope\nSEAT=seat0\nTTY=tty1\nTTY_VALIDITY=from-pam\nSERVICE=greetd\nDESKTOP=tmux-console\nVTNR=1\n",
+        );
+        logind(
+            &t,
+            &[
+                ("users/1000", "DISPLAY=345\nSESSIONS=345\n"),
+                blade_console,
+                ("seats/seat0", "ACTIVE=345\n"),
+            ],
+        );
+        assert_eq!(
+            seat_view(&t, 1000),
+            SeatView {
+                seat: Seat::Console {
+                    vt: 1,
+                    tty: "/dev/tty1".into()
+                },
+                graphical_vt: None
+            }
+        );
+        // When both an explicit tmux-console session (VT 1) and a graphical session (VT 2) exist,
+        // graphical_vt discovers the real graphical VT (2), never the explicit console VT (1).
+        let hypr_vt2 = (
+            "sessions/3",
+            "UID=1000\nTYPE=wayland\nDESKTOP=Hyprland\nCLASS=user\nSEAT=seat0\nTTY=tty2\nVTNR=2\n",
+        );
+        logind(
+            &t,
+            &[
+                ("users/1000", "DISPLAY=345\nSESSIONS=345 3\n"),
+                blade_console,
+                hypr_vt2,
+                ("seats/seat0", "ACTIVE=345\n"),
+            ],
+        );
+        assert_eq!(
+            seat_view(&t, 1000),
+            SeatView {
+                seat: Seat::Console {
+                    vt: 1,
+                    tty: "/dev/tty1".into()
+                },
+                graphical_vt: Some(2)
+            }
+        );
+        // Unrelated graphical session remains Seat::Graphical even with no compositor socket on disk.
+        std::fs::write(t.join("seats/seat0"), "ACTIVE=3\n").unwrap();
+        assert_eq!(
+            seat_view(&t, 1000),
+            SeatView {
+                seat: Seat::Graphical,
+                graphical_vt: Some(2)
+            }
+        );
+        // Foreign UID and non-user class guards still reject explicit DESKTOP=tmux-console sessions.
+        std::fs::write(
+            t.join("sessions/345"),
+            "UID=980\nTYPE=wayland\nDESKTOP=tmux-console\nCLASS=user\nSEAT=seat0\nTTY=tty1\nVTNR=1\n",
+        )
+        .unwrap();
+        std::fs::write(t.join("seats/seat0"), "ACTIVE=345\n").unwrap();
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("another session"))
+        );
+        std::fs::write(
+            t.join("sessions/345"),
+            "UID=1000\nTYPE=wayland\nDESKTOP=tmux-console\nCLASS=greeter\nSEAT=seat0\nTTY=tty1\nVTNR=1\n",
+        )
+        .unwrap();
+        assert!(
+            matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("another session"))
+        );
+        std::fs::write(
+            t.join("sessions/345"),
+            "UID=1000\nTYPE=wayland\nDESKTOP=tmux-console\nCLASS=user\nSEAT=seat0\nTTY=pts/0\n",
+        )
+        .unwrap();
+        assert!(matches!(seat_view(&t, 1000).seat, Seat::Foreign(r) if r.contains("no VT")));
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
