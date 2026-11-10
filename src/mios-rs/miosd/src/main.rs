@@ -16,6 +16,8 @@ mod placement;
 #[cfg(target_os = "linux")]
 mod sessions;
 #[cfg(target_os = "linux")]
+mod console_session;
+#[cfg(target_os = "linux")]
 mod shaderglass;
 use miosd::fhs_sync;
 use miosd::native_generator;
@@ -527,6 +529,9 @@ enum Commands {
         #[arg(long)]
         list: bool,
     },
+    /// Internal greetd PAM session ownership handoff for the controlling Linux VT
+    #[cfg(target_os = "linux")]
+    ConsoleSession,
     /// The tmux-os launcher: one organised popup for apps, TUIs, running instances and the tmux-os actions ([keybindings.tmux.launcher])
     #[cfg(target_os = "linux")]
     Launcher {
@@ -1877,6 +1882,13 @@ async fn main() {
         Commands::Sessions { root, list } => {
             if let Err(error) = sessions::run(std::path::Path::new(root), *list) {
                 eprintln!("[miosd] sessions: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Commands::ConsoleSession => {
+            if let Err(error) = console_session::run() {
+                eprintln!("[miosd] console session: {error}");
                 std::process::exit(1);
             }
         }

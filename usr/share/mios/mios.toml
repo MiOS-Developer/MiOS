@@ -11816,6 +11816,10 @@ auto_attach = true
 # Global tmux session selector (miosd sessions): the default entry of every interactive
 # login (desktop terminal, Linux VT, SSH, ttyd) lists [keybindings].socket_name sessions on
 # this node and on tailnet MiOS nodes, and starts new bare Tmux-OS sessions.
+[terminal.console_login]
+# Root-owned, private per-VT leases prevent delayed logout from reclaiming a new session.
+state_directory = "/run/mios-console-sessions"
+
 [terminal.sessions]
 selector         = true        # false = attach [keybindings].terminal_session directly (previous behaviour)
 new_session_name = "tmux-os"   # bare sessions: tmux-os, tmux-os-2, tmux-os-3, ...
@@ -16636,6 +16640,16 @@ scaffold = true
 dest_dir = "usr/libexec/mios"
 name_prefix = "mios-"
 name_suffix = ".py"
+emit = "file"
+
+[templates.pam]
+match = "^(?:etc|usr/lib)/pam\\.d/[\\w-]+$"
+comment = "hash"
+required_header = false
+required_markers = []
+generated = false
+scaffold = true
+dest_dir = "etc/pam.d"
 emit = "file"
 
 [templates.rust]

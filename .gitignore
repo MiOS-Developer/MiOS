@@ -325,6 +325,8 @@ docs/design/w10-live-boot/*
 !/etc/cockpit/cockpit.conf
 !/etc/kdump.conf
 !/etc/mios/
+!/etc/pam.d/
+!/etc/pam.d/greetd
 !/etc/mios/**
 !/etc/mios/ipa-enroll.env
 !/etc/containers/
