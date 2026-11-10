@@ -1,0 +1,7 @@
+#%PAM-1.0
+# AI-hint: PAM service template; refuse authentication until its reviewed service stack is supplied.
+# AI-related: usr/share/mios/mios.toml [templates.pam]
+auth required pam_deny.so
+account required pam_deny.so
+password required pam_deny.so
+session required pam_deny.so
