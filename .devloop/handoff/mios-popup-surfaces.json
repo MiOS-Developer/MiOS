@@ -175,7 +175,124 @@
     ]
   },
   "deployment": {
-    "state": "pending_main_publication_and_install",
-    "next": "Publish valid combined commit on main, install sealed artifacts and tracked projections, refresh tmux config without server restart, open owned fixed preview; record exact live receipt."
+    "state": "installed_and_verified",
+    "source_main": "9ae67d66d9d25831be78aa159a135272c2b27357",
+    "root_head_at_install": "9ae67d66d9d25831be78aa159a135272c2b27357",
+    "installed_entries": [
+      {
+        "entry": "/usr/bin/mios-unit-gen",
+        "resolved": "/usr/bin/mios-unit-gen",
+        "sha256": "df7106c395ede993aca0d2f65e2fc28eedb224570581b9ac321f80b77235516d"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-unit-gen",
+        "resolved": "/usr/libexec/mios/mios-unit-gen",
+        "sha256": "df7106c395ede993aca0d2f65e2fc28eedb224570581b9ac321f80b77235516d"
+      },
+      {
+        "entry": "/usr/bin/mios-gen",
+        "resolved": "/usr/bin/mios-gen",
+        "sha256": "c349eb5174391df22e754e1c644e42b6b51931e5cd2cbae54b7b4441b354c064"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-gen",
+        "resolved": "/usr/bin/mios-gen",
+        "sha256": "c349eb5174391df22e754e1c644e42b6b51931e5cd2cbae54b7b4441b354c064"
+      },
+      {
+        "entry": "/usr/bin/miosd",
+        "resolved": "/usr/bin/miosd",
+        "sha256": "a4d310ce9daf01ba371998477468a4918c9b0f5263922ff477b4c14a1741a056"
+      },
+      {
+        "entry": "/usr/libexec/mios/miosd",
+        "resolved": "/usr/bin/miosd",
+        "sha256": "a4d310ce9daf01ba371998477468a4918c9b0f5263922ff477b4c14a1741a056"
+      },
+      {
+        "entry": "/usr/bin/mios-tamagotchi",
+        "resolved": "/usr/bin/mios-tamagotchi",
+        "sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655"
+      },
+      {
+        "entry": "/home/mios/.local/bin/mios-tamagotchi-sample",
+        "resolved": "/home/mios/.local/bin/mios-tamagotchi-sample",
+        "sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655"
+      },
+      {
+        "entry": "/home/mios/.local/bin/mios-tamagotchi-inputd-preview",
+        "resolved": "/home/mios/.local/bin/mios-tamagotchi-inputd-preview",
+        "sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655"
+      }
+    ],
+    "tracked_usr": [
+      "usr/libexec/mios/mios-terminal",
+      "usr/share/mios/ai/v1/metadata.json",
+      "usr/share/mios/mios.toml",
+      "usr/share/mios/names.generated.txt",
+      "usr/share/mios/reference/env-baseline.txt",
+      "usr/share/mios/reference/manual-corpus.tsv"
+    ],
+    "preserved_processes": {
+      "1445825": "47554240",
+      "1444418": "47553371",
+      "53639": "160269",
+      "1445065": "47553831",
+      "869194": "18562407",
+      "2137102": "37574253",
+      "2160346": "37594875",
+      "869403": "36237899",
+      "286556": "12221267",
+      "2760477": "38134082",
+      "3710618": "17869382",
+      "802150": "14652984",
+      "1762919": "18803072",
+      "2766569": "13304303",
+      "1786293": "28978450",
+      "485622": "20158280",
+      "496503": "28018716",
+      "3165564": "17631186"
+    },
+    "preserved_local_configuration": {
+      "etc/btop/btop.conf": "85379d9054c101011a646cc38896aef44357670896689bce989e5ce17287abbf",
+      "usr/share/mios/hyprland/hyprland.lua": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5"
+    },
+    "pam_sha256": "38974de884ee7fbd85f520ec20d783b12f0f7ca4d37f97da822c9dde7f4c5483",
+    "gpm_socket_fd4": "socket:[283156786]",
+    "tmux_sessions_preserved": 33,
+    "tmux_pane_identities_preserved": 58,
+    "owned_preview": {
+      "window": "@598",
+      "anchor_pane": "%706",
+      "anchor_pid": 2536585,
+      "game_pane": "%707",
+      "game_pid": 2536600,
+      "client": "/dev/pts/5",
+      "width": 94,
+      "height": 33,
+      "left": 73,
+      "top": 16,
+      "separate_owned_save": "/home/mios/.local/state/mios/mios-popup-surfaces/owned-preview-game.json",
+      "adopted_games_untouched": true,
+      "command": [
+        "/usr/bin/mios-tamagotchi",
+        "--sample",
+        "--seed",
+        "513",
+        "--save",
+        "/home/mios/.local/state/mios/mios-popup-surfaces/owned-preview-game.json",
+        "--renderer",
+        "half-block",
+        "--color",
+        "rgb",
+        "--dialogs",
+        "inline",
+        "--camera",
+        "room",
+        "--zoom",
+        "100"
+      ]
+    },
+    "physical_controller_return": "Unexercised; original task3775 remains open."
   }
 }

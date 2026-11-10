@@ -4884,3 +4884,9 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Task3782: reuse existing per-type SSOT launch sizes and font geometry; bound/center console launchers, sessions, floats, menus, game dialogs and transient tooltips. MiOS-Mons retains its full scene without a persistent right sidebar.
 - Native affected UI134, dialogs16, HUD18, config7, CLI13, unit generator43, resolver popup2, generator351+integrations and miosd407 pass (one pre-existing ignored). Strict all-target Clippy and static musl release checks pass. Compiled disabled-floating/unbounded-size mutations fail intended assertions and restored positives pass. Actual private tmux13tests cover native float geometry and centered quick-click menus.
 - Exact raw proof and original unpublished checkpoint are archived; intermediate failures are retained as provenance and are not claimed as passes. No gate thresholds were weakened. Publish/install sealed artifacts next, retaining unsaved adopted games and console/agent processes; physical controller-return task3775 remains open.
+
+
+## Global popup deployment verified (2026-11-10)
+
+- Published 9ae67d66d9d25831be78aa159a135272c2b27357 and installed sealed mios-gen, mios-unit-gen, miosd and MiOS-Mons with exact vendor/runtime projections. Native menus use the existing60-column menu width, center over the client and open after the initiating right-button release. All13actual private tmux tests passed, including outside-console entry and quick clicks at3viewport positions.
+- Refreshed the human tmux configuration without restarting its server, native agent, adopted games, input daemon or authenticated VT bridge. Original PAM lease/GPM and local btop/hardware customizations verified. The physical display now shows a separate owned94x33game preview with its own save; original unsaved sample games remain untouched. Task3782 completed; controller-return task3775 remains open.
