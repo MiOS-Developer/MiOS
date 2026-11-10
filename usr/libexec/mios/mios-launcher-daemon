@@ -137,7 +137,7 @@ def _execution_context(env):
     return {"id": str(control.resolve()), "platform": "linux",
             "session_id": signature, "backend": "hyprland"}
 
-def _operator_environment():
+def _operator_environment(*, allow_headless=False):
     import pwd
     from pathlib import Path
 
@@ -160,7 +160,14 @@ def _operator_environment():
                             text=True, timeout=probe_ms / 1000)
     if result.returncode:
         raise RuntimeError("Operator session manager is unavailable")
-    return _refresh_gui_environment(env, result.stdout, runtime, uid, probe_ms / 1000)
+    try:
+        return _refresh_gui_environment(env, result.stdout, runtime, uid, probe_ms / 1000)
+    except (OSError, RuntimeError):
+        if not allow_headless:
+            raise
+        # Captured filesystem/console verbs need no compositor. Revalidate the
+        # private runtime and remove every stale GUI value before dispatch.
+        return _refresh_gui_environment(env, "", runtime, uid, probe_ms / 1000)
 
 
 def handle(conn: socket.socket) -> None:
@@ -178,7 +185,7 @@ def handle(conn: socket.socket) -> None:
             return
 
         try:
-            env = _operator_environment()
+            env = _operator_environment(allow_headless=line.startswith(("CAPTURE_JSON: ", "CAPTURE: ")))
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             message = f"Operator session unavailable: {error}"
             if line.startswith("CAPTURE_JSON: "):

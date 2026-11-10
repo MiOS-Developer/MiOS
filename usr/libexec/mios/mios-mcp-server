@@ -2303,6 +2303,8 @@ def _monitor_ui_request():
 
     return {"workspace": data["mcp"]["tmux"]["workspace"], "colors": mios_toml.colors(data),
             "observation_request": _agent_observation_request(), "state": str(_agent_relay_directory()),
+            "observation_command": [data["mcp"]["python"], str(Path(__file__).resolve()),
+                                    "--agent-cli", "--observe-stream"],
             "agents": [{**row, "installed": _is_tool_installed(row)}
                 for row in data["agent_cli"]["tools"]]}
 
@@ -2411,6 +2413,30 @@ def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
 
 def _agent_cli_main(args):
     cfg = _agent_cli_config()
+    if args == ["--observe-stream"]:
+        async def stream():
+            import mios_mcp_federation
+            config = mios_toml.load_merged()["mcp"]["agents"]
+            federation = _federation()
+            inventory = mios_mcp_federation.AgentObservationCache(federation,
+                config["observation"]["refresh_s"], config["max_state_bytes"])
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
+            try:
+                inventory.start_background()
+                while True:
+                    local = await asyncio.to_thread(_agent_relay_call, "mios_agent_observe", {"scope": "local"})
+                    print(json.dumps(inventory.snapshot(local)), flush=True)
+                    await asyncio.sleep(config["observation"]["refresh_s"])
+            finally:
+                await inventory.close()
+                if federation:
+                    await federation.close()
+        try:
+            asyncio.run(stream())
+        except asyncio.CancelledError:
+            pass
+        return 0
     if args in (["--observe"], ["--watch"]):
         if args == ["--observe"] or not sys.stdout.isatty():
             local = _agent_relay_call("mios_agent_observe", {"scope": "local"})

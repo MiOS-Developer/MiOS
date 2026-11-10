@@ -699,6 +699,90 @@ class Federation:
         await asyncio.gather(*(member.halt() for member in self.members), return_exceptions=True)
 
 
+class AgentObservationProcess:
+    """Read public snapshots from the configured MCP interpreter, without importing its SDK."""
+
+    def __init__(self, command, max_bytes):
+        self.command, self.max_bytes = command, max_bytes
+        self.task = self.process = self.latest = None
+        self.state = "pending"
+
+    def start_background(self):
+        self.task = asyncio.create_task(self._read(), name="mios-global-observation")
+
+    async def _read(self):
+        try:
+            self.process = await asyncio.create_subprocess_exec(*self.command,
+                stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=self.max_bytes + 1)
+            while True:
+                line = await self.process.stdout.readline()
+                if not line:
+                    raise RuntimeError("observation stream ended")
+                if len(line) > self.max_bytes:
+                    raise ValueError("oversized observation")
+                data = json.loads(line)
+                if not isinstance(data, dict) or any(not isinstance(data.get(key), list)
+                        for key in (*AgentObservationCache.FIELDS, "sources", "errors")):
+                    raise ValueError("invalid observation stream")
+                self.latest, self.state = data, "ready"
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, ValueError):
+            self.state = "unavailable"
+        finally:
+            await self._stop()
+
+    def snapshot(self, local):
+        if self.latest is None:
+            result = dict(local)
+            result["sources"] = [*local.get("sources", []),
+                {"source": "global observer", "kind": "mcp", "state": self.state}]
+            result["errors"] = list(local.get("errors", []))
+            if self.state == "unavailable":
+                result["errors"].append({"source": "global observer", "error": "observation stream unavailable"})
+            return result
+        result = dict(local)
+        local_sources = {row["source"] for row in local.get("sources", [])}
+        sources = [dict(row) for row in self.latest["sources"] if row["source"] not in local_sources]
+        remote_sources = {row["source"] for row in sources}
+        def remote(row):
+            return any(row.get("source", "") == source or row.get("source", "").startswith(source + "/")
+                       for source in remote_sources)
+        for key in AgentObservationCache.FIELDS:
+            rows = [dict(row) for row in self.latest[key] if remote(row)]
+            if self.state != "ready":
+                for row in rows:
+                    row["stale"] = True
+            result[key] = [*local.get(key, []), *rows]
+        if self.state != "ready":
+            for source in sources:
+                source["state"] = "unavailable"
+        result["sources"] = [*local.get("sources", []), *sources]
+        result["errors"] = [*local.get("errors", []),
+                            *(row for row in self.latest["errors"] if remote(row))]
+        if self.state != "ready":
+            result["errors"].append({"source": "global observer", "error": "observation stream unavailable"})
+        result["agent_total"] = len(result["agents"])
+        result["online_total"] = sum(row.get("online") is True and not row.get("stale") for row in result["agents"])
+        return result
+
+    async def _stop(self):
+        if self.process and self.process.returncode is None:
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), 5)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await self.process.wait()
+
+    async def close(self):
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+            self.task = None
+
+
 class AgentObservationCache:
     """Poll declared MiOS-MCP relays independently of terminal refreshes.
 

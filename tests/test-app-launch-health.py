@@ -156,6 +156,22 @@ class BrokerEnvironmentTests(unittest.TestCase):
     def test_foreign_runtime_owner_is_rejected(self):
         with self.assertRaises(RuntimeError):self.refresh(uid=os.getuid()+1)
 
+    def test_headless_capture_strips_stale_gui_but_graphical_dispatch_still_refuses(self):
+        from unittest import mock
+        from types import SimpleNamespace
+        sys.path.insert(0,str(ROOT/"usr/lib/mios"))
+        import mios_toml
+        stale="XDG_CURRENT_DESKTOP=Hyprland\nWAYLAND_DISPLAY=dead-display\n"
+        with mock.patch.dict(os.environ,{"XDG_RUNTIME_DIR":str(self.runtime)}), \
+             mock.patch.object(mios_toml,"load_merged",return_value={"desktop":{"launch":{"probe_timeout_ms":200}}}), \
+             mock.patch.object(self.module.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=stale)):
+            result=self.module._operator_environment(allow_headless=True)
+            self.assertFalse(self.module._GUI_SESSION_KEYS.intersection(result))
+            self.assertIsNone(self.module._execution_context(result))
+            with self.assertRaises(RuntimeError):self.module._operator_environment()
+            self.runtime.chmod(0o777)
+            with self.assertRaises(RuntimeError):self.module._operator_environment(allow_headless=True)
+
     def test_foreign_socket_owner_is_rejected(self):
         from unittest import mock
         from types import SimpleNamespace

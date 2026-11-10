@@ -594,6 +594,39 @@ class TailnetDiscoveryTests(unittest.TestCase):
 
 
 class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ui_observation_process_keeps_remote_rows_and_degrades_on_stream_loss(self):
+        local={"agents":[{"agent_id":"local","source":"local-relay","online":True}],
+               "messages":[],"panes":[],"sessions":[],"subagents":[],"errors":[],
+               "sources":[{"source":"local-relay","state":"ready"}]}
+        frame={**local,"agents":[*local["agents"],{"agent_id":"system","source":"system/root-relay","online":True}],
+               "sources":[*local["sources"],{"source":"system","state":"ready"}]}
+        program="import sys,time;print("+repr(json.dumps(frame))+",flush=True);time.sleep(30)"
+        inventory=fed.AgentObservationProcess([sys.executable,"-I","-c",program],65536)
+        inventory.start_background()
+        try:
+            for _ in range(100):
+                if inventory.state=="ready":break
+                await asyncio.sleep(.01)
+            result=inventory.snapshot(local)
+            self.assertEqual([row["agent_id"] for row in result["agents"]],["local","system"])
+            self.assertEqual(result["online_total"],2)
+            inventory.process.terminate()
+            await asyncio.wait_for(inventory.task,5)
+            result=inventory.snapshot(local)
+            self.assertEqual(result["online_total"],1)
+            self.assertTrue(result["agents"][1]["stale"])
+            self.assertEqual(result["sources"][1]["state"],"unavailable")
+            self.assertTrue(result["errors"])
+        finally:await inventory.close()
+
+    async def test_ui_observation_process_rejects_invalid_or_oversized_frames(self):
+        for frame in ("{}", "x"*2048):
+            inventory=fed.AgentObservationProcess([sys.executable,"-I","-c","print("+repr(frame)+")"],1024)
+            inventory.start_background()
+            await asyncio.wait_for(inventory.task,5)
+            self.assertEqual(inventory.state,"unavailable")
+            self.assertIsNone(inventory.latest)
+
     async def test_global_sources_are_qualified_sanitized_and_nonrecursive(self):
         from types import SimpleNamespace
         calls = []

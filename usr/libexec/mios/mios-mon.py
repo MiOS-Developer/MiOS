@@ -961,13 +961,11 @@ if TEXTUAL_AVAILABLE:
             if self.enable_agent_federation:
                 try:
                     import mios_mcp_federation
-                    self.agent_federation = mios_mcp_federation.Federation.from_ssot(load_merged())
-                    if self.agent_federation:
-                        cfg = self.ui_request.get("observation_request", {}).get("config", {})
-                        self.agent_inventory = mios_mcp_federation.AgentObservationCache(self.agent_federation,
-                            cfg.get("observation", {}).get("refresh_s", 2), cfg.get("max_state_bytes", 2097152))
-                        self.agent_inventory.start_background()
-                except (ImportError, ValueError, OSError):
+                    cfg = self.ui_request["observation_request"]["config"]
+                    self.agent_inventory = mios_mcp_federation.AgentObservationProcess(
+                        self.ui_request["observation_command"], cfg["max_state_bytes"])
+                    self.agent_inventory.start_background()
+                except (ImportError, ValueError, OSError, KeyError):
                     # Keep the native inventory available, while showing incomplete coverage.
                     from mios_mcp_federation import AgentObservationCache
                     self.agent_inventory = AgentObservationCache(None)
