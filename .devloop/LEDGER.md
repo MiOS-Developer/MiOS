@@ -4857,3 +4857,10 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Actual installed greetd+pam_exec and SELinuxEnforcing workerxdm_t/client matching the existing unconfined physical context passed unusedVT63 ownership/GPM/lease/logout acceptance. Explicit user mode620/group1000 changes remained while owner restoredroot. ActiveVT1 and four adopted process identities remained intact. No authentication requirement or live session was changed during the private mount-namespace fixture.
 - Root-pinned policy ignores caller loader overrides; descriptor and kernel parent/session/foreground witnesses protect handoff, nonblocking lease prevents PAM waits. Protected /run mount handles the Blade filesystem root delegation.
 - Raw sanitized logs, exact hardware harnesses, controls and receipts are in mios-console-native-verification.tar.gz with zero raw scanner findings. Combined generation/gates, main publication and scoped live installation follow.
+
+
+## Keep privileged PAM bookkeeping before user context setup (2026-11-10)
+
+- Final mixed-context SELinux stress test connected GPM but denied logout bookkeeping. The live PAM file was not changed. Move only the new optional privileged hook before pam_selinux open, following pam_selinux close/loginuid, with every pre-existing stack line/order preserved.
+- Corrected actual close/loginuid/hook/open fixture passed in Enforcing mode with parentxdm_t and a client matching the physical unconfined context: UID1000/GPM/user-mode620+group1000 retained/rootUID0/empty lease. ActiveVT1 and adopted PID/start identities unchanged. No SELinux policy was relaxed.
+- Updated native archive includes this exact fixture and failure/success receipts; raw scan is empty. Rust407/254 tests and their compiled controls remain unchanged; regenerate and re-run publication gates before rollout.

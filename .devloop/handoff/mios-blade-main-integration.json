@@ -1114,6 +1114,7 @@
     },
     "kernel_selinux_acceptance": {
       "passed": true,
+      "privileged_hook_before_selinux_user_setup": true,
       "selinux_enforcing_service_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
       "worker_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
       "client_context": "unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023",
@@ -1122,8 +1123,8 @@
       "user_changed_mode_and_group_preserved": true,
       "vt": 63,
       "active_vt_preserved": 1,
-      "actual_greetd_worker_pid": 1070644,
-      "actual_unprivileged_console_bridge_pid": 1070688,
+      "actual_greetd_worker_pid": 1338841,
+      "actual_unprivileged_console_bridge_pid": 1338875,
       "open_uid": 1000,
       "close_uid": 0,
       "group_and_mode_preserved": true,
@@ -1137,13 +1138,20 @@
       },
       "scope": "Private mount namespace PAM/config fixture, actual installed greetd+pam_exec and kernel VT, no live authentication/config/active VT change"
     },
-    "authentication_policy": "Existing greetd auth/account/password/session lines preserved; one optional PAM session hook appended.",
+    "authentication_policy": "Every original greetd stack line/order is preserved. Optional privileged session hook runs after pam_selinux close/loginuid and before pam_selinux open, keeping bookkeeping in service context at both boundaries.",
     "verification_archive": {
       "path": ".devloop/handoff/mios-console-native-verification.tar.gz",
-      "sha256": "8d51839ac333e6c4c0d2ddc4e95227eb2afa0d6c47dbe7fd1bb0c0f47cd5b616",
-      "bytes": 96252,
+      "sha256": "bf445011a5aa54cf0976c140911b30405127f33ed080e78527be01bb356c10c3",
+      "bytes": 98058,
       "raw_secret_scan_findings": 0
     },
-    "deployment": "Prepared for combined main publication and live installation; active console and adopted processes will be retained."
+    "deployment": "Prepared for combined main publication and live installation; active console and adopted processes will be retained.",
+    "pam_hook_sha256_current": "38974de884ee7fbd85f520ec20d783b12f0f7ca4d37f97da822c9dde7f4c5483",
+    "selinux_order_control": {
+      "observed_failure": "Mixed helper open-unconfined/close-xdm context stress fixture connected GPM but could not reclaim ownership; real host SELinux enforced denial.",
+      "correction": "Privileged PAM hook precedes SELinux user-context setup; actual pam_selinux close/loginuid/hook/open fixture passed owner/GPM/logout/mutable-mode-group acceptance.",
+      "no_policy_bypass": true,
+      "active_vt_preserved": 1
+    }
   }
 }
