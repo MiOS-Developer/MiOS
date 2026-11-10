@@ -1226,3 +1226,7 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-tui-desktop.json
 
 !/.devloop/handoff/mios-tui-desktop-verification.tar.gz
+
+!/.devloop/handoff/mios-tui-desktop-live-verification.json
+
+!/.devloop/handoff/mios-menu-defect-controls-proof.tar.gz

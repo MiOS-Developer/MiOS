@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1748 |
-| in_progress | 94 |
-| completed | 1900 |
+| pending | 1749 |
+| in_progress | 95 |
+| completed | 1901 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3783 |
+| total | 3786 |
 
 0 record(s) carry at least one override.
 
@@ -2674,7 +2674,10 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3778` Content-fit menus and spatial controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
 - `task_3779` Textured shaded menu panels with shared content-fit geometry -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
-- `task_3783` Improve compact MiOS-Tmux and game menu navigation -- in_progress · owner mios-menu-navigation · P1 · size M
+- `task_3783` Improve compact MiOS-Tmux and game menu navigation -- completed · owner mios-menu-navigation · P1 · size M
+- `task_3784` Unify the top TUI, automatic Desktop login and user-session input bindings -- in_progress · owner mios-desktop-session-migration · P1 · size M · depends_on task_3783
+- `task_3785` Complete genuine remote PAM login with user selection and owned PTY lifecycle -- in_progress · owner mios-remote-login · P1 · size M · depends_on task_3783
+- `task_3786` Replace the legacy game identity globally with MiOS-Mons -- pending · owner mios-global-identity-migration · P1 · size M · depends_on task_3784, task_3785
 
 ## WS-MIOSSYS
 

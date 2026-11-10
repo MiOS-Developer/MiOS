@@ -10,6 +10,7 @@
     "Backend viewport clipping rejects empty/off-screen occluders and zero-width ranges; identification IPC yields on backpressure; border-safe window mouse coordinates normalize status rows and panning."
   ],
   "deployment": {
+    "completion_metadata_publication": "pending Root metadata commit/push and post-push install",
     "final_artifacts": [
       {
         "bytes": 12139824,
@@ -61,14 +62,148 @@
       "physical_pointer": "unverified; no physical acceptance claimed",
       "state": "host freeze recovered with witnessed authorized session reset"
     },
-    "installed_entries": null,
-    "installed_main": null,
+    "installed_entries": [
+      {
+        "entry": "/usr/bin/mios-gen",
+        "sha256": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "target": "/usr/bin/mios-gen"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-gen",
+        "sha256": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "target": "/usr/bin/mios-gen"
+      },
+      {
+        "entry": "/usr/bin/mios-unit-gen",
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "target": "/usr/bin/mios-unit-gen"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-unit-gen",
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "target": "/usr/libexec/mios/mios-unit-gen"
+      },
+      {
+        "entry": "/usr/bin/miosd",
+        "sha256": "8c5196bda9c68022322d95f7e8c7b9316588511a32a76816b4ef799a0eceb9fb",
+        "target": "/usr/bin/miosd"
+      },
+      {
+        "entry": "/usr/libexec/mios/miosd",
+        "sha256": "8c5196bda9c68022322d95f7e8c7b9316588511a32a76816b4ef799a0eceb9fb",
+        "target": "/usr/bin/miosd"
+      },
+      {
+        "entry": "/usr/bin/mios-tamagotchi",
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/usr/bin/mios-tamagotchi"
+      },
+      {
+        "entry": "/home/mios/.local/bin/mios-tamagotchi-sample",
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/home/mios/.local/bin/mios-tamagotchi-sample"
+      },
+      {
+        "entry": "/home/mios/.local/bin/mios-tamagotchi-inputd-preview",
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/home/mios/.local/bin/mios-tamagotchi-inputd-preview"
+      },
+      {
+        "entry": "/usr/bin/mios-controls",
+        "sha256": "506418a3de5ab38f5c73a97bb062c45f1a38476260ba5b56f11c54f56ba03087",
+        "target": "/usr/bin/mios-controls"
+      },
+      {
+        "entry": "/usr/bin/mios-fanctl",
+        "sha256": "56ea96c418e469cfc1986f9e56eba89e8eb191a9164193bd210ac694f861ecd3",
+        "target": "/usr/bin/mios-fanctl"
+      }
+    ],
+    "installed_main": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+    "installed_targets": [
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "target": "/usr/bin/mios-gen",
+        "uid": 0
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "target": "/usr/bin/mios-unit-gen",
+        "uid": 0
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "target": "/usr/libexec/mios/mios-unit-gen",
+        "uid": 0
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "8c5196bda9c68022322d95f7e8c7b9316588511a32a76816b4ef799a0eceb9fb",
+        "target": "/usr/bin/miosd",
+        "uid": 0
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/usr/bin/mios-tamagotchi",
+        "uid": 0
+      },
+      {
+        "gid": 1000,
+        "mode": 493,
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/home/mios/.local/bin/mios-tamagotchi-sample",
+        "uid": 1000
+      },
+      {
+        "gid": 1000,
+        "mode": 493,
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "target": "/home/mios/.local/bin/mios-tamagotchi-inputd-preview",
+        "uid": 1000
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "506418a3de5ab38f5c73a97bb062c45f1a38476260ba5b56f11c54f56ba03087",
+        "target": "/usr/bin/mios-controls",
+        "uid": 0
+      },
+      {
+        "gid": 0,
+        "mode": 493,
+        "sha256": "56ea96c418e469cfc1986f9e56eba89e8eb191a9164193bd210ac694f861ecd3",
+        "target": "/usr/bin/mios-fanctl",
+        "uid": 0
+      }
+    ],
     "policy": "After every main push, install and verify the authorized live target; record published main, artifact source/checksum, installed path and actual running target.",
     "preview_entry": "miosd desktop",
-    "preview_latest_controls_theme_reload": "pending publication/install and coordinated re-entry",
-    "published_main": null,
-    "running_target": null,
-    "state": "core_verified_pending_main_publication_and_install"
+    "preview_latest_controls_theme_reload": "verified by scoped owned preview refresh and attach probe",
+    "published_main": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+    "running_target": {
+      "backend_sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803",
+      "desktop_canvas": {
+        "pid": 3009022,
+        "start": 53650067,
+        "uid": 1000
+      },
+      "desktop_server": {
+        "pid": 3009021,
+        "start": 53650067,
+        "uid": 1000
+      },
+      "source_artifact_commit": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
+    "state": "core_published_installed_preview_refreshed"
   },
   "failures_and_limits": [
     "Full10 stopped at the new argv0 fixture with one failure; its exact failed log and exit are archived. The focused repair run passed and supersedes that fixture failure, not its historical record.",
@@ -77,14 +212,49 @@
     "Physical pointer and controller trial unverified.",
     "Remote authentication and later global MiOS-Mons identity migration remain separate.",
     "Private desktop 1+15 tests used the exact earlier artifacts recorded in their receipt; latest argv0/TTY transport is covered separately by focused repair and PTY proofs.",
-    "Authorized host reset lost unsaved process memory; three existing saved-progress files were backed up; source work was preserved."
+    "Authorized host reset lost unsaved process memory; three existing saved-progress files were backed up; source work was preserved.",
+    "First core live install inherited a private umask; fifty public tracked modes and one directory were repaired and verified, and Git helpers now scope022.",
+    "Four empty owned preview processes were deliberately reset under operator authorization; the SSH shell and twenty-four outside process witnesses/saved files were preserved.",
+    "Shell SSOT policy/theme and left-control projection were verified; this preview receipt does not claim interactive shell-prompt rendering, physical controller/analog/PiP acceptance or title-control click injection."
   ],
-  "next_owner": "Root: publish the verified core on main, install after each push, verify exact artifact hashes and running targets, then record publication/install receipts in a metadata commit and install that revision. Keep physical trial, real remote authentication and later identity migration separate until proved.",
+  "follow_up_tasks": [
+    {
+      "depends_on": [
+        "task_01M72ZZY7PCPJ82V3APRZ39WNZ"
+      ],
+      "id": "task_01M73JJRHDYFWG4C7SGSJJ9TZM",
+      "key": "desktop_session_binding_migration",
+      "login_requirement": "automatic workspace at login over the blank Desktop canvas",
+      "number": 3784,
+      "status": "in_progress"
+    },
+    {
+      "depends_on": [
+        "task_01M72ZZY7PCPJ82V3APRZ39WNZ"
+      ],
+      "id": "task_01M73JJRVSXS1S8PK9S4TYFHRY",
+      "key": "remote_pam_login",
+      "number": 3785,
+      "status": "in_progress"
+    },
+    {
+      "depends_on": [
+        "task_01M73JJRHDYFWG4C7SGSJJ9TZM",
+        "task_01M73JJRVSXS1S8PK9S4TYFHRY"
+      ],
+      "id": "task_01M73JJS65XNRW3BT1G2N4XSBY",
+      "key": "global_identity_migration",
+      "number": 3786,
+      "status": "pending"
+    }
+  ],
+  "next_owner": "Root: run metadata standing checks, publish/install this completion metadata, then continue the three linked unfinished follow-ups in order. Preserve both immutable verification archives, existing saved state and protected physical policy.",
   "pending_acceptance": [
-    "Publish reviewed core on main; confirm public revision, install sealed artifacts and record actual running targets.",
-    "Coordinate latest desktop/TTY client re-entry and interactive physical trial; private proofs do not certify physical pointer behavior.",
-    "Finish separately reviewed real remote PAM authentication, then the ordered global MiOS-Mons identity migration.",
-    "Physical controller and analog acceptance under task3775 remain open."
+    "Publish and install this metadata completion revision after Root standing checks; core code/artifacts are already published/installed 84ae9c5.",
+    "Continue 3784 unified top TUI, automatic workspace open at login over the blank Desktop canvas and inputd user/session/global binding migration.",
+    "Continue 3785 genuine remote PAM implementation authentication/lifecycle acceptance.",
+    "Only after both follow-ups are accepted, complete 3786 global MiOS-Mons identity migration.",
+    "Physical controller/pointer and task3775 analog acceptance remain open."
   ],
   "purpose": "mios-tui-desktop",
   "scaffold": {
@@ -97,8 +267,24 @@
   },
   "schema": 1,
   "source": {
-    "commit": null,
+    "artifact_commit": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+    "commit": "84ae9c5248f147cd831b896a56e98058dd10ce49",
     "digest_scope": "schema2 metadata/source-input-sha256.json in verification archive; dynamic task/docs/handoff metadata excluded",
+    "generated_metadata_updates": [
+      {
+        "after": 695,
+        "artifact_input_manifest_preserved": true,
+        "artifact_source_commit": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+        "artifact_source_sha256": "8432a6e85fca2839561071cbabe7db6e9770fdb3f819147df0a96f6843fb8585",
+        "before": 693,
+        "byte_exact_other_inputs": 364,
+        "current_tree_sha256": "8b1714fd9849b3826376e8752f0c4cfa92e022320d1406cdb5fcdcc58db1ea57",
+        "generated_counter": "max_tracked_mb",
+        "normalized_artifact_source_sha256": "8432a6e85fca2839561071cbabe7db6e9770fdb3f819147df0a96f6843fb8585",
+        "only_exact_counter_changed": true,
+        "path": "usr/share/mios/mios.toml"
+      }
+    ],
     "input_files": [
       {
         "path": "src/mios-rs/.cargo/config.toml",
@@ -1564,13 +1750,13 @@
     "input_files_format": "path-sha256-rows-v2",
     "lane": "mios-menu-navigation",
     "sha256": "2c52f1edaceb989fa56bbf521134708ef5ad534c0ce8a5615e9a74dd255e5c25",
-    "state": "explicit code inputs frozen; publishing commit intentionally pending"
+    "state": "compiled artifact source remains84ae9c5; original365-input manifest retained; current SSOT differs only by the approved generated tracked-size counter"
   },
-  "status": "core_verified_pending_main_publication_and_install",
+  "status": "core_completed_published_installed_and_preview_refreshed",
   "task": {
     "id": "task_01M72ZZY7PCPJ82V3APRZ39WNZ",
     "number": 3783,
-    "status": "in_progress"
+    "status": "completed"
   },
   "verification_archive": {
     "bytes": 112628,
@@ -1943,23 +2129,83 @@
         ]
       ]
     },
+    "compiled_negative_controls": {
+      "bytes": 128805,
+      "expected_runtime_assertion_failures": 4,
+      "focused_positive_passes": 12,
+      "members": 55,
+      "negative_controls": [
+        {
+          "name": "menu-paging",
+          "negative_binary_sha256": "808d15fcdc537e61f9a8dcd07b061554d4f2a2b3f9f4da91ae9b04bcc74abd0f",
+          "negative_log_sha256": "1f8079d8b8bc1a56085beaa0f7e5e52c5f391129ce4c5b3de4c00eed85db7de9",
+          "restored_binary_sha256": "d9e7d05338c69e5a94832d8fb25eab4cce095a00859354ccccb0055fdc4f79fa",
+          "restored_bytes_exact": true,
+          "restored_source_sha256": "60ef92c2fa40c6b532fa71beef4a987bfdca4947ab5339e58a9bf070bf59562a",
+          "source": "tools/native/mios-gen/src/tmux_os.rs",
+          "status": "passed_compiled_negative_and_restored_positive"
+        },
+        {
+          "name": "literal-search",
+          "negative_binary_sha256": "941c1375984621709c728fb26fb5c6403a6c31c4c1359f019a3bf5f76d9fbb4d",
+          "negative_log_sha256": "5fcb5d3df9a8a71643d31724fb14c15326c4c37b81c27475126dc36ce98a95e9",
+          "restored_binary_sha256": "294d20bb2fd05670b3b1575bef09ab313633ca75f6ec31b59930dc921d936a2e",
+          "restored_bytes_exact": true,
+          "restored_source_sha256": "903aa7bc246f54084d64b04e42182cbbdf1f9b7809f86ecbbbf46c13c1753006",
+          "source": "src/mios-rs/miosd/src/launcher.rs",
+          "status": "passed_compiled_negative_and_restored_positive"
+        },
+        {
+          "name": "back-focus",
+          "negative_binary_sha256": "5ff338161068a018d7c6ca07d9ac629f713c06c6d904059b2f2db00eb83d75ad",
+          "negative_log_sha256": "22e10e34ba3831ad459b0053ea7ff8315bde0515f94f66ecddf35288302b9a70",
+          "restored_binary_sha256": "5fd7c98676546fa6e6dff1c73042d5399c7cb2de5781867a171fbdeb9f03a866",
+          "restored_bytes_exact": true,
+          "restored_source_sha256": "ca170417357f73d3b94649f2695723ffe3d7b8a018dc12d7d457e258466f6790",
+          "source": "tools/native/mios-tamagotchi/src/ui.rs",
+          "status": "passed_compiled_negative_and_restored_positive"
+        },
+        {
+          "name": "back-scroll",
+          "negative_binary_sha256": "c05e3c7e015e0e005cbc083405c83e3349d1f5ca049b4c6e03ad8854745ff07c",
+          "negative_log_sha256": "1f7ab792edd00a15c4eaee9ec4d61244dbb9e297d87a0313df8e29cbd7025cc2",
+          "restored_binary_sha256": "5fd7c98676546fa6e6dff1c73042d5399c7cb2de5781867a171fbdeb9f03a866",
+          "restored_bytes_exact": true,
+          "restored_source_sha256": "ca170417357f73d3b94649f2695723ffe3d7b8a018dc12d7d457e258466f6790",
+          "source": "tools/native/mios-tamagotchi/src/ui.rs",
+          "status": "passed_compiled_negative_and_restored_positive"
+        }
+      ],
+      "path": ".devloop/handoff/mios-menu-defect-controls-proof.tar.gz",
+      "receipt_sha256": "506cefa9fc223cc3ee8058fdf0a85524a6bfdce097315ef7d750261baae6ac5b",
+      "sealed_cache_unchanged": true,
+      "sha256": "90f5e8957a2b40cdf23ba3cab7924a5f1c3bd4ef3a519df460cf80bfa8dd150d",
+      "source_commit": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+      "source_restored": true,
+      "strict_directory_scan": {
+        "exit": 0,
+        "findings": 0,
+        "scanner_sha256": "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509"
+      },
+      "successful_compilations": 11
+    },
     "core_final": {
       "full10_failed_host_exit": 101,
-      "installed_main": null,
+      "installed_main": "84ae9c5248f147cd831b896a56e98058dd10ce49",
       "limits": [
         "Physical pointer and controller trial unverified.",
         "Remote authentication and later global MiOS-Mons identity migration remain separate.",
         "Private desktop 1+15 tests used the exact earlier artifacts recorded in their receipt; latest argv0/TTY transport is covered separately by focused repair and PTY proofs.",
         "Authorized host reset lost unsaved process memory; three existing saved-progress files were backed up; source work was preserved."
       ],
-      "published_main": null,
+      "published_main": "84ae9c5248f147cd831b896a56e98058dd10ce49",
       "repair_prefix": "full11",
       "runtime_replays": 7,
       "runtime_tests": 3,
       "source_inputs_sha256": "2c52f1edaceb989fa56bbf521134708ef5ad534c0ce8a5615e9a74dd255e5c25",
       "standing_gates_host_exit": 0,
       "standing_gates_inside_exit": 0,
-      "status": "core_verified_pending_main_publication_and_install",
+      "status": "core_published_installed_preview_refreshed",
       "test_runs": {
         "full10-extra-tuis.log": [
           {
@@ -2282,6 +2528,11 @@
       "passed": 461,
       "scope": "Native release library run before the separate wheel delta; not a final combined-source count."
     },
+    "live_verification": {
+      "path": ".devloop/handoff/mios-tui-desktop-live-verification.json",
+      "sha256": "7676c69b59ee58b696bfd32ae21df13f81b0e0a70d44f94da4d8b9ffe597d9d5",
+      "source_artifact_commit": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
     "native_monitor": {
       "agent_tui_passed": 19,
       "monitor_passed": 10,
@@ -2318,19 +2569,32 @@
       "trace": "150 alternating TIOCSWINSZ at 100 Hz plus owned SIGWINCH; identical seed, renderer, quality and initial pause; ABBA order"
     },
     "runtime_final": {
+      "all_seven_save_sha256": "87b69f8f58b3eaf230c9055f95a6b9508ad645a464bca3b67009f7820fb5e418",
       "all_seven_saves_identical": true,
       "baseline_cpu_seconds": [
         0.94,
         0.93
       ],
+      "baseline_output_bytes": [
+        6532000,
+        6532000
+      ],
       "candidate_cpu_seconds": [
         0.07,
         0.06
       ],
+      "candidate_output_bytes": [
+        261399,
+        261399
+      ],
       "candidate_sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
       "replays": 7,
       "report_sha256": "78d05072e0c37b059ce7c71eba26c0217b61a900cd1a9f012dad22f1d6fda0f2",
-      "scope": "owned private PTYs only",
+      "resize_events_per_trace": 150,
+      "resize_order": "ABBA",
+      "scenarios": 7,
+      "scope": "owned private PTYs; seeded paused save; identical renderer/quality; measurements apply to this trace, not every workload",
+      "target_hz": 100,
       "tests": 3
     }
   }
