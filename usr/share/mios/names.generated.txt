@@ -652,6 +652,8 @@ consensus.timeout_s  MIOS_CONSENSUS_TIMEOUT_S
 consensus.weight_floor  MIOS_CONSENSUS_WEIGHT_FLOOR
 consensus.rrf_k  MIOS_CONSENSUS_RRF_K
 consensus.lanes  MIOS_CONSENSUS_LANES
+drift.bounded_capacities.mcp.agents.max_agents.limit  MIOS_DRIFT_BOUNDED_CAPACITIES_MCP_AGENTS_MAX_AGENTS_LIMIT
+drift.bounded_capacities.mcp.agents.max_agents.reason  MIOS_DRIFT_BOUNDED_CAPACITIES_MCP_AGENTS_MAX_AGENTS_REASON
 drift.denylist  MIOS_DRIFT_DENYLIST
 dispatch.enable  MIOS_DISPATCH_ENABLE
 dispatch.default_hop_budget  MIOS_DISPATCH_DEFAULT_HOP_BUDGET

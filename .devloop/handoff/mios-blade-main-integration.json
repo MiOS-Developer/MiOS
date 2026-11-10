@@ -386,5 +386,306 @@
     "Historical recovery snapshots are source archives, not globally runtime-certified code.",
     "Existing running bridge and nested launchers are retained; new launchers receive the new protocol."
   ],
-  "resume_action": "Fetch full main; verify recovery checksum and prerequisites; import selected refs into an unused private namespace. Use a fresh protocol-v1 parent/child preview for physical acceptance while preserving the adopted game, PiP and live bridge."
+  "resume_action": "Fetch full main; verify recovery checksum and prerequisites; import selected refs into an unused private namespace. Use a fresh protocol-v1 parent/child preview for physical acceptance while preserving the adopted game, PiP and live bridge.",
+  "controller_parent_compatibility": {
+    "source_commit": "5b4fe1f0cdb80f81f8ecb5637c197f42d95ff455",
+    "behavior": "Reject unsupported or dead parent before contacting child; require supported protocol on fresh parent ACK; Inputd advertises protocol1.",
+    "tests": {
+      "generator": 351,
+      "inputd": 254
+    },
+    "baseline_controls": [
+      {
+        "log": "gen-baseline.log",
+        "failed_behavior_tests": 2,
+        "exit": 101,
+        "sha256": "e765e7a651da3a83c9995b1b4cf35102c8985cdd472331dca90685500abf9a24"
+      },
+      {
+        "log": "inputd-baseline.log",
+        "failed_behavior_tests": 1,
+        "exit": 101,
+        "sha256": "f1bde899cc6a515f5b2e036098eae71e0d3dcfae04fd627c6768c3c34a09f42e"
+      }
+    ],
+    "compiled_negative_controls": [
+      {
+        "name": "parent-preflight-planted",
+        "exit": 101,
+        "log_sha256": "db1660aa507268dfafdb90c34c2d61232236eb833dcd28d31b196c39cbdafb42"
+      },
+      {
+        "name": "parent-preflight-restored",
+        "exit": 0,
+        "log_sha256": "e1e254f6e1f6f3690bc736a6e8f94e43a3dfd4e6481925243fb618e1ef7ba482"
+      },
+      {
+        "name": "parent-ack-planted",
+        "exit": 101,
+        "log_sha256": "bff774c1f962f320f0fd179646e822a049e8213963ecfe8041f2c3e656a69eb1"
+      },
+      {
+        "name": "parent-ack-restored",
+        "exit": 0,
+        "log_sha256": "c5f4537404bbf5e8012188833a5687d3225c7cbb62a846d43251237279771662"
+      }
+    ],
+    "physical_acceptance": "Still pending on a fresh protocol-v1 parent/child; adopted bridge/game/PiP retained."
+  },
+  "global_agent_inventory": {
+    "task": {
+      "id": "task_01M7196GFKJJGVVEVDRT77H23D",
+      "number": 3780,
+      "title": "Expose all reported global agents, sessions and subagents in shared TUIs"
+    },
+    "source_commit": "406ac56123fe15061c8dabcc73d3ab1730ff9672",
+    "upstream_integrated": "69cc268c99eedbb2cceab408760b6a9be4ebdb0e",
+    "changes": [
+      "Untruncated registered-agent, tmux socket/pane/session and reported/detected child inventory; online-first searchable shared Monitor and agent TUI.",
+      "F6 filters, Ctrl+F search, Enter full identities/source/parent, keyboard paging and stable refresh selection.",
+      "Background configured MiOS-MCP source observation with local scope, sanitized fields, qualified identities and explicit pending/partial/unavailable coverage.",
+      "Operational registry capacity256 with explicit reviewed bound256; reject257, malformed policies and silent bound increases while other ratchets remain enforced."
+    ],
+    "verification": {
+      "builder": "MiOS-DEV rootless Podman; pinned e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf; memory admission and shared heavy lock; installed PowerShell runtime mounted read-only for its existing gate tests.",
+      "native_tools_tests": 707,
+      "native_gate_tests": 310,
+      "textual_tests": 15,
+      "federation_tests": 26,
+      "clippy": "all affected packages, all targets, -D warnings",
+      "generation": "all29 declared stages passed",
+      "suite_registry": "573 suites,6/6 exemptions",
+      "gates": {
+        "credential-literals": "passed",
+        "phase-registry": "passed",
+        "ratchet-direction": "passed",
+        "signature-policy": "passed",
+        "version-literals-ssot": "passed"
+      },
+      "global_cut_controls": {
+        "planted_exit": 101,
+        "intended_failures": 4,
+        "restored_exit": 0,
+        "restored_passes": 4,
+        "source_restored": true,
+        "logs": {
+          "global-cuts-planted.log": "28e7f98cb06b9ed8521f3b2643c2a46d3cd71144f499c5772ea32d79225c52b2",
+          "global-cuts-restored.log": "c03560a8ce800a525c25d0f86639874db86960dfb61e72773fee03b64838614b"
+        }
+      },
+      "capacity_controls": {
+        "baseline_exit": 101,
+        "baseline_behavior_failures": 3,
+        "expanded_gate_exit": 0,
+        "expanded_gate_passes": 3,
+        "controls": "257 agents rejected at limit256; independent docs ratchet increase rejected; bound increase256to512 rejected; malformed/unknown/overlapping policies rejected",
+        "source_restored": true,
+        "logs": {
+          "capacity-gate-baseline.log": "18267897c2b1d3803cc8a66fde55e54ae63a4f3f482a78e926258e3c4037be53",
+          "capacity-gate-restored.log": "eedf7fa830728132a30db8b4123a772b2d7b8a41b0e56db886b0c7272ec599f6"
+        }
+      },
+      "live_primary_preview": {
+        "registered": 63,
+        "online": 2,
+        "sessions": 67,
+        "panes": 119,
+        "subagents": 0,
+        "errors": [],
+        "matches_every_stored_identity": true
+      },
+      "log_directory": "/home/mios/.local/state/mios/mios-global-agent-inventory",
+      "logs": {
+        "expanded-admission.json": {
+          "bytes": 64,
+          "sha256": "0658cfd6e2107f1241d8a0d00f3e07f05e52de1b4f5821cfa00fb453588bcef1"
+        },
+        "tui-final.log": {
+          "bytes": 2464,
+          "sha256": "e78f0747b8ac5a1f7ae5e81198c63f67ab86e5dd5c03cdc7a18ce392f3d63863"
+        },
+        "federation-final.log": {
+          "bytes": 3622,
+          "sha256": "137829675cf96b1094647a32b513148103dbe64ca925ef991932b31479a0610a"
+        },
+        "expanded-gate-tests.log": {
+          "bytes": 24557,
+          "sha256": "6710cf7a24b5854de66130446ac7f1a6c547d016e43c43b98a750dd78bb268b7"
+        },
+        "expanded-gate-clippy.log": {
+          "bytes": 3020,
+          "sha256": "f9223d5d73b7eb9d6bafa16e46eed2709e972518fa2215b7fbb34cbd97ddb2cd"
+        },
+        "expanded-gate-release.log": {
+          "bytes": 1045,
+          "sha256": "8bf798795b344d966ffcdf291388a660a50539f23f06fa5b053474363d7cca1f"
+        },
+        "expanded-relay-tests.log": {
+          "bytes": 9015,
+          "sha256": "f6fc6ef1f9341bee20a15d5ce7c080dd01b1982f371691163a461f90f9336c27"
+        },
+        "expanded-gen-tests.log": {
+          "bytes": 30922,
+          "sha256": "16a9ae6cc0660a2a85a72f0cb62ef0378a8f7cc42d081b67d559a1c0a88e9741"
+        },
+        "expanded-inputd-tests.log": {
+          "bytes": 21708,
+          "sha256": "0d5e187e6328a397af15e265ba65e344af1f1690ab82ed99838c2722de5d7d9f"
+        },
+        "expanded-tools-clippy.log": {
+          "bytes": 669,
+          "sha256": "0b83d8d7776ac8685f3d30d5e7ce7bdec98b96b64b3d9cf89430cd66443ae1f5"
+        },
+        "expanded-tools-release.log": {
+          "bytes": 62,
+          "sha256": "92434e198f27984c035c376ec77a7cf9e6ebdde782f8ccb1336ae3329b66ddb7"
+        },
+        "expanded-generation.log": {
+          "bytes": 1243,
+          "sha256": "f9620b8d1d870367dbefa35785acaa29a69a6ade6ef96e56ac4236ee328856c4"
+        },
+        "expanded-suite-registry.log": {
+          "bytes": 66,
+          "sha256": "b182e98835609d0446e5242d0a165bcd98b857cb47e64a74905db996d4dae85b"
+        },
+        "expanded-task-check.log": {
+          "bytes": 51,
+          "sha256": "87d7b9cff1f8095dc9fe5e6ccc62f2c96a64b6654b4c313c8cad1dfce271e0ce"
+        },
+        "expanded-corpus-check.log": {
+          "bytes": 67,
+          "sha256": "c724c5b35548fbcd7fb9450a5f84a37b4202dd024059e9f457669ea7d51b46c5"
+        },
+        "expanded-manifest-check.log": {
+          "bytes": 50,
+          "sha256": "a325c8501c731c54e5c3f36e8d9a159f42783d8909cd93c00ffcb6602fbe7aec"
+        },
+        "expanded-metadata-check.log": {
+          "bytes": 107,
+          "sha256": "8cd8331daa3ae11b0d43a60813315eb47343269b23e76a86f961b860092383e7"
+        },
+        "global-cuts-planted.log": {
+          "bytes": 2867,
+          "sha256": "28e7f98cb06b9ed8521f3b2643c2a46d3cd71144f499c5772ea32d79225c52b2"
+        },
+        "global-cuts-restored.log": {
+          "bytes": 813,
+          "sha256": "c03560a8ce800a525c25d0f86639874db86960dfb61e72773fee03b64838614b"
+        },
+        "capacity-gate-baseline.log": {
+          "bytes": 5289,
+          "sha256": "18267897c2b1d3803cc8a66fde55e54ae63a4f3f482a78e926258e3c4037be53"
+        },
+        "capacity-gate-restored.log": {
+          "bytes": 587,
+          "sha256": "eedf7fa830728132a30db8b4123a772b2d7b8a41b0e56db886b0c7272ec599f6"
+        },
+        "expanded-check-credential-literals.log": {
+          "sha256": "5a4230870bf6ac387ba20b33e4c959ddf9d5fc9a5fcb99918fde1addb1575249"
+        },
+        "expanded-check-phase-registry.log": {
+          "sha256": "8540bd7f1cd1f388f26299e3ff4e23000fb9a33ba5a7ae0897582835fa2dd066"
+        },
+        "expanded-check-ratchet-direction.log": {
+          "sha256": "d1b146453ba06249d917e0809c01eaf25e4e7313c84e1fe9daaa5ff45ee78da0"
+        },
+        "expanded-check-signature-policy.log": {
+          "sha256": "c42fbfbfeba63883d7fe03a444bb28af5c3f921938755fbc2aae6408ae3982b8"
+        },
+        "expanded-check-version-literals-ssot.log": {
+          "sha256": "0810b5cca3fde8f9c02a2f324d638ca51db596cccea2fba8950f1affa926479e"
+        }
+      }
+    },
+    "artifacts": [
+      {
+        "name": "mios-gen",
+        "source_commit": "406ac56123fe15061c8dabcc73d3ab1730ff9672",
+        "built_path": "/home/mios/.local/state/mios/mios-global-agent-inventory/target-native/x86_64-unknown-linux-musl/release/mios-gen",
+        "sha256": "5ec3fb6ff899b86e9f538e677d17a20031638cee9debab9ecdbd3bd962c1dbbd",
+        "bytes": 11872400,
+        "install_target": "/usr/bin/mios-gen",
+        "static_linkage": {
+          "check": "static-linkage",
+          "findings": [],
+          "status": "clean",
+          "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-gen verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+        }
+      },
+      {
+        "name": "mios-inputd",
+        "source_commit": "406ac56123fe15061c8dabcc73d3ab1730ff9672",
+        "built_path": "/home/mios/.local/state/mios/mios-global-agent-inventory/target-native/x86_64-unknown-linux-musl/release/mios-inputd",
+        "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+        "bytes": 7621808,
+        "install_target": "/usr/bin/mios-inputd",
+        "static_linkage": {
+          "check": "static-linkage",
+          "findings": [],
+          "status": "clean",
+          "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-inputd verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+        }
+      },
+      {
+        "name": "mios-agent-relay",
+        "source_commit": "406ac56123fe15061c8dabcc73d3ab1730ff9672",
+        "built_path": "/home/mios/.local/state/mios/mios-global-agent-inventory/target-native/x86_64-unknown-linux-musl/release/mios-agent-relay",
+        "sha256": "b71fc23c1aa4e67b7d8c8c5540e1d6954c90d47fe27a6cd8ca986eb0dbbf074f",
+        "bytes": 2331976,
+        "install_target": "/usr/libexec/mios/mios-agent-relay",
+        "static_linkage": {
+          "check": "static-linkage",
+          "findings": [],
+          "status": "clean",
+          "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-agent-relay verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+        }
+      },
+      {
+        "name": "mios-gate",
+        "source_commit": "406ac56123fe15061c8dabcc73d3ab1730ff9672",
+        "built_path": "/home/mios/.local/state/mios/mios-global-agent-inventory/target-native/x86_64-unknown-linux-musl/release/mios-gate",
+        "sha256": "8a468b25c6a1d85e519c81835e8a59a374ba43cf42db55ae8e5c1b94d6193eb9",
+        "bytes": 6293208,
+        "install_target": "/usr/bin/mios-gate",
+        "static_linkage": {
+          "check": "static-linkage",
+          "findings": [],
+          "status": "clean",
+          "summary": "binary /mios-proof/target-native/x86_64-unknown-linux-musl/release/mios-gate verified as static ELF (no PT_INTERP, no DT_NEEDED)"
+        }
+      }
+    ],
+    "deployment": {
+      "state": "prepared; main publication and live observer refresh pending",
+      "system_source": {
+        "path": "/home/mios/.config/mios/mios.d/mios-global-system-relay.toml",
+        "transport": "native MiOS-MCP stdio via sudo -n -H",
+        "allowed_tools": [
+          "mios_agent_observe"
+        ],
+        "known_additional_system_registrations": 13
+      },
+      "preserve_live_inputd_pid": 2137102,
+      "preserve_physical_console_bridge_pid": 3710964,
+      "preserve_agent_pane": "%391",
+      "preserve_root_hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5"
+    },
+    "review": "Native Antigravity review requested; it resumed and received MCP updates. No independent candidate-review pass claimed.",
+    "next": "Publish main, atomically install identical artifacts at every active entrypoint, refresh verified observer panes, verify all user+system registrations through MiOS-MCP, then record deployment."
+  },
+  "physical_console_repair": {
+    "live_ownership_handoff": {
+      "target": "/dev/tty1",
+      "before_uid": 0,
+      "after_uid": 1000,
+      "gid": 5,
+      "mode": "0o600",
+      "bridge_pid": 3710964,
+      "bridge_start": "45916667",
+      "login_parent": 3710829,
+      "reason": "greetd authenticated MiOS console bridge owns the active VT but GPM rejects root-owned tty1"
+    },
+    "evidence": "GPM repeatedly rejected uid1000 on root-owned tty1; bridge fd0 and foreground authenticated greetd session witnessed. Raw tty modes were already correct.",
+    "durable_login_fix": "Assigned via MiOS-MCP to existing Antigravity session in isolated mios-console-login-ownership lane; implementation/verification pending. No authentication-policy change made."
+  }
 }

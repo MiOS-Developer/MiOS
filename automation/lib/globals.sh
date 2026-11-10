@@ -2559,6 +2559,8 @@ is *also* a local, self-hosted, agentic AI operating system.
 [ -n "${MIOS_DOCS_SIGNALS_WHY+x}" ] || MIOS_DOCS_SIGNALS_WHY='\b(because|so that|otherwise|avoid|prevents?|must not|never|do not|fail-open|fail-closed|deliberately|intentionally|noqa|workaround|upstream bug|race|deadlock)\b'
 : "${MIOS_DOCS_STAY_MAX_LINES:=2}"
 : "${MIOS_DOCS_STAY_MAX_WORDS:=25}"
+: "${MIOS_DRIFT_BOUNDED_CAPACITIES_MCP_AGENTS_MAX_AGENTS_LIMIT:=256}"
+: "${MIOS_DRIFT_BOUNDED_CAPACITIES_MCP_AGENTS_MAX_AGENTS_REASON:=Global relay registrations include remote sessions and subagents; the saved-state byte budget remains independently enforced.}"
 : "${MIOS_DRIFT_BUDGET_KEYS_MAX_UNCONSUMED:=9}"
 : "${MIOS_DRIFT_BUDGET_KEYS_REQUIRED:=tool_max_iters,replan_max,no_progress_window,max_consecutive_failures,wall_clock_budget_s,reflexion_enable,swarm_max_width,max_dispatch_depth,default_hop_budget}"
 : "${MIOS_DRIFT_BUDGET_KEYS_UNCONSUMED:=client_tools_passthrough,lane_concurrency_cpu,lane_concurrency_gpu0,reflexion_limit,tool_backend_model,tool_loop_limit,trace_enable,trace_max_spans_per_trace,trace_max_traces}"
@@ -3701,7 +3703,7 @@ _mios_input MIOS_ROUTING_LOCATION_SENSITIVE_PHRASES MIOS_LOCATION_SENSITIVE_PHRA
 : "${MIOS_MCP_AGENTS_ENABLED:=true}"
 : "${MIOS_MCP_AGENTS_LEASE_S:=3600}"
 : "${MIOS_MCP_AGENTS_MAILBOX_RETENTION_S:=86400}"
-: "${MIOS_MCP_AGENTS_MAX_AGENTS:=64}"
+: "${MIOS_MCP_AGENTS_MAX_AGENTS:=256}"
 : "${MIOS_MCP_AGENTS_MAX_MESSAGE_BYTES:=32768}"
 : "${MIOS_MCP_AGENTS_MAX_PENDING:=1024}"
 : "${MIOS_MCP_AGENTS_MAX_RECEIPTS:=4096}"

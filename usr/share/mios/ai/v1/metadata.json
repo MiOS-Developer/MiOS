@@ -4901,7 +4901,7 @@
     },
     {
       "path": "src/mios-rs/mios-gate/src/ratchet.rs",
-      "hint": "Asserts shrink-only ceilings in mios.toml never increase over HEAD, and that a ceiling exempted as a generated budget says so in SSOT rather than by being quietly skipped.",
+      "hint": "Compare shrink-only ceilings with the immutable baseline, with explicit generated budgets and bounded operational capacities declared in SSOT.",
       "related": [
         "usr/share/mios/mios.toml",
         "src/mios-rs/mios-gate/tests/ratchet.rs",

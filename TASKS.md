@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 93 |
+| in_progress | 94 |
 | completed | 1897 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3779 |
+| total | 3780 |
 
 0 record(s) carry at least one override.
 
@@ -447,6 +447,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3509` Heavy lane loads real weights with tool calling; pgvector and the firstboot model resolve (WS-AI | P0 | S) -- completed · P0 · size S
 - `task_3540` Q2 (brief P1-24): only the tiny LFM2 micro model is baked; every other model is pulled; the cloud overlay skips pulls (WS-AI | P1 | M) -- pending · P1 · size M
 - `task_3578` P2-9: GPU co-tenancy -- vLLM sleep mode from admission, native KV offload, a per-lane device key (WS-AI | P2 | M) -- pending · P2 · size M
+- `task_3780` Expose all reported global agents, sessions and subagents in shared TUIs -- in_progress · owner mios-global-agent-inventory · P1 · size M
 
 ## WS-AIOS
 
@@ -2666,7 +2667,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3771` Preserve typed controller arrays through the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
 - `task_3773` Require deliberate short stick gestures for desktop focus changes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3774` Make Mon orbit pan and zoom smooth with standard camera controls -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3775` Return owned nested controllers to parent without trapping the operator -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
+- `task_3775` Return owned nested controllers to parent without trapping the operator -- in_progress · owner mios-controller-parent-compat · P1 · size M
 - `task_3776` Keep malformed app-only profiles from disabling base controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3778` Content-fit menus and spatial controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
