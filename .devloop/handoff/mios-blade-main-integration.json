@@ -595,6 +595,15 @@
         "expanded-check-version-literals-ssot.log": {
           "sha256": "0810b5cca3fde8f9c02a2f324d638ca51db596cccea2fba8950f1affa926479e"
         }
+      },
+      "secret_scan": {
+        "raw_findings": 1,
+        "reviewed_false_positives": 1,
+        "unreviewed_findings": 0,
+        "fingerprint": "1ef910353569fb4f8ffefe081b8a70b7e556ecd7:automation/manifest.json:generic-api-key:1",
+        "classification": "public algorithm-name prose, not a credential",
+        "evidence": "Exact unchanged public shell-script string from69cc268c9: [auth].password_hash > sha512-crypt of [identity].default_password.",
+        "baseline_policy": "Only this individually reviewed commit/file/rule fingerprint; no repository scanner exemptions changed."
       }
     },
     "artifacts": [
@@ -670,7 +679,7 @@
       "preserve_agent_pane": "%391",
       "preserve_root_hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5"
     },
-    "review": "Native Antigravity review requested; it resumed and received MCP updates. No independent candidate-review pass claimed.",
+    "review": "Native Antigravity read-only controller-parent and untruncated inventory review passed, received via MiOS-MCP message mios-agy-ack-console-login-ownership-0008; optional unused CLI _parent pre-socket shortcut noted. Durable physical-console login ownership lane accepted separately.",
     "next": "Publish main, atomically install identical artifacts at every active entrypoint, refresh verified observer panes, verify all user+system registrations through MiOS-MCP, then record deployment."
   },
   "physical_console_repair": {
@@ -686,6 +695,7 @@
       "reason": "greetd authenticated MiOS console bridge owns the active VT but GPM rejects root-owned tty1"
     },
     "evidence": "GPM repeatedly rejected uid1000 on root-owned tty1; bridge fd0 and foreground authenticated greetd session witnessed. Raw tty modes were already correct.",
-    "durable_login_fix": "Assigned via MiOS-MCP to existing Antigravity session in isolated mios-console-login-ownership lane; implementation/verification pending. No authentication-policy change made."
+    "durable_login_fix": "Assigned via MiOS-MCP to existing Antigravity session in isolated mios-console-login-ownership lane; implementation/verification pending. No authentication-policy change made.",
+    "live_verification": "Existing bridge3710964 now holds fd4 connected to GPM after the scoped tty1 ownership handoff; original tmux client3712497 and agent/game processes retained."
   }
 }
