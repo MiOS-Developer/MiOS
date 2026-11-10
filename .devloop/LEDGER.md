@@ -4864,3 +4864,10 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Final mixed-context SELinux stress test connected GPM but denied logout bookkeeping. The live PAM file was not changed. Move only the new optional privileged hook before pam_selinux open, following pam_selinux close/loginuid, with every pre-existing stack line/order preserved.
 - Corrected actual close/loginuid/hook/open fixture passed in Enforcing mode with parentxdm_t and a client matching the physical unconfined context: UID1000/GPM/user-mode620+group1000 retained/rootUID0/empty lease. ActiveVT1 and adopted PID/start identities unchanged. No SELinux policy was relaxed.
 - Updated native archive includes this exact fixture and failure/success receipts; raw scan is empty. Rust407/254 tests and their compiled controls remain unchanged; regenerate and re-run publication gates before rollout.
+
+
+## Verified console installation and authorized login reload (2026-11-10)
+
+- Main cd0f4a7b9 pushed fast-forward and publicly verified, installed to Blade RootGit. Sealed miosd193565 and inputd33eb installed aliases, SELinux labels, corrected PAM38974 and vendor policy verified; original authentication stack and local btop/hardware projection preserved.
+- Operator then authorized logout/reload. A separate console host drop-in renders plain tuigreet without a compositor, defaulting to existing tmux-os-2. Prior graphical preference remains untouched and backed up. Console bridge/client ended as authorized; tmux server, all sessions/pane identities present before reload, long-running input daemon and native agent work remained. Text prompt verified on tty1; user reauthentication is not inferred.
+- Native Tailscale MCP187tools/ping and exact75user+system stored registrations pass; actual captured headless /etc/pam.d listing succeeds. Task3781 completed. Task3775 physical controller return remains in progress; source recovery archives remain preserved without claiming global runtime certification.
