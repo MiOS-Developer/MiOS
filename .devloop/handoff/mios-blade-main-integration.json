@@ -873,7 +873,8 @@
           }
         }
       },
-      "next": "Publish/install, refresh witnessed observers and the user launcher broker only, prove full live TUI identity coverage and a real headless MCP file call, then finish the native peer durable VT lane."
+      "next": "Publish/install, refresh witnessed observers and the user launcher broker only, prove full live TUI identity coverage and a real headless MCP file call, then finish the native peer durable VT lane.",
+      "upstream_integrated": "f29a41952691fbc010ba7303f4d73c4a29b692fb"
     }
   },
   "physical_console_repair": {
