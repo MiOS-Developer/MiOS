@@ -140,7 +140,23 @@
     },
     "failure_provenance": [
       "Initial mutation harness rejected a duplicate text anchor before mutating source; its failed log is retained, and is not counted as a compiled negative control."
-    ]
+    ],
+    "publication": {
+      "sync_stages_passed": 29,
+      "registered_suites": 573,
+      "registered_exemptions": "6/6 unchanged",
+      "canonical_tasks": 3782,
+      "standing_gates": [
+        "credential-literals",
+        "phase-registry",
+        "ratchet-direction",
+        "signature-policy",
+        "version-literals-ssot"
+      ],
+      "generated_budget_increases": 0,
+      "real_nested_cli_tests": 6,
+      "history_secret_findings_unreviewed": 0
+    }
   },
   "preservation": {
     "verified_unchanged_processes": {
@@ -174,8 +190,74 @@
     "A recovery ACK schedules reacquisition; only the explicit kernel test verifies eventual actual reacquisition."
   ],
   "deployment": {
-    "state": "prepared_pending_main_publication_and_install",
-    "next": "Publish main, install sealed generator/Inputd binaries and existing launcher aliases, preserve every adopted process; record exact installed revision and private receipt."
+    "state": "installed_and_verified",
+    "artifact_source_commit": "6537a6ff894f5fbd82423de65be399b9e331cad2",
+    "published_main_at_install": "6537a6ff894f5fbd82423de65be399b9e331cad2",
+    "root_head_at_install": "6537a6ff894f5fbd82423de65be399b9e331cad2",
+    "installed_entries": [
+      {
+        "entry": "/usr/bin/mios-gen",
+        "resolved": "/usr/bin/mios-gen",
+        "sha256": "2fdacf10bc00f71ddc47a21e1d285800c0fb7f945ccb207fddb1a47e3179f2c2"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-gen",
+        "resolved": "/usr/bin/mios-gen",
+        "sha256": "2fdacf10bc00f71ddc47a21e1d285800c0fb7f945ccb207fddb1a47e3179f2c2"
+      },
+      {
+        "entry": "/usr/bin/mios-inputd",
+        "resolved": "/usr/bin/mios-inputd",
+        "sha256": "5563ca322836af6c3ea0229a00f915756e4033b77ceded9147a56786034d7d93"
+      },
+      {
+        "entry": "/usr/libexec/mios/mios-inputd",
+        "resolved": "/usr/libexec/mios/mios-inputd",
+        "sha256": "5563ca322836af6c3ea0229a00f915756e4033b77ceded9147a56786034d7d93"
+      },
+      {
+        "entry": "/home/mios/.local/libexec/mios/mios-inputd",
+        "resolved": "/home/mios/.local/libexec/mios/mios-inputd",
+        "sha256": "5563ca322836af6c3ea0229a00f915756e4033b77ceded9147a56786034d7d93"
+      }
+    ],
+    "tracked_usr": [
+      "usr/share/mios/ai/v1/metadata.json",
+      "usr/share/mios/reference/manual-corpus.tsv"
+    ],
+    "preserved_processes": {
+      "1445825": "47554240",
+      "1444418": "47553371",
+      "746689": "51563542",
+      "53639": "160269",
+      "1445065": "47553831",
+      "869194": "18562407",
+      "2137102": "37574253",
+      "2536600": "48601101",
+      "2160346": "37594875",
+      "869403": "36237899",
+      "286556": "12221267",
+      "2760477": "38134082",
+      "3710618": "17869382",
+      "802150": "14652984",
+      "1762919": "18803072",
+      "2766569": "13304303",
+      "440814": "51301780",
+      "1786293": "28978450",
+      "485622": "20158280",
+      "496503": "28018716",
+      "3165564": "17631186"
+    },
+    "tmux_sessions_preserved": 35,
+    "tmux_pane_identities_preserved": 65,
+    "active_vt": "tty1",
+    "gpm_socket_fd4": "socket:[283156786]",
+    "pam_sha256": "38974de884ee7fbd85f520ec20d783b12f0f7ca4d37f97da822c9dde7f4c5483",
+    "preserved_local_configuration": {
+      "etc/btop/btop.conf": "85379d9054c101011a646cc38896aef44357670896689bce989e5ce17287abbf",
+      "usr/share/mios/hyprland/hyprland.lua": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5"
+    },
+    "process_policy": "All adopted processes retained. Old controller daemon PID2137102 remains on its original running executable; updated launcher aliases are ready for fresh sessions. No physical return acceptance claim."
   },
   "next_owner": "Continue task3775 physical and analog acceptance on an owned fresh protocol-v1 seat. Do not restart adopted controller daemon or claim physical event14 under the guise of this uinput test."
 }

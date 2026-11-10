@@ -4897,3 +4897,5 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Task3775 continuation: scan-derived launcher/client deadlines, ownership-safe rollback and retryable nested EVIOCGRAB contention.
 - Native355 generator/254 Inputd tests, strict Clippy/static artifacts, four compiled defect controls,18 restored return tests and real uinput held-button/raw-holder/neutral-return acceptance pass. Original services, games and agent identities remain unchanged. Exact proof archived in the controller-return handoff.
 - Physical DualSense/visible game/PiP and separate analog rearming acceptance remain open. Publish/install sealed artifacts without restarting adopted processes.
+
+- Installed and verified controller artifacts from 6537a6ff894f5fbd82423de65be399b9e331cad2 on main: generator/Inputd plus existing aliases;35 tmux sessions/65pane identities and21 process identities preserved. Active VT1/GPM/PAM and local configuration hashes unchanged. Public source handoff records exact installed digests. Physical/analog acceptance remains open.
