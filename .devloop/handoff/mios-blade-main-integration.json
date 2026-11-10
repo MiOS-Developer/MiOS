@@ -1225,7 +1225,7 @@
         "default_session": "tmux-os-2",
         "autologin": false
       },
-      "physical_authentication": "Plain text login prompt is running on physical VT1; user reauthentication and physical controller-return acceptance are not inferred.",
+      "physical_authentication": "Actual fresh physicaltty1 login verified: sealed new bridge33eb, GPM fd4 connected, owner1000, root-private PAM lease matches actual greetd parent PID/start/device, tmux-os-2 attached; SELinux Enforcing. Physical controller return remains unexercised.",
       "local_settings": "Existing btop and hardware projection preserved byte-for-byte. Previous graphical greeter preference retained in70-greeter; remove71-console-login.toml and re-render to restore it.",
       "native_mcp_verification": {
         "protocol": "2025-11-25",
@@ -1266,6 +1266,41 @@
         "success": true,
         "exit_code": 0,
         "output_bytes": 694
+      },
+      "authenticated_physical_login": {
+        "passed": true,
+        "console_bridge_pid": 1445065,
+        "bridge_sha256": "33eb56247acfd3bee32a185f57328e508968aa0bdff6a9565a77749c0a3f3629",
+        "gpm_socket_fd4": "socket:[283156786]",
+        "physical_vt": "tty1",
+        "owner": 1000,
+        "privileged_pam_lease_matches_actual_greetd_parent": true,
+        "lease": {
+          "session": 1444418,
+          "start": 47553371,
+          "uid": 1000,
+          "device": 1025,
+          "inode": 20,
+          "gid": 5,
+          "mode": 384
+        },
+        "active_tmux_session": "tmux-os-2",
+        "tmux_clients": "1445825|/dev/pts/5|tmux-os-2|linux\n",
+        "seat": "User=1000\nTTY=tty1\nDesktop=\nLeader=1444418\nType=tty\nActive=yes\n",
+        "security": {
+          "lease": {
+            "session": 1444418,
+            "start": 47553371,
+            "uid": 1000,
+            "device": 1025,
+            "inode": 20,
+            "gid": 5,
+            "mode": 384
+          },
+          "labels": "system_u:object_r:xdm_var_run_t:s0 /run/mios-console-sessions\nsystem_u:object_r:xdm_var_run_t:s0 /run/mios-console-sessions/tty1.json\n        system_u:object_r:bin_t:s0 /usr/bin/miosd\n        system_u:object_r:bin_t:s0 /usr/libexec/mios/mios-inputd\n",
+          "selinux": "Enforcing"
+        },
+        "physical_controller_return": "Not exercised; task3775 remains open."
       }
     },
     "pam_hook_sha256_current": "38974de884ee7fbd85f520ec20d783b12f0f7ca4d37f97da822c9dde7f4c5483",

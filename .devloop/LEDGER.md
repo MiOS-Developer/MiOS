@@ -4871,3 +4871,9 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Main cd0f4a7b9 pushed fast-forward and publicly verified, installed to Blade RootGit. Sealed miosd193565 and inputd33eb installed aliases, SELinux labels, corrected PAM38974 and vendor policy verified; original authentication stack and local btop/hardware projection preserved.
 - Operator then authorized logout/reload. A separate console host drop-in renders plain tuigreet without a compositor, defaulting to existing tmux-os-2. Prior graphical preference remains untouched and backed up. Console bridge/client ended as authorized; tmux server, all sessions/pane identities present before reload, long-running input daemon and native agent work remained. Text prompt verified on tty1; user reauthentication is not inferred.
 - Native Tailscale MCP187tools/ping and exact75user+system stored registrations pass; actual captured headless /etc/pam.d listing succeeds. Task3781 completed. Task3775 physical controller return remains in progress; source recovery archives remain preserved without claiming global runtime certification.
+
+
+## Actual authenticated physical console re-login verified (2026-11-10)
+
+- User reauthenticated on physicaltty1 after authorized reload. New bridge1445065 hashes33eb5624; GPM socketfd4 connected, VT owner1000, root-private PAM lease matches live greetd session PID/start/tty device, and tmux-os-2 attaches with TERMlinux. SELinux remains Enforcing.
+- Fresh login now exercises the installed PAM handoff on the real operator console; all prior private kernel/compiled controls remain preserved. Task3781 completed; physical controller-return acceptance in task3775 is not inferred.
