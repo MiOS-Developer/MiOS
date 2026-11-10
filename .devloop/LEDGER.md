@@ -4840,3 +4840,11 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Actual native SDK2 observation revealed snake-case response fields; fixed with SDK1 compatibility and a real SDK result regression test. Selected Textual scope labels now use an application-owned CSS class.
 - The two previous behaviors each fail one intended assertion; restored source passes15 UI and27 federation tests,29 projection stages,573-suite registry and five publication gates. Full live federation proof follows installation.
 - Durable authenticated physical VT ownership remains assigned to the resumed native peer; no physical controller return acceptance is claimed.
+
+
+## Physical console global backend and captured verbs (2026-11-10)
+
+- Live MCP2a2bad7a1 proves75 retained registrations,2online,80detected sessions,125panes,0reported subagents,0errors across user and system relays. Counts are time-specific; unreported internal harness threads remain unknown.
+- Actual observer system Python has no MCP SDK. Move persistent global observation to the configured MCP interpreter, keep source-qualified remote rows and fresh native local metadata, and expose unavailable streams explicitly.
+- The operator is directly on physical VT1. Captured console/filesystem verbs now remove stale GUI manager values and validate the private runtime even when no compositor exists. Graphical dispatch retains strict compositor checks.
+- Native16TUI+29federation+17broker tests pass; each old behavior fails one intended assertion.29generation stages,573-suite registry and five publication gates pass. Durable VT login handoff is still assigned to the resumed native peer.

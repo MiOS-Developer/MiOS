@@ -665,7 +665,7 @@
       }
     ],
     "deployment": {
-      "state": "Core01de4e0 installed; SDK2 response-field and selected-scope-label follow-up validated, pending publication/install and full global live proof.",
+      "state": "Core2a2bad7a1 installed; physical-console global backend and headless captured-verb follow-up validated; final publication/install and actual TUI proof pending.",
       "system_source": {
         "path": "/home/mios/.config/mios/mios.d/mios-global-system-relay.toml",
         "transport": "native MiOS-MCP stdio via sudo -n -H",
@@ -679,8 +679,8 @@
       "preserve_agent_pane": "%391",
       "preserve_root_hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
       "core_installation": {
-        "published_main": "01de4e0d1af61bbb59409570bc3bc43db6b103ea",
-        "root_head": "01de4e0d1af61bbb59409570bc3bc43db6b103ea",
+        "published_main": "2a2bad7a10edac38b0fd2ad81902d69460380d5e",
+        "root_head": "2a2bad7a10edac38b0fd2ad81902d69460380d5e",
         "installed_artifacts": [
           {
             "entry": "/usr/bin/mios-gen",
@@ -728,32 +728,35 @@
         "refreshed_observers": [
           {
             "pane": "%529",
-            "old_pid": 872809,
+            "old_pid": 357193,
             "head": "%90"
           },
           {
             "pane": "%657",
-            "old_pid": 3779723,
+            "old_pid": 357198,
             "head": "%2"
           },
           {
             "pane": "%652",
-            "old_pid": 3715273,
+            "old_pid": 357202,
             "head": "%391"
           },
           {
             "pane": "%653",
-            "old_pid": 3716134,
+            "old_pid": 357207,
             "head": "%651"
           }
         ],
         "preserved_processes": {
           "2137102": "37574253",
-          "3710964": "45916667"
+          "3710964": "45916667",
+          "3712497": "45918989",
+          "1786293": "28978450"
         },
         "hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
         "root_status_before": " M usr/share/mios/hyprland/hyprland.lua\n",
-        "root_status_after": " M usr/share/mios/hyprland/hyprland.lua\n"
+        "root_status_after": " M usr/share/mios/hyprland/hyprland.lua\n",
+        "python_followup_installed": true
       }
     },
     "review": "Native Antigravity read-only controller-parent and untruncated inventory review passed, received via MiOS-MCP message mios-agy-ack-console-login-ownership-0008; optional unused CLI _parent pre-socket shortcut noted. Durable physical-console login ownership lane accepted separately.",
@@ -812,6 +815,65 @@
         }
       },
       "next": "Publish/install follow-up, verify user and system relay identity coverage, then integrate the native peer durable VT ownership lane."
+    },
+    "physical_console_runtime": {
+      "source_commit": "c0f56b052b9b4490ab5b5374dfee151d63bca56c",
+      "behavior": [
+        "Run persistent public global observation under the configured MCP interpreter; consume it in SDK-free system Python TUIs.",
+        "Merge fresh local metadata with source-qualified global rows, preserving unknown remote rows on stream failure.",
+        "Permit captured filesystem/console verbs without a compositor after removing stale GUI settings and revalidating private runtime ownership; graphical dispatch stays strict."
+      ],
+      "verification": {
+        "textual_tests": 16,
+        "federation_tests": 29,
+        "broker_tests": 17,
+        "baseline_controls": [
+          {
+            "log": "console-ui-baseline.log",
+            "exit": 1,
+            "behavior_failures": 1
+          },
+          {
+            "log": "headless-capture-baseline.log",
+            "exit": 1,
+            "behavior_failures": 1
+          }
+        ],
+        "generation": "all29 stages passed",
+        "suite_registry": "573 suites,6/6 exemptions",
+        "publication_gates": "all five passed",
+        "logs": {
+          "console-ui-baseline.log": {
+            "sha256": "7443a176de92346bdfdb78d78c839fe4fdb94a54cf9bae3a3203dd3163c21928",
+            "bytes": 1863
+          },
+          "headless-capture-baseline.log": {
+            "sha256": "739bbe099a91b1a174f19fea43cffdba485a474584dc7a57c215136c0ec79f9a",
+            "bytes": 959
+          },
+          "console-retry-tui.log": {
+            "sha256": "29b6aa1897bc73876a8c13e70d167ab80a449d39245fb93a6bcabfdcbf17482c",
+            "bytes": 2624
+          },
+          "console-retry-federation.log": {
+            "sha256": "7c44a811ad39cd9eae596c4bf5fe9f0d42b47b139f45e823bd5f487ca6dda966",
+            "bytes": 4121
+          },
+          "console-retry-broker.log": {
+            "sha256": "7b66fdaf6c1a5a94fd86f4b7002053b7f9c753f21f0b4859ed5c24b59c68b76e",
+            "bytes": 116
+          },
+          "console-retry-generation.log": {
+            "sha256": "f9620b8d1d870367dbefa35785acaa29a69a6ade6ef96e56ac4236ee328856c4",
+            "bytes": 1243
+          },
+          "console-retry-suites.log": {
+            "sha256": "b182e98835609d0446e5242d0a165bcd98b857cb47e64a74905db996d4dae85b",
+            "bytes": 66
+          }
+        }
+      },
+      "next": "Publish/install, refresh witnessed observers and the user launcher broker only, prove full live TUI identity coverage and a real headless MCP file call, then finish the native peer durable VT lane."
     }
   },
   "physical_console_repair": {
