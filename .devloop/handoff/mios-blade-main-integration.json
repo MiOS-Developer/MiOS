@@ -665,7 +665,7 @@
       }
     ],
     "deployment": {
-      "state": "prepared; main publication and live observer refresh pending",
+      "state": "Core01de4e0 installed; SDK2 response-field and selected-scope-label follow-up validated, pending publication/install and full global live proof.",
       "system_source": {
         "path": "/home/mios/.config/mios/mios.d/mios-global-system-relay.toml",
         "transport": "native MiOS-MCP stdio via sudo -n -H",
@@ -677,10 +677,142 @@
       "preserve_live_inputd_pid": 2137102,
       "preserve_physical_console_bridge_pid": 3710964,
       "preserve_agent_pane": "%391",
-      "preserve_root_hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5"
+      "preserve_root_hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
+      "core_installation": {
+        "published_main": "01de4e0d1af61bbb59409570bc3bc43db6b103ea",
+        "root_head": "01de4e0d1af61bbb59409570bc3bc43db6b103ea",
+        "installed_artifacts": [
+          {
+            "entry": "/usr/bin/mios-gen",
+            "resolved": "/usr/bin/mios-gen",
+            "sha256": "5ec3fb6ff899b86e9f538e677d17a20031638cee9debab9ecdbd3bd962c1dbbd",
+            "previous_sha256": "cfdc44bc0b785bf682d2082393b3bc628fd97e618e0cd9661d1e7fe571f0dc78"
+          },
+          {
+            "entry": "/usr/bin/mios-inputd",
+            "resolved": "/usr/bin/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "b2641e0a82cf26488bc8c9f2f3c44621966bf6d15d5f4dbffd1dc84870a8a273"
+          },
+          {
+            "entry": "/usr/libexec/mios/mios-inputd",
+            "resolved": "/usr/libexec/mios/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb"
+          },
+          {
+            "entry": "/home/mios/.local/bin/mios-inputd",
+            "resolved": "/home/mios/.local/bin/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb"
+          },
+          {
+            "entry": "/usr/bin/mios-agent-relay",
+            "resolved": "/usr/bin/mios-agent-relay",
+            "sha256": "b71fc23c1aa4e67b7d8c8c5540e1d6954c90d47fe27a6cd8ca986eb0dbbf074f",
+            "previous_sha256": "e15e9aedde1faa440f7d86aad5b321916bcee61c5ca7193031554577148f6f94"
+          },
+          {
+            "entry": "/usr/libexec/mios/mios-agent-relay",
+            "resolved": "/usr/libexec/mios/mios-agent-relay",
+            "sha256": "b71fc23c1aa4e67b7d8c8c5540e1d6954c90d47fe27a6cd8ca986eb0dbbf074f",
+            "previous_sha256": "43ba8697acbaf8fa3cc21a566d93af9f56b83ebb22d322dfec3b06aac2ad13d2"
+          },
+          {
+            "entry": "/usr/bin/mios-gate",
+            "resolved": "/usr/bin/mios-gate",
+            "sha256": "8a468b25c6a1d85e519c81835e8a59a374ba43cf42db55ae8e5c1b94d6193eb9",
+            "previous_sha256": "3934e4e535d9a3eea529a10d3dcd2edf41621b0fcfcbf39ae470a665718e15ea"
+          }
+        ],
+        "refreshed_observers": [
+          {
+            "pane": "%529",
+            "old_pid": 872809,
+            "head": "%90"
+          },
+          {
+            "pane": "%657",
+            "old_pid": 3779723,
+            "head": "%2"
+          },
+          {
+            "pane": "%652",
+            "old_pid": 3715273,
+            "head": "%391"
+          },
+          {
+            "pane": "%653",
+            "old_pid": 3716134,
+            "head": "%651"
+          }
+        ],
+        "preserved_processes": {
+          "2137102": "37574253",
+          "3710964": "45916667"
+        },
+        "hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
+        "root_status_before": " M usr/share/mios/hyprland/hyprland.lua\n",
+        "root_status_after": " M usr/share/mios/hyprland/hyprland.lua\n"
+      }
     },
     "review": "Native Antigravity read-only controller-parent and untruncated inventory review passed, received via MiOS-MCP message mios-agy-ack-console-login-ownership-0008; optional unused CLI _parent pre-socket shortcut noted. Durable physical-console login ownership lane accepted separately.",
-    "next": "Publish main, atomically install identical artifacts at every active entrypoint, refresh verified observer panes, verify all user+system registrations through MiOS-MCP, then record deployment."
+    "next": "Publish main, atomically install identical artifacts at every active entrypoint, refresh verified observer panes, verify all user+system registrations through MiOS-MCP, then record deployment.",
+    "live_followup": {
+      "source_commit": "0e35081cb1867b9830d22602a755bb1865021792",
+      "behavior": [
+        "Accept native MCP SDK2 snake-case result fields while retaining SDK1 compatibility.",
+        "Keep selected scope labels visible using an application-owned CSS class."
+      ],
+      "verification": {
+        "textual_tests": 15,
+        "federation_tests": 27,
+        "baseline_controls": [
+          {
+            "log": "scope-label-baseline.log",
+            "behavior_failures": 1,
+            "exit": 1,
+            "sha256": "15d7eb34f6f4a85a81704d7734245cfdd419455dc0e9c2f5e1e658a76b11d114"
+          },
+          {
+            "log": "sdk-fields-baseline.log",
+            "behavior_failures": 1,
+            "exit": 1,
+            "sha256": "91a93f9ba32ca5e8dd9359c79ea6c79416f0862b269eac7392b167ddb5957c9b"
+          }
+        ],
+        "generation": "all29 stages passed",
+        "suite_registry": "573 suites,6/6 exemptions",
+        "publication_gates": "all five passed",
+        "logs": {
+          "scope-label-baseline.log": {
+            "sha256": "15d7eb34f6f4a85a81704d7734245cfdd419455dc0e9c2f5e1e658a76b11d114",
+            "bytes": 1259
+          },
+          "sdk-fields-baseline.log": {
+            "sha256": "91a93f9ba32ca5e8dd9359c79ea6c79416f0862b269eac7392b167ddb5957c9b",
+            "bytes": 1662
+          },
+          "tui-live-fixes.log": {
+            "sha256": "a2234e88e9cdc231dfb69dcf9b5e0db2c1912214076f70f4d65fd495c3a1f6da",
+            "bytes": 2465
+          },
+          "federation-live-fixes.log": {
+            "sha256": "bb606a8b2fd4bc75b0dd2feefcc293ec1f9c06178919a9501ed3012d9e326a98",
+            "bytes": 3767
+          },
+          "generation-live-fixes.log": {
+            "sha256": "f9620b8d1d870367dbefa35785acaa29a69a6ade6ef96e56ac4236ee328856c4",
+            "bytes": 1243
+          },
+          "suites-live-fixes.log": {
+            "sha256": "b182e98835609d0446e5242d0a165bcd98b857cb47e64a74905db996d4dae85b",
+            "bytes": 66
+          }
+        }
+      },
+      "next": "Publish/install follow-up, verify user and system relay identity coverage, then integrate the native peer durable VT ownership lane."
+    }
   },
   "physical_console_repair": {
     "live_ownership_handoff": {

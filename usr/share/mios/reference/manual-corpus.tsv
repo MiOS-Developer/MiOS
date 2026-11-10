@@ -24981,7 +24981,7 @@ usr/lib/mios/agent-pipe/test_mios_agent_call.py	958	958	1	8	655cd30565b8	STAY	lo
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	1	3	3	24	c5e16216621b	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	87	87	1	6	2d4ec7fc086e	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	127	128	2	18	1eb49a3e7a28	STAY	local-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_agent_tui.py	363	363	1	4	f5aa02cb50bd	STAY	inline-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_agent_tui.py	364	364	1	4	f5aa02cb50bd	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	1	3	3	19	0ad878d2a0fb	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	4	4	1	7	0f25d134d2f5	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	12	14	3	37	d0d117c0fa29	STAY	midsize-why		0				0
@@ -26330,6 +26330,7 @@ usr/lib/mios/mios_mcp_federation.py	677	677	1	7	2ac79daf6c82	STAY	inline-scoped	
 usr/lib/mios/mios_mcp_federation.py	703	708	6	40	239e2325cf7c	MIGRATE	narrative-rationale		0				0
 usr/lib/mios/mios_mcp_federation.py	742	742	1	11	28b5cab9d003	STAY	local-scoped		0				0
 usr/lib/mios/mios_mcp_federation.py	759	759	1	10	c617022dbac4	STAY	local-scoped		0				0
+usr/lib/mios/mios_mcp_federation.py	766	766	1	10	994add07484c	STAY	local-scoped		0				0
 usr/lib/mios/mios_oscontrol_client.py	1	2	2	19	57292cb79f9d	STAY	ai-header		0				0
 usr/lib/mios/mios_oscontrol_client.py	3	3	1	10	3d3ccf816f76	STAY	local-scoped		0				0
 usr/lib/mios/mios_oscontrol_client.py	15	15	1	12	3d087eeb98c2	STAY	local-scoped		0				0

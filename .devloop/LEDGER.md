@@ -4832,3 +4832,11 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Shared TUI exposes every reported registration/session/subagent with source coverage, filters/search/details; receipt windows no longer limit inventory. Live user preview63agents/2online/67sessions/119panes/0errors. System relay has13additional retained registrations; its read-only MiOS-MCP source is configured for live aggregation.
 - Physical VT1 diagnosis found greetd authenticated UID1000 bridge on root-owned0600tty1, with repeated GPM rejections. Scoped owner repair preserved mode/group and all processes. Durable login handoff is assigned to the resumed native Antigravity peer through MiOS-MCP; no peer review pass or physical controller acceptance is claimed.
 - Provenance, artifacts/checksums and next installation steps: .devloop/handoff/mios-blade-main-integration.json. Main publication/live installation follow this checkpoint.
+
+
+## Native MCP and visible scope follow-up (2026-11-10)
+
+- Core01de4e0 is installed, including all inputd aliases and four witnessed observer panes; original console bridge, user input daemon, agent heads and hardware projection remain intact.
+- Actual native SDK2 observation revealed snake-case response fields; fixed with SDK1 compatibility and a real SDK result regression test. Selected Textual scope labels now use an application-owned CSS class.
+- The two previous behaviors each fail one intended assertion; restored source passes15 UI and27 federation tests,29 projection stages,573-suite registry and five publication gates. Full live federation proof follows installation.
+- Durable authenticated physical VT ownership remains assigned to the resumed native peer; no physical controller return acceptance is claimed.
