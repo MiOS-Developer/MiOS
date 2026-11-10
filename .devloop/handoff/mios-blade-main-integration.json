@@ -1016,5 +1016,134 @@
     "evidence": "GPM repeatedly rejected uid1000 on root-owned tty1; bridge fd0 and foreground authenticated greetd session witnessed. Raw tty modes were already correct.",
     "durable_login_fix": "Assigned via MiOS-MCP to existing Antigravity session in isolated mios-console-login-ownership lane; implementation/verification pending. No authentication-policy change made.",
     "live_verification": "Existing bridge3710964 now holds fd4 connected to GPM after the scoped tty1 ownership handoff; original tmux client3712497 and agent/game processes retained."
+  },
+  "physical_console_login": {
+    "task_id": "task_01M71M53F4PMQS67FAM543A1HV",
+    "implementation": {
+      "source_commit": "56b5644e6dbadd392a695189e4356cd9417cfac3",
+      "artifact": {
+        "name": "miosd",
+        "path": "/home/mios/.local/state/mios/mios-console-login-ownership/artifacts/miosd-193565a99893aa91bd9553b379a355809af8580e82232a389e052bd329e8cdc1",
+        "sha256": "193565a99893aa91bd9553b379a355809af8580e82232a389e052bd329e8cdc1",
+        "bytes": 21030088,
+        "source_checkpoint": "56b5644e6dbadd392a695189e4356cd9417cfac3",
+        "build_worktree_parent": "755879020c72dd7934d7539fa179eec12080a093",
+        "source_snapshot_note": "Built from the tested working snapshot before its checkpoint commit; exact final Rust source bytes are recorded below. Generated index/metadata projection follows native compilation.",
+        "source_sha256": {
+          "src/mios-rs/miosd/src/main.rs": "4697dc1ede44dd14c7f63b807287b40db24acd544dfbcf18109f974d69a4bc2b",
+          "src/mios-rs/miosd/src/console_session.rs": "72089af6951bf64106e80664629d8bc14ccbc1942e9eacb2b532c2dcb8a52b6c"
+        }
+      },
+      "native_tests": 407,
+      "existing_ignored_tests": 1,
+      "controls": [
+        {
+          "case": "handoff",
+          "mutant_exit": 101,
+          "intended_failed_assertions": 1,
+          "restored_exit": 0
+        },
+        {
+          "case": "delayed-logout",
+          "mutant_exit": 101,
+          "intended_failed_assertions": 1,
+          "restored_exit": 0
+        },
+        {
+          "case": "privileged-policy",
+          "mutant_exit": 101,
+          "intended_failed_assertions": 1,
+          "restored_exit": 0
+        },
+        {
+          "case": "parent-session",
+          "mutant_exit": 101,
+          "intended_failed_assertions": 1,
+          "restored_exit": 0
+        }
+      ],
+      "kernel_pam_proof": {
+        "passed": true,
+        "selinux_enforcing_service_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
+        "worker_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
+        "client_context": "unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023",
+        "client_context_explicitly_matches_existing_physical_bridge": true,
+        "artifact_sha256": "193565a99893aa91bd9553b379a355809af8580e82232a389e052bd329e8cdc1",
+        "user_changed_mode_and_group_preserved": true,
+        "vt": 63,
+        "active_vt_preserved": 1,
+        "actual_greetd_worker_pid": 1070644,
+        "actual_unprivileged_console_bridge_pid": 1070688,
+        "open_uid": 1000,
+        "close_uid": 0,
+        "group_and_mode_preserved": true,
+        "gpm_connected": true,
+        "lease_reclaimed": true,
+        "adopted_processes_preserved": {
+          "2137102": "37574253",
+          "3710964": "45916667",
+          "3712497": "45918989",
+          "1786293": "28978450"
+        },
+        "scope": "Private mount namespace PAM/config fixture, actual installed greetd+pam_exec and kernel VT, no live authentication/config/active VT change"
+      },
+      "pam_baseline_sha256": "f4ca407f16232468bbd53d8039be05c2c0bed87c5ced6701bba19ef5b9ff54be",
+      "pam_hook_sha256": "df47935080e984dd2049d7837f01d90a5606f8961f1fdb395b2070eba879694f",
+      "review_message": "mios-agy-final-helper-review-approved-0018; mios-agy-seat-checkpoint-73deb3e15-0023",
+      "generation": "29stages passed",
+      "gates": "all5 passed",
+      "next": "Publish combined main and install the verified executable and optional PAM hook; preserve adopted processes and local configuration."
+    },
+    "seat_classification": {
+      "source_commit": "73deb3e156ab678914c34e88d5400b5876dbc5b6",
+      "review": "Root reviewed the complete source diff; explicit console identity is handled after existing UID/class guards and excluded from graphical return discovery.",
+      "native_tests": 254,
+      "controls": {
+        "old_classifier_exit": 101,
+        "intended_assertions_failed": 1,
+        "restored_exit": 0
+      },
+      "clippy": "all targets, -D warnings passed",
+      "artifact": {
+        "name": "mios-inputd",
+        "path": "/home/mios/.local/state/mios/mios-console-seat-classification/artifacts/mios-inputd-33eb56247acfd3bee32a185f57328e508968aa0bdff6a9565a77749c0a3f3629",
+        "sha256": "33eb56247acfd3bee32a185f57328e508968aa0bdff6a9565a77749c0a3f3629",
+        "bytes": 7513288
+      },
+      "live_process_policy": "Install all aliases; adopted input daemon/console bridge remain running. Fresh physical controller return remains tracked separately."
+    },
+    "kernel_selinux_acceptance": {
+      "passed": true,
+      "selinux_enforcing_service_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
+      "worker_context": "system_u:system_r:xdm_t:s0-s0:c0.c1023",
+      "client_context": "unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023",
+      "client_context_explicitly_matches_existing_physical_bridge": true,
+      "artifact_sha256": "193565a99893aa91bd9553b379a355809af8580e82232a389e052bd329e8cdc1",
+      "user_changed_mode_and_group_preserved": true,
+      "vt": 63,
+      "active_vt_preserved": 1,
+      "actual_greetd_worker_pid": 1070644,
+      "actual_unprivileged_console_bridge_pid": 1070688,
+      "open_uid": 1000,
+      "close_uid": 0,
+      "group_and_mode_preserved": true,
+      "gpm_connected": true,
+      "lease_reclaimed": true,
+      "adopted_processes_preserved": {
+        "2137102": "37574253",
+        "3710964": "45916667",
+        "3712497": "45918989",
+        "1786293": "28978450"
+      },
+      "scope": "Private mount namespace PAM/config fixture, actual installed greetd+pam_exec and kernel VT, no live authentication/config/active VT change"
+    },
+    "authentication_policy": "Existing greetd auth/account/password/session lines preserved; one optional PAM session hook appended.",
+    "verification_archive": {
+      "path": ".devloop/handoff/mios-console-native-verification.tar.gz",
+      "sha256": "8d51839ac333e6c4c0d2ddc4e95227eb2afa0d6c47dbe7fd1bb0c0f47cd5b616",
+      "bytes": 96252,
+      "raw_secret_scan_findings": 0
+    },
+    "deployment": "Prepared for combined main publication and live installation; active console and adopted processes will be retained."
   }
 }

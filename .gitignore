@@ -1203,3 +1203,5 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-blade-recovery.bundle.sha256
 !/.devloop/handoff/mios-blade-recovery.json
 !/.devloop/handoff/mios-blade-main-integration.json
+
+!/.devloop/handoff/mios-console-native-verification.tar.gz

@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 93 |
+| in_progress | 94 |
 | completed | 1898 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3780 |
+| total | 3781 |
 
 0 record(s) carry at least one override.
 
@@ -448,6 +448,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3540` Q2 (brief P1-24): only the tiny LFM2 micro model is baked; every other model is pulled; the cloud overlay skips pulls (WS-AI | P1 | M) -- pending · P1 · size M
 - `task_3578` P2-9: GPU co-tenancy -- vLLM sleep mode from admission, native KV offload, a per-lane device key (WS-AI | P2 | M) -- pending · P2 · size M
 - `task_3780` Expose all reported global agents, sessions and subagents in shared TUIs -- completed · owner mios-global-agent-inventory · P1 · size M
+- `task_3781` Preserve authenticated physical VT ownership and classify explicit console seats -- in_progress · owner mios-console-login-ownership · P1 · size M
 
 ## WS-AIOS
 

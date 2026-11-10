@@ -4848,3 +4848,12 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Actual observer system Python has no MCP SDK. Move persistent global observation to the configured MCP interpreter, keep source-qualified remote rows and fresh native local metadata, and expose unavailable streams explicitly.
 - The operator is directly on physical VT1. Captured console/filesystem verbs now remove stale GUI manager values and validate the private runtime even when no compositor exists. Graphical dispatch retains strict compositor checks.
 - Native16TUI+29federation+17broker tests pass; each old behavior fails one intended assertion.29generation stages,573-suite registry and five publication gates pass. Durable VT login handoff is still assigned to the resumed native peer.
+
+
+## Authenticated physical console and seat classification (2026-11-10)
+
+- Preserved native peer source73deb3e15 and root helper56b5644e6 with original histories. Global task3780 is completed with exact stored identity set matching and live75-registration TUI/MCP proof.
+- PAM helper407native passes(1existing ignored), four intended compiled mutation failures/restored passes, strictClippy/staticmusl; seat classifier254native passes, compiled old classifier fails intended assertion and restored candidate passes.
+- Actual installed greetd+pam_exec and SELinuxEnforcing workerxdm_t/client matching the existing unconfined physical context passed unusedVT63 ownership/GPM/lease/logout acceptance. Explicit user mode620/group1000 changes remained while owner restoredroot. ActiveVT1 and four adopted process identities remained intact. No authentication requirement or live session was changed during the private mount-namespace fixture.
+- Root-pinned policy ignores caller loader overrides; descriptor and kernel parent/session/foreground witnesses protect handoff, nonblocking lease prevents PAM waits. Protected /run mount handles the Blade filesystem root delegation.
+- Raw sanitized logs, exact hardware harnesses, controls and receipts are in mios-console-native-verification.tar.gz with zero raw scanner findings. Combined generation/gates, main publication and scoped live installation follow.
