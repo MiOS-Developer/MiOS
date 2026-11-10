@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4289,
-  "total_metadata_entries": 3445,
-  "total_hints": 3439,
+  "total_files_scanned": 4292,
+  "total_metadata_entries": 3446,
+  "total_hints": 3440,
   "total_functions_indexed": 2136,
-  "total_related_links": 6889,
+  "total_related_links": 6893,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -12901,6 +12901,20 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tools.md",
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/controller_return_live.rs",
+      "hint": "Opt-in native kernel proof of controller return. Only uniquely named private uinput fixtures are opened;",
+      "related": [
+        "nested_session.rs",
+        "nested_devices.rs",
+        "mios-inputd/src/runtime.rs",
+        "task_01M6VYCEBMPNBPJT5DJBVZSDC3"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "slash",
       "has_shebang": false
     },

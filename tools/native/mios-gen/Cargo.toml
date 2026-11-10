@@ -23,3 +23,6 @@ mios-service-core = { path = "../mios-service-core" }
 mios-unit-gen = { path = "../mios-unit-gen" }
 # recvmsg/sendmsg with SCM_RIGHTS and memfd for the nested-session render proxy (wl_device_proxy.rs), safe API.
 rustix = { version = "1.1", features = ["fs", "net", "process"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+mios-inputd = { path = "../mios-inputd" }

@@ -2250,6 +2250,7 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "flate2",
+ "mios-inputd",
  "mios-resolver",
  "mios-service-core",
  "mios-unit-gen",

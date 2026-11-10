@@ -753,6 +753,45 @@ impl Claim {
                 return Err("controller return rollback belongs to another launcher".into());
             }
         }
+        // The parent wait runs without the registry lock. Another live seat may
+        // have acquired the released node; rollback must never create two leases.
+        let retained_nodes: Vec<&str> = self.entry["devices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|d| {
+                std::iter::once(&d["path"]).chain(d["siblings"].as_array().into_iter().flatten())
+            })
+            .filter_map(Json::as_str)
+            .collect();
+        let nodes: Vec<&str> = original["devices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|d| {
+                std::iter::once(&d["path"]).chain(d["siblings"].as_array().into_iter().flatten())
+            })
+            .filter_map(Json::as_str)
+            .filter(|node| !retained_nodes.contains(node))
+            .collect();
+        for (other_path, other) in live_sessions(dir, true) {
+            if other_path == self.path {
+                continue;
+            }
+            let conflict = other["devices"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|d| {
+                    std::iter::once(&d["path"])
+                        .chain(d["siblings"].as_array().into_iter().flatten())
+                })
+                .filter_map(Json::as_str)
+                .any(|path| nodes.contains(&path));
+            if conflict {
+                return Err(format!("controller return rollback refused: another live seat {:?} now owns a returned node", other["seat"]));
+            }
+        }
         let path = PathBuf::from(
             self.entry["descriptor"]
                 .as_str()

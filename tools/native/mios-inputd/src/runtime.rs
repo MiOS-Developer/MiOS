@@ -2456,6 +2456,7 @@ fn update_active_manifest(
     devices: &BTreeMap<PathBuf, RunningDevice>,
     raw_consumers: &BTreeMap<PathBuf, String>,
     bridge: bool,
+    scan_ms: u64,
 ) {
     let path = runtime.join("mios-inputd-active.json");
     let me = std::process::id();
@@ -2489,6 +2490,7 @@ fn update_active_manifest(
         "start_time": start_ticks,
         "bridge_start": start_ticks,
         "controller_return_protocol_version": 1,
+        "controller_scan_ms": scan_ms,
         "devices": devs,
         "raw_consumers": raws,
         "timestamp": now_dur.as_secs(),
@@ -3543,6 +3545,7 @@ pub fn run(
             &devices,
             &raw_consumers.lock().unwrap(),
             opt.bridge,
+            global.controller.scan_ms,
         );
     }
 
@@ -3650,6 +3653,7 @@ pub fn run(
                         &devices,
                         &raw_consumers.lock().unwrap(),
                         opt.bridge,
+                        global.controller.scan_ms,
                     );
                 }
                 if let Some(r) = &registry {
@@ -3681,6 +3685,7 @@ pub fn run(
                             &devices,
                             &raw_consumers.lock().unwrap(),
                             opt.bridge,
+                            global.controller.scan_ms,
                         );
                     }
                     if let Ok(mut a) = assigned.lock() {
@@ -3934,17 +3939,22 @@ pub fn run(
                 let output = if opt.bridge {
                     if !suspended {
                         if let Err(e) = device.grab() {
-                            if !nested && e.raw_os_error() == Some(libc::EBUSY) {
+                            if e.raw_os_error() == Some(libc::EBUSY) {
                                 raw_consumers.lock().unwrap().insert(
                                     path.clone(),
                                     format!("device held by raw consumer (EBUSY): {e}"),
                                 );
-                                update_active_manifest(
-                                    &runtime,
-                                    &devices,
-                                    &raw_consumers.lock().unwrap(),
-                                    opt.bridge,
-                                );
+                                if !nested {
+                                    update_active_manifest(
+                                        &runtime,
+                                        &devices,
+                                        &raw_consumers.lock().unwrap(),
+                                        opt.bridge,
+                                        global.controller.scan_ms,
+                                    );
+                                }
+                                // A raw holder may outlive abort_release. Keep the
+                                // child alive and retry discovery after it lets go.
                                 continue;
                             }
                             return Err(format!("{}: cannot own input: {e}", path.display()));
@@ -3994,6 +4004,7 @@ pub fn run(
                         &devices,
                         &raw_consumers.lock().unwrap(),
                         opt.bridge,
+                        global.controller.scan_ms,
                     );
                 }
             }
@@ -4221,6 +4232,7 @@ pub fn run(
                     &devices,
                     &raw_consumers.lock().unwrap(),
                     opt.bridge,
+                    global.controller.scan_ms,
                 );
                 manifest_dirty = false;
             }
@@ -4291,6 +4303,7 @@ pub fn run(
                     &devices,
                     &raw_consumers.lock().unwrap(),
                     opt.bridge,
+                    global.controller.scan_ms,
                 );
             }
             for (source, owned) in adopt {
@@ -6269,11 +6282,13 @@ mod app_detection {
             &std::collections::BTreeMap::new(),
             &std::collections::BTreeMap::new(),
             true,
+            2000,
         );
         let record: serde_json::Value = serde_json::from_slice(
             &std::fs::read(runtime.path().join("mios-inputd-active.json")).unwrap(),
         )
         .unwrap();
+        assert_eq!(record["controller_scan_ms"], 2000);
         assert_eq!(
             record["controller_return_protocol_version"].as_u64(),
             Some(1)

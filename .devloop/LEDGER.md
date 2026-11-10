@@ -4890,3 +4890,10 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 
 - Published 9ae67d66d9d25831be78aa159a135272c2b27357 and installed sealed mios-gen, mios-unit-gen, miosd and MiOS-Mons with exact vendor/runtime projections. Native menus use the existing60-column menu width, center over the client and open after the initiating right-button release. All13actual private tmux tests passed, including outside-console entry and quick clicks at3viewport positions.
 - Refreshed the human tmux configuration without restarting its server, native agent, adopted games, input daemon or authenticated VT bridge. Original PAM lease/GPM and local btop/hardware customizations verified. The physical display now shows a separate owned94x33game preview with its own save; original unsaved sample games remain untouched. Task3782 completed; controller-return task3775 remains open.
+
+
+## Controller return cadence and recovery (2026-11-10)
+
+- Task3775 continuation: scan-derived launcher/client deadlines, ownership-safe rollback and retryable nested EVIOCGRAB contention.
+- Native355 generator/254 Inputd tests, strict Clippy/static artifacts, four compiled defect controls,18 restored return tests and real uinput held-button/raw-holder/neutral-return acceptance pass. Original services, games and agent identities remain unchanged. Exact proof archived in the controller-return handoff.
+- Physical DualSense/visible game/PiP and separate analog rearming acceptance remain open. Publish/install sealed artifacts without restarting adopted processes.

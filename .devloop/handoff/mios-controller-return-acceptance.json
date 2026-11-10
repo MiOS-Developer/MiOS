@@ -1,0 +1,181 @@
+{
+  "task_id": "task_01M6VYCEBMPNBPJT5DJBVZSDC3",
+  "task_number": 3775,
+  "status": "in_progress",
+  "base_main": "c88a84e02acda6898382ecc92ceb54bd6a458ba9",
+  "source_lane": "mios-controller-return-acceptance",
+  "source_sha256": {
+    "tools/native/Cargo.lock": "48bed15ab1bef8d75ee42c1b9053244e7e0b3238ac9b45d2ef48cb08b16e8a9d",
+    "tools/native/mios-gen/Cargo.toml": "240ebb1719ab695c06381a7bd0b679df0e78783080e2fb1a5a631e76af535449",
+    "tools/native/mios-gen/src/controller_return_live.rs": "712a7072211c11482178f99fe3ec99b64dc7ab17767bf479dbfbf9912005a04b",
+    "tools/native/mios-gen/src/nested_devices.rs": "9904ba7e59e40bef87d12e0e7164efda6304688e670ea93e1b551e5096b59f85",
+    "tools/native/mios-gen/src/nested_session.rs": "a3c804d1124b069645dfd0942370623f7eadc72d4a2341549910a86ca25eafc1",
+    "tools/native/mios-inputd/src/runtime.rs": "e1c1c08ccfb7edb6845a3225ca443910a89de49a3490163135212ec5e689ed45"
+  },
+  "behavior": [
+    "Parent manifests advertise their actual configured scan cadence. Launcher and client deadlines cover independent registry/discovery phases, retaining bounded legacy compatibility.",
+    "Rollback refuses intervening live owners of reintroduced event or joystick nodes without changing either record; retained nonexclusive overlaps do not prevent valid recovery.",
+    "Nested bridges retry EVIOCGRAB contention instead of exiting after a recovery ACK. Existing identity, nonce, protocol and neutral-state checks remain enforced."
+  ],
+  "artifacts": [
+    {
+      "name": "mios-gen",
+      "path": "/home/mios/.local/state/mios/mios-controller-return-acceptance/candidate-bin/mios-gen",
+      "sha256": "2fdacf10bc00f71ddc47a21e1d285800c0fb7f945ccb207fddb1a47e3179f2c2",
+      "bytes": 11887784,
+      "static": true
+    },
+    {
+      "name": "mios-inputd",
+      "path": "/home/mios/.local/state/mios/mios-controller-return-acceptance/candidate-bin/mios-inputd",
+      "sha256": "5563ca322836af6c3ea0229a00f915756e4033b77ceded9147a56786034d7d93",
+      "bytes": 7623048,
+      "static": true
+    }
+  ],
+  "verification": {
+    "substrate": "Pinned native MiOS-DEV e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf; offline locked musl builds; 12GB admission and shared heavy lock. Actual uinput acceptance runs as the Blade user outside the build container.",
+    "generator": "355 passed; 2 opt-in helper/kernel tests ignored by ordinary run",
+    "inputd": "254 passed",
+    "strict_clippy": "Both changed crates, all targets, -D warnings",
+    "kernel": "1 explicit opt-in test passed at unchanged vendor 2000ms cadence: held-button deferral, both records unchanged, real raw-holder recovery with child surviving and actually reacquiring, neutral return through real frontend/Claim/parent and child Inputd, parent fresh identity/neutral ACK and actual descriptor/grab transfer.",
+    "compiled_controls": {
+      "mutations": [
+        {
+          "mutation": "short-parent-wait",
+          "test": "nested_session::tests::return_frontend_accepts_ack_after_both_vendor_scan_phases",
+          "exit": 101,
+          "compiled_assertion_failed": true
+        },
+        {
+          "mutation": "short-frontend-wait",
+          "test": "nested_session::tests::return_frontend_accepts_ack_after_both_vendor_scan_phases",
+          "exit": 101,
+          "compiled_assertion_failed": true
+        },
+        {
+          "mutation": "duplicate-rollback-owner",
+          "test": "nested_session::tests::return_rollback_refuses_a_new_live_owner_including_joystick_siblings",
+          "exit": 101,
+          "compiled_assertion_failed": true
+        },
+        {
+          "mutation": "fatal-nested-EBUSY",
+          "binary_sha256": "f2ad07b1ad9e54d696abb8f25052e980ceda99b1266930fd99582054f16c8b9a",
+          "kernel_assertion": "child survives raw-holder recovery",
+          "kernel_assertion_failed": true,
+          "kernel_exit": 101
+        }
+      ],
+      "source_restored": true,
+      "restored_native_tests_pass": true,
+      "restored_kernel_pass": true,
+      "protected_processes_unchanged": true
+    },
+    "restored_positive": "18 native return tests passed and restored real-kernel acceptance passed",
+    "archive": {
+      "path": ".devloop/handoff/mios-controller-return-native-verification.tar.gz",
+      "sha256": "c1bed9f458e0516270a90904dc618027926d28c7a96824bb4729ad4f91f9bd69",
+      "bytes": 28854,
+      "files": {
+        "clippy-final.log": "2b1b93999ab16c4a7bea814f1824f4a094b86dd6fbcaba788bacfe1d8c02a036",
+        "clippy-positive.log": "390b10a526dd9ad9339c873b596364fa7fc38279d573ec832179fcf756244a9e",
+        "compiled-controls.json": "59204453f0d15e09fdcca1a4bfc102d1a2f13a59dc9d53ee8d2b23ee6f697035",
+        "final-admission-before-create.json": "9d5dc04c68aba5f2295e33cfd194963799c4530da67c9e6ce16cf1ac1e77f94c",
+        "final-admission.json": "b74ca4449f4d94b2216f7dc6d1a265dc03389f1ad150c84d258bac64c59a5c08",
+        "final-host.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "final-inside.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "fmt-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "fmt-positive.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "gen-final.log": "a621b5e2b42292720655d9e7940f11ee39a09a566197f31883aa7e4cc9964c4f",
+        "gen-positive.log": "9e0ef07aa52e7c17e39df6a61b91d89f69c54d88b603eb8da7a595e58f900b4c",
+        "inputd-final.log": "e2c91340aad5d42913e90b019c2e1bd28d6d02a5eca8126cb9b4eb383b6ca23b",
+        "inputd-positive.log": "a2dc7958fe6c2ba6b0944da3401a60b2ea6fbd2c218ff9c38306ddc26a275e66",
+        "kernel-controls-host.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "kernel-controls-launch.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "kernel-controls-protected-after.json": "01f612fd0f8c6f8cb076a8692481e6a6ce0f60a87334dd24749ae4f54b6fa62d",
+        "kernel-controls-protected-before.json": "01f612fd0f8c6f8cb076a8692481e6a6ce0f60a87334dd24749ae4f54b6fa62d",
+        "kernel-final-launch.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "kernel-final-protected-after.json": "cc010a9eaef89d18def41f9770dbc156d03140c97aaba2bdec93dfbfc16766fc",
+        "kernel-final-protected-before.json": "cc010a9eaef89d18def41f9770dbc156d03140c97aaba2bdec93dfbfc16766fc",
+        "kernel-final.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "kernel-final.log": "915731f3c6e4c3c36657ca4e6685a4d6477ce8c441c52ad2b8a3ace886347fb0",
+        "kernel-launch.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "kernel-negative-raw.exit": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+        "kernel-negative-raw.log": "d0d2839bb0563c1fc85ace1cbb700033a19a297fc374c41e37f33d693240d504",
+        "kernel-positive.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "kernel-positive.log": "084322a23b9b80039e4d7b143363f1a06af67c6d88c742a2cecdb99e09a0ead0",
+        "kernel-protected-after.json": "cc010a9eaef89d18def41f9770dbc156d03140c97aaba2bdec93dfbfc16766fc",
+        "kernel-protected-before.json": "cc010a9eaef89d18def41f9770dbc156d03140c97aaba2bdec93dfbfc16766fc",
+        "kernel-restored-positive.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "kernel-restored-positive.log": "9a76cc58910e875d773e970e39f5f2408a7c05b508d9cbc4e2174991a4dd6342",
+        "mios-gen-static.json": "e4668f5ad18a61c50cf314e1e4e1de0810470db77f9137b2a96fbd764b4fff0a",
+        "mios-inputd-static.json": "d058e20204db5791d7cf7bbc568cfe3069de15cd8ac86acc9ffa07cd8ee6ca8f",
+        "mutation-results.json": "c7c255362a942d8dee8e883c7a1ac22fb2e3cc968aff9e858a12378d5918fbb0",
+        "mutation-source-restored.json": "b2ec259aeb5e18d33c245850bd3dd40852d85fd787a67bc745e1143292e47143",
+        "mutations-admission-before-create.json": "c39933cfcbc83b04a9106cdd0b5bb71a6479fd3a1aba063cb84a9ed9910e6079",
+        "mutations-admission.json": "5ff5570921fa43f7fe503adb20350e81c12ede2ef7b91931cc749fe6c9a4575f",
+        "mutations-host.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "mutations-host.log": "396ce6eb529fc70d35a8b58a531260c293dd8d6ce038134a4183080164c35aea",
+        "mutations-inside.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+        "mutations2-admission-before-create.json": "ef9aa8acb0d132bed818c14a883550956ed2e1a719bbd773a09e8f07566dcd20",
+        "mutations2-admission.json": "8945fd291bb2f2f140c56b29a0daab63faa00edccdfd6fd59e6633ab50aef9b0",
+        "mutations2-host.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "mutations2-inside.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "negative-duplicate-rollback-owner.log": "fbe58b936581eab395f2a6b42ab14808e14fbf3355a9ec104732e1f1619f3a88",
+        "negative-raw-build.log": "7956e1e51a611f557edde88f052ba64c65e417afc36129da888610317b25acda",
+        "negative-short-frontend-wait.log": "e566a664954e57f9223f2ce86a8697fb3b01c0861b45db4d939fd7cf9f8097d4",
+        "negative-short-parent-wait.log": "aae01f52f2ce81e68b3c50698fb7af2297c839c82425f12be1686365a8fadad5",
+        "positive-admission-before-create.json": "e8b3f5d221796031334bb13a30f5a5e10ea77cd744bda141d2a80cd6453d851f",
+        "positive-admission.json": "52106024bdd6aabcd37d76ae9998df8b6c62c8ad7d8605acd9946a13e4f29986",
+        "positive-host.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "positive-inside.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+        "release-final.log": "d740dde6f28364f71f09a96a2eaa2a5389dd954f2efb0334fd5679f4a38ceeed",
+        "release-positive.log": "208e7f4a2581080f909b982081c7bc56def20895b6fdd5f7288fd2ed9773ade7",
+        "restored-positive.log": "5c245e55f3a2040ba73ab4a274faa4c8d037e0c5bcff0788defefb9f436e8d6e",
+        "source-sha256.json": "f83e636671583bd3d7c1aef7648214e279abc1887b60da8db5cb7d807d3573e4",
+        "static-artifacts.json": "8e7ab37c2f0af8d7b0176e745194d6840ccc7c7be13173e6fd77abf2a669ebde"
+      },
+      "raw_secret_findings": 0
+    },
+    "failure_provenance": [
+      "Initial mutation harness rejected a duplicate text anchor before mutating source; its failed log is retained, and is not counted as a compiled negative control."
+    ]
+  },
+  "preservation": {
+    "verified_unchanged_processes": {
+      "2137102": {
+        "start": "37574253",
+        "exe_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb"
+      },
+      "1445065": {
+        "start": "47553831",
+        "exe_sha256": "33eb56247acfd3bee32a185f57328e508968aa0bdff6a9565a77749c0a3f3629"
+      },
+      "2536600": {
+        "start": "48601101",
+        "exe_sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655"
+      },
+      "440814": {
+        "start": "51301780",
+        "exe_sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655"
+      },
+      "1786293": {
+        "start": "28978450",
+        "exe_sha256": "379c1bfc53d08815975c647ad7da5d19d8e8a8566ce8097c50231c8b116e5e7b"
+      }
+    },
+    "physical_controller": "DualSense /dev/input/event14 remains with adopted daemon PID2137102. No physical claim, signal, daemon restart, compositor launch or game restart occurred.",
+    "console": "Keep active VT1 console bridge1445065, tmux53639, both user clients and all adopted games/agent panes."
+  },
+  "limits": [
+    "Physical DualSense return with a fresh protocol-v1 seat and visible game/PiP continuity remains open; the kernel fixture is not physical acceptance.",
+    "Separate analog stick/trigger held-state and parent deflected-to-neutral rearming live cases are not claimed.",
+    "A recovery ACK schedules reacquisition; only the explicit kernel test verifies eventual actual reacquisition."
+  ],
+  "deployment": {
+    "state": "prepared_pending_main_publication_and_install",
+    "next": "Publish main, install sealed generator/Inputd binaries and existing launcher aliases, preserve every adopted process; record exact installed revision and private receipt."
+  },
+  "next_owner": "Continue task3775 physical and analog acceptance on an owned fresh protocol-v1 seat. Do not restart adopted controller daemon or claim physical event14 under the guise of this uinput test."
+}

@@ -1212,3 +1212,7 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-popup-surfaces.json
 
 !/.devloop/handoff/mios-popup-native-verification.tar.gz
+
+!/.devloop/handoff/mios-controller-return-acceptance.json
+
+!/.devloop/handoff/mios-controller-return-native-verification.tar.gz

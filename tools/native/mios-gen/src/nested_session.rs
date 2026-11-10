@@ -1512,6 +1512,18 @@ fn return_time_ms() -> u64 {
         .as_millis() as u64
 }
 
+// Parent registry reconciliation and device discovery have independent scan phases.
+// Older protocol-1 parents did not advertise a cadence; retain their bounded wait.
+fn return_parent_wait(record: &Json) -> Result<Duration, String> {
+    match record.get("controller_scan_ms") {
+        None => Ok(Duration::from_secs(2)),
+        Some(value) => match value.as_u64() {
+            Some(scan @ 1..=60_000) => Ok(Duration::from_millis(scan * 2 + 1000)),
+            _ => Err("parent bridge advertised an invalid controller scan cadence".into()),
+        },
+    }
+}
+
 /// Handle a connection on the continuing launcher's control socket.
 pub fn handle_control_connection(
     mut stream: UnixStream,
@@ -1566,6 +1578,7 @@ pub fn handle_control_connection(
         if parent_record["controller_return_protocol_version"].as_u64() != Some(1) {
             return Err("parent bridge does not support the authenticated controller return protocol; preserve the adopted session and use a compatible parent/child preview".into());
         }
+        let parent_wait = return_parent_wait(&parent_record)?;
         let expected_parent = manifest_identity(&parent_record)
             .ok_or("parent bridge readiness has a missing or recycled process identity")?;
         // Probe before any ownership mutation: older child daemons ignore nonce fields.
@@ -1612,7 +1625,8 @@ pub fn handle_control_connection(
         }
         let mut failure =
             "parent did not acknowledge a fresh, owned and neutral controller".to_string();
-        for _ in 0..20 {
+        let deadline = Instant::now() + parent_wait;
+        loop {
             if let Ok(record) = devices::read_return_json(&manifest) {
                 let identity = manifest_identity(&record);
                 let stamp = record["timestamp_ms"].as_u64().unwrap_or(0);
@@ -1655,7 +1669,14 @@ pub fn handle_control_connection(
                     }
                 }
             }
-            thread::sleep(Duration::from_millis(100));
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
+            );
         }
         let restore = claim.restore_return(registry, &original);
         let recovery = if restore.is_ok() {
@@ -1677,7 +1698,7 @@ pub fn handle_control_connection(
 }
 
 /// Request a controller return from a live nested session's continuing launcher.
-pub fn return_controller(_parent: &Path, registry: &Path, o: &Options) -> Result<Json, String> {
+pub fn return_controller(parent: &Path, registry: &Path, o: &Options) -> Result<Json, String> {
     let seat = o
         .seat
         .as_deref()
@@ -1768,7 +1789,12 @@ pub fn return_controller(_parent: &Path, registry: &Path, o: &Options) -> Result
     });
     writeln!(stream, "{req}").map_err(|e| format!("failed to write request: {e}"))?;
 
-    let resp = read_control_frame(&mut stream, Duration::from_secs(4))?;
+    let response_timeout = devices::read_return_json(&parent.join("mios-inputd-active.json"))
+        .ok()
+        .and_then(|record| return_parent_wait(&record).ok())
+        .map(|wait| wait + RETURN_IO_TIMEOUT * 4 + Duration::from_secs(1))
+        .unwrap_or(Duration::from_secs(4));
+    let resp = read_control_frame(&mut stream, response_timeout)?;
     if resp["nonce"] != nonce {
         return Err("session response nonce does not match this request".into());
     }
@@ -2937,4 +2963,152 @@ mod tests {
         );
         assert_eq!(fs::read(registry.join("review.json")).unwrap(), before);
     }
+    #[test]
+    fn return_wait_validates_advertised_scan_cadence() {
+        assert_eq!(
+            return_parent_wait(&json!({})).unwrap(),
+            Duration::from_secs(2)
+        );
+        for scan in [1, 2000, 60_000] {
+            assert_eq!(
+                return_parent_wait(&json!({"controller_scan_ms":scan})).unwrap(),
+                Duration::from_millis(scan * 2 + 1000)
+            );
+        }
+        for bad in [
+            json!(0),
+            json!(60_001),
+            json!(-1),
+            json!("2000"),
+            Json::Null,
+        ] {
+            assert!(return_parent_wait(&json!({"controller_scan_ms":bad})).is_err());
+        }
+    }
+
+    #[test]
+    fn return_frontend_accepts_ack_after_both_vendor_scan_phases() {
+        let t = tempfile::tempdir().unwrap();
+        let (registry, parent, owned, mut claim) = root_review_claim(&t);
+        let manifest_path = parent.join("mios-inputd-active.json");
+        let mut manifest = devices::read_return_json(&manifest_path).unwrap();
+        manifest["controller_scan_ms"] = json!(2000);
+        fs::write(&manifest_path, manifest.to_string()).unwrap();
+        let listener = UnixListener::bind(owned.join("control.sock")).unwrap();
+        claim
+            .update(
+                json!({"control_socket":owned.join("control.sock"),"control_protocol_version":1}),
+            )
+            .unwrap();
+        let ack_parent = parent.clone();
+        let child = return_test_child(&owned, 1, move |_| {
+            let ack_parent = ack_parent.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(4200));
+                return_test_manifest(
+                    &ack_parent,
+                    json!([{"path":"/dev/input/event42","rearmed":true}]),
+                    json!([]),
+                );
+            });
+            json!({})
+        });
+        let client_parent = parent.clone();
+        let client_registry = registry.clone();
+        let client = thread::spawn(move || {
+            return_controller(
+                &client_parent,
+                &client_registry,
+                &Options {
+                    seat: Some("review".into()),
+                    ..Default::default()
+                },
+            )
+        });
+        let (socket, _) = listener.accept().unwrap();
+        handle_control_connection(socket, &mut claim, &registry, &parent, &owned).unwrap();
+        let response = client.join().unwrap().unwrap();
+        assert_eq!(response["parent_acknowledged"], true);
+        assert_eq!(child.join().unwrap(), vec!["release_device"]);
+    }
+
+    #[test]
+    fn return_rollback_refuses_a_new_live_owner_including_joystick_siblings() {
+        for sibling in [false, true] {
+            let t = tempfile::tempdir().unwrap();
+            let (registry, _, owned, mut claim) = root_review_claim(&t);
+            if sibling {
+                let mut device = claim.entry()["devices"][0].clone();
+                device["siblings"] = json!(["/dev/input/js42"]);
+                claim.update(json!({"devices":[device.clone()]})).unwrap();
+                fs::write(
+                    owned.join("session.json"),
+                    json!({"seat":"review","devices":[device]}).to_string(),
+                )
+                .unwrap();
+            }
+            let original = claim.entry().clone();
+            claim
+                .return_controller(&registry, Path::new("/dev/input/event42"))
+                .unwrap();
+            let after_claim = fs::read(registry.join("review.json")).unwrap();
+            let after_descriptor = fs::read(owned.join("session.json")).unwrap();
+            let competing = Device {
+                path: if sibling {
+                    "/dev/input/js42"
+                } else {
+                    "/dev/input/event42"
+                }
+                .into(),
+                spec: "owned".into(),
+                name: "other".into(),
+                kind: "controller".into(),
+                virtual_node: false,
+                siblings: vec![],
+            };
+            let _other =
+                devices::Claim::take(&registry, "other", &[competing], true, json!({})).unwrap();
+            assert!(claim
+                .restore_return(&registry, &original)
+                .unwrap_err()
+                .contains("another live seat"));
+            assert_eq!(fs::read(registry.join("review.json")).unwrap(), after_claim);
+            assert_eq!(
+                fs::read(owned.join("session.json")).unwrap(),
+                after_descriptor
+            );
+        }
+    }
+    #[test]
+    fn return_rollback_ignores_retained_nonexclusive_nodes() {
+        let t = tempfile::tempdir().unwrap();
+        let (registry, _, owned, mut claim) = root_review_claim(&t);
+        let retained = Device {
+            path: "/dev/input/event43".into(),
+            spec: "retained".into(),
+            name: "retained".into(),
+            kind: "controller".into(),
+            virtual_node: false,
+            siblings: vec![],
+        };
+        let devices = json!([claim.entry()["devices"][0].clone(), retained.to_json()]);
+        claim.update(json!({"devices":devices})).unwrap();
+        fs::write(
+            owned.join("session.json"),
+            json!({"seat":"review","devices":devices}).to_string(),
+        )
+        .unwrap();
+        let original = claim.entry().clone();
+        let _other =
+            devices::Claim::take(&registry, "shared", &[retained], false, json!({})).unwrap();
+        claim
+            .return_controller(&registry, Path::new("/dev/input/event42"))
+            .unwrap();
+        claim.restore_return(&registry, &original).unwrap();
+        assert_eq!(claim.entry(), &original);
+    }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "controller_return_live.rs"]
+mod controller_return_live;
