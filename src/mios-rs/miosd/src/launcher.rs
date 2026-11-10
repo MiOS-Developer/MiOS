@@ -14,7 +14,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::crossterm::event::{
@@ -101,6 +101,7 @@ pub enum LauncherCommand {
 #[derive(Clone, Debug)]
 pub struct Cfg {
     pub enabled: bool,
+    pub command_timeout: Duration,
     pub popup_policy: mios_resolver::popup::PopupPolicy,
     pub title: String,
     pub popup_w: u32,
@@ -222,6 +223,12 @@ pub const LABEL_KEYS: &[&str] = &[
     "new_window",
     "run",
     "cancel",
+    "find",
+    "find_hint",
+    "find_help",
+    "no_matches",
+    "help_compact",
+    "options_help",
 ];
 
 pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
@@ -311,6 +318,11 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
         [c("bg"), c("fg"), c("cursor"), c("subtle"), c("muted")]
     };
     let cfg = Cfg {
+        command_timeout: Duration::from_millis(int(
+            v,
+            "keybindings.tmux.command_timeout_ms",
+            100..=60000,
+        )? as u64),
         popup_policy: mios_resolver::popup::PopupPolicy::from_value(v)?,
         enabled: at(v, &format!("{l}.enabled"))?
             .as_bool()
@@ -739,7 +751,7 @@ pub fn build(
             _ => {}
         }
     }
-    let mut used: BTreeSet<char> = BTreeSet::from([CLOSE_KEY]);
+    let mut used: BTreeSet<char> = BTreeSet::from([CLOSE_KEY, '/']);
     // Own keys first, in order, so the familiar prefix keys win; then the pool for the rest.
     for sec in out.iter_mut() {
         for it in sec.items.iter_mut() {
@@ -884,6 +896,10 @@ pub enum Input {
     Activate,
     Options,
     Back,
+    Search,
+    Query(char),
+    EraseQuery,
+    ClearQuery,
     Key(char),
     Click { x: u16, y: u16, right: bool },
     Wheel { up: bool },
@@ -911,6 +927,8 @@ pub fn map_key(k: KeyEvent, prefix: &str, pending: &mut bool) -> Input {
             Input::Nothing
         }
         KeyCode::Char('c') if ctrl => Input::Back,
+        KeyCode::Char('f') if ctrl => Input::Search,
+        KeyCode::Char('/') if !ctrl => Input::Search,
         KeyCode::Up => Input::Up,
         KeyCode::Down => Input::Down,
         KeyCode::Left => Input::Left,
@@ -1467,6 +1485,9 @@ pub fn move_session(i: &Instance, cfg: &Cfg, ctx: &Ctx) -> Overlay {
 struct Ui<'a> {
     cfg: &'a Cfg,
     sections: Vec<Section>,
+    source_sections: Vec<Section>,
+    search: Option<String>,
+    search_anchor: Option<(Target, usize)>,
     sel: usize,
     offset: usize,
     overlay: Vec<Overlay>,
@@ -1490,7 +1511,10 @@ impl<'a> Ui<'a> {
         let sel_order = order(&sections, &lay);
         let mut ui = Ui {
             cfg,
+            source_sections: sections.clone(),
             sections,
+            search: None,
+            search_anchor: None,
             sel: 0,
             offset: 0,
             overlay: Vec::new(),
@@ -1502,6 +1526,88 @@ impl<'a> Ui<'a> {
         };
         ui.start(start);
         ui
+    }
+
+    fn key(&mut self, key: KeyEvent) -> Input {
+        if self.search.is_some() && self.overlay.is_empty() && !self.pending {
+            match key.code {
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return Input::ClearQuery
+                }
+                KeyCode::Backspace => return Input::EraseQuery,
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                        && !c.is_control() =>
+                {
+                    return Input::Query(c)
+                }
+                _ => {}
+            }
+        }
+        map_key(key, &self.cfg.prefix, &mut self.pending)
+    }
+
+    fn begin_search(&mut self) {
+        if self.search.is_none() {
+            self.search_anchor = self
+                .selected()
+                .map(|item| (item.target.clone(), self.offset));
+            self.search = Some(String::new());
+        }
+    }
+
+    fn filter(&mut self) {
+        let keep = self.selected().map(|item| item.target.clone());
+        let query = self.search.as_deref().unwrap_or("").to_lowercase();
+        let words: Vec<&str> = query.split_whitespace().collect();
+        self.sections = self
+            .source_sections
+            .iter()
+            .filter_map(|section| {
+                let mut result = section.clone();
+                result.items.retain(|item| {
+                    let target = match &item.target {
+                        Target::App { id } => id.as_str(),
+                        Target::Instance(instance) => instance.command.as_str(),
+                        _ => "",
+                    };
+                    let haystack = format!(
+                        "{} {} {} {}",
+                        section.title, item.label, item.detail, target
+                    )
+                    .to_lowercase();
+                    words.iter().all(|word| haystack.contains(word))
+                });
+                (words.is_empty() || !result.items.is_empty()).then_some(result)
+            })
+            .collect();
+        self.lay = layout(&self.sections, self.area, self.cfg);
+        self.sel_order = order(&self.sections, &self.lay);
+        self.sel = keep
+            .and_then(|target| {
+                self.sel_order
+                    .iter()
+                    .position(|&pos| self.item_at(pos).is_some_and(|item| item.target == target))
+            })
+            .unwrap_or(0);
+        self.offset = 0;
+    }
+
+    fn cancel_search(&mut self) {
+        self.search = None;
+        self.filter();
+        if let Some((target, offset)) = self.search_anchor.take() {
+            if let Some(index) = self
+                .sel_order
+                .iter()
+                .position(|&pos| self.item_at(pos).is_some_and(|item| item.target == target))
+            {
+                self.sel = index;
+                self.offset = offset;
+            }
+        }
     }
 
     fn item_at(&self, pos: (usize, usize)) -> Option<&Item> {
@@ -1725,7 +1831,27 @@ impl<'a> Ui<'a> {
             Input::Home => self.sel = 0,
             Input::End => self.sel = n.saturating_sub(1),
             Input::NextSection => self.jump_section(true),
+            Input::Back if self.search.is_some() => self.cancel_search(),
             Input::Back => return Outcome::Close,
+            Input::Search => self.begin_search(),
+            Input::Query(c) => {
+                if let Some(query) = &mut self.search {
+                    query.push(c);
+                    self.filter();
+                }
+            }
+            Input::EraseQuery => {
+                if let Some(query) = &mut self.search {
+                    query.pop();
+                    self.filter();
+                }
+            }
+            Input::ClearQuery => {
+                if let Some(query) = &mut self.search {
+                    query.clear();
+                    self.filter();
+                }
+            }
             Input::Activate => {
                 if let Some(it) = self.selected() {
                     return Outcome::Done(activate(&it.target, self.cfg, ctx));
@@ -1758,6 +1884,7 @@ impl<'a> Ui<'a> {
                     }
                 }
             }
+            Input::Click { y, .. } if y == self.area.y + 1 => self.begin_search(),
             Input::Click { x, y, right } => {
                 if let Some(i) = self.hit(x, y) {
                     self.sel = i;
@@ -1809,6 +1936,19 @@ impl<'a> Ui<'a> {
                 .fg(accent)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
+        );
+        let search_line = match &self.search {
+            Some(query) => format!("{} {}", self.cfg.label("find"), query),
+            None => self.cfg.label("find_hint"),
+        };
+        buf.set_stringn(
+            area.x + 1,
+            area.y + 1,
+            search_line,
+            area.width.saturating_sub(2) as usize,
+            Style::default()
+                .fg(if self.search.is_some() { accent } else { muted })
+                .bg(bg),
         );
         self.scroll();
         let selected = self.sel_order.get(self.sel).copied();
@@ -1916,20 +2056,60 @@ impl<'a> Ui<'a> {
                     }
                 }
             }
-            // A scroll hint when the column continues below.
-            if col.len() > self.offset + self.lay.height as usize {
-                let more = if console { "v more" } else { "\u{25be} more" };
-                buf.set_stringn(
-                    x0 + self.lay.col_w.saturating_sub(7),
-                    self.lay.top + self.lay.height,
-                    more,
-                    7,
-                    Style::default().fg(muted).bg(bg),
-                );
-            }
         }
-        let help = &self.cfg.help;
-        let hx = area.x + area.width.saturating_sub(help.len() as u16) / 2;
+        let context = if let Some(item) = self.selected() {
+            let pos = self.sel_order[self.sel];
+            let section = self
+                .section_of(pos)
+                .and_then(|index| self.sections.get(index))
+                .map(|section| section.title.as_str())
+                .unwrap_or("");
+            let more_above = self.offset > 0;
+            let more_below = self
+                .lay
+                .cols
+                .iter()
+                .any(|col| col.len() > self.offset + self.lay.height as usize);
+            format!(
+                "{} {}/{} {}{}{} | {}",
+                section,
+                self.sel + 1,
+                self.sel_order.len(),
+                if more_above { "^" } else { "" },
+                if more_below { "v" } else { "" },
+                if more_above || more_below {
+                    " more"
+                } else {
+                    ""
+                },
+                if item.detail.is_empty() {
+                    item.label.as_str()
+                } else {
+                    item.detail.as_str()
+                }
+            )
+        } else if self.search.is_some() {
+            self.cfg.label("no_matches")
+        } else {
+            String::new()
+        };
+        buf.set_stringn(
+            area.x + 1,
+            area.y + area.height.saturating_sub(2),
+            context,
+            area.width.saturating_sub(2) as usize,
+            Style::default().fg(muted).bg(bg),
+        );
+        let help = if !self.overlay.is_empty() {
+            self.cfg.label("options_help")
+        } else if self.search.is_some() {
+            self.cfg.label("find_help")
+        } else if self.cfg.help.chars().count() > area.width as usize {
+            self.cfg.label("help_compact")
+        } else {
+            self.cfg.help.clone()
+        };
+        let hx = area.x + area.width.saturating_sub(help.chars().count() as u16) / 2;
         buf.set_stringn(
             hx,
             area.y + area.height.saturating_sub(1),
@@ -2069,15 +2249,35 @@ fn socket_from_env() -> Result<String, String> {
     }
 }
 
-fn tmux(sock: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("tmux")
-        .arg("-S")
-        .arg(sock)
-        .args(args)
-        .env_remove("TMUX_PANE")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("tmux: {e}"))?;
+fn control_environment_key(key: &str) -> bool {
+    matches!(
+        key,
+        "HOME" | "PATH" | "TERM" | "LANG" | "USER" | "LOGNAME" | "SHELL" | "TMPDIR" | "TMUX_TMPDIR"
+    ) || key.starts_with("LC_")
+}
+
+fn tmux(timeout: Duration, sock: &str, args: &[&str]) -> Result<String, String> {
+    // A control query does not need the expanded MiOS configuration environment.
+    // Sending it all during tmux IDENTIFY can fill IPC buffers before the query
+    // is even dispatched. The target server/client retains its own app state.
+    let mut command = Command::new("tmux");
+    command.arg("-S").arg(sock).args(args).env_clear();
+    for (key, value) in std::env::vars_os() {
+        if control_environment_key(&key.to_string_lossy()) {
+            command.env(key, value);
+        }
+    }
+    command.stdin(Stdio::null());
+    let interactive = matches!(
+        args.first().copied(),
+        Some("display-popup" | "display-menu" | "command-prompt")
+    );
+    let out = if interactive {
+        command.output().map_err(|e| format!("tmux: {e}"))?
+    } else {
+        crate::sessions::run_bounded(&mut command, Instant::now() + timeout)
+            .map_err(|e| format!("tmux control query: {e}"))?
+    };
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout)
             .trim_end_matches('\n')
@@ -2091,8 +2291,9 @@ fn tmux(sock: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-fn pane_state(sock: &str, pane: &str) -> PaneState {
+fn pane_state(cfg: &Cfg, sock: &str, pane: &str) -> PaneState {
     let f = tmux(
+        cfg.command_timeout,
         sock,
         &[
             "display-message",
@@ -2114,8 +2315,14 @@ fn pane_state(sock: &str, pane: &str) -> PaneState {
 }
 
 fn context(cfg: &Cfg, sock: &str, client: &str, pane: &str, console: bool) -> (Ctx, String) {
-    let listing = tmux(sock, &["list-panes", "-a", "-F", PANES]).unwrap_or_default();
+    let listing = tmux(
+        cfg.command_timeout,
+        sock,
+        &["list-panes", "-a", "-F", PANES],
+    )
+    .unwrap_or_default();
     let sessions_out = tmux(
+        cfg.command_timeout,
         sock,
         &["list-sessions", "-F", "#{session_id}\t#{session_name}"],
     )
@@ -2139,7 +2346,7 @@ fn context(cfg: &Cfg, sock: &str, client: &str, pane: &str, console: bool) -> (C
         client: client.into(),
         pane: pane.into(),
         console,
-        state: pane_state(sock, pane),
+        state: pane_state(cfg, sock, pane),
         sessions: all
             .iter()
             .filter(|(_, n)| !policy::is_hidden_session(&cfg.hidden, n))
@@ -2212,9 +2419,7 @@ fn pick(
             continue;
         }
         let inp = match event::read().map_err(|e| e.to_string())? {
-            Event::Key(k) if k.kind == KeyEventKind::Press => {
-                map_key(k, &cfg.prefix, &mut ui.pending)
-            }
+            Event::Key(k) if k.kind == KeyEventKind::Press => ui.key(k),
             Event::Mouse(m) => match m.kind {
                 MouseEventKind::Down(MouseButton::Left) => Input::Click {
                     x: m.column,
@@ -2309,8 +2514,12 @@ pub fn run_ops(cfg: &Cfg, sock: &str, client: &str, ops: Vec<Op>) -> Result<(), 
         match op {
             Op::Tmux { args } => {
                 let a: Vec<&str> = args.iter().map(String::as_str).collect();
-                if let Err(e) = tmux(sock, &a) {
-                    let _ = tmux(sock, &["display-message", "-c", client, "-l", &e]);
+                if let Err(e) = tmux(cfg.command_timeout, sock, &a) {
+                    let _ = tmux(
+                        cfg.command_timeout,
+                        sock,
+                        &["display-message", "-c", client, "-l", &e],
+                    );
                     return Err(e);
                 }
             }
@@ -2327,6 +2536,7 @@ pub fn run_ops(cfg: &Cfg, sock: &str, client: &str, ops: Vec<Op>) -> Result<(), 
                     c.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
                 } else {
                     tmux(
+                        cfg.command_timeout,
                         sock,
                         &[
                             "display-message",
@@ -2373,6 +2583,7 @@ pub fn open_on(
     let v = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let cfg = config(&v, console)?;
     let size = tmux(
+        cfg.command_timeout,
         sock,
         &[
             "display-message",
@@ -2388,6 +2599,7 @@ pub fn open_on(
         .unwrap_or((0, 0));
     let Some((w, h)) = popup_size(&cfg, cw, ch) else {
         return tmux(
+            cfg.command_timeout,
             sock,
             &["display-message", "-c", client, "-l", &cfg.too_small],
         )
@@ -2440,7 +2652,7 @@ pub fn open_on(
         args.extend(["--start".into(), st.into()]);
     }
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
-    let shown = tmux(sock, &a);
+    let shown = tmux(cfg.command_timeout, sock, &a);
     let chosen = std::fs::read_to_string(&result).unwrap_or_default();
     let _ = std::fs::remove_file(&result);
     shown?;
@@ -2565,10 +2777,20 @@ fn desktop(root: &Path) -> Result<(), String> {
     if let Some((sock, tty)) = focused_pid()
         .and_then(|p| tmux_client_under(Path::new("/proc"), p, &cfg.socket, &cfg.socket_root))
     {
-        let clients = tmux(&sock, &["list-clients", "-F", "#{client_name}"]).unwrap_or_default();
+        let clients = tmux(
+            cfg.command_timeout,
+            &sock,
+            &["list-clients", "-F", "#{client_name}"],
+        )
+        .unwrap_or_default();
         if clients.lines().any(|c| c == tty) {
-            let pane = tmux(&sock, &["display-message", "-p", "-c", &tty, "#{pane_id}"])?;
+            let pane = tmux(
+                cfg.command_timeout,
+                &sock,
+                &["display-message", "-p", "-c", &tty, "#{pane_id}"],
+            )?;
             let console = tmux(
+                cfg.command_timeout,
                 &sock,
                 &[
                     "display-message",
@@ -2724,6 +2946,23 @@ mod tests {
         include_str!("../../../../usr/share/mios/mios.toml")
             .parse()
             .unwrap()
+    }
+
+    #[test]
+    fn control_queries_do_not_forward_expanded_config_or_credentials() {
+        for key in ["HOME", "PATH", "TERM", "LANG", "LC_ALL", "TMUX_TMPDIR"] {
+            assert!(control_environment_key(key));
+        }
+        for key in [
+            "MIOS_CONFIG_JSON",
+            "MIOS_AGENT_TOKEN",
+            "OPENAI_API_KEY",
+            "TMUX",
+            "TMUX_PANE",
+            "PYTHONPATH",
+        ] {
+            assert!(!control_environment_key(key));
+        }
     }
 
     fn cfg() -> Cfg {
@@ -3747,5 +3986,196 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
             ),
             o => panic!("{o:?}"),
         }
+    }
+    fn find_sections() -> Vec<Section> {
+        vec![
+            Section {
+                id: "edit".into(),
+                title: "Editors".into(),
+                empty: None,
+                items: vec![Item {
+                    label: "Quiet editor".into(),
+                    detail: "Floating editor".into(),
+                    key: Some('1'),
+                    target: Target::App {
+                        id: "quiet-edit".into(),
+                    },
+                    enabled: true,
+                }],
+            },
+            Section {
+                id: "system".into(),
+                title: "System".into(),
+                empty: None,
+                items: vec![
+                    Item {
+                        label: "Process monitor".into(),
+                        detail: "Main session".into(),
+                        key: Some('2'),
+                        target: Target::App { id: "btop".into() },
+                        enabled: true,
+                    },
+                    Item {
+                        label: "Copy selection".into(),
+                        detail: "Copy mode required".into(),
+                        key: Some('3'),
+                        target: Target::MenuRow {
+                            menu: "pane".into(),
+                            key: "y".into(),
+                        },
+                        enabled: false,
+                    },
+                ],
+            },
+        ]
+    }
+
+    fn enter_query(ui: &mut Ui<'_>, query: &str) {
+        assert_eq!(ui.input(Input::Search, &ctx(), &|_| None), Outcome::Stay);
+        for character in query.chars() {
+            let input = ui.key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+            assert_eq!(
+                ui.input(input, &ctx(), &|_| None),
+                Outcome::Stay,
+                "typing must never activate a row or close the launcher"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_find_keeps_quit_space_and_shortcuts_literal() {
+        let c = cfg();
+        let mut ui = Ui::new(&c, find_sections(), Rect::new(0, 0, 94, 33), None);
+        let find = ui.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL));
+        assert_eq!(find, Input::Search);
+        ui.input(find, &ctx(), &|_| None);
+        enter_query(&mut ui, "2");
+        assert!(
+            ui.selected().is_none(),
+            "a typed row shortcut must be search text"
+        );
+        ui.input(Input::ClearQuery, &ctx(), &|_| None);
+        enter_query(&mut ui, "qUIET editor");
+        assert_eq!(ui.sel_order.len(), 1);
+        assert_eq!(
+            ui.selected().unwrap().target,
+            Target::App {
+                id: "quiet-edit".into()
+            }
+        );
+        assert_eq!(
+            ui.input(Input::Activate, &ctx(), &|_| None),
+            Outcome::Done(activate(
+                &Target::App {
+                    id: "quiet-edit".into()
+                },
+                &c,
+                &ctx()
+            ))
+        );
+    }
+
+    #[test]
+    fn launcher_find_uses_section_and_detail_and_preserves_controller_paging() {
+        let c = cfg();
+        let mut ui = Ui::new(&c, find_sections(), Rect::new(0, 0, 60, 18), None);
+        enter_query(&mut ui, "system main");
+        assert_eq!(
+            ui.selected().unwrap().target,
+            Target::App { id: "btop".into() }
+        );
+        assert_eq!(
+            ui.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+            Input::Nothing
+        );
+        assert_eq!(
+            ui.key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+            Input::PageDown
+        );
+        assert_eq!(ui.search.as_deref(), Some("system main"));
+        let erase = ui.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        ui.input(erase, &ctx(), &|_| None);
+        assert_eq!(ui.search.as_deref(), Some("system mai"));
+        let clear = ui.key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        ui.input(clear, &ctx(), &|_| None);
+        assert_eq!(ui.search.as_deref(), Some(""));
+        assert_eq!(ui.sel_order.len(), 2);
+    }
+
+    #[test]
+    fn launcher_find_empty_results_cannot_launch_and_escape_restores_focus_after_resize() {
+        let c = cfg();
+        let mut ui = Ui::new(&c, find_sections(), Rect::new(0, 0, 94, 33), None);
+        ui.input(Input::End, &ctx(), &|_| None);
+        let anchor = ui.selected().unwrap().target.clone();
+        enter_query(&mut ui, "no such application");
+        assert!(ui.selected().is_none());
+        assert_eq!(ui.input(Input::Activate, &ctx(), &|_| None), Outcome::Stay);
+        let area = Rect::new(5, 3, 34, 10);
+        ui.relayout(area);
+        let mut buffer = Buffer::empty(area);
+        ui.draw(&mut buffer, area);
+        let text = buf_text(&buffer);
+        assert!(text.contains("No available matches"), "{text}");
+        assert!(text.contains("Esc clear"), "{text}");
+        assert_eq!(ui.input(Input::Back, &ctx(), &|_| None), Outcome::Stay);
+        assert_eq!(ui.selected().unwrap().target, anchor);
+        assert_eq!(ui.input(Input::Back, &ctx(), &|_| None), Outcome::Close);
+    }
+
+    #[test]
+    fn launcher_find_keeps_disabled_actions_inert_and_clicks_target_filtered_rows() {
+        let c = cfg();
+        let area = Rect::new(7, 4, 60, 18);
+        let mut ui = Ui::new(&c, find_sections(), area, None);
+        enter_query(&mut ui, "copy");
+        assert!(ui.selected().is_none());
+        assert_eq!(ui.input(Input::Activate, &ctx(), &|_| None), Outcome::Stay);
+        assert_eq!(ui.input(Input::Key('3'), &ctx(), &|_| None), Outcome::Stay);
+        ui.input(Input::Back, &ctx(), &|_| None);
+        assert_eq!(
+            ui.input(
+                Input::Click {
+                    x: area.x + 2,
+                    y: area.y + 1,
+                    right: false
+                },
+                &ctx(),
+                &|_| None
+            ),
+            Outcome::Stay
+        );
+        assert!(ui.search.is_some());
+        enter_query(&mut ui, "monitor");
+        let mut buffer = Buffer::empty(area);
+        ui.draw(&mut buffer, area);
+        let (column, line) = ui.sel_order[0];
+        assert_eq!(
+            ui.input(
+                Input::Click {
+                    x: ui.lay.col_x[column] + 4,
+                    y: ui.lay.top + line as u16,
+                    right: false
+                },
+                &ctx(),
+                &|_| None
+            ),
+            Outcome::Done(activate(&Target::App { id: "btop".into() }, &c, &ctx()))
+        );
+    }
+
+    #[test]
+    fn launcher_compact_help_and_options_back_remain_visible() {
+        let c = cfg();
+        let mut ui = Ui::new(&c, find_sections(), Rect::new(0, 0, 34, 10), None);
+        let mut buffer = Buffer::empty(ui.area);
+        ui.draw(&mut buffer, ui.area);
+        let text = buf_text(&buffer);
+        assert!(text.contains("Esc close"), "{text}");
+        ui.input(Input::Options, &ctx(), &|_| None);
+        let mut buffer = Buffer::empty(ui.area);
+        ui.draw(&mut buffer, ui.area);
+        let text = buf_text(&buffer);
+        assert!(text.contains("Esc back"), "{text}");
     }
 }

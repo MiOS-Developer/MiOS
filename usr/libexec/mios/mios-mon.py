@@ -19,6 +19,7 @@ import subprocess
 from datetime import datetime
 import argparse
 import threading
+import queue
 import signal
 import xml.etree.ElementTree as ET
 from collections import deque
@@ -77,7 +78,7 @@ try:
     from textual.reactive import reactive
     from textual.theme import Theme
     from textual import on
-    from mios_agent_tui import ClientView, AgentView, InventoryDetails, SystemSummary
+    from mios_agent_tui import ClientView, AgentView, InventoryDetails, SystemSummary, sync_rows
     import psutil
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -467,7 +468,7 @@ def _collect_agent_and_mcp_data():
             cmd = ["wsl.exe", "-d", "podman-MiOS-DEV", "-u", "mios", "--", "/usr/bin/mios", "agents", "--observe"]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
         if result.returncode:
-            return [], [], []
+            raise RuntimeError(result.stderr.strip() or f"Observer exit {result.returncode}")
         snapshot = json.loads(result.stdout)
         agents = [{**a, "id": a["agent_id"]} for a in snapshot.get("agents", [])]
         panes = []
@@ -478,8 +479,8 @@ def _collect_agent_and_mcp_data():
                           "active": not p.get("dead", False) and command not in ("bash", "sh", ""),
                           "raw_cmd": p.get("command", "")})
         return agents, snapshot.get("messages", []), panes
-    except Exception:
-        return [], [], []
+    except Exception as exc:
+        raise RuntimeError("Agent observation unavailable") from exc
 
 
 def create_metal_layout():
@@ -628,6 +629,14 @@ if TEXTUAL_AVAILABLE:
         else: color = SSOT['success']
         return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
 
+    class MonitorLog(RichLog):
+        """Keep a reader's viewport while new journal/build/agent lines arrive."""
+        def write(self, content, width=None, expand=False, shrink=True,
+                  scroll_end=None, animate=False):
+            if scroll_end is None:
+                scroll_end = self.auto_scroll and self.is_vertical_scroll_end
+            return super().write(content, width, expand, shrink, scroll_end, animate)
+
     class MiosMonitorApp(App):
         TITLE = "MiOS Unified System & AI Monitor"
         refresh_interval = reactive(0.5)
@@ -638,6 +647,9 @@ if TEXTUAL_AVAILABLE:
             self.ui_mode = ui_mode
             self.collectors_enabled = collectors
             self.collectors_started = False
+            self._snapshot_jobs = set()
+            self._snapshot_queues = {}
+            self._snapshot_closing = False
             self.observer = observer or self.observe_agents
             self.agent_inventory = None
             self.agent_federation = None
@@ -929,7 +941,7 @@ if TEXTUAL_AVAILABLE:
                 with TabPane("Agents & AI", id="tab-agents"):
                     with Horizontal(id="ai-container"):
                         yield AgentView(self.observer, self.ui_request.get("observation_request", {}).get("observation", {}).get("refresh_s", 2), id="agent-view")
-                        yield RichLog(id="ai-log-box", classes="box", markup=True, wrap=True)
+                        yield MonitorLog(id="ai-log-box", classes="box", markup=True, wrap=True)
                 with TabPane("System", id="tab-global"):
                     yield SystemSummary(get_telemetry, get_services, id="system-summary")
                     with Horizontal(id="main-container"):
@@ -942,18 +954,18 @@ if TEXTUAL_AVAILABLE:
                                 yield Static(id="forge-box", classes="box")
                             with Vertical(id="spark-container"):
                                 yield Sparkline(data=[], id="spark-widget")
-                            yield RichLog(id="log-box", classes="box", markup=True, wrap=True,
+                            yield MonitorLog(id="log-box", classes="box", markup=True, wrap=True,
                                           max_lines=monitor_sources_config()["scrollback_rows"])
                 with TabPane("Build", id="tab-build"):
                     with Horizontal(id="build-container"):
                         with Vertical(id="build-stats-pane", classes="box"):
                             yield Static(id="build-stats", markup=True)
-                        yield RichLog(id="build-log-box", classes="box", markup=True, wrap=True)
+                        yield MonitorLog(id="build-log-box", classes="box", markup=True, wrap=True)
                 with TabPane("Flash", id="tab-flash"):
                     with Horizontal(id="flash-container"):
                         with Vertical(id="flash-stats-pane", classes="box"):
                             yield Static(id="flash-stats", markup=True)
-                        yield RichLog(id="flash-log-box", classes="box", markup=True, wrap=True)
+                        yield MonitorLog(id="flash-log-box", classes="box", markup=True, wrap=True)
             yield Footer()
             yield Static("F1–F5 views · Ctrl+←/→ · Esc quit", id="monitor-help", markup=False)
 
@@ -1001,6 +1013,37 @@ if TEXTUAL_AVAILABLE:
             if not self.ui_mode:
                 self.start_collectors()
 
+        def _start_snapshot(self, name, collect, apply):
+            if self._snapshot_closing or name in self._snapshot_jobs:
+                return False
+            self._snapshot_jobs.add(name)
+            if name not in self._snapshot_queues:
+                requests = queue.Queue(maxsize=1)
+                self._snapshot_queues[name] = requests
+
+                def run():
+                    # psutil's nonblocking CPU baselines belong to the calling
+                    # thread. Reuse this daemon for each collector's samples.
+                    while not self._snapshot_closing:
+                        try:
+                            collect_next, apply_next = requests.get(timeout=0.5)
+                        except queue.Empty:
+                            continue
+                        try:
+                            sample = collect_next()
+                            if not self._snapshot_closing:
+                                self.call_from_thread(apply_next, sample)
+                        except Exception:
+                            # Keep the successful view if collection fails or
+                            # the app closes while a subprocess is finishing.
+                            pass
+                        finally:
+                            self._snapshot_jobs.discard(name)
+
+                threading.Thread(target=run, daemon=True, name=f"mios-monitor-{name}").start()
+            self._snapshot_queues[name].put_nowait((collect, apply))
+            return True
+
         def start_collectors(self):
             if self.collectors_started or not self.collectors_enabled:
                 return
@@ -1018,6 +1061,10 @@ if TEXTUAL_AVAILABLE:
             self.refresh_build_log()
 
             self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
+            self.update_telemetry()
+            agent_interval = float(monitor_config().get("terminal", {}).get("monitor", {}).get("agent_poll_s", 5))
+            self.set_interval(agent_interval, self.update_agent_events)
+            self.update_agent_events()
             self.set_interval(3.0, self.async_update_services)
             self.async_update_services()
             self.update_titles()
@@ -1235,83 +1282,97 @@ if TEXTUAL_AVAILABLE:
                              "--no-pager", "-o", "short-iso"], "MiOS")
 
         def refresh_build_log(self):
+            return self._start_snapshot("build-log", self.collect_build_log, self.apply_build_log)
+
+        def collect_build_log(self):
+            paths = [os.environ.get("MIOS_UNIFIED_LOG"), os.environ.get("MIOS_BUILD_LOG")]
+            for directory in (os.environ.get("MIOS_LOG_DIR"),
+                              r"M:\MiOS\logs", r"C:\MiOS\logs",
+                              r"C:\mios-bootstrap\installation",
+                              "/mnt/c/MiOS/logs", "/mnt/m/MiOS/logs", "/var/log/mios"):
+                if directory and os.path.isdir(directory):
+                    for pattern in ("mios-install-*.log", "mios-build-*.log", "deploy*.log", "build*.log"):
+                        paths.extend(glob.glob(os.path.join(directory, pattern)))
+            available = []
+            for path in set(filter(None, paths)):
+                try:
+                    stat = os.stat(path)
+                    if os.path.isfile(path):
+                        available.append((stat.st_mtime_ns, path))
+                except OSError:
+                    continue
+            if not available:
+                return None
+            _, path = max(available)
+            with open(path, "r", encoding="utf-8", errors="replace") as stream:
+                stat = os.fstat(stream.fileno())
+                identity = (stat.st_dev, stat.st_ino)
+                replaced = path != self.build_log_path or identity != self.build_log_identity
+                reset = replaced or stat.st_size < self.build_log_offset
+                if replaced:
+                    # This scan may cover a large installation log; it runs in
+                    # one background job and retains only the existing 150 lines.
+                    lines = list(deque(stream, maxlen=150))
+                else:
+                    stream.seek(0 if reset else self.build_log_offset)
+                    lines = []
+                    for _ in range(300):
+                        line = stream.readline()
+                        if not line:
+                            break
+                        lines.append(line)
+                return path, identity, stream.tell(), stat.st_mtime, replaced, reset, lines
+
+        def apply_build_log(self, sample):
+            if sample is None:
+                return
+            path, identity, offset, modified, replaced, reset, lines = sample
+            build_box = self.query_one("#build-log-box", RichLog)
+            global_box = self.query_one("#log-box", RichLog)
+            if reset:
+                build_box.clear()
+                self.build_log_phase = "-"
+            if replaced:
+                banner = Text(f"Streaming build log: {os.path.basename(path)}", style=SSOT['success'])
+                build_box.write(banner)
+                global_box.write(banner)
+            for line in lines:
+                line = line.rstrip("\r\n")
+                if not line.strip():
+                    continue
+                if "step:" in line:
+                    self.build_log_phase = line.split("step:", 1)[1].strip()
+                low = line.lower()
+                rendered = Text(line)
+                if any(marker in low for marker in ("[error]", "traceback", "exception", "panic")):
+                    rendered.stylize(SSOT['error'])
+                elif "[warn]" in low or "warning" in low:
+                    rendered.stylize(SSOT['warning'])
+                build_box.write(rendered)
+                global_box.write(rendered)
+            self.build_log_offset, self.build_log_path = offset, path
+            self.build_log_identity, self.last_build_log_time = identity, modified
+
+        def collect_telemetry(self):
+            sample = {"telemetry": get_telemetry(), "system": get_sys_info()}
+            sample["memory"] = psutil.virtual_memory() if psutil else None
+            sample["swap"] = psutil.swap_memory() if psutil else None
+            sample["cores"] = psutil.cpu_percent(percpu=True) if psutil else []
             try:
-                build_box = self.query_one("#build-log-box", RichLog)
-                global_box = self.query_one("#log-box", RichLog)
-                paths = [os.environ.get("MIOS_UNIFIED_LOG"), os.environ.get("MIOS_BUILD_LOG")]
-                for directory in (os.environ.get("MIOS_LOG_DIR"),
-                                  r"M:\MiOS\logs", r"C:\MiOS\logs",
-                                  r"C:\mios-bootstrap\installation",
-                                  "/mnt/c/MiOS/logs", "/mnt/m/MiOS/logs", "/var/log/mios"):
-                    if directory and os.path.isdir(directory):
-                        for pattern in ("mios-install-*.log", "mios-build-*.log",
-                                        "deploy*.log", "build*.log"):
-                            paths.extend(glob.glob(os.path.join(directory, pattern)))
-                available = []
-                for path in set(filter(None, paths)):
-                    try:
-                        stat = os.stat(path)
-                        if os.path.isfile(path):
-                            available.append((stat.st_mtime_ns, path))
-                    except OSError:
-                        continue
-                if not available:
-                    return
-                _, path = max(available)
-
-                def display(line):
-                    line = line.rstrip("\r\n")
-                    if not line.strip():
-                        return
-                    if "step:" in line:
-                        self.build_log_phase = line.split("step:", 1)[1].strip()
-                    low = line.lower()
-                    rendered = Text(line)
-                    if any(marker in low for marker in ("[error]", "traceback", "exception", "panic")):
-                        rendered.stylize(SSOT['error'])
-                    elif "[warn]" in low or "warning" in low:
-                        rendered.stylize(SSOT['warning'])
-                    build_box.write(rendered)
-                    global_box.write(rendered)
-
-                with open(path, "r", encoding="utf-8", errors="replace") as stream:
-                    stat = os.fstat(stream.fileno())
-                    identity = (stat.st_dev, stat.st_ino)
-                    replaced = (path != self.build_log_path or
-                                identity != self.build_log_identity)
-                    if replaced:
-                        history = deque(stream, maxlen=150)
-                        build_box.clear()
-                        self.build_log_phase = "-"
-                        banner = Text(f"Streaming build log: {os.path.basename(path)}", style=SSOT['success'])
-                        build_box.write(banner)
-                        global_box.write(banner)
-                        for line in history:
-                            display(line)
-                    else:
-                        if stat.st_size < self.build_log_offset:
-                            build_box.clear()
-                            self.build_log_offset = 0
-                            self.build_log_phase = "-"
-                        stream.seek(self.build_log_offset)
-                        for _ in range(300):
-                            line = stream.readline()
-                            if not line:
-                                break
-                            display(line)
-                    self.build_log_offset = stream.tell()
-                    self.build_log_path = path
-                    self.build_log_identity = identity
-                    self.last_build_log_time = stat.st_mtime
-            except (OSError, ValueError):
-                # Root merge may replace the log directory between stat/open/read.
-                self.build_log_path = None
-                self.build_log_offset = 0
-                self.build_log_identity = None
+                sample["network"] = psutil.net_io_counters() if psutil else None
+            except Exception:
+                sample["network"] = None
+            return sample
 
         def update_telemetry(self):
-            cpu, ram, root, m_disk, load = get_telemetry()
-            sys_info = get_sys_info()
+            return self._start_snapshot("telemetry", self.collect_telemetry, self.apply_telemetry)
+
+        def update_agent_events(self):
+            return self._start_snapshot("agent-events", get_agent_and_mcp_data, self.apply_agent_events)
+
+        def apply_telemetry(self, sample):
+            cpu, ram, root, m_disk, load = sample["telemetry"]
+            sys_info = sample["system"]
 
             self.cpu_history.append(float(cpu))
             if len(self.cpu_history) > 60: self.cpu_history.pop(0)
@@ -1321,12 +1382,7 @@ if TEXTUAL_AVAILABLE:
 
             if self.size.width < 95 or self.size.height < 28:
                 # 80x20 SSOT compact mode: 4 clean lines, max 36 chars wide, 0 line wraps
-                mem = psutil.virtual_memory() if psutil else None
-                swap = psutil.swap_memory() if psutil else None
-                net = None
-                if psutil:
-                    try: net = psutil.net_io_counters()
-                    except Exception: pass
+                mem, swap, net = sample["memory"], sample["swap"], sample["network"]
 
                 hw_lines = [
                     f"[{SSOT['subtle']} bold]CPU:[/] {make_bar(cpu, 10)} [{SSOT['subtle']} bold]{cpu:4.1f}%[/] | [{SSOT['subtle']}]Ld {str(load)[:4]}[/]"
@@ -1345,7 +1401,7 @@ if TEXTUAL_AVAILABLE:
                     ""
                 ]
                 if psutil:
-                    cpu_percs = psutil.cpu_percent(percpu=True)
+                    cpu_percs = sample["cores"]
                     half = (len(cpu_percs) + 1) // 2
                     for i in range(min(half, 8)):
                         c1_num = i
@@ -1361,17 +1417,13 @@ if TEXTUAL_AVAILABLE:
                         hw_lines.append(f"  {c1_str:<32}  {c2_str}")
 
                     hw_lines.append("")
-                    mem = psutil.virtual_memory()
-                    swap = psutil.swap_memory()
+                    mem, swap = sample["memory"], sample["swap"]
                     hw_lines.append(f"[{SSOT['warning']} bold]RAM:[/]  {make_bar(mem.percent, 16)} {mem.used/(1024**3):.1f}/{mem.total/(1024**3):.1f} GB ({mem.percent}%)")
                     hw_lines.append(f"[{SSOT['warning']} bold]Swap:[/] {make_bar(swap.percent, 16)} {swap.used/(1024**3):.1f}/{swap.total/(1024**3):.1f} GB ({swap.percent}%)")
                     hw_lines.append("")
                     hw_lines.append(f"[{SSOT['subtle']} bold]Disk C:[/] {make_bar(root, 12)} {root}%   |   [{SSOT['subtle']} bold]Disk M:[/] {make_bar(m_disk, 12)} {m_disk}%")
 
-                    try:
-                        net = psutil.net_io_counters()
-                    except Exception:
-                        net = None
+                    net = sample["network"]
                     if net is None:
                         hw_lines.append(f"[{SSOT['success']} bold]Network I/O:[/] unavailable")
                     else:
@@ -1397,47 +1449,6 @@ if TEXTUAL_AVAILABLE:
                 f"[{SSOT['success']} bold]GIT:[/] {get_git_tree_status()}"
             ]
             self.query_one("#forge-box", Static).update("\n".join(u_lines))
-
-            try:
-                agents, messages, slots = get_agent_and_mcp_data()
-                ai_log_box = self.query_one("#ai-log-box", RichLog)
-
-                # Stream slot state transitions into #ai-log-box
-                if not hasattr(self, "_seen_slot_states"):
-                    self._seen_slot_states = {}
-                current_slot_states = {str(sl["identity"]): (sl["pid"], sl["cmd"], sl.get("active", False)) for sl in slots}
-                ts_now = datetime.now().strftime("%H:%M:%S")
-                for pane, (pid, cmd, active) in current_slot_states.items():
-                    if pane not in self._seen_slot_states:
-                        if active:
-                            ai_log_box.write(f"[{SSOT['success']}]\\[{ts_now}] \\[SLOT ACTIVE][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [green]{escape(str(cmd))}[/]")
-                        else:
-                            ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT READY][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [dim]{escape(str(cmd))}[/]")
-                    else:
-                        prev_pid, prev_cmd, prev_active = self._seen_slot_states[pane]
-                        if active and (not prev_active or prev_cmd != cmd):
-                            ai_log_box.write(f"[{SSOT['warning']}]\\[{ts_now}] \\[SLOT EXEC][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [yellow]{escape(str(cmd))}[/]")
-                        elif not active and prev_active:
-                            ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT IDLE][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): released")
-                for pane, (pid, prev_cmd, prev_active) in self._seen_slot_states.items():
-                    if pane not in current_slot_states:
-                        ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT CLOSED][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): closed")
-                self._seen_slot_states = current_slot_states
-                seen = getattr(self, "_seen_ai_messages", None)
-                for m in (messages[-10:] if seen is None else messages):
-                    key = (m.get("message_id"), m.get("status"))
-                    if seen is not None and key in seen:
-                        continue
-                    ts = datetime.fromtimestamp(m.get("created", time.time())).strftime("%H:%M:%S")
-                    status = m.get("status", "msg").upper()
-                    color = {"RECEIVED": "green", "QUEUED": "yellow"}.get(status, "cyan")
-                    peers = [str(m.get(k, "?")) for k in ("from", "to")]
-                    peers = [p if len(p) <= 22 else p[:10] + ".." + p[-10:] for p in peers]
-                    preview = escape(str(m.get("message_id", "")))
-                    ai_log_box.write(f"[{color}]\\[{ts}] \\[{status}][/] [cyan]{escape(peers[0])}[/] → [magenta]{escape(peers[1])}[/]\n  [dim]\"{preview}\"[/]")
-                # Bound deduplication to the retained native receipt snapshot.
-                self._seen_ai_messages = {(m.get("message_id"), m.get("status")) for m in messages}
-            except Exception: pass
 
             try:
                 last_log_t = getattr(self, 'last_flash_log_time', None)
@@ -1484,25 +1495,61 @@ if TEXTUAL_AVAILABLE:
                 self.query_one("#build-stats", Static).update("\n".join(build_lines))
             except Exception: pass
 
-        def async_update_services(self):
-            threading.Thread(target=self.update_services, daemon=True).start()
-
-        def update_services(self):
-            svcs = get_services()
-            self.service_status = {name: online for name, _, online in svcs}
+        def apply_agent_events(self, sample):
             try:
-                table = self.query_one("#svc-table", DataTable)
-                def apply_updates():
-                    table.clear()
-                    for s in svcs:
-                        label = ("LISTEN" if s[2] else "CLOSED") if s[1] else ("ONLINE" if s[2] else "OFFLINE")
-                        color = SSOT["success"] if s[2] else SSOT["error"]
-                        status = f"[{color} bold]{label}[/]"
-                        name_str = s[0].ljust(35)
-                        port_str = str(s[1]).ljust(15)
-                        table.add_row(Text.from_markup(name_str), Text.from_markup(port_str), Text.from_markup(status))
-                self.call_from_thread(apply_updates)
+                agents, messages, slots = sample
+                ai_log_box = self.query_one("#ai-log-box", RichLog)
+
+                # Stream slot state transitions into #ai-log-box
+                if not hasattr(self, "_seen_slot_states"):
+                    self._seen_slot_states = {}
+                current_slot_states = {str(sl["identity"]): (sl["pid"], sl["cmd"], sl.get("active", False)) for sl in slots}
+                ts_now = datetime.now().strftime("%H:%M:%S")
+                for pane, (pid, cmd, active) in current_slot_states.items():
+                    if pane not in self._seen_slot_states:
+                        if active:
+                            ai_log_box.write(f"[{SSOT['success']}]\\[{ts_now}] \\[SLOT ACTIVE][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [green]{escape(str(cmd))}[/]")
+                        else:
+                            ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT READY][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [dim]{escape(str(cmd))}[/]")
+                    else:
+                        prev_pid, prev_cmd, prev_active = self._seen_slot_states[pane]
+                        if active and (not prev_active or prev_cmd != cmd):
+                            ai_log_box.write(f"[{SSOT['warning']}]\\[{ts_now}] \\[SLOT EXEC][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): [yellow]{escape(str(cmd))}[/]")
+                        elif not active and prev_active:
+                            ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT IDLE][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): released")
+                for pane, (pid, prev_cmd, prev_active) in self._seen_slot_states.items():
+                    if pane not in current_slot_states:
+                        ai_log_box.write(f"[{SSOT['subtle']}]\\[{ts_now}] \\[SLOT CLOSED][/] Slot [cyan]{escape(str(pane))}[/] (PID {pid}): closed")
+                self._seen_slot_states = current_slot_states
+                seen = getattr(self, "_seen_ai_messages", None)
+                for m in (messages[-10:] if seen is None else messages):
+                    key = (m.get("message_id"), m.get("status"))
+                    if seen is not None and key in seen:
+                        continue
+                    ts = datetime.fromtimestamp(m.get("created", time.time())).strftime("%H:%M:%S")
+                    status = m.get("status", "msg").upper()
+                    color = {"RECEIVED": "green", "QUEUED": "yellow"}.get(status, "cyan")
+                    peers = [str(m.get(k, "?")) for k in ("from", "to")]
+                    peers = [p if len(p) <= 22 else p[:10] + ".." + p[-10:] for p in peers]
+                    preview = escape(str(m.get("message_id", "")))
+                    ai_log_box.write(f"[{color}]\\[{ts}] \\[{status}][/] [cyan]{escape(peers[0])}[/] → [magenta]{escape(peers[1])}[/]\n  [dim]\"{preview}\"[/]")
+                # Bound deduplication to the retained native receipt snapshot.
+                self._seen_ai_messages = {(m.get("message_id"), m.get("status")) for m in messages}
             except Exception: pass
+
+
+        def async_update_services(self):
+            return self._start_snapshot("services", get_services, self.apply_services)
+
+        def apply_services(self, svcs):
+            self.service_status = {name: online for name, _, online in svcs}
+            rows = []
+            for name, port, online in svcs:
+                label = ("LISTEN" if online else "CLOSED") if port else ("ONLINE" if online else "OFFLINE")
+                color = SSOT["success"] if online else SSOT["error"]
+                rows.append((name, (name.ljust(35), str(port).ljust(15),
+                                    Text(label, style=f"{color} bold"))))
+            sync_rows(self.query_one("#svc-table", DataTable), rows)
 
         def apply_responsive_layout(self, width: int, height: int) -> None:
             self.set_class(width < 95 or height < 28, "compact")
@@ -1643,6 +1690,7 @@ if TEXTUAL_AVAILABLE:
             self.dark = not self.dark
 
         async def on_unmount(self) -> None:
+            self._snapshot_closing = True
             self.tailing = False
             if self.agent_inventory:
                 await self.agent_inventory.close()

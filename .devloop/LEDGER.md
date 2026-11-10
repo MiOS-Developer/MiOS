@@ -4899,3 +4899,20 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Physical DualSense/visible game/PiP and separate analog rearming acceptance remain open. Publish/install sealed artifacts without restarting adopted processes.
 
 - Installed and verified controller artifacts from 6537a6ff894f5fbd82423de65be399b9e331cad2 on main: generator/Inputd plus existing aliases;35 tmux sessions/65pane identities and21 process identities preserved. Active VT1/GPM/PAM and local configuration hashes unchanged. Public source handoff records exact installed digests. Physical/analog acceptance remains open.
+
+
+## TTY desktop, responsive scrolling and runtime recovery checkpoint (2026-11-10)
+
+- Task3783 source combines the native TTY desktop, searchable Apps, shared popup sizing, persistent window geometry/minimize/restore, left title controls, top bar/dock and SSOT shell-theme handoff. The systems chooser uses the full viewport with compact navigation and two footer rows. Final combined runtime acceptance remains with the integration publisher.
+- Native game validation passed 461 tests before the separate wheel delta; five focused render-budget tests passed after it. Agent TUI 19/19 and Monitor 10/10 passed on the Blade, including selection/viewport preservation and a real wheel event between refresh and layout. These counts are distinct stages, not a claimed final all-crate pass.
+- An owned-PTY ABBA resize trace used 0.63/0.64 CPU seconds before and 0.05/0.06 after, with 5,671,125 versus 227,070 output bytes per trace. All four paused seeded game saves had the same digest. This measures that trace and candidate, not every workload.
+- The backend candidate passed 25 private checks. Actual border input covered 12 status/viewport combinations and 72 clicks, including 36 title clicks. Reproductions detected both the off-screen occluder allocation loop and blocked identification IPC; the candidate stayed responsive.
+- The operator authorized live trials and session resets after both host TTY/VT sessions froze. A separate recovery owner checkpoints and resets only witnessed affected processes. This entry does not certify recovery, latest preview reload, main publication or post-push installation; exact completion fields remain pending in the desktop handoff.
+- Genuine remote user authentication and the subsequent global MiOS-Mons identity migration are separate unfinished milestones. Physical controller-return task3775 remains open.
+
+
+## Verified TTY desktop core awaiting publication and installation (2026-11-10)
+
+- Native full9 validation and successful full10 pre-test stages combine with focused full11 correction, standing gates, six actual static artifact reports, private desktop T14 plus 15 legacy tests, Agent TUI 19/19 and Monitor 10/10. Exact counts and artifact scopes are in the desktop handoff; the full10 failed argv0 fixture is retained as a failure.
+- The sealed current game passed three real-PTY tests/seven replays, including dense wheel ordering and ABBA resize traces. All seven saves matched; the old stalled-wheel negative control remains archived. Trace CPU/output measurements describe only that workload.
+- Authorized host reset restored the frozen TTY paths and saved-file checkpoints; unsaved process memory was lost. Physical pointer/controller behavior remains unverified. Main publication, installation and latest client re-entry remain pending; real remote authentication and the subsequent global MiOS-Mons identity migration are separate follow-ups.

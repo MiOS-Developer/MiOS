@@ -3,6 +3,7 @@
 # AI-functions: TestAgentTui
 
 import copy
+import threading
 import importlib.machinery
 import json
 import os
@@ -18,7 +19,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "usr/lib/mios"))
-from mios_agent_tui import AgentView, InventoryDetails, clean, peer_name
+from mios_agent_tui import AgentView, InventoryDetails, SystemSummary, clean, peer_name, sync_rows
+from textual.app import App
+from textual.events import MouseScrollDown
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent
 
 monitor = importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")).load_module()
@@ -31,6 +34,126 @@ SNAPSHOT = {"agents": [{"agent_id": "agy:unique", "kind": "agy", "label": "Antig
 
 
 class TestAgentTui(unittest.IsolatedAsyncioTestCase):
+    async def test_keyed_rows_preserve_selection_top_anchor_and_horizontal_scroll(self):
+        class TableApp(App):
+            def compose(self):
+                yield DataTable(id="anchor", cursor_type="row")
+            def on_mount(self):
+                self.query_one(DataTable).add_column("Wide values", width=100)
+
+        app = TableApp()
+        async with app.run_test(size=(34, 12)) as pilot:
+            table = app.query_one(DataTable)
+            rows = [(f"row-{i:02}", (f"Value {i}",)) for i in range(70)]
+            sync_rows(table, rows, ordered=True)
+            await pilot.pause()
+            table.move_cursor(row=45, scroll=False)
+            table.scroll_to(x=13, y=30, animate=False, force=True, immediate=True)
+            await pilot.pause()
+            selected = "row-45"
+            with patch.object(table, "clear", wraps=table.clear) as clear, \
+                 patch.object(table, "update_cell", wraps=table.update_cell) as update:
+                sync_rows(table, rows, ordered=True)
+                await pilot.pause()
+                clear.assert_not_called()
+                update.assert_not_called()
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, selected)
+            self.assertEqual((table.scroll_x, table.scroll_y), (13, 30))
+
+            # A status-sort change moves another row above the viewport; the
+            # selected row and the visible top row are separate stable keys.
+            reordered = rows[55:56] + rows[:55] + rows[56:]
+            sync_rows(table, reordered, ordered=True)
+            await pilot.pause()
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, selected)
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "row-30")
+            self.assertEqual(table.scroll_x, 13)
+
+            # Removing both keys keeps their next retained neighbours rather
+            # than jumping selection or viewport to the first row.
+            remaining = [row for row in reordered if row[0] not in {"row-30", selected}]
+            sync_rows(table, remaining, ordered=True)
+            await pilot.pause()
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "row-46")
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "row-31")
+            await pilot.resize_terminal(30, 10)
+            await pilot.pause()
+            sync_rows(table, remaining, ordered=True)
+            await pilot.pause()
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "row-31")
+            self.assertEqual(table.scroll_x, 13)
+            sync_rows(table, [], ordered=True)
+            await pilot.pause()
+            self.assertEqual(table.row_count, 0)
+
+    async def test_user_wheel_between_refresh_and_layout_wins_over_saved_anchor(self):
+        class TableApp(App):
+            def compose(self):
+                yield DataTable(id="anchor", cursor_type="row")
+            def on_mount(self):
+                self.query_one(DataTable).add_column("Wide values", width=100)
+
+        app = TableApp()
+        async with app.run_test(size=(34, 12)) as pilot:
+            table = app.query_one(DataTable)
+            rows = [(f"row-{i:02}", (f"Value {i}",)) for i in range(70)]
+            sync_rows(table, rows, ordered=True)
+            await pilot.pause()
+            table.move_cursor(row=45, scroll=False)
+            table.scroll_to(x=13, y=30, animate=False, force=True, immediate=True)
+            await pilot.pause()
+            callbacks = []
+            reordered = rows[55:56] + rows[:55] + rows[56:]
+            # Delay just this refresh's final-layout callback so actual wheel
+            # dispatch deterministically arrives in the vulnerable interval.
+            with patch.object(table, "call_after_refresh", side_effect=lambda callback: callbacks.append(callback)):
+                sync_rows(table, reordered, ordered=True)
+            self.assertEqual(len(callbacks), 1)
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "row-30")
+            before = table.scroll_y
+            table.post_message(MouseScrollDown(table, 2, 2, 0, 1, 0, False, False, False))
+            await pilot.pause()
+            self.assertGreater(table.scroll_y, before, "dispatch the real widget wheel handler")
+            wheel_position = (table.scroll_x, table.scroll_y)
+            for callback in callbacks:
+                callback()
+            await pilot.pause()
+            self.assertEqual((table.scroll_x, table.scroll_y), wheel_position)
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "row-45")
+
+    async def test_agent_timer_collector_does_not_hold_widget_input(self):
+        app = self.app(mode="agents")
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        def slow_observer():
+            calls.append(threading.get_ident())
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test did not release observer")
+            return copy.deepcopy(SNAPSHOT)
+
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            view = app.query_one(AgentView)
+            view.observer = slow_observer
+            try:
+                view.schedule_refresh()
+                for _ in range(100):
+                    await pilot.pause(.01)
+                    if entered.is_set():
+                        break
+                self.assertTrue(entered.is_set())
+                for _ in range(20):
+                    view.schedule_refresh()
+                await pilot.press("ctrl+f")
+                await pilot.pause()
+                self.assertEqual(app.focused.id, "agent-search")
+                self.assertEqual(len(calls), 1)
+                self.assertNotEqual(calls[0], threading.get_ident())
+            finally:
+                release.set()
+                await view.workers.wait_for_complete()
+
     async def test_system_python_ui_receives_global_rows_from_mcp_interpreter(self):
         from types import SimpleNamespace
         local={"agents":[{"agent_id":"local","source":"local-relay","online":True}],

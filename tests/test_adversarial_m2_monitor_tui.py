@@ -2,6 +2,7 @@
 # AI-related: /usr/libexec/mios/mios-mon.py, /usr/lib/mios/mios_agent_tui.py, /usr/lib/mios/agent-pipe/test_mios_agent_tui.py
 
 import copy
+import threading
 import importlib.machinery
 import os
 import sys
@@ -51,6 +52,103 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
         )
         app.cpu_history = []
         return app
+
+    async def test_service_poll_keeps_scrolled_row_and_cursor(self):
+        # Stub the compact summary's independent service collector too.
+        with patch.object(monitor, "get_services", return_value=[]):
+            app = self.make_app(mode="global")
+            async with app.run_test(size=(120, 35)) as pilot:
+                services = [(f"service-{i:03}", 1000 + i, True) for i in range(80)]
+                app.apply_services(services)
+                await pilot.pause()
+                table = app.query_one("#svc-table", DataTable)
+                table.move_cursor(row=45, scroll=False)
+                table.scroll_to(y=30, animate=False, force=True, immediate=True)
+                await pilot.pause()
+                with patch.object(table, "clear", wraps=table.clear) as clear:
+                    app.apply_services([(name, port, False) for name, port, _ in services])
+                    await pilot.pause()
+                    clear.assert_not_called()
+                self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "service-045")
+                self.assertEqual(table.scroll_y, 30)
+                self.assertEqual(table.get_cell("service-045", list(table.columns)[2]).plain, "CLOSED")
+                app.apply_services(services[1:])
+                await pilot.pause()
+                self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "service-045")
+                self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "service-030")
+
+    async def test_slow_observer_is_single_flight_and_does_not_block_navigation(self):
+        app = self.make_app(mode="clients")
+        entered, release = threading.Event(), threading.Event()
+        calls, worker_threads = [], []
+        def slow_observer():
+            calls.append(threading.get_ident())
+            worker_threads.append(threading.current_thread())
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test did not release collector")
+            return [], [], []
+
+        with patch.object(monitor, "get_agent_and_mcp_data", side_effect=slow_observer):
+            async with app.run_test(size=(100, 30)) as pilot:
+                try:
+                    self.assertTrue(app.update_agent_events())
+                    for _ in range(100):
+                        await pilot.pause(.01)
+                        if entered.is_set():
+                            break
+                    self.assertTrue(entered.is_set())
+                    for _ in range(50):
+                        self.assertFalse(app.update_agent_events())
+                    await pilot.press("f2", "ctrl+f")
+                    await pilot.pause()
+                    self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
+                    self.assertEqual(app.focused.id, "agent-search")
+                    self.assertEqual(len(calls), 1)
+                    self.assertNotEqual(calls[0], threading.get_ident())
+                finally:
+                    release.set()
+                    for _ in range(100):
+                        await pilot.pause(.01)
+                        if not app._snapshot_jobs:
+                            break
+                self.assertFalse(app._snapshot_jobs)
+                # Repeated samples reuse the same actual Thread object; CPU
+                # percentages must not lose psutil's thread-local baselines.
+                self.assertTrue(app.update_agent_events())
+                for _ in range(100):
+                    await pilot.pause(.01)
+                    if not app._snapshot_jobs:
+                        break
+                self.assertEqual(len(worker_threads), 2)
+                self.assertIs(worker_threads[0], worker_threads[1])
+
+    async def test_log_append_preserves_reader_and_resumes_follow_at_end(self):
+        class LogApp(App):
+            def compose(self):
+                yield monitor.MonitorLog(id="reader", wrap=True)
+
+        app = LogApp()
+        async with app.run_test(size=(60, 14)) as pilot:
+            log = app.query_one("#reader", RichLog)
+            for index in range(100):
+                log.write(f"line {index:03}")
+            await pilot.pause()
+            self.assertTrue(log.is_vertical_scroll_end)
+            log.scroll_to(y=25, animate=False, force=True, immediate=True)
+            for index in range(100, 110):
+                log.write(f"line {index:03}")
+            await pilot.pause()
+            self.assertEqual(log.scroll_y, 25)
+            await pilot.resize_terminal(45, 12)
+            await pilot.pause()
+            log.write("after resize")
+            await pilot.pause()
+            self.assertEqual(log.scroll_y, 25)
+            log.scroll_end(animate=False, immediate=True)
+            log.write("following again")
+            await pilot.pause()
+            self.assertTrue(log.is_vertical_scroll_end)
 
     async def test_01_negative_control_ai_stats_removed(self):
         """Verify negative control: querying removed #ai-stats and #ai-stats-pane raises NoMatches."""
@@ -168,7 +266,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [], step1_slots)), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
 
             log_output = "\n".join(strip.text for strip in ai_log_box.lines)
@@ -191,7 +290,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [], step2_slots)), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
 
             log_output = "\n".join(strip.text for strip in ai_log_box.lines)
@@ -210,7 +310,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [], step3_slots)), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
 
             log_output = "\n".join(strip.text for strip in ai_log_box.lines)
@@ -249,7 +350,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [], step4_adversarial)), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
 
             log_output = "\n".join(strip.text for strip in ai_log_box.lines)
@@ -259,46 +361,35 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             self.assertIn("unicode-slot-🚀", log_output)
             self.assertIn("SLOT READY", log_output)
 
-    async def test_05_compact_table_scrollbars_suppression(self):
-        """Stress-test DataTable scrollbar suppression across compact and non-standard dimensions."""
-        app = self.make_app(mode="agents")
+    async def test_05_compact_inventory_scrollbars_and_last_row_reachability(self):
+        """The unified long inventory scrolls vertically at every supported size."""
+        snapshot = copy.deepcopy(SNAPSHOT)
+        snapshot["agents"] = [{"agent_id": f"agent:{index:03}", "kind": "codex",
+                               "label": f"Agent {index:03}", "online": True}
+                              for index in range(80)]
+        app = self.make_app(mode="agents", observer=lambda: copy.deepcopy(snapshot))
         async with app.run_test(size=(35, 19)) as pilot:
-            test_dimensions = [
-                (35, 19),  # standard half-width
-                (44, 19),  # wider half-width
-                (30, 15),  # very compact split
-                (25, 10),  # extreme compact split
-                (60, 22),  # sub-desktop size
-                (80, 25),  # standard desktop size
-                (120, 40), # wide desktop
-            ]
-
-            for w, h in test_dimensions:
+            await pilot.pause()
+            view = app.query_one(AgentView)
+            view.set_scope("agents")
+            # Sessions and workers now share #peer-table rather than a second
+            # fixed roster whose old zero-width scrollbar assertion hid rows.
+            with self.assertRaises(NoMatches):
+                app.query_one("#worker-table", DataTable)
+            for w, h in [(35, 19), (44, 19), (30, 15), (25, 10), (60, 22), (80, 25), (120, 40)]:
                 await pilot.resize_terminal(w, h)
                 await pilot.pause()
+                table = app.query_one("#peer-table", DataTable)
+                table.focus()
+                self.assertEqual(table.row_count, 80)
+                self.assertEqual(table.styles.scrollbar_size_vertical, 1)
+                self.assertEqual(table.styles.scrollbar_size_horizontal, 0)
+                self.assertFalse(table.horizontal_scrollbar.display)
+                await pilot.press("ctrl+end")
+                await pilot.pause()
+                self.assertEqual(table.cursor_row, 79, f"last row reachable at {w}x{h}")
+                self.assertGreater(table.scroll_y, 0)
 
-                for table_id in ("#peer-table", "#worker-table"):
-                    table = app.query_one(table_id, DataTable)
-                    self.assertFalse(
-                        table.vertical_scrollbar.display,
-                        f"{table_id} vertical scrollbar should not display at {w}x{h}",
-                    )
-                    self.assertFalse(
-                        table.horizontal_scrollbar.display,
-                        f"{table_id} horizontal scrollbar should not display at {w}x{h}",
-                    )
-                    self.assertEqual(
-                        table.styles.scrollbar_size_vertical,
-                        0,
-                        f"{table_id} scrollbar_size_vertical must be 0 at {w}x{h}",
-                    )
-                    self.assertEqual(
-                        table.styles.scrollbar_size_horizontal,
-                        0,
-                        f"{table_id} scrollbar_size_horizontal must be 0 at {w}x{h}",
-                    )
-
-            # Switch to clients view and test client-table
             app.action_tab_clients()
             await pilot.pause()
             client_table = app.query_one("#client-table", DataTable)
@@ -360,7 +451,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [msg1], [])), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
 
             initial_lines_count = len(log_box.lines)
@@ -375,7 +467,8 @@ class TestM2AdversarialMonitorTui(unittest.IsolatedAsyncioTestCase):
             with patch.object(monitor, "get_agent_and_mcp_data", return_value=([], [msg1], [])), \
                  patch.object(monitor, "get_telemetry", return_value=(10.0, 20.0, 30.0, 40.0, "1.0")), \
                  patch.object(monitor, "get_sys_info", return_value={"user": "u", "host": "h", "kernel": "k", "uptime": "1d", "cpu_model": "test"}):
-                app.update_telemetry()
+                app.apply_telemetry(app.collect_telemetry())
+                app.apply_agent_events(monitor.get_agent_and_mcp_data())
             await pilot.pause()
             self.assertEqual(len(log_box.lines), initial_lines_count, "Duplicate message should not be logged again")
 

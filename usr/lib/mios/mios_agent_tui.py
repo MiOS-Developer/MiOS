@@ -10,6 +10,7 @@ from mios_toml import colors, load_merged
 from rich.text import Text
 from textual import on
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.message import Message
@@ -35,20 +36,80 @@ def peer_name(row):
     return label or kind
 
 
-def sync_rows(table, rows):
-    """Refresh cells in place so polling does not reset selection or scroll."""
+def sync_rows(table, rows, *, ordered=False):
+    """Refresh keyed cells, keeping selection and the visible row independently."""
+    previous = table.ordered_rows
+    old_keys = [row.key.value for row in previous]
+    selected_index = min(table.cursor_row, max(0, len(old_keys) - 1))
+    selected = old_keys[selected_index] if old_keys else None
+    x, y = table.scroll_x, table.scroll_y
+    top_index, intra_row = 0, y
+    for index, row in enumerate(previous):
+        if intra_row < row.height:
+            top_index = index
+            break
+        intra_row -= row.height
+    else:
+        top_index, intra_row = max(0, len(previous) - 1), 0
+
     wanted = {key for key, _ in rows}
+    desired_order = [key for key, _ in rows]
+    cursor_column = table.cursor_column
+    # Textual's cursor watcher scrolls to the selected row even when
+    # move_cursor(scroll=False) is used. A refresh must retain an offscreen
+    # selection without manufacturing a deferred scroll-to-cursor operation.
+    table.set_reactive(DataTable.cursor_coordinate, Coordinate(0, cursor_column))
     for key in list(table.rows):
         if key.value not in wanted:
             table.remove_row(key)
     columns = list(table.columns)
     for key, cells in rows:
-        values = [Text(clean(cell)) for cell in cells]
+        values = [Text(clean(cell), style=cell.style) if isinstance(cell, Text)
+                  else Text(clean(cell)) for cell in cells]
         if key in table.rows:
             for column, value in zip(columns, values):
-                table.update_cell(key, column, value)
+                if table.get_cell(key, column) != value:
+                    table.update_cell(key, column, value)
         else:
             table.add_row(*values, key=key)
+
+    if ordered and [row.key.value for row in table.ordered_rows] != desired_order:
+        # Sort the existing keyed rows without clearing geometry or data. Each
+        # first cell is a distinct Text object, including duplicate labels.
+        first = columns[0]
+        rank = {id(table.get_cell(key, first)): index for index, key in enumerate(desired_order)}
+        table.sort(first, key=lambda cell: rank[id(cell)])
+
+    def survivor(index):
+        if not old_keys:
+            return None
+        for key in old_keys[index:] + list(reversed(old_keys[:index])):
+            if key in wanted:
+                return key
+        return None
+
+    selected = selected if selected in wanted else survivor(selected_index)
+    anchor = survivor(top_index)
+    if selected is not None:
+        table.set_reactive(DataTable.cursor_coordinate,
+                           Coordinate(table.get_row_index(selected), cursor_column))
+    table.refresh()
+    if anchor is not None:
+        current = table.ordered_rows
+        anchor_index = table.get_row_index(anchor)
+        # A removed top row falls forward to its next retained neighbour.
+        residual = intra_row if old_keys[top_index] == anchor else 0
+        y = sum(row.height for row in current[:anchor_index]) + min(residual, max(0, current[anchor_index].height - 1))
+    table.scroll_to(x=x, y=y, animate=False, force=True, immediate=True)
+    immediate = (table.scroll_x, table.scroll_y, table.cursor_coordinate)
+
+    def restore_after_layout():
+        # Dimensions may still describe the previous row set. Do not override
+        # input that moved the cursor or viewport before this layout completed.
+        if (table.scroll_x, table.scroll_y, table.cursor_coordinate) == immediate:
+            table.scroll_to(x=x, y=y, animate=False, force=True, immediate=True)
+
+    table.call_after_refresh(restore_after_layout)
 
 
 class ClientView(Vertical):
@@ -241,8 +302,12 @@ class AgentView(Vertical):
         table = self.query_one("#peer-table", DataTable)
         for title, width in (("Agent / session", 18), ("State", 8), ("Type", 8)):
             table.add_column(title, width=width)
-        self.set_interval(self.refresh_s, self.refresh_snapshot)
-        self.call_after_refresh(self.refresh_snapshot)
+        self.set_interval(self.refresh_s, self.schedule_refresh)
+        self.call_after_refresh(self.schedule_refresh)
+
+    def schedule_refresh(self):
+        if not self.refreshing:
+            self.run_worker(self.refresh_snapshot(), group="snapshot", exit_on_error=False)
 
     async def refresh_snapshot(self):
         if self.refreshing:
@@ -306,15 +371,7 @@ class AgentView(Vertical):
                   if (self.scope == "all" or self.scope in row["scopes"]) and (not query or query in row["search"])]
         wanted.sort(key=lambda item: (item[1][1] != "Online", item[1][1] == "Offline", str(item[1][0]).casefold(), item[0]))
         table = self.query_one("#peer-table", DataTable)
-        old_order = [key.value for key in table.rows]
-        selected = old_order[table.cursor_row] if old_order and table.cursor_row < len(old_order) else None
-        scroll_y = table.scroll_y
-        if old_order != [key for key, _ in wanted]:
-            table.clear()
-        sync_rows(table, wanted)
-        if selected in table.rows:
-            table.move_cursor(row=table.get_row_index(selected), animate=False, scroll=False)
-            table.scroll_to(y=scroll_y, animate=False, force=True)
+        sync_rows(table, wanted, ordered=True)
         self.show_detail()
 
     @on(Button.Pressed)
@@ -443,8 +500,12 @@ class SystemSummary(Vertical):
     def on_mount(self):
         self.query_one("#metric-table", DataTable).add_columns("Resource", "Use")
         self.query_one("#summary-services", DataTable).add_columns("Service", "State")
-        self.set_interval(3, self.refresh_snapshot)
-        self.call_after_refresh(self.refresh_snapshot)
+        self.set_interval(3, self.schedule_refresh)
+        self.call_after_refresh(self.schedule_refresh)
+
+    def schedule_refresh(self):
+        if not self.refreshing:
+            self.run_worker(self.refresh_snapshot(), group="snapshot", exit_on_error=False)
 
     async def refresh_snapshot(self):
         if self.refreshing or not self.is_on_screen:

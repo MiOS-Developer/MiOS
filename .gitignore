@@ -1216,3 +1216,13 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-controller-return-acceptance.json
 
 !/.devloop/handoff/mios-controller-return-native-verification.tar.gz
+
+# Native TTY desktop source and verification handoff
+!/.devloop/handoff/mios-tmux-desktop-platform.json
+
+# Built third-party terminal backend; reproducible source is tracked.
+/usr/libexec/mios/mios-tmux
+
+!/.devloop/handoff/mios-tui-desktop.json
+
+!/.devloop/handoff/mios-tui-desktop-verification.tar.gz

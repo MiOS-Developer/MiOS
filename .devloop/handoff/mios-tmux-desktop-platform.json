@@ -1,0 +1,581 @@
+{
+  "schema": 1,
+  "purpose": "mios-tmux-desktop-platform",
+  "status": "border_mouse_revision_ready_for_parent_integration",
+  "branch": "mios-tmux-desktop-platform",
+  "base_commit": "28ef0cf03338dece2d19a7a4cfaa8032fc158f3b",
+  "owned_files": [
+    "tools/patches/tmux-desktop.patch",
+    ".devloop/handoff/mios-tmux-desktop-platform.json",
+    "tools/native/mios-gen/src/tmux_desktop_build.rs"
+  ],
+  "relay_identity": "codex:mios-desktop-platform-f3e48872",
+  "source": {
+    "version": "3.7c",
+    "url": "https://github.com/tmux/tmux/releases/download/3.7c/tmux-3.7c.tar.gz",
+    "sha256": "7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf",
+    "proposal": "root must project source pin into canonical SSOT; no shipped build pins introduced"
+  },
+  "patch": {
+    "sha256": "d30e6eabdddca554424a6c73f88e73e3dce321f47a8a9010cb1dfdb9bc156fde",
+    "features": [
+      "float-pane [-d] -t P -x W -y H -X X -Y Y lossless pane conversion and geometry",
+      "last tiled pane refusal",
+      "shared bounded target-only native geometry helper",
+      "safe resize-pane floating x/y,L/R/U/D",
+      "native mouse uses same geometry helper",
+      "same geometry returns without redraw,notify or grid reflow",
+      "saved/current layout-cell defaults preserve scrollbar/zoom geometry",
+      "Ordered event-driven client identification avoids synchronous bootstrap EAGAIN spin.",
+      "Private bundled imsg writers report progress; exit flush stops on no progress instead of spinning.",
+      "Offscreen viewport bounds and empty/invalid occluder guards prevent infinite visible range splitting.",
+      "Right split fragments are skipped for the current occluder and range arrays grow geometrically.",
+      "mouse_window_x/y provide zero-based border-safe window coordinates using event-captured viewport offsets, subtract topstatus rows, and reject status/missing events."
+    ],
+    "last_tested_patch_sha256": "d30e6eabdddca554424a6c73f88e73e3dce321f47a8a9010cb1dfdb9bc156fde",
+    "current_delta": "Additive border-safe mouse_window_x/y formats and upstream manpage rows; original mouse_x/y unchanged. Fresh source build and25 private checks pass."
+  },
+  "native_build": {
+    "state": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border",
+    "image": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "memory_limit": "3g",
+    "swap_limit": "3g",
+    "cpus": 2,
+    "network": "none",
+    "lock": "/var/lib/mios-build/heavy.lock",
+    "admission_min_mb": 12288,
+    "initial_available_before_create_mb": 18822,
+    "initial_exit": 0,
+    "initial_binary_sha256": "f803777de0733b929307712fcebb6ed7469ac2e9543b80f3819eab892929fa7f",
+    "initial_binary_path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform/initial-build/mios-tmux",
+    "linkage": "Existing upstream third-party dependency dynamically linked to Fedora libc,libm,libresolv,libevent_core,libtinfo; static archives absent; no host installs",
+    "configure": [
+      "--prefix=/usr",
+      "--libexecdir=/usr/libexec/mios",
+      "--enable-sixel",
+      "--disable-systemd",
+      "--disable-utempter",
+      "--disable-utf8proc",
+      "--disable-jemalloc"
+    ],
+    "make": "make -j2; copy tmux to artifacts/mios-tmux; strip",
+    "initial_proofs": "initial-build/{build.log,admission.json,admission-before-create.json,container.id,toolchain-rpms.txt,private-tests.json,private-mouse-tests.json,final-evidence.json}",
+    "review_exit": 0,
+    "review_available_before_create_mb": 18953,
+    "review_binary_sha256": "0c1cd8f01dfba0495ed329a08c0f669b8a887baf0cc1dc222d27a744358e1413",
+    "binary_path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/artifacts/mios-tmux",
+    "binary_sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803",
+    "binary_size": 1133880,
+    "rebuild_host_sha256": "1052f27d3d39556f4198acd74667ca383dd6aa3be331ae25ef0f0c001337aa99",
+    "container_script_sha256": "279f6f889ddfeb797f7c0dbe9c01702f31f60d334720f80be732bb28c4331411",
+    "toolchain": [
+      "gcc-16.2.1-2.fc44.x86_64",
+      "make-4.4.1-12.fc44.x86_64",
+      "bison-3.8.2-15.fc44.x86_64",
+      "glibc-devel-2.43-9.fc44.x86_64",
+      "libevent-devel-2.1.13-1.fc44.x86_64",
+      "ncurses-devel-6.6-1.fc44.x86_64"
+    ],
+    "warnings": [
+      "environ.c:157:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "format.c:3840:17: warning: return discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "input-keys.c:525:19: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "input.c:1374:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "input.c:1458:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "input.c:3236:18: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]",
+      "compat/getopt_long.c:472:18: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]"
+    ],
+    "static_attempt": "Not attempted because static dependency archives absent; all build commands stayed in canonical container.",
+    "runtime_dependency_file_provenance": [
+      {
+        "path": "/usr/lib64/libtinfo.so.6.6",
+        "sha256": "b053da6b12bebc6e239835fbb646d46f26c97942b3098ac7b01604f8ce827679",
+        "package": "ncurses-libs 6.6 1.fc44 https://invisible-island.net/ncurses/ncurses.html ncurses-6.6-1.fc44.src.rpm",
+        "package_query_exit": 0
+      },
+      {
+        "path": "/usr/lib64/libevent_core-2.1.so.7.0.2",
+        "sha256": "60d5342b70c9eb7d116b72c390910fb6902d99eb14c767be9bd6aebe6f54c72d",
+        "package": "libevent 2.1.13 1.fc44 http://libevent.org/ libevent-2.1.13-1.fc44.src.rpm",
+        "package_query_exit": 0
+      },
+      {
+        "path": "/usr/lib64/libm.so.6",
+        "sha256": "16a03ce6d24c8a46742206d4a9c1d35bb6577ae2384f153dc6ef4a4b62b5357f",
+        "package": "glibc 2.43 9.fc44 http://www.gnu.org/software/glibc/ glibc-2.43-9.fc44.src.rpm",
+        "package_query_exit": 0
+      },
+      {
+        "path": "/usr/lib64/libresolv.so.2",
+        "sha256": "7aba4bc66547667af661384fd84c79008445ff5456b27476fe5a6c2f1038233f",
+        "package": "glibc 2.43 9.fc44 http://www.gnu.org/software/glibc/ glibc-2.43-9.fc44.src.rpm",
+        "package_query_exit": 0
+      },
+      {
+        "path": "/usr/lib64/libc.so.6",
+        "sha256": "a5c5ad9d59d3c69eda93aa8f82930ba06cc4e893a113e66c85ad6e96243d53c8",
+        "package": "glibc 2.43 9.fc44 http://www.gnu.org/software/glibc/ glibc-2.43-9.fc44.src.rpm",
+        "package_query_exit": 0
+      },
+      {
+        "path": "/usr/lib64/ld-linux-x86-64.so.2",
+        "sha256": "4e5d39355699e90fa29313d3100e82af4a23290028c58c364d6a249ef6a78e5e",
+        "package": "glibc 2.43 9.fc44 http://www.gnu.org/software/glibc/ glibc-2.43-9.fc44.src.rpm",
+        "package_query_exit": 0
+      }
+    ],
+    "evidence_files": [
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/tmux-3.7c.tar.gz",
+        "size": 789431,
+        "sha256": "7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/tmux-desktop.patch",
+        "size": 19786,
+        "sha256": "d30e6eabdddca554424a6c73f88e73e3dce321f47a8a9010cb1dfdb9bc156fde"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/build-host.sh",
+        "size": 1132,
+        "sha256": "1052f27d3d39556f4198acd74667ca383dd6aa3be331ae25ef0f0c001337aa99"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/build-container.sh",
+        "size": 642,
+        "sha256": "279f6f889ddfeb797f7c0dbe9c01702f31f60d334720f80be732bb28c4331411"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/build.log",
+        "size": 261598,
+        "sha256": "28f54948689681af985656cdbd10cd4cc14c08dde011656742608862ea744565"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/build.exit",
+        "size": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/admission.json",
+        "size": 64,
+        "sha256": "d7d1a7a3f1fb21c69d1e975167b6ef64fffb989efba9473251a4b950bfed37cf"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/admission-before-create.json",
+        "size": 64,
+        "sha256": "d7d1a7a3f1fb21c69d1e975167b6ef64fffb989efba9473251a4b950bfed37cf"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/container.id",
+        "size": 65,
+        "sha256": "bdca47de36fbc14ca427ae7b796b3745f5b3bec26ff440341c23fffdfef12dae"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/binary.sha256",
+        "size": 89,
+        "sha256": "f2e9dfa82a11264c1799cdab883ee2716d4615ad2e1af8b93742d1e20f3a6502"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/binary.ldd",
+        "size": 412,
+        "sha256": "f94ef267f80191b96153caf8593226779a592d5f4064e124bd177067781a2942"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/toolchain-rpms.txt",
+        "size": 177,
+        "sha256": "354b62125faca8fc13ae0281bcb489a34c94efa13008bf446a3e29c070948cf0"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-tests.json",
+        "size": 31163,
+        "sha256": "ab76314a7fce588c132bbf47517b6f5e00aba70e7cb7919557ae53dc591be295"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-mouse-tests.json",
+        "size": 3670,
+        "sha256": "cf1af2937377e53b42c703531b6c93370ce7e81b57390c0ff6e393b816dbd3d9"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-scrollbar-tests.json",
+        "size": 22450,
+        "sha256": "4a118abd559704348f7a9cfe92d6eb90defda63fd01151d71bf8b5760062249b"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-ipc-viewport-regressions.json",
+        "size": 2381,
+        "sha256": "c5ca0d04af739e9dea23d8f3ed0d47957ad562475a2440950a2e3f0cf8fb7193"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-border-format-tests.json",
+        "size": 20251,
+        "sha256": "094204257dc4152128291ad4e8244f0171ce479d5f0f7231c9acf948b14db896"
+      },
+      {
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/artifacts/mios-tmux",
+        "size": 1133880,
+        "sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803"
+      }
+    ],
+    "host_usr_ro_bind": true,
+    "final_exit": 0,
+    "final_admission": {
+      "admission.json": {
+        "admitted": true,
+        "available_mb": 18081,
+        "min_available_mb": 12288
+      },
+      "admission-before-create.json": {
+        "admitted": true,
+        "available_mb": 18081,
+        "min_available_mb": 12288
+      }
+    },
+    "final_container_id": "f9facce66855b8980f4c41e4f0b2f559482da13457d64bdfa137d2d3fa2073f6",
+    "evidence": "Exact file digests refer to final native build and20test proofs. Earlier candidate records retained under initial-build, pre-backpressure-build and pre-viewport-build.",
+    "reproducibility_scope": "Source tar and vendor patch digest-bound. This border revision extracted into a new private native purpose directory with no prior generated files or objects, in the pinned MiOS-DEV image with host /usr read-only. Toolchain RPMs and runtime library hashes additionally record the host bind inputs; OCI digest alone does not pin mounted host /usr.",
+    "clean_replay_contract": {
+      "owner": "New native Rust tmux_desktop_build::run implements source verification, fresh build, patching, compilation and staging; root wires CLI and owns external admission/lock/container.",
+      "input_fields": [
+        "upstream tmux version",
+        "upstream HTTPS source tar URL",
+        "upstream source tar SHA256",
+        "tracked vendor patch path and SHA256",
+        "side-by-side binary output path",
+        "canonical MiOS-DEV image digest",
+        "native memory admission and resource limits"
+      ],
+      "do_not_read_pins_from": "Scratch scripts or handoff at runtime; root must project canonical SSOT fields.",
+      "steps": [
+        {
+          "action": "admit",
+          "argv": [
+            "mios-gen",
+            "mem-admit",
+            "--root",
+            "<canonical MiOS source root>",
+            "--wait"
+          ]
+        },
+        {
+          "action": "lock",
+          "path": "/var/lib/mios-build/heavy.lock",
+          "then": "Recheck memory admission immediately before container creation."
+        },
+        {
+          "action": "fetch",
+          "source": "Read upstream HTTPS URL/version/source digest from canonical SSOT, fetch tar, verify SHA256 before extraction."
+        },
+        {
+          "action": "verify_patch",
+          "source": "Read patch path and digest from canonical SSOT; verify exact tracked patch bytes."
+        },
+        {
+          "action": "create_fresh_build_directory",
+          "reason": "Never reuse previous generated files or apply a patch on a pre-patched tree."
+        },
+        {
+          "action": "run_container",
+          "network": "none",
+          "image": "Canonical SSOT pinned MiOS-DEV image",
+          "memory": "3g",
+          "memory_swap": "3g",
+          "cpus": 2,
+          "userns": "keep-id",
+          "user": "1000:1000",
+          "mounts": [
+            "/usr:/usr:ro",
+            "<owned state>:/mios-proof:rw"
+          ],
+          "entrypoint": [
+            "/usr/bin/bash",
+            "--noprofile",
+            "--norc",
+            "<reviewable build input>"
+          ]
+        },
+        {
+          "action": "unpack_and_patch",
+          "argv": [
+            "tar -xzf <verified tar> into fresh directory",
+            "patch --batch --fuzz=0 -p1 < <verified tracked patch>"
+          ]
+        },
+        {
+          "action": "configure",
+          "argv": [
+            "./configure",
+            "--prefix=/usr",
+            "--libexecdir=/usr/libexec/mios",
+            "--enable-sixel",
+            "--disable-systemd",
+            "--disable-utempter",
+            "--disable-utf8proc",
+            "--disable-jemalloc"
+          ]
+        },
+        {
+          "action": "compile",
+          "argv": [
+            "make",
+            "-j2"
+          ]
+        },
+        {
+          "action": "stage",
+          "argv": [
+            "copy tmux to owned artifacts/mios-tmux",
+            "strip artifacts/mios-tmux",
+            "sha256sum artifacts/mios-tmux",
+            "ldd artifacts/mios-tmux"
+          ]
+        },
+        {
+          "action": "validate",
+          "source": "Restore exact validation drivers from validation.preserved_drivers and run only owned private sockets/PIDs."
+        },
+        {
+          "action": "install",
+          "owner": "root only, after integration/gates",
+          "path": "/usr/libexec/mios/mios-tmux",
+          "preservation": "No adopted human server restart from this worker."
+        }
+      ]
+    },
+    "prior_verified_binary_sha256": "ae087371c4cdceb1fa3353bf7e2c79ed02327c2cd064170b801ca72465ed3e6f",
+    "prior_state": "/home/mios/.local/state/mios/mios-tmux-desktop-platform",
+    "fresh_source_build": true
+  },
+  "validation": {
+    "initial_functional_checks_passed": 10,
+    "initial_private_mouse_checks_passed": 2,
+    "details": [
+      "pane ID,PID andPTY preserved convert/move/resize/tile/refloat",
+      "background200x60 stable throughout floating geometry updates",
+      "CLI absolute and4direction resize works",
+      "snapleft/right and1x1 minimum/clamps work",
+      "zoom restores geometry/identity; upstream selection remains active",
+      "60noops produce no control layout notification or SIGWINCH",
+      "coordinateonlymove produces notification and no SIGWINCH",
+      "SGRmouse topborder drag and corner resize work with unchanged background"
+    ],
+    "private_test_sockets_cleaned": true,
+    "current_scrollbar_delta_tests": "passed right and left scrollbar coordinate-only moves and no-arg no-ops; saved zoom cell default width/offset; invalid width/coordinate/height rejected unchanged",
+    "integration_gate": "root-owned, unrun",
+    "physical_tty": "No adoptedserver/client/VT/game mutations; private PTY test only",
+    "human_server_53639": "never mutated/restarted",
+    "installed": false,
+    "committed": false,
+    "pushed": false,
+    "final_functional_checks_passed": 10,
+    "final_private_mouse_checks_passed": 2,
+    "final_scrollbar_zoom_negative_checks_passed": 4,
+    "human_server_start_tick": 160269,
+    "upstream_semantics": [
+      "Converting a tiled pane releases its tiled slot via normal layout_close_pane; background is then stable through float updates.",
+      "resize-pane -Z restores exact rectangle and paneID/PID/PTY while upstream leaves zoomed pane active.",
+      "Geometry uses native layout-cell dimensions, including scrollbars; visible pane content dimensions exclude scrollbar width.",
+      "float-pane -d preserves active focus; without -d it focuses target if needed.",
+      "Coordinates and dimensions are clamped to window bounds by shared helper; minimum1x1."
+    ],
+    "native_test_proofs": {
+      "cli": "private-tests.json",
+      "mouse": "private-mouse-tests.json",
+      "scrollbar": "private-scrollbar-tests.json",
+      "initial_failed_test_harness_attempts": "Preserved initial-build/private-tests-attempt-*.json reflect harness-only misuse split-window -L and upstream zoom-selection comparison; implementation unchanged for those fixes."
+    },
+    "preserved_drivers": [
+      {
+        "name": "verify-cli.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/verify-cli.py",
+        "sha256": "b85e9334594b974a17a24e0f1d1c229accf0df68c0d73157ee707a2ac25aba21",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBzdWJwcm9jZXNzLG9zLGpzb24sdGltZSxzaGxleCxoYXNobGliLHRyYWNlYmFjayxzZWxlY3QsZmNudGwsdGVybWlvcyxzdHJ1Y3QKcz1QYXRoKCcvaG9tZS9taW9zLy5sb2NhbC9zdGF0ZS9taW9zL21pb3MtdG11eC1kZXNrdG9wLXBsYXRmb3JtLWJvcmRlcicpOyBiPXMvJ2FydGlmYWN0cy9taW9zLXRtdXgnOyBzb2NrPXMvJ3ByaXZhdGUtdGVzdC5zb2NrJwppZiBzb2NrLmV4aXN0cygpOgogcHJvYmU9c3VicHJvY2Vzcy5ydW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnbGlzdC1zZXNzaW9ucyddLHRleHQ9VHJ1ZSxjYXB0dXJlX291dHB1dD1UcnVlKQogYXNzZXJ0IHByb2JlLnJldHVybmNvZGUgYW5kICgnbm8gc2VydmVyIHJ1bm5pbmcnIGluIHByb2JlLnN0ZGVyciBvciAnQ29ubmVjdGlvbiByZWZ1c2VkJyBpbiBwcm9iZS5zdGRlcnIpLCAncHJpdmF0ZSBzZXJ2ZXIgY29sbGlzaW9uJwogc29jay51bmxpbmsoKQpwcmV2aW91cz1zLydwcml2YXRlLXRlc3RzLmpzb24nCmlmIHByZXZpb3VzLmV4aXN0cygpOnByZXZpb3VzLnJlbmFtZShzLygncHJpdmF0ZS10ZXN0cy1hdHRlbXB0LScrc3RyKHRpbWUudGltZV9ucygpKSsnLmpzb24nKSkKcmVjb3JkPXsnYmluYXJ5X3NoYTI1Nic6aGFzaGxpYi5zaGEyNTYoYi5yZWFkX2J5dGVzKCkpLmhleGRpZ2VzdCgpLCdzdGVwcyc6W10sJ2NoZWNrcyc6e30sJ3N0YXJ0ZWRfYXQnOnRpbWUudGltZSgpfQplbnY9ZGljdChvcy5lbnZpcm9uLFRFUk09J3h0ZXJtLTI1NmNvbG9yJyk7ZW52LnBvcCgnVE1VWCcsTm9uZSkKZGVmIGNtZCgqYSxjaGVjaz1UcnVlKToKIHA9c3VicHJvY2Vzcy5ydW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnLWYnLCcvZGV2L251bGwnLCphXSx0ZXh0PVRydWUsY2FwdHVyZV9vdXRwdXQ9VHJ1ZSxlbnY9ZW52LHRpbWVvdXQ9NSkKIHJlY29yZFsnc3RlcHMnXS5hcHBlbmQoeydhcmdzJzpsaXN0KGEpLCdleGl0JzpwLnJldHVybmNvZGUsJ3N0ZG91dCc6cC5zdGRvdXQsJ3N0ZGVycic6cC5zdGRlcnJ9KQogaWYgY2hlY2sgYW5kIHAucmV0dXJuY29kZTpyYWlzZSBSdW50aW1lRXJyb3IoZid7YX06IHtwLnN0ZGVycn0nKQogcmV0dXJuIHAuc3Rkb3V0LnN0cmlwKCkgaWYgY2hlY2sgZWxzZSBwCmZpZWxkcz1bJ3BhbmVfaWQnLCdwYW5lX3BpZCcsJ3BhbmVfdHR5JywncGFuZV9sZWZ0JywncGFuZV90b3AnLCdwYW5lX3dpZHRoJywncGFuZV9oZWlnaHQnLCdwYW5lX2Zsb2F0aW5nX2ZsYWcnLCdwYW5lX2FjdGl2ZSddCmRlZiBzbmFwKCk6CiByb3dzPWNtZCgnbGlzdC1wYW5lcycsJy10JywncHJvb2YnLCctRicsJ3wnLmpvaW4oJyN7Jyt4Kyd9JyBmb3IgeCBpbiBmaWVsZHMpKS5zcGxpdGxpbmVzKCkKIHJldHVybiB7ci5zcGxpdCgnfCcpWzBdOmRpY3QoemlwKGZpZWxkcyxyLnNwbGl0KCd8JykpKSBmb3IgciBpbiByb3dzfQpkZWYgZ2VvbSh2KTpyZXR1cm4gdHVwbGUoaW50KHZba10pIGZvciBrIGluIFsncGFuZV9sZWZ0JywncGFuZV90b3AnLCdwYW5lX3dpZHRoJywncGFuZV9oZWlnaHQnXSkKZGVmIHBpZCh2KTpyZXR1cm4gdHVwbGUodltrXSBmb3IgayBpbiBbJ3BhbmVfaWQnLCdwYW5lX3BpZCcsJ3BhbmVfdHR5J10pCmNoaWxkPSJpbXBvcnQgb3Msc2lnbmFsLHRpbWU7IGZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aDsgcD1QYXRoKCVyKTsgc2lnbmFsLnNpZ25hbChzaWduYWwuU0lHV0lOQ0gsbGFtYmRhICphOnAub3BlbignYScpLndyaXRlKCd3XFxuJykpOyBwcmludCgnTWlPUyBwcmVzZXJ2ZWQgcGFuZScsb3MuZ2V0cGlkKCksZmx1c2g9VHJ1ZSk7IHRpbWUuc2xlZXAoMzAwKSIlc3RyKHMvJ3ByaXZhdGUtd2luY2gubG9nJykKYXBwPSdleGVjIHB5dGhvbjMgLWMgJytzaGxleC5xdW90ZShjaGlsZCkKdHJ5OgogY21kKCduZXctc2Vzc2lvbicsJy1kJywnLXMnLCdwcm9vZicsJy14JywnMjAwJywnLXknLCc2MCcsYXBwKQogY21kKCdzZXQtb3B0aW9uJywnLWcnLCdzdGF0dXMnLCdvZmYnKTtjbWQoJ3NldC13aW5kb3ctb3B0aW9uJywnLXQnLCdwcm9vZicsJ3dpbmRvdy1zaXplJywnbWFudWFsJykKIGZpcnN0PXNuYXAoKTtiYXNlPW5leHQoaXRlcihmaXJzdCkpOwogcj1jbWQoJ2Zsb2F0LXBhbmUnLCctZCcsJy10JyxiYXNlLCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJyxjaGVjaz1GYWxzZSkKIGFzc2VydCByLnJldHVybmNvZGUgYW5kICdsYXN0IHRpbGVkIHBhbmUnIGluIHIuc3RkZXJyCiBhc3NlcnQgc25hcCgpPT1maXJzdAogcmVjb3JkWydjaGVja3MnXVsnbGFzdF90aWxlZF9yZWZ1c2VkX3dpdGhvdXRfZ2VvbWV0cnlfb3JfaWRlbnRpdHlfY2hhbmdlJ109VHJ1ZQogdGFyZ2V0PWNtZCgnbmV3LXBhbmUnLCctTCcsJy1kJywnLXQnLGJhc2UsJy1QJywnLUYnLCcje3BhbmVfaWR9JyxhcHApCiBiZWZvcmU9c25hcCgpOyBpZGVudGl0eT1waWQoYmVmb3JlW3RhcmdldF0pOwogY21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJykKIGFmdGVyPXNuYXAoKTthc3NlcnQgZ2VvbShhZnRlclt0YXJnZXRdKT09KDIwLDEwLDYwLDIwKSxhZnRlcgogYXNzZXJ0IHBpZChhZnRlclt0YXJnZXRdKT09aWRlbnRpdHkKIHJlY29yZFsnY2hlY2tzJ11bJ2NvbnZlcnRfcHJlc2VydmVzX2lkX3BpZF9wdHknXT1UcnVlCiBiYXNlbGluZT1hZnRlcltiYXNlXQogY21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCcteCcsJzgwJywnLXknLCcyNScsJy1YJywnMzAnLCctWScsJzEyJykKIGFmdGVyPXNuYXAoKTthc3NlcnQgZ2VvbShhZnRlclt0YXJnZXRdKT09KDMwLDEyLDgwLDI1KTthc3NlcnQgZ2VvbShhZnRlcltiYXNlXSk9PWdlb20oYmFzZWxpbmUpIGFuZCBwaWQoYWZ0ZXJbYmFzZV0pPT1waWQoYmFzZWxpbmUpO2Fzc2VydCBwaWQoYWZ0ZXJbdGFyZ2V0XSk9PWlkZW50aXR5CiByZWNvcmRbJ2NoZWNrcyddWydtb3ZlX2FuZF9yZXNpemVfcHJlc2VydmVfYmFja2dyb3VuZF9nZW9tZXRyeV9hbmRfcHJvY2VzcyddPVRydWUKIGNtZCgncmVzaXplLXBhbmUnLCctdCcsdGFyZ2V0LCcteCcsJzkwJywnLXknLCcyNycpCiBhZnRlcj1zbmFwKCk7YXNzZXJ0IGdlb20oYWZ0ZXJbdGFyZ2V0XSk9PSgzMCwxMiw5MCwyNyk7YXNzZXJ0IGdlb20oYWZ0ZXJbYmFzZV0pPT1nZW9tKGJhc2VsaW5lKSBhbmQgcGlkKGFmdGVyW2Jhc2VdKT09cGlkKGJhc2VsaW5lKQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1MJywnNScpO2Fzc2VydCBnZW9tKHNuYXAoKVt0YXJnZXRdKT09KDMwLDEyLDg1LDI3KQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1SJywnNScpO2Fzc2VydCBnZW9tKHNuYXAoKVt0YXJnZXRdKT09KDMwLDEyLDkwLDI3KQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1VJywnMycpO2Fzc2VydCBnZW9tKHNuYXAoKVt0YXJnZXRdKT09KDMwLDEyLDkwLDI0KQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1EJywnMycpO2FmdGVyPXNuYXAoKTthc3NlcnQgZ2VvbShhZnRlclt0YXJnZXRdKT09KDMwLDEyLDkwLDI3KTthc3NlcnQgZ2VvbShhZnRlcltiYXNlXSk9PWdlb20oYmFzZWxpbmUpIGFuZCBwaWQoYWZ0ZXJbYmFzZV0pPT1waWQoYmFzZWxpbmUpCiByZWNvcmRbJ2NoZWNrcyddWydyZXNpemVfY2xpX2Fic29sdXRlX2FuZF9hbGxfZm91cl9kaXJlY3Rpb25zX3NhZmUnXT1UcnVlCiBjbWQoJ2Zsb2F0LXBhbmUnLCctZCcsJy10Jyx0YXJnZXQsJy14JywnNTAlJywnLXknLCcxMDAlJywnLVgnLCcwJywnLVknLCcwJykKIGFmdGVyPXNuYXAoKTthc3NlcnQgZ2VvbShhZnRlclt0YXJnZXRdKT09KDAsMCwxMDAsNjApO2Fzc2VydCBnZW9tKGFmdGVyW2Jhc2VdKT09Z2VvbShiYXNlbGluZSkgYW5kIHBpZChhZnRlcltiYXNlXSk9PXBpZChiYXNlbGluZSkKIGNtZCgnZmxvYXQtcGFuZScsJy1kJywnLXQnLHRhcmdldCwnLXgnLCcxMDAnLCcteScsJzYwJywnLVgnLCcxMDAnLCctWScsJzAnKTthc3NlcnQgZ2VvbShzbmFwKClbdGFyZ2V0XSk9PSgxMDAsMCwxMDAsNjApCiByZWNvcmRbJ2NoZWNrcyddWydzbmFwX2xlZnRfcmlnaHQnXT1UcnVlCiBjbWQoJ2Zsb2F0LXBhbmUnLCctZCcsJy10Jyx0YXJnZXQsJy14JywnNjAnLCcteScsJzIwJywnLVgnLCcyMCcsJy1ZJywnMTAnKQogYmVmb3JlPXNuYXAoKTtjbWQoJ3Jlc2l6ZS1wYW5lJywnLXQnLHRhcmdldCwnLVonKTthc3NlcnQgZ2VvbShzbmFwKClbdGFyZ2V0XSk9PSgwLDAsMjAwLDYwKQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1aJyk7cmVzdG9yZWQ9c25hcCgpO2Fzc2VydCBhbGwoZ2VvbShyZXN0b3JlZFtrXSk9PWdlb20odikgYW5kIHBpZChyZXN0b3JlZFtrXSk9PXBpZCh2KSBhbmQgcmVzdG9yZWRba11bJ3BhbmVfZmxvYXRpbmdfZmxhZyddPT12WydwYW5lX2Zsb2F0aW5nX2ZsYWcnXSBmb3Igayx2IGluIGJlZm9yZS5pdGVtcygpKQogcmVjb3JkWydjaGVja3MnXVsnem9vbV9yZXN0b3Jlc19leGFjdF9nZW9tZXRyeV9hbmRfaWRlbnRpdHknXT1UcnVlCiBjbWQoJ2Zsb2F0LXBhbmUnLCctZCcsJy10Jyx0YXJnZXQsJy14JywnOTk5OScsJy15JywnOTk5OScsJy1YJywnOTk5OScsJy1ZJywnLTk5OTknKQogYXNzZXJ0IGdlb20oc25hcCgpW3RhcmdldF0pPT0oMCwwLDIwMCw2MCkKIGNtZCgnZmxvYXQtcGFuZScsJy1kJywnLXQnLHRhcmdldCwnLXgnLCcxJywnLXknLCcxJywnLVgnLCc5OTk5JywnLVknLCc5OTk5Jyk7YXNzZXJ0IGdlb20oc25hcCgpW3RhcmdldF0pPT0oMTk5LDU5LDEsMSkKIHJlY29yZFsnY2hlY2tzJ11bJ2dlb21ldHJ5X2NsYW1wZWRfYW5kX21pbmltdW1fMXgxJ109VHJ1ZQogY21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJykKICMgT2JzZXJ2ZSByZWFsIHNlcnZlciBub3RpZmljYXRpb25zIHVzaW5nIGEgcHJpdmF0ZSBjb250cm9sIGNsaWVudC4KIGNvbnRyb2w9c3VicHJvY2Vzcy5Qb3Blbihbc3RyKGIpLCctUycsc3RyKHNvY2spLCctQycsJ2F0dGFjaC1zZXNzaW9uJywnLXQnLCdwcm9vZiddLHN0ZGluPXN1YnByb2Nlc3MuUElQRSxzdGRvdXQ9c3VicHJvY2Vzcy5QSVBFLHN0ZGVycj1zdWJwcm9jZXNzLlBJUEUsZW52PWVudikKIGRlZiBkcmFpbihwLHdhaXQ9LjEpOgogIGRhdGE9YicnOyBkZWFkbGluZT10aW1lLm1vbm90b25pYygpK3dhaXQKICB3aGlsZSB0aW1lLm1vbm90b25pYygpPGRlYWRsaW5lOgogICByZWFkeSxfLF89c2VsZWN0LnNlbGVjdChbcC5zdGRvdXRdLFtdLFtdLG1heCgwLGRlYWRsaW5lLXRpbWUubW9ub3RvbmljKCkpKQogICBpZiByZWFkeToKICAgIGNodW5rPW9zLnJlYWQocC5zdGRvdXQuZmlsZW5vKCksNjU1MzYpCiAgICBpZiBub3QgY2h1bms6YnJlYWsKICAgIGRhdGErPWNodW5rCiAgcmV0dXJuIGRhdGEKIGRyYWluKGNvbnRyb2wsLjMpCiAjIGNvbnRyb2wgY2xpZW50IG1heSBjaGFuZ2Ugc2l6aW5nOyByZXN0b3JlIG1hbnVhbCBkaW1lbnNpb25zLgogY21kKCdyZXNpemUtd2luZG93JywnLXQnLCdwcm9vZicsJy14JywnMjAwJywnLXknLCc2MCcpO2RyYWluKGNvbnRyb2wsLjIpCiBiZWZvcmU9c25hcCgpOyB3aW5jaD1zLydwcml2YXRlLXdpbmNoLmxvZyc7IHdpbmNoX2JlZm9yZT13aW5jaC5yZWFkX3RleHQoKSBpZiB3aW5jaC5leGlzdHMoKSBlbHNlICcnCiBmb3IgXyBpbiByYW5nZSgzMCk6Y21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJykKIGZvciBfIGluIHJhbmdlKDMwKTpjbWQoJ3Jlc2l6ZS1wYW5lJywnLXQnLHRhcmdldCwnLXgnLCc2MCcsJy15JywnMjAnKQogZXZlbnRzPWRyYWluKGNvbnRyb2wsLjIpLmRlY29kZShlcnJvcnM9J3JlcGxhY2UnKTsgYWZ0ZXI9c25hcCgpCiBhc3NlcnQgYmVmb3JlPT1hZnRlcgogYXNzZXJ0ICclbGF5b3V0LWNoYW5nZScgbm90IGluIGV2ZW50cyxldmVudHMKIGFzc2VydCAod2luY2gucmVhZF90ZXh0KCkgaWYgd2luY2guZXhpc3RzKCkgZWxzZSAnJyk9PXdpbmNoX2JlZm9yZQogcmVjb3JkWydjaGVja3MnXVsnc2l4dHlfbm9vcHNfbm9fbGF5b3V0X25vdGlmaWNhdGlvbl9ub19zaWd3aW5jaCddPVRydWUKIHJlY29yZFsnbm9vcF9jb250cm9sX291dHB1dCddPWV2ZW50cwogY21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCctWCcsJzI1JywnLVknLCcxMicpCiBldmVudHM9ZHJhaW4oY29udHJvbCwuMikuZGVjb2RlKGVycm9ycz0ncmVwbGFjZScpO2Fzc2VydCAnJWxheW91dC1jaGFuZ2UnIGluIGV2ZW50cyxldmVudHMKIGFzc2VydCAod2luY2gucmVhZF90ZXh0KCkgaWYgd2luY2guZXhpc3RzKCkgZWxzZSAnJyk9PXdpbmNoX2JlZm9yZQogYXNzZXJ0IGdlb20oc25hcCgpW2Jhc2VdKT09Z2VvbShiYXNlbGluZSkgYW5kIHBpZChzbmFwKClbYmFzZV0pPT1waWQoYmFzZWxpbmUpCiByZWNvcmRbJ2NoZWNrcyddWydjb29yZGluYXRlX29ubHlfbW92ZV9ub19zaWd3aW5jaF93aXRoX2NvbnRyb2xfbm90aWZpY2F0aW9uJ109VHJ1ZQogcmVjb3JkWydtb3ZlX2NvbnRyb2xfb3V0cHV0J109ZXZlbnRzCiBjb250cm9sLnN0ZGluLndyaXRlKGInZGV0YWNoLWNsaWVudFxuJyk7Y29udHJvbC5zdGRpbi5mbHVzaCgpO2NvbnRyb2wud2FpdCh0aW1lb3V0PTMpCiBjbWQoJ2pvaW4tcGFuZScsJy1kJywnLXMnLHRhcmdldCwnLXQnLGJhc2UsJy1oJykKIHRpbGVkPXNuYXAoKTthc3NlcnQgcGlkKHRpbGVkW3RhcmdldF0pPT1pZGVudGl0eTthc3NlcnQgZ2VvbSh0aWxlZFt0YXJnZXRdKSE9KDI1LDEyLDYwLDIwKQogY21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJykKIGFzc2VydCBwaWQoc25hcCgpW3RhcmdldF0pPT1pZGVudGl0eTthc3NlcnQgZ2VvbShzbmFwKClbdGFyZ2V0XSk9PSgyMCwxMCw2MCwyMCkKIHJlY29yZFsnY2hlY2tzJ11bJ3RpbGVfYW5kX3JlZmxvYXRfcHJlc2VydmVzX2lkX3BpZF9wdHknXT1UcnVlCiByZWNvcmRbJ2ZpbmFsX3NuYXBzaG90J109c25hcCgpCiByZWNvcmRbJ29rJ109VHJ1ZQpleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiByZWNvcmRbJ29rJ109RmFsc2U7cmVjb3JkWydlcnJvciddPXJlcHIoZSk7cmVjb3JkWyd0cmFjZWJhY2snXT10cmFjZWJhY2suZm9ybWF0X2V4YygpCmZpbmFsbHk6CiBjbWQoJ2tpbGwtc2VydmVyJyxjaGVjaz1GYWxzZSkKIAogZm9yIF8gaW4gcmFuZ2UoMjApOgogIGlmIG5vdCBzb2NrLmV4aXN0cygpOmJyZWFrCiAgdGltZS5zbGVlcCguMDIpCiBpZiBzb2NrLmV4aXN0cygpOgogIHByb2JlPXN1YnByb2Nlc3MucnVuKFtzdHIoYiksJy1TJyxzdHIoc29jayksJ2xpc3Qtc2Vzc2lvbnMnXSx0ZXh0PVRydWUsY2FwdHVyZV9vdXRwdXQ9VHJ1ZSkKICBpZiBwcm9iZS5yZXR1cm5jb2RlIGFuZCAoJ25vIHNlcnZlciBydW5uaW5nJyBpbiBwcm9iZS5zdGRlcnIgb3IgJ0Nvbm5lY3Rpb24gcmVmdXNlZCcgaW4gcHJvYmUuc3RkZXJyKTpzb2NrLnVubGluaygpCiByZWNvcmRbJ293bmVkX3NvY2tldF9yZW1vdmVkJ109bm90IHNvY2suZXhpc3RzKCkKIHJlY29yZFsnZmluaXNoZWRfYXQnXT10aW1lLnRpbWUoKQogKHMvJ3ByaXZhdGUtdGVzdHMuanNvbicpLndyaXRlX3RleHQoanNvbi5kdW1wcyhyZWNvcmQsaW5kZW50PTIpKydcbicpCiBwcmludChqc29uLmR1bXBzKHJlY29yZCxpbmRlbnQ9MikpCg==",
+        "role": "Temporary development verification input, not shipped runtime code."
+      },
+      {
+        "name": "verify-mouse.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/verify-mouse.py",
+        "sha256": "ba22e1d317beadfa0d14616c1b0a52a960084fe4ef7c13083235fc9a3f1222b6",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBvcyxzdWJwcm9jZXNzLGpzb24sdGltZSxzZWxlY3QsZmNudGwsdGVybWlvcyxzdHJ1Y3QsdHJhY2ViYWNrLGhhc2hsaWIKcz1QYXRoKCcvaG9tZS9taW9zLy5sb2NhbC9zdGF0ZS9taW9zL21pb3MtdG11eC1kZXNrdG9wLXBsYXRmb3JtLWJvcmRlcicpO2I9cy8nYXJ0aWZhY3RzL21pb3MtdG11eCc7c29jaz1zLydwcml2YXRlLW1vdXNlLnNvY2snCmFzc2VydCBub3Qgc29jay5leGlzdHMoKSwncHJpdmF0ZSBzb2NrZXQgY29sbGlzaW9uJwplbnY9ZGljdChvcy5lbnZpcm9uLFRFUk09J3h0ZXJtLTI1NmNvbG9yJyk7ZW52LnBvcCgnVE1VWCcsTm9uZSkKcj17J2JpbmFyeV9zaGEyNTYnOmhhc2hsaWIuc2hhMjU2KGIucmVhZF9ieXRlcygpKS5oZXhkaWdlc3QoKSwnc3RlcHMnOltdLCdjaGVja3MnOnt9LCdzdGFydGVkX2F0Jzp0aW1lLnRpbWUoKX07Y2xpZW50PU5vbmU7bWFzdGVyPU5vbmUKZGVmIGNtZCgqYSk6CiBwPXN1YnByb2Nlc3MucnVuKFtzdHIoYiksJy1TJyxzdHIoc29jayksJy1mJywnL2Rldi9udWxsJywqYV0sY2FwdHVyZV9vdXRwdXQ9VHJ1ZSx0ZXh0PVRydWUsZW52PWVudix0aW1lb3V0PTUpO3JbJ3N0ZXBzJ10uYXBwZW5kKHsnYXJncyc6YSwnZXhpdCc6cC5yZXR1cm5jb2RlLCdvdXQnOnAuc3Rkb3V0LCdlcnInOnAuc3RkZXJyfSk7YXNzZXJ0IHAucmV0dXJuY29kZT09MCxwLnN0ZGVycjtyZXR1cm4gcC5zdGRvdXQuc3RyaXAoKQpkZWYgc25hcHNob3QoKToKIHJldHVybiB7di5zcGxpdCgnfCcpWzBdOnYuc3BsaXQoJ3wnKVsxOl0gZm9yIHYgaW4gY21kKCdsaXN0LXBhbmVzJywnLXQnLCdtb3VzZScsJy1GJywnI3twYW5lX2lkfXwje3BhbmVfcGlkfXwje3BhbmVfdHR5fXwje3BhbmVfbGVmdH18I3twYW5lX3RvcH18I3twYW5lX3dpZHRofXwje3BhbmVfaGVpZ2h0fXwje3BhbmVfZmxvYXRpbmdfZmxhZ30nKS5zcGxpdGxpbmVzKCl9CmRlZiBkcmFpbih3YWl0PS4xMik6CiBlbmQ9dGltZS5tb25vdG9uaWMoKSt3YWl0O2RhdGE9YicnCiB3aGlsZSB0aW1lLm1vbm90b25pYygpPGVuZDoKICBycixfLF89c2VsZWN0LnNlbGVjdChbbWFzdGVyXSxbXSxbXSxtYXgoMCxlbmQtdGltZS5tb25vdG9uaWMoKSkpCiAgaWYgcnI6CiAgIHRyeTpkYXRhKz1vcy5yZWFkKG1hc3Rlciw2NTUzNikKICAgZXhjZXB0IE9TRXJyb3I6YnJlYWsKIHJldHVybiBkYXRhCmRlZiBtb3VzZShjb2RlLHgseSxyZWxlYXNlPUZhbHNlKToKIG9zLndyaXRlKG1hc3RlciwoJ1x4MWJbPCVkOyVkOyVkJXMnJShjb2RlLHgrMSx5KzEsJ20nIGlmIHJlbGVhc2UgZWxzZSAnTScpKS5lbmNvZGUoKSk7ZHJhaW4oLjA4KQpkZWYgZHJhZyh4LHksbngsbnkpOgogbW91c2UoMCx4LHkpO21vdXNlKDMyLG54LG55KTttb3VzZSgwLG54LG55LFRydWUpCnRyeToKIGNtZCgnbmV3LXNlc3Npb24nLCctZCcsJy1zJywnbW91c2UnLCcteCcsJzIwMCcsJy15JywnNjAnLCdleGVjIHNsZWVwIDMwMCcpCiBjbWQoJ3NldC1vcHRpb24nLCctZycsJ3N0YXR1cycsJ29mZicpO2NtZCgnc2V0LW9wdGlvbicsJy1nJywnbW91c2UnLCdvbicpO2NtZCgnc2V0LXdpbmRvdy1vcHRpb24nLCctdCcsJ21vdXNlJywnd2luZG93LXNpemUnLCdtYW51YWwnKQogYmFzZT1jbWQoJ2Rpc3BsYXktbWVzc2FnZScsJy1wJywnLXQnLCdtb3VzZScsJyN7cGFuZV9pZH0nKQogdGFyZ2V0PWNtZCgnbmV3LXBhbmUnLCctZCcsJy10JyxiYXNlLCcteCcsJzYwJywnLXknLCcyMCcsJy1YJywnMjAnLCctWScsJzEwJywnLVAnLCctRicsJyN7cGFuZV9pZH0nLCdleGVjIHNsZWVwIDMwMCcpCiBjbWQoJ2JpbmQta2V5JywnLW4nLCdNb3VzZURyYWcxQm9yZGVyJywncmVzaXplLXBhbmUnLCctTScpCiBiZWZvcmU9c25hcHNob3QoKTtyWydiZWZvcmUnXT1iZWZvcmUKIG1hc3RlcixzbGF2ZT1vcy5vcGVucHR5KCk7ZmNudGwuaW9jdGwoc2xhdmUsdGVybWlvcy5USU9DU1dJTlNaLHN0cnVjdC5wYWNrKCdISEhIJyw2MCwyMDAsMCwwKSkKIGRlZiBwcmVleGVjKCk6b3Muc2V0c2lkKCk7ZmNudGwuaW9jdGwoMCx0ZXJtaW9zLlRJT0NTQ1RUWSwwKQogY2xpZW50PXN1YnByb2Nlc3MuUG9wZW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnYXR0YWNoLXNlc3Npb24nLCctdCcsJ21vdXNlJ10sc3RkaW49c2xhdmUsc3Rkb3V0PXNsYXZlLHN0ZGVycj1zbGF2ZSxlbnY9ZW52LHByZWV4ZWNfZm49cHJlZXhlYyk7b3MuY2xvc2Uoc2xhdmUpCiByWydpbml0aWFsX3R0eV9ieXRlcyddPWxlbihkcmFpbiguNCkpCiBkcmFnKDMwLDksNDAsMTQpCiBhZnRlcj1zbmFwc2hvdCgpO3JbJ2FmdGVyX3RvcF9kcmFnJ109YWZ0ZXIKIGFzc2VydCB0dXBsZShtYXAoaW50LGFmdGVyW3RhcmdldF1bMjo2XSkpPT0oMzAsMTUsNjAsMjApLGFmdGVyCiBhc3NlcnQgYWZ0ZXJbYmFzZV1bOjZdPT1iZWZvcmVbYmFzZV1bOjZdO2Fzc2VydCBhZnRlclt0YXJnZXRdWzoyXT09YmVmb3JlW3RhcmdldF1bOjJdCiByWydjaGVja3MnXVsnbW91c2VfdG9wX2JvcmRlcl9kcmFnX21vdmVzX2V4aXN0aW5nX2Zsb2F0X29ubHknXT1UcnVlCiBkcmFnKDkwLDM1LDEwMCw0MCkKIGFmdGVyPXNuYXBzaG90KCk7clsnYWZ0ZXJfY29ybmVyX3Jlc2l6ZSddPWFmdGVyCiBhc3NlcnQgdHVwbGUobWFwKGludCxhZnRlclt0YXJnZXRdWzI6Nl0pKT09KDMwLDE1LDcwLDI1KSxhZnRlcgogYXNzZXJ0IGFmdGVyW2Jhc2VdWzo2XT09YmVmb3JlW2Jhc2VdWzo2XTthc3NlcnQgYWZ0ZXJbdGFyZ2V0XVs6Ml09PWJlZm9yZVt0YXJnZXRdWzoyXQogclsnY2hlY2tzJ11bJ21vdXNlX2Nvcm5lcl9yZXNpemVfY2hhbmdlc19leGlzdGluZ19mbG9hdF9vbmx5J109VHJ1ZQogclsnb2snXT1UcnVlCmV4Y2VwdCBFeGNlcHRpb24gYXMgZTpyWydvayddPUZhbHNlO3JbJ2Vycm9yJ109cmVwcihlKTtyWyd0cmFjZWJhY2snXT10cmFjZWJhY2suZm9ybWF0X2V4YygpCmZpbmFsbHk6CiBzdWJwcm9jZXNzLnJ1bihbc3RyKGIpLCctUycsc3RyKHNvY2spLCdraWxsLXNlcnZlciddLGNhcHR1cmVfb3V0cHV0PVRydWUpCiBpZiBjbGllbnQ6CiAgdHJ5OmNsaWVudC53YWl0KHRpbWVvdXQ9MykKICBleGNlcHQgc3VicHJvY2Vzcy5UaW1lb3V0RXhwaXJlZDpjbGllbnQudGVybWluYXRlKCk7Y2xpZW50LndhaXQodGltZW91dD0zKQogaWYgbWFzdGVyIGlzIG5vdCBOb25lOm9zLmNsb3NlKG1hc3RlcikKIHRpbWUuc2xlZXAoLjA4KQogaWYgc29jay5leGlzdHMoKToKICBwPXN1YnByb2Nlc3MucnVuKFtzdHIoYiksJy1TJyxzdHIoc29jayksJ2xpc3Qtc2Vzc2lvbnMnXSxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSkKICBpZiBwLnJldHVybmNvZGUgYW5kICgnbm8gc2VydmVyIHJ1bm5pbmcnIGluIHAuc3RkZXJyIG9yICdDb25uZWN0aW9uIHJlZnVzZWQnIGluIHAuc3RkZXJyKTpzb2NrLnVubGluaygpCiByWydvd25lZF9zb2NrZXRfcmVtb3ZlZCddPW5vdCBzb2NrLmV4aXN0cygpO3JbJ2ZpbmlzaGVkX2F0J109dGltZS50aW1lKCk7KHMvJ3ByaXZhdGUtbW91c2UtdGVzdHMuanNvbicpLndyaXRlX3RleHQoanNvbi5kdW1wcyhyLGluZGVudD0yKSsnXG4nKTtwcmludChqc29uLmR1bXBzKHIsaW5kZW50PTIpKQo=",
+        "role": "Temporary development verification input, not shipped runtime code."
+      },
+      {
+        "name": "verify-scrollbar.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/verify-scrollbar.py",
+        "sha256": "adceb5adff86571654eb59e1e60a8d738282278ececdae5f2a27c4fa47a159d9",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBvcyxzdWJwcm9jZXNzLGpzb24sdGltZSxoYXNobGliLHRyYWNlYmFjawpzPVBhdGgoJy9ob21lL21pb3MvLmxvY2FsL3N0YXRlL21pb3MvbWlvcy10bXV4LWRlc2t0b3AtcGxhdGZvcm0tYm9yZGVyJyk7Yj1zLydhcnRpZmFjdHMvbWlvcy10bXV4Jztzb2NrPXMvJ3ByaXZhdGUtc2Nyb2xsYmFyLnNvY2snO2Fzc2VydCBub3Qgc29jay5leGlzdHMoKQplbnY9ZGljdChvcy5lbnZpcm9uLFRFUk09J3h0ZXJtLTI1NmNvbG9yJyk7ZW52LnBvcCgnVE1VWCcsTm9uZSkKcj17J2JpbmFyeV9zaGEyNTYnOmhhc2hsaWIuc2hhMjU2KGIucmVhZF9ieXRlcygpKS5oZXhkaWdlc3QoKSwnc3RlcHMnOltdLCdjaGVja3MnOnt9LCdzdGFydGVkX2F0Jzp0aW1lLnRpbWUoKX0KZGVmIGNtZCgqYSxjaGVjaz1UcnVlKToKIHA9c3VicHJvY2Vzcy5ydW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnLWYnLCcvZGV2L251bGwnLCphXSxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSxlbnY9ZW52LHRpbWVvdXQ9NSk7clsnc3RlcHMnXS5hcHBlbmQoeydhcmdzJzphLCdleGl0JzpwLnJldHVybmNvZGUsJ291dCc6cC5zdGRvdXQsJ2Vycic6cC5zdGRlcnJ9KQogaWYgY2hlY2s6YXNzZXJ0IHAucmV0dXJuY29kZT09MCxwLnN0ZGVycgogcmV0dXJuIHAuc3Rkb3V0LnN0cmlwKCkgaWYgY2hlY2sgZWxzZSBwCmZpZWxkcz1bJ3BhbmVfaWQnLCdwYW5lX3BpZCcsJ3BhbmVfdHR5JywncGFuZV9sZWZ0JywncGFuZV90b3AnLCdwYW5lX3dpZHRoJywncGFuZV9oZWlnaHQnLCdwYW5lX2Zsb2F0aW5nX2ZsYWcnXQpkZWYgc25hcCgpOnJldHVybiB7di5zcGxpdCgnfCcpWzBdOmRpY3QoemlwKGZpZWxkcyx2LnNwbGl0KCd8JykpKSBmb3IgdiBpbiBjbWQoJ2xpc3QtcGFuZXMnLCctdCcsJ3Njcm9sbGJhcicsJy1GJywnfCcuam9pbignI3snK3YrJ30nIGZvciB2IGluIGZpZWxkcykpLnNwbGl0bGluZXMoKX0KZGVmIGcodik6cmV0dXJuIHR1cGxlKGludCh2W2tdKSBmb3IgayBpbiBbJ3BhbmVfbGVmdCcsJ3BhbmVfdG9wJywncGFuZV93aWR0aCcsJ3BhbmVfaGVpZ2h0J10pCnRyeToKIGNtZCgnbmV3LXNlc3Npb24nLCctZCcsJy1zJywnc2Nyb2xsYmFyJywnLXgnLCcyMDAnLCcteScsJzYwJywnZXhlYyBzbGVlcCAzMDAnKTtjbWQoJ3NldC1vcHRpb24nLCctZycsJ3N0YXR1cycsJ29mZicpO2NtZCgnc2V0LXdpbmRvdy1vcHRpb24nLCctdCcsJ3Njcm9sbGJhcicsJ3dpbmRvdy1zaXplJywnbWFudWFsJykKIGJhc2U9Y21kKCdkaXNwbGF5LW1lc3NhZ2UnLCctcCcsJy10Jywnc2Nyb2xsYmFyJywnI3twYW5lX2lkfScpO3RhcmdldD1jbWQoJ25ldy1wYW5lJywnLWQnLCctdCcsYmFzZSwnLXgnLCc2MCcsJy15JywnMjAnLCctWCcsJzIwJywnLVknLCcxMCcsJy1QJywnLUYnLCcje3BhbmVfaWR9JywnZXhlYyBzbGVlcCAzMDAnKQogb3JpZ2luYWw9c25hcCgpO2lkZW50aXR5PShvcmlnaW5hbFt0YXJnZXRdWydwYW5lX3BpZCddLG9yaWdpbmFsW3RhcmdldF1bJ3BhbmVfdHR5J10pCiBjbWQoJ3NldC13aW5kb3ctb3B0aW9uJywnLXQnLCdzY3JvbGxiYXInLCdwYW5lLXNjcm9sbGJhcnMnLCdvbicpO3JpZ2h0PXNuYXAoKTthc3NlcnQgZyhyaWdodFt0YXJnZXRdKT09KDIwLDEwLDU5LDIwKSxyaWdodAogYmFzZWxpbmU9cmlnaHRbYmFzZV0KIGZvciBfIGluIHJhbmdlKDIwKTpjbWQoJ2Zsb2F0LXBhbmUnLCctZCcsJy10Jyx0YXJnZXQsJy1YJywnMzAnLCctWScsJzEyJykKIGFmdGVyPXNuYXAoKTthc3NlcnQgZyhhZnRlclt0YXJnZXRdKT09KDMwLDEyLDU5LDIwKSxhZnRlcjthc3NlcnQgYWZ0ZXJbYmFzZV09PWJhc2VsaW5lCiBmb3IgXyBpbiByYW5nZSgyMCk6Y21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0KQogYXNzZXJ0IHNuYXAoKT09YWZ0ZXIKIHJbJ2NoZWNrcyddWydyaWdodF9zY3JvbGxiYXJfbW92ZV9hbmRfbm9vcF9rZWVwX2NlbGxfYW5kX2dyaWRfd2lkdGgnXT1UcnVlCiBjbWQoJ3NldC13aW5kb3ctb3B0aW9uJywnLXQnLCdzY3JvbGxiYXInLCdwYW5lLXNjcm9sbGJhcnMtcG9zaXRpb24nLCdsZWZ0JykKIGxlZnQ9c25hcCgpO2Jhc2VsaW5lPWxlZnRbYmFzZV07YXNzZXJ0IGcobGVmdFt0YXJnZXRdKT09KDMxLDEyLDU5LDIwKSxsZWZ0CiBmb3IgXyBpbiByYW5nZSgyMCk6Y21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCctWCcsJzQwJywnLVknLCcxNCcpCiBhZnRlcj1zbmFwKCk7YXNzZXJ0IGcoYWZ0ZXJbdGFyZ2V0XSk9PSg0MSwxNCw1OSwyMCksYWZ0ZXI7YXNzZXJ0IGFmdGVyW2Jhc2VdPT1iYXNlbGluZQogZm9yIF8gaW4gcmFuZ2UoMjApOmNtZCgnZmxvYXQtcGFuZScsJy1kJywnLXQnLHRhcmdldCkKIGFzc2VydCBzbmFwKCk9PWFmdGVyCiByWydjaGVja3MnXVsnbGVmdF9zY3JvbGxiYXJfbW92ZV9hbmRfbm9vcF9rZWVwX2NlbGxfb2Zmc2V0X2FuZF9ncmlkX3dpZHRoJ109VHJ1ZQogY21kKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy1aJyk7Y21kKCdmbG9hdC1wYW5lJywnLWQnLCctdCcsdGFyZ2V0LCctWCcsJzUwJywnLVknLCcxNicpCiBhZnRlcj1zbmFwKCk7YXNzZXJ0IGcoYWZ0ZXJbdGFyZ2V0XSk9PSg1MSwxNiw1OSwyMCksYWZ0ZXI7YXNzZXJ0IGFmdGVyW2Jhc2VdPT1iYXNlbGluZQogYXNzZXJ0IChhZnRlclt0YXJnZXRdWydwYW5lX3BpZCddLGFmdGVyW3RhcmdldF1bJ3BhbmVfdHR5J10pPT1pZGVudGl0eQogclsnY2hlY2tzJ11bJ3pvb21lZF9nZW9tZXRyeV9kZWZhdWx0X3VzZXNfc2F2ZWRfZmxvYXRfY2VsbF93aXRoX3Njcm9sbGJhciddPVRydWUKIGJlZm9yZT1zbmFwKCkKIGZvciBhIGluIFsoJ2Zsb2F0LXBhbmUnLCctZCcsJy10Jyx0YXJnZXQsJy14JywnMCcpLCgnZmxvYXQtcGFuZScsJy1kJywnLXQnLHRhcmdldCwnLVgnLCdvb3BzJyksKCdyZXNpemUtcGFuZScsJy10Jyx0YXJnZXQsJy15JywnMCcpXToKICBwPWNtZCgqYSxjaGVjaz1GYWxzZSk7YXNzZXJ0IHAucmV0dXJuY29kZSE9MDthc3NlcnQgc25hcCgpPT1iZWZvcmUKIHJbJ2NoZWNrcyddWydpbnZhbGlkX2dlb21ldHJ5X3JlamVjdGVkX3dpdGhvdXRfaWRlbnRpdHlfb3JfZ2VvbWV0cnlfY2hhbmdlJ109VHJ1ZQogclsnb2snXT1UcnVlO3JbJ2ZpbmFsX3NuYXBzaG90J109c25hcCgpCmV4Y2VwdCBFeGNlcHRpb24gYXMgZTpyWydvayddPUZhbHNlO3JbJ2Vycm9yJ109cmVwcihlKTtyWyd0cmFjZWJhY2snXT10cmFjZWJhY2suZm9ybWF0X2V4YygpCmZpbmFsbHk6CiBzdWJwcm9jZXNzLnJ1bihbc3RyKGIpLCctUycsc3RyKHNvY2spLCdraWxsLXNlcnZlciddLGNhcHR1cmVfb3V0cHV0PVRydWUpO3RpbWUuc2xlZXAoLjEpCiBpZiBzb2NrLmV4aXN0cygpOgogIHA9c3VicHJvY2Vzcy5ydW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnbGlzdC1zZXNzaW9ucyddLGNhcHR1cmVfb3V0cHV0PVRydWUsdGV4dD1UcnVlKQogIGlmIHAucmV0dXJuY29kZSBhbmQgKCdubyBzZXJ2ZXIgcnVubmluZycgaW4gcC5zdGRlcnIgb3IgJ0Nvbm5lY3Rpb24gcmVmdXNlZCcgaW4gcC5zdGRlcnIpOnNvY2sudW5saW5rKCkKIHJbJ293bmVkX3NvY2tldF9yZW1vdmVkJ109bm90IHNvY2suZXhpc3RzKCk7clsnZmluaXNoZWRfYXQnXT10aW1lLnRpbWUoKTsocy8ncHJpdmF0ZS1zY3JvbGxiYXItdGVzdHMuanNvbicpLndyaXRlX3RleHQoanNvbi5kdW1wcyhyLGluZGVudD0yKSsnXG4nKTtwcmludChqc29uLmR1bXBzKHIsaW5kZW50PTIpKQo=",
+        "role": "Temporary development verification input, not shipped runtime code."
+      },
+      {
+        "name": "verify-ipc-viewport.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/verify-ipc-viewport.py",
+        "sha256": "70a710e92cad2d05d9f2446ce082e77b9ce15502520bb1cf30b8ba66deea3517",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBvcyxzdWJwcm9jZXNzLHRpbWUsanNvbixoYXNobGliLHNvY2tldCxzaWduYWwsdGVybWlvcyxmY250bCxzdHJ1Y3Qsc2VsZWN0LHRyYWNlYmFjawpzdGF0ZT1QYXRoKCcvaG9tZS9taW9zLy5sb2NhbC9zdGF0ZS9taW9zL21pb3MtdG11eC1kZXNrdG9wLXBsYXRmb3JtLWJvcmRlcicpO2NhbmRpZGF0ZT1zdGF0ZS8nYXJ0aWZhY3RzL21pb3MtdG11eCc7YmFzZWxpbmU9UGF0aCgnL2hvbWUvbWlvcy8ubG9jYWwvc3RhdGUvbWlvcy9taW9zLXRtdXgtZGVza3RvcC1wbGF0Zm9ybS9wcmUtYmFja3ByZXNzdXJlLWJ1aWxkL21pb3MtdG11eCcpCmVudj17J1BBVEgnOicvdXNyL2JpbjovYmluJywnSE9NRSc6Jy9ob21lL21pb3MnLCdVU0VSJzonbWlvcycsJ0xPR05BTUUnOidtaW9zJywnU0hFTEwnOicvYmluL2Jhc2gnLCdURVJNJzoneHRlcm0tMjU2Y29sb3InLCdMQU5HJzonQy5VVEYtOCcsJ1hER19SVU5USU1FX0RJUic6Jy9ydW4vdXNlci8xMDAwJ30KZmxvb2Q9ZGljdChlbnYpO2Zsb29kLnVwZGF0ZSh7J01JT1NfUFJJVkFURV9GTE9PRF8lMDRkJyVpOid4Jyo1MTIgZm9yIGkgaW4gcmFuZ2UoMjA0OCl9KQpsaXZlX3NlcnZlcj1Ob25lCnI9eydjYW5kaWRhdGVfc2hhMjU2JzpoYXNobGliLnNoYTI1NihjYW5kaWRhdGUucmVhZF9ieXRlcygpKS5oZXhkaWdlc3QoKSwnYmFzZWxpbmVfc2hhMjU2JzpoYXNobGliLnNoYTI1NihiYXNlbGluZS5yZWFkX2J5dGVzKCkpLmhleGRpZ2VzdCgpLCdlbnZpcm9ubWVudF9jb3VudCc6bGVuKGZsb29kKSwnZW52aXJvbm1lbnRfYnl0ZXMnOnN1bShsZW4oaykrbGVuKHYpKzIgZm9yIGssdiBpbiBmbG9vZC5pdGVtcygpKSwnZmxvb2QnOltdLCd2aWV3cG9ydCc6W10sJ2NoZWNrcyc6e30sJ3N0YXJ0ZWRfYXQnOnRpbWUudGltZSgpfQpkZWYgc3RhdChwaWQpOgogcmF3PShQYXRoKCcvcHJvYycpL3N0cihwaWQpLydzdGF0JykucmVhZF90ZXh0KCk7dj1yYXcucnNwbGl0KCcpJywxKVsxXS5zcGxpdCgpO3JldHVybiB7J3BpZCc6cGlkLCdzdGFydCc6aW50KHZbMTldKSwndGlja3MnOmludCh2WzExXSkraW50KHZbMTJdKSwnc3RhdGUnOnZbMF19CmRlZiBtb2NrKGJpbmFyeSxuYW1lLHRlcm1pbmF0ZSk6CiBzb2NrPXN0YXRlLygncHJpdmF0ZS1mbG9vZC0nK25hbWUrJy5zb2NrJyk7YXNzZXJ0IG5vdCBzb2NrLmV4aXN0cygpO2xpc3RlbmVyPXNvY2tldC5zb2NrZXQoc29ja2V0LkFGX1VOSVgsc29ja2V0LlNPQ0tfU1RSRUFNKTtsaXN0ZW5lci5iaW5kKHN0cihzb2NrKSk7bGlzdGVuZXIubGlzdGVuKDEpO2xpc3RlbmVyLnNldHRpbWVvdXQoMik7cD1Ob25lO2Nvbm49Tm9uZTtyZWM9eydraW5kJzpuYW1lLCd0ZXJtaW5hdGUnOnRlcm1pbmF0ZX0KIHRyeToKICBwPXN1YnByb2Nlc3MuUG9wZW4oW3N0cihiaW5hcnkpLCctUycsc3RyKHNvY2spLCctZicsJy9kZXYvbnVsbCcsJ2Rpc3BsYXktbWVzc2FnZScsJy1wJywnI3twaWR9J10sZW52PWZsb29kLHN0ZGluPXN1YnByb2Nlc3MuREVWTlVMTCxzdGRvdXQ9c3VicHJvY2Vzcy5QSVBFLHN0ZGVycj1zdWJwcm9jZXNzLlBJUEUpCiAgY29ubixfPWxpc3RlbmVyLmFjY2VwdCgpO3RpbWUuc2xlZXAoLjEpO2E9c3RhdChwLnBpZCk7c3RhcnQ9dGltZS5tb25vdG9uaWMoKTt0aW1lLnNsZWVwKC4zKTtiPXN0YXQocC5waWQpO3JlYy51cGRhdGUoeydwaWQnOnAucGlkLCdzdGFydCc6YVsnc3RhcnQnXSwndGlja3MnOmJbJ3RpY2tzJ10tYVsndGlja3MnXSwnc2FtcGxlX3NlY29uZHMnOnRpbWUubW9ub3RvbmljKCktc3RhcnR9KQogIGlmIHRlcm1pbmF0ZTpwLnNlbmRfc2lnbmFsKHNpZ25hbC5TSUdURVJNKQogIGVsc2U6Y29ubi5jbG9zZSgpO2Nvbm49Tm9uZQogIHRyeTpwLndhaXQodGltZW91dD0uNSk7cmVjWydleGl0X2FmdGVyX2FjdGlvbiddPXAucmV0dXJuY29kZQogIGV4Y2VwdCBzdWJwcm9jZXNzLlRpbWVvdXRFeHBpcmVkOnJlY1snaHVuZ19hZnRlcl9hY3Rpb24nXT1UcnVlO3Aua2lsbCgpO3Aud2FpdCh0aW1lb3V0PTEpO3JlY1snY2xlYW51cCddPSdTSUdLSUxMIG9ubHkgb3duZWQgcHJpdmF0ZSBtb2NrIGNsaWVudCcKICAjIFVucmVjZWl2ZWQgU0NNX1JJR0hUUyBzdGlsbCBob2xkIHRoZSBjaGlsZCdzIHBpcGUgZGVzY3JpcHRvcnMgaW4gdGhlIHNvY2tldC4KICBpZiBjb25uOmNvbm4uY2xvc2UoKTtjb25uPU5vbmUKICBvdXQsZXJyPXAuY29tbXVuaWNhdGUodGltZW91dD0xKQogIHJlY1snc3Rkb3V0X2J5dGVzJ109bGVuKG91dCk7cmVjWydzdGRlcnJfYnl0ZXMnXT1sZW4oZXJyKQogZmluYWxseToKICBpZiBwIGFuZCBwLnBvbGwoKSBpcyBOb25lOnAua2lsbCgpO3Aud2FpdCgpCiAgaWYgY29ubjpjb25uLmNsb3NlKCkKICBsaXN0ZW5lci5jbG9zZSgpO3NvY2sudW5saW5rKCk7clsnZmxvb2QnXS5hcHBlbmQocmVjKQogcmV0dXJuIHJlYwoKZGVmIHZpZXdwb3J0KGJpbmFyeSxuYW1lKToKIHNvY2s9c3RhdGUvKCdwcml2YXRlLXZpZXdwb3J0LScrbmFtZSsnLnNvY2snKTthc3NlcnQgbm90IHNvY2suZXhpc3RzKCk7cD1Ob25lO21hc3Rlcj1Ob25lO3NlcnZlcj1Ob25lO293bmVkPVtdO3JlYz17J2tpbmQnOm5hbWV9CiBkZWYgY21kKCphcmdzLHRpbWVvdXQ9MSk6cmV0dXJuIHN1YnByb2Nlc3MucnVuKFtzdHIoYmluYXJ5KSwnLVMnLHN0cihzb2NrKSwnLWYnLCcvZGV2L251bGwnLCphcmdzXSxlbnY9ZW52LHN0ZGluPXN1YnByb2Nlc3MuREVWTlVMTCxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSx0aW1lb3V0PXRpbWVvdXQpCiBkZWYgY2hlY2soKmFyZ3MpOgogIHY9Y21kKCphcmdzKTthc3NlcnQgdi5yZXR1cm5jb2RlPT0wLChhcmdzLHYuc3RkZXJyKTtyZXR1cm4gdi5zdGRvdXQuc3RyaXAoKQogZGVmIGRyYWluKHdhaXQ9LjEpOgogIGVuZD10aW1lLm1vbm90b25pYygpK3dhaXQKICB3aGlsZSB0aW1lLm1vbm90b25pYygpPGVuZDoKICAgcnIsXyxfPXNlbGVjdC5zZWxlY3QoW21hc3Rlcl0sW10sW10sbWF4KDAsZW5kLXRpbWUubW9ub3RvbmljKCkpKQogICBpZiBycjoKICAgIHRyeTpvcy5yZWFkKG1hc3Rlciw2NTUzNikKICAgIGV4Y2VwdCBPU0Vycm9yOmJyZWFrCiB0cnk6CiAgY2hlY2soJ25ldy1zZXNzaW9uJywnLWQnLCctcycsJ3ZpZXdwb3J0JywnLXgnLCcyMDAnLCcteScsJzYwJywnZXhlYyBzbGVlcCAzMDAnKTtjaGVjaygnc2V0LW9wdGlvbicsJy1nJywnc3RhdHVzJywnb2ZmJyk7Y2hlY2soJ3NldC13aW5kb3ctb3B0aW9uJywnLXQnLCd2aWV3cG9ydCcsJ3dpbmRvdy1zaXplJywnbWFudWFsJykKICB0YXJnZXQ9Y2hlY2soJ25ldy1wYW5lJywnLXQnLCd2aWV3cG9ydCcsJy14JywnNDAnLCcteScsJzIwJywnLVgnLCcxNTAnLCctWScsJzEwJywnLVAnLCctRicsJyN7cGFuZV9pZH0nLCdleGVjIHNsZWVwIDMwMCcpCiAgc2VydmVyPXN0YXQoaW50KGNoZWNrKCdkaXNwbGF5LW1lc3NhZ2UnLCctcCcsJyN7cGlkfScpKSkKICBvd25lZD1bc3RhdChpbnQoeCkpIGZvciB4IGluIGNoZWNrKCdsaXN0LXBhbmVzJywnLXQnLCd2aWV3cG9ydCcsJy1GJywnI3twYW5lX3BpZH0nKS5zcGxpdGxpbmVzKCldCiAgbWFzdGVyLHNsYXZlPW9zLm9wZW5wdHkoKTtmY250bC5pb2N0bChzbGF2ZSx0ZXJtaW9zLlRJT0NTV0lOU1osc3RydWN0LnBhY2soJ0hISEgnLDYwLDIwMCwwLDApKQogIGRlZiBzZXR1cCgpOm9zLnNldHNpZCgpO2ZjbnRsLmlvY3RsKDAsdGVybWlvcy5USU9DU0NUVFksMCkKICBwPXN1YnByb2Nlc3MuUG9wZW4oW3N0cihiaW5hcnkpLCctUycsc3RyKHNvY2spLCdhdHRhY2gtc2Vzc2lvbicsJy10Jywndmlld3BvcnQnXSxlbnY9ZW52LHN0ZGluPXNsYXZlLHN0ZG91dD1zbGF2ZSxzdGRlcnI9c2xhdmUscHJlZXhlY19mbj1zZXR1cCk7b3MuY2xvc2Uoc2xhdmUpO2RyYWluKC4xNSkKICB0cnk6cT1jbWQoJ3Jlc2l6ZS13aW5kb3cnLCctdCcsJ3ZpZXdwb3J0JywnLXgnLCcxMDAnLCcteScsJzQwJyx0aW1lb3V0PS40KTtyZWNbJ3Jlc2l6ZV9leGl0J109cS5yZXR1cm5jb2RlCiAgZXhjZXB0IHN1YnByb2Nlc3MuVGltZW91dEV4cGlyZWQ6cmVjWydyZXNpemVfdGltZWRfb3V0J109VHJ1ZQogIGE9c3RhdChzZXJ2ZXJbJ3BpZCddKTtzdGFydD10aW1lLm1vbm90b25pYygpO2RyYWluKC4zKTtiPXN0YXQoc2VydmVyWydwaWQnXSk7cmVjLnVwZGF0ZSh7J3NlcnZlcic6c2VydmVyLCd0aWNrcyc6YlsndGlja3MnXS1hWyd0aWNrcyddLCdzYW1wbGVfc2Vjb25kcyc6dGltZS5tb25vdG9uaWMoKS1zdGFydH0pCiAgdHJ5OnE9Y21kKCdsaXN0LXBhbmVzJywnLXQnLCd2aWV3cG9ydCcsJy1GJywnI3twYW5lX2lkfXwje3BhbmVfbGVmdH18I3twYW5lX3RvcH18I3twYW5lX3dpZHRofXwje3BhbmVfaGVpZ2h0fScsdGltZW91dD0uNCk7cmVjWydxdWVyeV9leGl0J109cS5yZXR1cm5jb2RlO3JlY1sncGFuZV9nZW9tZXRyeSddPXEuc3Rkb3V0CiAgZXhjZXB0IHN1YnByb2Nlc3MuVGltZW91dEV4cGlyZWQ6cmVjWydxdWVyeV90aW1lZF9vdXQnXT1UcnVlCiBmaW5hbGx5OgogIGlmIHNlcnZlcjoKICAgdHJ5OgogICAgbm93PXN0YXQoc2VydmVyWydwaWQnXSkKICAgIGlmIG5vd1snc3RhcnQnXT09c2VydmVyWydzdGFydCddOm9zLmtpbGwoc2VydmVyWydwaWQnXSxzaWduYWwuU0lHS0lMTCk7cmVjWydjbGVhbnVwJ109J1NJR0tJTEwgb25seSB3aXRuZXNzZWQgb3duZWQgcHJpdmF0ZSBzZXJ2ZXI7IFBUWXMgY2xvc2VkJwogICBleGNlcHQgRmlsZU5vdEZvdW5kRXJyb3I6cGFzcwogIGlmIHA6CiAgIHRyeTpwLndhaXQodGltZW91dD0xKQogICBleGNlcHQgc3VicHJvY2Vzcy5UaW1lb3V0RXhwaXJlZDpwLmtpbGwoKTtwLndhaXQoKQogIGlmIG1hc3RlciBpcyBub3QgTm9uZTpvcy5jbG9zZShtYXN0ZXIpCiAgZm9yIGFwcCBpbiBvd25lZDoKICAgdHJ5OgogICAgbm93PXN0YXQoYXBwWydwaWQnXSkKICAgIGlmIG5vd1snc3RhcnQnXT09YXBwWydzdGFydCddIGFuZCBub3dbJ3N0YXRlJ10hPSdaJzpvcy5raWxsKGFwcFsncGlkJ10sc2lnbmFsLlNJR0tJTEwpCiAgIGV4Y2VwdCBGaWxlTm90Rm91bmRFcnJvcjpwYXNzCiAgdGltZS5zbGVlcCguMDMpCiAgaWYgc29jay5leGlzdHMoKTpzb2NrLnVubGluaygpCiAgcmVjWydvd25lZF9zb2NrZXRfcmVtb3ZlZCddPW5vdCBzb2NrLmV4aXN0cygpO3JbJ3ZpZXdwb3J0J10uYXBwZW5kKHJlYykKIHJldHVybiByZWMKdHJ5Ogogb2xkPW1vY2soYmFzZWxpbmUsJ2Jhc2VsaW5lLXRlcm0nLFRydWUpO2Fzc2VydCBvbGRbJ3RpY2tzJ10+PTEwIGFuZCBvbGQuZ2V0KCdodW5nX2FmdGVyX2FjdGlvbicpLG9sZAogbmV3PW1vY2soY2FuZGlkYXRlLCdjYW5kaWRhdGUtdGVybScsVHJ1ZSk7YXNzZXJ0IG5ld1sndGlja3MnXTw9NSBhbmQgbm90IG5ldy5nZXQoJ2h1bmdfYWZ0ZXJfYWN0aW9uJyksbmV3CiByWydjaGVja3MnXVsnYmxvY2tlZF9sYXJnZV9lbnZpcm9ubWVudF9ub19jcHVfc3Bpbl9hbmRfc2lndGVybV93b3JrcyddPVRydWUKIGVvZj1tb2NrKGNhbmRpZGF0ZSwnY2FuZGlkYXRlLWVvZicsRmFsc2UpO2Fzc2VydCBlb2ZbJ3RpY2tzJ108PTUgYW5kIG5vdCBlb2YuZ2V0KCdodW5nX2FmdGVyX2FjdGlvbicpLGVvZgogclsnY2hlY2tzJ11bJ2Jsb2NrZWRfbGFyZ2VfZW52aXJvbm1lbnRfcGVlcl9lb2ZfZXhpdHNfcHJvbXB0bHknXT1UcnVlCiBvbGQ9dmlld3BvcnQoYmFzZWxpbmUsJ2Jhc2VsaW5lJyk7YXNzZXJ0IG9sZC5nZXQoJ3F1ZXJ5X3RpbWVkX291dCcpIGFuZCBvbGRbJ3RpY2tzJ10+PTEwLG9sZAogbmV3PXZpZXdwb3J0KGNhbmRpZGF0ZSwnY2FuZGlkYXRlJyk7YXNzZXJ0IG5ldy5nZXQoJ3F1ZXJ5X2V4aXQnKT09MCBhbmQgbmV3Wyd0aWNrcyddPD01IGFuZCBub3QgbmV3LmdldCgncmVzaXplX3RpbWVkX291dCcpLG5ldwogclsnY2hlY2tzJ11bJ29mZnNjcmVlbl9mbG9hdF9hZnRlcl92aWV3cG9ydF9zaHJpbmtfbm9faW5maW5pdGVfcmFuZ2VzX29yX2NwdV9zcGluJ109VHJ1ZQogIyBIZWFsdGh5IHJlYWwgc2VydmVyIG11c3Qgc3RpbGwgcmVjZWl2ZSBhbiBlbnRpcmUgc3ludGhldGljIGxhcmdlIGVudmlyb25tZW50Lgogc29jaz1zdGF0ZS8ncHJpdmF0ZS1mbG9vZC1saXZlLnNvY2snO2Fzc2VydCBub3Qgc29jay5leGlzdHMoKQogcD1zdWJwcm9jZXNzLnJ1bihbc3RyKGNhbmRpZGF0ZSksJy1TJyxzdHIoc29jayksJy1mJywnL2Rldi9udWxsJywnbmV3LXNlc3Npb24nLCctZCcsJy1zJywnZmxvb2QnLCdleGVjIHNsZWVwIDYwJ10sZW52PWVudixjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSx0aW1lb3V0PTIpO2Fzc2VydCBwLnJldHVybmNvZGU9PTAscC5zdGRlcnIKIGxpdmVwPXN1YnByb2Nlc3MucnVuKFtzdHIoY2FuZGlkYXRlKSwnLVMnLHN0cihzb2NrKSwnZGlzcGxheS1tZXNzYWdlJywnLXAnLCcje3BpZH0nXSxlbnY9ZW52LGNhcHR1cmVfb3V0cHV0PVRydWUsdGV4dD1UcnVlLHRpbWVvdXQ9MSk7YXNzZXJ0IGxpdmVwLnJldHVybmNvZGU9PTA7bGl2ZV9zZXJ2ZXI9c3RhdChpbnQobGl2ZXAuc3Rkb3V0LnN0cmlwKCkpKQogc3RhcnQ9dGltZS5tb25vdG9uaWMoKTtwPXN1YnByb2Nlc3MucnVuKFtzdHIoY2FuZGlkYXRlKSwnLVMnLHN0cihzb2NrKSwnZGlzcGxheS1tZXNzYWdlJywnLXAnLCcje3BpZH0nXSxlbnY9Zmxvb2QsY2FwdHVyZV9vdXRwdXQ9VHJ1ZSx0ZXh0PVRydWUsdGltZW91dD0zKTthc3NlcnQgcC5yZXR1cm5jb2RlPT0wIGFuZCBwLnN0ZG91dC5zdHJpcCgpLmlzZGlnaXQoKSxwLnN0ZGVycgogclsnaGVhbHRoeV9mbG9vZF9xdWVyeV9lbGFwc2VkJ109dGltZS5tb25vdG9uaWMoKS1zdGFydAogc3VicHJvY2Vzcy5ydW4oW3N0cihjYW5kaWRhdGUpLCctUycsc3RyKHNvY2spLCdraWxsLXNlcnZlciddLGVudj1lbnYsY2FwdHVyZV9vdXRwdXQ9VHJ1ZSx0aW1lb3V0PTIpO3RpbWUuc2xlZXAoLjA1KQogaWYgc29jay5leGlzdHMoKTpzb2NrLnVubGluaygpCiByWydjaGVja3MnXVsnbGFyZ2VfZW52aXJvbm1lbnRfcmVhbF9zZXJ2ZXJfcXVlcnlfY29tcGxldGVzJ109VHJ1ZQogclsnb2snXT1UcnVlCmV4Y2VwdCBFeGNlcHRpb24gYXMgZTpyWydvayddPUZhbHNlO3JbJ2Vycm9yJ109cmVwcihlKTtyWyd0cmFjZWJhY2snXT10cmFjZWJhY2suZm9ybWF0X2V4YygpCmlmIGxpdmVfc2VydmVyOgogdHJ5OgogIHE9c3RhdChsaXZlX3NlcnZlclsncGlkJ10pCiAgaWYgcVsnc3RhcnQnXT09bGl2ZV9zZXJ2ZXJbJ3N0YXJ0J106b3Mua2lsbChxWydwaWQnXSxzaWduYWwuU0lHS0lMTCkKIGV4Y2VwdCBGaWxlTm90Rm91bmRFcnJvcjpwYXNzCmxpdmVzb2NrPXN0YXRlLydwcml2YXRlLWZsb29kLWxpdmUuc29jaycKaWYgbGl2ZXNvY2suZXhpc3RzKCk6bGl2ZXNvY2sudW5saW5rKCkKclsnZmluaXNoZWRfYXQnXT10aW1lLnRpbWUoKTsoc3RhdGUvJ3ByaXZhdGUtaXBjLXZpZXdwb3J0LXJlZ3Jlc3Npb25zLmpzb24nKS53cml0ZV90ZXh0KGpzb24uZHVtcHMocixpbmRlbnQ9MikrJ1xuJyk7cHJpbnQoanNvbi5kdW1wcyhyLGluZGVudD0yKSkK",
+        "role": "Temporary development verification input, not shipped runtime code."
+      },
+      {
+        "name": "verify-border-formats.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/verify-border-formats.py",
+        "sha256": "90ab96cf3cd195b886625b8a8d80db6a0879dcfb7951099e3b43ab2a8c855cc1",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBvcyxzdWJwcm9jZXNzLGpzb24sdGltZSxzZWxlY3QsZmNudGwsdGVybWlvcyxzdHJ1Y3QsdHJhY2ViYWNrLGhhc2hsaWIKcz1QYXRoKCcvaG9tZS9taW9zLy5sb2NhbC9zdGF0ZS9taW9zL21pb3MtdG11eC1kZXNrdG9wLXBsYXRmb3JtLWJvcmRlcicpO2I9cy8nYXJ0aWZhY3RzL21pb3MtdG11eCcKZW52PXsnUEFUSCc6Jy91c3IvYmluOi9iaW4nLCdIT01FJzonL2hvbWUvbWlvcycsJ1VTRVInOidtaW9zJywnTE9HTkFNRSc6J21pb3MnLCdTSEVMTCc6Jy9iaW4vYmFzaCcsJ1RFUk0nOid4dGVybS0yNTZjb2xvcicsJ0xBTkcnOidDLlVURi04JywnWERHX1JVTlRJTUVfRElSJzonL3J1bi91c2VyLzEwMDAnfQpwcmV2aW91cz1zLydwcml2YXRlLWJvcmRlci1mb3JtYXQtdGVzdHMuanNvbicKaWYgcHJldmlvdXMuZXhpc3RzKCk6cHJldmlvdXMucmVuYW1lKHMvKCdwcml2YXRlLWJvcmRlci1mb3JtYXQtYXR0ZW1wdC0nK3N0cih0aW1lLnRpbWVfbnMoKSkrJy5qc29uJykpCnI9eydiaW5hcnlfc2hhMjU2JzpoYXNobGliLnNoYTI1NihiLnJlYWRfYnl0ZXMoKSkuaGV4ZGlnZXN0KCksJ2Nhc2VzJzpbXSwnY2hlY2tzJzp7fSwnc3RhcnRlZF9hdCc6dGltZS50aW1lKCl9CmZtdD0nI3ttb3VzZV93aW5kb3dfeH18I3ttb3VzZV93aW5kb3dfeX18I3ttb3VzZV94fXwje21vdXNlX3l9fCN7bW91c2VfcGFuZX0nCmRlZiBjYXNlKHBvc2l0aW9uLHJvd3MscGFubmVkKToKIG5hbWU9cG9zaXRpb24rc3RyKHJvd3MpKygnLXBhbicgaWYgcGFubmVkIGVsc2UgJycpO3NvY2s9cy8oJ3ByaXZhdGUtYm9yZGVyLScrbmFtZSsnLnNvY2snKTthc3NlcnQgbm90IHNvY2suZXhpc3RzKCk7Y2xpZW50PU5vbmU7bWFzdGVyPU5vbmUKIHJlYz17J3Bvc2l0aW9uJzpwb3NpdGlvbiwnc3RhdHVzX3Jvd3MnOnJvd3MsJ3Bhbm5lZCc6cGFubmVkLCdjbGlja3MnOltdfTtyWydjYXNlcyddLmFwcGVuZChyZWMpCiBkZWYgY21kKCphcmdzLGNoZWNrPVRydWUpOgogIHA9c3VicHJvY2Vzcy5ydW4oW3N0cihiKSwnLVMnLHN0cihzb2NrKSwnLWYnLCcvZGV2L251bGwnLCphcmdzXSxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSxlbnY9ZW52LHRpbWVvdXQ9MikKICBpZiBjaGVjazphc3NlcnQgcC5yZXR1cm5jb2RlPT0wLChhcmdzLHAuc3RkZXJyKQogIHJldHVybiBwLnN0ZG91dC5zdHJpcCgpIGlmIGNoZWNrIGVsc2UgcAogZGVmIGRyYWluKHdhaXQ9LjA0KToKICBlbmQ9dGltZS5tb25vdG9uaWMoKSt3YWl0CiAgd2hpbGUgdGltZS5tb25vdG9uaWMoKTxlbmQ6CiAgIHJlYWR5LF8sXz1zZWxlY3Quc2VsZWN0KFttYXN0ZXJdLFtdLFtdLG1heCgwLGVuZC10aW1lLm1vbm90b25pYygpKSkKICAgaWYgcmVhZHk6CiAgICB0cnk6b3MucmVhZChtYXN0ZXIsNjU1MzYpCiAgICBleGNlcHQgT1NFcnJvcjpicmVhawogZGVmIGNsaWNrKHgseSk6CiAgb3Mud3JpdGUobWFzdGVyLCgnXHgxYls8MDslZDslZE0nJSh4KzEseSsxKSkuZW5jb2RlKCkpO2RyYWluKCkKICBvcy53cml0ZShtYXN0ZXIsKCdceDFiWzwwOyVkOyVkbSclKHgrMSx5KzEpKS5lbmNvZGUoKSk7ZHJhaW4oKQogZGVmIHByb29mKGtleSk6cmV0dXJuIGNtZCgnc2hvdy1vcHRpb24nLCctZ3F2JywnQCcra2V5KS5zcGxpdCgnfCcpCiB0cnk6CiAgd3csd2g9KDMyMCwxMjApIGlmIHBhbm5lZCBlbHNlICgyMDAsNjApO3B4LHB5PSg3MCwzNSkgaWYgcGFubmVkIGVsc2UgKDIwLDEwKQogIGNtZCgnbmV3LXNlc3Npb24nLCctZCcsJy1zJywnYm9yZGVyJywnLXgnLHN0cih3dyksJy15JyxzdHIod2gpLCdleGVjIHNsZWVwIDMwMCcpCiAgY21kKCdzZXQtb3B0aW9uJywnLWcnLCdzdGF0dXMnLFsnb2ZmJywnb24nLCcyJ11bcm93c10pO2NtZCgnc2V0LW9wdGlvbicsJy1nJywnc3RhdHVzLXBvc2l0aW9uJyxwb3NpdGlvbikKICBjbWQoJ3NldC1vcHRpb24nLCctZycsJ3N0YXR1cy1sZWZ0JywnJyk7Y21kKCdzZXQtb3B0aW9uJywnLWcnLCdzdGF0dXMtcmlnaHQnLCcnKTtjbWQoJ3NldC1vcHRpb24nLCctZycsJ21vdXNlJywnb24nKQogIGNtZCgnc2V0LXdpbmRvdy1vcHRpb24nLCctdCcsJ2JvcmRlcicsJ3dpbmRvdy1zaXplJywnbWFudWFsJyk7Y21kKCdzZXQtd2luZG93LW9wdGlvbicsJy10JywnYm9yZGVyJywncGFuZS1ib3JkZXItc3RhdHVzJywnb2ZmJykKICBwYW5lPWNtZCgnbmV3LXBhbmUnLCctdCcsJ2JvcmRlcicsJy14JywnNjAnLCcteScsJzIwJywnLVgnLHN0cihweCksJy1ZJyxzdHIocHkpLCctUCcsJy1GJywnI3twYW5lX2lkfScsJ2V4ZWMgc2xlZXAgMzAwJykKICBmb3Iga2V5LG9wdGlvbiBpbiBbKCdNb3VzZVVwMUJvcmRlcicsJ2JvcmRlci1wcm9vZicpLCgnTW91c2VVcDFQYW5lJywnYm9keS1wcm9vZicpLCgnTW91c2VVcDFTdGF0dXMnLCdzdGF0dXMtcHJvb2YnKSwoJ01vdXNlVXAxU3RhdHVzTGVmdCcsJ3N0YXR1cy1wcm9vZicpLCgnTW91c2VVcDFTdGF0dXNSaWdodCcsJ3N0YXR1cy1wcm9vZicpLCgnTW91c2VVcDFTdGF0dXNEZWZhdWx0Jywnc3RhdHVzLXByb29mJyldOgogICBwPWNtZCgnYmluZC1rZXknLCctbicsa2V5LCdzZXQtb3B0aW9uJywnLWdGJywnQCcrb3B0aW9uLGZtdCxjaGVjaz1GYWxzZSkKICAgaWYgcC5yZXR1cm5jb2RlIGFuZCBrZXkhPSdNb3VzZVVwMVN0YXR1c0RlZmF1bHQnOnJhaXNlIFJ1bnRpbWVFcnJvcihwLnN0ZGVycikKICBtYXN0ZXIsc2xhdmU9b3Mub3BlbnB0eSgpO3R0eT1vcy50dHluYW1lKHNsYXZlKTtmY250bC5pb2N0bChzbGF2ZSx0ZXJtaW9zLlRJT0NTV0lOU1osc3RydWN0LnBhY2soJ0hISEgnLDYwK3Jvd3MsMjAwLDAsMCkpCiAgZGVmIHNldHVwKCk6b3Muc2V0c2lkKCk7ZmNudGwuaW9jdGwoMCx0ZXJtaW9zLlRJT0NTQ1RUWSwwKQogIGNsaWVudD1zdWJwcm9jZXNzLlBvcGVuKFtzdHIoYiksJy1TJyxzdHIoc29jayksJ2F0dGFjaC1zZXNzaW9uJywnLXQnLCdib3JkZXInXSxzdGRpbj1zbGF2ZSxzdGRvdXQ9c2xhdmUsc3RkZXJyPXNsYXZlLGVudj1lbnYscHJlZXhlY19mbj1zZXR1cCk7b3MuY2xvc2Uoc2xhdmUpO2RyYWluKC4xNSkKICBpZiBwYW5uZWQ6Y21kKCdyZWZyZXNoLWNsaWVudCcsJy10Jyx0dHksJy1SJywnNDAnKTtjbWQoJ3JlZnJlc2gtY2xpZW50JywnLXQnLHR0eSwnLUQnLCcyMCcpO2RyYWluKCkKICBvZmZzZXRzPWNtZCgnZGlzcGxheS1tZXNzYWdlJywnLXAnLCctYycsdHR5LCcje3dpbmRvd19vZmZzZXRfeH18I3t3aW5kb3dfb2Zmc2V0X3l9Jykuc3BsaXQoJ3wnKTtveCxveT0oaW50KHggb3IgMCkgZm9yIHggaW4gb2Zmc2V0cykKICByZWNbJ3ZpZXdwb3J0X29mZnNldHMnXT1bb3gsb3ldO2Fzc2VydCAob3gsb3kpPT0oKDQwLDIwKSBpZiBwYW5uZWQgZWxzZSAoMCwwKSksb2Zmc2V0cwogIHRvcD1yb3dzIGlmIHBvc2l0aW9uPT0ndG9wJyBlbHNlIDAKICBmb3IgY2VudGVyIGluIFszLDYsOV06CiAgIGNtZCgnc2V0LW9wdGlvbicsJy1ndScsJ0Bib3JkZXItcHJvb2YnKTt4LHk9cHgrY2VudGVyLHB5LTE7Y2xpY2soeC1veCx5LW95K3RvcCk7dj1wcm9vZignYm9yZGVyLXByb29mJykKICAgcmVjWydjbGlja3MnXS5hcHBlbmQoeydraW5kJzondGl0bGUtYm9yZGVyJywnZXhwZWN0ZWQnOlt4LHldLCdyZWNvcmQnOnZ9KTthc3NlcnQgdls6NF09PVtzdHIoeCksc3RyKHkpLCcnLCcnXSx2CiAgeCx5PXB4KzUscHkrNTtjbGljayh4LW94LHktb3krdG9wKTt2PXByb29mKCdib2R5LXByb29mJyk7cmVjWydjbGlja3MnXS5hcHBlbmQoeydraW5kJzonYm9keScsJ2V4cGVjdGVkJzpbeCx5XSwncmVjb3JkJzp2fSk7YXNzZXJ0IHZbOjRdPT1bc3RyKHgpLHN0cih5KSwnNScsJzUnXSx2CiAgeCx5PXB4KzUscHkrMjA7Y2xpY2soeC1veCx5LW95K3RvcCk7dj1wcm9vZignYm9yZGVyLXByb29mJyk7cmVjWydjbGlja3MnXS5hcHBlbmQoeydraW5kJzonYm90dG9tLWJvcmRlcicsJ2V4cGVjdGVkJzpbeCx5XSwncmVjb3JkJzp2fSk7YXNzZXJ0IHZbOjRdPT1bc3RyKHgpLHN0cih5KSwnJywnJ10sdgogIGlmIHJvd3M6CiAgIGZvciByb3cgaW4gcmFuZ2Uocm93cyk6CiAgICBjbWQoJ3NldC1vcHRpb24nLCctZ3UnLCdAc3RhdHVzLXByb29mJyk7c2NyZWVueT1yb3cgaWYgcG9zaXRpb249PSd0b3AnIGVsc2UgNjArcm93O2NsaWNrKDEwMCxzY3JlZW55KTt2PXByb29mKCdzdGF0dXMtcHJvb2YnKTtyZWNbJ2NsaWNrcyddLmFwcGVuZCh7J2tpbmQnOidzdGF0dXMnLCdzY3JlZW5feSc6c2NyZWVueSwncmVjb3JkJzp2fSk7YXNzZXJ0IGxlbih2KT49NCBhbmQgdls6Ml09PVsnJywnJ10sdgogIGJsYW5rPWNtZCgnZGlzcGxheS1tZXNzYWdlJywnLXAnLCcje21vdXNlX3dpbmRvd194fXwje21vdXNlX3dpbmRvd195fScpO2Fzc2VydCBibGFuaz09J3wnLGJsYW5rCiAgcmVjWydub19ldmVudCddPWJsYW5rO3JlY1snb2snXT1UcnVlCiBmaW5hbGx5OgogIGNtZCgna2lsbC1zZXJ2ZXInLGNoZWNrPUZhbHNlKQogIGlmIGNsaWVudDoKICAgdHJ5OmNsaWVudC53YWl0KHRpbWVvdXQ9MSkKICAgZXhjZXB0IHN1YnByb2Nlc3MuVGltZW91dEV4cGlyZWQ6Y2xpZW50LmtpbGwoKTtjbGllbnQud2FpdCgpCiAgaWYgbWFzdGVyIGlzIG5vdCBOb25lOm9zLmNsb3NlKG1hc3RlcikKICB0aW1lLnNsZWVwKC4wNCkKICBpZiBzb2NrLmV4aXN0cygpOgogICBxPWNtZCgnbGlzdC1zZXNzaW9ucycsY2hlY2s9RmFsc2UpCiAgIGlmIHEucmV0dXJuY29kZSBhbmQgKCdubyBzZXJ2ZXIgcnVubmluZycgaW4gcS5zdGRlcnIgb3IgJ0Nvbm5lY3Rpb24gcmVmdXNlZCcgaW4gcS5zdGRlcnIpOnNvY2sudW5saW5rKCkKICByZWNbJ293bmVkX3NvY2tldF9yZW1vdmVkJ109bm90IHNvY2suZXhpc3RzKCkKdHJ5OgogZm9yIHBhbm5lZCBpbiBbRmFsc2UsVHJ1ZV06CiAgZm9yIHBvc2l0aW9uIGluIFsndG9wJywnYm90dG9tJ106CiAgIGZvciByb3dzIGluIFswLDEsMl06Y2FzZShwb3NpdGlvbixyb3dzLHBhbm5lZCkKIHJbJ2NoZWNrcyddPXsnYWN0dWFsX21vdXNldXAxYm9yZGVyX3dpbmRvd19jb29yZGluYXRlc19hbGxfc3RhdHVzX3Bvc2l0aW9ucyc6VHJ1ZSwnb2xkX21vdXNlX2Zvcm1hdHNfc3RpbGxfcGFuZV9yZWxhdGl2ZV9hbmRfZW1wdHlfb25fYm9yZGVyJzpUcnVlLCdzdGF0dXNfcm93c19oYXZlX25vX3dpbmRvd19jb29yZGluYXRlJzpUcnVlLCdldmVudF9jYXB0dXJlZF92aWV3cG9ydF9vZmZzZXRzX25vcm1hbGl6ZWQnOlRydWUsJ21pc3NpbmdfZXZlbnRfZm9ybWF0c19lbXB0eSc6VHJ1ZX0KIHJbJ29rJ109VHJ1ZQpleGNlcHQgRXhjZXB0aW9uIGFzIGU6clsnb2snXT1GYWxzZTtyWydlcnJvciddPXJlcHIoZSk7clsndHJhY2ViYWNrJ109dHJhY2ViYWNrLmZvcm1hdF9leGMoKQpyWydmaW5pc2hlZF9hdCddPXRpbWUudGltZSgpO3JbJ3ByaXZhdGVfc29ja2V0c19yZW1haW5pbmcnXT1bc3RyKHYpIGZvciB2IGluIHMuZ2xvYigncHJpdmF0ZS1ib3JkZXItKi5zb2NrJyldOyhzLydwcml2YXRlLWJvcmRlci1mb3JtYXQtdGVzdHMuanNvbicpLndyaXRlX3RleHQoanNvbi5kdW1wcyhyLGluZGVudD0yKSsnXG4nKTtwcmludChqc29uLmR1bXBzKHIsaW5kZW50PTIpKQo=",
+        "role": "Temporary development verification input, not shipped runtime code."
+      },
+      {
+        "name": "collect-evidence.py",
+        "path": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/collect-evidence.py",
+        "sha256": "65751c4793c51fa74ac38802bd25492d4fbbe1c2040db06c3890997f74323a0f",
+        "source_base64": "ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBoYXNobGliLGpzb24sc3VicHJvY2VzcyxyZSxiYXNlNjQsZ3ppcApzPVBhdGgoJy9ob21lL21pb3MvLmxvY2FsL3N0YXRlL21pb3MvbWlvcy10bXV4LWRlc2t0b3AtcGxhdGZvcm0tYm9yZGVyJykKcj17J2ZpbGVzJzpbXSwnbGlicmFyaWVzJzpbXX0KZm9yIG4gaW4gWyd0bXV4LTMuN2MudGFyLmd6JywndG11eC1kZXNrdG9wLnBhdGNoJywnYnVpbGQtaG9zdC5zaCcsJ2J1aWxkLWNvbnRhaW5lci5zaCcsJ2J1aWxkLmxvZycsJ2J1aWxkLmV4aXQnLCdhZG1pc3Npb24uanNvbicsJ2FkbWlzc2lvbi1iZWZvcmUtY3JlYXRlLmpzb24nLCdjb250YWluZXIuaWQnLCdiaW5hcnkuc2hhMjU2JywnYmluYXJ5LmxkZCcsJ3Rvb2xjaGFpbi1ycG1zLnR4dCcsJ3ByaXZhdGUtdGVzdHMuanNvbicsJ3ByaXZhdGUtbW91c2UtdGVzdHMuanNvbicsJ3ByaXZhdGUtc2Nyb2xsYmFyLXRlc3RzLmpzb24nLCdwcml2YXRlLWlwYy12aWV3cG9ydC1yZWdyZXNzaW9ucy5qc29uJywncHJpdmF0ZS1ib3JkZXItZm9ybWF0LXRlc3RzLmpzb24nLCdhcnRpZmFjdHMvbWlvcy10bXV4J106CiBwPXMvbjtyWydmaWxlcyddLmFwcGVuZCh7J3BhdGgnOnN0cihwKSwnc2l6ZSc6cC5zdGF0KCkuc3Rfc2l6ZSwnc2hhMjU2JzpoYXNobGliLnNoYTI1NihwLnJlYWRfYnl0ZXMoKSkuaGV4ZGlnZXN0KCl9KQpmb3IgbiBpbiBbJ2xpYnRpbmZvLnNvLjYnLCdsaWJldmVudF9jb3JlLTIuMS5zby43JywnbGlibS5zby42JywnbGlicmVzb2x2LnNvLjInLCdsaWJjLnNvLjYnLCdsZC1saW51eC14ODYtNjQuc28uMiddOgogcD0oUGF0aCgnL3Vzci9saWI2NCcpL24pLnJlc29sdmUoKTtxPXN1YnByb2Nlc3MucnVuKFsncnBtJywnLXFmJywnLS1xZicsJyV7TkFNRX0gJXtWRVJTSU9OfSAle1JFTEVBU0V9ICV7VVJMfSAle1NPVVJDRVJQTX1cbicsc3RyKHApXSxjYXB0dXJlX291dHB1dD1UcnVlLHRleHQ9VHJ1ZSkKIHJbJ2xpYnJhcmllcyddLmFwcGVuZCh7J3BhdGgnOnN0cihwKSwnc2hhMjU2JzpoYXNobGliLnNoYTI1NihwLnJlYWRfYnl0ZXMoKSkuaGV4ZGlnZXN0KCksJ3BhY2thZ2UnOnEuc3Rkb3V0LnN0cmlwKCksJ3BhY2thZ2VfcXVlcnlfZXhpdCc6cS5yZXR1cm5jb2RlfSkKclsnd2FybmluZ3MnXT1bdiBmb3IgdiBpbiAocy8nYnVpbGQubG9nJykucmVhZF90ZXh0KCkuc3BsaXRsaW5lcygpIGlmICd3YXJuaW5nOicgaW4gdi5sb3dlcigpXQpyWydidWlsZF9leGl0J109KHMvJ2J1aWxkLmV4aXQnKS5yZWFkX3RleHQoKS5zdHJpcCgpO3JbJ3NvdXJjZV9pZCddPSd0bXV4My43Yyc7clsnYWRtaXNzaW9ucyddPXtuOmpzb24ubG9hZHMoKHMvbikucmVhZF90ZXh0KCkpIGZvciBuIGluIFsnYWRtaXNzaW9uLmpzb24nLCdhZG1pc3Npb24tYmVmb3JlLWNyZWF0ZS5qc29uJ119O3JbJ2NvbnRhaW5lcl9pZCddPShzLydjb250YWluZXIuaWQnKS5yZWFkX3RleHQoKS5zdHJpcCgpO3JbJ3ByaXZhdGVfc29ja2V0c19yZW1haW5pbmcnXT1bc3RyKHApIGZvciBwIGluIHMuZ2xvYigncHJpdmF0ZSouc29jaycpXQoocy8nZmluYWwtZXZpZGVuY2UuanNvbicpLndyaXRlX3RleHQoanNvbi5kdW1wcyhyLGluZGVudD0yKSsnXG4nKQpwcmludChqc29uLmR1bXBzKHIsaW5kZW50PTIpKQo=",
+        "role": "Temporary development verification input, not shipped runtime code."
+      }
+    ],
+    "final_total_checks_passed": 25,
+    "final_ipc_viewport_checks_passed": 4,
+    "private_sockets_remaining": [],
+    "all_checks_binary_sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803",
+    "live_query_action": {
+      "authorized_by": "parent root direct assignment and native live-session authorization",
+      "action": "Exact ephemeral read-only dimensions client PID1281325/start52041758/UID1000 with parent1281286/start52041721 matched full executable and argv; SIGTERM failed inside unserviced event loop, then authorized SIGKILL removed only that query.",
+      "human_server": "Still spinning at last worker observation; root owns checkpoint/reset/live recovery. Worker did not kill/restart/install human server.",
+      "evidence": "live-query-kill.json"
+    },
+    "root_cause_reproductions": {
+      "environment": {
+        "synthetic_variables": 2056,
+        "synthetic_bytes": 1099914,
+        "baseline_cpu_ticks_per_0_3s": 29,
+        "candidate_cpu_ticks_per_0_3s": 0,
+        "baseline_sigterm": "not serviced",
+        "candidate_sigterm": "exits promptly",
+        "candidate_peer_eof": "exits promptly",
+        "healthy_query_seconds": 0.0035312510444782674
+      },
+      "viewport": {
+        "trigger": "Attached private server: create float atx150 in200-cell viewport, shrink viewport below float left border.",
+        "baseline_cpu_ticks_per_0_3s": 29,
+        "baseline_query": "times out",
+        "candidate_cpu_ticks_per_0_3s": 0,
+        "candidate_query": "succeeds",
+        "diagnostic_stack": [
+          "memmove",
+          "recallocarray",
+          "server_client_ensure_ranges",
+          "screen_redraw_get_visible_ranges",
+          "screen_redraw_draw_pane",
+          "screen_redraw_screen",
+          "server_loop"
+        ],
+        "source_cause": "An off-right occluder produces left>right after viewport clipping, repeatedly appending zero-width intervals in the same range loop; reallocating by one amplifies CPU/memory churn."
+      }
+    },
+    "final_mouse_window_format_checks_passed": 5,
+    "border_actual_mouse_matrix": {
+      "proof": "/home/mios/.local/state/mios/mios-tmux-desktop-platform-border/private-border-format-tests.json",
+      "positions": [
+        "top",
+        "bottom"
+      ],
+      "status_rows": [
+        0,
+        1,
+        2
+      ],
+      "viewport_offsets": [
+        [
+          0,
+          0
+        ],
+        [
+          40,
+          20
+        ]
+      ],
+      "case_count": 12,
+      "title_click_count": 36,
+      "total_click_count": 72,
+      "checks": [
+        "Real MouseUp1Border records window coordinates on all three left-control slots.",
+        "Body records window coordinates while existing mouse_x/y remain pane-relative5,5.",
+        "Old mouse_x/y remain empty on top/bottom borders.",
+        "Actual status row clicks produce empty new formats.",
+        "No event produces empty new formats.",
+        "Offsets captured by event include panned viewport and topstatus correction."
+      ],
+      "source_changes": [
+        "format.c",
+        "tmux.1"
+      ],
+      "human_or_preview_mutations": false
+    }
+  },
+  "next_owner": "Root integrates new patch and provenance, verifies/stages c0e59d border binary and reloads ONLY owned preview server so new formats become available. Shell projection passes mouse_window_x/y; engine expects zero-based window coordinates. Root owns any human/live reset/install and main publication. Worker performed no preview/human mutation. Retain Rust helper f843 fixture fix; root owns its guarded clean invocation.",
+  "cpu_observation": {
+    "readonly": true,
+    "human_server_pid": 53639,
+    "human_server_start": 160269,
+    "query_client_pid": 1281325,
+    "query_client_start": 52041758,
+    "sample_seconds": 0.4,
+    "human_server_cpu_tick_delta": 39,
+    "query_client_cpu_tick_delta": 41,
+    "query": "display-message -p -c /dev/pts/60 #{client_width}\\t#{client_height}",
+    "cause": "Proven live server occlusion/range loop and separate initial environment EAGAIN client spin, both reproduced and fixed in vendor patch.",
+    "record": "/workspace/scratch/mios-desktop-platform-cpu-readonly.txt",
+    "private_client_trace": "Private protocol trace not embedded or published because it can contain environment data; sanitized cause/metadata and safe server stack retained."
+  },
+  "build_helper_scaffold": {
+    "argv": [
+      "/usr/bin/miosd",
+      "scaffold",
+      "rust",
+      "mios-gen/src/tmux_desktop_build"
+    ],
+    "root": "/home/mios/.local/state/mios/mios-tmux-desktop-platform/scaffold-build-helper",
+    "exit": 0,
+    "stdout": "Scaffolded new rust at: /home/mios/.local/state/mios/mios-tmux-desktop-platform/scaffold-build-helper/tools/native/mios-gen/src/tmux_desktop_build.rs\n",
+    "stderr": "",
+    "template_path": "/usr/share/mios/templates/rust",
+    "template_sha256": "2a9bf43dc4c1e0af3fd0b26f3b42217740a5dea7c86a7e619254f8cb62683203",
+    "output": "/home/mios/.local/state/mios/mios-tmux-desktop-platform/scaffold-build-helper/tools/native/mios-gen/src/tmux_desktop_build.rs",
+    "scaffold_sha256": "2a9bf43dc4c1e0af3fd0b26f3b42217740a5dea7c86a7e619254f8cb62683203",
+    "scaffold_base64": "Ly8gQUktaGludDogUnVzdCBtb2R1bGUgb3Igc291cmNlIGZpbGUgaW1wbGVtZW50aW5nIGNvcmUgbG9naWMuCi8vIEFJLXJlbGF0ZWQ6IC91c3Ivc2hhcmUvbWlvcy90ZW1wbGF0ZXMvcnVzdAovLyBBSS1mdW5jdGlvbnM6IGhlbGxvCgpwdWIgZm4gaGVsbG8oKSB7CiAgICBwcmludGxuISgiSGVsbG8gZnJvbSBSdXN0ISIpOwp9Cg=="
+  },
+  "build_helper": {
+    "path": "tools/native/mios-gen/src/tmux_desktop_build.rs",
+    "sha256": "f8431378e20bcc556f1ef92fd80a8de064afbb15aaeca65a25136e797b57edc7",
+    "api": "pub fn run(root: &Path, archive: &Path, build_dir: &Path, install_root: &Path) -> Result<(), String>",
+    "scaffold": "Canonical native /usr/bin/miosd scaffold rust mios-gen/src/tmux_desktop_build completed before coding; full receipt in build_helper_scaffold.",
+    "reads_ssot": [
+      "keybindings.tmux.desktop.source.version",
+      "keybindings.tmux.desktop.source.url",
+      "keybindings.tmux.desktop.source.sha256",
+      "keybindings.tmux.desktop.source.patch",
+      "keybindings.tmux.desktop.source.configure_args",
+      "keybindings.tmux.desktop.source.make_jobs",
+      "keybindings.tmux.desktop.binary"
+    ],
+    "behavior": [
+      "Requires actual container name podman-MiOS-DEV or podman-MiOS-DEV-* from /run/.containerenv.",
+      "Caller supplies already-downloaded archive; copies and stream-verifies exact SHA before extracting the same private bytes.",
+      "Copies and hashes canonical tracked patch before applying private snapshot.",
+      "Fresh empty private caller-owned build directory; rejects symlink/traversal staging paths and install root /.",
+      "Tar paths constrained to tmux-version top directory; links and special files refused before/after extraction.",
+      "Runs existing tar/patch/configure/make/strip utilities via argument vectors, never a new runtime shell/Python wrapper.",
+      "make_jobs limited1..2, all configure flags/version/URL/hash/patch/output from SSOT.",
+      "Stages stripped binary mode0755 with atomic rename and adjacent <binary>.build.json digest/source/patch/container receipt.",
+      "Does not download, install host packages, start containers or write live install root /."
+    ],
+    "validation": {
+      "native_rustfmt_exit": 0,
+      "latest_small_path_test_edits": "Format-compatible direct source additions after initial native rustfmt; root formats during integration.",
+      "archive_entry_validation": "Official verified3.7c tar listing contains only regular files; no tar symlink rejection conflicts.",
+      "unit_tests_added": [
+        "actual container name parser negative controls",
+        "staging traversal/filesystemroot rejection",
+        "fresh/private/empty directory and symlink negative controls"
+      ],
+      "compiled": false,
+      "tests_run": false,
+      "reason": "Source-only assignment: root compiles/tests in guarded pinned DEV and wires CLI.",
+      "fixture_revision": "Explicit0700 before positive private-directory check; positive assertion includes actual Result error. Root owns guarded rerun."
+    }
+  }
+}

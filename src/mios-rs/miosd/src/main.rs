@@ -8,6 +8,8 @@
 mod appmenu;
 #[cfg(target_os = "linux")]
 mod console_session;
+#[cfg(target_os = "linux")]
+mod desktop;
 mod drift;
 #[cfg(target_os = "linux")]
 mod framerate;
@@ -537,6 +539,16 @@ enum Commands {
     Launcher {
         #[command(subcommand)]
         action: launcher::LauncherCommand,
+    },
+    /// Open the native terminal desktop, or run its persistent background canvas
+    #[cfg(target_os = "linux")]
+    Desktop {
+        #[arg(default_value = "open", value_parser = ["open", "canvas"])]
+        action: String,
+        #[arg(long, default_value = "/")]
+        root: String,
+        #[arg(long)]
+        no_attach: bool,
     },
     /// Real application menus of the focused window (GTK org.gtk.Menus + dbusmenu registrar)
     #[cfg(target_os = "linux")]
@@ -1896,6 +1908,22 @@ async fn main() {
         Commands::Launcher { action } => {
             if let Err(error) = launcher::run(action) {
                 eprintln!("[miosd] launcher: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        Commands::Desktop {
+            action,
+            root,
+            no_attach,
+        } => {
+            let result = if action == "canvas" {
+                desktop::run(std::path::Path::new(root))
+            } else {
+                desktop::open(std::path::Path::new(root), *no_attach)
+            };
+            if let Err(error) = result {
+                eprintln!("[miosd] desktop: {error}");
                 std::process::exit(1);
             }
         }

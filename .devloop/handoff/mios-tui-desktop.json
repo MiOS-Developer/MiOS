@@ -1,0 +1,2337 @@
+{
+  "base_main": "28ef0cf03338dece2d19a7a4cfaa8032fc158f3b",
+  "behavior_implemented_in_source": [
+    "Native TTY desktop on an explicitly configured dedicated backend/socket/session; quiet background, top bar, bottom dock and searchable Apps launcher.",
+    "Left [x][_][+] window controls, guarded native border movement/resizing, centered window actions, snap halves/quarters, tile/float and identity-preserving minimize/restore.",
+    "Per-type window/menu/dialog/tooltip dimensions reuse layered terminal.popups; native systems chooser fills the viewport with compact tabs and at most two footer rows.",
+    "Desktop shells reuse the generated SSOT prompt/theme and terminal-shell argv, clear the worker-only helper flag in human scope, and keep remote/full-palette versus console fallback behavior.",
+    "Game redraw scheduling bounds notification batches and preserves wheel order plus a paint barrier before page-relative key/click activation.",
+    "Monitor input stays independent of bounded single-flight collectors; keyed tables preserve selected/top-visible identities and horizontal position; reader logs retain scroll until follow resumes.",
+    "Backend viewport clipping rejects empty/off-screen occluders and zero-width ranges; identification IPC yields on backpressure; border-safe window mouse coordinates normalize status rows and panning."
+  ],
+  "deployment": {
+    "final_artifacts": [
+      {
+        "bytes": 12139824,
+        "name": "mios-gen",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-gen",
+        "sha256": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "static_gate": "native/core-gates-mios-gen-static.json"
+      },
+      {
+        "bytes": 2192296,
+        "name": "mios-unit-gen",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-unit-gen",
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "static_gate": "native/core-gates-mios-unit-gen-static.json"
+      },
+      {
+        "bytes": 20913464,
+        "name": "miosd",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/miosd",
+        "sha256": "8c5196bda9c68022322d95f7e8c7b9316588511a32a76816b4ef799a0eceb9fb",
+        "static_gate": "native/core-gates-miosd-static.json"
+      },
+      {
+        "bytes": 6710512,
+        "name": "mios-tamagotchi",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-tamagotchi",
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "static_gate": "native/core-gates-mios-tamagotchi-static.json"
+      },
+      {
+        "bytes": 6839744,
+        "name": "mios-controls",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-controls",
+        "sha256": "506418a3de5ab38f5c73a97bb062c45f1a38476260ba5b56f11c54f56ba03087",
+        "static_gate": "native/core-gates-mios-controls-static.json"
+      },
+      {
+        "bytes": 2035920,
+        "name": "mios-fanctl",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-fanctl",
+        "sha256": "56ea96c418e469cfc1986f9e56eba89e8eb191a9164193bd210ac694f861ecd3",
+        "static_gate": "native/core-gates-mios-fanctl-static.json"
+      }
+    ],
+    "host_recovery": {
+      "files_and_existing_saves": "three existing saved-progress files backed up; source work preserved; unsaved process memory was not preserved",
+      "operator_authorized_session_resets": true,
+      "physical_pam_and_inputd": "verify exact protected policy/process identities in final receipt",
+      "physical_pointer": "unverified; no physical acceptance claimed",
+      "state": "host freeze recovered with witnessed authorized session reset"
+    },
+    "installed_entries": null,
+    "installed_main": null,
+    "policy": "After every main push, install and verify the authorized live target; record published main, artifact source/checksum, installed path and actual running target.",
+    "preview_entry": "miosd desktop",
+    "preview_latest_controls_theme_reload": "pending publication/install and coordinated re-entry",
+    "published_main": null,
+    "running_target": null,
+    "state": "core_verified_pending_main_publication_and_install"
+  },
+  "failures_and_limits": [
+    "Full10 stopped at the new argv0 fixture with one failure; its exact failed log and exit are archived. The focused repair run passed and supersedes that fixture failure, not its historical record.",
+    "The first archive scanner rejected five bare source-path-to-SHA256 entries as generic-api-key matches. Each value was independently verified as a public source digest; typed digest rows correct the representation. No scanner rule, baseline or allowlist was relaxed; the final payload requires zero findings.",
+    "Earlier projection/compile/private-fixture failures remain intermediate failure provenance; final standing gates and focused corrected tests are recorded separately.",
+    "Physical pointer and controller trial unverified.",
+    "Remote authentication and later global MiOS-Mons identity migration remain separate.",
+    "Private desktop 1+15 tests used the exact earlier artifacts recorded in their receipt; latest argv0/TTY transport is covered separately by focused repair and PTY proofs.",
+    "Authorized host reset lost unsaved process memory; three existing saved-progress files were backed up; source work was preserved."
+  ],
+  "next_owner": "Root: publish the verified core on main, install after each push, verify exact artifact hashes and running targets, then record publication/install receipts in a metadata commit and install that revision. Keep physical trial, real remote authentication and later identity migration separate until proved.",
+  "pending_acceptance": [
+    "Publish reviewed core on main; confirm public revision, install sealed artifacts and record actual running targets.",
+    "Coordinate latest desktop/TTY client re-entry and interactive physical trial; private proofs do not certify physical pointer behavior.",
+    "Finish separately reviewed real remote PAM authentication, then the ordered global MiOS-Mons identity migration.",
+    "Physical controller and analog acceptance under task3775 remain open."
+  ],
+  "purpose": "mios-tui-desktop",
+  "scaffold": {
+    "initial_output_sha256": "5816ca1e99cac07fddeee1babc50abc3c1790c699edb9ecebfd7bfa4cfea87fb",
+    "receipt": "mios-tui-desktop-publication-scaffold.json",
+    "receipt_sha256": "f970b43ee102431e95944a9becaf36ee712fdb8557f136263c14b6f21a7ba360",
+    "template": "usr/share/mios/templates/json-schema",
+    "template_sha256": "6d20b1d4b1a57ad088131a2917a7a7ff92f53f9b809c144a61cfc9eda3621d5c",
+    "tool": "miosd scaffold json-schema mios-tui-desktop"
+  },
+  "schema": 1,
+  "source": {
+    "commit": null,
+    "digest_scope": "schema2 metadata/source-input-sha256.json in verification archive; dynamic task/docs/handoff metadata excluded",
+    "input_files": [
+      {
+        "path": "src/mios-rs/.cargo/config.toml",
+        "sha256": "1e0b9f874d2fa4d68aa95c59a761778334a6a1cb2dfc9fdf1ce23a21818d50ee"
+      },
+      {
+        "path": "src/mios-rs/Cargo.lock",
+        "sha256": "bf83bcfccfd2e1e88c1811e3a138f958efa8a818d08bb69bef74bdf0bafe6135"
+      },
+      {
+        "path": "src/mios-rs/Cargo.toml",
+        "sha256": "54426be4e3b60a2fbf899cf60264398ee65d9515f1f8106405dd9bd95c0bedaf"
+      },
+      {
+        "path": "src/mios-rs/mios-build/Cargo.toml",
+        "sha256": "bb759beadeefd63b744c0271498dd9191ca9ad1727f70ca63114752857d4355c"
+      },
+      {
+        "path": "src/mios-rs/mios-build/src/artifacts.rs",
+        "sha256": "a47978379df456ac6dca104c21937a1d2c6acbe1cc9e336db55fa8251a60b251"
+      },
+      {
+        "path": "src/mios-rs/mios-build/src/lib.rs",
+        "sha256": "b6287b663e21c47839d4aafd89811a3b0dc7ac2f1402e31b22d5e3107a3388e3"
+      },
+      {
+        "path": "src/mios-rs/mios-build/src/monitor.rs",
+        "sha256": "7d7896e8573cc92d753e2e33fad9abd461edc5feb5f940427dd746d2e99dbe39"
+      },
+      {
+        "path": "src/mios-rs/mios-build/src/progress.rs",
+        "sha256": "9a88d833e4ea5954813c416de61a6d95329735f0f745ff82de7edf9186376c6e"
+      },
+      {
+        "path": "src/mios-rs/mios-build/src/verification.rs",
+        "sha256": "2676c5ce3fd20d8b201f685cd9ebc6ddfdc0c89a856074592724b8aec1a7b5fc"
+      },
+      {
+        "path": "src/mios-rs/mios-build/tests/golden_harness.rs",
+        "sha256": "ca8e7386d4d0ae0e82a388a3899dca3bc265c57929b3b71431c1afedb06bb06b"
+      },
+      {
+        "path": "src/mios-rs/mios-config/Cargo.toml",
+        "sha256": "eb0ee3d183a337fc6f5f9722dc9eaee069bb4183027ccbf143d4fa3094c3be0b"
+      },
+      {
+        "path": "src/mios-rs/mios-config/src/lib.rs",
+        "sha256": "27e71436937c7ae797623622519a08ac8a584b0d8cb974251a414e36ef6e6068"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/Cargo.toml",
+        "sha256": "9532da7ef3a3f4ba04a2220e230ec5a3fa35a92763b3add0e1879b65a76f4e71"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/artifact.rs",
+        "sha256": "327579016ebadcc6fb1b2888b2320b2bc28be2f0fdb7f79fd579e4fae7668cdf"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/artifact_layers.rs",
+        "sha256": "745c5bf9c146299b2de7f53263a7aa97b5813f63dd774a5a311da2901652e8bf"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/artifact_recipes.rs",
+        "sha256": "5394d92490ea0d9be1f99b8599118965f85ca40790240d3250deeb3baedb33e5"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/canonical_bools.rs",
+        "sha256": "da7e4ec7faca7d61fbb5e24237f7adc209bca9f461be74bf4c9d3ae9c908d90f"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/credentials.rs",
+        "sha256": "2536f368e796005ef1b546abda5f2f70200872a7e5ec3306d7bd5180165a18ce"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/dispatch.rs",
+        "sha256": "b23690d3d262c85fd3882d03339afe6e5d5c7b83a563e103a086d11902ff9cf8"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/doc_refs.rs",
+        "sha256": "faf81898f117febe9422e88ad44cf9a0b9b340377e62a2987c99dee96ed6e0ed"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/gate_registry.rs",
+        "sha256": "4f4c0b2f6074585f6823a08f748dc9c7c59acc250cb154ccfc966b0e563f994b"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/host_parity.rs",
+        "sha256": "bd13eb7592865ca94312d2dec07b25e1f2c00b6ade8104748bccf7c8bf97492a"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/image_equivalence.rs",
+        "sha256": "da09810b6a8e0443ccdcadc03ea70149b5d8afea09960dc7224f121379c2de95"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/image_freshness.rs",
+        "sha256": "a93955ee4e83597cddb405b41a5edbec6f5bedb140b8e5269879c58a5e2a530c"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/inert_tables.rs",
+        "sha256": "577c61c4486606b7260517a530218867f75d613d42998e85805bf7450c76b210"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/keybinds.rs",
+        "sha256": "80271e0526c9d45b142d76e94f7ad4f94c87622d4cf001f1334faee757acfca5"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/laws.rs",
+        "sha256": "8726778e0035a15cecaaedfab222e4729e71be4c8dfeed53fb82208a050b5517"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/main.rs",
+        "sha256": "5c5a655834356602203d339886a3ff7659d8b8674c4cd9ae0488745ebf062225"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/module_tests.rs",
+        "sha256": "cd4b28e41513e55b07119f93b45693ccafcd8082ebe3cd48a779f2fe5ae5a909"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/negative_coverage.rs",
+        "sha256": "695aad9cd64aa3bdaa27aa9efc8bcc817edbf4a554803337dddc7b379b79347f"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/phases.rs",
+        "sha256": "2210a5c31ef74cab15317af2e8f0d5b4846f7e8141eaabe93acfda60eb3b8479"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/powershell.rs",
+        "sha256": "a8b785a4aa40cdf013981b88e81d24e1e6184e64059275c2ad2e650e2f52f45d"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/profiles.rs",
+        "sha256": "48db4724532af1ff4c15481b4829953ff1a0c8a8f25d74471bdc9110e3358890"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/projreg.rs",
+        "sha256": "ddd53e8ffec44eaf08d8ebf859c0d60f82c1014e3659b1fa5b6acd3b6390bb6c"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/protected_refs.rs",
+        "sha256": "0167b2258e217bdff9364484d8665644c69b5ab2c0a50113fc52ddcfcc7ec6dd"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/ratchet.rs",
+        "sha256": "354af7135ab1aee1acfbab0133ed7d107dee71b7d5174acff8a9244cafa88e64"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/rendercov.rs",
+        "sha256": "e1d7bff14909801c20ea8add3878730b2b546a1712f83665e200d021ee824cda"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/rust_categories.rs",
+        "sha256": "ca6faacd94eba536ed637cbca5d5823ca82bbd15096cdda2745aeed7abbe49a2"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/shell_lint.rs",
+        "sha256": "75ec6cebbbf94df963510d9f4014beba22611250d821b72d2c132e95cdb9117b"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/sigpolicy.rs",
+        "sha256": "724617422b37452d82f615d54f49e89853dc09e3c38c26213af0e5a0f301984e"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/static_linkage.rs",
+        "sha256": "fa0e02ed4f0ec57ee5a4eaf91ec1440cbdb07a16d9b33c18c37095ba5a0b8666"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/stubs.rs",
+        "sha256": "ccc16edc78cdac65a6a03972813f0bae25b18e415efa2d34bdce961a88ba1e38"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/src/version_literals.rs",
+        "sha256": "4bbbb3454ff2c5d2a77e4bf7a364f3bb513d9cf92c28ede1f7ec2ad92f393748"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/canonical_bools.rs",
+        "sha256": "8e7b808baa0b9b9948e733ae9672087215f1e6c493924d10243545a5033520dc"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/credentials.rs",
+        "sha256": "9d558fe655de79b493949dc298cce2de840ad09d5179d3de1358ba6d418fc445"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/dispatch.rs",
+        "sha256": "2144428b5233f8ee53b17f55af0762a5d7f6129869733ed0bbdeeb06ae649623"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/laws.rs",
+        "sha256": "fa94830c1695fa5c23c4115c813b6458e315400daa008884b2b9d5c185b48e2d"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/negative_coverage.rs",
+        "sha256": "3d3346e9755adc3612628ed0b86de524167ce93da64f7e0821fa889f6bdc719a"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/phases.rs",
+        "sha256": "f6c67829cafaf66c1c985b9874a662843f4e255af6079f4be8b92caeb020c058"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/profiles.rs",
+        "sha256": "5c5a3ac28c55d81c0291393fa6308af209fb34cd44733fc0cbe7f051e6f59f96"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/projreg.rs",
+        "sha256": "6f59179f697c97211fffe61df554f9cf6ed50ada91e9be237831577b8920ee7c"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/ratchet.rs",
+        "sha256": "b3f33e2befcae56cd132afa842fb8a8dc1cd5d16e884d29b296a8eb6b9140322"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/rust_categories.rs",
+        "sha256": "d15986d4a92cdd65e4e4a32ad767e12be0c6a3a9ce4dade511c98fc65f3600a5"
+      },
+      {
+        "path": "src/mios-rs/mios-gate/tests/stubs.rs",
+        "sha256": "6c68769d390d5a900ec3ddc42f11c9a0a9bffe6b5df41977737f69190dc460f1"
+      },
+      {
+        "path": "src/mios-rs/mios-node/Cargo.toml",
+        "sha256": "a3776933d363c665ec2a854d42a4863f7fdb27ea02975e963c2cddde9f8be16c"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/crypto.rs",
+        "sha256": "30ac5085f9de67bcbe8a62e04b6b943aa32f0bd78ae576b114688fdb9d6e8052"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/device.rs",
+        "sha256": "12e3844dd1fc60ae4ad446468fc25edd932b8797e589b4ff43a41adf16791e15"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/exec.rs",
+        "sha256": "89b36b9434010f3d0fc68842c5886fd69f34bfb25a6040abc44c566cfb4795f0"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/heartbeat.rs",
+        "sha256": "0727669f64ede26101f1154daac43636da71e795473296abaf1c3b659dcc8d89"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/lib.rs",
+        "sha256": "f00f0156bbc1828c99f41bdc708f48df3d6c54828248032d835d2eb50b9c7387"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/main.rs",
+        "sha256": "85709330c97e57571ac3b9c7ae44825711e4b7911083ba682740670a4607f143"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/mesh.rs",
+        "sha256": "044797bac51e30558f8aeea86d36c84754e31ed60d563f484c8081064e2a98c9"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/node.rs",
+        "sha256": "dc0566e3f8fff58b5c29b71c47128c564933e5a6689f7d7e9dba73796b1a29d7"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/state_sync.rs",
+        "sha256": "cbecef44f9144da6bb2bf0ddad456fcfd723e75d43a8c2ab3c01cecee95a49b3"
+      },
+      {
+        "path": "src/mios-rs/mios-node/src/wire.rs",
+        "sha256": "0f0ce038fdb9445015be5281aa4a153a4d0951494affe9b019dba09e178458c2"
+      },
+      {
+        "path": "src/mios-rs/mios-node/tests/adversarial.rs",
+        "sha256": "ade0ce491d9979aedb3ae7fff50d9b45d1eba52c4461df503a0e1dbb452a8cbe"
+      },
+      {
+        "path": "src/mios-rs/mios-node/tests/mesh.rs",
+        "sha256": "945283b9b6899eb15b7b888e407132562396bf5720687162a2a7c70c2265862f"
+      },
+      {
+        "path": "src/mios-rs/mios-probe/Cargo.toml",
+        "sha256": "7151bec2f220207f91dac00d701acd056480ccdaa684b0c565f9db96b062ae9c"
+      },
+      {
+        "path": "src/mios-rs/mios-probe/src/main.rs",
+        "sha256": "365b583d487d8804d7ccfc9bcf528c1c32c0e27af3c4a75710688fdc8142560e"
+      },
+      {
+        "path": "src/mios-rs/mios-probe/tests/probes.rs",
+        "sha256": "afdf6e25a83dc4086eae4af10fb97044f7d45e4cbf12b0d63951b367d051b8e1"
+      },
+      {
+        "path": "src/mios-rs/miosd/Cargo.toml",
+        "sha256": "b2fa2f8e06e20c0c277b92820c1979f54b87308a21522137dcf231811c9f0200"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/appmenu.rs",
+        "sha256": "688fb004f40610e1a37ae78ef2afea14634310d3174aea168729e753aee6b59a"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/cli.rs",
+        "sha256": "8c80a0afd07687f8c9f5b78e838137af57722fd6ef26999f221fc1ef28f5dcd4"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/console_session.rs",
+        "sha256": "72089af6951bf64106e80664629d8bc14ccbc1942e9eacb2b532c2dcb8a52b6c"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/daemon.rs",
+        "sha256": "50b7adb89056822c2822cee24dc415193af66615be62c92a7f1d967728fa864f"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/desktop.rs",
+        "sha256": "7845f4a03259414e39ac50a590cb3d12e89157e9f95cc6f2081417515969f200"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/aiplane.rs",
+        "sha256": "e1a3540175455e40867cf729e7b5b3451ef0246ef8938dfb7fe7e7bb60daabf4"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/audit.rs",
+        "sha256": "d17ca33f747289763f18e8db91625d4e83a380067c61f793b3feec6d0f44c161"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/bake.rs",
+        "sha256": "c0a09b4cdc9fe7e40731d1acbc155c966509e719733520892df6ce0e434537af"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/boot.rs",
+        "sha256": "fdae5bd1a4e3bfbe4fe1d31d76b5bfdf7140727d373938429aaf3ed7f5b0238c"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/converge.rs",
+        "sha256": "0a7b1d72d70d21a3e3e77be7ce268153775738173c70cfc4229412781164ddbd"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/db.rs",
+        "sha256": "9f4a7001b2ef4095955af12b34225aa9ea5bf9ec3ad4c0cd37654ec81f3c00d5"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/deploy.rs",
+        "sha256": "ef10d448806a52ebc493dfb20569fb32104adf2eecb81f5fee733b64dbdc9440"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/governance.rs",
+        "sha256": "2da7c2fa37c0ceb21e7995302f58ea944ade348286e2874feabb1d7187e33242"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/hardcode.rs",
+        "sha256": "fc8af57baa077ac6fe2921a009d8e6aab2e87303abf116bae85eaa8ecf3c3beb"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/laws.rs",
+        "sha256": "0560403fd2ae5275b9e1e81990596fd4e765b6d78e564dd4a29ea2f27b4fba5b"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/mod.rs",
+        "sha256": "80c058e6307782da1d7b8b97bca190b4e848983a4e94954ca9ee7eaff1ac9245"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/modules.rs",
+        "sha256": "2e550406d237045ed1f879bc0ae3f86c204f5a477b444f853c3d32d29e580254"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/names.rs",
+        "sha256": "6505aec964d267104aaef60059671b1a524fbaec82eb7426ef14601f0babe9ce"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/numbering.rs",
+        "sha256": "1b3c93d327b185a5d8c4e17a1973a6fff280e60671e218737c83db23397ae1e8"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/ports.rs",
+        "sha256": "0e9293f4ff7a6d15f66eece86f0f1d7899193873661ee7500f25674ffb542e12"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/projections.rs",
+        "sha256": "dc72464494e09a51a1f014cb80ce936263f6d1fefcc3091867a8230ca65c64ba"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/regen.rs",
+        "sha256": "346a427028558b53b31d879ed605ab8f5bc5d09b599209da21c436e15ebf01db"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/resolver.rs",
+        "sha256": "b88ba46ac8aa2b46f978869d820a14a280716e2f5004e62d8150ebde4f4ee018"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/security.rs",
+        "sha256": "740a430ef80ff6b2467f99afa906db89eb76b8bc8fbb1f87c5d424e177f3e005"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/selftest.rs",
+        "sha256": "8930abaa2f02bc61abe65616c8086efb6cb3d7b249aedb6b2ec813cd259aebea"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/ssot_lint.rs",
+        "sha256": "3348e23ac273c8731e44466c8f24cb546b766e3873c3c464a1dd9cd2f59051f9"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/supply_chain.rs",
+        "sha256": "8752ac321292adc4d76d8522a5922e956f1fa53904957e81605d9b2b2fdef69a"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/templates.rs",
+        "sha256": "33e057eb8acb512495c6e34f294586c4813c13959a0423bd9373c925141d49f0"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/drift/version.rs",
+        "sha256": "2c82027b040a05df5acf3077c454b30cd0d492c2e6f56f67e69fc7af9bca084c"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/fhs_sync.rs",
+        "sha256": "2f8234cda83c0900dfced58b425dd6617188c5be6f1a57ec99b9e12c52fc0407"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/framerate.rs",
+        "sha256": "4347c6f075595c6a370e66a1ea77f27428d02b7a8aaa71ff8ca12131b1ca800e"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/framerate/plan.rs",
+        "sha256": "43fd83ec4f6a4b87a69f1ef427bd0ad8b278ad2294740d6257433adf789d6122"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/launcher.rs",
+        "sha256": "903aa7bc246f54084d64b04e42182cbbdf1f9b7809f86ecbbbf46c13c1753006"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/lib.rs",
+        "sha256": "ec51c2ab4a467a636c2214b19cf4461bad56dea87722d0721aecfbb9db676ff5"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/main.rs",
+        "sha256": "37872b65cfa699b7241400d19211e23ae75d2d32fad1b924f8d00576a9733c89"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/placement.rs",
+        "sha256": "822b72eb35364f8bcad3ab829b75ffdd19b4bb0739667323ddbaa35255e8f830"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/rde.rs",
+        "sha256": "61327d8734bc8c23ae859af3fe113b7184d1d4939d49e70e280b88100502ef41"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/sessions.rs",
+        "sha256": "b449713508d56ee293d5db58d744ab9be5db1ecacc754f74bdfc2c0129f51295"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass.rs",
+        "sha256": "1ec371bd1ce8a8d3d3574579bd7776935ccf4477de78e658330a2c5078a348f6"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/follow.rs",
+        "sha256": "58ea6214b0c191212c88b1b38bba39aad664a7cab1b13361938e42505a83747f"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/picker.rs",
+        "sha256": "e2563af1563e374b55010e67f056cc4e02e3a884f1b15961b5c45b57fb684446"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/release.rs",
+        "sha256": "70b812a0708dbf63084dd8fb0fabf7f03d73e15a0e4661d0647a3c05ea3b5ad3"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/state.rs",
+        "sha256": "f9e029b670d18397491d735aff0315361fe1042c9c2b032f2a9b93d31e5bdf0e"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/wine.rs",
+        "sha256": "d86ea69b8827d8b42c51564c0b4c54a94a748165e5fa2d10011f50abbf604b18"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/shaderglass/zip.rs",
+        "sha256": "fcb6f48d7fcaa5c22c273c3f9e65aca7a8a6ae6bc87a8b855aef7f636588e33d"
+      },
+      {
+        "path": "src/mios-rs/miosd/src/wallpaper.rs",
+        "sha256": "41e943306c427d90be125cf377ccda88695dcffa2a1a266016de73eeb3fdaef5"
+      },
+      {
+        "path": "src/mios-rs/miosd/tests/integration.rs",
+        "sha256": "4ac32fa937643808b02d6054c1d564eea44c453b97c969fa40de4a87361cf2f1"
+      },
+      {
+        "path": "tests/test-mios-mons-runtime.py",
+        "sha256": "ffef7bf0bae69ab17905d274aaaa9528e3969e9eac0424690ebce485ce3f789f"
+      },
+      {
+        "path": "tests/test-tmux-os.py",
+        "sha256": "8ecb518a36e86db5d76c161052b3ce542a86672de8a8bfcff325e851d60d9d38"
+      },
+      {
+        "path": "tests/test_adversarial_m2_monitor_tui.py",
+        "sha256": "943c068bfc5a2e39f4557712ea92eb3e0f3d7af850eedfcd0d135b17bbfbc15a"
+      },
+      {
+        "path": "tools/native/.cargo/config.toml",
+        "sha256": "ea2950ff2c30104512f7d8c1716eb05cafe62a83eb3647b206f49dfb0f7ebe2f"
+      },
+      {
+        "path": "tools/native/Cargo.lock",
+        "sha256": "e450468127291a864db899f2b703589d73c9ec91e64547e26d718639724d1ad8"
+      },
+      {
+        "path": "tools/native/Cargo.toml",
+        "sha256": "fc42376df6abf3d57d43e0122ff1b5158bcd8d665c05ee3b453ce4872167995b"
+      },
+      {
+        "path": "tools/native/generate-names-registry/Cargo.toml",
+        "sha256": "77fb5b94aafe8b07bc7e37488d14aa6b1f968fd037b536c62ac28050e370c555"
+      },
+      {
+        "path": "tools/native/generate-names-registry/src/main.rs",
+        "sha256": "5aaa75de490ada54881284d071b5657cd2124631c4f11035d1b6659df526affd"
+      },
+      {
+        "path": "tools/native/generate-names-registry/tests/cli.rs",
+        "sha256": "0d42310a0fbd807c83caf2d2011b28abcd4015107b98bc234a0e8d1b04be7b36"
+      },
+      {
+        "path": "tools/native/mios-agent-relay/Cargo.toml",
+        "sha256": "2487692a23c60b1dc35e1d14a71cbd07fbf5ade18f6082854c516b5810217bac"
+      },
+      {
+        "path": "tools/native/mios-agent-relay/src/main.rs",
+        "sha256": "33f33c8852f3663b5a295ae3a1c53e118594d75f5c8e807895e01744f6664b0a"
+      },
+      {
+        "path": "tools/native/mios-agent-relay/src/workspace_hook.rs",
+        "sha256": "97d7519d265322d76a5f8a85a5157001e455f52bd5e2d5c75e2ed5c0db94c0f5"
+      },
+      {
+        "path": "tools/native/mios-ai-config/Cargo.toml",
+        "sha256": "961dd6dd0fc005b0f2e98e086cb03bbc6dc50670ac5d310777c84f4fe8149334"
+      },
+      {
+        "path": "tools/native/mios-ai-config/src/main.rs",
+        "sha256": "7a3001555e53b85da585f05e1f612df6a8ef8f4634cf53e44e509dd345b72f4d"
+      },
+      {
+        "path": "tools/native/mios-ai-config/tests/runtime.rs",
+        "sha256": "5cd6f221b5151914904e87950fcccef42bbd7058bf5a0b3ea804a0e7984acfeb"
+      },
+      {
+        "path": "tools/native/mios-aiplane-lint/Cargo.toml",
+        "sha256": "b418176dd8d6789c2ea62dd17b0667f37b9de5d025f6eedae805efb1c0e46f85"
+      },
+      {
+        "path": "tools/native/mios-aiplane-lint/src/main.rs",
+        "sha256": "1cdcaa0e7f73e309f39a20ebd97e9ca6b81bd137f61621ad5a71e33748f6cc0e"
+      },
+      {
+        "path": "tools/native/mios-bake-plan/Cargo.toml",
+        "sha256": "a1f017c55e00fd2ea2b99edfc67deb6337aa96ff96a23c29c0af3906510d6404"
+      },
+      {
+        "path": "tools/native/mios-bake-plan/src/latest.rs",
+        "sha256": "ea3a38f1831dfb8e85cb40159043c343c24f3d098768f0b950b6f6149b8d6c44"
+      },
+      {
+        "path": "tools/native/mios-bake-plan/src/main.rs",
+        "sha256": "eb95fc32deed9ed2cdc5a136d17a1583e914995b775aad7b4252b48370aba4a2"
+      },
+      {
+        "path": "tools/native/mios-browser/Cargo.toml",
+        "sha256": "ee403fb0c867d103a90b7cdb09611ca16c2d8e538a3d5455c0402db0ed2a9d55"
+      },
+      {
+        "path": "tools/native/mios-browser/src/main.rs",
+        "sha256": "b18faa55d2307345c67cc9ca70deb16d0b15dc91a192817a1b421fa0d8039fcb"
+      },
+      {
+        "path": "tools/native/mios-comment-lex/Cargo.toml",
+        "sha256": "6ded280ff96fc965fcb952c7dc0973a003ef4849ba0955fd47dcaa1ed11868c9"
+      },
+      {
+        "path": "tools/native/mios-comment-lex/src/main.rs",
+        "sha256": "7a3fa5e00d8aa29b0e07da17d935cd3c1c1760b6342396807ace8ab8fc7a5bbe"
+      },
+      {
+        "path": "tools/native/mios-controls/Cargo.toml",
+        "sha256": "9de0614644ad46aaccd7f15e6a4681483bf5ad789baf89a98bf64bb5fd633604"
+      },
+      {
+        "path": "tools/native/mios-controls/src/apply.rs",
+        "sha256": "6a4d3003963ebc04022f6195d479c01721a88831c76df84dbc2e2fdf17edcf99"
+      },
+      {
+        "path": "tools/native/mios-controls/src/bindmap.rs",
+        "sha256": "eb70f0dc93465870fba157f90ec1c8bb41cebb4f7f92153059a34223aa13faca"
+      },
+      {
+        "path": "tools/native/mios-controls/src/devices.rs",
+        "sha256": "47e10ec36dcdec7074ff79c66c3addd60db42177ac3a0ca45853b8d099cd316f"
+      },
+      {
+        "path": "tools/native/mios-controls/src/input.rs",
+        "sha256": "23c7a5d6be5e61647e3e12601e8817ff1f700ea6a2701d5f10401b1058486587"
+      },
+      {
+        "path": "tools/native/mios-controls/src/layout.rs",
+        "sha256": "dadd8e7896e2b9421766ec3f7507958c7a1b4d6cef15edaabaac4b42716dfd56"
+      },
+      {
+        "path": "tools/native/mios-controls/src/main.rs",
+        "sha256": "2f757b7b912f65546652fca5c548b1e288e71f4d0fd69df34b241c5b48aaf09c"
+      },
+      {
+        "path": "tools/native/mios-controls/src/model.rs",
+        "sha256": "a13b2680c4c0b028ecfd819c99da8e2ef3d1a814fb6510509a4cb67441c109f5"
+      },
+      {
+        "path": "tools/native/mios-controls/src/pads.rs",
+        "sha256": "5421f7009cfc1defe02f20198f8e37f4a2fb4ce0d72f427d27ec95053bbf7296"
+      },
+      {
+        "path": "tools/native/mios-controls/src/tui.rs",
+        "sha256": "45150d3cad3f8d2593a264295c06a5c4e79be1bc8b4c27edb797859684f27bb4"
+      },
+      {
+        "path": "tools/native/mios-controls/src/validate.rs",
+        "sha256": "920293bc3e7a8c769d62d7f53fe59a95847752dc921683cb664b47f3d66ee715"
+      },
+      {
+        "path": "tools/native/mios-displays/Cargo.toml",
+        "sha256": "dc3b3fd6de7271c5e2b372bc4d6df8275b75f5212fb0b6a9bf473347fcee8378"
+      },
+      {
+        "path": "tools/native/mios-displays/src/main.rs",
+        "sha256": "0a751b9aa8661ac8af1739967758d804b0a9c39213dc613b3e8dfdf91da37212"
+      },
+      {
+        "path": "tools/native/mios-displays/src/model.rs",
+        "sha256": "e01351045747983072ea36a9063ac249ebaed7986c23f06971640f26fd4315d9"
+      },
+      {
+        "path": "tools/native/mios-drift-runner/Cargo.toml",
+        "sha256": "cfc8de850fe88e1a61787cfb244a0381d680c7e39bc407966cf514d529b1bb73"
+      },
+      {
+        "path": "tools/native/mios-drift-runner/src/main.rs",
+        "sha256": "5e40980528c9472e101326958f7ef4c7eea991505d12f3883bab7169a0ea9827"
+      },
+      {
+        "path": "tools/native/mios-edge-status/Cargo.toml",
+        "sha256": "42178eb89f31512d158b53d201d8cc4d655ef918428109ef617452a1ac8953cb"
+      },
+      {
+        "path": "tools/native/mios-edge-status/src/main.rs",
+        "sha256": "2adc1e1b3db0a30fd720eafc80c03f44b2674f5ce55a35a09f49d75a03663128"
+      },
+      {
+        "path": "tools/native/mios-fanctl/Cargo.toml",
+        "sha256": "9c27a3e4b845a5e471a9dd6c1e571515970fdd114dff83fcc6230a3083cf9bf4"
+      },
+      {
+        "path": "tools/native/mios-fanctl/src/api.rs",
+        "sha256": "57587f5953de46a39c2ee09c130115707e683bf1ecc8f8e177da8c64f645766d"
+      },
+      {
+        "path": "tools/native/mios-fanctl/src/config.rs",
+        "sha256": "05c1cd0beafc47d2825b425eccf312ba2c964d6d043c879eca00977722c658c0"
+      },
+      {
+        "path": "tools/native/mios-fanctl/src/main.rs",
+        "sha256": "de30bb25643137999b7997657af04eb71441a9a12a52c06df24b3f6929952ca3"
+      },
+      {
+        "path": "tools/native/mios-fanctl/src/tui.rs",
+        "sha256": "0bcc9c99d6f3f8feae21d6d7a21352862a1eb0d3a3c0387036d46db1192f530b"
+      },
+      {
+        "path": "tools/native/mios-fanctl/src/view.rs",
+        "sha256": "7c58d8d2d535f090f73e53bb559134e373b9697899d0bb34a52ebbc84f471156"
+      },
+      {
+        "path": "tools/native/mios-gen/Cargo.toml",
+        "sha256": "240ebb1719ab695c06381a7bd0b679df0e78783080e2fb1a5a631e76af535449"
+      },
+      {
+        "path": "tools/native/mios-gen/src/agent_interaction.rs",
+        "sha256": "088c4a7535fabb02e212ceec915c04ed6712f7f04baeebdfd6928bd751970c40"
+      },
+      {
+        "path": "tools/native/mios-gen/src/ai.rs",
+        "sha256": "02ff6b6b4de37bea302ad5f61d393a324a62499426099847c47b3b145a80d13a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/ai_metadata.rs",
+        "sha256": "c05ca2b955018895aade3eee31702472b57ef0298ddb65f6a5290c5cdb1f321c"
+      },
+      {
+        "path": "tools/native/mios-gen/src/app_preflight.rs",
+        "sha256": "5fa16b045a33d8750c9e75ac33372b25d3385ba964a06dcc2e04d7c42606a287"
+      },
+      {
+        "path": "tools/native/mios-gen/src/bootstrap_sync.rs",
+        "sha256": "dbc3201768627ba91dfad3ea5bd15a5be81bf966285f1fcc6134e484e984a8a7"
+      },
+      {
+        "path": "tools/native/mios-gen/src/btop_theme.rs",
+        "sha256": "760cd6eb15b991c61b07664c3ea06ba1722c1426aeee1f244b616842e014fe3b"
+      },
+      {
+        "path": "tools/native/mios-gen/src/controller_return_live.rs",
+        "sha256": "9303cd22afae42e8f7e78a18fa8bd7124559fa2749cb4da4b9202b16ab70c8ae"
+      },
+      {
+        "path": "tools/native/mios-gen/src/device_forwarding.rs",
+        "sha256": "56a98ea90da8760181ea9a862ac3ba810897b71ae1d6f87efbfda7820953ea7b"
+      },
+      {
+        "path": "tools/native/mios-gen/src/display_scale.rs",
+        "sha256": "1b9fe528521002cff3d63c1c86cfd09fd4efafb1dd224eb88d9984d59d4dd611"
+      },
+      {
+        "path": "tools/native/mios-gen/src/dock.rs",
+        "sha256": "77ad6acbdf53e4fc64ffd2e8c3bb9ea3675f526140320727a8a6b9e64f65200b"
+      },
+      {
+        "path": "tools/native/mios-gen/src/docs.rs",
+        "sha256": "d541b89d4c7eac4d1f4780489da2717e6d956b15639e2ef06da9b25ffcb9243a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/env_snapshot.rs",
+        "sha256": "5fd20f8a1664fb243ab8b1e1470c0470c20b874d7c4927c4f2bcf4fe9ff8fe00"
+      },
+      {
+        "path": "tools/native/mios-gen/src/flatpak_overrides.rs",
+        "sha256": "6b164d47b575153512ac174953b9ae11fa0049e1c0c777bf2cd99ea05ec3dc6a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/global_bindings.rs",
+        "sha256": "5f50dea8ab1fb18ee3a79657185f8aa78c2587a23f9d588ae3dbc710d9d9ffa1"
+      },
+      {
+        "path": "tools/native/mios-gen/src/gpu_topology.rs",
+        "sha256": "f75357067c7458f57af3d3194dd4172a04bd7c78213828be4c7cd74e29cda8d0"
+      },
+      {
+        "path": "tools/native/mios-gen/src/greeter.rs",
+        "sha256": "d45d98dac2160179552e1bd41067fd2b069b4b8a564686ede5438501303f9702"
+      },
+      {
+        "path": "tools/native/mios-gen/src/grub.rs",
+        "sha256": "18530d82f60f9eeee28ba5cda1f999ced5ff5ebab80f4b8e2eeecc8c562c7e2a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/hypr3d_spawn.rs",
+        "sha256": "60dd106dc091273f07420053881231dee2860889254ad326fe772a7703288848"
+      },
+      {
+        "path": "tools/native/mios-gen/src/hyprland_build.rs",
+        "sha256": "fcf998f0a6ae25209fd3a7eaf72cf182a2dd5bb7d9ba70fac01591b5a6c0b28a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/image.rs",
+        "sha256": "8943047cadc88702056338d400a791097573128748cde781e152deca936408ea"
+      },
+      {
+        "path": "tools/native/mios-gen/src/indexes.rs",
+        "sha256": "ee6a9b18409ee201c20ef474bab2fed0321060a50ac59628a5273384ae136f50"
+      },
+      {
+        "path": "tools/native/mios-gen/src/lib.rs",
+        "sha256": "d4a207b3ee467b74c210a8f8016296b980951b2089a00a534be1cd83661a0ef3"
+      },
+      {
+        "path": "tools/native/mios-gen/src/main.rs",
+        "sha256": "f1641798d3a5eb1aaa5c3e4fb435ff268b15e6a513b5c275d91783d1fc24b83f"
+      },
+      {
+        "path": "tools/native/mios-gen/src/mem_admit.rs",
+        "sha256": "28dc8c1e786f43205c51cc3d91325b7c8361111da21784cfd54958a47b5f26bd"
+      },
+      {
+        "path": "tools/native/mios-gen/src/metal_vs_hosted.rs",
+        "sha256": "cc1a38d65a2e44ca672eff632ec915aa8b8463ebc3cd1248aa4e2e7bbe786c0b"
+      },
+      {
+        "path": "tools/native/mios-gen/src/nested_devices.rs",
+        "sha256": "9904ba7e59e40bef87d12e0e7164efda6304688e670ea93e1b551e5096b59f85"
+      },
+      {
+        "path": "tools/native/mios-gen/src/nested_session.rs",
+        "sha256": "a3c804d1124b069645dfd0942370623f7eadc72d4a2341549910a86ca25eafc1"
+      },
+      {
+        "path": "tools/native/mios-gen/src/pod_quadlets.rs",
+        "sha256": "5591b9df4a1ca250e56a905d9389d34707e374240410e0fded229157ed593499"
+      },
+      {
+        "path": "tools/native/mios-gen/src/render.rs",
+        "sha256": "41be15ed1398e156cb975d18950a9157d13ecadf87f9cefc48ca5e1ee86e4f2c"
+      },
+      {
+        "path": "tools/native/mios-gen/src/session_scale.rs",
+        "sha256": "9546ee3c8764597c41e89ff0bb66ff81aeb2b75c344cc4ada0f77a8d98f2a6c0"
+      },
+      {
+        "path": "tools/native/mios-gen/src/sync.rs",
+        "sha256": "ee21458f51dd8c25085cc375586e28cc673091459a7d1a4bab5eff1d934ed5d2"
+      },
+      {
+        "path": "tools/native/mios-gen/src/terminal.rs",
+        "sha256": "9ba7d8289155b15696ec9c208657f442abed86bdd5a8e8c847eb3510f9d00e4f"
+      },
+      {
+        "path": "tools/native/mios-gen/src/tmux_desktop.rs",
+        "sha256": "57b4de12b3a1789c137053c732cf991fc7f45e031dbde8de19bea777f7170f69"
+      },
+      {
+        "path": "tools/native/mios-gen/src/tmux_desktop_build.rs",
+        "sha256": "f8431378e20bcc556f1ef92fd80a8de064afbb15aaeca65a25136e797b57edc7"
+      },
+      {
+        "path": "tools/native/mios-gen/src/tmux_os.rs",
+        "sha256": "60ef92c2fa40c6b532fa71beef4a987bfdca4947ab5339e58a9bf070bf59562a"
+      },
+      {
+        "path": "tools/native/mios-gen/src/wl_device_proxy.rs",
+        "sha256": "0d66bcbb62af30813c17cbc4084aa7c4fd0c538b650bf565d43fc55b1d6ad4f0"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/btop_theme.rs",
+        "sha256": "143c1632b43abaabe2c330c181f5cf022adbd6a9bafe9e0b135f1962667a7fcb"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/docs.rs",
+        "sha256": "99c917780a40063572ad95bad9f6cab6638fad5d64965d43fbd086819889610a"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/golden.rs",
+        "sha256": "a09bd615435788e38130062bfbe8f177afc893b4612ca9d4415d1874720b6d2c"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/image.rs",
+        "sha256": "abeb304e5392634ba903078d377623448878c167ea5119e5edd7b42f1fc1ebd2"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/ssot.rs",
+        "sha256": "5f5154632863fd6ead477568a0855191f8403a5d316592899f0f2ee5f1807239"
+      },
+      {
+        "path": "tools/native/mios-gen/tests/theme.rs",
+        "sha256": "95f5d5e181e921a763b448aaaab9eb9fa144383f06dd5ed5d2734706061860fd"
+      },
+      {
+        "path": "tools/native/mios-hardcode-lint/Cargo.toml",
+        "sha256": "b4eacccaecbc114bff8072f74af89a52d5d9eb63a77c22f0b76c089ec0f372eb"
+      },
+      {
+        "path": "tools/native/mios-hardcode-lint/src/main.rs",
+        "sha256": "2db66ee25da84aaae275ccfb2d86235ee4e56ececcddae90a32b31c03131815d"
+      },
+      {
+        "path": "tools/native/mios-inputd/Cargo.toml",
+        "sha256": "bf7f8d96d47179ea93bf0217c058cc5263020ebc34fc1c9db00b34b65f682ddd"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/config.rs",
+        "sha256": "db0f2c5621c270710567fec869bdfe97bd4df6263883a48b00f6a53cb960c687"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/console.rs",
+        "sha256": "12c7205e5a8464e8d9cae0d16685e127b5f605a6082c70acb3cf589fe9ad6cea"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/lib.rs",
+        "sha256": "af39f32aac3b5f5474921c61553fd2aadd9fc2ead19d62ae8944ce924905294a"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/linux.rs",
+        "sha256": "300c47dbf0ed3550af595f3f9eecee00d1a9a936386ed9997a3cec3ffceb37c1"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/main.rs",
+        "sha256": "ca44b283151f9ead1bd96da5ce6a1cee0b78d57d1f8ebef0a2be7f289c73a2ac"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/nav.rs",
+        "sha256": "600392a6152dce8edb27460f4e616e87b15f0bccc3bfd9e1e98352a777596b1f"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/nested.rs",
+        "sha256": "e8800ba26ef6cc520652d5251cbbc0c9b07ca8e78df09759a84c92d5938fc2e8"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/router.rs",
+        "sha256": "62922f51c0b2ea1c4e5ac3892b716c96e48a847c0861b37a9da30f1698449839"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/runtime.rs",
+        "sha256": "e1c1c08ccfb7edb6845a3225ca443910a89de49a3490163135212ec5e689ed45"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/sessions.rs",
+        "sha256": "09ad8ade1708a9eb3d736e824c68a7e06d36822132d207ca0efadfa7a15a896f"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/vm.rs",
+        "sha256": "27eb210d63f6decf44c076ccc1fe40078f1bc971158bcc6574f0a8a4b40baa1b"
+      },
+      {
+        "path": "tools/native/mios-inputd/src/vpad.rs",
+        "sha256": "aef2d78e6bd371c2b62dd846c0d7da2bb5a3f689962be9d62e7cf4348d3e738c"
+      },
+      {
+        "path": "tools/native/mios-install/Cargo.toml",
+        "sha256": "a9acd152fe6a5bea722a7090c13abb543ee390982a9944ebe0e1f67ba6d3827e"
+      },
+      {
+        "path": "tools/native/mios-install/src/lib.rs",
+        "sha256": "14d3baa2023653ea079f90cf3311181d563c468b59724e2cb786a619fd6754eb"
+      },
+      {
+        "path": "tools/native/mios-install/src/main.rs",
+        "sha256": "fbfc51bcf6b3fce48ecee41090cb93cae06b5d637b01a901b99b6dd3b0d8fc64"
+      },
+      {
+        "path": "tools/native/mios-install/tests/cli.rs",
+        "sha256": "8987b7d31ed84f9eb688c87adf1cdd2ec55a09cd4b8e87d8f15c5aff027925dd"
+      },
+      {
+        "path": "tools/native/mios-launch/Cargo.toml",
+        "sha256": "90e4debf8b11bb36a8c71d0a9ca566a533f623ed58e53b873cde97525148355b"
+      },
+      {
+        "path": "tools/native/mios-launch/src/main.rs",
+        "sha256": "8b030e5b1d48beb186a35b1e047aa7d4feca0164014e2bd9d0f10dd85fee7917"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/Cargo.toml",
+        "sha256": "1dcda0fda010ee99a322ceec235e0aebb3c198d645507f59edfe917bc7bbf7fa"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/src/gravity.rs",
+        "sha256": "359f493e31e8f3cecfc5e297d26ade035d839f61a977b51097cb5f9e1c15a9f1"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/src/hud.rs",
+        "sha256": "fa3c7c865a041349d757a50a31f37f726f172870219f593f79624a2b0a61341e"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/src/main.rs",
+        "sha256": "b71a8c0894e8ab5220a92898f263c15f38401f7be11d9f5119d54e680905d48c"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/src/matrix.rs",
+        "sha256": "5b23040595955a6283db2b46d5f341b5f5bd2bf572265a2867dde8d5ad512a84"
+      },
+      {
+        "path": "tools/native/mios-pip-gravity/src/window.rs",
+        "sha256": "9db84f4ce846dfa2b0a3a85f493134ef9d28a2f31bc7f8c41297d548cb75b784"
+      },
+      {
+        "path": "tools/native/mios-render-quadlets/Cargo.toml",
+        "sha256": "e52073c56435ac050e040349b626232aac1c7bac0cda6c17e81984427a154f58"
+      },
+      {
+        "path": "tools/native/mios-render-quadlets/src/main.rs",
+        "sha256": "ada5d188843b7409fc8d48f8a04e13c1f6c5be5432fdbe4e340b33019bd6cedb"
+      },
+      {
+        "path": "tools/native/mios-resolver/Cargo.toml",
+        "sha256": "100ee7ef43be0fe7dacae67e51307eeb3752d5f6ba5cfa0d86302cd262caaa53"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/db_overlay.rs",
+        "sha256": "6dddd82dc8c5b8df1dd4c22e83d13af24fd566a54c99e603b8b4ab16d00db8c3"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/edid_timing.rs",
+        "sha256": "f7fe78c12f33435c6e6ec81f8a15c30269406ef51a11b526858045a8247a2165"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/emit.rs",
+        "sha256": "75b28cabcc1d607ef50aadb3bdd0f1be8b83ef3fc783abe1d379a0424dc21347"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/expand.rs",
+        "sha256": "865efd3dc8872879c8494e9c87bf834b4b2b73e8c99ecab79f561ae9c9fdb7a0"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/framerate.rs",
+        "sha256": "61886f56c6a11e73e319b92c1aaaece458dd2d51daf793a03433c60651453b13"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/keybindings.rs",
+        "sha256": "ddb3367244ad621d124251fae48edc1dddc54084db960d8bad6d50c2e6fa840a"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/layers.rs",
+        "sha256": "e1ffe6055266f6e8cd53707200b138c22c87c6bbe62dc6e8a58d784095bd5304"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/lib.rs",
+        "sha256": "a55792ee3ccad695dea6989ac4176f0086be9a16c412e8c98abd37e8cac42fa7"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/main.rs",
+        "sha256": "e76a840c04ef14be414d5ae11cd7fd5c97381a8f4413429b7153026e3de8bdf5"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/merge.rs",
+        "sha256": "135d5106770b0324bd08216ffbad01d62cfcaeae08adf40f0687722d24db8718"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/names.rs",
+        "sha256": "c9960acf4eda7daf29ab0787598cf9e6e23f071cbc667555ab9ff72114e978c0"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/palette.rs",
+        "sha256": "da0089e9f7a79ac30992291dadcf9bbceecc39f08fd830ec5f299fa39c62065a"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/popup.rs",
+        "sha256": "a9ad90dd70beeff1fc95a7bcb89c71f4fce3b9f62fa995930de877ef2a42db47"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/ports.rs",
+        "sha256": "5c6e0719698117c6dff9441acbc7da2ac86f4654e83369afe1e596c2e947cf62"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/sigstore.rs",
+        "sha256": "11c828a66d203ab30e4fff684c1837074dfa153e3e235a3bdf941984048320fa"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/terminal_tuis.rs",
+        "sha256": "da8cdc9a0f120a10fd170e5da1c30d1b1387c52261fa91f3c2872a88b4d14863"
+      },
+      {
+        "path": "tools/native/mios-resolver/src/walk.rs",
+        "sha256": "908ab44bb3244d5a5e90be41ca03513104e916744cd40cf922f2bcbbf0bf99d8"
+      },
+      {
+        "path": "tools/native/mios-resolver/tests/emit.rs",
+        "sha256": "30c9b71bd9101078e27c209ebcee8e218aba86ff9c8462f285c222950eafc336"
+      },
+      {
+        "path": "tools/native/mios-service-core/Cargo.toml",
+        "sha256": "cec1db5a811ca0f726c75cf8687b44abc178b9c09970e6881ea2b34ce3d0d565"
+      },
+      {
+        "path": "tools/native/mios-service-core/src/dashboard.rs",
+        "sha256": "7835d3f68a9ef56a0ac881b011bf436aa9fef927710fbc66509aa16fa1717ef1"
+      },
+      {
+        "path": "tools/native/mios-service-core/src/launcher.rs",
+        "sha256": "2ed8074c8018e9d0d8f4ea9996670b9344653b6e1a3c9781c569ba38a0d0310f"
+      },
+      {
+        "path": "tools/native/mios-service-core/src/lib.rs",
+        "sha256": "97a5ebd0ec743f124ee5d8ee5114e32da35e7de6808c9a447ea5283d5cc35e1a"
+      },
+      {
+        "path": "tools/native/mios-service-core/src/tmux_theme.rs",
+        "sha256": "bd034da94ac3e2c463224f09c10b2d63025890e80fb61654d38bbbd9861338b4"
+      },
+      {
+        "path": "tools/native/mios-service-core/src/wayland_fd.rs",
+        "sha256": "268754005b0fbf2caf63674ffc3ce4c2e3ae644572038b9c468d2d769a01a4f8"
+      },
+      {
+        "path": "tools/native/mios-service-core/tests/service_core.rs",
+        "sha256": "5e4e0578a8da2de0f3b05770bf2c29c54f5e37772982df8c6c6ec457ba01ece0"
+      },
+      {
+        "path": "tools/native/mios-shot/Cargo.toml",
+        "sha256": "6758933f32b177224d2d6019f56e7c75e570bf0afdd37aa1b8795483b4583bed"
+      },
+      {
+        "path": "tools/native/mios-shot/src/main.rs",
+        "sha256": "25aeced4fc8614f14ba11c4575d02b6ed9ecacc77adec63a191cf9a431cae54a"
+      },
+      {
+        "path": "tools/native/mios-size-ceiling/Cargo.toml",
+        "sha256": "42e79d03124c798f3d36f5b9182cedbfdf72b0f4ea10468c9cafe0c06531b95a"
+      },
+      {
+        "path": "tools/native/mios-size-ceiling/src/main.rs",
+        "sha256": "22b684cb3e60fb5db56e4a33ad923f5dc17a20a31c415827433fd39504f553c9"
+      },
+      {
+        "path": "tools/native/mios-ssot-lint/Cargo.toml",
+        "sha256": "1280ff42cf6f34cf87bcf348ac17558221ad972f8b982132b1829227e057c5d9"
+      },
+      {
+        "path": "tools/native/mios-ssot-lint/src/main.rs",
+        "sha256": "2f6c887012308de41e3eadd0df40f8892080a7a68e55b476a68759ff57de45ed"
+      },
+      {
+        "path": "tools/native/mios-ssot-walk/Cargo.toml",
+        "sha256": "a8eb61d320c3d032baec20c2011bcf07cabc1e8e0f19605d270d765b2b170ba9"
+      },
+      {
+        "path": "tools/native/mios-ssot-walk/src/lib.rs",
+        "sha256": "4212cb1875eb6f7aa013a525529728f0f8a98053ee44d135ef6ade13d06c9650"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/Cargo.toml",
+        "sha256": "ef3d5555312a2f17f7fc79729b550fb4cae5b0e3bd2b0895098e14b10d38e233"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/capabilities.rs",
+        "sha256": "bb28185afe0825a088f895e9cbeede147e4ebd2e189d9b6cf5eb9617a0a42515"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/characters.rs",
+        "sha256": "40e3e1ee45a12010ae4949d56b7484681db28a214b20d9de066069f18deead74"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/config.rs",
+        "sha256": "cb89c88dcfbf1ea4420b7a47cdc83c8e11eefc01d87ae42a24a39edb7f8b5ed3"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/dialogs.rs",
+        "sha256": "022045885a2e4b6009e346fe08ee0fee593b8a24de4966475143e4ff5d5aa076"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/game.rs",
+        "sha256": "939bda704b0ee48266bc13c18620e330ccbe22978376bae2edd713166ab8b6a6"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/game_tests.rs",
+        "sha256": "99fc1c5f21f273ed0104c40d85398f32475c855ceca289ea86b9d8b9027b608a"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/genetics.rs",
+        "sha256": "7f64b0966d386623873957121fc595f1bee663871ea6f933640438852ba1e046"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/geometry.rs",
+        "sha256": "dc66bfc798a48a159c829d60a71073ca1aa03326f98b4a903a10969b7f92f028"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/habitat.rs",
+        "sha256": "c9da87635283b53ac8393f03af53d4baa76de70a832dd40427c45f6721ef15d3"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/hud.rs",
+        "sha256": "cb11a0ab0b13d64377e3cde9f6101616e2bac450f16f1a8a13a0cf2652f23d0a"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/input.rs",
+        "sha256": "415ad08cbb23193764438a0ed669e47a3eb7c85e6a09e96f2a043f7ca4376722"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/lib.rs",
+        "sha256": "bf2e60bfc59ea81045b6aec760473c73b5e3fc4611c10684821bf0d7ce16584e"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/lighting.rs",
+        "sha256": "82a47475f727dc2aa343643ac6bac4f917bea29e4df6aa3630da52beca3b6916"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/main.rs",
+        "sha256": "c6de0dc002ee14f9b48074062612ea587b232540dde6d3ac627a7f931dcf2f86"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/progression.rs",
+        "sha256": "18c147f3888a83bdeed72da6c021994f697c56a7630763d8f97ff3e878238819"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/render.rs",
+        "sha256": "9a337f7e9c1f4b30ff849814bc3d86fdfdd04b242762044d54e6c13f7661ecbb"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/save.rs",
+        "sha256": "e788ab989360ad3388e8224347a7d4032fde4f5b8d23e9f41078e5d7da964a2a"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/seed_entry.rs",
+        "sha256": "424bb385b70d868ecf73b2246215e177d75e5b35e4595debbe8e8e024380aeda"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/sprite.rs",
+        "sha256": "feb435305486a0557ccf93f8121bbb19cc9c54fa9ebf5842cd5e41d0d6878c96"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/tests.rs",
+        "sha256": "6142782d07e98b0ba6b283cef0e96ed78c856021116a7784a84f75dff63eaa06"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/ui.rs",
+        "sha256": "ca170417357f73d3b94649f2695723ffe3d7b8a018dc12d7d457e258466f6790"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/src/world.rs",
+        "sha256": "76aaa97e7eb837f99c02699369069393a34ee4f8ef54b141b82895f5931c76c1"
+      },
+      {
+        "path": "tools/native/mios-tamagotchi/tests/cli.rs",
+        "sha256": "ee569dca3da7768aac47bfd18b5ddf7c870a12e1ee1f6cf3a2ff20972a5c708d"
+      },
+      {
+        "path": "tools/native/mios-task/Cargo.toml",
+        "sha256": "5e708c9846f68f82925ff79e13f0c5233b1ba0a291046dd86253fde7bd929443"
+      },
+      {
+        "path": "tools/native/mios-task/src/check.rs",
+        "sha256": "f85ee8fcab53cb3c0e0c3d7a928431abcde0daa4bdc5613c2a61af91ef074179"
+      },
+      {
+        "path": "tools/native/mios-task/src/cli.rs",
+        "sha256": "cbe6409f41e3f6b9f64f6172dc9f21f48243a422fb143c3bf0bc7330ed424975"
+      },
+      {
+        "path": "tools/native/mios-task/src/main.rs",
+        "sha256": "cd2ef21f3dc4d72885503f5676abbed4bbf45f995c3fbbd88d97c26ebc8626bd"
+      },
+      {
+        "path": "tools/native/mios-task/src/migrate.rs",
+        "sha256": "deab4802624dfc93ca22a14b3f986c87e139a05bf868e26852afa5b3fa860dcb"
+      },
+      {
+        "path": "tools/native/mios-task/src/overrides.rs",
+        "sha256": "26c166e236352d24c7ab1dfa60c623719e120201153f54b386cedd73ce286d5d"
+      },
+      {
+        "path": "tools/native/mios-task/src/record.rs",
+        "sha256": "88096cac6ff677be05061198d95d7c22f7a6c0d23becb211bc5956a8ee4a14ac"
+      },
+      {
+        "path": "tools/native/mios-task/tests/cli.rs",
+        "sha256": "6fff4c430e11579a8ae56b4de9689cebbe9511992794f0e818148249cf5821c6"
+      },
+      {
+        "path": "tools/native/mios-template-compile/Cargo.toml",
+        "sha256": "c7f7f05a8141d42f1b5fa33e94137bc5531ef4ad2cb54e781535916715e7f752"
+      },
+      {
+        "path": "tools/native/mios-template-compile/src/main.rs",
+        "sha256": "675264901a2244067f60d3c3ca3191d98ac90143186353845ae4c17f52f9b90f"
+      },
+      {
+        "path": "tools/native/mios-template-compile/tests/compile_templates.rs",
+        "sha256": "9a6aa39070b8537c3bc9790bfe38f437df85b7701e104b74b0705502d30b112b"
+      },
+      {
+        "path": "tools/native/mios-template-conform/Cargo.toml",
+        "sha256": "e897a6257d078bb8bd7d02d878940c7da00a11acec57a004c04e99b46fe75f22"
+      },
+      {
+        "path": "tools/native/mios-template-conform/src/main.rs",
+        "sha256": "e6cc90984289ec5a8100cf7b46b2355eba9f4fc318a195af599a40fa1e05e78c"
+      },
+      {
+        "path": "tools/native/mios-toml-get/Cargo.toml",
+        "sha256": "715ab1268302d7ea090f88a2477a25be730a922b93af3ca7aec1861031243099"
+      },
+      {
+        "path": "tools/native/mios-toml-get/src/main.rs",
+        "sha256": "a82eb8de5111e60696498c4d748a0145eb79dba90b8d17e3bef59cb604d64fd8"
+      },
+      {
+        "path": "tools/native/mios-toolchain-pin/Cargo.toml",
+        "sha256": "82165018595face8f21a319e693122ed52ee0775adbf9d60e384877327a299e0"
+      },
+      {
+        "path": "tools/native/mios-toolchain-pin/src/main.rs",
+        "sha256": "ae25bc385dba2595747e13d34a8e0f496fb53073d8316447c75d3a6fb6b45e81"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/Cargo.toml",
+        "sha256": "966886d9f7618067972e7856e6cb729fc5ec8cccfe50ad378e89be89eea62923"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/src/lib.rs",
+        "sha256": "3fdc2944c212d9a48eef2ad7267ecd903b3b64cfa0335fa064aefb7977773dae"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/src/main.rs",
+        "sha256": "a312d9610c95ca013d1fd85bdab6b92e7985f8d9b06bf397332256e39f5579a7"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/src/tmux_desktop.rs",
+        "sha256": "5d5f99b2b12ed1c58a237b2aab962ca91611d4364385271bd0b81b03ec3cadf2"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/src/tmux_os.rs",
+        "sha256": "81425ef8be3d25187df93ce61b26b97c6ecdfe6f5209b9de942ae183be01a181"
+      },
+      {
+        "path": "tools/native/mios-unit-gen/tests/projection.rs",
+        "sha256": "c813cd8860427ee60ef84e468f7ade602c87ce2c861aa4d363a8b86c50400f7d"
+      },
+      {
+        "path": "tools/native/mios-version-check/Cargo.toml",
+        "sha256": "807fbf1f50a65c3919fb5a78be3ec4a9fade77990940f11110bd747e1593e228"
+      },
+      {
+        "path": "tools/native/mios-version-check/src/main.rs",
+        "sha256": "af096391770458aa031778728f0cee37ab521a843212dd27344d8bd81b573484"
+      },
+      {
+        "path": "tools/native/mios-wallpaperd/Cargo.toml",
+        "sha256": "8e1e238c47b8e03f7d49cdc7bd353e3e1828f5908c2cf35da0b47ce460a0ef76"
+      },
+      {
+        "path": "tools/native/mios-wallpaperd/src/main.rs",
+        "sha256": "241edee0210c7bfab123274179411b2f84f75bea3a9c441c18449400981e5880"
+      },
+      {
+        "path": "tools/native/xtask/Cargo.toml",
+        "sha256": "b9075ebd9e372464c492ad1169472b6bb8f7a3b5f541face5b5f6b9c36223f30"
+      },
+      {
+        "path": "tools/native/xtask/src/main.rs",
+        "sha256": "a155b49c0b04052185b1af8ee8201d14de9590d1eb8607863ac4638ff339606c"
+      },
+      {
+        "path": "tools/patches/tmux-desktop.patch",
+        "sha256": "d30e6eabdddca554424a6c73f88e73e3dce321f47a8a9010cb1dfdb9bc156fde"
+      },
+      {
+        "path": "usr/bin/mios",
+        "sha256": "6be590aaf71d13b70ab3e8d72aecaf8d628047489b1a4b8879ccf3f8545cd4dc"
+      },
+      {
+        "path": "usr/lib/mios/agent-pipe/test_mios_agent_tui.py",
+        "sha256": "1b1db9376fcd9b5fb0678b1b8756c63af4e6f3a24cdb902edcaa7efc7906e847"
+      },
+      {
+        "path": "usr/lib/mios/mios_agent_tui.py",
+        "sha256": "85db463385875fe2429b1f99a414c1a39f00b1f34a3285f61d45fd5501f2e392"
+      },
+      {
+        "path": "usr/libexec/mios/mios-mon.py",
+        "sha256": "2802f543b9fdfb9bd916efdd3da8d89df36be8e02e9ebc97141806ff71e8a835"
+      },
+      {
+        "path": "usr/libexec/mios/mios-terminal",
+        "sha256": "3e685548a3c786effde46257bb019f7689bd404a80e4656ecfd856e838038a46"
+      },
+      {
+        "path": "usr/share/mios/mios.toml",
+        "sha256": "8432a6e85fca2839561071cbabe7db6e9770fdb3f819147df0a96f6843fb8585"
+      },
+      {
+        "path": "usr/share/mios/templates/adr",
+        "sha256": "74ac9cb4eba7026f34a479a34e1cf8a617eadb14b90bf3ef69c36b0d0e9f13b1"
+      },
+      {
+        "path": "usr/share/mios/templates/artifact-prompt",
+        "sha256": "ead0d8adb6706dbcf49415cb8bb0bc72ffd93929534cc0a024dbdcec546e98f7"
+      },
+      {
+        "path": "usr/share/mios/templates/automation-step",
+        "sha256": "9fc239387c0cbc9ed4c203709f549b9738db13f1e89c72769a1de349def4ad4c"
+      },
+      {
+        "path": "usr/share/mios/templates/bash",
+        "sha256": "3c86057195d636be87e73bde6bcba48b4fd873c82ca352b7609897348a2aadce"
+      },
+      {
+        "path": "usr/share/mios/templates/bash-tool",
+        "sha256": "aa4315486de8d1b7a1cdc2ee6e6b2c7fbef34e4f5d36d036ff54eee66b2a903f"
+      },
+      {
+        "path": "usr/share/mios/templates/bash-verb",
+        "sha256": "bc9b4333c059164d860bc174eba4bc22fd308e368e8d21222909b76564689392"
+      },
+      {
+        "path": "usr/share/mios/templates/conformance-grandfathered.list",
+        "sha256": "e0ab35ea0b39eb4ff8e1c4e164a4a6b05fff109b704ae3e2ab8d22a4f3c48118"
+      },
+      {
+        "path": "usr/share/mios/templates/drift-check",
+        "sha256": "e592251d0dcd4a258a86c76707d1deef7a107262208be595c0f67dc11634b034"
+      },
+      {
+        "path": "usr/share/mios/templates/json-schema",
+        "sha256": "6d20b1d4b1a57ad088131a2917a7a7ff92f53f9b809c144a61cfc9eda3621d5c"
+      },
+      {
+        "path": "usr/share/mios/templates/kitfile",
+        "sha256": "296e2b49ecfac7d5b44aa5970752b92e65d2836c003bd9792812a41c9f2f1dbc"
+      },
+      {
+        "path": "usr/share/mios/templates/markdown-doc",
+        "sha256": "271e543f11538c0a55d8f53487944818b05ecd8c907a246a7ad58de86b2c2cfe"
+      },
+      {
+        "path": "usr/share/mios/templates/pam",
+        "sha256": "532f90e94da9de7670ac91d1162eb4816465070b6412f37bc8c034b11f9db4df"
+      },
+      {
+        "path": "usr/share/mios/templates/powershell",
+        "sha256": "3813c957631d18559e4398b04bac9e0b0c5d7a9302a002756704a045df3cd9c0"
+      },
+      {
+        "path": "usr/share/mios/templates/python-module",
+        "sha256": "44b21b8f662ece6aed00dc26d1fada853e03630198f7bee50324c52c7d0d024d"
+      },
+      {
+        "path": "usr/share/mios/templates/python-test",
+        "sha256": "0753d82b90cc80ff7122d3aa77e835d012bb9d33e8a076efafafad0eca27fd44"
+      },
+      {
+        "path": "usr/share/mios/templates/python-tool",
+        "sha256": "5012d0be02f1a55432bcaaac2a5f511ddaba51df7878fc2c8c60d616ac1ee372"
+      },
+      {
+        "path": "usr/share/mios/templates/quadlet",
+        "sha256": "1382700afc54b32d07827f60de969ef82b1cbe4cfec9e391bbb9929b55483746"
+      },
+      {
+        "path": "usr/share/mios/templates/quadlet-container",
+        "sha256": "2bc0b06b2593bcdea2781a75a17746ce7269807625f6295ba3cd9b247c81b1ad"
+      },
+      {
+        "path": "usr/share/mios/templates/quadlet-network",
+        "sha256": "8b6e92c6b052cafa82f326bcdf843e8706f4b0eb120c9bdb6c600963924cc14e"
+      },
+      {
+        "path": "usr/share/mios/templates/quadlet-pod",
+        "sha256": "8aeaa8720ae83e6f2cdf07569a7efdacce1306806208c95553912b3563c26ad4"
+      },
+      {
+        "path": "usr/share/mios/templates/quadlet-volume",
+        "sha256": "4eae20f2bb6983859ca333f31a45c390913a7965a980ab13b7c90715f876f63b"
+      },
+      {
+        "path": "usr/share/mios/templates/research-prompt",
+        "sha256": "01fcbb321a10615cbf58ad94319323a6ca56ba44e3a3caed482db7f430d8304f"
+      },
+      {
+        "path": "usr/share/mios/templates/roadmap",
+        "sha256": "64d0d1efd634911045fe0f5b492fe4ad858ef86484a61b3e33cc60ab1dad7a12"
+      },
+      {
+        "path": "usr/share/mios/templates/roadmap-ws",
+        "sha256": "357e0e89e9b8c2a4e5bcbd866b3798a8c31d8197da57278635a7eb2f85e7f8de"
+      },
+      {
+        "path": "usr/share/mios/templates/rust",
+        "sha256": "2a9bf43dc4c1e0af3fd0b26f3b42217740a5dea7c86a7e619254f8cb62683203"
+      },
+      {
+        "path": "usr/share/mios/templates/rust-crate/Cargo.toml",
+        "sha256": "87e51a479d0f55c25f198f22b616ea0489c4c93a4faa5418636ccd1b16ab2116"
+      },
+      {
+        "path": "usr/share/mios/templates/rust-crate/src/main.rs",
+        "sha256": "44a1300b05888022a1d4a31140d8d0fb3e78ed1fd45ce732da1a4b9c539134c7"
+      },
+      {
+        "path": "usr/share/mios/templates/systemd-timer",
+        "sha256": "640c322a82fe7bfac12c074c665bd05477d8ebde8a2539c8bbd99c45c9ef6fcd"
+      },
+      {
+        "path": "usr/share/mios/templates/systemd-unit",
+        "sha256": "b25460d1327fb62fa234e47fc3255e44078d8ae3df82df7e7c22d82a16953afe"
+      },
+      {
+        "path": "usr/share/mios/templates/theme-surface",
+        "sha256": "c3f7e2f76bbc7318dff1015d321b36883ad24184c37f834aa44e7cf764fde356"
+      },
+      {
+        "path": "usr/share/mios/templates/toml-config",
+        "sha256": "e601feeee03e52c0831e1afb75d5f9ec3257f39871348df4ec375a2ec237e4b6"
+      },
+      {
+        "path": "usr/share/mios/templates/typescript",
+        "sha256": "28b38642bc5ab210e8b3f140ac6f10d956e164357333c8a46a6a07f2cd575095"
+      },
+      {
+        "path": "usr/share/mios/templates/yaml",
+        "sha256": "eef61f12b7e2bf8f32ca8d6bc0f4b4e5df488de04b0ad66e6603d844affeda01"
+      }
+    ],
+    "input_files_format": "path-sha256-rows-v2",
+    "lane": "mios-menu-navigation",
+    "sha256": "2c52f1edaceb989fa56bbf521134708ef5ad534c0ce8a5615e9a74dd255e5c25",
+    "state": "explicit code inputs frozen; publishing commit intentionally pending"
+  },
+  "status": "core_verified_pending_main_publication_and_install",
+  "task": {
+    "id": "task_01M72ZZY7PCPJ82V3APRZ39WNZ",
+    "number": 3783,
+    "status": "in_progress"
+  },
+  "verification_archive": {
+    "bytes": 112628,
+    "exclude": [
+      "Raw identification IPC/strace data",
+      "Environment contents",
+      "Authentication data",
+      "Private relay registration/lease tokens"
+    ],
+    "files": {
+      "metadata/builder.json": {
+        "bytes": 242,
+        "sha256": "ace8a893682a6134bc9a50048d5a993376ddf9bfc7e52e6ab6f518b409ca5014"
+      },
+      "metadata/core-verification.json": {
+        "bytes": 6312,
+        "sha256": "8b0ebf662a67a42505ccf39daae3d089a02838d09905fc0f9210f07850bd5cdf"
+      },
+      "metadata/evidence-sha256.json": {
+        "bytes": 13614,
+        "sha256": "84ba12e64d1ba7bae58a8edab4692f9fcb99ff36c8aa174b39f2574babe0a273"
+      },
+      "metadata/focused-production-equality.json": {
+        "bytes": 463,
+        "sha256": "b574c115abbf4f61dc6da0a1f9a19838ea200c1d9a668e969950aeaa847f9e8b"
+      },
+      "metadata/gitleaks-dir.json": {
+        "bytes": 280,
+        "sha256": "ce83511ad77ef7c11a1abe1420e09077e864f0a824d4ddb34145d2a8c25f905c"
+      },
+      "metadata/gitleaks-findings.json": {
+        "bytes": 3,
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+      },
+      "metadata/source-input-sha256.json": {
+        "bytes": 55682,
+        "sha256": "2c52f1edaceb989fa56bbf521134708ef5ad534c0ce8a5615e9a74dd255e5c25"
+      },
+      "metadata/static-artifacts.json": {
+        "bytes": 1970,
+        "sha256": "76e60ad822f47bce95f8e2e7da24c1022a8b2876fcfd9329e58df569e9f3d80f"
+      },
+      "native/core-gates-admission.json": {
+        "bytes": 64,
+        "sha256": "edec7f0bc7b9fd99892ded80e419db36c8b70d5a498de78aa452cb17e15f80de"
+      },
+      "native/core-gates-credential-literals.log": {
+        "bytes": 111,
+        "sha256": "5a4230870bf6ac387ba20b33e4c959ddf9d5fc9a5fcb99918fde1addb1575249"
+      },
+      "native/core-gates-diff.log": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "native/core-gates-host.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/core-gates-inside.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/core-gates-mios-controls-static.json": {
+        "bytes": 220,
+        "sha256": "6eeef724baceb25d98a064eaeba2058c9608c16c7e43b4c8e4229183c3b83c93"
+      },
+      "native/core-gates-mios-fanctl-static.json": {
+        "bytes": 218,
+        "sha256": "186fe7ee8781ce59578acaa45f56ccf75342c097e4c54a70d0abd71d9d8d3469"
+      },
+      "native/core-gates-mios-gen-static.json": {
+        "bytes": 215,
+        "sha256": "4889a30caa7e6b72874dfb569122ad80d26a3e11ef31b028d61182ef6a23927f"
+      },
+      "native/core-gates-mios-tamagotchi-static.json": {
+        "bytes": 222,
+        "sha256": "7d2a535caa4b4a3ce4f9227704f603cf55245f883c5c3142010674b9a38584d1"
+      },
+      "native/core-gates-mios-unit-gen-static.json": {
+        "bytes": 220,
+        "sha256": "db691a8a3aaf5c88c4dd00f39eb7b301e9bdf31f96dd0538bd3fa35ecaf670e2"
+      },
+      "native/core-gates-miosd-static.json": {
+        "bytes": 212,
+        "sha256": "7603b4c6d17b1fb1b96df083b332df34a9a65b76c8705a2031bacacb64eab77f"
+      },
+      "native/core-gates-phase-registry.log": {
+        "bytes": 102,
+        "sha256": "8540bd7f1cd1f388f26299e3ff4e23000fb9a33ba5a7ae0897582835fa2dd066"
+      },
+      "native/core-gates-ratchet-direction.log": {
+        "bytes": 181,
+        "sha256": "d6c38d64d875df3f5e1604a19d0e081f7c3183d09a376730852b3873a5dda52d"
+      },
+      "native/core-gates-registry.log": {
+        "bytes": 66,
+        "sha256": "86c556d9138c9af1d524e4fc808d54a318f4cdd60e33090ac7b326c775cc326b"
+      },
+      "native/core-gates-signature-policy.log": {
+        "bytes": 153,
+        "sha256": "c42fbfbfeba63883d7fe03a444bb28af5c3f921938755fbc2aae6408ae3982b8"
+      },
+      "native/core-gates-sync.log": {
+        "bytes": 1243,
+        "sha256": "f9620b8d1d870367dbefa35785acaa29a69a6ade6ef96e56ac4236ee328856c4"
+      },
+      "native/core-gates-tasks.log": {
+        "bytes": 51,
+        "sha256": "233920e116a2be647970dd3a8a40d356d40709b2525d4f31abea3c1d48d0d365"
+      },
+      "native/core-gates-version-literals-ssot.log": {
+        "bytes": 145,
+        "sha256": "64d26a52d21eb769fa0c4eb1b698e191d1f9e5661142d9c035bd9f8d3907444d"
+      },
+      "native/full10-admission.json": {
+        "bytes": 64,
+        "sha256": "dcdfc9cb1fa7b2f841a8f88ae8ef7c15ef609cc1b48651e2d6072a1fd37e8192"
+      },
+      "native/full10-debug-unitgen.log": {
+        "bytes": 72,
+        "sha256": "99f71393b9903dca098310bb446022a4bdee195ea9996f351a787195555210a6"
+      },
+      "native/full10-extra-tuis.log": {
+        "bytes": 8769,
+        "sha256": "f9d51b1905dda78b83473e3a8f414ea668b4cfc211fa6cab76cde40617924b75"
+      },
+      "native/full10-generator.log": {
+        "bytes": 41096,
+        "sha256": "a4198a41632fb7838bc372b19f2de21e098a8040aad8fd589fb41c670ebcb744"
+      },
+      "native/full10-host.exit": {
+        "bytes": 4,
+        "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+      },
+      "native/full10-inside.exit": {
+        "bytes": 4,
+        "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c"
+      },
+      "native/full10-miosd-clippy.log": {
+        "bytes": 322,
+        "sha256": "e197463a30fdadf7db3f9f4e8cf31aef5e993f3b0f713e07c71e44d73df0e216"
+      },
+      "native/full10-miosd-release.log": {
+        "bytes": 313,
+        "sha256": "441d4dfd943f9fd1cbcd3d9cbe1b50d208a6ae4f606921d73a357afa8e6b9bfa"
+      },
+      "native/full10-miosd.log": {
+        "bytes": 35362,
+        "sha256": "735b2934068f97bad93e7b64224cc799f825fb61db0d32eed78925ba4aa0ef29"
+      },
+      "native/full10-native-clippy.log": {
+        "bytes": 1412,
+        "sha256": "560afe76d500a1f1cfa32696e2ac623db09e119d3685b9c7c49b1ffe13cbc7e3"
+      },
+      "native/full10-native-release.log": {
+        "bytes": 967,
+        "sha256": "4ec9a857d9e6142ed5beb93291b71998d5d36fc0617f288a14c753d60aba7145"
+      },
+      "native/full10-sync.log": {
+        "bytes": 1243,
+        "sha256": "f9620b8d1d870367dbefa35785acaa29a69a6ade6ef96e56ac4236ee328856c4"
+      },
+      "native/full11-admission.json": {
+        "bytes": 64,
+        "sha256": "52749311f1866d20ca394f0ff5540c31f71983de507d820505919b0eac132c5f"
+      },
+      "native/full11-game.log": {
+        "bytes": 47424,
+        "sha256": "1e2a9bd1916d42be27e2d67c2eadb3f5e0d254d845cb60452bb0a6d990ede051"
+      },
+      "native/full11-host.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/full11-inside.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/full11-miosd-clippy.log": {
+        "bytes": 224,
+        "sha256": "da25a5d4cac960d8c6e730ea4b4a994ac5b6e28419d7d25ad5d1af8e8c7f7a74"
+      },
+      "native/full11-miosd-release.log": {
+        "bytes": 215,
+        "sha256": "1e40a6cf74c964c138ecde6df51ef1a83d1b00571eb7739e8cab832d72bff41a"
+      },
+      "native/full11-miosd.log": {
+        "bytes": 36829,
+        "sha256": "f328cf26eb736974bf0d47adbeb295674746070869c58a8854896e287cdba682"
+      },
+      "native/full11-source-ready.json": {
+        "bytes": 193,
+        "sha256": "dd70e2b854373fdab274c2a409c438247b023abcb38a12457ab5583f272e2382"
+      },
+      "native/full9-admission.json": {
+        "bytes": 64,
+        "sha256": "88b950eccec5fb43ba3c4797d3c7d9959f77d0f7abd4763dacbab78c9830a067"
+      },
+      "native/full9-agent-tui.log": {
+        "bytes": 3096,
+        "sha256": "a5d09b81a5972d824a8b000d9208273ad39fcd9860b093e783098239ea08b97e"
+      },
+      "native/full9-game.log": {
+        "bytes": 47234,
+        "sha256": "0a0aef2b8e1507852709d68ed2fe7564caeec666985e34acadbee96d55c21f68"
+      },
+      "native/full9-generator.log": {
+        "bytes": 41278,
+        "sha256": "0e5145d97bb7f63561941bb0797c8a2bb59173b06f33ace61bec3308ed5e922a"
+      },
+      "native/full9-host.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/full9-inside.exit": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "native/full9-miosd.log": {
+        "bytes": 36997,
+        "sha256": "a1cafe3cc395ec3165df0e3c4753862c7af8d1286ee7511f8c1e8f59b229a83c"
+      },
+      "native/full9-monitor-tui.log": {
+        "bytes": 2156,
+        "sha256": "7a47d0d7a44992c66479e3a47ab0066e4b5cbc9680d01bbee8ec43f8b9b89e63"
+      },
+      "native/full9-unitgen.log": {
+        "bytes": 4166,
+        "sha256": "4f17dbb4c4615634427b2fe4bc82dab918e2935ede975bda889f0c4bede71aeb"
+      },
+      "support/backend/provenance-summary.json": {
+        "bytes": 7374,
+        "sha256": "823439926f507fd757090c1d032fc7557f6ee153ff2fb894b925505d8dd828f8"
+      },
+      "support/desktop/legacy.log": {
+        "bytes": 2493,
+        "sha256": "50485ed3f9cf119557a8474d843f9c1a9d539da6583fb735f3864b74ab4e00e7"
+      },
+      "support/desktop/private-acceptance.json": {
+        "bytes": 1140,
+        "sha256": "eb360a7ade752619dfdfc78c2c76f9e5beda4aa65ccfb18cbc61556cce07d20d"
+      },
+      "support/desktop/t14.log": {
+        "bytes": 292,
+        "sha256": "83944e7a5897045e1d8e760e61227869707a8922e40e3787915a972f91959fc6"
+      },
+      "support/initial-handoff.json": {
+        "bytes": 8693,
+        "sha256": "dffd4f48fdf72e5c2065625dca56dabd201a4f93aa1c14bec560093cde7d391a"
+      },
+      "support/recovery/checkpoint-summary.json": {
+        "bytes": 549,
+        "sha256": "f68ba50fbd2ebfb2e02b1b59e7d852b13f803416a039f2e16ba5c686f9af37df"
+      },
+      "support/runtime/SHA256.json": {
+        "bytes": 818,
+        "sha256": "894c8dd74e1274d60ca34edf22d05b8472f7516f1265b882e2cbe561cd8a8ac9"
+      },
+      "support/runtime/full10-artifact-receipt.json": {
+        "bytes": 836,
+        "sha256": "bcac9bac3e09782018c90a71f1dc700e38bbab80e7db814f5265bf9d47ce1ea8"
+      },
+      "support/runtime/full10-runtime-4f293852fe0d312c/cleanup-check.json": {
+        "bytes": 133,
+        "sha256": "88069534851ba52cb2e1affc6fb733586184ef253be580017befeed19d149747"
+      },
+      "support/runtime/full10-runtime-4f293852fe0d312c/inputs.json": {
+        "bytes": 836,
+        "sha256": "bcac9bac3e09782018c90a71f1dc700e38bbab80e7db814f5265bf9d47ce1ea8"
+      },
+      "support/runtime/full10-runtime-4f293852fe0d312c/runtime-exit.json": {
+        "bytes": 1107,
+        "sha256": "887298c2e7b2a002d7cfec696d34681fc629aaf6c1ad492b0b94e4aac97a1bff"
+      },
+      "support/runtime/full10-runtime-4f293852fe0d312c/runtime-report.json": {
+        "bytes": 3194,
+        "sha256": "78d05072e0c37b059ce7c71eba26c0217b61a900cd1a9f012dad22f1d6fda0f2"
+      },
+      "support/runtime/full10-runtime-4f293852fe0d312c/runtime.log": {
+        "bytes": 3697,
+        "sha256": "b93a1e1bb6b234a41b00316e60db1c5f775f4ebf90114cd1173a2cb91bc2e6c3"
+      },
+      "support/runtime/negative-old-8bf-wheel-stall.json": {
+        "bytes": 736,
+        "sha256": "08c81a5969f5ee36661448873b383785e8d4ddbb19673ec92ef22bb29edc6f6b"
+      },
+      "support/scanner/prior-public-digest-failure.json": {
+        "bytes": 2564,
+        "sha256": "4a9992970889a80c6bf923cc2e1f458f172abff955341d0e19965247e365812e"
+      }
+    },
+    "files_format": "path-to-sha256-bytes-v2",
+    "path": ".devloop/handoff/mios-tui-desktop-verification.tar.gz",
+    "raw_secret_findings": 0,
+    "sha256": "27e54242510b0f0797cc672af46167b3d87c94fef02a676636964ce915fd65d6",
+    "state": "sanitized explicit allowlist sealed after gitleaks dir exit0"
+  },
+  "verification_completed": {
+    "artifacts": [
+      {
+        "bytes": 12139824,
+        "name": "mios-gen",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-gen",
+        "sha256": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "static_gate": "native/core-gates-mios-gen-static.json"
+      },
+      {
+        "bytes": 2192296,
+        "name": "mios-unit-gen",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-unit-gen",
+        "sha256": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "static_gate": "native/core-gates-mios-unit-gen-static.json"
+      },
+      {
+        "bytes": 20913464,
+        "name": "miosd",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/miosd",
+        "sha256": "8c5196bda9c68022322d95f7e8c7b9316588511a32a76816b4ef799a0eceb9fb",
+        "static_gate": "native/core-gates-miosd-static.json"
+      },
+      {
+        "bytes": 6710512,
+        "name": "mios-tamagotchi",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-tamagotchi",
+        "sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+        "static_gate": "native/core-gates-mios-tamagotchi-static.json"
+      },
+      {
+        "bytes": 6839744,
+        "name": "mios-controls",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-controls",
+        "sha256": "506418a3de5ab38f5c73a97bb062c45f1a38476260ba5b56f11c54f56ba03087",
+        "static_gate": "native/core-gates-mios-controls-static.json"
+      },
+      {
+        "bytes": 2035920,
+        "name": "mios-fanctl",
+        "path": "/home/mios/.local/state/mios/mios-menu-navigation/target-native/x86_64-unknown-linux-musl/release/mios-fanctl",
+        "sha256": "56ea96c418e469cfc1986f9e56eba89e8eb191a9164193bd210ac694f861ecd3",
+        "static_gate": "native/core-gates-mios-fanctl-static.json"
+      }
+    ],
+    "backend": {
+      "binary_sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803",
+      "border_cases": 12,
+      "checks_passed": 25,
+      "patch_sha256": "d30e6eabdddca554424a6c73f88e73e3dce321f47a8a9010cb1dfdb9bc156fde",
+      "provenance_sha256_at_preparation": "d9e74fcb4ce0043a085aa90a257d9f2a1eace2fb8d919de6f8bb7fe1b127bc5e",
+      "scope": "Owned private processes/sockets only. Backend artifact is an upstream dependency with recorded dynamic-library/toolchain provenance, not a claimed static Rust binary.",
+      "status_positions": [
+        "top",
+        "bottom"
+      ],
+      "status_rows": [
+        0,
+        1,
+        2
+      ],
+      "title_clicks": 36,
+      "total_clicks": 72,
+      "tracked_provenance": ".devloop/handoff/mios-tmux-desktop-platform.json",
+      "viewport_offsets": [
+        [
+          0,
+          0
+        ],
+        [
+          40,
+          20
+        ]
+      ]
+    },
+    "core_final": {
+      "full10_failed_host_exit": 101,
+      "installed_main": null,
+      "limits": [
+        "Physical pointer and controller trial unverified.",
+        "Remote authentication and later global MiOS-Mons identity migration remain separate.",
+        "Private desktop 1+15 tests used the exact earlier artifacts recorded in their receipt; latest argv0/TTY transport is covered separately by focused repair and PTY proofs.",
+        "Authorized host reset lost unsaved process memory; three existing saved-progress files were backed up; source work was preserved."
+      ],
+      "published_main": null,
+      "repair_prefix": "full11",
+      "runtime_replays": 7,
+      "runtime_tests": 3,
+      "source_inputs_sha256": "2c52f1edaceb989fa56bbf521134708ef5ad534c0ce8a5615e9a74dd255e5c25",
+      "standing_gates_host_exit": 0,
+      "standing_gates_inside_exit": 0,
+      "status": "core_verified_pending_main_publication_and_install",
+      "test_runs": {
+        "full10-extra-tuis.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 87,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 18,
+            "result": "ok"
+          }
+        ],
+        "full10-generator.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 22,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 2,
+            "measured": 0,
+            "passed": 366,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 5,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 13,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 2,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 10,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 21,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 12,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 0,
+            "result": "ok"
+          }
+        ],
+        "full10-miosd.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 137,
+            "result": "ok"
+          },
+          {
+            "failed": 1,
+            "filtered_out": 0,
+            "ignored": 1,
+            "measured": 0,
+            "passed": 267,
+            "result": "FAILED"
+          }
+        ],
+        "full11-game.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 3,
+            "measured": 0,
+            "passed": 463,
+            "result": "ok"
+          }
+        ],
+        "full11-miosd.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 137,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 1,
+            "measured": 0,
+            "passed": 268,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 22,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 0,
+            "result": "ok"
+          }
+        ],
+        "full9-game.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 3,
+            "measured": 0,
+            "passed": 463,
+            "result": "ok"
+          }
+        ],
+        "full9-generator.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 22,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 2,
+            "measured": 0,
+            "passed": 366,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 5,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 13,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 2,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 10,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 21,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 12,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 0,
+            "result": "ok"
+          }
+        ],
+        "full9-miosd.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 137,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 1,
+            "measured": 0,
+            "passed": 268,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 22,
+            "result": "ok"
+          },
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 0,
+            "result": "ok"
+          }
+        ],
+        "full9-unitgen.log": [
+          {
+            "failed": 0,
+            "filtered_out": 0,
+            "ignored": 0,
+            "measured": 0,
+            "passed": 50,
+            "result": "ok"
+          }
+        ]
+      }
+    },
+    "desktop_private": {
+      "backend_sha256": "c0e59da273b154ce029bfe2f511ce12859503c847a64be204c718bdca63e6803",
+      "candidate_sha256": {
+        "mios-gen": "f3cefb66fb28b6fbb933cf8b28f40b8d0372f0464906a7f5640c8852108e00a1",
+        "mios-unit-gen": "02e13e2362364ceab790a799162df7fa430ac4de5c6a4d6fc31da41da6f26eb2",
+        "miosd": "fc99f52e93ce630701024a71e8f13305d4f0967f60a600bbead59388c8107d96"
+      },
+      "complete": true,
+      "scope": "Private T14 plus 15 legacy tests on the recorded earlier artifacts. Later argv0 and crossterm transport changes require separate focused repair and PTY proofs; this is not a claim that these sixteen tests ran on final artifacts.",
+      "stages": [
+        {
+          "exit": 0,
+          "finished": 1794334140.7205877,
+          "log_sha256": "83944e7a5897045e1d8e760e61227869707a8922e40e3787915a972f91959fc6",
+          "name": "t14",
+          "started": 1794334135.8997285,
+          "tests_requested": 1
+        },
+        {
+          "exit": 0,
+          "finished": 1794334189.3449583,
+          "log_sha256": "50485ed3f9cf119557a8474d843f9c1a9d539da6583fb735f3864b74ab4e00e7",
+          "name": "legacy",
+          "started": 1794334140.7207599,
+          "tests_requested": 15
+        }
+      ]
+    },
+    "game_focused_render_budget": {
+      "passed": 5,
+      "scope": "Resize coalescing, frame budget, inert-event input ordering, wheel budget and key/click page barrier after the wheel delta."
+    },
+    "game_initial_full_library": {
+      "ignored": 3,
+      "passed": 461,
+      "scope": "Native release library run before the separate wheel delta; not a final combined-source count."
+    },
+    "native_monitor": {
+      "agent_tui_passed": 19,
+      "monitor_passed": 10,
+      "receipt": "mios-dashboard-anchor-native-final.txt",
+      "receipt_sha256": "315e8fad1caa23fbc1753d88987ea33a8bde929790a3909f853466095483eeaf",
+      "scope": "Actual Blade Python/Textual in private tests; includes a real MouseScrollDown between refresh and layout."
+    },
+    "resize_trace": {
+      "all_four_saves_identical": true,
+      "all_quit_exit_zero": true,
+      "baseline_binary_sha256": "cd30af534eddbeecfad719b9b63279f107beb85e49f53c44cf1c41059793e655",
+      "baseline_cpu_seconds": [
+        0.63,
+        0.64
+      ],
+      "baseline_output_bytes_per_trace": 5671125,
+      "candidate_binary_sha256": "eb82764c52f62e06e03f738ba1917630bcb2732b5f467a27ed741c47ca2a406a",
+      "candidate_cpu_seconds": [
+        0.05,
+        0.06
+      ],
+      "candidate_output_bytes_per_trace": 227070,
+      "cpu_reduction_fraction": 0.9133858267716536,
+      "final_size": [
+        120,
+        40
+      ],
+      "identical_save_sha256": "87b69f8f58b3eaf230c9055f95a6b9508ad645a464bca3b67009f7820fb5e418",
+      "limit": "Initial resize candidate and trace only; no universal CPU claim or final wheel-candidate benchmark inferred.",
+      "output_reduction_fraction": 0.9599603253322754,
+      "receipt": "mios-tui-live-performance-proof.txt",
+      "receipt_sha256": "754781e5e1c5864ee44073d64225a26477d3bcd31c7bf7bb728c94f7fbc6a82e",
+      "scope": "owned native PTYs only; adopted panes untouched",
+      "trace": "150 alternating TIOCSWINSZ at 100 Hz plus owned SIGWINCH; identical seed, renderer, quality and initial pause; ABBA order"
+    },
+    "runtime_final": {
+      "all_seven_saves_identical": true,
+      "baseline_cpu_seconds": [
+        0.94,
+        0.93
+      ],
+      "candidate_cpu_seconds": [
+        0.07,
+        0.06
+      ],
+      "candidate_sha256": "4f293852fe0d312c0f1c6c17250c6d7ed01c4078153a432feb331d25f1d5baae",
+      "replays": 7,
+      "report_sha256": "78d05072e0c37b059ce7c71eba26c0217b61a900cd1a9f012dad22f1d6fda0f2",
+      "scope": "owned private PTYs only",
+      "tests": 3
+    }
+  }
+}

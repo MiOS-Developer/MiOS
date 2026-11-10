@@ -402,6 +402,7 @@ def chat_streaming(client: OpenAI, msgs: list[dict[str, Any]],
 
 
 KNOWN_VERBS = {
+    "desktop": ["/usr/bin/miosd", "desktop"],
     "terminal": ["/usr/libexec/mios/mios-terminal"],
     "ai-terminal": ["/usr/libexec/mios/mios-ai-terminal"],
     "mcp": ["/usr/lib/mios/mcp/.venv/bin/python3", "/usr/libexec/mios/mios-mcp-server"],
@@ -690,6 +691,7 @@ def main(argv: list[str]) -> int:
             "  mios                               unified tmux workspace (clients, agents, systems)\n"
             "  mios mon (or monitor)              unified live TUI monitor\n"
             "  mios terminal (or shell)             native themed tmux interface (local or SSH)\n"
+            "  mios desktop                       native TTY desktop with floating windows and dock\n"
             "  mios ai-terminal                     mobile text interface to MiOS AI\n"
             "  mios mcp                             combined MiOS + terminal MCP stdio\n"
             "  mios agents [--install]              global SSOT agent CLI catalog / installation\n"

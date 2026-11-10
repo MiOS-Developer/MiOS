@@ -22,6 +22,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::Frame;
 use toml::Value;
 
 const TERMINAL: &str = "/usr/libexec/mios/mios-terminal";
@@ -44,7 +45,6 @@ const SERVER_ALIVE_COUNT_MAX: u32 = 2;
 
 #[derive(Clone)]
 struct Config {
-    popup_policy: mios_resolver::popup::PopupPolicy,
     socket: String,
     socket_root: String,
     default_session: String,
@@ -70,6 +70,8 @@ struct MenuConfig {
     title: String,
     apps_title: String,
     systems_title: String,
+    #[serde(default)]
+    tabs: Option<[String; 3]>,
     inventory_program: String,
     launch_program: String,
     probe_program: String,
@@ -276,8 +278,15 @@ fn config(root: &Path) -> Result<Config, String> {
     {
         return Err("terminal.sessions.menu fields must be nonempty printable strings".into());
     }
+    if menu.tabs.as_ref().is_some_and(|tabs| {
+        tabs.iter()
+            .any(|label| label.trim().is_empty() || label.chars().any(char::is_control))
+    }) {
+        return Err(
+            "terminal.sessions.menu.tabs must contain three nonempty printable labels".into(),
+        );
+    }
     Ok(Config {
-        popup_policy: mios_resolver::popup::PopupPolicy::from_value(&v)?,
         root: root.to_path_buf(),
         discovery_timeout_ms: integer(&v, "desktop.launch.overall_timeout_ms")?.clamp(1000, 60000)
             as u64,
@@ -354,7 +363,7 @@ fn glob(pattern: &str, name: &str) -> bool {
 /// Run `cmd` to completion or until `deadline`, whichever comes first. The child runs in its
 /// own process group (so it never reads the selector's tty and never receives its job-control
 /// signals); at the deadline the whole group is SIGKILLed and reaped, and Err("timed out").
-fn run_bounded(cmd: &mut Command, deadline: Instant) -> Result<Output, String> {
+pub(crate) fn run_bounded(cmd: &mut Command, deadline: Instant) -> Result<Output, String> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1260,6 +1269,24 @@ fn navigate(
     key: KeyCode,
     page: usize,
 ) -> usize {
+    if table
+        .get(cur)
+        .is_some_and(|row| matches!(row.0, Some(Choice::View(_))))
+    {
+        match key {
+            KeyCode::Left => return cur.saturating_sub(1),
+            KeyCode::Right => return (cur + 1).min(2),
+            KeyCode::Down => {
+                return table
+                    .iter()
+                    .enumerate()
+                    .skip(3)
+                    .find(|(_, row)| row.0.is_some())
+                    .map_or(cur, |(index, _)| index)
+            }
+            _ => {}
+        }
+    }
     let selectable: Vec<usize> = table
         .iter()
         .enumerate()
@@ -1303,6 +1330,303 @@ fn navigate(
     }
 }
 
+/// Layout and hit targets share physical terminal cells, including after resize.
+#[derive(Clone, Copy, Default)]
+struct SelectorHitboxes {
+    viewport: Rect,
+    navigation: [Rect; 3],
+    content: Rect,
+    content_start: usize,
+    footer: Rect,
+}
+
+impl SelectorHitboxes {
+    fn row_at(&self, x: u16, y: u16, offset: usize) -> Option<usize> {
+        let position = ratatui::layout::Position::new(x, y);
+        if self.footer.contains(position) {
+            return None;
+        }
+        self.navigation
+            .iter()
+            .position(|area| area.contains(position))
+            .or_else(|| {
+                self.content.contains(position).then(|| {
+                    self.content_start + offset + usize::from(y.saturating_sub(self.content.y))
+                })
+            })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SelectorFrame<'a> {
+    c: &'a Config,
+    table: &'a [(Option<Choice>, Line<'static>, Style)],
+    view: &'a MenuView,
+    target: Option<&'a DesktopSystem>,
+    query: &'a str,
+    searching: bool,
+    status: &'a str,
+    g: &'a Glyphs,
+}
+
+/// Width is measured in terminal cells, not UTF-8 bytes. A search shows its tail
+/// so the text being edited remains visible even on a narrow remote terminal.
+fn clip_cells(value: &str, width: u16, tail: bool) -> String {
+    let mut chars = Vec::new();
+    let mut used = 0;
+    let add = |ch: char, chars: &mut Vec<char>, used: &mut usize| {
+        let cells = Line::from(ch.to_string()).width();
+        if used.saturating_add(cells) > usize::from(width) {
+            return false;
+        }
+        *used += cells;
+        chars.push(ch);
+        true
+    };
+    if tail {
+        for ch in value.chars().rev() {
+            if !add(ch, &mut chars, &mut used) {
+                break;
+            }
+        }
+        chars.reverse();
+    } else {
+        for ch in value.chars() {
+            if !add(ch, &mut chars, &mut used) {
+                break;
+            }
+        }
+    }
+    chars.into_iter().collect()
+}
+
+fn selector_footer(
+    context: SelectorFrame<'_>,
+    state: &ListState,
+    area: Rect,
+) -> Vec<Line<'static>> {
+    let SelectorFrame {
+        c,
+        table,
+        target,
+        query,
+        searching,
+        status,
+        g,
+        ..
+    } = context;
+    let help = if area.width >= 180 {
+        g.help
+    } else if area.width >= 58 {
+        "Enter open  / Find  Tab new  PgUp/Dn page  Esc shell"
+    } else if area.width >= 34 {
+        "Enter open  / Find  Esc shell"
+    } else if area.width >= 24 {
+        "Enter open /Find Esc"
+    } else {
+        "Enter open Esc"
+    };
+    if area.height < 2 {
+        return vec![Line::from(clip_cells(help, area.width, false))];
+    }
+    let summary = if searching || !query.is_empty() {
+        let prefix = if searching { "/ " } else { "Find: " };
+        format!(
+            "{prefix}{}",
+            clip_cells(
+                &menu_text(query, c.console),
+                area.width.saturating_sub(prefix.len() as u16),
+                true
+            )
+        )
+    } else {
+        let selected = state.selected().and_then(|index| table.get(index));
+        let position = state.selected().map_or(0, |index| {
+            table
+                .iter()
+                .take(index.saturating_add(1))
+                .filter(|row| row.0.is_some())
+                .count()
+        });
+        let total = table.iter().filter(|row| row.0.is_some()).count();
+        let note = if !matches!(
+            status,
+            "Discovering apps and running systems"
+                | "Select Apps or Systems; / searches the complete menu"
+        ) {
+            menu_text(status, c.console)
+        } else {
+            target
+                .filter(|system| {
+                    selected.is_some_and(|row| {
+                        matches!(&row.0,
+                Some(Choice::SelectSystem(selector)) if selector == &system.selector)
+                    })
+                })
+                .map_or_else(String::new, |system| {
+                    if system.ready {
+                        "Ready".into()
+                    } else {
+                        "Unavailable".into()
+                    }
+                })
+        };
+        if note.is_empty() {
+            format!("{position}/{total}")
+        } else {
+            format!("{position}/{total} | {note}")
+        }
+    };
+    vec![
+        Line::from(clip_cells(&summary, area.width, false)),
+        Line::from(clip_cells(help, area.width, false)),
+    ]
+}
+
+/// The system chooser is a full-viewport surface. Other MiOS popups still use
+/// their shared launch policy; reserving their compact rectangle here hid the
+/// selectable systems underneath four persistent metadata/help rows.
+fn paint_selector(
+    frame: &mut Frame,
+    context: SelectorFrame<'_>,
+    state: &mut ListState,
+) -> SelectorHitboxes {
+    let SelectorFrame {
+        c, table, view, g, ..
+    } = context;
+    let [bg, fg, accent, subtle, muted] = c.palette;
+    let viewport = frame.area();
+    let footer_rows = if viewport.height >= 6 {
+        2
+    } else {
+        u16::from(viewport.height >= 4)
+    };
+    let [body, footer] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(footer_rows)]).areas(viewport);
+    let block = Block::default()
+        .borders(if body.width >= 4 && body.height >= 3 {
+            Borders::ALL
+        } else {
+            Borders::NONE
+        })
+        .border_type(if c.console {
+            BorderType::Plain
+        } else {
+            BorderType::Rounded
+        })
+        .border_style(Style::default().fg(subtle))
+        .title(Span::styled(
+            format!(" {} ", c.menu.title),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ))
+        .style(Style::default().bg(bg).fg(fg));
+    let inner = block.inner(body);
+    frame.render_widget(block, body);
+    let tabs_visible = inner.height >= 2 && inner.width >= 12;
+    let [navigation, content] = Layout::vertical([
+        Constraint::Length(u16::from(tabs_visible)),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
+    let navigation = if tabs_visible {
+        Layout::horizontal([Constraint::Ratio(1, 3); 3]).areas(navigation)
+    } else {
+        [Rect::default(); 3]
+    };
+    let content_start = if tabs_visible { 3 } else { 0 };
+    let highlight = Style::default()
+        .bg(accent)
+        .fg(bg)
+        .add_modifier(Modifier::BOLD);
+    if tabs_visible {
+        let labels = c
+            .menu
+            .tabs
+            .as_ref()
+            .map(|tabs| tabs.each_ref().map(String::as_str))
+            .unwrap_or([
+                c.menu.apps_title.as_str(),
+                c.menu.systems_title.as_str(),
+                "All",
+            ]);
+        let active = match view {
+            MenuView::Apps => 0,
+            MenuView::Systems => 1,
+            MenuView::All => 2,
+        };
+        for (index, area) in navigation.iter().enumerate() {
+            let style = if state.selected() == Some(index) {
+                highlight
+            } else if index == active {
+                Style::default()
+                    .fg(accent)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(fg).bg(bg)
+            };
+            frame.render_widget(
+                Paragraph::new(clip_cells(labels[index], area.width, false)).style(style),
+                *area,
+            );
+        }
+    }
+    let items: Vec<ListItem> = table
+        .iter()
+        .skip(content_start)
+        .map(|(choice, line, style)| {
+            let value = menu_text(&line.to_string(), c.console);
+            let indent = if value.starts_with(' ') { "  " } else { "" };
+            let value = format!(
+                "{indent}{}",
+                value.split_whitespace().collect::<Vec<_>>().join(" ")
+            );
+            ListItem::new(clip_cells(
+                &value,
+                content
+                    .width
+                    .saturating_sub(Line::from(g.pick).width() as u16),
+                false,
+            ))
+            .style(if choice.is_none() {
+                style.fg(accent)
+            } else {
+                style.fg(fg)
+            })
+        })
+        .collect();
+    let mut content_state = ListState::default();
+    *content_state.offset_mut() = state.offset();
+    content_state.select(
+        state
+            .selected()
+            .filter(|index| *index >= content_start)
+            .map(|index| index - content_start),
+    );
+    frame.render_stateful_widget(
+        List::new(items)
+            .highlight_style(highlight)
+            .highlight_symbol(g.pick),
+        content,
+        &mut content_state,
+    );
+    *state.offset_mut() = content_state.offset();
+    if footer.height > 0 {
+        frame.render_widget(
+            Paragraph::new(selector_footer(context, state, footer))
+                .style(Style::default().fg(muted).bg(bg)),
+            footer,
+        );
+    }
+    SelectorHitboxes {
+        viewport,
+        navigation,
+        content,
+        content_start,
+        footer,
+    }
+}
+
 fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let guard = TermGuard::arm();
     let mut terminal = ratatui::init();
@@ -1324,7 +1648,6 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
     let mut state = ListState::default();
     let mut remembered: Option<Choice> = None;
     let mut last_click: Option<(usize, Instant)> = None;
-    let [bg, fg, accent, subtle, muted] = c.palette;
     let g = if c.console { &ASCII } else { &UNICODE };
     let result = loop {
         if let Some(rx) = &pending {
@@ -1414,113 +1737,35 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 }),
         );
         focus_content = false;
-        let items: Vec<ListItem> = table
-            .iter()
-            .map(|(choice, line, style)| {
-                let base = if choice.is_none() {
-                    style.fg(accent)
-                } else {
-                    style.fg(fg)
-                };
-                ListItem::new(line.clone()).style(base)
-            })
-            .collect();
-        let mut list_area = Rect::default();
-        let mut nav_area = Rect::default();
+        let context = SelectorFrame {
+            c,
+            table: &table,
+            view: &view,
+            target,
+            query: &query,
+            searching,
+            status: &status,
+            g,
+        };
+        let mut hitboxes = SelectorHitboxes::default();
         terminal
-            .draw(|f| {
-                let frame = f.area();
-                let (w, h) = c.popup_policy.size(
-                    mios_resolver::popup::SurfaceKind::Window,
-                    frame.width,
-                    frame.height,
-                );
-                let surface = Rect::new(
-                    frame.x + frame.width.saturating_sub(w) / 2,
-                    frame.y + frame.height.saturating_sub(h) / 2,
-                    w,
-                    h,
-                );
-                let [body, help] =
-                    Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(surface);
-                let block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(if c.console {
-                        BorderType::Plain
-                    } else {
-                        BorderType::Rounded
-                    })
-                    .border_style(Style::default().fg(subtle))
-                    .title(Span::styled(
-                        format!(" {} ", c.menu.title),
-                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                    ))
-                    .style(Style::default().bg(bg).fg(fg));
-                let inner = block.inner(body);
-                f.render_widget(block, body);
-                let [navigation, content] =
-                    Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(inner);
-                nav_area = navigation;
-                list_area = content;
-                let highlight = Style::default()
-                    .bg(accent)
-                    .fg(bg)
-                    .add_modifier(Modifier::BOLD);
-                let mut nav_state = ListState::default();
-                nav_state.select(state.selected().filter(|index| *index < 3));
-                f.render_stateful_widget(
-                    List::new(items[..3].to_vec())
-                        .highlight_style(highlight)
-                        .highlight_symbol(g.pick),
-                    navigation,
-                    &mut nav_state,
-                );
-                let mut content_state = state;
-                content_state.select(
-                    state
-                        .selected()
-                        .filter(|index| *index >= 3)
-                        .map(|index| index - 3),
-                );
-                f.render_stateful_widget(
-                    List::new(items[3..].to_vec())
-                        .highlight_style(highlight)
-                        .highlight_symbol(g.pick),
-                    content,
-                    &mut content_state,
-                );
-                *state.offset_mut() = content_state.offset();
-                f.render_widget(
-                    Paragraph::new(format!(
-                        "Target: {}\nSearch{}: {}\n{}\n{}",
-                        target
-                            .map(|s| format!(
-                                "{} | {}",
-                                if s.ready { "ready" } else { "unavailable" },
-                                menu_text(&s.label, c.console)
-                            ))
-                            .unwrap_or_else(|| "none ready; select Systems".into()),
-                        if searching { " editing" } else { "" },
-                        menu_text(&query, c.console),
-                        status,
-                        if surface.width < 90 {
-                            "Arrows Enter open /search Tab/n new Esc shell"
-                        } else {
-                            g.help
-                        }
-                    ))
-                    .style(Style::default().fg(muted).bg(bg)),
-                    help,
-                );
-            })
-            .map_err(|e| e.to_string())?;
+            .draw(|frame| hitboxes = paint_selector(frame, context, &mut state))
+            .map_err(|error| error.to_string())?;
         if !event::poll(Duration::from_millis(250)).map_err(|e| e.to_string())? {
             continue;
         }
         let cur = state.selected().unwrap_or(0);
-        let page = list_area.height.max(1) as usize;
+        let input = event::read().map_err(|e| e.to_string())?;
+        if matches!(input, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left))
+            && terminal.size().map_err(|error| error.to_string())? != hitboxes.viewport.as_size()
+        {
+            terminal
+                .draw(|frame| hitboxes = paint_selector(frame, context, &mut state))
+                .map_err(|error| error.to_string())?;
+        }
+        let page = hitboxes.content.height.max(1) as usize;
         let mut activate = false;
-        let next = match event::read().map_err(|e| e.to_string())? {
+        let next = match input {
             Event::Key(key) if key.kind == KeyEventKind::Press && searching => {
                 match key.code {
                     KeyCode::Esc => {
@@ -1578,20 +1823,15 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                 MouseEventKind::ScrollDown => navigate(&table, cur, KeyCode::Down, page),
                 MouseEventKind::ScrollUp => navigate(&table, cur, KeyCode::Up, page),
                 MouseEventKind::Down(MouseButton::Left) => {
-                    let in_navigation =
-                        nav_area.contains(ratatui::layout::Position::new(m.column, m.row));
-                    let inside = in_navigation
-                        || list_area.contains(ratatui::layout::Position::new(m.column, m.row));
-                    let row = if in_navigation {
-                        m.row.saturating_sub(nav_area.y) as usize
-                    } else {
-                        3 + state.offset() + m.row.saturating_sub(list_area.y) as usize
-                    };
+                    let row = hitboxes.row_at(m.column, m.row, state.offset());
+                    let inside = row.is_some();
+                    let row = row.unwrap_or(cur);
                     if inside && table.get(row).is_some_and(|r| r.0.is_some()) {
                         // A second click on the same row within half a second opens it.
-                        activate = last_click.is_some_and(|(r, t)| {
-                            r == row && t.elapsed() < Duration::from_millis(500)
-                        });
+                        activate = row < hitboxes.content_start
+                            || last_click.is_some_and(|(r, t)| {
+                                r == row && t.elapsed() < Duration::from_millis(500)
+                            });
                         last_click = Some((row, Instant::now()));
                         row
                     } else {
@@ -1823,6 +2063,221 @@ pub fn run(root: &Path, list: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
 
+    fn selector_table(c: &Config) -> Vec<(Option<Choice>, Line<'static>, Style)> {
+        let names: Vec<_> = (0..80).map(|index| format!("session-{index:03}")).collect();
+        let names: Vec<_> = names.iter().map(String::as_str).collect();
+        menu_rows(MenuContext {
+            c,
+            nodes: &[local(&names)],
+            querying: false,
+            nested: &[],
+            discovery: &MenuDiscovery::default(),
+            view: &MenuView::All,
+            query: "",
+            selected: None,
+            g: &ASCII,
+        })
+    }
+
+    #[test]
+    fn selector_uses_full_viewport_and_only_two_footer_rows_at_all_launch_sizes() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let mut c = cfg(3);
+        c.console = true;
+        let table = selector_table(&c);
+        for (width, height) in [(20, 6), (34, 10), (80, 24), (200, 60)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            let mut state = ListState::default();
+            state.select(Some(3));
+            let context = SelectorFrame {
+                c: &c,
+                table: &table,
+                view: &MenuView::All,
+                target: None,
+                query: "",
+                searching: false,
+                status: "Select Apps or Systems; / searches the complete menu",
+                g: &ASCII,
+            };
+            let mut hit = SelectorHitboxes::default();
+            terminal
+                .draw(|frame| hit = paint_selector(frame, context, &mut state))
+                .unwrap();
+            assert_eq!(hit.viewport, Rect::new(0, 0, width, height));
+            assert_eq!(hit.footer, Rect::new(0, height - 2, width, 2));
+            assert_eq!(hit.content.width, width - 2);
+            assert!(hit.content.height >= 1);
+            assert_eq!(hit.navigation[0].y, hit.navigation[2].y);
+            assert_eq!(hit.navigation[0].height, 1);
+            assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "┌");
+            assert_eq!(
+                terminal.backend().buffer()[(width - 1, height - 3)].symbol(),
+                "┘"
+            );
+            assert!(
+                hit.row_at(0, height - 1, state.offset()).is_none(),
+                "footer cannot select a hidden row"
+            );
+        }
+    }
+
+    #[test]
+    fn selector_last_choice_survives_scroll_resize_and_current_cell_hit_testing() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let c = cfg(3);
+        let table = selector_table(&c);
+        assert_eq!(navigate(&table, 0, KeyCode::Right, 1), 1);
+        assert_eq!(navigate(&table, 1, KeyCode::Left, 1), 0);
+        let first_content = navigate(&table, 0, KeyCode::Down, 1);
+        assert!(first_content >= 3 && table[first_content].0.is_some());
+        let wanted = Choice::Attach {
+            node: 0,
+            session: "session-079".into(),
+        };
+        let index = table
+            .iter()
+            .position(|row| row.0.as_ref() == Some(&wanted))
+            .unwrap();
+        let mut state = ListState::default();
+        state.select(Some(index));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        for (width, height) in [(80, 24), (20, 6), (34, 10), (200, 60)] {
+            terminal.backend_mut().resize(width, height);
+            terminal.resize(Rect::new(0, 0, width, height)).unwrap();
+            let context = SelectorFrame {
+                c: &c,
+                table: &table,
+                view: &MenuView::All,
+                target: None,
+                query: "",
+                searching: false,
+                status: "",
+                g: &ASCII,
+            };
+            let mut hit = SelectorHitboxes::default();
+            terminal
+                .draw(|frame| hit = paint_selector(frame, context, &mut state))
+                .unwrap();
+            assert_eq!(state.selected(), Some(index));
+            let row = index - hit.content_start - state.offset();
+            assert!(
+                row < usize::from(hit.content.height),
+                "selected last row must remain painted"
+            );
+            let clicked = hit
+                .row_at(
+                    hit.content.x + 2,
+                    hit.content.y + row as u16,
+                    state.offset(),
+                )
+                .unwrap();
+            assert_eq!(
+                table[clicked].0.as_ref(),
+                Some(&wanted),
+                "physical cells resolve the same choice after resize"
+            );
+            let line = (0..width)
+                .map(|x| terminal.backend().buffer()[(x, hit.content.y + row as u16)].symbol())
+                .collect::<String>();
+            assert!(line.contains("session-079"), "{width}x{height}: {line}");
+            for (tab, area) in hit.navigation.iter().enumerate() {
+                assert_eq!(hit.row_at(area.x, area.y, state.offset()), Some(tab));
+            }
+            let end = navigate(
+                &table,
+                clicked,
+                KeyCode::End,
+                usize::from(hit.content.height),
+            );
+            assert!(table[end].0.is_some());
+        }
+    }
+
+    #[test]
+    fn selector_footer_keeps_search_tail_and_omits_long_target_identity() {
+        let c = cfg(3);
+        let table = selector_table(&c);
+        let target = DesktopSystem {
+            selector: "private-target".into(),
+            label: "release-with-an-enormous-session-identifier".repeat(10),
+            ready: false,
+            remote: true,
+            operator: false,
+            error: "offline".into(),
+        };
+        let mut state = ListState::default();
+        state.select(Some(3));
+        for width in [20, 34, 80] {
+            let context = SelectorFrame {
+                c: &c,
+                table: &table,
+                view: &MenuView::All,
+                target: Some(&target),
+                query: "",
+                searching: false,
+                status: "Select Apps or Systems; / searches the complete menu",
+                g: &ASCII,
+            };
+            let footer = selector_footer(context, &state, Rect::new(0, 0, width, 2));
+            assert_eq!(footer.len(), 2);
+            assert!(footer.iter().all(|line| line.width() <= usize::from(width)));
+            assert!(!footer
+                .iter()
+                .any(|line| line.to_string().contains("release-")));
+            assert!(footer[1].to_string().contains("Esc"));
+            let query = format!("{}tail-final", "wide Ω界 ".repeat(12));
+            let search = selector_footer(
+                SelectorFrame {
+                    query: &query,
+                    searching: true,
+                    ..context
+                },
+                &state,
+                Rect::new(0, 0, width, 2),
+            );
+            assert!(search[0].to_string().ends_with("tail-final"));
+            assert!(search.iter().all(|line| line.width() <= usize::from(width)));
+        }
+        assert!(Line::from(clip_cells("你好世界", 5, false)).width() <= 5);
+    }
+
+    #[test]
+    fn selector_tiny_viewport_retains_a_selectable_list_without_footer_overlap() {
+        use ratatui::{backend::TestBackend, Terminal};
+        let c = cfg(3);
+        let table = selector_table(&c);
+        let mut terminal = Terminal::new(TestBackend::new(8, 3)).unwrap();
+        let mut state = ListState::default();
+        state.select(Some(0));
+        let mut hit = SelectorHitboxes::default();
+        terminal
+            .draw(|frame| {
+                hit = paint_selector(
+                    frame,
+                    SelectorFrame {
+                        c: &c,
+                        table: &table,
+                        view: &MenuView::All,
+                        target: None,
+                        query: "",
+                        searching: false,
+                        status: "",
+                        g: &ASCII,
+                    },
+                    &mut state,
+                )
+            })
+            .unwrap();
+        assert_eq!(hit.content_start, 0);
+        assert_eq!(hit.footer.height, 0);
+        assert!(hit.content.height >= 1);
+        let row = hit
+            .row_at(hit.content.x, hit.content.y, state.offset())
+            .unwrap();
+        assert_eq!(row, 0);
+        assert!(table[row].0.is_some());
+    }
+
     #[test]
     fn tui_client_requires_exact_pane_session_and_unique_attached_client() {
         assert_eq!(
@@ -2032,10 +2487,6 @@ mod tests {
 
     fn cfg(ssh_timeout: i64) -> Config {
         Config {
-            popup_policy: mios_resolver::popup::PopupPolicy::from_value(&toml::Value::Table(
-                Default::default(),
-            ))
-            .unwrap(),
             socket: "mios".into(),
             socket_root: "/tmp".into(),
             default_session: "mios".into(),
@@ -2054,6 +2505,7 @@ mod tests {
                 title: "MiOS systems and apps".into(),
                 apps_title: "Global apps".into(),
                 systems_title: "Systems and sessions".into(),
+                tabs: Some(["Apps".into(), "Systems".into(), "All".into()]),
                 inventory_program: "mios-gen".into(),
                 launch_program: "/usr/libexec/mios/mios-launch".into(),
                 probe_program: "/usr/libexec/mios/mios-computer-use".into(),

@@ -29,6 +29,7 @@ BIN = Path(os.environ.get("MIOS_TMUX_OS_BIN", "/var/lib/mios-build/tmp/mios-tmux
 GEN, UNITGEN, RELAY = BIN / "mios-gen", BIN / "mios-unit-gen", BIN / "mios-agent-relay"
 # miosd (the tmux-os launcher, `miosd launcher`) lives in the src/mios-rs workspace, so it has its own build dir.
 MIOSD = Path(os.environ.get("MIOS_TMUX_OS_MIOSD", str(BIN / "miosd")))
+DESKTOP_TMUX = Path(os.environ["MIOS_TMUX_OS_TMUX"]) if os.environ.get("MIOS_TMUX_OS_TMUX") else None
 SSOT = tomllib.loads(VENDOR.read_text())
 OPERATOR_SOCKET = SSOT["keybindings"]["socket_name"]
 PREFIX = "mios-tmuxos-test-"
@@ -124,6 +125,8 @@ class Harness:
         for name in (self.inner, self.outer):
             assert name.startswith(PREFIX) and name != OPERATOR_SOCKET and not name.startswith(("tmux-os", "mios-workspace-"))
         (self.dir / "bin").mkdir()
+        if DESKTOP_TMUX is not None:
+            (self.dir / "bin/tmux").symlink_to(DESKTOP_TMUX)
         (self.dir / "run").mkdir(mode=0o700)
         self.log = self.dir / "tui.log"
         stub = self.dir / "bin/fake-tui"
@@ -133,7 +136,7 @@ class Harness:
         base = BASE_HOST.replace("enabled = false", "enabled = true") if global_popups else BASE_HOST
         self.host.write_text(base + host_extra)
         # No desktop variables: a launcher pop-out must never open a window on the operator's desktop.
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("TMUX", "MIOS_", "SSH_", "WAYLAND_", "HYPRLAND_")) and k != "DISPLAY"}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("TMUX", "MIOS_", "SSH_", "WAYLAND_", "HYPRLAND_")) and k not in ("DISPLAY", "BASH_ENV")}
         env.update({
             "TMUX_TMPDIR": str(self.dir),
             "MIOS_VENDOR_TOML": str(VENDOR),
@@ -163,7 +166,7 @@ class Harness:
         text = (out / "tmux.conf").read_text()
         assert "set-hook -g client-attached" not in text, "workspace hooks must be off in tests"
         conf = out / "test.conf"
-        conf.write_text(text.replace("/usr/libexec/mios/mios-terminal", str(TERMINAL)).replace("/usr/bin/miosd ", f"{MIOSD} "))
+        conf.write_text(text.replace("/usr/libexec/mios/mios-terminal", str(TERMINAL)).replace("/usr/bin/miosd ", f"{MIOSD} ").replace("/usr/bin/mios-gen ", f"{GEN} "))
         return conf
 
     def I(self, *args, check=True, timeout=5):
@@ -184,6 +187,7 @@ class Harness:
         self.I("set-environment", "-g", "MIOS_TMUX_HELPER", "1")
 
     def view(self, name="view", term="xterm-256color", w=100, h=30, session="main"):
+        before = set(self.clients())
         cmd = f"env -u TMUX TERM={term} tmux -L {self.inner} attach -t ={session}"
         if self.O("has-session", "-t", "=v", check=False) == "" and subprocess.run(
                 ["tmux", "-L", self.outer, "has-session", "-t", "=v"], env=self.env, capture_output=True, timeout=5).returncode == 0:
@@ -191,7 +195,6 @@ class Harness:
         else:
             self.O("new-session", "-d", "-s", "v", "-n", name, "-x", str(w), "-y", str(h), cmd)
         self.O("set", "-g", "escape-time", "0")
-        before = set(self.clients())
         # Wait for THIS viewer's client: with another viewer attached, "any client" would answer at once.
         fresh = wait(lambda: set(self.clients()) - before)
         assert fresh, f"viewer {name} never attached"
@@ -786,6 +789,147 @@ enabled = false
         self.assertIn("Detach", shot)
         self.assertNotRegex(shot, r"Running ─{5,}")
         self.assertFalse(any(re.search(r"\S ─{5,}.*\S ─{5,}", l) for l in shot.splitlines()))
+
+
+    @unittest.skipUnless(MIOSD.is_file(), "the candidate native launcher is required")
+    def test_t12_launcher_find_keeps_typing_literal_and_opens_the_filtered_app(self):
+        extra = CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "find")
+        h = Harness("find", extra, global_popups=True)
+        self.addCleanup(h.close)
+        h.start(120, 36)
+        h.view(w=120, h=36)
+        h.keys("view", "C-b", "Space")
+        self.assertTrue(wait(lambda: "/ or Ctrl+F" in h.shot(delay=0.1)))
+        h.keys("view", "C-f")
+        h.raw("view", "q 2")
+        shot = h.shot()
+        self.assertIn("Find: q 2", shot, "q, spaces and row shortcuts remain literal search input")
+        self.assertIn("No available matches", shot)
+        self.assertFalse(h.log.exists(), "typing must not launch an app")
+        h.keys("view", "C-u")
+        h.raw("view", "fake ok")
+        self.assertTrue(wait(lambda: "Fake OK" in h.shot(delay=0.1)))
+        self.assertNotIn("Fake Popup", h.shot(delay=0.1))
+        h.keys("view", "Tab")
+        self.assertTrue(wait(lambda: "Options: Fake OK" in h.shot(delay=0.1)))
+        self.assertIn("Esc back", h.shot(delay=0.1))
+        h.keys("view", "Escape")
+        self.assertTrue(wait(lambda: "Options: Fake OK" not in h.shot(delay=0.1)))
+        self.assertIn("Find: fake ok", h.shot(delay=0.1), "Back returns to the same search")
+        h.keys("view", "Enter")
+        self.assertTrue(wait(lambda: h.log.exists() and "window" in h.log.read_text().splitlines()))
+        self.assertNotIn("popup", h.log.read_text(), "the original filtered app target must be used")
+
+    @unittest.skipUnless(MIOSD.is_file(), "the candidate native launcher is required")
+    def test_t13_console_find_empty_results_cancel_and_mouse_match(self):
+        extra = CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "find-vt")
+        h = Harness("find-vt", extra, global_popups=True)
+        self.addCleanup(h.close)
+        h.start(80, 30)
+        h.view(term="vt220", w=80, h=30)
+        h.keys("view", "C-b", "Space")
+        self.assertTrue(wait(lambda: "/ or Ctrl+F" in h.shot(delay=0.1)))
+        h.raw("view", "/")
+        h.raw("view", "zzzz-missing")
+        self.assertIn("No available matches", h.shot())
+        h.keys("view", "Enter")
+        self.assertIn("Find: zzzz-missing", h.shot(), "empty results stay open and cannot activate")
+        h.keys("view", "Escape")
+        self.assertTrue(wait(lambda: "/ or Ctrl+F" in h.shot(delay=0.1)))
+        self.assertFalse(h.log.exists())
+        h.raw("view", "/fake ok")
+        shot = h.shot()
+        self.assertIn("Fake OK", shot)
+        self.assertNotIn("Fake Popup", shot)
+        row = next((y, line.index("Fake OK")) for y, line in enumerate(shot.splitlines()) if "Fake OK" in line)
+        x, y = row[1] + 2, row[0]
+        h.raw("view", f"\x1b[<0;{x + 1};{y + 1}M")
+        h.raw("view", f"\x1b[<0;{x + 1};{y + 1}m")
+        self.assertTrue(wait(lambda: h.log.exists() and "window" in h.log.read_text().splitlines()), "mouse activates exactly the visible filtered row")
+
+    @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the patched native desktop backend is required")
+    def test_t14_desktop_windows_preserve_apps_across_geometry_minimize_and_mouse_controls(self):
+        extra = CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "desktop")
+        extra += f'\n[keybindings.tmux.desktop]\nbinary={str(DESKTOP_TMUX)!r}\n'
+        h = Harness("desktop", extra, global_popups=True)
+        self.addCleanup(h.close)
+        h.start(200, 60)
+        client = h.view(w=200, h=60)
+        canvas = h.I("display", "-p", "-t", "main", "#{pane_id}")
+        h.I("set-option", "-w", "-t", canvas, "@mios-desktop-enabled", "1")
+        h.I("set-option", "-p", "-t", canvas, "@mios-desktop-canvas", "1")
+        h.I("set-option", "-w", "-t", canvas, "pane-scrollbars", "off")
+        h.I("set-option", "-w", "-t", canvas, "pane-border-status", "top")
+        h.I("set-option", "-w", "-t", canvas, "pane-border-format", h.I("show-options", "-gqv", "@mios-desktop-border-format"))
+        h.I("set-option", "-t", "main", "status", "2")
+        h.I("set-option", "-t", "main", "status-position", "bottom")
+        h.I("set-option", "-t", "main", "status-format[1]", h.I("show-options", "-gqv", "@mios-desktop-dock-format"))
+        app = h.I("new-pane", "-P", "-F", "#{pane_id}", "-t", canvas, "-x", "60", "-y", "20", "-X", "20", "-Y", "10", "--", "fake-tui", "desktop")
+        self.assertTrue(wait(lambda: h.log.exists()))
+        socket = h.I("display", "-p", "#{socket_path}")
+        def identity():
+            return h.I("display", "-p", "-t", app, "#{pane_id}|#{pane_pid}|#{pane_tty}")
+        witnessed = identity()
+        def rect():
+            return tuple(map(int, h.I("display", "-p", "-t", app, "#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}").split("|")))
+        def engine(verb, *args, check=True):
+            command = [str(GEN), "tmux-os", "--root", str(ROOT), "desktop", verb, "--socket", socket, "--client", client, "--pane", app, *args]
+            result = subprocess.run(command, env=h.env, capture_output=True, text=True, timeout=8)
+            if check:
+                self.assertEqual(result.returncode, 0, result.stderr)
+            return result
+        background = h.I("display", "-p", "-t", canvas, "#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}")
+        engine("center")
+        self.assertEqual(rect()[2:], (94, 33))
+        self.assertEqual(identity(), witnessed)
+        engine("snap-left")
+        left = rect()
+        engine("snap-right")
+        right = rect()
+        self.assertEqual(left[0] + left[2], right[0])
+        self.assertEqual(h.I("display", "-p", "-t", canvas, "#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}"), background)
+        engine("maximize")
+        self.assertEqual(h.I("display", "-p", "-t", app, "#{window_zoomed_flag}"), "1")
+        engine("restore")
+        self.assertEqual(rect(), right)
+        engine("tile")
+        self.assertEqual(h.I("display", "-p", "-t", app, "#{pane_floating_flag}"), "0")
+        engine("float")
+        self.assertEqual(h.I("display", "-p", "-t", app, "#{pane_floating_flag}"), "1")
+        self.assertEqual(identity(), witnessed)
+        engine("minimize")
+        self.assertTrue(h.I("display", "-p", "-t", app, "#{session_name}").startswith("mios-float-"))
+        dock = __import__("json").loads(engine("dock-state").stdout)
+        self.assertTrue(any(row["pane"] == app and row["minimized"] for row in dock))
+        engine("focus")
+        self.assertEqual(h.I("display", "-p", "-t", app, "#{session_name}"), "main")
+        self.assertEqual(identity(), witnessed)
+        h.I("set-option", "-p", "-t", app, "@mios-mcp-owner", "private-proof")
+        before = rect()
+        self.assertNotEqual(engine("snap-left", check=False).returncode, 0)
+        self.assertEqual(rect(), before)
+        h.I("set-option", "-p", "-u", "-t", app, "@mios-mcp-owner")
+        engine("center")
+        x,y,w,height = rect()
+        # A native border drag moves the existing window, without helpers per motion.
+        h.raw("view", f"\x1b[<0;{x+20};{y}M\x1b[<32;{x+25};{y+2}M\x1b[<0;{x+25};{y+2}m")
+        self.assertTrue(wait(lambda: rect()[:2] != (x,y)))
+        self.assertEqual(identity(), witnessed)
+        x,y,w,height = rect()
+        # Left title controls start at body x+2: [x][_][+]; click the middle minimize cell.
+        click_x, click_y = x+7, y
+        h.raw("view", f"\x1b[<0;{click_x};{click_y}M\x1b[<0;{click_x};{click_y}m")
+        self.assertTrue(wait(lambda: h.I("display", "-p", "-t", app, "#{session_name}").startswith("mios-float-")), h.shot())
+        engine("focus")
+        self.assertEqual(identity(), witnessed)
+        # The Apps control opens the same searchable launcher as the keyboard.
+        command = shlex.join([str(GEN), "tmux-os", "--root", str(ROOT), "desktop", "dock-click", "--socket", socket, "--client", client, "--item", "apps"])
+        h.I("run-shell", "-b", "-t", canvas, command)
+        self.assertTrue(wait(lambda: "/ or Ctrl+F" in h.shot(delay=.1)))
+        h.raw("view", "/fake ok")
+        self.assertTrue(wait(lambda: "Fake OK" in h.shot(delay=.1)))
+        h.keys("view", "Escape", "Escape")
+        self.assertEqual(identity(), witnessed)
 
 
 if __name__ == "__main__":

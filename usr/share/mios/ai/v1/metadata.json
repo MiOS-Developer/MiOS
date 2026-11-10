@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4292,
-  "total_metadata_entries": 3446,
-  "total_hints": 3440,
-  "total_functions_indexed": 2136,
-  "total_related_links": 6893,
+  "total_files_scanned": 4300,
+  "total_metadata_entries": 3451,
+  "total_hints": 3445,
+  "total_functions_indexed": 2157,
+  "total_related_links": 6908,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -5435,6 +5435,26 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/miosd/src/desktop.rs",
+      "hint": "Event-driven TTY desktop background; applications, dock, and native window geometry remain owned by tmux.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "usr/share/mios/mios.toml [keybindings.tmux.desktop]",
+        "tools/native/mios-unit-gen/src/tmux_desktop.rs"
+      ],
+      "functions": [
+        "open",
+        "reserve_config",
+        "run",
+        "config",
+        "paint",
+        "settle_resize"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/miosd/src/drift/aiplane.rs",
       "hint": "AI-plane lint, hint coverage, and manifest integrity checks for miosd drift runner.",
       "related": [
@@ -9189,6 +9209,23 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-mios-mons-runtime.py",
+      "hint": "Replay MiOS-Mons resize and scroll regressions in owned Linux PTYs.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "tests/test-tmux-os.py"
+      ],
+      "functions": [
+        "TestMiOSMonsRuntime",
+        "OwnedTerminal",
+        "Screen",
+        "catalogue_binary"
+      ],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -13283,6 +13320,44 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/tmux_desktop.rs",
+      "hint": "MiOS TTY desktop window actions preserve app processes and PTYs and verify the explicit socket, client, server and pane before mutation.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.tmux.desktop]",
+        "tools/native/mios-resolver/src/popup.rs",
+        "tools/native/mios-gen/src/tmux_os.rs"
+      ],
+      "functions": [
+        "run",
+        "geometry",
+        "context",
+        "minimize",
+        "restore",
+        "dock_state"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/tmux_desktop_build.rs",
+      "hint": "Build verified upstream MiOS-Tmux source inside an admitted MiOS-DEV container, then atomically stage its binary and digest receipt.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.tmux.desktop.source]",
+        "tools/patches/tmux-desktop.patch",
+        "tools/native/mios-gen/src/main.rs"
+      ],
+      "functions": [
+        "run",
+        "container_name",
+        "fresh_build_directory",
+        "stage"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/tmux_os.rs",
       "hint": "MiOS-Tmux (tmux-os) executor behind mios-terminal --menu/--app/--float/--session-cycle/--new: the SSOT Apps and TUIs menu, TUI launch by mode, the per-session float shell (toggle, lift, dock, reap) and hidden-session-aware cycling. Every tmux call names its client and pane explicitly.",
       "related": [
@@ -15002,6 +15077,22 @@
       "hint": "CLI driver for mios-unit-gen rendering systemd unit files from SSOT.",
       "related": [],
       "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-unit-gen/src/tmux_desktop.rs",
+      "hint": "Project the opt-in native TTY desktop dock, painted title controls, and guarded mouse callbacks from SSOT.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "usr/share/mios/mios.toml [keybindings.tmux.desktop]",
+        "tools/native/mios-gen/src/tmux_desktop.rs",
+        "src/mios-rs/miosd/src/desktop.rs"
+      ],
+      "functions": [
+        "render"
+      ],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false

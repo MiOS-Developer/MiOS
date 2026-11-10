@@ -65,6 +65,13 @@ pub enum Menu {
     Seed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MenuPosition {
+    menu: Menu,
+    selected: usize,
+    scroll: usize,
+}
+
 #[derive(Clone, Copy)]
 enum NativeKind {
     Talk,
@@ -120,7 +127,7 @@ pub struct Ui {
     menu_scroll_limit: Cell<usize>,
     menu_visible_rows: Cell<usize>,
     menu_total_lines: Cell<usize>,
-    menu_history: Vec<Menu>,
+    menu_history: Vec<MenuPosition>,
     menu_number_start: Cell<usize>,
     menu_number_count: Cell<usize>,
     menu_footer: Cell<Rect>,
@@ -1398,10 +1405,13 @@ impl Ui {
         }
     }
     fn open(&mut self, menu: Menu) {
-        self.choice_geometry.borrow_mut().take();
         if let Some(parent) = self.menu {
             if parent != menu && self.menu_history.len() < 16 {
-                self.menu_history.push(parent);
+                self.menu_history.push(MenuPosition {
+                    menu: parent,
+                    selected: self.menu_selected,
+                    scroll: self.menu_scroll.min(self.menu_scroll_limit.get()),
+                });
             }
         } else {
             self.menu_history.clear();
@@ -1409,18 +1419,33 @@ impl Ui {
         self.menu = Some(menu);
         self.menu_selected = 0;
         self.menu_scroll = 0;
+        self.invalidate_menu_targets();
+    }
+    fn invalidate_menu_targets(&self) {
+        self.choice_geometry.borrow_mut().take();
+        self.menu_targets.borrow_mut().clear();
+        self.control_targets.borrow_mut().clear();
+        self.care_targets.borrow_mut().clear();
+        self.seed_cursor_targets.borrow_mut().clear();
+        self.seed_edit_targets.borrow_mut().clear();
+        self.menu_footer.set(Rect::default());
         self.menu_scroll_limit.set(512);
         self.menu_number_start.set(0);
         self.menu_number_count.set(0);
     }
     fn back(&mut self) {
-        self.choice_geometry.borrow_mut().take();
-        self.menu = self.menu_history.pop();
-        self.menu_selected = 0;
-        self.menu_scroll = 0;
-        self.menu_scroll_limit.set(512);
-        self.menu_number_start.set(0);
-        self.menu_number_count.set(0);
+        if let Some(parent) = self.menu_history.pop() {
+            self.menu = Some(parent.menu);
+            self.menu_selected = parent
+                .selected
+                .min(self.menu_len(parent.menu).saturating_sub(1));
+            self.menu_scroll = parent.scroll;
+        } else {
+            self.menu = None;
+            self.menu_selected = 0;
+            self.menu_scroll = 0;
+        }
+        self.invalidate_menu_targets();
     }
     fn action_hint(&self) -> String {
         if self.selected <= 4 {
@@ -1467,7 +1492,10 @@ impl Ui {
         } else if menu == Menu::Home {
             format!("{} [{mode}]", menu_title(menu))
         } else {
-            let parent = self.menu_history.last().copied().unwrap_or(Menu::Home);
+            let parent = self
+                .menu_history
+                .last()
+                .map_or(Menu::Home, |position| position.menu);
             let parent = if parent == Menu::Home {
                 "Home"
             } else {
@@ -4901,7 +4929,7 @@ impl Ui {
                     if menu == Menu::Care {
                         ["Feed", "Clean", "Rest", "Med", "Back"][index]
                     } else {
-                        compact_menu_entry(menu, index).unwrap_or(entry)
+                        compact_menu_entry(menu, index, self.floating_surfaces).unwrap_or(entry)
                     }
                 } else {
                     entry
@@ -5378,7 +5406,7 @@ impl Ui {
         if menu == Menu::Graphics && self.floating_surfaces {
             entries[9] = "Status and needs popup";
             entries[10] = "Controls and help popup";
-            entries[11] = "Actions popup";
+            entries[11] = "Main menu popup";
         }
         if choice_menu(menu) {
             self.draw_choice_menu(screen, menu, &entries, config, colors, ascii);
@@ -5559,7 +5587,7 @@ impl Ui {
                 });
                 let prefix = format!("{}{} {key}", if selected { ">" } else { " " }, row + 1);
                 let short = if body.width < 32 {
-                    compact_menu_entry(menu, index).unwrap_or(short)
+                    compact_menu_entry(menu, index, self.floating_surfaces).unwrap_or(short)
                 } else {
                     short
                 };
@@ -5847,7 +5875,7 @@ fn menu_title(menu: Menu) -> &'static str {
         Menu::Seed => "ENTER CODE",
     }
 }
-fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
+fn compact_menu_entry(menu: Menu, index: usize, floating_surfaces: bool) -> Option<&'static str> {
     match menu {
         Menu::Home => [
             "Care",
@@ -5867,6 +5895,9 @@ fn compact_menu_entry(menu: Menu, index: usize) -> Option<&'static str> {
         ]
         .get(index)
         .copied(),
+        Menu::Graphics if floating_surfaces && (9..12).contains(&index) => {
+            Some(["Status", "Help", "Main menu"][index - 9])
+        }
         Menu::Graphics => [
             "Voxel 3D",
             "Pixel sprite",
@@ -6045,6 +6076,81 @@ fn apply_effect(
     }
     Ok(false)
 }
+
+#[derive(Default)]
+struct RenderSchedule {
+    last_draw: Option<Duration>,
+    wheel_pending: bool,
+}
+impl RenderSchedule {
+    fn wait(&self, now: Duration, interval: Duration) -> Duration {
+        self.last_draw.map_or(Duration::ZERO, |last| {
+            interval.saturating_sub(now.saturating_sub(last))
+        })
+    }
+
+    fn due(&self, now: Duration, interval: Duration) -> bool {
+        self.wait(now, interval).is_zero()
+    }
+
+    fn drawn(&mut self, now: Duration) {
+        self.last_draw = Some(now);
+        self.wheel_pending = false;
+    }
+
+    fn input_requires_frame(&self, event: &Event) -> bool {
+        self.wheel_pending && !wheel_event(event)
+    }
+
+    fn input_applied(&mut self, event: &Event) -> bool {
+        if wheel_event(event) {
+            self.wheel_pending = true;
+            false
+        } else {
+            true
+        }
+    }
+}
+
+fn wheel_event(event: &Event) -> bool {
+    matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown |
+        MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight))
+}
+
+fn redraw_only_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Resize(_, _) | Event::FocusGained | Event::FocusLost
+    ) || matches!(event, Event::Key(key) if key.kind == KeyEventKind::Release)
+        || matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
+            MouseEventKind::Moved | MouseEventKind::Drag(_) | MouseEventKind::Up(_)))
+}
+
+/// Resize notifications carry no gameplay input. Drain consecutive notifications
+/// before painting the terminal's actual current size, stopping at the first key,
+/// paste, click or wheel event so input order and painted menu numbers stay intact.
+fn next_actionable_input(
+    first: Option<Event>,
+    mut read_ready: impl FnMut() -> io::Result<Option<Event>>,
+) -> io::Result<Option<Event>> {
+    let mut first = first;
+    // Bound queue work so continuous resize traffic cannot starve ticks or saves.
+    for _ in 0..256 {
+        let incoming = match first.take() {
+            Some(incoming) => incoming,
+            None => match read_ready()? {
+                Some(incoming) => incoming,
+                None => return Ok(None),
+            },
+        };
+        if !redraw_only_event(&incoming) {
+            return Ok(Some(incoming));
+        }
+    }
+    Ok(None)
+}
+
 /// Hit-test a left click against the frame at the terminal's current size.
 /// Click targets belong to the last drawn frame, but tmux (`window-size
 /// latest`) resizes the window to the clicking client before writing the
@@ -6081,8 +6187,13 @@ pub fn run(
     let mut last_save = Instant::now();
     let mut last_camera_instant = Instant::now();
     let animation = Instant::now();
+    let mut schedule = RenderSchedule::default();
+    let mut drawn = terminal.size()?;
+    let mut force_frame = true;
+    let mut pending = None;
     loop {
         while let Some(reply) = native.poll() {
+            force_frame = true;
             match reply {
                 DialogEvent::Opened => ui.native_modal = true,
                 DialogEvent::Selected(choice) => {
@@ -6124,12 +6235,34 @@ pub fn run(
         ui.controller_camera = controller.camera();
         ui.controller_menu_navigation = controller.menu_navigation();
         ui.controller_status = controller.status().to_owned();
-        let mut drawn = terminal
-            .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?
-            .area
-            .as_size();
-        if event::poll(Duration::from_millis(ui.camera_poll_interval_ms(config)))? {
-            let incoming = event::read()?;
+        let incoming = next_actionable_input(pending.take(), || {
+            if event::poll(Duration::ZERO)? {
+                event::read().map(Some)
+            } else {
+                Ok(None)
+            }
+        })?;
+        // An actionable event is a layout barrier, including a numbered menu
+        // shortcut that must use the page visible at the current client size.
+        if let Some(incoming) = &incoming {
+            if terminal.size()? != drawn || schedule.input_requires_frame(incoming) {
+                force_frame = true;
+            }
+        }
+        let interval = Duration::from_millis(ui.camera_poll_interval_ms(config));
+        if force_frame || schedule.due(animation.elapsed(), interval) {
+            drawn = terminal
+                .draw(|screen| ui.draw(screen, config, renderer, colors, frame, store.is_some()))?
+                .area
+                .as_size();
+            schedule.drawn(animation.elapsed());
+            force_frame = false;
+        }
+        if let Some(incoming) = incoming {
+            // Wheel state changes accumulate at the existing frame cadence.
+            // The next key/paste/click paints that state before hit-testing or
+            // interpreting its page-relative menu numbers.
+            let immediate_feedback = schedule.input_applied(&incoming);
             let was_paused = ui.game.paused;
             let was_overlay = ui.overlay_open();
             let old_age = ui.game.age_ticks;
@@ -6219,6 +6352,7 @@ pub fn run(
                 }
                 _ => Effect::Continue,
             };
+            force_frame |= immediate_feedback;
             if ui.game.paused != was_paused
                 || ui.overlay_open() != was_overlay
                 || ui.game.age_ticks < old_age
@@ -6239,12 +6373,24 @@ pub fn run(
                 ui.react(Expression::Surprised);
             }
             last_tick = Instant::now();
+            force_frame = true;
         }
         if last_save.elapsed() >= Duration::from_secs(config.autosave_seconds) {
             if let Some(s) = store {
                 ui.save_to(s).map_err(io::Error::other)?;
             }
             last_save = Instant::now();
+        }
+        let wait = if force_frame {
+            Duration::ZERO
+        } else {
+            schedule.wait(
+                animation.elapsed(),
+                Duration::from_millis(ui.camera_poll_interval_ms(config)),
+            )
+        };
+        if event::poll(wait)? {
+            pending = Some(event::read()?);
         }
     }
 }
@@ -10796,9 +10942,10 @@ mod controller_alias_precedence_tests {
             &config.game,
         );
         assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.menu_selected, 1, "Back restores the Games choice");
         ui.handle(alias('2'), &config.game);
         ui.handle(alias('8'), &config.game);
-        assert_eq!(ui.menu_selected, 0);
+        assert_eq!(ui.menu_selected, 1);
         assert_eq!(ui.game, game);
         assert_eq!(
             (
@@ -11999,5 +12146,554 @@ mod floating_feedback_regressions {
             &config.game,
         );
         assert_eq!(ui.menu, Some(Menu::Identity));
+    }
+}
+
+#[cfg(test)]
+mod menu_backtrack_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::{backend::TestBackend, buffer::Buffer};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn fixture() -> (Config, Ui) {
+        let mut config = Config::sample().unwrap();
+        config.world.enabled = false;
+        config.view_mode = ViewMode::Pixel;
+        let mut game = Game::new(&config.game, 3778);
+        for _ in 0..config.game.hatch_ticks {
+            game.tick(&config.game);
+        }
+        let ui = Ui::configured(game, &config);
+        (config, ui)
+    }
+
+    fn draw(ui: &Ui, config: &Config, width: u16, height: u16) -> Buffer {
+        let colors = Colors::from_config(config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| ui.draw(frame, config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn painted(buffer: &Buffer, area: Rect) -> String {
+        (area.y..area.bottom())
+            .map(|y| {
+                (area.x..area.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn selected_target(ui: &Ui) -> Rect {
+        ui.menu_targets
+            .borrow()
+            .iter()
+            .find(|(_, index)| *index == ui.menu_selected)
+            .expect("restored selection must have a painted target")
+            .0
+    }
+
+    #[test]
+    fn graphics_popup_labels_match_keyboard_and_mouse_destinations_at_every_width() {
+        let (base, fixture) = fixture();
+        for floating in [true, false] {
+            let mut config = base.clone();
+            config.popup_policy.as_mut().unwrap().enabled = floating;
+            for (width, height) in [(20, 8), (20, 26), (80, 24)] {
+                for index in 9..12 {
+                    for mouse in [false, true] {
+                        let mut ui = Ui::configured(fixture.game.clone(), &config);
+                        let saved = ui.game.clone();
+                        let rng = ui.visual_rng;
+                        ui.open(Menu::Graphics);
+                        ui.menu_selected = index;
+                        let buffer = draw(&ui, &config, width, height);
+                        let target = selected_target(&ui);
+                        let label = painted(&buffer, target);
+                        if floating {
+                            assert!(
+                                label.contains(["Status", "Help", "Main menu"][index - 9])
+                                    || (index == 10 && label.contains("help")),
+                                "{width}x{height} choice {index}: {label}"
+                            );
+                            assert!(!label.contains("HUD"), "{label}");
+                        } else {
+                            assert!(label.contains("HUD"), "{label}");
+                        }
+                        let effect = if mouse {
+                            ui.click(target.x, target.y, &config.game)
+                        } else {
+                            ui.handle(key(KeyCode::Enter), &config.game)
+                        };
+                        assert_eq!(effect, Effect::Continue);
+                        if floating {
+                            assert_eq!(
+                                ui.menu,
+                                Some([Menu::Status, Menu::Help, Menu::Home][index - 9])
+                            );
+                        } else {
+                            assert_eq!(ui.menu, Some(Menu::Graphics));
+                            assert_eq!(
+                                ui.hud_mode,
+                                [HudMode::Auto, HudMode::Minimal, HudMode::Full][index - 9]
+                            );
+                        }
+                        assert_eq!(ui.game, saved);
+                        assert_eq!(ui.visual_rng, rng);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_and_painted_back_restore_deep_parent_focus_and_breadcrumbs() {
+        let (config, mut ui) = fixture();
+        let saved = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.open(Menu::Home);
+        ui.menu_selected = 5;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        ui.menu_selected = 8;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Gallery));
+        let buffer = draw(&ui, &config, 80, 24);
+        assert!(painted(&buffer, buffer.area).contains("GRAPHICS > SPRITE STUDIO"));
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Graphics));
+        assert_eq!(ui.menu_selected, 8);
+        assert!(ui.menu_targets.borrow().is_empty());
+        assert!(ui.control_targets.borrow().is_empty());
+        assert!(ui.choice_geometry.borrow().is_none());
+        assert_eq!(ui.menu_number_count.get(), 0);
+        let buffer = draw(&ui, &config, 80, 24);
+        assert!(painted(&buffer, buffer.area).contains("Home > GRAPHICS"));
+        assert!(painted(&buffer, selected_target(&ui)).contains("Sprite studio"));
+        ui.handle(key(KeyCode::Char('?')), &config.game);
+        draw(&ui, &config, 20, 8);
+        let back = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Cancel)
+            .expect("painted Back button")
+            .0;
+        assert_eq!(ui.click(back.x, back.y, &config.game), Effect::Continue);
+        assert_eq!(ui.menu, Some(Menu::Graphics));
+        assert_eq!(ui.menu_selected, 8);
+        draw(&ui, &config, 20, 8);
+        selected_target(&ui);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.menu_selected, 5);
+        draw(&ui, &config, 20, 8);
+        selected_target(&ui);
+        assert_eq!(ui.game, saved);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn long_roster_and_scrolled_help_survive_nested_back_resize_and_catalogue_shrink() {
+        let (config, mut ui) = fixture();
+        let saved = ui.game.clone();
+        let rng = ui.visual_rng;
+        let catalogue = ui.catalogue.clone();
+        for index in 0..48 {
+            let mut preview = catalogue[index % catalogue.len()].clone();
+            preview.name = format!("Preview {index}");
+            ui.catalogue.push(preview);
+        }
+        ui.open(Menu::Home);
+        ui.menu_selected = 3;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let last = ui.catalogue.len() - 1;
+        ui.menu_selected = last;
+        draw(&ui, &config, 20, 8);
+        ui.handle(key(KeyCode::Char('?')), &config.game);
+        draw(&ui, &config, 20, 8);
+        ui.handle(key(KeyCode::End), &config.game);
+        let scroll = ui.menu_scroll;
+        assert!(scroll > 0);
+        ui.handle(key(KeyCode::Char('v')), &config.game);
+        assert!(ui.menu_targets.borrow().is_empty());
+        assert!(ui.control_targets.borrow().is_empty());
+        assert_eq!(ui.menu_number_count.get(), 0);
+        draw(&ui, &config, 80, 24);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Help));
+        assert_eq!(ui.menu_scroll, scroll);
+        let buffer = draw(&ui, &config, 80, 24);
+        let visible_start = scroll.min(ui.menu_scroll_limit.get());
+        let popup = ui.last_surface.get();
+        assert!(
+            painted(
+                &buffer,
+                Rect::new(popup.x, popup.bottom() - 1, popup.width, 1)
+            )
+            .contains(&format!("L{}-", visible_start + 1)),
+            "resized help must paint a valid clamped page"
+        );
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Roster));
+        assert_eq!(ui.menu_selected, last);
+        let buffer = draw(&ui, &config, 12, 6);
+        let popup = ui.last_surface.get();
+        assert!(painted(
+            &buffer,
+            Rect::new(popup.x, popup.bottom() - 1, popup.width, 1)
+        )
+        .contains(&format!("{}/{}", last + 1, ui.catalogue.len())));
+        ui.open(Menu::Help);
+        ui.catalogue.truncate(2);
+        ui.back();
+        assert_eq!(ui.menu, Some(Menu::Roster));
+        assert_eq!(
+            ui.menu_selected, 1,
+            "restored focus clamps to current choices"
+        );
+        draw(&ui, &config, 20, 8);
+        ui.handle(key(KeyCode::Esc), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.menu_selected, 3);
+        assert_eq!(ui.game, saved);
+        assert_eq!(ui.visual_rng, rng);
+    }
+}
+
+#[cfg(test)]
+mod resize_render_budget_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers, MouseEvent};
+    use ratatui::backend::TestBackend;
+    use std::collections::VecDeque;
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn resize_batches_are_bounded_and_stop_before_each_actionable_input() {
+        let first_key = key(KeyCode::Char('o'));
+        let next_key = key(KeyCode::Char('1'));
+        let click = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        });
+        let mut queue: VecDeque<_> = (0..1000)
+            .map(|index| Event::Resize(40 + index % 23, 12 + index % 7))
+            .collect();
+        queue.push_back(first_key.clone());
+        queue.push_back(Event::Resize(20, 8));
+        queue.push_back(next_key.clone());
+        queue.push_back(click.clone());
+        queue.push_back(Event::Paste("birth code".into()));
+        let mut size = Size::new(80, 24);
+        let mut input = None;
+        let mut passes = 0;
+        while input.is_none() {
+            let before = queue.len();
+            input = next_actionable_input(None, || {
+                let event = queue.pop_front();
+                if let Some(Event::Resize(width, height)) = &event {
+                    size = Size::new(*width, *height);
+                }
+                Ok(event)
+            })
+            .unwrap();
+            assert!(
+                before - queue.len() <= 256,
+                "queue work must leave room for ticks and saves"
+            );
+            passes += 1;
+            assert!(passes <= 4);
+        }
+        assert_eq!(passes, 4);
+        assert_eq!(input, Some(first_key));
+        assert_eq!(size, Size::new(40 + 999 % 23, 12 + 999 % 7));
+        assert_eq!(queue.front(), Some(&Event::Resize(20, 8)));
+        let input = next_actionable_input(None, || {
+            let event = queue.pop_front();
+            if let Some(Event::Resize(width, height)) = &event {
+                size = Size::new(*width, *height);
+            }
+            Ok(event)
+        })
+        .unwrap();
+        assert_eq!(input, Some(next_key));
+        assert_eq!(size, Size::new(20, 8));
+        assert_eq!(
+            next_actionable_input(None, || Ok(queue.pop_front())).unwrap(),
+            Some(click)
+        );
+        assert_eq!(
+            next_actionable_input(None, || Ok(queue.pop_front())).unwrap(),
+            Some(Event::Paste("birth code".into()))
+        );
+        let pending = key(KeyCode::Esc);
+        assert_eq!(
+            next_actionable_input(Some(pending.clone()), || panic!(
+                "pending input is the barrier"
+            ))
+            .unwrap(),
+            Some(pending)
+        );
+    }
+
+    #[test]
+    fn resize_storm_renders_at_existing_frame_budget_with_final_geometry_and_unchanged_pet() {
+        let mut config = Config::sample().unwrap();
+        config.world.enabled = false;
+        config.view_mode = ViewMode::Pixel;
+        let mut game = Game::new(&config.game, 3778);
+        game.paused = true;
+        let mut ui = Ui::configured(game, &config);
+        ui.open(Menu::Home);
+        let saved = ui.game.clone();
+        let rng = ui.visual_rng;
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        let mut schedule = RenderSchedule::default();
+        let interval = Duration::from_millis(ui.camera_poll_interval_ms(&config));
+        let mut frames = 0;
+        for milliseconds in 0..=200 {
+            let size = Size::new(40 + milliseconds % 19, 12 + milliseconds % 9);
+            terminal.backend_mut().resize(size.width, size.height);
+            let mut event = Some(Event::Resize(size.width, size.height));
+            let incoming = next_actionable_input(None, || Ok(event.take())).unwrap();
+            assert!(
+                incoming.is_none(),
+                "resize notifications must not force an input frame"
+            );
+            let now = Duration::from_millis(u64::from(milliseconds));
+            if schedule.due(now, interval) {
+                terminal
+                    .draw(|frame| ui.draw(frame, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                schedule.drawn(now);
+                frames += 1;
+            }
+        }
+        assert_eq!(interval, Duration::from_millis(100));
+        assert_eq!(
+            frames, 3,
+            "201 resize notifications must not cause 201 full renders"
+        );
+        assert_eq!(
+            terminal.backend().buffer().area.as_size(),
+            Size::new(50, 14)
+        );
+        let popup = ui.last_surface.get();
+        assert_eq!(popup.intersection(terminal.backend().buffer().area), popup);
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == ui.menu_selected));
+        assert_eq!(ui.game, saved);
+        assert_eq!(ui.visual_rng, rng);
+        // Camera motion keeps its configured faster cadence; coalescing does
+        // not postpone an actionable key/paste/click behind the idle budget.
+        assert!(schedule.due(Duration::from_millis(233), Duration::from_millis(33)));
+        assert_eq!(
+            schedule.wait(Duration::from_millis(220), Duration::from_millis(33)),
+            Duration::from_millis(13)
+        );
+    }
+
+    fn wheel(kind: MouseEventKind) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column: 5,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn wheel_burst_applies_every_step_with_bounded_draws_and_a_key_barrier() {
+        let mut config = Config::sample().unwrap();
+        config.world.enabled = false;
+        config.view_mode = ViewMode::Pixel;
+        let mut ui = Ui::configured(Game::new(&config.game, 3778), &config);
+        ui.game.paused = true;
+        ui.open(Menu::Home);
+        let saved = ui.game.clone();
+        let count = ui.menu_len(Menu::Home);
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+        let mut schedule = RenderSchedule::default();
+        let interval = Duration::from_millis(ui.camera_poll_interval_ms(&config));
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        schedule.drawn(Duration::ZERO);
+        let mut frames = 1;
+        for milliseconds in 1..200 {
+            let incoming = wheel(MouseEventKind::ScrollDown);
+            let now = Duration::from_millis(milliseconds);
+            if schedule.input_requires_frame(&incoming) || schedule.due(now, interval) {
+                terminal
+                    .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                schedule.drawn(now);
+                frames += 1;
+            }
+            assert!(!schedule.input_applied(&incoming));
+            assert_eq!(ui.menu_input(Action::Next, &config.game), Effect::Continue);
+        }
+        assert_eq!(
+            ui.menu_selected,
+            199 % count,
+            "every wheel step is retained in order"
+        );
+        assert_eq!(
+            frames, 2,
+            "wheel traffic must not repaint the scene per event"
+        );
+        let cancel = key(KeyCode::Esc);
+        assert!(schedule.input_requires_frame(&cancel));
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        schedule.drawn(Duration::from_millis(199));
+        frames += 1;
+        assert_eq!(frames, 3);
+        assert!(!schedule.input_requires_frame(&cancel));
+        assert!(schedule.input_applied(&cancel));
+        assert_eq!(ui.game, saved);
+        for kind in [
+            MouseEventKind::ScrollUp,
+            MouseEventKind::ScrollDown,
+            MouseEventKind::ScrollLeft,
+            MouseEventKind::ScrollRight,
+        ] {
+            assert!(wheel_event(&wheel(kind)));
+        }
+    }
+
+    #[test]
+    fn wheel_to_number_or_click_paints_the_current_page_before_activation() {
+        for use_click in [false, true] {
+            let mut config = Config::sample().unwrap();
+            config.world.enabled = false;
+            config.view_mode = ViewMode::Pixel;
+            let game = Game::new(&config.game, 3778);
+            let mut ui = Ui::configured(game.clone(), &config);
+            let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+            let mut terminal = Terminal::new(TestBackend::new(20, 8)).unwrap();
+            ui.open(Menu::Graphics);
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let old_start = ui.menu_number_start.get();
+            let mut schedule = RenderSchedule::default();
+            schedule.drawn(Duration::ZERO);
+            for _ in 0..11 {
+                let incoming = wheel(MouseEventKind::ScrollDown);
+                assert!(!schedule.input_applied(&incoming));
+                ui.menu_input(Action::Next, &config.game);
+            }
+            assert_eq!(
+                ui.menu_number_start.get(),
+                old_start,
+                "no intermediate repaint"
+            );
+            let barrier = if use_click {
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: 5,
+                    row: 4,
+                    modifiers: KeyModifiers::NONE,
+                })
+            } else {
+                key(KeyCode::Char('1'))
+            };
+            assert!(schedule.input_requires_frame(&barrier));
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            schedule.drawn(Duration::from_millis(1));
+            let start = ui.menu_number_start.get();
+            assert!(
+                start > old_start,
+                "wheel selection must reach a later numbered page"
+            );
+            let mut expected = Ui::configured(game, &config);
+            expected.open(Menu::Graphics);
+            expected.menu_selected = start;
+            let expected_effect = expected.menu_input(Action::Accept, &config.game);
+            let effect = if use_click {
+                let target = ui
+                    .menu_targets
+                    .borrow()
+                    .iter()
+                    .find(|(_, index)| *index == start)
+                    .unwrap()
+                    .0;
+                let mut drawn = terminal.size().unwrap();
+                click_at_current_size(
+                    &mut terminal,
+                    &mut drawn,
+                    &mut ui,
+                    (target.x, target.y),
+                    |ui, f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false),
+                    &config.game,
+                )
+                .unwrap()
+            } else {
+                ui.handle(
+                    KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE),
+                    &config.game,
+                )
+            };
+            assert_eq!(effect, expected_effect);
+            assert_eq!(ui.menu, expected.menu);
+            assert_eq!(ui.renderer, expected.renderer);
+            assert_eq!(ui.view_mode, expected.view_mode);
+            assert_eq!(ui.hud_mode, expected.hud_mode);
+            assert_eq!(ui.game, expected.game);
+        }
+    }
+
+    #[test]
+    fn inert_mouse_and_key_release_traffic_does_not_drop_a_pressed_key() {
+        let pressed = key(KeyCode::Char('q'));
+        let mut queue = VecDeque::from([
+            Event::FocusLost,
+            Event::FocusGained,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 3,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 3,
+                row: 2,
+                modifiers: KeyModifiers::NONE,
+            }),
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Release,
+                ..KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)
+            }),
+            pressed.clone(),
+        ]);
+        assert_eq!(
+            next_actionable_input(None, || Ok(queue.pop_front())).unwrap(),
+            Some(pressed)
+        );
+        assert!(queue.is_empty());
     }
 }

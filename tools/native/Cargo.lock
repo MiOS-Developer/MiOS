@@ -683,6 +683,7 @@ checksum = "829d955a0bb380ef178a640b91779e3987da38c9aea133b20614cfed8cdea9c6"
 dependencies = [
  "bitflags 2.13.1",
  "crossterm_winapi",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix 0.38.44",
@@ -701,6 +702,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more 2.1.1",
  "document-features",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix 1.1.4",
@@ -1028,6 +1030,17 @@ dependencies = [
  "toml",
  "uncased",
  "version_check",
+]
+
+[[package]]
+name = "filedescriptor"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e40758ed24c9b2eeb76c35fb0aebc66c626084edd827e07e1552279814c6682d"
+dependencies = [
+ "libc",
+ "thiserror 1.0.69",
+ "winapi",
 ]
 
 [[package]]
@@ -2201,6 +2214,7 @@ dependencies = [
 name = "mios-controls"
 version = "0.3.0"
 dependencies = [
+ "crossterm 0.28.1",
  "mios-inputd",
  "mios-resolver",
  "ratatui 0.29.0",
@@ -2238,6 +2252,7 @@ dependencies = [
 name = "mios-fanctl"
 version = "0.3.0"
 dependencies = [
+ "crossterm 0.28.1",
  "ratatui 0.29.0",
  "serde",
  "serde_json",

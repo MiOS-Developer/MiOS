@@ -3,7 +3,7 @@
 // AI-related: nested_session.rs, nested_devices.rs, mios-inputd/src/runtime.rs, task_01M6VYCEBMPNBPJT5DJBVZSDC3
 use super::*;
 use mios_inputd::linux::{GrabProbe, VirtualDevice};
-use mios_inputd::router::{Event, EV_KEY, EV_SYN, SYN_REPORT};
+use mios_inputd::router::{Event, EV_ABS, EV_KEY, EV_SYN, SYN_REPORT};
 
 const HELPER: &str = "nested_session::controller_return_live::owned_bridge_helper";
 struct OwnedBridge(std::process::Child, PathBuf);
@@ -199,40 +199,36 @@ fn controller_return_owned_kernel() {
     );
     let original = fs::read(registry.join("kernel-return.json")).unwrap();
     let original_descriptor = fs::read(&descriptor).unwrap();
-    // Negative: an actual held evdev button defers release and preserves both records.
-    probe
-        .emit(|| {
-            pad.write(&[
-                Event::new(EV_KEY, 0x130, 1),
-                Event::new(EV_SYN, SYN_REPORT, 0),
-            ])
-        })
-        .unwrap();
-    let (mut client, socket) = UnixStream::pair().unwrap();
-    writeln!(
-        client,
-        "{}",
-        json!({"action":"return_controller","nonce":"held-kernel","seat":"kernel-return"})
-    )
-    .unwrap();
-    handle_control_connection(socket, &mut claim, &registry, &parent, &owned).unwrap();
-    let deferred = read_control_frame(&mut client, Duration::from_secs(1)).unwrap();
-    assert_eq!(deferred["ok"], false, "{deferred}");
-    assert_eq!(deferred["reason"], "controls_held", "{deferred}");
-    assert_eq!(
-        fs::read(registry.join("kernel-return.json")).unwrap(),
-        original
-    );
-    assert_eq!(fs::read(&descriptor).unwrap(), original_descriptor);
-    assert!(has_node(child_bridge.0.id(), &node) && probe.held_elsewhere());
-    probe
-        .emit(|| {
-            pad.write(&[
-                Event::new(EV_KEY, 0x130, 0),
-                Event::new(EV_SYN, SYN_REPORT, 0),
-            ])
-        })
-        .unwrap();
+    // Actual evdev snapshots must defer for buttons, sticks and analog triggers.
+    for (name, kind, code, held) in [
+        ("button", EV_KEY, 0x130, 1),
+        ("stick", EV_ABS, 0, 22_000),
+        ("trigger", EV_ABS, 2, 255),
+    ] {
+        probe
+            .emit(|| {
+                pad.write(&[
+                    Event::new(kind, code, held),
+                    Event::new(EV_SYN, SYN_REPORT, 0),
+                ])
+            })
+            .unwrap();
+        let (mut client, socket) = UnixStream::pair().unwrap();
+        writeln!(client, "{}", json!({"action":"return_controller","nonce":format!("held-kernel-{name}"),"seat":"kernel-return"})).unwrap();
+        handle_control_connection(socket, &mut claim, &registry, &parent, &owned).unwrap();
+        let deferred = read_control_frame(&mut client, Duration::from_secs(1)).unwrap();
+        assert_eq!(deferred["ok"], false, "{name}: {deferred}");
+        assert_eq!(deferred["reason"], "controls_held", "{name}: {deferred}");
+        assert_eq!(
+            fs::read(registry.join("kernel-return.json")).unwrap(),
+            original
+        );
+        assert_eq!(fs::read(&descriptor).unwrap(), original_descriptor);
+        assert!(has_node(child_bridge.0.id(), &node) && probe.held_elsewhere());
+        probe
+            .emit(|| pad.write(&[Event::new(kind, code, 0), Event::new(EV_SYN, SYN_REPORT, 0)]))
+            .unwrap();
+    }
     // Recovery ACK only schedules acquisition. Hold the actual kernel grab across
     // abort_release and prove the child survives contention, then reacquires.
     let (_, child_peer) =
@@ -312,6 +308,6 @@ fn controller_return_owned_kernel() {
     println!(
         "kernel-controller-return: {}",
         json!({"scope":"owned uinput; no compositor, game, PiP or physical-pad acceptance", "node":node,
-        "parent_pid":parent_bridge.0.id(),"child_pid":child_bridge.0.id(),"held_control_deferred":true,"raw_recovery_reacquired":true,"return":response})
+        "parent_pid":parent_bridge.0.id(),"child_pid":child_bridge.0.id(),"held_control_deferred":true,"held_controls_verified":["button","stick","analog_trigger"],"raw_recovery_reacquired":true,"return":response})
     );
 }

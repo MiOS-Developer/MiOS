@@ -40,3 +40,6 @@
 
 # Git bundle headers can exceed content detection limits; preserve pack bytes.
 *.bundle binary
+
+# Upstream patch context preserves its original tabs and blank lines.
+*.patch -whitespace

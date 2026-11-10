@@ -279,6 +279,87 @@ installed `[[terminal.tuis]]` rows for this terminal. It is read-only data for
 the Portal, the controller app and agents. MCP has no tool that launches a TUI
 into a human session; such a tool would need an owner lease first.
 
+## Native TTY desktop
+
+Open the desktop directly from a local terminal or SSH:
+
+```sh
+mios desktop
+# Equivalent native entry:
+miosd desktop
+# Terminal launcher entry:
+mios-terminal --desktop
+```
+
+`[keybindings.tmux.desktop]` selects the backend, dedicated socket/session,
+dock, window titles, minimum sizes and resize debounce. The quiet background
+draws the global top bar; the dock stays at the bottom. Its background redraws
+after a settled size change and blocks while idle. Applications run in native
+tmux panes without requiring a graphical compositor.
+
+The Apps dock control and the top bar open the same searchable launcher as
+**Alt+Space** or **Ctrl+B, Space**. Press **/** or **Ctrl+F** to find apps and
+actions; typed spaces, `q` and number keys stay inside the query. **Enter** opens
+the selected match, **Tab** opens its options, and **Esc** clears search or backs
+out. The launcher preserves the original application target through filtering.
+The `terminal-shell` catalogue entry opens a persistent terminal window.
+
+Window titles show the application command with left-side **[x] [_] [+]**
+controls for confirmed close, minimize and maximize. Drag a top border to move
+a floating window; drag its edge or corner to resize it. Right-click a border
+for centered window actions: center, maximize/restore, snap halves or quarters,
+tile, float, minimize or close. Snap actions reject unusably small geometry.
+Minimize parks the existing app in an owned hidden session; restore keeps its
+pane identity, process and PTY. Managed agent panes and the background anchor
+retain their ownership guards.
+
+Windows, menus, dialogs and tooltips use the shared `[terminal.popups]` policy
+and existing per-type size sources. Geometry is centered and clamped to the
+current client. A systems chooser is intentionally full viewport. `miosd sessions` uses compact
+Apps/Systems/All tabs and at most two footer rows so descriptions and status text leave room for choices on small terminals.
+
+The desktop reuses `render-tmux-theme` and the SSOT `terminal-shell` argv for
+its shell setup. `MIOS_OMP_THEME` points at the generated prompt, and the
+human desktop clears the worker-only helper-prompt flag in its own scope.
+The palette follows the terminal's capabilities and layered SSOT. Native
+agent worker prompts keep their separate helper policy.
+
+### Resize and scroll behavior
+
+The game TUI drains redundant resize/mouse notifications within a bounded
+batch and paints at its existing configured frame interval. Wheel actions
+remain ordered; a key or click following a wheel burst first paints the current
+menu page. Current-size click hit tests remain enforced. Scene quality, game
+ticks and saves keep their existing rules.
+
+Monitor collectors run outside the input path with one pending job per
+collector. Keyed tables preserve the selected identity, top visible row and
+horizontal position across refresh/reorder/removal. A refresh does not queue
+a cursor-scroll action over a later wheel input. Logs follow new lines while
+the reader is at the end and retain a manually scrolled position otherwise.
+
+The native backend also bounds off-screen floating-pane occlusion ranges and
+yields when identification IPC has no write progress. Border callbacks use
+window-coordinate mouse formats, which account for top status rows and panned
+viewports; ordinary pane-relative mouse formats retain their existing meaning.
+
+### Backend build and verification
+
+`mios-gen build-tmux-desktop` verifies the supplied source archive against
+`[keybindings.tmux.desktop.source]`, applies the declared patch, builds in a
+fresh private directory and stages the configured binary with a digest receipt.
+Run it inside an admitted MiOS-DEV container under the shared native build lock;
+the host wrapper supplies the inspected container identity. Source, patch,
+toolchain and runtime-library provenance accompany the artifact. Replacing a
+backend file leaves an existing server's loaded executable unchanged; deployment
+therefore verifies the running server after a checkpointed, scoped reload.
+
+The checkpoint in
+`.devloop/handoff/mios-tui-desktop.json` distinguishes completed private/native
+checks from final combined validation, publication and live recovery. Its
+verification archive is assembled by the integration publisher. Raw IPC traces,
+environment contents, authentication data and private relay tokens are excluded.
+
 ## Licensing and validation
 
 MiOS's repository license is Apache-2.0. Upstream tmux-mcp's README declares MIT;

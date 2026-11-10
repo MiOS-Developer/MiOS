@@ -148,6 +148,28 @@ pub fn menu_argv(
     section: Option<&str>,
     is_exec: impl Fn(&str) -> bool,
 ) -> Result<Option<Vec<String>>, String> {
+    menu_page_argv(merged, console, rows, u16::MAX, section, 0, is_exec)
+}
+
+fn menu_page_argv(
+    merged: &Value,
+    console: bool,
+    rows: u32,
+    columns: u16,
+    section: Option<&str>,
+    page: usize,
+    is_exec: impl Fn(&str) -> bool,
+) -> Result<Option<Vec<String>>, String> {
+    let popup = mios_resolver::popup::PopupPolicy::from_value(merged)?;
+    let (menu_columns, menu_rows) = popup.size(
+        mios_resolver::popup::SurfaceKind::Menu,
+        columns,
+        u16::try_from(rows).unwrap_or(u16::MAX),
+    );
+    let rows = u32::from(menu_rows);
+    if menu_columns < 10 || rows < 6 {
+        return Ok(None);
+    }
     let l = terminal_tuis::launcher(merged)?;
     let cat = terminal_tuis::catalog(merged)?;
     let tuis = if l.enabled {
@@ -184,10 +206,39 @@ pub fn menu_argv(
             return Err(format!("unknown section {sec:?}"));
         }
         title = format!("{} > {}", l.title, capitalised(sec));
-        for t in tuis.iter().filter(|t| t.section == sec) {
+        let group: Vec<_> = tuis.iter().filter(|t| t.section == sec).collect();
+        let paged = group.len() as u32 + 4 > rows;
+        let capacity = if paged {
+            rows.saturating_sub(6).max(1) as usize
+        } else {
+            group.len().max(1)
+        };
+        let pages = group.len().max(1).div_ceil(capacity);
+        let page = page.min(pages - 1);
+        if pages > 1 {
+            title = format!("{title} {}/{}", page + 1, pages);
+        }
+        for t in group.iter().skip(page * capacity).take(capacity) {
             items.push(item(t, keys.next().unwrap_or_default()));
         }
-        items.push(sep());
+        // A six-row console fits one app plus both navigation keys and Back.
+        // Its decorative separator must not make middle pages unreachable.
+        if rows > 6 {
+            items.push(sep());
+        }
+        let open_page = |page: usize| {
+            helper(&format!("--menu apps --section {sec} --page {page} --client #{{q:client_name}} --console {cflag} --rows #{{client_height}}"))
+        };
+        if page > 0 {
+            items.push([
+                "< Previous page".into(),
+                "PPage".into(),
+                open_page(page - 1),
+            ]);
+        }
+        if page + 1 < pages {
+            items.push(["Next page >".into(), "NPage".into(), open_page(page + 1)]);
+        }
         items.push(["< Back".into(), "BSpace".into(), helper(&format!("--menu apps --client #{{q:client_name}} --console {cflag} --rows #{{client_height}}"))]);
     } else {
         for (label, key, command) in &actions {
@@ -232,6 +283,36 @@ pub fn menu_argv(
     let height = items.len() as u32 + 2;
     if height > rows {
         return Ok(None);
+    }
+    let label_columns = usize::from(menu_columns.saturating_sub(6));
+    if title.chars().count() > label_columns {
+        title = format!(
+            "{}...",
+            title
+                .chars()
+                .take(label_columns.saturating_sub(3))
+                .collect::<String>()
+        );
+    }
+    if popup.enabled {
+        title = format!(
+            "{:^width$}",
+            title,
+            width = usize::from(menu_columns.saturating_sub(4))
+        );
+    }
+    for item in &mut items {
+        let width =
+            usize::from(menu_columns.saturating_sub(4)).saturating_sub(item[1].chars().count() + 3);
+        if item[0].chars().count() > width {
+            item[0] = format!(
+                "{}...",
+                item[0]
+                    .chars()
+                    .take(width.saturating_sub(3))
+                    .collect::<String>()
+            );
+        }
     }
     // No -M: it would make tmux ignore -C, and Enter alone must choose the first item (controller vocabulary).
     let mut argv: Vec<String> = vec![
@@ -296,6 +377,7 @@ struct Args {
     console: bool,
     rows: u32,
     section: Option<String>,
+    page: usize,
     session: Option<String>,
     socket: Option<String>,
     id: Option<String>,
@@ -312,6 +394,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
         console: false,
         rows: 24,
         section: None,
+        page: 0,
         session: None,
         socket: None,
         id: None,
@@ -342,6 +425,11 @@ fn parse(argv: &[String]) -> Result<Args, String> {
                     .ok_or("--rows must be 1..1000")?
             }
             "--section" => a.section = Some(val()?),
+            "--page" => {
+                a.page = val()?
+                    .parse()
+                    .map_err(|_| "--page must be a nonnegative integer")?
+            }
             "--session" => a.session = Some(val()?),
             "--socket" => a.socket = Some(val()?),
             "--mode" => {
@@ -867,15 +955,23 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
         &pane,
         mios_resolver::popup::SurfaceKind::Window,
     )?;
+    let desktop = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        &pane,
+        "#{@mios-desktop-enabled}",
+    ])? == "1";
     let mut mode = a.mode.unwrap_or_else(|| {
-        if dimensions.is_some() && t.mode == Mode::Window {
+        if (dimensions.is_some() || desktop) && t.mode == Mode::Window {
             Mode::Float
         } else {
             t.mode
         }
     });
     if mode == Mode::Popup && !scope_works(&l.popup_scope) {
-        mode = Mode::Window; // never run a popup TUI in the tmux server's own cgroup
+        // Keep the desktop visible when the app's scoped popup cannot start.
+        mode = if desktop { Mode::Float } else { Mode::Window };
     }
     if mode == Mode::Float && tmux(&["list-commands", "new-pane"]).is_err() {
         mode = Mode::Window;
@@ -971,6 +1067,9 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
 /// `mios-gen tmux-os VERB ...`: runs inside a tmux job (TMUX and an explicit TMUX_PANE set by the binding).
 /// Ok(()) after a command that returns; exec-ing verbs never return on success.
 pub fn run(root: &Path, argv: &[String]) -> Result<u8, String> {
+    if argv.first().is_some_and(|arg| arg == "desktop") {
+        return crate::tmux_desktop::run(root, &argv[1..]);
+    }
     let a = parse(argv)?;
     let merged = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     match a.verb.as_str() {
@@ -980,11 +1079,16 @@ pub fn run(root: &Path, argv: &[String]) -> Result<u8, String> {
             }
             let client = need_client(&a)?;
             let pane = pane_env()?;
-            match menu_argv(
+            let columns = tmux(&["display-message", "-p", "-c", &client, "#{client_width}"])?
+                .parse::<u16>()
+                .map_err(|_| "tmux client width is not a cell count")?;
+            match menu_page_argv(
                 &merged,
                 a.console,
                 a.rows,
+                columns,
                 a.section.as_deref(),
+                a.page,
                 terminal_tuis::is_installed,
             )? {
                 None => {
@@ -1092,8 +1196,16 @@ mod tests {
     fn small_clients_page_by_section_or_get_nothing() {
         let d = ssot();
         let all = |_: &str| true;
-        let flat = menu_argv(&d, false, 60, None, all).unwrap().unwrap();
+        let mut legacy = d.clone();
+        legacy["terminal"]["popups"]["enabled"] = Value::Boolean(false);
+        let flat = menu_argv(&legacy, false, 60, None, all).unwrap().unwrap();
         assert!(flat.iter().any(|a| a == "btop"));
+        let compact = menu_argv(&d, false, 240, None, all).unwrap().unwrap();
+        assert!(compact.iter().any(|a| a.starts_with("System (")));
+        assert!(
+            !compact.iter().any(|a| a == "btop"),
+            "a tall viewport still uses compact sections"
+        );
         let paged = menu_argv(&d, false, 16, None, all).unwrap().unwrap();
         assert!(
             !paged.iter().any(|a| a == "btop") && paged.iter().any(|a| a.starts_with("System (")),
@@ -1146,5 +1258,117 @@ mod tests {
             .is_err(),
             "desktop is the launcher's own pop-out"
         );
+    }
+    fn menu_rows(argv: &[String]) -> Vec<[String; 3]> {
+        let mut result = Vec::new();
+        let mut index = argv.iter().position(|arg| arg == "--").unwrap() + 1;
+        while index < argv.len() {
+            if argv[index].is_empty() {
+                result.push([String::new(), String::new(), String::new()]);
+                index += 1;
+            } else {
+                result.push([
+                    argv[index].clone(),
+                    argv[index + 1].clone(),
+                    argv[index + 2].clone(),
+                ]);
+                index += 3;
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn compact_apps_pages_reach_every_item_without_exceeding_ssot_bounds() {
+        let mut data = ssot();
+        let template = data["terminal"]["tuis"].as_array().unwrap()[0].clone();
+        data["terminal"]["tuis"] = Value::Array(
+            (0..37)
+                .map(|index| {
+                    let mut item = template.clone();
+                    item["id"] = Value::String(format!("proof{index}"));
+                    item["label"] = Value::String(format!("Proof application {index}"));
+                    item["section"] = Value::String("system".into());
+                    item
+                })
+                .collect(),
+        );
+        let mut found = std::collections::BTreeSet::new();
+        let mut page = 0;
+        loop {
+            let menu = menu_page_argv(&data, false, 67, 240, Some("system"), page, |_| true)
+                .unwrap()
+                .unwrap();
+            let rows = menu_rows(&menu);
+            assert!(rows.len() + 2 <= 18, "{rows:?}");
+            assert!(rows.iter().all(|row| row[0].chars().count() <= 54));
+            assert!(rows.iter().any(|row| row[0] == "< Back"));
+            for row in &rows {
+                if row[0].starts_with("Proof application") {
+                    assert!(found.insert(row[0].clone()), "duplicate {row:?}");
+                }
+            }
+            if !rows.iter().any(|row| row[0] == "Next page >") {
+                break;
+            }
+            assert!(rows
+                .iter()
+                .any(|row| row[2].contains(&format!("--page {}", page + 1))));
+            page += 1;
+            assert!(page < 10);
+        }
+        assert_eq!(found.len(), 37);
+        assert!(page > 0);
+        let last = menu_page_argv(&data, false, 67, 240, Some("system"), usize::MAX, |_| true)
+            .unwrap()
+            .unwrap();
+        assert!(!menu_rows(&last).iter().any(|row| row[0] == "Next page >"));
+        assert!(parse(&["menu".into(), "--page".into(), "-1".into()]).is_err());
+    }
+
+    #[test]
+    fn six_row_apps_menu_keeps_middle_pages_and_back_reachable() {
+        let mut data = ssot();
+        let template = data["terminal"]["tuis"].as_array().unwrap()[0].clone();
+        data["terminal"]["tuis"] = Value::Array(
+            (0..5)
+                .map(|index| {
+                    let mut app = template.clone();
+                    app["id"] = Value::String(format!("proof{index}"));
+                    app["label"] = Value::String(format!("Proof {index}"));
+                    app["section"] = Value::String("system".into());
+                    app
+                })
+                .collect(),
+        );
+        for page in 0..5 {
+            let menu = menu_page_argv(&data, true, 6, 20, Some("system"), page, |_| true)
+                .unwrap()
+                .expect("every tiny page must fit");
+            let rows = menu_rows(&menu);
+            assert!(rows.len() + 2 <= 6);
+            assert!(rows.iter().any(|row| row[0] == format!("Proof {page}")));
+            assert!(rows.iter().any(|row| row[0] == "< Back"));
+            assert_eq!(rows.iter().any(|row| row[1] == "PPage"), page > 0);
+            assert_eq!(rows.iter().any(|row| row[1] == "NPage"), page < 4);
+        }
+    }
+
+    #[test]
+    fn compact_apps_labels_and_title_fit_narrow_clients() {
+        let mut data = ssot();
+        data["terminal"]["tuis"].as_array_mut().unwrap()[0]["label"] =
+            Value::String("An installed application with a longer menu label".into());
+        let menu = menu_page_argv(&data, false, 40, 34, Some("mios"), 0, |_| true)
+            .unwrap()
+            .unwrap();
+        let policy = mios_resolver::popup::PopupPolicy::from_value(&data).unwrap();
+        let (width, height) = policy.size(mios_resolver::popup::SurfaceKind::Menu, 34, 40);
+        assert!(menu_rows(&menu).len() + 2 <= usize::from(height));
+        assert!(menu_rows(&menu)
+            .iter()
+            .all(|row| row[0].chars().count() + 6 <= usize::from(width)));
+        let title = menu.iter().position(|arg| arg == "-T").unwrap() + 1;
+        assert!(menu[title].chars().count() <= usize::from(width));
     }
 }

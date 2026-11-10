@@ -24,6 +24,8 @@ mios-unit-gen = { path = "../../../tools/native/mios-unit-gen" }
 zbus = { version = "5.19.0", default-features = false, features = ["tokio"] }
 x11rb = "0.14.0"
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+# Select the re-exported backend explicitly, including standalone package builds.
+crossterm = { version = "0.29", default-features = false, features = ["use-dev-tty"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]

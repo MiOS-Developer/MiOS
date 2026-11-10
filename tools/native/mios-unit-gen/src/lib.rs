@@ -7,6 +7,7 @@ use std::fs;
 use std::path::Path;
 use thiserror::Error;
 
+pub mod tmux_desktop;
 pub mod tmux_os;
 use tmux_os::render_tmux_keys;
 
@@ -276,6 +277,9 @@ pub fn render_keybindings_for(
             paths.join(", ")
         );
         tmux += &render_tmux_keys(&doc, config, platform, &mut keys, &tmux_actions)?;
+        if platform == "linux" {
+            tmux += &tmux_desktop::render(&doc)?;
+        }
     }
     let passthrough = config_value(config, "keybindings", "vscode_passthrough_commands")?
         .as_array()
@@ -1554,9 +1558,15 @@ mod tests {
             .contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
         assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
         assert!(tmux.contains("mios-menu-pane=display-menu"));
-        let root=tmux.lines().find(|line|line.contains("mios-menu-root=display-menu")).unwrap();
+        let root = tmux
+            .lines()
+            .find(|line| line.contains("mios-menu-root=display-menu"))
+            .unwrap();
         assert!(root.contains("#[align=centre]#{?#{e|>=:#{client_width},60}"));
-        assert!(root.contains("#{l:MiOS}}"), "narrow clients retain the original title");
+        assert!(
+            root.contains("#{l:MiOS}}"),
+            "narrow clients retain the original title"
+        );
         // The master toggle must disable menu interception as well as mouse capture.
         let mut doc: toml::Value = toml::from_str(ssot).unwrap();
         doc["keybindings"]["mouse"] = toml::Value::Boolean(false);

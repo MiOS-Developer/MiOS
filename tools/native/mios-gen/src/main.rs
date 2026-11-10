@@ -39,6 +39,8 @@ mod render;
 mod session_scale;
 mod sync;
 mod terminal;
+mod tmux_desktop;
+mod tmux_desktop_build;
 mod tmux_os;
 mod wl_device_proxy;
 
@@ -220,6 +222,17 @@ enum Commands {
         root: Option<PathBuf>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         args: Vec<String>,
+    },
+    /// Build the verified MiOS-Tmux backend inside an admitted MiOS-DEV container
+    BuildTmuxDesktop {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        source_archive: PathBuf,
+        #[arg(long)]
+        build_dir: PathBuf,
+        #[arg(long)]
+        install_root: PathBuf,
     },
     /// Render the complete Windows host tmux configuration from layered SSOT.
     RenderHostTmux {
@@ -1746,6 +1759,22 @@ fn main() -> ExitCode {
                 Ok(code) => ExitCode::from(code),
                 Err(error) => {
                     eprintln!("[tmux-os] {error}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Commands::BuildTmuxDesktop {
+            root,
+            source_archive,
+            build_dir,
+            install_root,
+        } => {
+            let root = resolve_root(root);
+            return match tmux_desktop_build::run(&root, &source_archive, &build_dir, &install_root)
+            {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("[build-tmux-desktop] {error}");
                     ExitCode::FAILURE
                 }
             };

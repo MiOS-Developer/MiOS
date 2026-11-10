@@ -17,11 +17,11 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | Status | Records |
 |---|---|
 | pending | 1748 |
-| in_progress | 93 |
+| in_progress | 94 |
 | completed | 1900 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3782 |
+| total | 3783 |
 
 0 record(s) carry at least one override.
 
@@ -2674,6 +2674,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3777` Validate controller timing bounds in the actual configurator form -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3778` Content-fit menus and spatial controller navigation -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
 - `task_3779` Textured shaded menu panels with shared content-fit geometry -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size L
+- `task_3783` Improve compact MiOS-Tmux and game menu navigation -- in_progress · owner mios-menu-navigation · P1 · size M
 
 ## WS-MIOSSYS
 

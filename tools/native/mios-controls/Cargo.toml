@@ -16,6 +16,8 @@ mios-resolver = { path = "../mios-resolver" }
 # the router's own config validator (room table, Guide layer, contract) and its guarded evdev Device (open, grab)
 mios-inputd = { path = "../mios-inputd" }
 ratatui = "0.29"
+# Select the re-exported backend explicitly, including standalone package builds.
+crossterm = { version = "0.28", default-features = false, features = ["use-dev-tty"] }
 # sched_setaffinity for the dedicated input threads and poll(2) for the pad thread (safe APIs; the crate forbids unsafe)
 rustix = { version = "0.38", features = ["process", "event"] }
 serde_json = { workspace = true }

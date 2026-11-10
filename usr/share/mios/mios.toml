@@ -4396,6 +4396,7 @@ adapters = [
 # key words published by the server as @mios-menu-keys. The generated `mios-menu` command alias opens the same menu by
 # name (command prompt, one-client scripts) but cannot be aimed: tmux appends CLI arguments to an alias's expansion.
 [keybindings.tmux]
+command_timeout_ms = 3000 # bound read-only control clients; popup interaction remains open
 # MiOS-Tmux (tmux-os), tier 3 of [keybindings.global] in the terminal context. Every binding below is in the
 # PREFIX table ([keybindings].tmux_prefix, then one key), so none can shadow a reserved_terminal chord; the
 # only root-table keys are [keybindings.agent].accept_chord and the right-click menus (mouse = true).
@@ -4515,6 +4516,61 @@ origin_gone_message = "The original window is gone: the pane stays in the float 
 # a window or a session, close) or how to open an app (popup, window, floating pane, its own desktop window).
 # Prefix keys run as if typed on the launching client once the popup closes (send-keys -c CLIENT -K); menu rows run
 # through the generated mios-menu-ID key tables (switch-client -c CLIENT -T mios-menu-ID, then the row's key).
+# The native TTY desktop has its own server: adopted human/agent sessions retain
+# their tmux executable and layout. All surfaces use [terminal.popups] bounds.
+[keybindings.tmux.desktop]
+enabled = true
+binary = "/usr/libexec/mios/mios-tmux"
+socket_name = "mios-desktop"
+session_name = "MiOS-Desktop"
+dock = true
+pane_titles = true
+dock_rows = 2
+dock_refresh_seconds = 1
+dock_item_columns = 16
+command_timeout_ms = 3000
+min_columns = 34
+min_rows = 10
+snap_margin = 2
+resize_debounce_ms = 40
+
+[keybindings.tmux.desktop.source]
+version = "3.7c"
+url = "https://github.com/tmux/tmux/releases/download/3.7c/tmux-3.7c.tar.gz"
+sha256 = "7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf"
+patch = "tools/patches/tmux-desktop.patch"
+configure_args = ["--prefix=/usr", "--libexecdir=/usr/libexec/mios", "--enable-sixel", "--disable-systemd", "--disable-utempter", "--disable-utf8proc", "--disable-jemalloc"]
+make_jobs = 2
+
+[keybindings.tmux.desktop.labels]
+apps = "Apps"
+windows = "Windows"
+topbar = "MiOS | Apps | Windows | System"
+canvas_title = "MiOS Desktop"
+canvas_subtitle = "Terminal applications in floating windows"
+canvas_help = "Alt-Space: Apps | Right-click border: actions | Drag border: move or resize"
+center = "Center"
+maximize = "Maximize"
+restore = "Restore"
+snap_left = "Snap left"
+snap_right = "Snap right"
+snap_top = "Snap top"
+snap_bottom = "Snap bottom"
+snap_top_left = "Snap top left"
+snap_top_right = "Snap top right"
+snap_bottom_left = "Snap bottom left"
+snap_bottom_right = "Snap bottom right"
+tile = "Tile"
+float = "Float"
+minimize = "Minimize"
+close = "Close"
+confirm_close = "Close this window?"
+cancel = "Cancel"
+context_title = "Window actions"
+snap = "Snap"
+corners = "Corners"
+back = "Back"
+
 [keybindings.tmux.launcher]
 enabled              = true        # false: prefix + menu_key and launcher_key open the display-menus again
 title                = "MiOS"
@@ -4547,7 +4603,7 @@ confirm_close        = "Close it?"
 move_window_title    = "Move the pane to window"
 move_session_title   = "Move the window to session"
 new_session_label    = "New session"
-labels = { go = "Go to", popout = "Pop out to its own window", float = "Float the pane", dock = "Tile the pane (dock it)", move_window = "Move to window...", move_session = "Move to session...", rename = "Rename...", close = "Close...", yes = "Yes, close it", no = "No", open = "Open", open_popup = "Open in a popup", open_window = "Open as a window", open_float = "Open as a floating pane", open_desktop = "Open in its own desktop window", new_window = "New window", run = "Run", cancel = "Cancel" }
+labels = { go = "Go to", popout = "Pop out to its own window", float = "Float the pane", dock = "Tile the pane (dock it)", move_window = "Move to window...", move_session = "Move to session...", rename = "Rename...", close = "Close...", yes = "Yes, close it", no = "No", open = "Open", open_popup = "Open in a popup", open_window = "Open as a window", open_float = "Open as a floating pane", open_desktop = "Open in its own desktop window", new_window = "New window", run = "Run", cancel = "Cancel", find = "/ Find:", find_hint = "/ or Ctrl+F: find apps and actions", find_help = "Type to find Enter open Esc clear", no_matches = "No available matches. Esc clears search.", help_compact = "Enter open  Tab options  Esc close", options_help = "Enter choose  Esc back" }
 popped_message       = "Popped out to session"
 
 # Generated menus (command aliases mios-menu-ID and the Linux-console variant mios-menu-ID-vt). Every menu is
@@ -4592,7 +4648,6 @@ items = [
   { label = "Split right", key = "v" },
   { label = "Float / dock", key = "F", managed = "disable" },
   { label = "Kill pane...", key = "x" },
-  { header = "More" },
   { label = "New window", key = "t" },
   { label = "Detach", key = "d" },
   { label = "MiOS...", key = "Space", menu = "root" },
@@ -5004,7 +5059,7 @@ flick_off = 0.3                     # the stick must fall below this before it c
 app_poll_ms = 250                   # recheck the verified foreground executable without blocking input
 app_query_timeout_ms = 150          # a failed/late query restores the ordinary context profile
 # tmux servers (-L names) whose clients select a *_tmux profile; the verbs reach exactly that client and server.
-tmux_sockets = ["mios-human", "mios-nested"]
+tmux_sockets = ["mios-human", "mios-nested", "mios-desktop"]
 
 
 # task3773: a deliberate short out-and-return RIGHT-stick gesture is the only way to move
@@ -11834,6 +11889,7 @@ hidden_session_prefixes = ["mios-float-"]
 
 # The login selector exposes the complete native registry and fresh execution sessions.
 [terminal.sessions.menu]
+tabs = ["Apps", "Systems", "All"]
 title = "MiOS systems and global apps"
 apps_title = "Global apps"
 systems_title = "Systems and sessions"
@@ -11874,6 +11930,14 @@ empty_message = "No installed TUI fits this terminal"
 # (native floating pane). A row whose argv[0] is not an executable (absolute path, or found on PATH) is hidden.
 # vt_ok = false hides the row on the Linux console; argv_vt replaces argv there. hold = true (popup only) keeps
 # the popup open after the program exits. The AI CLIs come from [[keybindings.actions]] and are listed first.
+[[terminal.tuis]]
+id = "terminal-shell"
+label = "Terminal shell"
+section = "system"
+mode = "float"
+vt_ok = true
+argv = ["/bin/bash", "--noprofile", "--rcfile", "/usr/share/mios/tmux/mios-bashrc"]
+
 [[terminal.tuis]]
 id = "mon"
 label = "System monitor"
@@ -18779,6 +18843,7 @@ unit = [
     "tests/test-profile-gateway-model.py",
     "tests/test-tmux-oom-policy.py",
     "tests/test-tmux-os.py",
+    "tests/test-mios-mons-runtime.py",
     "tests/test-document-portal-isolation.py",
     "tests/test-hyprland-shader-contract.py",
     "tests/test-template-conform-sparse-bound.py",

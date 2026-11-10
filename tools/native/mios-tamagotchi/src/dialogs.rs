@@ -4,16 +4,20 @@
 
 use clap::ValueEnum;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseButton, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
+    text::{Line, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Wrap},
-    Terminal,
+    Frame, Terminal,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -701,7 +705,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
     }
 }
 #[derive(Debug, PartialEq, Eq)]
@@ -710,6 +714,8 @@ enum HelperKey {
     Next,
     ScrollUp,
     ScrollDown,
+    ScrollStart,
+    ScrollEnd,
     Accept,
     Back,
 }
@@ -731,12 +737,283 @@ fn helper_key(key: KeyEvent) -> Option<HelperKey> {
         KeyCode::Down | KeyCode::Right | KeyCode::Tab => Some(HelperKey::Next),
         KeyCode::PageUp => Some(HelperKey::ScrollUp),
         KeyCode::PageDown => Some(HelperKey::ScrollDown),
+        KeyCode::Home => Some(HelperKey::ScrollStart),
+        KeyCode::End => Some(HelperKey::ScrollEnd),
         _ if key.kind != KeyEventKind::Press => None,
         KeyCode::Enter | KeyCode::Char(' ') => Some(HelperKey::Accept),
         KeyCode::Esc | KeyCode::Char('q') => Some(HelperKey::Back),
         _ => None,
     }
 }
+
+#[derive(Clone, Copy, Default)]
+struct HelperLayout {
+    area: Rect,
+    text: Rect,
+    choices: Rect,
+    accept: Rect,
+    back: Rect,
+    first_choice: usize,
+}
+
+struct HelperUi {
+    selected: usize,
+    scroll: usize,
+    text: Text<'static>,
+    text_width: u16,
+    wrapped_heights: Vec<usize>,
+    text_total: usize,
+    list: ListState,
+    layout: HelperLayout,
+}
+
+impl HelperUi {
+    fn new(request: &DialogRequest) -> Self {
+        Self {
+            selected: 0,
+            scroll: 0,
+            text: Text::from(visible(&request.text, request.ascii)),
+            text_width: 0,
+            wrapped_heights: Vec::new(),
+            text_total: 0,
+            list: ListState::default(),
+            layout: HelperLayout::default(),
+        }
+    }
+
+    fn scroll_limit(&self) -> usize {
+        self.text_total
+            .saturating_sub(usize::from(self.layout.text.height))
+    }
+
+    fn fit_text(&mut self, area: Rect) {
+        self.layout.text = area;
+        if self.text_width != area.width {
+            self.text_width = area.width;
+            self.wrapped_heights = self
+                .text
+                .lines
+                .iter()
+                .map(|line| {
+                    Paragraph::new(line.clone())
+                        .wrap(Wrap { trim: false })
+                        .line_count(area.width)
+                })
+                .collect();
+            self.text_total = self.wrapped_heights.iter().sum();
+        }
+        self.scroll = self.scroll.min(self.scroll_limit());
+    }
+
+    fn paragraph(&self) -> Paragraph<'static> {
+        // Skip whole logical lines first, so a long, newline-rich dialogue is
+        // not limited by Paragraph's u16 wrapped-line scroll offset.
+        let mut remaining = self.scroll;
+        let mut first = 0;
+        for height in &self.wrapped_heights {
+            if remaining < *height {
+                break;
+            }
+            remaining -= *height;
+            first += 1;
+        }
+        Paragraph::new(self.text.lines[first..].to_vec())
+            .wrap(Wrap { trim: false })
+            .scroll((remaining.min(usize::from(u16::MAX)) as u16, 0))
+    }
+
+    fn caption(hint: &str, fallback: &str, verb: &str, width: u16, ascii: bool) -> String {
+        let hint = if hint.trim().is_empty() {
+            fallback
+        } else {
+            hint
+        };
+        let full = visible(&format!("{hint}: {verb}"), ascii);
+        if Line::from(full.as_str()).width() <= usize::from(width) {
+            full
+        } else {
+            format!("{fallback}: {verb}")
+        }
+    }
+
+    fn paint_caption(frame: &mut Frame, area: Rect, caption: &str) -> Rect {
+        let width = Line::from(caption).width().min(usize::from(area.width)) as u16;
+        let target = Rect::new(area.x, area.y, width, area.height.min(1));
+        frame.render_widget(Paragraph::new(caption), target);
+        target
+    }
+
+    fn render(&mut self, frame: &mut Frame, request: &DialogRequest) {
+        if frame.area().width < 20 || frame.area().height < 8 {
+            self.layout = HelperLayout::default();
+            return;
+        }
+        self.selected = self.selected.min(request.choices.len().saturating_sub(1));
+        let mut block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(if request.ascii {
+                BorderType::Plain
+            } else {
+                BorderType::Rounded
+            })
+            .title(visible(&request.title, request.ascii))
+            .title_bottom(format!(
+                "Choice {}/{}",
+                self.selected + 1,
+                request.choices.len()
+            ));
+        if request.ascii {
+            block = block.border_set(ratatui::symbols::border::Set {
+                top_left: "+",
+                top_right: "+",
+                bottom_left: "+",
+                bottom_right: "+",
+                vertical_left: "|",
+                vertical_right: "|",
+                horizontal_top: "-",
+                horizontal_bottom: "-",
+            });
+        }
+        let area = block.inner(frame.area());
+        self.layout.area = frame.area();
+        frame.render_widget(block, frame.area());
+        let choice_height =
+            (request.choices.len() as u16).min((area.height.saturating_sub(2) / 2).max(1));
+        let rows = Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(choice_height),
+            Constraint::Length(2),
+        ])
+        .split(area);
+        self.fit_text(rows[0]);
+        frame.render_widget(self.paragraph(), rows[0]);
+        self.layout.choices = rows[1];
+        self.list.select(Some(self.selected));
+        let choices: Vec<_> = request
+            .choices
+            .iter()
+            .map(|choice| ListItem::new(choice.label()))
+            .collect();
+        frame.render_stateful_widget(
+            List::new(choices)
+                .highlight_symbol(if request.ascii { "> " } else { "› " })
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
+            rows[1],
+            &mut self.list,
+        );
+        // Ratatui may move the offset to reveal selection, including on resize.
+        self.layout.first_choice = self.list.offset();
+        let accept_row = Rect::new(rows[2].x, rows[2].y, rows[2].width, 1);
+        let back_row = Rect::new(rows[2].x, rows[2].bottom() - 1, rows[2].width, 1);
+        let accept = Self::caption(
+            &request.accept_hint,
+            "Enter",
+            "choose",
+            accept_row.width,
+            request.ascii,
+        );
+        let back = Self::caption(
+            &request.back_hint,
+            "Esc",
+            "back",
+            back_row.width,
+            request.ascii,
+        );
+        self.layout.accept = Self::paint_caption(frame, accept_row, &accept);
+        self.layout.back = Self::paint_caption(frame, back_row, &back);
+        let start = if self.text_total == 0 {
+            0
+        } else {
+            self.scroll + 1
+        };
+        let end = (self.scroll + usize::from(rows[0].height)).min(self.text_total);
+        let range_x = self.layout.back.right().saturating_add(2);
+        let range_width = back_row.right().saturating_sub(range_x);
+        for range in [
+            format!("Text {start}-{end}/{} PgUp/PgDn", self.text_total),
+            format!("{start}-{end}/{}", self.text_total),
+        ] {
+            if Line::from(range.as_str()).width() <= usize::from(range_width) {
+                frame.render_widget(
+                    Paragraph::new(range),
+                    Rect::new(range_x, back_row.y, range_width, 1),
+                );
+                break;
+            }
+        }
+    }
+
+    fn input(&mut self, request: &DialogRequest, incoming: Event) -> Option<Choice> {
+        let count = request.choices.len();
+        if count == 0 {
+            return None;
+        }
+        match incoming {
+            Event::Key(key) => match helper_key(key) {
+                Some(HelperKey::Previous) => self.selected = (self.selected + count - 1) % count,
+                Some(HelperKey::Next) => self.selected = (self.selected + 1) % count,
+                Some(HelperKey::ScrollUp) => {
+                    self.scroll = self
+                        .scroll
+                        .saturating_sub(usize::from(self.layout.text.height).max(1));
+                }
+                Some(HelperKey::ScrollDown) => {
+                    self.scroll = self
+                        .scroll
+                        .saturating_add(usize::from(self.layout.text.height).max(1))
+                        .min(self.scroll_limit());
+                }
+                Some(HelperKey::ScrollStart) => self.scroll = 0,
+                Some(HelperKey::ScrollEnd) => self.scroll = self.scroll_limit(),
+                Some(HelperKey::Accept) => return request.choices.get(self.selected).copied(),
+                Some(HelperKey::Back) => return Some(Choice::Back),
+                None => {}
+            },
+            Event::Mouse(mouse) => {
+                let point = (mouse.column, mouse.row).into();
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        if self.layout.accept.contains(point) {
+                            return request.choices.get(self.selected).copied();
+                        }
+                        if self.layout.back.contains(point) {
+                            return Some(Choice::Back);
+                        }
+                        if self.layout.choices.contains(point) {
+                            let index = self.layout.first_choice
+                                + usize::from(mouse.row - self.layout.choices.y);
+                            if let Some(choice) = request.choices.get(index) {
+                                self.selected = index;
+                                return Some(*choice);
+                            }
+                        }
+                    }
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        let down = mouse.kind == MouseEventKind::ScrollDown;
+                        if self.layout.text.contains(point) {
+                            self.scroll = if down {
+                                self.scroll.saturating_add(1).min(self.scroll_limit())
+                            } else {
+                                self.scroll.saturating_sub(1)
+                            };
+                        } else if self.layout.choices.contains(point) {
+                            self.selected = if down {
+                                (self.selected + 1) % count
+                            } else {
+                                (self.selected + count - 1) % count
+                            };
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::Resize(_, _) => self.layout = HelperLayout::default(),
+            _ => {}
+        }
+        None
+    }
+}
+
 /// Standalone popup renderer. It can return only a choice; it never controls the pet.
 pub fn popup_helper(path: &Path) -> Result<(), String> {
     let payload = load_payload(path)?;
@@ -747,14 +1024,12 @@ pub fn popup_helper(path: &Path) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(remaining);
     enable_raw_mode().map_err(|e| e.to_string())?;
     let guard = TerminalGuard;
-    execute!(io::stdout(), EnterAlternateScreen).map_err(|e| e.to_string())?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture).map_err(|e| e.to_string())?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(|e| e.to_string())?;
     terminal.clear().map_err(|e| e.to_string())?;
     let request = &payload.request;
-    let mut selected = 0;
-    let mut scroll = 0u16;
-    let mut state = ListState::default();
+    let mut ui = HelperUi::new(request);
     let result = loop {
         if Instant::now() >= deadline {
             break Err("Popup timed out".into());
@@ -767,92 +1042,22 @@ pub fn popup_helper(path: &Path) -> Result<(), String> {
         if size.width < 20 || size.height < 8 {
             break Err("Popup became too small".into());
         }
-        state.select(Some(selected));
         terminal
-            .draw(|frame| {
-                let mut block = Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(if request.ascii {
-                        BorderType::Plain
-                    } else {
-                        BorderType::Rounded
-                    })
-                    .title(visible(&request.title, request.ascii));
-                if request.ascii {
-                    block = block.border_set(ratatui::symbols::border::Set {
-                        top_left: "+",
-                        top_right: "+",
-                        bottom_left: "+",
-                        bottom_right: "+",
-                        vertical_left: "|",
-                        vertical_right: "|",
-                        horizontal_top: "-",
-                        horizontal_bottom: "-",
-                    });
-                }
-                let area = block.inner(frame.area());
-                frame.render_widget(block, frame.area());
-                let choice_height = (request.choices.len() as u16).min((area.height / 2).max(1));
-                let rows = Layout::vertical([
-                    Constraint::Min(1),
-                    Constraint::Length(choice_height),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-                frame.render_widget(
-                    Paragraph::new(visible(&request.text, request.ascii))
-                        .wrap(Wrap { trim: false })
-                        .scroll((scroll, 0)),
-                    rows[0],
-                );
-                let choices: Vec<_> = request
-                    .choices
-                    .iter()
-                    .map(|c| ListItem::new(c.label()))
-                    .collect();
-                frame.render_stateful_widget(
-                    List::new(choices)
-                        .highlight_symbol(if request.ascii { "> " } else { "› " })
-                        .highlight_style(Style::default().add_modifier(Modifier::REVERSED)),
-                    rows[1],
-                    &mut state,
-                );
-                let accept = if request.accept_hint.trim().is_empty() {
-                    "Enter"
-                } else {
-                    &request.accept_hint
-                };
-                let back = if request.back_hint.trim().is_empty() {
-                    "Esc"
-                } else {
-                    &request.back_hint
-                };
-                frame.render_widget(
-                    Paragraph::new(visible(
-                        &format!("{accept}: choose  {back}: back  PgUp/PgDn: text"),
-                        request.ascii,
-                    )),
-                    rows[2],
-                );
-            })
+            .draw(|frame| ui.render(frame, request))
             .map_err(|e| e.to_string())?;
         if !event::poll(Duration::from_millis(50)).map_err(|e| e.to_string())? {
             continue;
         }
-        if let Event::Key(key) = event::read().map_err(|e| e.to_string())? {
-            match helper_key(key) {
-                Some(HelperKey::Previous) => {
-                    selected = (selected + request.choices.len() - 1) % request.choices.len()
-                }
-                Some(HelperKey::Next) => selected = (selected + 1) % request.choices.len(),
-                Some(HelperKey::ScrollUp) => scroll = scroll.saturating_sub(4),
-                Some(HelperKey::ScrollDown) => scroll = scroll.saturating_add(4),
-                Some(HelperKey::Accept) => {
-                    break reply_helper(&payload.reply, request.choices[selected]);
-                }
-                Some(HelperKey::Back) => break reply_helper(&payload.reply, Choice::Back),
-                None => {}
+        let incoming = event::read().map_err(|e| e.to_string())?;
+        if matches!(incoming, Event::Mouse(_)) {
+            let current = terminal.size().map_err(|e| e.to_string())?;
+            if (current.width, current.height) != (ui.layout.area.width, ui.layout.area.height) {
+                // A click read before its Resize must not activate a stale row.
+                continue;
             }
+        }
+        if let Some(choice) = ui.input(request, incoming) {
+            break reply_helper(&payload.reply, choice);
         }
     };
     drop(terminal);
@@ -1227,5 +1432,266 @@ mod habitat_context_tests {
         assert!(validate_request(&request, 4096).is_ok());
         request.choices[1] = request.choices[0];
         assert!(validate_request(&request, 4096).is_err());
+    }
+}
+
+#[cfg(test)]
+mod helper_navigation_tests {
+    use super::*;
+    use crossterm::event::MouseEvent;
+    use ratatui::{backend::TestBackend, buffer::Buffer};
+
+    fn request() -> DialogRequest {
+        DialogRequest {
+            title: "Owned conversation".into(),
+            text: "alpha beta 猫猫 e\u{301}  gamma\n\ndelta epsilon zeta\n".repeat(10)
+                + "VISIBLE_END",
+            choices: Choice::value_variants().to_vec(),
+            accept_hint: "Hold D-pad Right / Tap Triangle".into(),
+            back_hint: "Hold Circle / Hold Xbox B".into(),
+            ascii: false,
+        }
+    }
+
+    fn draw(ui: &mut HelperUi, request: &DialogRequest, width: u16, height: u16) -> Buffer {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| ui.render(frame, request)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn painted(buffer: &Buffer, area: Rect) -> String {
+        (area.y..area.bottom())
+            .map(|y| {
+                (area.x..area.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn key(code: KeyCode) -> Event {
+        Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn wrapped_text_paging_stops_at_real_bounds_and_clamps_after_resize() {
+        let request = request();
+        let mut ui = HelperUi::new(&request);
+        draw(&mut ui, &request, 20, 8);
+        let expected = Paragraph::new(visible(&request.text, request.ascii))
+            .wrap(Wrap { trim: false })
+            .line_count(ui.layout.text.width);
+        assert_eq!(ui.text_total, expected);
+        assert!(ui.scroll_limit() > 0);
+        let selected = ui.selected;
+        let rows = usize::from(ui.layout.text.height);
+        assert_eq!(ui.input(&request, key(KeyCode::PageDown)), None);
+        assert_eq!(ui.scroll, rows.min(ui.scroll_limit()));
+        for _ in 0..expected {
+            assert_eq!(ui.input(&request, key(KeyCode::PageDown)), None);
+        }
+        assert_eq!(ui.scroll, ui.scroll_limit());
+        let buffer = draw(&mut ui, &request, 20, 8);
+        assert!(painted(&buffer, ui.layout.text).contains("VISIBLE_END"));
+        let narrow_limit = ui.scroll_limit();
+        let buffer = draw(&mut ui, &request, 80, 24);
+        assert!(ui.scroll_limit() < narrow_limit);
+        assert_eq!(ui.scroll, ui.scroll_limit());
+        assert!(painted(&buffer, ui.layout.text).contains("VISIBLE_END"));
+        assert_eq!(ui.selected, selected);
+        assert_eq!(ui.input(&request, key(KeyCode::Home)), None);
+        assert_eq!(ui.scroll, 0);
+        assert_eq!(ui.input(&request, key(KeyCode::PageUp)), None);
+        assert_eq!(ui.scroll, 0);
+        assert_eq!(ui.input(&request, key(KeyCode::End)), None);
+        assert_eq!(ui.scroll, ui.scroll_limit());
+    }
+
+    #[test]
+    fn newline_rich_text_can_reach_the_end_beyond_u16_scroll_offsets() {
+        let mut request = request();
+        request.text = "x\n".repeat(usize::from(u16::MAX) + 8) + "FINAL_LINE";
+        validate_request(&request, 262_144).unwrap();
+        let mut ui = HelperUi::new(&request);
+        draw(&mut ui, &request, 20, 8);
+        assert!(ui.scroll_limit() > usize::from(u16::MAX));
+        assert_eq!(ui.input(&request, key(KeyCode::End)), None);
+        let buffer = draw(&mut ui, &request, 20, 8);
+        assert!(painted(&buffer, ui.layout.text).contains("FINAL_LINE"));
+    }
+
+    #[test]
+    fn mouse_choice_rows_follow_the_rendered_offset_and_resize_discards_old_targets() {
+        let request = request();
+        let mut ui = HelperUi::new(&request);
+        ui.selected = request.choices.len() - 1;
+        let buffer = draw(&mut ui, &request, 20, 8);
+        assert!(ui.layout.first_choice > 0);
+        let first = ui.layout.first_choice;
+        let choices = ui.layout.choices;
+        assert!(
+            painted(&buffer, Rect::new(choices.x, choices.y, choices.width, 1))
+                .contains(request.choices[first].label())
+        );
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    choices.x,
+                    choices.y
+                )
+            ),
+            Some(request.choices[first])
+        );
+        assert_eq!(ui.selected, first);
+        assert_eq!(ui.input(&request, Event::Resize(60, 20)), None);
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    choices.x,
+                    choices.y
+                )
+            ),
+            None,
+            "a resize invalidates hit boxes until a new frame is painted"
+        );
+        let buffer = draw(&mut ui, &request, 60, 20);
+        let choices = ui.layout.choices;
+        let first = ui.layout.first_choice;
+        for row in 0..choices.height {
+            let index = first + usize::from(row);
+            let expected = request.choices.get(index).copied();
+            if let Some(choice) = expected {
+                assert!(painted(
+                    &buffer,
+                    Rect::new(choices.x, choices.y + row, choices.width, 1)
+                )
+                .contains(choice.label()));
+            }
+            assert_eq!(
+                ui.input(
+                    &request,
+                    mouse(
+                        MouseEventKind::Down(MouseButton::Left),
+                        choices.x,
+                        choices.y + row
+                    )
+                ),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn wheel_only_navigates_its_painted_region_and_outside_or_release_events_are_inert() {
+        let request = request();
+        let mut ui = HelperUi::new(&request);
+        draw(&mut ui, &request, 20, 8);
+        let text = ui.layout.text;
+        let choices = ui.layout.choices;
+        assert_eq!(
+            ui.input(&request, mouse(MouseEventKind::ScrollDown, text.x, text.y)),
+            None
+        );
+        assert_eq!(ui.scroll, 1);
+        assert_eq!(ui.selected, 0);
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(MouseEventKind::ScrollDown, choices.x, choices.y)
+            ),
+            None
+        );
+        assert_eq!(ui.selected, 1);
+        assert_eq!(ui.scroll, 1);
+        let before = (ui.selected, ui.scroll);
+        for event in [
+            mouse(MouseEventKind::Down(MouseButton::Left), 0, 0),
+            mouse(MouseEventKind::ScrollDown, 0, 0),
+            mouse(MouseEventKind::Moved, choices.x, choices.y),
+            mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                choices.x,
+                choices.y,
+            ),
+            mouse(MouseEventKind::Up(MouseButton::Left), choices.x, choices.y),
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Repeat,
+                ..KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            }),
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Release,
+                ..KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            }),
+        ] {
+            assert_eq!(ui.input(&request, event), None);
+            assert_eq!((ui.selected, ui.scroll), before);
+        }
+        assert_eq!(
+            ui.input(&request, mouse(MouseEventKind::ScrollUp, text.x, text.y)),
+            None
+        );
+        assert_eq!(ui.scroll, 0);
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(MouseEventKind::ScrollUp, choices.x, choices.y)
+            ),
+            None
+        );
+        assert_eq!(ui.selected, 0);
+    }
+
+    #[test]
+    fn mapped_captions_keep_truthful_choose_and_back_on_distinct_clickable_rows() {
+        let request = request();
+        let mut ui = HelperUi::new(&request);
+        ui.selected = 3;
+        let buffer = draw(&mut ui, &request, 20, 8);
+        let accept = ui.layout.accept;
+        let back = ui.layout.back;
+        assert_ne!(accept.y, back.y);
+        assert!(accept.intersection(back).is_empty());
+        assert_eq!(painted(&buffer, accept), "Enter: choose");
+        assert_eq!(painted(&buffer, back), "Esc: back");
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(MouseEventKind::Down(MouseButton::Left), accept.x, accept.y)
+            ),
+            Some(request.choices[3])
+        );
+        assert_eq!(
+            ui.input(&request, key(KeyCode::Enter)),
+            Some(request.choices[3])
+        );
+        assert_eq!(
+            ui.input(
+                &request,
+                mouse(MouseEventKind::Down(MouseButton::Left), back.x, back.y)
+            ),
+            Some(Choice::Back)
+        );
+        assert_eq!(ui.input(&request, key(KeyCode::Esc)), Some(Choice::Back));
+        draw(&mut ui, &request, 80, 24);
+        let accept = ui.layout.accept;
+        let back = ui.layout.back;
+        assert!(
+            accept.width > 13 && back.width > 9,
+            "wide popups retain full mapped hints"
+        );
     }
 }

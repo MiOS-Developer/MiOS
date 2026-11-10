@@ -13,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 ratatui = "0.29"
+# Select the re-exported backend explicitly, including standalone package builds.
+crossterm = { version = "0.28", default-features = false, features = ["use-dev-tty"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

@@ -1879,7 +1879,7 @@ mod tests {
             .lines()
             .find(|l| l.contains("\"mios-menu-pane="))
             .unwrap();
-        for h in ["View", "Layout", "More"] {
+        for h in ["View", "Layout"] {
             assert!(
                 pane.contains(&format!("-#[align=centre]{h}")),
                 "{h}: {pane}"
@@ -2136,5 +2136,27 @@ mod tests {
         assert!(term_glob("linux*", "linux-16color"));
         assert!(term_glob("vt?00", "vt100"));
         assert!(!term_glob("vt*", "xterm"));
+    }
+    #[test]
+    fn default_context_menus_fit_the_shared_compact_height_without_losing_actions() {
+        let data = ssot();
+        let policy = mios_resolver::popup::PopupPolicy::from_value(&data).unwrap();
+        let (_, height) = policy.size(mios_resolver::popup::SurfaceKind::Menu, u16::MAX, u16::MAX);
+        for menu in launcher_menus(&data, "linux").unwrap() {
+            assert!(
+                menu.rows <= i64::from(height),
+                "{} has {} rows, cap {height}",
+                menu.id,
+                menu.rows
+            );
+            if menu.id == "pane" {
+                for label in ["New window", "Detach", "MiOS...", "Kill pane..."] {
+                    assert!(
+                        menu.items.iter().any(|item| item.label == label),
+                        "missing {label}"
+                    );
+                }
+            }
+        }
     }
 }
