@@ -205,7 +205,7 @@ class AgentView(Vertical):
     AgentView #agent-error { height: 1; }
     AgentView #inventory-scopes { height: 1; }
     AgentView Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent; }
-    AgentView Button.-active { background: @MIOS:accent@; color: @MIOS:fg@; }
+    AgentView Button.scope-selected { background: @MIOS:accent@; color: @MIOS:fg@; }
     AgentView #agent-search { height: 1; border: none; padding: 0; background: transparent; }
     AgentView #peer-table { height: 1fr; min-height: 1; overflow-y: auto; overflow-x: hidden;
         scrollbar-size-vertical: 1; scrollbar-size-horizontal: 0; background: transparent; }
@@ -230,7 +230,7 @@ class AgentView(Vertical):
         yield Static("Sessions and subagents: loading", id="worker-count", markup=False)
         with Horizontal(id="inventory-scopes"):
             for scope in ("all", "agents", "sessions", "subagents"):
-                yield Button(scope.capitalize(), id="scope-" + scope, classes="-active" if scope == "all" else "")
+                yield Button(scope.capitalize(), id="scope-" + scope, classes="scope-selected" if scope == "all" else "")
         yield Input(placeholder="Search name, ID, source or parent", id="agent-search")
         yield DataTable(id="peer-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
         yield Static("Arrows / PgUp / PgDn / Home / End · F6 scope", id="agent-detail", markup=False)
@@ -326,7 +326,7 @@ class AgentView(Vertical):
     def set_scope(self, scope):
         self.scope = scope
         for button in self.query("#inventory-scopes Button"):
-            button.set_class(button.id == "scope-" + scope, "-active")
+            button.set_class(button.id == "scope-" + scope, "scope-selected")
         self.render_rows()
         self.query_one("#peer-table", DataTable).focus()
 

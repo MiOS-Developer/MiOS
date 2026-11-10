@@ -633,6 +633,26 @@ class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["sources"][1]["state"], "partial", "legacy cutoffs cannot masquerade as complete")
         self.assertEqual(result["online_total"],1)
 
+    async def test_native_sdk_result_fields_reach_global_inventory(self):
+        from types import SimpleNamespace
+        from mcp import types
+        snapshot = {"agent_total":1, "agents":[{"agent_id":"native-peer", "online":True}],
+                    "messages":[], "panes":[], "sessions":[], "subagents":[], "errors":[]}
+        class Session:
+            async def call_tool(self, *args, **kwargs):
+                return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(snapshot))], structuredContent=snapshot)
+        class Member:
+            spec = SimpleNamespace(id="native-system", allowed_tools=[])
+            cached,tools,inflight,session = {},[],0,Session()
+            def catalog(self): return [{"name":"mios_agent_observe","inputSchema":{"properties":{"scope":{"type":"string"}}}}]
+            async def ensure(self): pass
+        inventory = fed.AgentObservationCache(SimpleNamespace(members=[Member()],config={"call_timeout_s":3}))
+        await inventory.refresh()
+        result = inventory.snapshot({"agents":[], "panes":[], "messages":[], "errors":[]})
+        self.assertEqual(result["sources"][0]["state"], "ready")
+        self.assertEqual(result["agents"][0]["agent_id"], "native-peer")
+        self.assertEqual(result["online_total"],1)
+
     async def test_global_sources_reject_oversize_and_invalid_reply_without_clearing_cache(self):
         from types import SimpleNamespace
         class Session:

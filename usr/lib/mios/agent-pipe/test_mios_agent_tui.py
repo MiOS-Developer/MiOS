@@ -19,7 +19,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(ROOT / "usr/lib/mios"))
 from mios_agent_tui import AgentView, InventoryDetails, clean, peer_name
-from textual.widgets import DataTable, Input, Static, TabbedContent
+from textual.widgets import Button, DataTable, Input, Static, TabbedContent
 
 monitor = importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")).load_module()
 CLIENTS = [{"name": name, "installed": True, "mcp": name != "aider"}
@@ -189,6 +189,7 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             view = app.query_one(AgentView)
             table = app.query_one("#peer-table", DataTable)
             self.assertEqual(table.row_count, 149)
+            self.assertIn("All", app.query_one("#scope-all", Button).render_line(0).text)
             self.assertEqual(table.get_row_at(0)[0].plain, "Agent 095")
             table.focus()
             await pilot.press("ctrl+end")

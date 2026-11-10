@@ -763,9 +763,10 @@ class AgentObservationCache:
                 finally:
                     member.inflight -= 1
                     member.last_used = time.monotonic()
-                if reply.isError:
+                # SDK 2 uses snake_case attributes; SDK 1 retains wire aliases.
+                if getattr(reply, "is_error", getattr(reply, "isError", False)):
                     raise ValueError("relay observation failed")
-                data = reply.structuredContent
+                data = getattr(reply, "structured_content", getattr(reply, "structuredContent", None))
                 if data is None:
                     data = json.loads(next(part.text for part in reply.content if part.type == "text"))
                 if not isinstance(data, dict) or len(json.dumps(data).encode()) > self.max_bytes:
