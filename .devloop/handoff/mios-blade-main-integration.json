@@ -604,6 +604,46 @@
         "classification": "public algorithm-name prose, not a credential",
         "evidence": "Exact unchanged public shell-script string from69cc268c9: [auth].password_hash > sha512-crypt of [identity].default_password.",
         "baseline_policy": "Only this individually reviewed commit/file/rule fingerprint; no repository scanner exemptions changed."
+      },
+      "actual_global_mcp": {
+        "protocol": "2025-11-25",
+        "tools": 187,
+        "ping": "passed",
+        "transport": "MiOS-MCP over Tailscale SSH with pinned host key",
+        "registered_coordinator": "mios:cloud-connection-f3e48872",
+        "coordinator_online_and_visible": true,
+        "exact_stored_user_and_system_identity_sets_match": true,
+        "registered_agents": 75,
+        "online_agents": 2,
+        "sessions": 88,
+        "subagents": 0,
+        "panes": 129,
+        "sources": [
+          {
+            "source": "/home/mios/.local/state/mios/agent-relay",
+            "state": "ready",
+            "kind": "relay"
+          },
+          {
+            "source": "blender",
+            "kind": "mcp",
+            "state": "unsupported"
+          },
+          {
+            "source": "mios-system",
+            "kind": "mcp",
+            "state": "ready"
+          }
+        ],
+        "errors": []
+      },
+      "actual_headless_file_tool": {
+        "transport": "MiOS-MCP over Tailscale",
+        "tool": "list_directory",
+        "path": "/etc/pam.d",
+        "success": true,
+        "exit_code": 0,
+        "output_bytes": 694
       }
     },
     "artifacts": [
@@ -665,7 +705,7 @@
       }
     ],
     "deployment": {
-      "state": "Core2a2bad7a1 installed; physical-console global backend and headless captured-verb follow-up validated; final publication/install and actual TUI proof pending.",
+      "state": "Installed and verified on Blade physical VT1; all four witnessed observer panes display75registrations and full configured relay coverage.",
       "system_source": {
         "path": "/home/mios/.config/mios/mios.d/mios-global-system-relay.toml",
         "transport": "native MiOS-MCP stdio via sudo -n -H",
@@ -757,10 +797,94 @@
         "root_status_before": " M usr/share/mios/hyprland/hyprland.lua\n",
         "root_status_after": " M usr/share/mios/hyprland/hyprland.lua\n",
         "python_followup_installed": true
+      },
+      "live_installation": {
+        "published_main": "a3a6ecab80341b51a587a7558232babf884952d3",
+        "root_head": "a3a6ecab80341b51a587a7558232babf884952d3",
+        "installed_artifacts": [
+          {
+            "entry": "/usr/bin/mios-gen",
+            "resolved": "/usr/bin/mios-gen",
+            "sha256": "5ec3fb6ff899b86e9f538e677d17a20031638cee9debab9ecdbd3bd962c1dbbd",
+            "previous_sha256": "cfdc44bc0b785bf682d2082393b3bc628fd97e618e0cd9661d1e7fe571f0dc78"
+          },
+          {
+            "entry": "/usr/bin/mios-inputd",
+            "resolved": "/usr/bin/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "b2641e0a82cf26488bc8c9f2f3c44621966bf6d15d5f4dbffd1dc84870a8a273"
+          },
+          {
+            "entry": "/usr/libexec/mios/mios-inputd",
+            "resolved": "/usr/libexec/mios/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb"
+          },
+          {
+            "entry": "/home/mios/.local/bin/mios-inputd",
+            "resolved": "/home/mios/.local/bin/mios-inputd",
+            "sha256": "7668434a9bd8768cb4dffc6952716a13159c85d516fb1d602ceef3a9c5e73d2d",
+            "previous_sha256": "1bfe9b162e25ca569fde375e36adc2e51e344e43dd6fffdfebff3f2ea4c600bb"
+          },
+          {
+            "entry": "/usr/bin/mios-agent-relay",
+            "resolved": "/usr/bin/mios-agent-relay",
+            "sha256": "b71fc23c1aa4e67b7d8c8c5540e1d6954c90d47fe27a6cd8ca986eb0dbbf074f",
+            "previous_sha256": "e15e9aedde1faa440f7d86aad5b321916bcee61c5ca7193031554577148f6f94"
+          },
+          {
+            "entry": "/usr/libexec/mios/mios-agent-relay",
+            "resolved": "/usr/libexec/mios/mios-agent-relay",
+            "sha256": "b71fc23c1aa4e67b7d8c8c5540e1d6954c90d47fe27a6cd8ca986eb0dbbf074f",
+            "previous_sha256": "43ba8697acbaf8fa3cc21a566d93af9f56b83ebb22d322dfec3b06aac2ad13d2"
+          },
+          {
+            "entry": "/usr/bin/mios-gate",
+            "resolved": "/usr/bin/mios-gate",
+            "sha256": "8a468b25c6a1d85e519c81835e8a59a374ba43cf42db55ae8e5c1b94d6193eb9",
+            "previous_sha256": "3934e4e535d9a3eea529a10d3dcd2edf41621b0fcfcbf39ae470a665718e15ea"
+          }
+        ],
+        "refreshed_observers": [
+          {
+            "pane": "%529",
+            "old_pid": 473918,
+            "head": "%90"
+          },
+          {
+            "pane": "%657",
+            "old_pid": 473922,
+            "head": "%2"
+          },
+          {
+            "pane": "%652",
+            "old_pid": 473926,
+            "head": "%391"
+          },
+          {
+            "pane": "%653",
+            "old_pid": 473930,
+            "head": "%651"
+          }
+        ],
+        "preserved_processes": {
+          "2137102": "37574253",
+          "3710964": "45916667",
+          "3712497": "45918989",
+          "1786293": "28978450"
+        },
+        "hardware_projection_sha256": "de20d43039bbcee18058e131de37e209c30cb12152d85138585f511c2c0beac5",
+        "root_status_before": " M usr/share/mios/hyprland/hyprland.lua\n",
+        "root_status_after": " M usr/share/mios/hyprland/hyprland.lua\n",
+        "python_followup_installed": true,
+        "launcher_broker": {
+          "old_pid": 2425,
+          "new_pid": 569970
+        }
       }
     },
     "review": "Native Antigravity read-only controller-parent and untruncated inventory review passed, received via MiOS-MCP message mios-agy-ack-console-login-ownership-0008; optional unused CLI _parent pre-socket shortcut noted. Durable physical-console login ownership lane accepted separately.",
-    "next": "Publish main, atomically install identical artifacts at every active entrypoint, refresh verified observer panes, verify all user+system registrations through MiOS-MCP, then record deployment.",
+    "next": "Global inventory complete; durable authenticated VT login ownership continues in separate native lane. Original adopted processes remain running; fresh physical login/controller return acceptance is not inferred.",
     "live_followup": {
       "source_commit": "0e35081cb1867b9830d22602a755bb1865021792",
       "behavior": [
