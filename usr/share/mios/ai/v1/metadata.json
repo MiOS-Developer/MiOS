@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4282,
-  "total_metadata_entries": 3442,
-  "total_hints": 3436,
+  "total_files_scanned": 4285,
+  "total_metadata_entries": 3444,
+  "total_hints": 3438,
   "total_functions_indexed": 2136,
-  "total_related_links": 6881,
+  "total_related_links": 6885,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -5395,6 +5395,19 @@
         "usr/bin/mios",
         "MIOS_AI_ENDPOINT",
         "usr/libexec/mios/"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/miosd/src/console_session.rs",
+      "hint": "Authenticated greetd PAM session handoff of an actual controlling Linux VT, so unprivileged GPM clients can connect; restore only this session's witnessed ownership on logout.",
+      "related": [
+        "etc/pam.d/greetd",
+        "usr/share/mios/mios.toml [terminal.console_login]",
+        "tools/native/mios-inputd/src/console.rs"
       ],
       "functions": [],
       "doc": null,
@@ -41234,6 +41247,17 @@
       "hint": "Markdown documentation template.",
       "related": [
         "/usr/share/doc/mios/README.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/templates/pam",
+      "hint": "PAM service template; refuse authentication until its reviewed service stack is supplied.",
+      "related": [
+        "usr/share/mios/mios.toml [templates.pam]"
       ],
       "functions": [],
       "doc": null,

@@ -6,6 +6,8 @@
 
 #[cfg(target_os = "linux")]
 mod appmenu;
+#[cfg(target_os = "linux")]
+mod console_session;
 mod drift;
 #[cfg(target_os = "linux")]
 mod framerate;
@@ -15,8 +17,6 @@ mod launcher;
 mod placement;
 #[cfg(target_os = "linux")]
 mod sessions;
-#[cfg(target_os = "linux")]
-mod console_session;
 #[cfg(target_os = "linux")]
 mod shaderglass;
 use miosd::fhs_sync;

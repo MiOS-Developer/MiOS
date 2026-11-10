@@ -5769,6 +5769,7 @@ terminal.frame_width  MIOS_TERMINAL_FRAME_WIDTH
 terminal.frame_height  MIOS_TERMINAL_FRAME_HEIGHT
 terminal.right_margin  MIOS_TERMINAL_RIGHT_MARGIN
 terminal.startup.auto_attach  MIOS_TERMINAL_STARTUP_AUTO_ATTACH
+terminal.console_login.state_directory  MIOS_TERMINAL_CONSOLE_LOGIN_STATE_DIRECTORY
 terminal.sessions.selector  MIOS_TERMINAL_SESSIONS_SELECTOR
 terminal.sessions.new_session_name  MIOS_TERMINAL_SESSIONS_NEW_SESSION_NAME
 terminal.sessions.node_os  MIOS_TERMINAL_SESSIONS_NODE_OS
@@ -9819,6 +9820,14 @@ templates.python-tool.dest_dir  MIOS_TEMPLATES_PYTHON_TOOL_DEST_DIR
 templates.python-tool.name_prefix  MIOS_TEMPLATES_PYTHON_TOOL_NAME_PREFIX
 templates.python-tool.name_suffix  MIOS_TEMPLATES_PYTHON_TOOL_NAME_SUFFIX
 templates.python-tool.emit  MIOS_TEMPLATES_PYTHON_TOOL_EMIT
+templates.pam.match  MIOS_TEMPLATES_PAM_MATCH
+templates.pam.comment  MIOS_TEMPLATES_PAM_COMMENT
+templates.pam.required_header  MIOS_TEMPLATES_PAM_REQUIRED_HEADER
+templates.pam.required_markers  MIOS_TEMPLATES_PAM_REQUIRED_MARKERS
+templates.pam.generated  MIOS_TEMPLATES_PAM_GENERATED
+templates.pam.scaffold  MIOS_TEMPLATES_PAM_SCAFFOLD
+templates.pam.dest_dir  MIOS_TEMPLATES_PAM_DEST_DIR
+templates.pam.emit  MIOS_TEMPLATES_PAM_EMIT
 templates.rust.match  MIOS_TEMPLATES_RUST_MATCH
 templates.rust.comment  MIOS_TEMPLATES_RUST_COMMENT
 templates.rust.required_header  MIOS_TEMPLATES_RUST_REQUIRED_HEADER
