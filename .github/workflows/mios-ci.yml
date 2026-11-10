@@ -152,6 +152,8 @@ jobs:
         run: |
           set -euo pipefail
           bash ./automation/55-native-build.sh
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           # Host fixture paths remain part of the existing daemon unit suites.
           cargo build --locked --manifest-path ./src/mios-rs/Cargo.toml -p mios-gate -p miosd
 
@@ -196,6 +198,7 @@ jobs:
 
       - name: Rust format, lint and tests
         run: |
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           cd ./src/mios-rs
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
