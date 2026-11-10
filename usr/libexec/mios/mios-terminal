@@ -13,6 +13,7 @@ _mios_bare_opt=0
 _mios_app=""
 _mios_console=0
 _mios_launcher=0
+_mios_app_popup=0
 _gen=/usr/bin/mios-gen
 _miosd=/usr/bin/miosd
 _libgen=/usr/libexec/mios/mios-gen
@@ -225,8 +226,12 @@ elif (( _mios_created )); then
     tmux -L "${_mios_terminal_config[0]}" select-window -t "${_mios_terminal_config[1]}:^" 2>/dev/null || true
 fi
 if [[ -n "$_mios_app" ]]; then
-    # Popup and float modes need an attached client, so outside tmux every TUI opens as a window.
-    tmux -L "${_mios_terminal_config[0]}" new-window -t "=${_mios_terminal_config[1]}:" -n "${_mios_spec[1]}" -- "${_mios_spec[@]:5}"
+    # Defer the native launch until attach supplies the exact invoking client.
+    if [[ "$(/usr/bin/mios-toml-get terminal.popups enabled 2>/dev/null)" == true ]]; then
+        _mios_app_popup=1
+    else
+        tmux -L "${_mios_terminal_config[0]}" new-window -t "=${_mios_terminal_config[1]}:" -n "${_mios_spec[1]}" -- "${_mios_spec[@]:5}"
+    fi
 fi
 if [[ -n "$_mios_head" ]]; then
     tmux -L "${_mios_terminal_config[0]}" new-window -n 'MiOS Agent' "$_mios_head"
@@ -234,6 +239,9 @@ fi
 # A local VT client runs under the native console bridge ([keybindings.global.controller.console]): it owns the mouse
 # modes tmux asks the VT for and turns gpm/controller pointer events into SGR 1006 reports. One process per VT login.
 _mios_attach=(tmux -L "${_mios_terminal_config[0]}" attach-session -t "=${_mios_terminal_config[1]}")
+if (( _mios_app_popup )); then
+    _mios_attach+=(\; run-shell -b "TMUX_PANE=#{pane_id} $_gen tmux-os --root / app $_mios_app --client #{q:client_name} --console $_mios_console")
+fi
 if (( _mios_launcher )); then
     # run-shell after attach-session runs in the attaching client's context: #{q:client_name} is this client.
     _mios_attach+=(\; run-shell -b "TMUX_PANE=#{pane_id} $_miosd launcher open --root / --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}")

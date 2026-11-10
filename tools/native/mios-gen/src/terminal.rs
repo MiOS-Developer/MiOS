@@ -625,7 +625,8 @@ pub mod tmux_theme {
                 "mios-unit-gen not found (set MIOS_UNIT_GEN or build it)".to_string()
             })?;
             let src = dir.join(".keybindings.in.json");
-            // The console menu variants read [theme.tmux.console]; nothing else outside [keybindings].
+            // Forward only the console palette and popup switch. Dimensions resolve
+            // at launch time; unrelated layered values never enter this temporary file.
             let console = merged
                 .get("theme")
                 .and_then(|t| t.get("tmux"))
@@ -633,7 +634,15 @@ pub mod tmux_theme {
                 .ok_or_else(|| {
                     "Missing [theme.tmux.console] section in layered SSOT".to_string()
                 })?;
-            let payload = serde_json::json!({ "keybindings": kb, "theme": { "tmux": { "console": console } } });
+            let popups = mios_resolver::popup::PopupPolicy::enabled_from_value(merged)?;
+            let columns = if popups {
+                mios_resolver::popup::PopupPolicy::from_value(merged)?
+                    .size(mios_resolver::popup::SurfaceKind::Menu, u16::MAX, u16::MAX)
+                    .0
+            } else {
+                0
+            };
+            let payload = serde_json::json!({ "keybindings": kb, "theme": { "tmux": { "console": console } }, "terminal":{"popups":{"enabled":popups,"_menu_columns":columns}} });
             fs::write(&src, payload.to_string()).map_err(|e| format!("{}: {e}", src.display()))?;
             let out = Command::new(&unit_gen)
                 .args(["keybindings", "--from-json"])

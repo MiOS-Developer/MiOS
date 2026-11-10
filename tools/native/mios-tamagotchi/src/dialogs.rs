@@ -134,6 +134,7 @@ struct Settings {
     max_bytes: usize,
     min_width: u16,
     min_height: u16,
+    popup_policy: Option<mios_resolver::popup::PopupPolicy>,
 }
 struct Flight {
     events: Receiver<DialogEvent>,
@@ -154,6 +155,7 @@ impl NativeDialogs {
                 max_bytes: config.dialog_max_bytes.clamp(1, HARD_MAX_BYTES),
                 min_width: config.popup_min_width.max(20),
                 min_height: config.popup_min_height.max(8),
+                popup_policy: config.popup_policy.clone(),
             },
             flight: None,
         }
@@ -403,6 +405,7 @@ fn command_args(
     reply: &Path,
     request: &DialogRequest,
     menu: bool,
+    policy: Option<&mios_resolver::popup::PopupPolicy>,
 ) -> Result<Vec<std::ffi::OsString>, String> {
     use std::ffi::OsString;
     let mut args: Vec<OsString> = vec![
@@ -423,16 +426,10 @@ fn command_args(
     if request.ascii {
         args.extend(["-b".into(), "simple".into()]);
     }
+    args.extend(["-x".into(), "C".into(), "-y".into(), "C".into()]);
     if menu {
         // This command is launched from the game, not a tmux mouse key binding.
-        args.extend([
-            "-M".into(),
-            "-O".into(),
-            "-x".into(),
-            "M".into(),
-            "-y".into(),
-            "M".into(),
-        ]);
+        args.extend(["-M".into(), "-O".into()]);
         for (index, choice) in request.choices.iter().enumerate() {
             args.push(choice.label().into());
             args.push(format!("{:x}", index + 1).into());
@@ -442,19 +439,41 @@ fn command_args(
         let runtime = reply.parent().ok_or("Missing runtime directory")?;
         let mut environment = std::ffi::OsString::from("XDG_RUNTIME_DIR=");
         environment.push(runtime);
+        let (width, max_height) = policy.filter(|p| p.enabled).map_or(
+            (
+                target.width.saturating_sub(4).clamp(20, 90),
+                target.height.saturating_sub(2).clamp(8, 30),
+            ),
+            |p| {
+                p.size(
+                    mios_resolver::popup::SurfaceKind::Dialog,
+                    target.width,
+                    target.height,
+                )
+            },
+        );
+        let height = if policy.is_some_and(|p| p.enabled) {
+            let text_rows = request
+                .text
+                .chars()
+                .count()
+                .div_ceil(usize::from(width.saturating_sub(2).max(1)))
+                as u16;
+            (request.choices.len() as u16)
+                .saturating_add(text_rows)
+                .saturating_add(5)
+                .min(max_height)
+        } else {
+            popup_height(target, request)
+        };
         args.extend([
             "-e".into(),
             environment,
             "-E".into(),
             "-w".into(),
-            target
-                .width
-                .saturating_sub(4)
-                .clamp(20, 90)
-                .to_string()
-                .into(),
+            width.to_string().into(),
             "-h".into(),
-            popup_height(target, request).to_string().into(),
+            height.to_string().into(),
             exe.as_os_str().into(),
             "--dialog".into(),
             payload.as_os_str().into(),
@@ -568,7 +587,15 @@ fn run_dialog(
     }
     payload.write_all(&bytes).map_err(|e| e.to_string())?;
     let exe = helper_exe()?;
-    let args = command_args(&target, &exe, payload.path(), reply.path(), &request, menu)?;
+    let args = command_args(
+        &target,
+        &exe,
+        payload.path(),
+        reply.path(),
+        &request,
+        menu,
+        settings.popup_policy.as_ref(),
+    )?;
     let stderr = temporary(&dir)?;
     let child = Command::new("tmux")
         .args(args)
@@ -957,6 +984,7 @@ mod tests {
             Path::new("/reply"),
             &req,
             false,
+            None,
         )
         .unwrap();
         let args: Vec<_> = args.iter().map(|v| v.to_str().unwrap()).collect();
@@ -980,6 +1008,41 @@ mod tests {
         assert!(!args.contains(&"sh"));
     }
     #[test]
+    fn native_dialog_uses_global_dimensions_and_centered_client_placement() {
+        let config = crate::config::Config::sample().unwrap();
+        let target = crate::input::DialogTarget {
+            socket: "/s".into(),
+            pane: "%1".into(),
+            client: "/dev/pts/1".into(),
+            width: 240,
+            height: 67,
+        };
+        let args = command_args(
+            &target,
+            Path::new("/helper"),
+            Path::new("/payload"),
+            Path::new("/reply"),
+            &request(),
+            false,
+            config.popup_policy.as_ref(),
+        )
+        .unwrap();
+        let args: Vec<_> = args.iter().map(|a| a.to_str().unwrap()).collect();
+        for flag in ["-x", "-y"] {
+            let i = args.iter().position(|a| *a == flag).unwrap();
+            assert_eq!(args[i + 1], "C");
+        }
+        let w = args[args.iter().position(|a| *a == "-w").unwrap() + 1]
+            .parse::<u16>()
+            .unwrap();
+        let h = args[args.iter().position(|a| *a == "-h").unwrap() + 1]
+            .parse::<u16>()
+            .unwrap();
+        assert_eq!(w, 60);
+        assert!(h <= 18);
+    }
+
+    #[test]
     fn menu_callbacks_only_reply_and_have_unique_shortcuts() {
         let target = crate::input::DialogTarget {
             socket: "/s".into(),
@@ -995,6 +1058,7 @@ mod tests {
             Path::new("/reply"),
             &request(),
             true,
+            None,
         )
         .unwrap();
         let text = format!("{args:?}");
@@ -1085,6 +1149,7 @@ mod tests {
             max_bytes: 4096,
             min_width: 60,
             min_height: 18,
+            popup_policy: None,
         };
         let started = Instant::now();
         assert!(run_dialog(&settings, request(), false, &stop, &tx).is_err());

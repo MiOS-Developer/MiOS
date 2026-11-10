@@ -204,7 +204,15 @@ pub fn content_panel(
     footer_rows: u16,
     ratio: f64,
 ) -> Rect {
-    content_panel_with_minimum(bounds, content_width, content_rows, footer_rows, 1, ratio)
+    content_panel_with_minimum(
+        bounds,
+        content_width,
+        content_rows,
+        footer_rows,
+        1,
+        ratio,
+        true,
+    )
 }
 
 fn content_panel_with_minimum(
@@ -214,6 +222,7 @@ fn content_panel_with_minimum(
     footer_rows: u16,
     minimum_content_rows: u16,
     ratio: f64,
+    reserve_scene: bool,
 ) -> Rect {
     if bounds.width == 0 || bounds.height == 0 {
         return Rect::new(bounds.x, bounds.y, 0, 0);
@@ -233,8 +242,12 @@ fn content_panel_with_minimum(
         .saturating_add(2)
         .min(bounds.height);
 
-    let scene_share = ((f64::from(bounds.height) / ratio).round() as u16)
-        .min(bounds.height.saturating_sub(min_needed));
+    let scene_share = if reserve_scene {
+        ((f64::from(bounds.height) / ratio).round() as u16)
+            .min(bounds.height.saturating_sub(min_needed))
+    } else {
+        0
+    };
     let max_budget_height = bounds.height.saturating_sub(scene_share).max(min_needed);
 
     let panel_height = needed_height
@@ -242,7 +255,7 @@ fn content_panel_with_minimum(
         .clamp(min_needed, bounds.height);
 
     let x = bounds.x + bounds.width.saturating_sub(panel_width) / 2;
-    let y = bounds.y + bounds.height.saturating_sub(panel_height);
+    let y = bounds.y + bounds.height.saturating_sub(panel_height) / 2;
     Rect::new(x, y, panel_width, panel_height)
 }
 
@@ -259,6 +272,33 @@ pub fn menu_geometry(
     gap: u16,
     max_columns: u16,
     ratio: f64,
+) -> MenuGeometry {
+    menu_geometry_with_scene_budget(
+        bounds,
+        item_widths,
+        selected,
+        footer_rows,
+        cell_height,
+        gap,
+        max_columns,
+        ratio,
+        true,
+    )
+}
+
+/// An already bounded popup owns its full rectangle; scene budget was applied
+/// by its parent. Legacy overlays can retain the golden scene reservation.
+#[allow(clippy::too_many_arguments)]
+pub fn menu_geometry_with_scene_budget(
+    bounds: Rect,
+    item_widths: &[u16],
+    selected: usize,
+    footer_rows: u16,
+    cell_height: u16,
+    gap: u16,
+    max_columns: u16,
+    ratio: f64,
+    reserve_scene: bool,
 ) -> MenuGeometry {
     let requested_cell_height = cell_height.max(1);
     let max_columns = max_columns.max(1);
@@ -328,6 +368,7 @@ pub fn menu_geometry(
         footer_rows,
         cell_height,
         ratio,
+        reserve_scene,
     );
 
     let inner_w = panel.width.saturating_sub(2);

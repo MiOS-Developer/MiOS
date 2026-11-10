@@ -2464,6 +2464,7 @@ dependencies = [
 name = "mios-unit-gen"
 version = "0.3.0"
 dependencies = [
+ "mios-resolver",
  "serde",
  "serde_json",
  "tempfile",

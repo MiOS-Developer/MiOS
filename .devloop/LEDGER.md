@@ -4877,3 +4877,10 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 
 - User reauthenticated on physicaltty1 after authorized reload. New bridge1445065 hashes33eb5624; GPM socketfd4 connected, VT owner1000, root-private PAM lease matches live greetd session PID/start/tty device, and tmux-os-2 attaches with TERMlinux. SELinux remains Enforcing.
 - Fresh login now exercises the installed PAM handoff on the real operator console; all prior private kernel/compiled controls remain preserved. Task3781 completed; physical controller-return acceptance in task3775 is not inferred.
+
+
+## Centered global console popup surfaces (2026-11-10)
+
+- Task3782: reuse existing per-type SSOT launch sizes and font geometry; bound/center console launchers, sessions, floats, menus, game dialogs and transient tooltips. MiOS-Mons retains its full scene without a persistent right sidebar.
+- Native affected UI134, dialogs16, HUD18, config7, CLI13, unit generator43, resolver popup2, generator351+integrations and miosd407 pass (one pre-existing ignored). Strict all-target Clippy and static musl release checks pass. Compiled disabled-floating/unbounded-size mutations fail intended assertions and restored positives pass. Actual private tmux13tests cover native float geometry and centered quick-click menus.
+- Exact raw proof and original unpublished checkpoint are archived; intermediate failures are retained as provenance and are not claimed as passes. No gate thresholds were weakened. Publish/install sealed artifacts next, retaining unsaved adopted games and console/agent processes; physical controller-return task3775 remains open.

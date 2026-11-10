@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4286,
-  "total_metadata_entries": 3444,
-  "total_hints": 3438,
+  "total_files_scanned": 4289,
+  "total_metadata_entries": 3445,
+  "total_hints": 3439,
   "total_functions_indexed": 2136,
-  "total_related_links": 6885,
+  "total_related_links": 6889,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -14006,6 +14006,20 @@
       "related": [
         "usr/share/mios/mios.toml",
         "usr/libexec/mios/mios-theme-render"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-resolver/src/popup.rs",
+      "hint": "Shared MiOS popup bounds inherited from existing launch sizes and font cells; centered consumers retain their own scrolling and input ownership.",
+      "related": [
+        "usr/share/mios/mios.toml [terminal.popups]",
+        "miosd launcher",
+        "mios-gen tmux-os",
+        "mios-tamagotchi"
       ],
       "functions": [],
       "doc": null,

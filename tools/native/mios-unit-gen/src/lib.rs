@@ -1554,7 +1554,9 @@ mod tests {
             .contains("MouseDown3Pane select-pane -t = \\; if-shell -F '#{||:#{mouse_any_flag},"));
         assert!(tmux.contains("'send-keys -M' \"if-shell -F '#{e|<:#{client_height},"));
         assert!(tmux.contains("mios-menu-pane=display-menu"));
-        assert!(tmux.contains("\"mios-menu-root=display-menu -T \\\"#[align=centre]MiOS\\\" -x "));
+        let root=tmux.lines().find(|line|line.contains("mios-menu-root=display-menu")).unwrap();
+        assert!(root.contains("#[align=centre]#{?#{e|>=:#{client_width},60}"));
+        assert!(root.contains("#{l:MiOS}}"), "narrow clients retain the original title");
         // The master toggle must disable menu interception as well as mouse capture.
         let mut doc: toml::Value = toml::from_str(ssot).unwrap();
         doc["keybindings"]["mouse"] = toml::Value::Boolean(false);
@@ -1562,6 +1564,7 @@ mod tests {
         let disabled_tmux = &disabled["usr/share/mios/tmux/mios-keys.tmux.conf"];
         assert!(!disabled_tmux.contains("set -g mouse on"));
         assert!(!disabled_tmux.contains("-T root MouseDown3Pane select-pane"));
+        assert!(!disabled_tmux.contains("-T root MouseUp3Pane select-pane"));
         assert!(!disabled_tmux.contains("-T root MouseDown3Status \"if-shell"));
     }
 

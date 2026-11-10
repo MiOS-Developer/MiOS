@@ -1,6 +1,7 @@
 // AI-hint: Crate root for mios-resolver -- the native layered mios.toml resolver that subsumes mios_toml.py / userenv.sh / globals.ps1.
 // AI-related: usr/lib/mios/mios_toml.py, usr/lib/mios/userenv.sh, tools/native/mios-ssot-walk, usr/share/mios/mios.toml
 pub mod names;
+pub mod popup;
 // Public compatibility path; all name definitions live in the same module.
 pub use names as aliases;
 pub mod db_overlay;

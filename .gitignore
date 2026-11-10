@@ -1205,3 +1205,10 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-blade-main-integration.json
 
 !/.devloop/handoff/mios-console-native-verification.tar.gz
+
+# Shared native console popup geometry
+!tools/native/mios-resolver/src/popup.rs
+
+!/.devloop/handoff/mios-popup-surfaces.json
+
+!/.devloop/handoff/mios-popup-native-verification.tar.gz

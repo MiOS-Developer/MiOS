@@ -101,6 +101,7 @@ pub enum LauncherCommand {
 #[derive(Clone, Debug)]
 pub struct Cfg {
     pub enabled: bool,
+    pub popup_policy: mios_resolver::popup::PopupPolicy,
     pub title: String,
     pub popup_w: u32,
     pub popup_h: u32,
@@ -310,6 +311,7 @@ pub fn config(v: &Value, console: bool) -> Result<Cfg, String> {
         [c("bg"), c("fg"), c("cursor"), c("subtle"), c("muted")]
     };
     let cfg = Cfg {
+        popup_policy: mios_resolver::popup::PopupPolicy::from_value(v)?,
         enabled: at(v, &format!("{l}.enabled"))?
             .as_bool()
             .ok_or("keybindings.tmux.launcher.enabled must be a boolean")?,
@@ -1944,8 +1946,13 @@ impl<'a> Ui<'a> {
                 .max()
                 .unwrap_or(10) as u16
                 + 6;
-            let w = w.min(area.width);
-            let h = (ov.entries.len() as u16 + 2).min(area.height);
+            let (cap_w, cap_h) = self.cfg.popup_policy.size(
+                mios_resolver::popup::SurfaceKind::Menu,
+                area.width,
+                area.height,
+            );
+            let w = w.min(cap_w);
+            let h = (ov.entries.len() as u16 + 2).min(cap_h);
             let r = Rect {
                 x: area.x + (area.width - w) / 2,
                 y: area.y + (area.height - h) / 2,
@@ -2284,7 +2291,11 @@ pub fn popup_size(cfg: &Cfg, cw: u16, ch: u16) -> Option<(u16, u16)> {
     }
     let w = ((cw as u32 * cfg.popup_w) / 100) as u16;
     let h = ((ch as u32 * cfg.popup_h) / 100) as u16;
-    Some((w.max(cfg.min_w).min(cw), h.max(cfg.min_h).min(ch)))
+    Some(cfg.popup_policy.size(
+        mios_resolver::popup::SurfaceKind::Window,
+        w.max(cfg.min_w).min(cw),
+        h.max(cfg.min_h).min(ch),
+    ))
 }
 
 fn desktop_session() -> bool {
@@ -3551,8 +3562,21 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
     #[test]
     fn popup_size_follows_the_ssot_and_the_client() {
         let c = cfg();
-        assert_eq!(popup_size(&c, 200, 50), Some((172, 42)));
-        assert_eq!(popup_size(&c, 40, 12), Some((34, 10)), "never below min_*");
+        assert_eq!(popup_size(&c, 200, 50), Some((94, 33)), "shared window cap");
+        assert_eq!(
+            popup_size(&c, 40, 12),
+            Some((34, 10)),
+            "small client bounds"
+        );
+        let mut legacy = c.clone();
+        legacy.popup_policy =
+            mios_resolver::popup::PopupPolicy::from_value(&Value::Table(Default::default()))
+                .unwrap();
+        assert_eq!(
+            popup_size(&legacy, 200, 50),
+            Some((172, 42)),
+            "explicit compatibility mode"
+        );
         assert_eq!(
             popup_size(&c, 30, 20),
             None,

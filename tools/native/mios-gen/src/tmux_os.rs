@@ -16,8 +16,8 @@ pub const HIDDEN: u8 = 3;
 const TERMINAL: &str = "/usr/libexec/mios/mios-terminal";
 /// Menu shortcut keys handed to TUI rows in order (actions keep their own prefix keys).
 const SHORTCUTS: &str = "1234567890bcdhijklnopqrsuvwxyz";
-const MENU_X: &str = "#{?mouse_x,#{popup_mouse_centre_x},#{popup_centre_x}}";
-const MENU_Y: &str = "#{?mouse_y,#{popup_mouse_y},#{popup_centre_y}}";
+const MENU_X: &str = "C";
+const MENU_Y: &str = "C";
 
 fn get<'a>(v: &'a Value, path: &str) -> Result<&'a Value, String> {
     path.split('.')
@@ -432,6 +432,58 @@ fn reap(merged: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Every runtime popup resolves the same per-type SSOT cap on its actual client.
+fn popup_dimensions(
+    merged: &Value,
+    client: &str,
+    pane: &str,
+    kind: mios_resolver::popup::SurfaceKind,
+) -> Result<Option<(u16, u16)>, String> {
+    let policy = mios_resolver::popup::PopupPolicy::from_value(merged)?;
+    if !policy.enabled {
+        return Ok(None);
+    }
+    let dimensions = info(client, pane, "#{client_width}\t#{client_height}")?;
+    let width = dimensions
+        .first()
+        .and_then(|v| v.parse().ok())
+        .ok_or("invalid popup client width")?;
+    let height = dimensions
+        .get(1)
+        .and_then(|v| v.parse().ok())
+        .ok_or("invalid popup client height")?;
+    Ok(Some(policy.size(kind, width, height)))
+}
+
+/// Native floating-pane positions are numeric window cells; tmux does not
+/// accept display-popup's C token for new-pane -X/-Y.
+fn native_float_geometry(
+    merged: &Value,
+    client: &str,
+    pane: &str,
+) -> Result<Option<(u16, u16, u16, u16)>, String> {
+    let p = mios_resolver::popup::PopupPolicy::from_value(merged)?;
+    if !p.enabled {
+        return Ok(None);
+    }
+    let size = info(client, pane, "#{window_width}\t#{window_height}")?;
+    let w: u16 = size
+        .first()
+        .and_then(|s| s.parse().ok())
+        .ok_or("invalid floating window width")?;
+    let h: u16 = size
+        .get(1)
+        .and_then(|s| s.parse().ok())
+        .ok_or("invalid floating window height")?;
+    let (pw, ph) = p.size(mios_resolver::popup::SurfaceKind::Window, w, h);
+    Ok(Some((
+        pw,
+        ph,
+        w.saturating_sub(pw) / 2,
+        h.saturating_sub(ph) / 2,
+    )))
+}
+
 fn open_popup(
     merged: &Value,
     client: &str,
@@ -441,6 +493,12 @@ fn open_popup(
     console: bool,
 ) -> Result<String, String> {
     let f = float_cfg(merged)?;
+    let dimensions = popup_dimensions(
+        merged,
+        client,
+        pane,
+        mios_resolver::popup::SurfaceKind::Window,
+    )?;
     let sock = socket_env()?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut args: Vec<String> = vec![
@@ -451,9 +509,13 @@ fn open_popup(
         pane.into(),
         "-E".into(),
         "-w".into(),
-        string(f, "shell_width")?,
+        dimensions.map_or_else(|| string(f, "shell_width"), |(w, _)| Ok(w.to_string()))?,
         "-h".into(),
-        string(f, "shell_height")?,
+        dimensions.map_or_else(|| string(f, "shell_height"), |(_, h)| Ok(h.to_string()))?,
+        "-x".into(),
+        "C".into(),
+        "-y".into(),
+        "C".into(),
         "-T".into(),
         string(f, "shell_title")?,
         "-d".into(),
@@ -559,6 +621,52 @@ fn float(merged: &Value, a: &Args) -> Result<String, String> {
         .unwrap_or_default()
     };
     match sub {
+        "new" => {
+            if managed {
+                message(
+                    &client,
+                    &text(merged, "keybindings.tmux.managed_refusal_message")?,
+                )?;
+                return Ok(String::new());
+            }
+            let f = get(merged, "keybindings.tmux.float")?;
+            let pct = |k: &str| -> Result<u32, String> {
+                string(f, k)?
+                    .trim_end_matches('%')
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|n| (1..=100).contains(n))
+                    .ok_or_else(|| format!("[keybindings.tmux.float].{k} must be a percentage"))
+            };
+            let (w, h, x, y) =
+                if let Some((w, h, x, y)) = native_float_geometry(merged, &client, &pane)? {
+                    (w.to_string(), h.to_string(), x.to_string(), y.to_string())
+                } else {
+                    let (w, h) = (pct("pane_width")?, pct("pane_height")?);
+                    (
+                        format!("{w}%"),
+                        format!("{h}%"),
+                        format!("{}%", (100 - w) / 2),
+                        format!("{}%", (100 - h) / 2),
+                    )
+                };
+            Err(exec_tmux(&[
+                "new-pane".into(),
+                "-t".into(),
+                pane,
+                "-x".into(),
+                w,
+                "-y".into(),
+                h,
+                "-X".into(),
+                x,
+                "-Y".into(),
+                y,
+                "-c".into(),
+                cwd,
+                "--".into(),
+            ]))
+        }
         "shell" => {
             if in_float {
                 if recorded() == *tty || tmux(&["switch-client", "-c", &client, "-l"]).is_err() {
@@ -753,7 +861,19 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
         .map(|d| d.display().to_string())
         .unwrap_or_else(|_| "/".into());
     let argv = t.argv_for(a.console).to_vec();
-    let mut mode = a.mode.unwrap_or(t.mode);
+    let dimensions = popup_dimensions(
+        merged,
+        &client,
+        &pane,
+        mios_resolver::popup::SurfaceKind::Window,
+    )?;
+    let mut mode = a.mode.unwrap_or_else(|| {
+        if dimensions.is_some() && t.mode == Mode::Window {
+            Mode::Float
+        } else {
+            t.mode
+        }
+    });
     if mode == Mode::Popup && !scope_works(&l.popup_scope) {
         mode = Mode::Window; // never run a popup TUI in the tmux server's own cgroup
     }
@@ -775,9 +895,13 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
             }
             v.extend([
                 "-w".into(),
-                l.popup_width.clone(),
+                dimensions.map_or_else(|| l.popup_width.clone(), |(w, _)| w.to_string()),
                 "-h".into(),
-                l.popup_height.clone(),
+                dimensions.map_or_else(|| l.popup_height.clone(), |(_, h)| h.to_string()),
+                "-x".into(),
+                "C".into(),
+                "-y".into(),
+                "C".into(),
                 "-T".into(),
                 format!(" {} ", t.label),
                 "-d".into(),
@@ -810,19 +934,30 @@ fn app(merged: &Value, a: &Args) -> Result<String, String> {
                     .filter(|n| (1..=100).contains(n))
                     .ok_or_else(|| format!("[keybindings.tmux.float].{k} must be a percentage"))
             };
-            let (w, h) = (pct("pane_width")?, pct("pane_height")?);
+            let (w, h, x, y) =
+                if let Some((w, h, x, y)) = native_float_geometry(merged, &client, &pane)? {
+                    (w.to_string(), h.to_string(), x.to_string(), y.to_string())
+                } else {
+                    let (w, h) = (pct("pane_width")?, pct("pane_height")?);
+                    (
+                        format!("{w}%"),
+                        format!("{h}%"),
+                        format!("{}%", (100 - w) / 2),
+                        format!("{}%", (100 - h) / 2),
+                    )
+                };
             vec![
                 "new-pane".into(),
                 "-t".into(),
                 pane.clone(),
                 "-x".into(),
-                format!("{w}%"),
+                w,
                 "-y".into(),
-                format!("{h}%"),
+                h,
                 "-X".into(),
-                format!("{}%", (100 - w) / 2),
+                x,
                 "-Y".into(),
-                format!("{}%", (100 - h) / 2),
+                y,
                 "-c".into(),
                 cwd,
                 "--".into(),

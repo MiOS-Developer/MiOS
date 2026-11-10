@@ -27,6 +27,8 @@ pub enum HudMode {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(skip)]
+    pub popup_policy: Option<mios_resolver::popup::PopupPolicy>,
     pub dialog_mode: crate::dialogs::DialogMode,
     pub dialog_timeout_ms: u64,
     pub dialog_query_timeout_ms: u64,
@@ -129,6 +131,9 @@ impl Config {
             .as_integer()
             .and_then(|v| u16::try_from(v).ok())
             .ok_or("invalid native workspace portrait_ratio_percent")?;
+        let mut surfaces = vendor.clone();
+        mios_resolver::merge::deep_merge(&mut surfaces, value.clone());
+        config.popup_policy = Some(mios_resolver::popup::PopupPolicy::from_value(&surfaces)?);
         config.validate()?;
         Ok(config)
     }

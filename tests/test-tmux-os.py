@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,11 @@ enabled = false
 BASE_HOST = """
 [mcp.tmux.workspace]
 global_sessions = false
+
+# Existing cases retain their explicit legacy layout contract. Global popup
+# placement has its own actual-terminal case below.
+[terminal.popups]
+enabled = false
 """
 
 STUB = """#!/bin/sh
@@ -110,7 +116,7 @@ def wait(pred, timeout=6.0, step=0.1):
 class Harness:
     """A private inner server loaded with the generated conf, viewed by real clients in a private outer server."""
 
-    def __init__(self, tag, host_extra=""):
+    def __init__(self, tag, host_extra="", global_popups=False):
         self.dir = Path(tempfile.mkdtemp(prefix="mtt.", dir="/tmp"))  # short path: AF_UNIX sun_path limit
         os.chmod(self.dir, 0o700)
         self.inner = f"{PREFIX}{os.getpid()}-{tag}-i"
@@ -124,7 +130,8 @@ class Harness:
         stub.write_text(STUB.replace("{log}", str(self.log)))
         stub.chmod(0o755)
         self.host = self.dir / "host.toml"
-        self.host.write_text(BASE_HOST + host_extra)
+        base = BASE_HOST.replace("enabled = false", "enabled = true") if global_popups else BASE_HOST
+        self.host.write_text(base + host_extra)
         # No desktop variables: a launcher pop-out must never open a window on the operator's desktop.
         env = {k: v for k, v in os.environ.items() if not k.startswith(("TMUX", "MIOS_", "SSH_", "WAYLAND_", "HYPRLAND_")) and k != "DISPLAY"}
         env.update({
@@ -245,6 +252,71 @@ class TestTmuxOs(unittest.TestCase):
         h = Harness(tag, host_extra)
         self.addCleanup(h.close)
         return h
+
+    @unittest.skipUnless(MIOSD.is_file(), "the built native launcher is required")
+    def test_t11_global_popups_center_native_floats_and_keep_mouse_menus_open(self):
+        extra = CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "global-popups")
+        h = Harness("global-popups", extra, global_popups=True)
+        self.addCleanup(h.close)
+        h.start(240, 67)
+        client = h.view(w=240, h=67)
+        original = h.I("display", "-p", "-t", "main", "#{pane_id}")
+        original_pid = h.I("display", "-p", "-t", original, "#{pane_pid}")
+        root_keys=h.I("list-keys", "-T", "root")
+        self.assertTrue(any("MouseUp3Pane" in line and "mios-menu-pane-mouse" in line for line in root_keys.splitlines()), "runtime projection must carry the shared popup switch")
+        command = shlex.join(["env", f"TMUX_PANE={original}", str(GEN), "tmux-os", "--root", str(ROOT), "app", "ok", "--client", client])
+        h.I("run-shell", "-b", "-t", original, command)
+        def floating():
+            return [l for l in h.I("list-panes", "-t", "main", "-F", "#{pane_id}|#{pane_floating_flag}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}").splitlines() if "|1|" in l]
+        self.assertTrue(wait(floating), "default app window becomes a persistent centered float")
+        pane, flag, width, height, left, top = floating()[0].split("|")
+        width, height, left, top = map(int, [width, height, left, top])
+        ww, wh = map(int, h.I("display", "-p", "-t", original, "#{window_width}|#{window_height}").split("|"))
+        self.assertEqual((width, height), (94, 33))
+        self.assertEqual((left, top), ((ww-width)//2, (wh-height)//2))
+        self.assertEqual(h.I("display", "-p", "-t", original, "#{pane_pid}"), original_pid)
+        self.assertTrue(wait(lambda: h.log.exists() and "window" in h.log.read_text()))
+        h.keys("view", "C-b", "Space")
+        shot = h.shot(delay=1)
+        borders = [(y, line.find("╭"), line.rfind("╮")) for y,line in enumerate(shot.splitlines()) if "╭" in line and "╮" in line]
+        self.assertTrue(borders, shot)
+        self.assertTrue(any(r-l+1 <=94 and l>0 and y>0 for y,l,r in borders), shot)
+        h.keys("view", "Escape")
+        self.assertTrue(wait(lambda: "╭" not in h.shot(delay=0.05)), "launcher closes before its parent float is removed")
+        h.I("kill-pane", "-t", pane)
+        h.I("select-pane", "-t", original)
+        h.I("copy-mode", "-t", original)
+        # The opening release must never choose whatever lies beneath the
+        # pointer when a global centered menu appears.
+        for x,y in [(10,2),(120,32),(230,60)]:
+            h.raw("view", f"\x1b[<2;{x};{y}M")
+            h.raw("view", f"\x1b[<2;{x};{y}m")
+            menu_shot=h.shot(delay=0.4)
+            self.assertIn("MiOS pane",menu_shot)
+            title_row=next(line for line in menu_shot.splitlines() if "MiOS pane" in line)
+            menu_width=title_row.rfind("╮")-title_row.find("╭")+1
+            self.assertGreaterEqual(menu_width,54,"native menus retain physical landscape proportions")
+            self.assertLessEqual(menu_width,60,"native menus inherit the existing MiOS menu launch width")
+            self.assertIn(original, h.I("list-panes", "-t", "main", "-F", "#{pane_id}"))
+            h.keys("view", "Escape")
+            self.assertTrue(wait(lambda: "MiOS pane" not in h.shot(delay=0.05)), "wait for dismissal before starting the next independent click")
+        self.assertEqual(h.I("display", "-p", "-t", original, "#{pane_pid}"), original_pid)
+        h.I("send-keys", "-t", original, "-X", "cancel")
+        direct = shlex.join(["env", f"TMUX_PANE={original}", str(GEN), "tmux-os", "--root", str(ROOT), "float", "new", "--client", client])
+        h.I("run-shell", "-b", "-t", original, direct)
+        self.assertTrue(wait(floating), "explicit new float uses the same centered launch policy")
+        direct_pane, _, dw, dh, dx, dy = floating()[0].split("|")
+        self.assertEqual(tuple(map(int,[dw,dh,dx,dy])), (94,33,(ww-94)//2,(wh-33)//2))
+        self.assertEqual(h.I("display", "-p", "-t", original, "#{pane_pid}"), original_pid)
+        h.I("kill-pane", "-t", direct_pane)
+        h.O("new-window", "-t", "=v:", "-n", "entry", f"env -u TMUX -u TMUX_PANE {TERMINAL} --app ok --console 0; sleep 30")
+        base = SSOT["terminal"]["sessions"]["new_session_name"]
+        def outside_float():
+            return [line for line in h.I("list-panes", "-t", f"={base}:", "-F", "#{pane_floating_flag}|#{pane_width}|#{pane_height}", check=False).splitlines() if line.startswith("1|")]
+        self.assertTrue(wait(outside_float, timeout=20), "outside entry waits for its attaching client and then floats the app")
+        self.assertEqual(outside_float()[0], "1|94|33")
+        self.assertEqual(h.I("show", "-qv", "-t", f"={base}:", "@mios-bare"), "1")
+        self.assertEqual(h.I("display", "-p", "-t", original, "#{pane_pid}"), original_pid)
 
     # ---- T1: generated tables, idempotent and shrink-safe reloads ----
     def test_t1_prefix_and_root_tables_match_the_ssot_and_reloads_are_idempotent(self):

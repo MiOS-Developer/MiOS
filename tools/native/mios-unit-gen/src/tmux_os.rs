@@ -222,8 +222,8 @@ const MANAGED_PANE: &str =
 const MOUSE_PASSTHROUGH: &str =
     "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}";
 /// Centre a key-opened menu; put a right-click menu at the pointer (one alias serves both openers).
-const MENU_X: &str = "#{?mouse_x,#{popup_mouse_centre_x},#{popup_centre_x}}";
-const MENU_Y: &str = "#{?mouse_y,#{popup_mouse_y},#{popup_centre_y}}";
+const MENU_X: &str = "C";
+const MENU_Y: &str = "C";
 /// Hook slot of the float-session reaper (the theme's workspace hooks use [90]).
 const REAP_HOOK: &str = "session-closed[91]";
 
@@ -1016,11 +1016,19 @@ pub(crate) fn render_tmux_keys(
         let shell = helper(
             "--float shell --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}",
         );
-        let native = format!(
-            "new-pane -c '#{{pane_current_path}}' -x {w}% -y {h}% -X {}% -Y {}%",
-            (100 - w) / 2,
-            (100 - h) / 2
-        );
+        let popup_enabled =
+            mios_resolver::popup::PopupPolicy::enabled_from_value(doc).map_err(gm)?;
+        let native = if linux && popup_enabled {
+            helper(
+                "--float new --client #{q:client_name} --console #{?#{E:@mios-console-client},1,0}",
+            )
+        } else {
+            format!(
+                "new-pane -c '#{{pane_current_path}}' -x {w}% -y {h}% -X {}% -Y {}%",
+                (100 - w) / 2,
+                (100 - h) / 2
+            )
+        };
         binds.push(Bind {
             key: new_key,
             command: if linux {
@@ -1222,12 +1230,41 @@ pub(crate) fn render_tmux_keys(
                 menu.rows
             );
 
-            let (x, y) = if mouse {
+            let center = mios_resolver::popup::PopupPolicy::enabled_from_value(doc).map_err(gm)?;
+            let (x, y) = if mouse && !center {
                 ("M", mouse_y.as_str())
             } else {
                 (MENU_X, MENU_Y)
             };
-            let title = format!("#[align=centre]{}", menu.title);
+            let title = if center {
+                // Runtime projection forwards only this resolved size, never unrelated SSOT values.
+                let columns = match doc
+                    .get("terminal")
+                    .and_then(|v| v.get("popups"))
+                    .and_then(|v| v.get("_menu_columns"))
+                {
+                    Some(value) => value
+                        .as_integer()
+                        .and_then(|n| u16::try_from(n).ok())
+                        .filter(|n| (4..=4096).contains(n))
+                        .ok_or_else(|| gm("invalid projected popup menu columns".into()))?,
+                    None => {
+                        mios_resolver::popup::PopupPolicy::from_value(doc)
+                            .map_err(gm)?
+                            .size(mios_resolver::popup::SurfaceKind::Menu, u16::MAX, u16::MAX)
+                            .0
+                    }
+                };
+                let padded = format!(
+                    "{:^width$}",
+                    menu.title,
+                    width = usize::from(columns.saturating_sub(4))
+                );
+                // A cramped client retains the natural label width rather than forcing a wide menu off-screen.
+                format!("#[align=centre]#{{?#{{e|>=:#{{client_width}},{columns}}},#{{l:{padded}}},#{{l:{}}}}}",menu.title)
+            } else {
+                format!("#[align=centre]{}", menu.title)
+            };
             let mut args: Vec<String> = vec![
                 "display-menu".into(),
                 "-T".into(),
@@ -1363,7 +1400,7 @@ pub(crate) fn render_tmux_keys(
     }
 
     // ---- root table: launcher, right-click menus, M-Space, and the agent accept chord ----
-    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\nunbind-key -T root MouseDown1StatusLeft\n";
+    out += "unbind-key -T root MouseDown3Pane\nunbind-key -T root MouseDown3Status\nunbind-key -T root MouseUp3Pane\nunbind-key -T root MouseUp3Status\nunbind-key -T root MouseDown1StatusLeft\n";
     let mouse_opener = |id: &str| -> Result<String, UnitGenError> {
         let rows = menu_rows.get(id).ok_or_else(|| {
             gm(format!(
@@ -1373,15 +1410,21 @@ pub(crate) fn render_tmux_keys(
         Ok(menu_opener_for(id, *rows, &too_small, "-mouse"))
     };
     if mouse_on {
-        // Resolve mouse_any_flag after selecting the clicked pane: the previously active pane would route
-        // another pane's right-click to the wrong owner. Copy and view mode keep the menu (Go to top/bottom).
+        // A centered menu may be far from the pointer. Open after the initiating
+        // release so tmux cannot interpret it as an outside click and dismiss it.
+        // Applications that own mouse reporting still receive both event edges.
+        let centered = mios_resolver::popup::PopupPolicy::enabled_from_value(doc).map_err(gm)?;
+        let edge = if centered { "MouseUp3" } else { "MouseDown3" };
+        let pane_note = quote(&req_text(tmux, sec, "pane_menu_note")?);
+        if centered {
+            out += &format!("bind-key -N {pane_note} -T root MouseDown3Pane select-pane -t = \\; if-shell -F '{MOUSE_PASSTHROUGH}' 'send-keys -M' ''\n");
+        }
         out += &format!(
-            "bind-key -N {} -T root MouseDown3Pane select-pane -t = \\; if-shell -F '{MOUSE_PASSTHROUGH}' 'send-keys -M' {}\n",
-            quote(&req_text(tmux, sec, "pane_menu_note")?),
+            "bind-key -N {pane_note} -T root {edge}Pane select-pane -t = \\; if-shell -F '{MOUSE_PASSTHROUGH}' 'send-keys -M' {}\n",
             quote(&mouse_opener("pane")?)
         );
         out += &format!(
-            "bind-key -N {} -T root MouseDown3Status {}\n",
+            "bind-key -N {} -T root {edge}Status {}\n",
             quote(&req_text(tmux, sec, "menu_note")?),
             quote(&mouse_opener("root")?)
         );
@@ -1736,28 +1779,26 @@ mod tests {
             .find(|l| l.contains("\"mios-menu-pane-mouse="))
             .unwrap();
         assert!(
-            mouse.contains(" -x M -y ") && mouse.contains(" -O ") && !mouse.contains(" -C "),
+            mouse.contains(" -x C -y C ") && mouse.contains(" -O ") && !mouse.contains(" -C "),
             "{mouse}"
         );
-        // Below the pointer when the menu fits there, else above it (tmux 3.7c never moves a menu back on screen).
-        let rows = launcher_menus(&ssot(), "linux")
-            .unwrap()
-            .into_iter()
-            .find(|m| m.id == "pane")
-            .unwrap()
-            .rows;
-        assert!(mouse.contains(&format!("#{{?#{{e|<=:#{{e|+:#{{mouse_y}},{rows}}},#{{client_height}}}},#{{popup_mouse_top}},#{{?#{{e|>=:#{{mouse_y}},{rows}}},#{{popup_mouse_y}},#{{popup_centre_y}}}}}}")), "{mouse}");
+        assert!(!mouse.contains("popup_mouse_top"));
+        let mut legacy = ssot();
+        legacy["terminal"]["popups"]["enabled"] = false.into();
+        assert!(
+            render(&legacy).unwrap().contains(" -x M -y "),
+            "explicit compatibility mode"
+        );
 
         assert!(aliases
             .iter()
             .any(|l| l.contains("\"mios-menu-root-vt-mouse=") && l.contains("-b single")));
         assert!(conf
             .lines()
-            .any(|l| l.contains("-T root MouseDown3Pane") && l.contains("'mios-menu-pane-mouse'")));
-        assert!(conf
-            .lines()
-            .any(|l| l.contains("-T root MouseDown3Status")
-                && l.contains("'mios-menu-root-vt-mouse'")));
+            .any(|l| l.contains("-T root MouseUp3Pane") && l.contains("'mios-menu-pane-mouse'")));
+        assert!(conf.lines().any(
+            |l| l.contains("-T root MouseUp3Status") && l.contains("'mios-menu-root-vt-mouse'")
+        ));
         assert!(
             aliases
                 .iter()
@@ -1814,7 +1855,8 @@ mod tests {
             .find(|l| l.contains("\"mios-menu-root="))
             .unwrap();
         assert!(
-            root.contains("-T \\\"#[align=centre]MiOS\\\""),
+            root.contains("#[align=centre]#{?#{e|>=:#{client_width},60}")
+                && root.contains("#{l:MiOS}}"),
             "centred title: {root}"
         );
         assert!(
@@ -2015,7 +2057,10 @@ mod tests {
     fn floats_are_version_gated_and_managed_panes_refuse_layout_keys() {
         let conf = render(&ssot()).unwrap();
         assert!(conf.contains("%if \"#{>=:#{version},3.7}\"\nbind-key -N \"New floating pane (keeps the directory)\" '*' if-shell -F '#{||:#{@mios-workspace-head}"));
-        assert!(conf.contains("new-pane -c '#{pane_current_path}' -x 70% -y 60% -X 15% -Y 20%"));
+        assert!(
+            conf.contains("--float new --client #{q:client_name}"),
+            "shared runtime geometry"
+        );
         for key in ["'!'", "'{'", "'}'", "F"] {
             let needle = format!(" {key} if-shell -F '#{{||:#{{@mios-workspace-head}}");
             let line = conf

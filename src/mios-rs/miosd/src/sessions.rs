@@ -44,6 +44,7 @@ const SERVER_ALIVE_COUNT_MAX: u32 = 2;
 
 #[derive(Clone)]
 struct Config {
+    popup_policy: mios_resolver::popup::PopupPolicy,
     socket: String,
     socket_root: String,
     default_session: String,
@@ -276,6 +277,7 @@ fn config(root: &Path) -> Result<Config, String> {
         return Err("terminal.sessions.menu fields must be nonempty printable strings".into());
     }
     Ok(Config {
+        popup_policy: mios_resolver::popup::PopupPolicy::from_value(&v)?,
         root: root.to_path_buf(),
         discovery_timeout_ms: integer(&v, "desktop.launch.overall_timeout_ms")?.clamp(1000, 60000)
             as u64,
@@ -1427,8 +1429,20 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
         let mut nav_area = Rect::default();
         terminal
             .draw(|f| {
+                let frame = f.area();
+                let (w, h) = c.popup_policy.size(
+                    mios_resolver::popup::SurfaceKind::Window,
+                    frame.width,
+                    frame.height,
+                );
+                let surface = Rect::new(
+                    frame.x + frame.width.saturating_sub(w) / 2,
+                    frame.y + frame.height.saturating_sub(h) / 2,
+                    w,
+                    h,
+                );
                 let [body, help] =
-                    Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(f.area());
+                    Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(surface);
                 let block = Block::default()
                     .borders(Borders::ALL)
                     .border_type(if c.console {
@@ -1489,7 +1503,7 @@ fn pick(c: &Config) -> Result<(Choice, Vec<Node>), String> {
                         if searching { " editing" } else { "" },
                         menu_text(&query, c.console),
                         status,
-                        if f.area().width < 90 {
+                        if surface.width < 90 {
                             "Arrows Enter open /search Tab/n new Esc shell"
                         } else {
                             g.help
@@ -2018,6 +2032,10 @@ mod tests {
 
     fn cfg(ssh_timeout: i64) -> Config {
         Config {
+            popup_policy: mios_resolver::popup::PopupPolicy::from_value(&toml::Value::Table(
+                Default::default(),
+            ))
+            .unwrap(),
             socket: "mios".into(),
             socket_root: "/tmp".into(),
             default_session: "mios".into(),

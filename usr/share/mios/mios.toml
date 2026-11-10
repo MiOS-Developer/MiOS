@@ -11842,6 +11842,23 @@ launch_program = "/usr/libexec/mios/mios-launch"
 probe_program = "/usr/libexec/mios/mios-computer-use"
 
 # Apps and TUIs launcher: one catalogue for prefix e in tmux-os and the "TUI apps" section of miosd sessions.
+# Global MiOS console surfaces inherit existing per-type launch sizes. Native
+# consumers center and clamp them using physical font cells, without permanent
+# sidebars. These source references stay configurable in every SSOT layer.
+[terminal.popups]
+enabled = true
+window_size_source = "desktop.hyprland.hypr3d.spawn.landscape_cells"
+menu_width_source = "tamagotchi.popup_min_width"
+menu_height_source = "tamagotchi.popup_min_height"
+dialog_width_source = "tamagotchi.popup_min_width"
+dialog_height_source = "tamagotchi.popup_min_height"
+tooltip_width_source = "tamagotchi.popup_min_width"
+tooltip_height_source = "tamagotchi.inline_dialog_rows"
+font_width_source = "theme.font.cell_w_px"
+font_height_source = "theme.font.cell_h_px"
+aspect_source = "desktop.hyprland.placement.aspect"
+
+
 [terminal.tui_launcher]
 enabled       = true
 title         = "Apps"

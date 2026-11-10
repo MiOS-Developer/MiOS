@@ -84,6 +84,8 @@ pub struct Ui {
     pub confirm_reset: bool,
     reset_refused: bool,
     pub notice: String,
+    notice_seen: RefCell<String>,
+    notice_until: Cell<usize>,
     pub menu: Option<Menu>,
     pub menu_selected: usize,
     gallery_stage: usize,
@@ -187,6 +189,9 @@ pub struct Ui {
     native_modal: bool,
     thought_ticks: u64,
     adopt_character: Option<u8>,
+    floating_surfaces: bool,
+    surface_area: Cell<Option<Rect>>,
+    last_surface: Cell<Rect>,
     pet_area: Cell<Rect>,
     dialog_area: Cell<Rect>,
     care_targets: RefCell<Vec<(Rect, usize)>>,
@@ -197,12 +202,15 @@ pub struct Ui {
 impl Ui {
     pub fn new(game: Game) -> Self {
         let visual_rng = game.visual_seed().wrapping_add(1).max(1);
+        let notice = "Welcome home. Raise a healthy, happy adult.".to_owned();
         Self {
             game,
             selected: 0,
             confirm_reset: false,
             reset_refused: false,
-            notice: "Welcome home. Raise a healthy, happy adult.".into(),
+            notice: notice.clone(),
+            notice_seen: RefCell::new(notice),
+            notice_until: Cell::new(0),
             menu: None,
             menu_selected: 0,
             gallery_stage: 3,
@@ -302,6 +310,9 @@ impl Ui {
             native_modal: false,
             thought_ticks: 0,
             adopt_character: None,
+            floating_surfaces: false,
+            surface_area: Cell::new(None),
+            last_surface: Cell::new(Rect::default()),
             pet_area: Cell::new(Rect::default()),
             dialog_area: Cell::new(Rect::default()),
             care_targets: RefCell::new(Vec::new()),
@@ -316,6 +327,7 @@ impl Ui {
         ui.habitat_rules = Some(config.habitat.clone());
         ui.view_mode = config.view_mode;
         ui.hud_mode = config.hud_mode;
+        ui.floating_surfaces = config.popup_policy.as_ref().is_some_and(|p| p.enabled);
         ui.sprite_style = config.sprite_style;
         ui.presentation = Some(config.presentation.clone());
         ui.effective_style.set(config.sprite_style);
@@ -601,6 +613,30 @@ impl Ui {
             self.camera_stage.get().or_else(|| self.live_stage()),
         )
     }
+    fn surface_bounds(&self, screen: &Frame) -> Rect {
+        self.surface_area.get().unwrap_or_else(|| screen.area())
+    }
+
+    fn popup_bounds(
+        &self,
+        config: &Config,
+        area: Rect,
+        kind: mios_resolver::popup::SurfaceKind,
+    ) -> Rect {
+        let (width, height) = config
+            .popup_policy
+            .as_ref()
+            .map_or((area.width, area.height), |p| {
+                p.size(kind, area.width, area.height)
+            });
+        Rect::new(
+            area.x + area.width.saturating_sub(width) / 2,
+            area.y + area.height.saturating_sub(height) / 2,
+            width,
+            height,
+        )
+    }
+
     fn set_scene(&self, area: Rect) {
         self.set_scene_for_stage(
             area,
@@ -1507,6 +1543,13 @@ impl Ui {
             ]
             .get(index)
             .copied(),
+            Menu::Graphics if self.floating_surfaces && (9..12).contains(&index) => Some(
+                [
+                    "Open the compact status and needs dialog.",
+                    "Open the compact controls and help dialog.",
+                    "Open the action menu over the full game scene.",
+                ][index - 9],
+            ),
             Menu::Graphics => [
                 "Render the autonomous Mon and its voxel environment.",
                 "Use a classic pixel sprite without changing the pet.",
@@ -1550,7 +1593,7 @@ impl Ui {
 
     fn draw_menu_position(&self, screen: &mut Frame, colors: &Colors) {
         let Some(menu) = self.menu else { return };
-        if self.native_modal || self.confirm_reset || screen.area().width < 12 {
+        if self.native_modal || self.confirm_reset || self.surface_bounds(screen).width < 12 {
             return;
         }
         let text = if matches!(menu, Menu::Help | Menu::Status | Menu::Identity) {
@@ -1581,7 +1624,7 @@ impl Ui {
                 format!("{}/{}", selected + 1, total)
             }
         };
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         let width = area.width.saturating_sub(2);
         screen.render_widget(
             Paragraph::new(text).style(Style::default().fg(colors.ink(7)).bg(colors.background)),
@@ -1596,7 +1639,7 @@ impl Ui {
         colors: &Colors,
         renderer: Renderer,
     ) {
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         screen.render_widget(Clear, area);
         let block = self.menu_panel(
             &format!("TALK / {} says", self.name()),
@@ -1693,7 +1736,10 @@ impl Ui {
     }
     fn draw_menu_navigation(&self, screen: &mut Frame, colors: &Colors) {
         let Some(menu) = self.menu else { return };
-        let area = self.menu_footer.get().intersection(screen.area());
+        let area = self
+            .menu_footer
+            .get()
+            .intersection(self.surface_bounds(screen));
         if self.confirm_reset
             || self.native_modal
             || menu == Menu::Seed
@@ -1706,6 +1752,7 @@ impl Ui {
         self.control_targets.borrow_mut().clear();
         screen.render_widget(Clear, area);
         let style = Style::default().fg(colors.ink(7)).bg(colors.background);
+        screen.buffer_mut().set_style(area, style);
         for (offset, label, action) in [(0, "[<]", Action::Previous), (3, "[>]", Action::Next)] {
             let rect = Rect::new(area.x + offset, area.y, 3, 1);
             screen.render_widget(Paragraph::new(label).style(style), rect);
@@ -1848,6 +1895,12 @@ impl Ui {
             return Effect::Continue;
         }
         let point = (column, row).into();
+        if self.overlay_open()
+            && !self.last_surface.get().is_empty()
+            && !self.last_surface.get().contains(point)
+        {
+            return Effect::Continue;
+        }
         if self.menu == Some(Menu::Seed) && !self.confirm_reset && self.seed_import_allowed {
             let edit = self
                 .seed_edit_targets
@@ -1903,6 +1956,7 @@ impl Ui {
                 Action::Cancel => crossterm::event::KeyCode::Esc,
                 Action::Menu => crossterm::event::KeyCode::Char('o'),
                 Action::Help => crossterm::event::KeyCode::Char('?'),
+                Action::Status => crossterm::event::KeyCode::Char('i'),
                 Action::Pause => crossterm::event::KeyCode::Char('p'),
                 Action::Quit => crossterm::event::KeyCode::Char('q'),
                 _ => return Effect::Continue,
@@ -2224,6 +2278,14 @@ impl Ui {
         let Some(a) = action(key) else {
             return Effect::Continue;
         };
+        if self.floating_surfaces
+            && matches!(
+                a,
+                Action::Care(_) | Action::Pause | Action::Save | Action::Reset
+            )
+        {
+            self.notice_seen.borrow_mut().clear();
+        }
         if a == Action::Quit {
             return Effect::Quit;
         }
@@ -2421,6 +2483,19 @@ impl Ui {
                 }
             }
             return Effect::Continue;
+        }
+        if self.floating_surfaces
+            && matches!(
+                a,
+                Action::Direction(_) | Action::Previous | Action::Next | Action::Accept
+            )
+        {
+            self.open(Menu::Home);
+            return if a == Action::Accept {
+                Effect::Continue
+            } else {
+                self.menu_input(a, rules)
+            };
         }
         match a {
             Action::Direction(Direction::Up | Direction::Left) | Action::Previous => {
@@ -2676,8 +2751,11 @@ impl Ui {
                     6 => self.renderer = Some(Renderer::Quadrant),
                     7 => self.renderer = Some(Renderer::Braille),
                     8 => self.open(Menu::Gallery),
+                    9 if self.floating_surfaces => self.open(Menu::Status),
                     9 => self.hud_mode = HudMode::Auto,
+                    10 if self.floating_surfaces => self.open(Menu::Help),
                     10 => self.hud_mode = HudMode::Minimal,
+                    11 if self.floating_surfaces => self.open(Menu::Home),
                     11 => self.hud_mode = HudMode::Full,
                     12 => self.change_camera(CameraView::Room, self.zoom_target),
                     13 => self.change_camera(CameraView::Pet, self.zoom_target),
@@ -2821,6 +2899,8 @@ impl Ui {
     ) {
         let renderer = self.renderer.unwrap_or(renderer);
         let ascii = renderer == Renderer::Ascii;
+        self.surface_area.set(None);
+        self.last_surface.set(Rect::default());
         let area = screen.area();
         let viewport = Rect::new(
             area.x.saturating_add(1),
@@ -2828,13 +2908,18 @@ impl Ui {
             area.width.saturating_sub(2),
             area.height.saturating_sub(2),
         );
-        let detail_scene = crate::hud::split(
-            viewport,
-            config.hud_golden_ratio,
-            config.hud_landscape_columns,
-            config.hud_portrait_ratio_percent,
-        )
-        .scene;
+        let floating = config.popup_policy.as_ref().is_some_and(|p| p.enabled);
+        let detail_scene = if floating {
+            viewport
+        } else {
+            crate::hud::split(
+                viewport,
+                config.hud_golden_ratio,
+                config.hud_landscape_columns,
+                config.hud_portrait_ratio_percent,
+            )
+            .scene
+        };
         self.select_detail(detail_scene, renderer);
         self.pet_area.set(Rect::default());
         self.dialog_area.set(Rect::default());
@@ -2895,6 +2980,10 @@ impl Ui {
                 .style(Style::default().fg(colors.ink(2))),
                 inner,
             );
+            return;
+        }
+        if floating {
+            self.draw_floating_scene(screen, config, renderer, colors, frame, inner);
             return;
         }
         if let Some(menu) = self
@@ -3180,13 +3269,235 @@ impl Ui {
     /// The frame heading names the view registered by this frame's scene, not
     /// the previous size's (task3755b). Only the top border row is repainted.
     fn redraw_heading(&self, screen: &mut Frame, config: &Config, colors: &Colors, ascii: bool) {
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         let heading = self.room_heading(area.width, &config.game);
         screen.render_widget(
             panel(&heading, colors, ascii).borders(Borders::TOP | Borders::LEFT | Borders::RIGHT),
             Rect::new(area.x, area.y, area.width, 1.min(area.height)),
         );
     }
+    fn floating_footer_rows(&self, width: u16, height: u16) -> Vec<Vec<(String, Action)>> {
+        let back = self
+            .controller
+            .as_ref()
+            .map_or_else(|| "Esc Back".to_owned(), |p| format!("[{}] Back", p.back));
+        let accept = self.controller.as_ref().map_or_else(
+            || "[Enter] Actions".to_owned(),
+            |p| format!("[{}] Actions", p.accept),
+        );
+        let primary = if self.game.paused {
+            ("P Resume".to_owned(), Action::Pause)
+        } else {
+            (accept, Action::Accept)
+        };
+        let full = vec![
+            primary.clone(),
+            (back.clone(), Action::Menu),
+            ("I Code".into(), Action::Status),
+            ("? Help".into(), Action::Help),
+            ("Q Quit".into(), Action::Quit),
+        ];
+        let full_width =
+            full.iter().map(|(s, _)| s.len()).sum::<usize>() + full.len().saturating_sub(1) * 2;
+        if full_width <= usize::from(width) || height < 2 {
+            return vec![full];
+        }
+        let first = if primary.0.len() <= usize::from(width) {
+            primary
+        } else if self.game.paused {
+            ("P Resume".into(), Action::Pause)
+        } else {
+            (
+                self.controller.as_ref().map_or_else(
+                    || "[Enter]".into(),
+                    |p| format!("{}:Act", tiny_button(&p.accept)),
+                ),
+                Action::Accept,
+            )
+        };
+        let back = if back.len() <= usize::from(width) {
+            back
+        } else {
+            self.controller.as_ref().map_or_else(
+                || "Esc Back".into(),
+                |p| format!("{}:Back", tiny_button(&p.back)),
+            )
+        };
+        vec![vec![first], vec![(back, Action::Menu)]]
+    }
+
+    /// Gameplay owns the pane. Status, menus and confirmations temporarily
+    /// borrow a centered, bounded surface; no persistent information sidebar.
+    fn draw_floating_scene(
+        &self,
+        screen: &mut Frame,
+        config: &Config,
+        renderer: Renderer,
+        colors: &Colors,
+        frame: usize,
+        area: Rect,
+    ) {
+        use mios_resolver::popup::SurfaceKind;
+        let ascii = renderer == Renderer::Ascii;
+        let footer_rows = self.floating_footer_rows(area.width, area.height);
+        let footer_height = (footer_rows.len() as u16).min(area.height);
+        let room = Rect::new(
+            area.x,
+            area.y,
+            area.width,
+            area.height.saturating_sub(footer_height),
+        );
+        // Preview popups keep their own camera registration across frames.
+        if self.native_modal || !matches!(self.menu, Some(Menu::Gallery | Menu::Roster)) {
+            self.set_scene(room);
+        }
+        let sprite = self.pet_sprite(&config.game, frame);
+        screen.render_widget(
+            RoomWidget {
+                world: Some(&config.world),
+                detail: self.effective_style(),
+                camera: self.camera(),
+                sprite: &sprite,
+                renderer,
+                scale: config.scale,
+                colors,
+                expression: self.expression(&config.game, frame),
+                frame,
+                position: self.position,
+                habitat: Some(HabitatView {
+                    state: &self.game.habitat,
+                    rules: &config.habitat,
+                    wins: self.game.wins,
+                    age: self.game.age_ticks,
+                }),
+                face_detail: Some((
+                    &self.face_detail,
+                    crate::render::DetailClock {
+                        frame: self.frame,
+                        frames: self.camera_transition_frames,
+                        zoom: [self.zoom_percent, self.zoom_target],
+                    },
+                )),
+            },
+            room,
+        );
+        let style = Style::default().fg(colors.ink(7)).bg(colors.background);
+        if ascii && room.height <= 6 && room.height > 0 {
+            let face = self.expression(&config.game, frame).kaomoji(frame);
+            let width = (face.len() as u16).min(room.width);
+            screen.render_widget(
+                Paragraph::new(face).style(style),
+                Rect::new(
+                    room.x + (room.width - width) / 2,
+                    room.bottom() - 1,
+                    width,
+                    1,
+                ),
+            );
+        }
+        for (row, entries) in footer_rows
+            .iter()
+            .enumerate()
+            .take(usize::from(footer_height))
+        {
+            let line = Rect::new(area.x, room.bottom() + row as u16, area.width, 1);
+            screen.buffer_mut().set_style(line, style);
+            let mut x = line.x;
+            for (caption, action) in entries {
+                let width = (caption.len() as u16).min(line.right().saturating_sub(x));
+                if width == 0 {
+                    break;
+                }
+                let target = Rect::new(x, line.y, width, 1);
+                screen.render_widget(Paragraph::new(caption.as_str()).style(style), target);
+                self.control_targets.borrow_mut().push((target, *action));
+                x = x.saturating_add(width).saturating_add(2);
+            }
+            let source = self.controller.as_ref().map_or_else(
+                || "Keyboard / terminal".to_owned(),
+                |p| format!("{} / CONTROLLER", p.family),
+            );
+            if x.saturating_add(source.len() as u16) <= line.right() {
+                screen.render_widget(
+                    Paragraph::new(source).style(style),
+                    Rect::new(x, line.y, line.right() - x, 1),
+                );
+            }
+        }
+        if !self.overlay_open() && self.game.challenge.is_none() {
+            if *self.notice_seen.borrow() != self.notice {
+                *self.notice_seen.borrow_mut() = self.notice.clone();
+                self.notice_until
+                    .set(frame.saturating_add(self.reaction_frames));
+            }
+            if frame < self.notice_until.get() && !self.notice.is_empty() {
+                let bubble = self.popup_bounds(config, room, SurfaceKind::Tooltip);
+                screen.render_widget(Clear, bubble);
+                screen.render_widget(
+                    Paragraph::new(self.notice.as_str())
+                        .wrap(Wrap { trim: false })
+                        .block(panel(" NOTICE ", colors, ascii))
+                        .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+                    bubble,
+                );
+            }
+        }
+        if let Some(challenge) = &self.game.challenge {
+            let text = if challenge.reveal > 0 {
+                format!(
+                    "Watch: {}",
+                    challenge
+                        .pattern
+                        .iter()
+                        .map(|d| d.label())
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                )
+            } else {
+                format!("Repeat: {} of 3 / Esc cancels", challenge.entered)
+            };
+            let bubble = self.popup_bounds(config, room, SurfaceKind::Tooltip);
+            screen.render_widget(Clear, bubble);
+            screen.render_widget(
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .block(panel(" MEMORY ", colors, ascii))
+                    .style(Style::default().fg(colors.ink(7)).bg(colors.background)),
+                bubble,
+            );
+        }
+        if !self.native_modal && (self.menu.is_some() || self.confirm_reset) {
+            let kind = match self.menu {
+                Some(Menu::Gallery | Menu::Roster | Menu::Seed) => SurfaceKind::Window,
+                Some(Menu::Talk | Menu::Status | Menu::Help | Menu::Identity) => {
+                    SurfaceKind::Dialog
+                }
+                _ => SurfaceKind::Menu,
+            };
+            let popup = self.popup_bounds(config, screen.area(), kind);
+            self.last_surface.set(popup);
+            self.surface_area.set(Some(popup));
+            if let Some(menu) = self.menu {
+                self.draw_menu(screen, menu, config, colors, renderer);
+            }
+            self.draw_menu_position(screen, colors);
+            self.draw_menu_navigation(screen, colors);
+            self.draw_reset(screen, colors, ascii);
+            self.surface_area.set(None);
+        }
+        for (target, _) in self.control_targets.borrow().iter() {
+            let frame_bounds = screen.area();
+            screen.buffer_mut().set_style(
+                target.intersection(frame_bounds),
+                Style::default().bg(colors.background),
+            );
+        }
+        if self.last_surface.get().is_empty() || self.last_surface.get().y > screen.area().y {
+            self.redraw_heading(screen, config, colors, ascii);
+        }
+        self.suspend_native_targets();
+    }
+
     fn draw_minimal(
         &self,
         screen: &mut Frame,
@@ -3890,7 +4201,7 @@ impl Ui {
             return;
         };
         let ascii = renderer == Renderer::Ascii;
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         screen.render_widget(Clear, area);
         let micro = area.width < 18 || area.height <= 7;
         let title = if micro {
@@ -4068,7 +4379,7 @@ impl Ui {
         self.seed_cursor_targets.borrow_mut().clear();
         self.seed_edit_targets.borrow_mut().clear();
         if let Some(code) = self.seed_pending {
-            let modal = screen.area();
+            let modal = self.surface_bounds(screen);
             screen.render_widget(Clear, modal);
             let block = panel(" NEW SEED? ", colors, ascii);
             let body = block.inner(modal);
@@ -4110,7 +4421,7 @@ impl Ui {
             self.menu_controls(controls);
             return;
         }
-        let modal = screen.area();
+        let modal = self.surface_bounds(screen);
         screen.render_widget(Clear, modal);
         let block = panel(" NEW PET? ", colors, ascii);
         let body = block.inner(modal);
@@ -4248,7 +4559,7 @@ impl Ui {
     }
 
     fn draw_seed_entry(&self, screen: &mut Frame, colors: &Colors, renderer: Renderer) {
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         screen.render_widget(Clear, area);
         let block = self.menu_panel("ENTER CODE", colors, renderer == Renderer::Ascii);
         let body = block.inner(area);
@@ -4388,7 +4699,7 @@ impl Ui {
         colors: &Colors,
         renderer: Renderer,
     ) {
-        let area = screen.area();
+        let area = self.surface_bounds(screen);
         screen.render_widget(Clear, area);
         let block = self.menu_panel("I CODE", colors, renderer == Renderer::Ascii);
         let body = block.inner(area);
@@ -4580,7 +4891,7 @@ impl Ui {
         colors: &Colors,
         ascii: bool,
     ) {
-        let bounds = screen.area();
+        let bounds = self.surface_bounds(screen);
         let labels: Vec<_> = entries
             .iter()
             .enumerate()
@@ -4640,14 +4951,27 @@ impl Ui {
         } else {
             self.menu_description(menu).map(str::to_owned)
         };
+        let minimum_description = u16::from(
+            description.is_some()
+                && (bounds.height >= 8
+                    || (bounds.height >= 6 && matches!(menu, Menu::Training | Menu::Habitat))),
+        );
         let description_rows = if menu == Menu::Training {
-            bounds.height.saturating_sub(6).min(3)
+            bounds
+                .height
+                .saturating_sub(6)
+                .min(3)
+                .max(minimum_description)
         } else if menu == Menu::Habitat {
-            bounds.height.saturating_sub(6).min(2)
+            bounds
+                .height
+                .saturating_sub(6)
+                .min(2)
+                .max(minimum_description)
         } else {
-            u16::from(bounds.height >= 10 && description.is_some())
+            minimum_description
         };
-        let geometry = crate::hud::menu_geometry(
+        let geometry = crate::hud::menu_geometry_with_scene_budget(
             bounds,
             &widths,
             self.menu_selected,
@@ -4656,6 +4980,7 @@ impl Ui {
             1,
             entries.len().min(usize::from(u16::MAX)) as u16,
             config.hud_golden_ratio,
+            !self.floating_surfaces,
         );
         let numbered = crate::hud::menu_window(
             self.menu_selected.saturating_sub(geometry.first),
@@ -4734,9 +5059,9 @@ impl Ui {
         }
         let hint = self.controller.as_ref().map_or_else(
             || {
-                if menu == Menu::Training && bounds.width < 18 {
+                if menu == Menu::Training {
                     "Ent train\nEsc Back".into()
-                } else if menu == Menu::Habitat && bounds.width < 18 {
+                } else if menu == Menu::Habitat {
                     "Ent use\nEsc Back".into()
                 } else {
                     "Enter: OK\nEsc: Back".into()
@@ -4816,7 +5141,7 @@ impl Ui {
             ];
             let expression = expressions[self.menu_selected % expressions.len()];
             let stage = PREVIEW_STAGES[self.gallery_stage % PREVIEW_STAGES.len()];
-            let area = screen.area();
+            let area = self.surface_bounds(screen);
             screen.render_widget(Clear, area);
             let micro = area.width < 18 || area.height <= 7;
             let title = if micro {
@@ -4970,7 +5295,7 @@ impl Ui {
         } else {
             Vec::new()
         };
-        let (title, entries) = match menu {
+        let (title, mut entries) = match menu {
             Menu::Home => (
                 " MAIN MENU ",
                 vec![
@@ -5050,14 +5375,19 @@ impl Ui {
                 unreachable!("special menus draw their own view")
             }
         };
+        if menu == Menu::Graphics && self.floating_surfaces {
+            entries[9] = "Status and needs popup";
+            entries[10] = "Controls and help popup";
+            entries[11] = "Actions popup";
+        }
         if choice_menu(menu) {
             self.draw_choice_menu(screen, menu, &entries, config, colors, ascii);
             return;
         }
-        let modal = screen.area();
+        let modal = self.surface_bounds(screen);
         screen.render_widget(Clear, modal);
         let menu_title = if menu == Menu::Graphics {
-            if screen.area().width < 24 {
+            if self.surface_bounds(screen).width < 24 {
                 format!("V {}", self.detail_tag())
             } else {
                 format!(
@@ -5068,7 +5398,7 @@ impl Ui {
                     self.orbit_target
                 )
             }
-        } else if screen.area().width < 24 {
+        } else if self.surface_bounds(screen).width < 24 {
             format!("{} {title}", self.detail_tag())
         } else {
             format!("{} {title}", self.detail_label())
@@ -5939,6 +6269,97 @@ mod graphics_tests {
         (config, ui)
     }
     #[test]
+    fn floating_surfaces_keep_the_room_full_and_all_menu_targets_centered() {
+        use mios_resolver::popup::SurfaceKind;
+        let (mut config, mut ui) = pet();
+        config.view_mode = ViewMode::Pixel;
+        config.world.enabled = false;
+        ui.view_mode = ViewMode::Pixel;
+        ui.world_enabled = false;
+        let export = |tag: &str, backend: &TestBackend| {
+            if let Ok(path) = std::env::var("MIOS_POPUP_PROOF_DIR") {
+                let directory = std::path::Path::new(&path);
+                std::fs::create_dir_all(directory).unwrap();
+                let buffer = backend.buffer();
+                let cells:Vec<_>=buffer.content.iter().map(|c|serde_json::json!({"symbol":c.symbol(),"fg":format!("{:?}",c.fg),"bg":format!("{:?}",c.bg)})).collect();
+                let frame = serde_json::json!({"width":buffer.area.width,"height":buffer.area.height,"cells":cells});
+                std::fs::write(
+                    directory.join(format!("{tag}.json")),
+                    serde_json::to_vec(&frame).unwrap(),
+                )
+                .unwrap();
+            }
+        };
+        assert!(config.popup_policy.as_ref().unwrap().enabled);
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(240, 65)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
+            .unwrap();
+        assert_eq!(
+            ui.pet_area.get(),
+            Rect::new(1, 1, 238, 62),
+            "the status sidebar must not reserve scene space"
+        );
+        export("scene", terminal.backend());
+        let saved = ui.game.clone();
+        for menu in [
+            Menu::Home,
+            Menu::Care,
+            Menu::Games,
+            Menu::Graphics,
+            Menu::Talk,
+            Menu::Status,
+            Menu::Help,
+            Menu::Identity,
+            Menu::Roster,
+            Menu::Gallery,
+            Menu::Habitat,
+            Menu::Training,
+            Menu::Seed,
+        ] {
+            ui.open(menu);
+            terminal
+                .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
+                .unwrap();
+            export(&format!("{menu:?}").to_lowercase(), terminal.backend());
+            let popup = ui.last_surface.get();
+            let kind = match menu {
+                Menu::Gallery | Menu::Roster | Menu::Seed => SurfaceKind::Window,
+                Menu::Talk | Menu::Status | Menu::Help | Menu::Identity => SurfaceKind::Dialog,
+                _ => SurfaceKind::Menu,
+            };
+            assert_eq!(
+                popup,
+                ui.popup_bounds(&config, Rect::new(1, 1, 238, 63), kind)
+            );
+            assert!(
+                popup.width < 120 && popup.height < 40,
+                "{menu:?}: {popup:?}"
+            );
+            assert!(popup.x > 1 && popup.y > 1);
+            for (target, _) in ui.menu_targets.borrow().iter() {
+                assert_eq!(
+                    *target,
+                    target.intersection(popup),
+                    "{menu:?}: clipped menu hit target"
+                );
+            }
+            for (target, _) in ui.control_targets.borrow().iter() {
+                assert_eq!(
+                    *target,
+                    target.intersection(popup),
+                    "{menu:?}: clipped control hit target"
+                );
+            }
+            assert_eq!(ui.click(1, 1, &config.game), Effect::Continue);
+            assert_eq!(ui.game, saved, "outside a popup must not alter the Mon");
+            ui.menu = None;
+            ui.menu_history.clear();
+        }
+    }
+
+    #[test]
     fn menus_navigate_back_and_do_not_activate_on_release_or_repeat() {
         let (config, mut ui) = pet();
         let saved = ui.game.clone();
@@ -6017,7 +6438,12 @@ mod graphics_tests {
                         && heading.contains(&format!("{:?}", ui.game.stage(&config.game))),
                     "{heading}"
                 );
-                assert!(text.contains("QUICK CARE"));
+                assert!(text.contains("[Enter] Actions") && text.contains("Esc Back"));
+                assert_eq!(ui.pet_area.get(), Rect::new(1, 1, width - 2, height - 3));
+                assert!(
+                    ui.care_targets.borrow().is_empty(),
+                    "care controls belong to their popup"
+                );
                 let colored = buffer
                     .content
                     .iter()
@@ -6150,6 +6576,7 @@ mod graphics_tests {
             release: "Hold L3+R3".into(),
             quit: Some("Hold Circle".into()),
         });
+        let saved = ui.game.clone();
         let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         let render = |ui: &Ui, terminal: &mut Terminal<TestBackend>| {
@@ -6166,9 +6593,13 @@ mod graphics_tests {
         };
         let text = render(&ui, &mut terminal);
         assert!(text.contains("DualSense / CONTROLLER"));
-        assert!(text.contains("[Cross] Act"));
-        assert!(text.contains("[Circle] Menu"));
-        assert!(text.contains("[F] Feed"));
+        assert!(text.contains("[Cross] Actions"));
+        assert!(text.contains("[Circle] Back"));
+        assert!(ui.care_targets.borrow().is_empty());
+        assert!(
+            !text.contains("[F] Feed"),
+            "care is reached through the action popup"
+        );
         assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
         assert_eq!(ui.menu, Some(Menu::Home));
         let text = render(&ui, &mut terminal);
@@ -6188,10 +6619,22 @@ mod graphics_tests {
         ui.handle(key(KeyCode::Esc), &config.game);
         ui.controller = None;
         let text = render(&ui, &mut terminal);
-        assert!(text.contains("[F] Feed"));
-        assert!(text.contains("O Menu"));
+        assert!(text.contains("[Enter] Actions"));
+        assert!(text.contains("Esc Back"));
+        assert!(ui.care_targets.borrow().is_empty());
         assert_eq!(ui.handle(key(KeyCode::Esc), &config.game), Effect::Continue);
         assert_eq!(ui.menu, Some(Menu::Home));
+        ui.menu_selected = 0;
+        ui.handle(key(KeyCode::Enter), &config.game);
+        assert_eq!(ui.menu, Some(Menu::Care));
+        let text = render(&ui, &mut terminal);
+        assert!(text.contains("[F] Feed"), "{text}");
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, index)| *index == 0));
+        assert_eq!(ui.game, saved);
     }
     #[test]
     fn autonomous_rng_wandering_never_follows_menu_controls_or_changes_saved_game() {
@@ -6211,6 +6654,9 @@ mod graphics_tests {
         }
         assert_eq!(ui.position, initial);
         assert_eq!(ui.destination, initial);
+        assert_eq!(ui.game, saved);
+        ui.menu = None;
+        ui.menu_history.clear();
         ui.simulate_behavior(&config);
         assert_ne!(ui.destination, initial);
         ui.animate(8);
@@ -6252,7 +6698,17 @@ mod graphics_tests {
                 .iter()
                 .map(|c| c.symbol())
                 .collect();
-            assert!(text.contains("[Enter]"));
+            let (caption, action) = if ui.game.paused {
+                ("P Resume", Action::Pause)
+            } else {
+                ("[Enter]", Action::Accept)
+            };
+            assert!(text.contains(caption), "{width}x{height}: {text}");
+            assert!(ui
+                .control_targets
+                .borrow()
+                .iter()
+                .any(|(_, a)| *a == action));
             assert!(!text.contains("Terminal too small"));
             for index in 0..10 {
                 ui.open(Menu::Home);
@@ -6419,7 +6875,11 @@ mod graphics_tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains("R R R"), "{text}");
+        assert_eq!(
+            text.matches("RIGHT").count(),
+            3,
+            "all three memory tokens must remain visible: {text}"
+        );
     }
     #[test]
     fn pending_reset_is_cancelled_on_micro_resize_and_cannot_replace_pet() {
@@ -6660,7 +7120,12 @@ mod graphics_tests {
             .collect();
         assert!(!text.contains("MAIN MENU"));
         assert!(text.contains("ROOM"));
-        assert!(text.contains("thinks"));
+        assert_eq!(ui.pet_area.get(), Rect::new(1, 1, 98, 33));
+        assert!(ui.last_surface.get().is_empty());
+        assert!(ui.dialog_area.get().is_empty());
+        assert!(ui.care_targets.borrow().is_empty());
+        assert!(ui.menu_targets.borrow().is_empty());
+        assert!(ui.control_targets.borrow().is_empty());
         ui.open(Menu::Talk);
         terminal
             .draw(|f| ui.draw(f, &config, Renderer::HalfBlock, &colors, 0, false))
@@ -6672,7 +7137,12 @@ mod graphics_tests {
             .iter()
             .map(|c| c.symbol())
             .collect();
-        assert!(text.contains("thinks"));
+        assert_eq!(ui.pet_area.get(), Rect::new(1, 1, 98, 33));
+        assert!(ui.last_surface.get().is_empty());
+        assert!(ui.dialog_area.get().is_empty());
+        assert!(ui.care_targets.borrow().is_empty());
+        assert!(ui.menu_targets.borrow().is_empty());
+        assert!(ui.control_targets.borrow().is_empty());
         assert!(!text.contains(" says "));
         assert!(!text.contains("Back / Tab"));
         ui.menu = Some(Menu::Home);
@@ -6842,22 +7312,59 @@ mod progression_ui_tests {
             quit: None,
         });
         ui.hud_mode = HudMode::Minimal;
+        let before = ui.game.clone();
         let text = draw(&ui, &config, 12, 6, 0);
         assert!(
-            text.contains("H-DR:Feed") && text.contains("H-^:Menu"),
+            text.contains("H-DR:Act") && text.contains("H-^:Back"),
             "{text}"
         );
         assert!(
             !text.contains("D-pad Right /"),
-            "the long controller map belongs in paginated Help"
+            "the full map belongs in paginated Help"
         );
-        let before = ui.game.clone();
-        ui.open(Menu::Home);
+        let accept = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Accept)
+            .expect("visible mapped action button")
+            .0;
+        let back = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Menu)
+            .expect("visible mapped Back button")
+            .0;
+        assert_ne!(accept.y, back.y, "Back must remain on its own row");
+        assert!(accept.intersection(back).is_empty());
+        assert!(ui.care_targets.borrow().is_empty());
+        assert_eq!(ui.click(accept.x, accept.y, &config.game), Effect::Continue);
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.game, before, "opening actions must never feed the Mon");
         let text = draw(&ui, &config, 12, 6, 0);
         assert!(
             text.contains("H-DR: OK") && text.contains("H-^: Back"),
             "{text}"
         );
+        let accept = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Accept)
+            .expect("visible menu accept button")
+            .0;
+        let back = ui
+            .control_targets
+            .borrow()
+            .iter()
+            .find(|(_, action)| *action == Action::Cancel)
+            .expect("visible menu Back button")
+            .0;
+        assert_ne!(accept.y, back.y);
+        assert!(accept.intersection(back).is_empty());
+        assert_eq!(ui.click(back.x, back.y, &config.game), Effect::Continue);
+        assert!(ui.menu.is_none());
         assert_eq!(ui.game, before);
     }
     #[test]
@@ -6867,7 +7374,11 @@ mod progression_ui_tests {
         let mut ui = Ui::configured(ui.game, &config);
         draw(&ui, &config, 40, 12, 0);
         assert_eq!(ui.camera().view, CameraView::Face);
-        assert_eq!(ui.pet_area.get().height, 6);
+        assert_eq!(
+            ui.pet_area.get(),
+            Rect::new(1, 1, 38, 8),
+            "narrow controls use two footer rows"
+        );
         assert!(ui.game.progress.hatched);
         let id = ui.game.character;
         let character = ui.catalogue.iter_mut().find(|c| c.id == id).unwrap();
@@ -6883,8 +7394,8 @@ mod progression_ui_tests {
             .unwrap();
         let dialogue = ui.dialog_area.get();
         assert!(
-            ui.pet_area.get().bottom() <= dialogue.y,
-            "thoughts must lie below the pet"
+            dialogue.intersection(ui.last_surface.get()) == dialogue,
+            "talk text must stay inside its popup over the full room"
         );
         let buffer = terminal.backend().buffer();
         let row = (dialogue.x..dialogue.right())
@@ -7043,7 +7554,8 @@ mod portrait_density_tests {
     use crate::capabilities::Depth;
     use ratatui::{backend::TestBackend, Terminal};
     #[test]
-    fn phone_care_values_are_named_in_the_information_pane_before_training() {
+    fn phone_status_popup_pages_named_care_values_before_training() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let config = Config::sample().unwrap();
         let mut game = Game::new(&config.game, 913);
         for _ in 0..config.game.hatch_ticks {
@@ -7057,15 +7569,7 @@ mod portrait_density_tests {
         game.health = 95;
         let saved = game.clone();
         let mut ui = Ui::configured(game, &config);
-        ui.hud_mode = HudMode::Minimal;
-        let area = Rect::new(1, 1, 57, 47);
-        let info = crate::hud::split(
-            area,
-            config.hud_golden_ratio,
-            config.hud_landscape_columns,
-            config.hud_portrait_ratio_percent,
-        )
-        .info;
+        let rng = ui.visual_rng;
         for depth in [Depth::Mono, Depth::Rgb] {
             let colors = Colors::from_config(&config, depth).unwrap();
             for renderer in [
@@ -7075,41 +7579,86 @@ mod portrait_density_tests {
                 Renderer::Braille,
             ] {
                 for frame in [0, 28, 56] {
+                    ui.menu = None;
                     let mut terminal = Terminal::new(TestBackend::new(59, 49)).unwrap();
                     terminal
                         .draw(|f| ui.draw(f, &config, renderer, &colors, frame, false))
                         .unwrap();
-                    let footer = ui.info_footer.get();
-                    assert!(footer.y > info.y);
-                    let rows = (info.y..footer.y)
-                        .map(|y| {
-                            (info.x..info.right())
-                                .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                                .collect::<String>()
-                        })
-                        .collect::<Vec<_>>();
-                    let care_row = rows.iter().position(|row| row.contains("Food: 61")).expect(
-                        "care must be inside the information pane, not only the outer border",
+                    assert_eq!(ui.pet_area.get(), Rect::new(1, 1, 57, 46));
+                    ui.handle(
+                        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+                        &config.game,
                     );
-                    for metric in ["Happy: 42", "Clean: 73", "Energy: 84", "Health: 95"] {
+                    ui.menu_selected = 4;
+                    ui.handle(
+                        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                        &config.game,
+                    );
+                    assert_eq!(ui.menu, Some(Menu::Status));
+                    let mut pages = String::new();
+                    loop {
+                        terminal
+                            .draw(|f| ui.draw(f, &config, renderer, &colors, frame, false))
+                            .unwrap();
+                        let popup = ui.last_surface.get();
+                        assert!(popup.width < 59 && popup.height < 49);
+                        let buffer = terminal.backend().buffer();
+                        for y in popup.y + 1..ui.menu_footer.get().y {
+                            for x in popup.x + 1..popup.right() - 1 {
+                                pages.push_str(buffer[(x, y)].symbol());
+                            }
+                            pages.push(' ');
+                        }
+                        if ui.menu_scroll >= ui.menu_scroll_limit.get() {
+                            break;
+                        }
+                        let previous = ui.menu_scroll;
+                        ui.handle(
+                            KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+                            &config.game,
+                        );
+                        assert!(ui.menu_scroll > previous);
+                    }
+                    let pages = pages.split_whitespace().collect::<Vec<_>>().join(" ");
+                    for metric in [
+                        "Fullness 61%",
+                        "Happiness 42%",
+                        "Hygiene 73%",
+                        "Energy 84%",
+                        "Health 95%",
+                    ] {
                         assert!(
-                            rows[care_row].contains(metric),
-                            "{renderer:?} {depth:?}: {rows:?}"
+                            pages.contains(metric),
+                            "{renderer:?} {depth:?}: missing {metric}: {pages}"
                         );
                     }
-                    let training_row = rows
-                        .iter()
-                        .position(|row| row.contains("Swim"))
-                        .expect("phone retains training details too");
-                    assert!(care_row < training_row);
+                    assert!(
+                        pages.find("Fullness 61%").unwrap()
+                            < pages.find("Swim:").expect("status retains training stats")
+                    );
+                    ui.handle(
+                        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                        &config.game,
+                    );
+                    ui.handle(
+                        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+                        &config.game,
+                    );
+                    assert!(ui.menu.is_none());
+                    terminal
+                        .draw(|f| ui.draw(f, &config, renderer, &colors, frame, false))
+                        .unwrap();
+                    assert_eq!(ui.pet_area.get(), Rect::new(1, 1, 57, 46));
                     assert_eq!(ui.game, saved);
+                    assert_eq!(ui.visual_rng, rng);
                 }
             }
         }
     }
 
     #[test]
-    fn tall_views_show_all_skills_needs_currency_and_controls_without_paging_them_away() {
+    fn tall_views_keep_a_full_room_and_page_all_skills_and_currency_in_status() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let config = Config::sample().unwrap();
         let mut game = Game::new(&config.game, 913);
         for _ in 0..config.game.hatch_ticks {
@@ -7118,25 +7667,83 @@ mod portrait_density_tests {
         game.paused = true;
         let saved = game.clone();
         let mut ui = Ui::configured(game, &config);
-        ui.hud_mode = HudMode::Minimal;
+        let rng = ui.visual_rng;
         let colors = Colors::from_config(&config, Depth::Mono).unwrap();
         for (width, height) in [(30, 40), (40, 50), (153, 17)] {
+            ui.menu = None;
+            ui.menu_history.clear();
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
                 .unwrap();
-            let text = terminal
-                .backend()
-                .buffer()
-                .content
+            let expected_footer_rows = if width < 51 { 2 } else { 1 };
+            assert_eq!(
+                ui.pet_area.get(),
+                Rect::new(1, 1, width - 2, height - 2 - expected_footer_rows)
+            );
+            let mut footer_rows = ui
+                .control_targets
+                .borrow()
                 .iter()
-                .map(|c| c.symbol())
-                .collect::<String>();
-            for label in ["Swim", "Flight", "Run", "Power", "Stamina", "Menu"] {
-                assert!(text.contains(label), "{width}x{height}: {label}: {text}");
+                .map(|(area, _)| area.y)
+                .collect::<Vec<_>>();
+            footer_rows.sort_unstable();
+            footer_rows.dedup();
+            assert_eq!(footer_rows.len(), usize::from(expected_footer_rows));
+            assert!(ui.care_targets.borrow().is_empty());
+            ui.handle(
+                KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+                &config.game,
+            );
+            ui.menu_selected = 4;
+            ui.handle(
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                &config.game,
+            );
+            assert_eq!(ui.menu, Some(Menu::Status));
+            let mut pages = String::new();
+            loop {
+                terminal
+                    .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                    .unwrap();
+                let popup = ui.last_surface.get();
+                assert!(popup.height < height, "{width}x{height}: {popup:?}");
+                let buffer = terminal.backend().buffer();
+                for y in popup.y + 1..ui.menu_footer.get().y {
+                    for x in popup.x + 1..popup.right() - 1 {
+                        pages.push_str(buffer[(x, y)].symbol());
+                    }
+                    pages.push(' ');
+                }
+                if ui.menu_scroll >= ui.menu_scroll_limit.get() {
+                    break;
+                }
+                let previous = ui.menu_scroll;
+                ui.handle(
+                    KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+                    &config.game,
+                );
+                assert!(ui.menu_scroll > previous);
             }
-            assert!(text.contains("W0") && text.contains("$10"), "{text}");
+            let pages = pages.split_whitespace().collect::<Vec<_>>().join(" ");
+            for label in [
+                "Swim:",
+                "Flight:",
+                "Run:",
+                "Power:",
+                "Stamina:",
+                "Fullness",
+                "Happiness",
+                "Hygiene",
+                "Energy",
+                "Health",
+            ] {
+                assert!(pages.contains(label), "{width}x{height}: {label}: {pages}");
+            }
+            assert!(pages.contains(&format!("{} coins", saved.coins)), "{pages}");
+            assert!(pages.contains(&format!("{} wins", saved.wins)), "{pages}");
             assert_eq!(ui.game, saved);
+            assert_eq!(ui.visual_rng, rng);
         }
     }
 }
@@ -7320,7 +7927,53 @@ mod direct_navigation_regressions {
             let saved = ui.game.clone();
             let text = draw(&ui, &config, width, height);
             assert!(text.contains("P Resume"), "{width}x{height}: {text}");
+            let target = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, action)| *action == Action::Pause)
+                .expect("painted Resume control")
+                .0;
+            let printed = text
+                .chars()
+                .skip(usize::from(target.y) * usize::from(width) + usize::from(target.x))
+                .take(usize::from(target.width))
+                .collect::<String>();
+            assert!(printed.contains("P Resume"), "{printed}: {text}");
+            assert!(ui
+                .care_targets
+                .borrow()
+                .iter()
+                .all(|(area, _)| area.intersection(target).is_empty()));
+            ui.click(target.x, target.y, &config.game);
+            let mut resumed = saved;
+            resumed.paused = false;
+            assert_eq!(ui.game, resumed);
             if width > 12 {
+                ui.handle(key(KeyCode::Char('?')), &config.game);
+                assert_eq!(ui.menu, Some(Menu::Help));
+                let mut pages = String::new();
+                loop {
+                    let text = draw(&ui, &config, width, height);
+                    let popup = ui.last_surface.get();
+                    for y in popup.y + 1..ui.menu_footer.get().y {
+                        pages.extend(
+                            text.chars()
+                                .skip(
+                                    usize::from(y) * usize::from(width) + usize::from(popup.x + 1),
+                                )
+                                .take(usize::from(popup.width - 2)),
+                        );
+                        pages.push(' ');
+                    }
+                    if ui.menu_scroll >= ui.menu_scroll_limit.get() {
+                        break;
+                    }
+                    let previous = ui.menu_scroll;
+                    ui.handle(key(KeyCode::PageDown), &config.game);
+                    assert!(ui.menu_scroll > previous);
+                }
+                let pages = pages.split_whitespace().collect::<Vec<_>>().join(" ");
                 for label in [
                     "F Feed",
                     "G Memory",
@@ -7328,28 +7981,17 @@ mod direct_navigation_regressions {
                     "M Medicine",
                     "S Save",
                     "N New",
-                    "care paused",
                     "Inputd:",
                 ] {
-                    assert!(text.contains(label), "{width}x{height}: {label}: {text}");
+                    assert!(pages.contains(label), "{width}x{height}: {label}: {pages}");
                 }
+                assert_eq!(ui.game, resumed, "reading control help must not apply care");
             }
-            let target = ui
-                .control_targets
-                .borrow()
-                .iter()
-                .find(|(_, action)| *action == Action::Pause)
-                .unwrap()
-                .0;
-            ui.click(target.x, target.y, &config.game);
-            let mut resumed = saved;
-            resumed.paused = false;
-            assert_eq!(ui.game, resumed);
         }
     }
 
     #[test]
-    fn hud_quit_and_paused_save_targets_match_the_printed_captions() {
+    fn action_popups_paint_save_new_confirmation_and_quit_at_their_hit_targets() {
         for (width, height, paused) in [
             (61, 26, false),
             (61, 26, true),
@@ -7361,37 +8003,104 @@ mod direct_navigation_regressions {
             let (config, mut ui) = pet();
             ui.hud_mode = HudMode::Minimal;
             ui.game.paused = paused;
-            let text = draw(&ui, &config, width, height);
+            draw(&ui, &config, width, height);
             let before = ui.game.clone();
-            for (caption, index) in [("S Save", 6), ("N New", 7)] {
-                let position = text.find(caption).unwrap();
-                let point = (
-                    (position % usize::from(width)) as u16,
-                    (position / usize::from(width)) as u16,
-                )
-                    .into();
-                assert!(
-                    ui.care_targets
-                        .borrow()
-                        .iter()
-                        .any(|(area, action)| *action == index && area.contains(point)),
-                    "{caption}: {text}"
-                );
-            }
-            let target = ui
+            let rng = ui.visual_rng;
+            ui.open(Menu::Home);
+            ui.menu_selected = 8;
+            let text = draw(&ui, &config, width, height);
+            let save = ui
+                .menu_targets
+                .borrow()
+                .iter()
+                .find(|(_, index)| *index == 8)
+                .expect("painted Save choice")
+                .0;
+            let printed = text
+                .chars()
+                .skip(usize::from(save.y) * usize::from(width) + usize::from(save.x))
+                .take(usize::from(save.width))
+                .collect::<String>();
+            assert!(printed.contains("Save"), "{printed}: {text}");
+            assert!(ui.care_targets.borrow().is_empty());
+            assert_eq!(save.intersection(ui.last_surface.get()), save);
+            assert_eq!(ui.click(save.x, save.y, &config.game), Effect::Save);
+            assert_eq!(ui.game, before);
+            // A new Mon is reached through the visible Roster action and still
+            // requires its own confirmation before changing any saved state.
+            ui.open(Menu::Home);
+            ui.menu_selected = 3;
+            draw(&ui, &config, width, height);
+            let roster = ui
+                .menu_targets
+                .borrow()
+                .iter()
+                .find(|(_, index)| *index == 3)
+                .expect("painted Roster choice")
+                .0;
+            assert_eq!(ui.click(roster.x, roster.y, &config.game), Effect::Continue);
+            assert_eq!(ui.menu, Some(Menu::Roster));
+            draw(&ui, &config, width, height);
+            let adopt = ui
                 .control_targets
                 .borrow()
                 .iter()
-                .find(|(_, action)| *action == Action::Quit)
-                .unwrap()
+                .find(|(_, action)| *action == Action::Accept)
+                .expect("painted adoption button")
                 .0;
-            assert!(ui
-                .care_targets
+            assert_eq!(ui.click(adopt.x, adopt.y, &config.game), Effect::Continue);
+            assert!(ui.confirm_reset);
+            assert_eq!(ui.game, before);
+            let text = draw(&ui, &config, width, height);
+            assert!(
+                text.contains("NEW PET?") && text.contains("Adopt "),
+                "{text}"
+            );
+            let accept = ui
+                .control_targets
                 .borrow()
                 .iter()
-                .all(|(area, _)| area.intersection(target).is_empty()));
-            assert_eq!(ui.click(target.x, target.y, &config.game), Effect::Quit);
+                .find(|(_, action)| *action == Action::Accept)
+                .expect("painted new-pet confirmation")
+                .0;
+            let cancel = ui
+                .control_targets
+                .borrow()
+                .iter()
+                .find(|(_, action)| *action == Action::Cancel)
+                .expect("painted keep-pet button")
+                .0;
+            assert!(accept.intersection(cancel).is_empty());
+            let printed = text
+                .chars()
+                .skip(usize::from(accept.y) * usize::from(width) + usize::from(accept.x))
+                .take(usize::from(accept.width))
+                .collect::<String>();
+            assert!(printed.contains("New"), "{printed}");
+            assert_eq!(ui.click(cancel.x, cancel.y, &config.game), Effect::Continue);
+            assert!(!ui.confirm_reset);
             assert_eq!(ui.game, before);
+            ui.open(Menu::Home);
+            ui.menu_selected = 9;
+            let text = draw(&ui, &config, width, height);
+            let quit = ui
+                .menu_targets
+                .borrow()
+                .iter()
+                .find(|(_, index)| *index == 9)
+                .expect("painted Quit choice")
+                .0;
+            let printed = text
+                .chars()
+                .skip(usize::from(quit.y) * usize::from(width) + usize::from(quit.x))
+                .take(usize::from(quit.width))
+                .collect::<String>();
+            assert!(printed.contains("Quit"), "{printed}: {text}");
+            assert_eq!(quit.intersection(ui.last_surface.get()), quit);
+            assert!(ui.care_targets.borrow().is_empty());
+            assert_eq!(ui.click(quit.x, quit.y, &config.game), Effect::Quit);
+            assert_eq!(ui.game, before);
+            assert_eq!(ui.visual_rng, rng);
         }
     }
 
@@ -7402,9 +8111,14 @@ mod direct_navigation_regressions {
         ui.open(Menu::Help);
         let saved = ui.game.clone();
         let mut pages = String::new();
-        for page in 0..192 {
-            ui.menu_scroll = page;
+        loop {
             pages.push_str(&draw(&ui, &config, 12, 6));
+            if ui.menu_scroll >= ui.menu_scroll_limit.get() {
+                break;
+            }
+            let previous = ui.menu_scroll;
+            ui.handle(key(KeyCode::PageDown), &config.game);
+            assert!(ui.menu_scroll > previous);
         }
         for label in ["Inputd:", "Click", "Wheel:", "Ctrl+C:", "1..9:", "camera"] {
             assert!(pages.contains(label), "{label}");
@@ -8674,10 +9388,12 @@ mod console_shell_regressions {
                     );
                     assert!(!lines[0].contains("PET ROOM"), "{text}");
                     assert!(ui.care_targets.borrow().is_empty(), "{menu:?}");
+                    let popup = ui.last_surface.get();
+                    assert!(!popup.is_empty(), "{menu:?}");
+                    assert_eq!(popup.intersection(Rect::new(0, 0, width, height)), popup);
+                    let position_row = usize::from(popup.bottom() - 1);
                     assert!(
-                        !lines[usize::from(height - 1)]
-                            .trim_matches(['+', '-', ' '])
-                            .is_empty(),
+                        !lines[position_row].trim_matches(['+', '-', ' ']).is_empty(),
                         "{text}"
                     );
                     let footer = ui.menu_footer.get();
@@ -8710,11 +9426,7 @@ mod console_shell_regressions {
                         assert!(selected >= ui.menu_number_start.get());
                         assert!(selected < ui.menu_number_start.get() + ui.menu_number_count.get());
                         assert!(
-                            lines[usize::from(height - 1)].contains(&format!(
-                                "{}/{}",
-                                selected + 1,
-                                count
-                            )),
+                            lines[position_row].contains(&format!("{}/{}", selected + 1, count)),
                             "{text}"
                         );
                     }
@@ -8778,13 +9490,18 @@ mod console_shell_regressions {
                 draw(&ui, &config, width, height, Renderer::Ascii);
                 ui.handle(key(KeyCode::Home), &config.game);
                 let rows = ui.menu_visible_rows.get();
+                assert!(
+                    rows > 0,
+                    "{menu:?} {width}x{height}: informational popup must paint content"
+                );
                 ui.handle(key(KeyCode::PageDown), &config.game);
                 assert_eq!(ui.menu_scroll, rows.min(ui.menu_scroll_limit.get()));
                 ui.handle(key(KeyCode::End), &config.game);
                 let lines = draw(&ui, &config, width, height, Renderer::Ascii);
                 let total = ui.menu_total_lines.get();
                 assert!(
-                    lines[usize::from(height - 1)].contains(&format!("/{total}")),
+                    lines[usize::from(ui.last_surface.get().bottom() - 1)]
+                        .contains(&format!("/{total}")),
                     "{lines:?}"
                 );
                 let text = lines.join("\n");
@@ -9390,7 +10107,7 @@ mod console_shell_regressions {
     }
 
     #[test]
-    fn four_color_live_dock_keeps_all_care_labels_readable_when_selection_moves() {
+    fn four_color_care_popup_keeps_labels_readable_when_selection_moves() {
         let (mut config, mut ui) = fixture();
         config.palette = ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"]
             .map(String::from)
@@ -9399,6 +10116,7 @@ mod console_shell_regressions {
         let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
         ui.hud_mode = HudMode::Full;
         let game = ui.game.clone();
+        ui.open(Menu::Care);
         let mut terminal = Terminal::new(TestBackend::new(80, 32)).unwrap();
         let luminance = |color: ratatui::style::Color| {
             let ratatui::style::Color::Rgb(r, g, b) = color else {
@@ -9419,27 +10137,28 @@ mod console_shell_regressions {
                 .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
                 .unwrap();
             let buffer = terminal.backend().buffer();
-            let targets = ui.care_targets.borrow();
-            assert_eq!(targets.len(), 8);
+            assert!(ui.care_targets.borrow().is_empty());
+            let targets = ui.menu_targets.borrow();
+            assert_eq!(targets.len(), 5);
             let selected = targets
                 .iter()
-                .find(|(_, index)| *index == ui.selected)
+                .find(|(_, index)| *index == ui.menu_selected)
                 .unwrap()
                 .0;
             for (rect, index) in targets.iter() {
-                let cell = &buffer[(rect.x, rect.y)];
-                assert_eq!(cell.symbol(), "[");
+                let cell = &buffer[(rect.x + 1, rect.y)];
+                assert!(cell.symbol().chars().all(|c| c.is_ascii_digit()));
                 let (a, b) = (luminance(cell.fg), luminance(cell.bg));
                 let contrast = (a.max(b) + 0.05) / (a.min(b) + 0.05);
                 assert!(contrast >= 4.5, "dock{index}: contrast{contrast}");
-                if *index != ui.selected {
-                    assert_ne!(cell.bg, buffer[(selected.x, selected.y)].bg);
+                if *index != ui.menu_selected {
+                    assert_ne!(cell.bg, buffer[(selected.x + 1, selected.y)].bg);
                 }
             }
             drop(targets);
-            let previous_selection = ui.selected;
+            let previous_selection = ui.menu_selected;
             ui.handle(key(KeyCode::Tab), &config.game);
-            assert_ne!(ui.selected, previous_selection);
+            assert_ne!(ui.menu_selected, previous_selection);
         }
         assert_eq!(ui.game, game);
     }
@@ -9736,12 +10455,8 @@ mod camera_continuity_regressions {
     }
 
     #[test]
-    fn information_footer_paints_the_configured_background_80x24_auto() {
+    fn floating_footer_and_status_controls_paint_the_configured_background_80x24_auto() {
         let vendor = Config::sample().unwrap();
-        assert!(
-            80 < vendor.hud_minimal_width,
-            "80x24 must be the minimal HUD"
-        );
         let light = {
             let mut config = vendor.clone();
             config.background = "#F4F1E8".into();
@@ -9756,31 +10471,42 @@ mod camera_continuity_regressions {
                 let (_, base) = fixture();
                 let mut ui = Ui::configured(base.game, &config);
                 ui.hud_mode = HudMode::Auto;
+                let saved = ui.game.clone();
                 let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-                terminal
-                    .draw(|frame| ui.draw(frame, &config, Renderer::Ascii, &colors, 0, false))
-                    .unwrap();
-                let footer = ui.info_footer.get();
-                assert!(
-                    footer.width > 0 && footer.height > 0,
-                    "{depth:?}: draw_information did not run"
-                );
-                let buffer = terminal.backend().buffer();
-                for y in footer.y..footer.bottom() {
-                    for x in footer.x..footer.right() {
-                        let bg = buffer[(x, y)].bg;
-                        assert_ne!(
-                            bg,
-                            Color::Reset,
-                            "{} {depth:?} ({x},{y})",
-                            config.background
-                        );
-                        assert_eq!(
-                            bg, colors.background,
-                            "{} {depth:?} ({x},{y})",
-                            config.background
-                        );
+                for menu in [None, Some(Menu::Status)] {
+                    ui.menu = menu;
+                    terminal
+                        .draw(|frame| ui.draw(frame, &config, Renderer::Ascii, &colors, 0, false))
+                        .unwrap();
+                    let footer = if menu.is_some() {
+                        let popup = ui.last_surface.get();
+                        let footer = ui.menu_footer.get();
+                        assert!(!popup.is_empty() && !footer.is_empty());
+                        assert_eq!(footer.intersection(popup), footer);
+                        footer
+                    } else {
+                        assert_eq!(ui.pet_area.get(), Rect::new(1, 1, 78, 21));
+                        assert!(ui.care_targets.borrow().is_empty());
+                        Rect::new(1, ui.pet_area.get().bottom(), 78, 1)
+                    };
+                    let buffer = terminal.backend().buffer();
+                    for y in footer.y..footer.bottom() {
+                        for x in footer.x..footer.right() {
+                            let bg = buffer[(x, y)].bg;
+                            assert_ne!(
+                                bg,
+                                Color::Reset,
+                                "{} {depth:?} ({x},{y})",
+                                config.background
+                            );
+                            assert_eq!(
+                                bg, colors.background,
+                                "{} {depth:?} ({x},{y})",
+                                config.background
+                            );
+                        }
                     }
+                    assert_eq!(ui.game, saved);
                 }
             }
         }
@@ -9984,38 +10710,47 @@ mod camera_rig_regressions {
         assert!(ui.preview_angle.get().is_none());
     }
     #[test]
-    fn auto_hud_keeps_scene_space_on_short_wide_and_phone_frames() {
+    fn every_hud_mode_keeps_the_full_room_on_short_wide_and_phone_frames() {
         let (config, mut ui) = fixture();
         let colors = Colors::from_config(&config, crate::capabilities::Depth::Mono).unwrap();
         let game = ui.game.clone();
-        for (width, height) in [(130, 28), (100, 24), (59, 49), (20, 8)] {
-            ui.hud_mode = HudMode::Auto;
-            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal
-                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, ui.frame, false))
-                .unwrap();
-            let scene = ui.pet_area.get();
-            assert!(
-                scene.height >= if height >= 12 { height / 2 } else { 1 },
-                "{width}x{height}: {scene:?}"
-            );
-            let lines = (0..height)
-                .map(|y| {
-                    (0..width)
-                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(lines.contains("Menu"), "{lines}");
+        for hud in [HudMode::Auto, HudMode::Minimal, HudMode::Full] {
+            ui.hud_mode = hud;
+            for (width, height) in [(130, 28), (100, 24), (59, 49), (20, 8)] {
+                let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                terminal
+                    .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, ui.frame, false))
+                    .unwrap();
+                let expected_footer_rows = if width == 20 { 2 } else { 1 };
+                assert_eq!(
+                    ui.pet_area.get(),
+                    Rect::new(1, 1, width - 2, height - 2 - expected_footer_rows),
+                    "{hud:?} {width}x{height}"
+                );
+                let mut footer_rows = ui
+                    .control_targets
+                    .borrow()
+                    .iter()
+                    .map(|(area, _)| area.y)
+                    .collect::<Vec<_>>();
+                footer_rows.sort_unstable();
+                footer_rows.dedup();
+                assert_eq!(footer_rows.len(), usize::from(expected_footer_rows));
+                assert!(ui.care_targets.borrow().is_empty());
+                let text = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|c| c.symbol())
+                    .collect::<String>();
+                assert!(
+                    text.contains("[Enter] Actions") && text.contains("Esc Back"),
+                    "{text}"
+                );
+                assert_eq!(ui.game, game);
+            }
         }
-        ui.hud_mode = HudMode::Full;
-        let mut terminal = Terminal::new(TestBackend::new(130, 28)).unwrap();
-        terminal
-            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, ui.frame, false))
-            .unwrap();
-        assert!(ui.pet_area.get().height < 14);
-        assert_eq!(ui.game, game);
     }
 }
 
@@ -10369,7 +11104,21 @@ mod camera_plain_fallthrough_tests {
     fn rendered_help_describes_implemented_camera_and_wheel_controls() {
         let (config, mut ui) = fixture();
         ui.open(Menu::Help);
-        let text = draw(&ui, &config, 130, 70);
+        let game = ui.game.clone();
+        let mut text = String::new();
+        loop {
+            text.push_str(&draw(&ui, &config, 130, 70));
+            if ui.menu_scroll >= ui.menu_scroll_limit.get() {
+                break;
+            }
+            let previous = ui.menu_scroll;
+            ui.handle(
+                KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE),
+                &config.game,
+            );
+            assert!(ui.menu_scroll > previous, "help paging must make progress");
+        }
+        assert_eq!(ui.game, game);
         for hint in [
             "4/6/8/2",
             "Shift+arrows",
@@ -10847,7 +11596,12 @@ mod choice_menu_geometry_tests {
         assert_eq!(layout.footer.height, 2);
         let before = ui.game.clone();
         assert_eq!(
-            ui.handle(key(KeyCode::Char('1')), &config.game),
+            ui.handle(
+                key(KeyCode::Char(char::from(
+                    b'1' + (ui.menu_selected - ui.menu_number_start.get()) as u8
+                ))),
+                &config.game
+            ),
             Effect::Quit
         );
         assert_eq!(ui.game, before);
@@ -10919,8 +11673,8 @@ mod choice_menu_geometry_tests {
                 "{width}x{height}: {content}"
             );
             assert!(
-                layout.panel.y > 0,
-                "Habitat must retain an actual scene row at {width}x{height}"
+                (width < 30 && height < 9) || layout.panel.y > 0,
+                "Habitat must retain a scene margin outside cramped watch sizes: {width}x{height}"
             );
             for (index, item) in layout.items.iter().enumerate() {
                 assert_eq!(item.area.intersection(layout.body), item.area);
@@ -10977,8 +11731,8 @@ mod choice_menu_geometry_tests {
                 "{width}x{height}: {content}"
             );
             assert!(
-                layout.panel.y > 0,
-                "Training must retain an actual scene row at {width}x{height}"
+                (width < 30 && height < 9) || layout.panel.y > 0,
+                "Training must retain a scene margin outside cramped watch sizes: {width}x{height}"
             );
             for (index, item) in layout.items.iter().enumerate() {
                 assert_eq!(item.area.intersection(layout.body), item.area);
@@ -11147,5 +11901,103 @@ mod face_detail_memory_tests {
             "a new subject inherited the face detail"
         );
         assert_eq!(ui.game, game);
+    }
+}
+
+#[cfg(test)]
+mod floating_feedback_regressions {
+    use super::*;
+    use crate::capabilities::Depth;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use ratatui::backend::TestBackend;
+    fn fixture() -> (Config, Ui, Colors) {
+        let mut config = Config::sample().unwrap();
+        config.view_mode = ViewMode::Pixel;
+        config.world.enabled = false;
+        let ui = Ui::configured(Game::new(&config.game, 513), &config);
+        let colors = Colors::from_config(&config, Depth::Indexed).unwrap();
+        (config, ui, colors)
+    }
+    fn text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+    #[test]
+    fn room_navigation_and_accept_open_visible_actions_without_care() {
+        let (config, mut ui, colors) = fixture();
+        let game = ui.game.clone();
+        ui.selected = 7;
+        ui.handle(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert!(!ui.confirm_reset);
+        assert_eq!(ui.game, game);
+        let mut terminal = Terminal::new(TestBackend::new(94, 34)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        assert!(ui
+            .menu_targets
+            .borrow()
+            .iter()
+            .any(|(_, i)| *i == ui.menu_selected));
+        ui.handle(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &config.game,
+        );
+        ui.handle(
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.menu, Some(Menu::Home));
+        assert_eq!(ui.game, game);
+    }
+    #[test]
+    fn outcome_notice_is_a_bounded_transient_popup_and_code_caption_is_truthful() {
+        let (config, mut ui, colors) = fixture();
+        let game = ui.game.clone();
+        ui.notice = "Saved locally.".into();
+        let mut terminal = Terminal::new(TestBackend::new(140, 45)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        assert!(text(&terminal).contains("Saved locally."));
+        assert!(text(&terminal).contains("I Code"));
+        let deadline = ui.notice_until.get();
+        assert!(deadline > 0);
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, deadline + 1, false))
+            .unwrap();
+        assert!(!text(&terminal).contains("Saved locally."));
+        assert_eq!(ui.game, game);
+        for (width, height) in [(12, 6), (20, 8), (28, 10)] {
+            let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
+            ui.notice_seen.borrow_mut().clear();
+            small
+                .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+                .unwrap();
+            let painted = text(&small);
+            for row in ui.floating_footer_rows(width - 2, height - 2) {
+                for (caption, _) in row {
+                    assert!(
+                        painted.contains(&caption),
+                        "notice hid {caption}: {painted}"
+                    );
+                }
+            }
+            assert_eq!(ui.game, game);
+        }
+        ui.handle(
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+            &config.game,
+        );
+        assert_eq!(ui.menu, Some(Menu::Identity));
     }
 }
