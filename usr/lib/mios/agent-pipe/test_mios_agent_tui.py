@@ -52,6 +52,8 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                 result=app.observe_agents()
                 self.assertEqual([row["agent_id"] for row in result["agents"]],["local","system"])
                 self.assertEqual(result["online_total"],2)
+                await pilot.click("#scope-agents")
+                await pilot.pause()
                 self.assertEqual(app.query_one("#peer-table",DataTable).row_count,2)
 
     def app(self, mode="clients", observer=None, agents=None):
