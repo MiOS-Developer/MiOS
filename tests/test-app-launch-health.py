@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -165,7 +166,10 @@ class BrokerEnvironmentTests(unittest.TestCase):
         with mock.patch.dict(os.environ,{"XDG_RUNTIME_DIR":str(self.runtime)}), \
              mock.patch.object(mios_toml,"load_merged",return_value={"desktop":{"launch":{"probe_timeout_ms":200}}}), \
              mock.patch.object(self.module.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout=stale)):
-            result=self.module._operator_environment(allow_headless=True)
+            error=None
+            try:result=self.module._operator_environment(allow_headless=True)
+            except RuntimeError as failure:error=str(failure);result={}
+            self.assertIsNone(error,'captured filesystem verbs must work without a compositor')
             self.assertFalse(self.module._GUI_SESSION_KEYS.intersection(result))
             self.assertIsNone(self.module._execution_context(result))
             with self.assertRaises(RuntimeError):self.module._operator_environment()
