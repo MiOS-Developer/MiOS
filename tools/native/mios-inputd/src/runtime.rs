@@ -345,6 +345,7 @@ fn capture_binding(
             Some((target.client.clone(), target.start)),
             Some(target.identity.clone()),
             receipt.native.clone().map(|t| (t, true)),
+            None,
         )?))
     } else if receipt.error.is_none() && receipt.pid > 0 {
         Some(CaptureDispatcher::Plain(PlainCaptureWorker::spawn(
@@ -540,7 +541,7 @@ impl SessionWorker {
         client: Option<(TmuxClient, u64)>,
         pin: Option<(u32, String)>,
     ) -> Result<Self, String> {
-        Self::spawn_checked(route, cfg, client, pin, None)
+        Self::spawn_checked(route, cfg, client, pin, None, None)
     }
     pub(crate) fn frontend(
         front: &crate::tmux_capture::Frontend,
@@ -561,13 +562,16 @@ impl SessionWorker {
             Some((t.client(), t.client_start)),
             Some((t.server, t.window.clone())),
             Some((t.clone(), true)),
+            None,
         )
     }
     fn login(
         target: crate::tmux_capture::Target,
         device: &Path,
         cfg: GlobalConfig,
+        selection: SharedLogin,
     ) -> Result<Self, String> {
+        let generation = target.login_generation;
         let route = crate::sessions::SessionRoute {
             name: "login-target".into(),
             controllers: vec![device.to_owned()],
@@ -582,6 +586,7 @@ impl SessionWorker {
             Some((target.client(), target.client_start)),
             Some((target.server, target.window.clone())),
             Some((target, false)),
+            Some((selection, generation)),
         )
     }
     fn spawn_checked(
@@ -590,6 +595,7 @@ impl SessionWorker {
         client: Option<(TmuxClient, u64)>,
         pin: Option<(u32, String)>,
         native: Option<(crate::tmux_capture::Target, bool)>,
+        login: Option<(SharedLogin, u64)>,
     ) -> Result<Self, String> {
         let (jobs, inbox) = std::sync::mpsc::sync_channel::<SessionJob>(16);
         let stop = std::sync::Arc::new(AtomicBool::new(false));
@@ -619,21 +625,39 @@ impl SessionWorker {
         let worker=std::thread::Builder::new().name(format!("mios-pad-{}",route.name)).spawn(move || {
             let timeout=Duration::from_millis(cfg.controller.context_stale_ms);
             let mut route=route;
+            let authorized=|| -> Result<(),String> {
+                if let Some((selection,generation))=&login {
+                    let state=selection.lock().map_err(|_|"session login authority lock failed")?;
+                    if *generation==0 || state.generation!=*generation || state.remote.as_ref().is_none_or(|remote|remote.generation!=*generation) {
+                        return Err("session login generation changed".into());
+                    }
+                }
+                Ok(())
+            };
             let mut identity:Option<(u32,String)>=pin;
             while let Ok(job)=inbox.recv() {
+                #[cfg(test)] acceptance_observer::effect_boundary("session-before-job");
                 if cancelled.load(Ordering::Relaxed) { break; }
                 if job.queued.elapsed()>=timeout {
                     eprintln!("{}",serde_json::json!({"session":route.name,"action":job.action,"dropped":"expired"}));
                     continue;
                 }
-                let run=|argv:Vec<String>|run_bounded_cancel(&argv,timeout.saturating_sub(job.queued.elapsed()),Some(&cancelled));
+                let run=|argv:Vec<String>| -> Result<String,String> {
+                    authorized()?;
+                    if cancelled.load(Ordering::Relaxed) || job.queued.elapsed()>=timeout {return Err("session navigation expired or cancelled".into());}
+                    let reply=run_bounded_cancel(&argv,timeout.saturating_sub(job.queued.elapsed()),Some(&cancelled))?;
+                    #[cfg(test)] acceptance_observer::effect_boundary("session-after-step");
+                    Ok(reply)
+                };
                 let result=(|| -> Result<(),String> {
+                    authorized()?;
                     if job.action.starts_with("input:app-key ") {
                         let (app,semantic)=app_request(&job.action).ok_or("unsupported local app control")?;
                         let control=job.app_control.as_ref().ok_or("local app control has no accepted process witness")?;
                         if app!=control.identity.app || !accepted_apps.lock().is_ok_and(|state|local_control_current(&state,control,cfg.controller.context_stale_ms)) {return Err("local app focus visit expired".into());}
                         let actual=local_app_identity(&route,&cfg,timeout.saturating_sub(job.queued.elapsed()),&cancelled)?;
                         if actual!=control.identity {return Err("local app target changed since acceptance".into());}
+                        authorized()?;
                         let state=accepted_apps.lock().map_err(|_|"local app authority lock failed")?;
                         if cancelled.load(Ordering::Relaxed) || job.queued.elapsed()>=timeout || !local_control_current(&state,control,cfg.controller.context_stale_ms) {return Err("local app request cancelled".into());}
                         let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("local app runtime missing")?;
@@ -646,7 +670,8 @@ impl SessionWorker {
                         if !crate::tmux_capture::live_target(target,*owned_only) {return Err("native input focus, owner generation or foreground identity changed".into());}
                         if !owned_only {
                             if let Some(verb)=job.action.strip_prefix("tmux:") {
-                                run_tmux_guarded(&cfg,&target.client(),verb,true,|| {
+                                run_tmux_guarded(&cfg,&target.client(),verb,true,None,|| {
+                                    authorized()?;
                                     if cancelled.load(Ordering::Relaxed) || job.queued.elapsed()>=timeout {
                                         return Err("session navigation expired or cancelled".into());
                                     }
@@ -717,6 +742,7 @@ impl SessionWorker {
                     }
                     Ok(())
                 })();
+                #[cfg(test)] if login.is_some() {acceptance_observer::record_result("session-login",&result);}
                 eprintln!("{}",serde_json::json!({"session":route.name,"pane":route.pane,"action":job.action,
                     "ok":result.is_ok(),"error":result.err()}));
             }
@@ -1136,6 +1162,8 @@ fn ipc_bounded(
     let mut stream = crate::tmux_handoff::connect(&path, until)?;
     let mut pending = request.as_bytes();
     while !pending.is_empty() {
+        #[cfg(test)]
+        acceptance_observer::effect_boundary("compositor-before-write");
         stream
             .set_write_timeout(Some(remaining()?))
             .map_err(|e| e.to_string())?;
@@ -1360,6 +1388,32 @@ pub fn tmux_client_under(
         }
     }
     None
+}
+/// Graphical sampler cache misses enrich /proc discovery with the server's
+/// client instance. Genuine older backends may report zero; observe decides
+/// compatibility and still pins process/start/socket witnesses.
+fn graphical_tmux_client(
+    cfg: &GlobalConfig,
+    pid: u32,
+    uid: u32,
+    budget: Duration,
+) -> Option<TmuxClient> {
+    if budget.is_zero() {
+        return None;
+    }
+    let began = Instant::now();
+    let raw = tmux_client_under(
+        Path::new("/proc"),
+        pid,
+        &cfg.controller.nav.tmux_sockets,
+        uid,
+    )?;
+    let remaining = budget.saturating_sub(began.elapsed());
+    if remaining.is_zero() {
+        return None;
+    }
+    let target = crate::tmux_capture::observe(&raw, remaining).ok()?;
+    (began.elapsed() < budget).then(|| target.client())
 }
 pub(crate) fn tmux_client_at(
     proc_root: &Path,
@@ -2528,18 +2582,21 @@ fn run_tmux(
     verb: &str,
     console: bool,
 ) -> Result<Vec<String>, String> {
-    run_tmux_guarded(cfg, client, verb, console, || Ok(Duration::from_secs(1)))
+    run_tmux_guarded(cfg, client, verb, console, None, || {
+        Ok(Duration::from_secs(1))
+    })
 }
 fn run_tmux_guarded(
     cfg: &GlobalConfig,
     client: &TmuxClient,
     verb: &str,
     console: bool,
+    window: Option<&(String, u64)>,
     remaining: impl Fn() -> Result<Duration, String>,
 ) -> Result<Vec<String>, String> {
     let t = Duration::from_millis(1000);
     remaining()?;
-    let run = |argv: &[String]| {
+    let run = |argv: &[String]| -> Result<String, String> {
         let began = Instant::now();
         let budget = t.min(remaining()?);
         if client.start == 0 || client.socket_ino == 0 {
@@ -2555,7 +2612,10 @@ fn run_tmux_guarded(
         // Legacy tty-targeted commands have no atomic server-side identity
         // transaction; this is a fresh admission check, not cancellation of an
         // already accepted command or a guarantee across a disconnect race.
-        run_bounded(argv, budget)
+        let reply = run_bounded(argv, budget)?;
+        #[cfg(test)]
+        acceptance_observer::effect_boundary("tmux-after-step");
+        Ok(reply)
     };
     let argv = tmux_argv(cfg, client, verb)?;
     let words: Vec<_> = verb.split_whitespace().collect();
@@ -2581,8 +2641,13 @@ fn run_tmux_guarded(
             if edge && console {
                 ran.push("edge: a VT has no compositor focus".into());
             } else if edge {
-                let lua = command_for(&format!("hypr:movefocus {d}"))?.remove(2);
+                let action = format!("hypr:movefocus {d}");
+                let lua = command_for(&action)?.remove(2);
+                let lua = window_scoped_lua(&action, &lua, window)?;
                 let reply = ipc_bounded(&format!("/eval {lua}"), remaining()?, &remaining)?;
+                if reply.trim() != "ok" {
+                    return Err("queued compositor action was not acknowledged".into());
+                }
                 ran.push(format!("hypr:movefocus {d} -> {}", reply.trim()));
             } else {
                 let k = match *d {
@@ -2621,18 +2686,22 @@ fn run_tmux_guarded(
 }
 /// Jobs that must not block the forwarding loop: tmux verbs, the capture OSD, and (fixture tier with --live-context)
 /// the compositor projections of key: and hypr: into the followed (nested) compositor.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ActionScope {
     generation: u64,
     epoch: u64,
     queued: Instant,
+    bound: Duration,
+    window: Option<(String, u64)>,
 }
 impl ActionScope {
-    fn new(focus: &ContextSnapshot) -> Self {
+    fn new(focus: &ContextSnapshot, stale_ms: u64) -> Self {
         Self {
             generation: focus.routing_generation,
             epoch: focus.focus_epoch,
             queued: Instant::now(),
+            bound: Duration::from_millis(stale_ms),
+            window: focus.address.clone().zip(focus.pid),
         }
     }
     fn current(
@@ -2641,7 +2710,7 @@ impl ActionScope {
         focus: &std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
         stale_ms: u64,
     ) -> Result<(ContextSnapshot, Duration), String> {
-        let bound = Duration::from_millis(stale_ms);
+        let bound = self.bound.min(Duration::from_millis(stale_ms));
         if self.queued.elapsed() >= bound {
             return Err("queued input action expired".into());
         }
@@ -2696,6 +2765,7 @@ enum Job {
 struct ActionWorker {
     jobs: Option<std::sync::mpsc::SyncSender<Job>>,
     worker: Option<std::thread::JoinHandle<()>>,
+    stop: std::sync::Arc<AtomicBool>,
 }
 impl ActionWorker {
     fn spawn(
@@ -2704,36 +2774,59 @@ impl ActionWorker {
         shared_focus: std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
     ) -> Result<Self, String> {
         let (jobs, inbox) = std::sync::mpsc::sync_channel::<Job>(16);
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled = stop.clone();
         let worker=std::thread::Builder::new().name("mios-actions".into()).spawn(move || {
             while let Ok(job)=inbox.recv() {
+                #[cfg(test)] acceptance_observer::effect_boundary("action-before-policy");
+                if cancelled.load(Ordering::Acquire) {break;}
                 let cfg=match policy.lock() { Ok(c)=>c.clone(), Err(_)=>break };
+                if cancelled.load(Ordering::Acquire) {break;}
+                let running=|| -> Result<(),String> {
+                    if cancelled.load(Ordering::Acquire) {Err("input action worker stopped".into())} else {Ok(())}
+                };
                 match job {
                     Job::Tmux{verb,client,console,scope} => {
-                        let remaining=|| {
+                        let remaining=|| -> Result<Duration,String> {
+                            running()?;
                             let (current,time)=scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms)?;
                             if current.tmux_client.as_ref()!=Some(&client) { return Err("queued tmux client focus changed".into()); }
                             Ok(time)
                         };
-                        let r=run_tmux_guarded(&cfg,&client,&verb,console,remaining);
+                        let r=run_tmux_guarded(&cfg,&client,&verb,console,scope.window.as_ref(),remaining);
                         #[cfg(test)] acceptance_observer::record_result("legacy-tmux", &r);
                         eprintln!("{}",serde_json::json!({"tmux":verb,"client":client.tty,"ok":r.is_ok(),"ran":r.as_ref().ok(),"error":r.as_ref().err()}));
                     }
                     Job::Lua{action,lua,scope} => {
-                        let r=scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms).and_then(|(_,budget)| ipc_bounded(&format!("/eval {lua}"),budget,||scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms).map(|(_,time)|time)));
+                        let r=(|| -> Result<String,String> {
+                            running()?;
+                            let (_,budget)=scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms)?;
+                            let lua=window_scoped_lua(&action,&lua,scope.window.as_ref())?;
+                            let reply=ipc_bounded(&format!("/eval {lua}"),budget,|| {
+                                running()?;
+                                scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms).map(|(_,time)|time)
+                            })?;
+                            if reply.trim()!="ok" {return Err("queued compositor action was not acknowledged".into());}
+                            Ok(reply)
+                        })();
                         #[cfg(test)] acceptance_observer::record_result("legacy-lua", &r);
                         eprintln!("{}",serde_json::json!({"projected":action,"ok":r.as_ref().is_ok_and(|v|v.trim()=="ok"),"reply":r.as_ref().map(|v|v.trim().chars().take(200).collect::<String>()).unwrap_or_else(|e|e.clone())}));
                     }
                     Job::WindowZoom{native,window,generation,epoch,queued} => {
                         let bound=Duration::from_millis(cfg.controller.context_stale_ms);
                         let result=(|| -> Result<(),String> {
-                            let valid=||queued.elapsed()<bound && with_login_focus(&selection,&shared_focus,generation,epoch,cfg.controller.context_stale_ms,|_|Ok(())).is_ok();
+                            let valid=||!cancelled.load(Ordering::Acquire) && queued.elapsed()<bound && with_login_focus(&selection,&shared_focus,generation,epoch,cfg.controller.context_stale_ms,|_|Ok(())).is_ok();
                             if !valid() {
                                 return Err("zoom login generation or request expired".into());
                             }
                             if let Some(target)=native {
                                 crate::tmux_capture::zoom(&target,bound.saturating_sub(queued.elapsed()),valid)
                             } else if let Some((address,pid))=window {
-                                let reply=ipc(&format!("/eval {}",window_zoom_lua(&address,pid)))?;
+                                let remaining=|| -> Result<Duration,String> {
+                                    if !valid() {return Err("zoom login generation or request expired".into());}
+                                    Ok(bound.saturating_sub(queued.elapsed()))
+                                };
+                                let reply=ipc_bounded(&format!("/eval {}",window_zoom_lua(&address,pid)),remaining()?,remaining)?;
                                 if reply.trim()=="ok" {Ok(())} else {Err("focused window zoom was not acknowledged".into())}
                             } else {Err("zoom has no witnessed focused window".into())}
                         })();
@@ -2742,6 +2835,7 @@ impl ActionWorker {
                     }
                     Job::AppKey{app,action,focus,queued} => {
                         let result=(|| -> Result<(),String> {
+                            running()?;
                             let bound=Duration::from_millis(cfg.controller.context_stale_ms);
                             let expected=app_input_focus(&focus,cfg.controller.context_stale_ms).ok_or("app input scope expired")?;
                             if queued.elapsed()>=bound || expected.app!=app {
@@ -2761,6 +2855,7 @@ impl ActionWorker {
                             // send, never through process/tmux verification.
                             let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("app runtime missing")?;
                             with_login_focus(&selection,&shared_focus,focus.routing_generation,focus.focus_epoch,cfg.controller.context_stale_ms,|current| {
+                                running()?;
                                 check(current)?;
                                 mios_resolver::app_input::send(&runtime,pid,start,expected.clone(),semantic).map_err(|e|e.to_string())
                             })
@@ -2774,11 +2869,43 @@ impl ActionWorker {
         Ok(Self {
             jobs: Some(jobs),
             worker: Some(worker),
+            stop,
         })
     }
     fn submit(&self, job: Job) -> bool {
-        self.jobs.as_ref().is_some_and(|j| j.try_send(job).is_ok())
+        !self.stop.load(Ordering::Acquire)
+            && self.jobs.as_ref().is_some_and(|j| j.try_send(job).is_ok())
     }
+    fn cancel(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.jobs = None;
+    }
+}
+fn window_scoped_action(action: &str) -> bool {
+    action.starts_with("key:")
+        || matches!(
+            action.split_whitespace().next(),
+            Some(
+                "hypr:killactive"
+                    | "hypr:fullscreen"
+                    | "hypr:togglefloating"
+                    | "hypr:movetoworkspace"
+                    | "hypr:movewindow"
+                    | "hypr:movefocus"
+            )
+        )
+}
+fn window_scoped_lua(
+    action: &str,
+    lua: &str,
+    window: Option<&(String, u64)>,
+) -> Result<String, String> {
+    if !window_scoped_action(action) {
+        return Ok(lua.to_owned());
+    }
+    let (address, pid) = window.ok_or("queued compositor action has no window witness")?;
+    let address = serde_json::to_string(address).map_err(|e| e.to_string())?;
+    Ok(format!("local w=hl.get_active_window();assert(w and tostring(w.address)=={address} and tonumber(w.pid)=={pid},'queued compositor focus changed');{lua}"))
 }
 /// A zoom uses the exact focused window and PID, never the compositor's implicit
 /// dispatch target. It changes geometry only; capture ownership remains intact.
@@ -2875,7 +3002,7 @@ fn app_input_process(
 }
 impl Drop for ActionWorker {
     fn drop(&mut self) {
-        self.jobs = None;
+        self.cancel();
         if let Some(w) = self.worker.take() {
             let _ = w.join();
         }
@@ -3819,11 +3946,16 @@ fn emit(
                     submitted = true;
                 }
             } else if sinks.project {
-                if let (Some(worker), Some(window)) = (&sinks.actions, &focus.address) {
+                if let (Some(worker), Some(window), Some(_)) =
+                    (&sinks.actions, &focus.address, focus.pid)
+                {
                     submitted = worker.submit(Job::Lua {
                         action: action.clone(),
                         lua: key_lua(&chord, window),
-                        scope: ActionScope::new(focus),
+                        scope: ActionScope::new(
+                            focus,
+                            device.router.policy().controller.context_stale_ms,
+                        ),
                     });
                 }
             }
@@ -3842,7 +3974,10 @@ fn emit(
                         verb: verb.into(),
                         client: client.clone(),
                         console: device.router.console(),
-                        scope: ActionScope::new(focus),
+                        scope: ActionScope::new(
+                            focus,
+                            device.router.policy().controller.context_stale_ms,
+                        ),
                     });
                 }
             }
@@ -3865,11 +4000,17 @@ fn emit(
         } else if sinks.project && action.starts_with("hypr:") {
             if let Some(worker) = &sinks.actions {
                 let lua = configured_command(&action, device.router.policy())?.remove(2);
-                submitted = worker.submit(Job::Lua {
-                    action: action.clone(),
-                    lua,
-                    scope: ActionScope::new(focus),
-                });
+                if !window_scoped_action(&action) || focus.address.as_ref().zip(focus.pid).is_some()
+                {
+                    submitted = worker.submit(Job::Lua {
+                        action: action.clone(),
+                        lua,
+                        scope: ActionScope::new(
+                            focus,
+                            device.router.policy().controller.context_stale_ms,
+                        ),
+                    });
+                }
             }
         } else if sinks.execute_actions {
             let args = configured_command(&action, device.router.policy())?;
@@ -5168,7 +5309,8 @@ pub fn run(
                     snapshot.shell_overlay = runtime
                         .as_ref()
                         .is_some_and(|r| shell_overlay_open(r, &cfg));
-                    // C-09: /proc only, at most once a second per focused terminal (tmux may start inside it later).
+                    // C-09: discover and witness at most once a second per focused terminal;
+                    // server inspection stays off lock and within this snapshot's remaining stale budget.
                     let nav_context = capture_navigation_context(&cfg, snapshot.class.as_deref())
                         .unwrap_or_else(|| snapshot.name.clone());
                     if let (Some(pid), true) = (snapshot.pid, wants_tmux(&cfg, &nav_context)) {
@@ -5177,11 +5319,12 @@ pub fn run(
                         });
                         if !fresh {
                             let found = u32::try_from(pid).ok().and_then(|p| {
-                                tmux_client_under(
-                                    Path::new("/proc"),
+                                graphical_tmux_client(
+                                    &cfg,
                                     p,
-                                    &cfg.controller.nav.tmux_sockets,
                                     uid,
+                                    Duration::from_millis(cfg.controller.context_stale_ms)
+                                        .saturating_sub(snapshot.sampled.elapsed()),
                                 )
                             });
                             tmux_cache = Some((pid, Instant::now(), found));
@@ -5943,6 +6086,7 @@ pub fn run(
                                         target.clone(),
                                         &dev.device.path,
                                         global.clone(),
+                                        login_selection.clone(),
                                     )?,
                                 });
                             }
@@ -6456,6 +6600,8 @@ pub fn run(
         }
         Ok(())
     })();
+    // Stop queued/effect admission while the sampler still publishes authority.
+    drop(sinks.actions.take());
     cursor_requested.store(false, Ordering::Relaxed);
     if !nested {
         let _ = ipc(&format!("/eval {}", controller_cursor_lua(&global, false)));
@@ -6464,6 +6610,7 @@ pub fn run(
     for dev in devices.values_mut() {
         dev.session_worker = None;
         dev.capture = None;
+        dev.remote_input = None;
         dev.suspended = true;
         let out = dev.router.reset();
         let _ = emit(out, dev, &mut sinks, &focus);

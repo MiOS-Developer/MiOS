@@ -9,8 +9,6 @@ fn revoke_legacy_scope(mode: &str, selection: &SharedLogin, focus: &Arc<Mutex<Co
             drop(current);
             selection.lock().unwrap().generation = 1;
             current = focus.lock().unwrap();
-            current.routing_generation = 1;
-            current.focus_epoch += 1;
         }
         "focus-aba" => {
             let original = current.clone();
@@ -27,7 +25,7 @@ fn revoke_legacy_scope(mode: &str, selection: &SharedLogin, focus: &Arc<Mutex<Co
 }
 
 fn legacy_scope(mode: &str, focus: &ContextSnapshot, cfg: &GlobalConfig) -> ActionScope {
-    let mut scope = ActionScope::new(focus);
+    let mut scope = ActionScope::new(focus, cfg.controller.context_stale_ms);
     if mode == "expired" {
         scope.queued -= Duration::from_millis(cfg.controller.context_stale_ms + 1);
     }
@@ -71,6 +69,7 @@ fn actual_legacy_tmux_worker_rejects_revoked_expired_and_aba_jobs() {
         }));
         revoke_legacy_scope(mode, &selection, &focus);
         drop(barrier);
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         let observed = captured_tmux(&cfg, client.process.id()).unwrap().unwrap();
         assert_eq!(
@@ -80,9 +79,22 @@ fn actual_legacy_tmux_worker_rejects_revoked_expired_and_aba_jobs() {
         let rejected = acceptance_observer::take();
         assert_eq!(rejected.len(), 1);
         assert_eq!(rejected[0]["ok"], false);
+        assert_eq!(
+            rejected[0]["error"],
+            match mode {
+                "login-revoked" => "input login generation changed",
+                "focus-aba" => "input focus visit changed or expired",
+                _ => "queued input action expired",
+            }
+        );
 
-        focus.lock().unwrap().sampled = Instant::now();
-        let fresh = ActionScope::new(&focus.lock().unwrap());
+        {
+            let generation = selection.lock().unwrap().generation;
+            let mut fresh = focus.lock().unwrap();
+            fresh.sampled = Instant::now();
+            fresh.routing_generation = generation;
+        }
+        let fresh = ActionScope::new(&focus.lock().unwrap(), cfg.controller.context_stale_ms);
         let worker = ActionWorker::spawn(policy, selection, focus).unwrap();
         assert!(worker.submit(Job::Tmux {
             verb: "session-next".into(),
@@ -90,6 +102,7 @@ fn actual_legacy_tmux_worker_rejects_revoked_expired_and_aba_jobs() {
             console: true,
             scope: fresh
         }));
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         assert_ne!(
             captured_tmux(&cfg, client.process.id())
@@ -114,7 +127,7 @@ fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
     if isolated() {
         return;
     }
-    use std::io::{Read, Write};
+    use std::io::Write;
     let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
     let directory = runtime.join("hypr").join(signature().unwrap());
     std::fs::create_dir_all(&directory).unwrap();
@@ -124,7 +137,12 @@ fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
         let cfg = capture_config();
         let policy = Arc::new(Mutex::new(cfg.clone()));
         let selection: SharedLogin = Default::default();
-        let focus = Arc::new(Mutex::new(ContextSnapshot::new("desktop-2d")));
+        let focus = Arc::new(Mutex::new({
+            let mut focus = ContextSnapshot::new("desktop-2d");
+            focus.address = Some("0xowned".into());
+            focus.pid = Some(42);
+            focus
+        }));
         let scope = legacy_scope(mode, &focus.lock().unwrap(), &cfg);
         let barrier = policy.lock().unwrap();
         let worker = ActionWorker::spawn(policy.clone(), selection.clone(), focus.clone()).unwrap();
@@ -135,6 +153,7 @@ fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
         }));
         revoke_legacy_scope(mode, &selection, &focus);
         drop(barrier);
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         assert!(
             matches!(listener.accept(), Err(error) if error.kind()==std::io::ErrorKind::WouldBlock),
@@ -143,9 +162,22 @@ fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
         let rejected = acceptance_observer::take();
         assert_eq!(rejected.len(), 1);
         assert_eq!(rejected[0]["ok"], false);
+        assert_eq!(
+            rejected[0]["error"],
+            match mode {
+                "login-revoked" => "input login generation changed",
+                "focus-aba" => "input focus visit changed or expired",
+                _ => "queued input action expired",
+            }
+        );
 
-        focus.lock().unwrap().sampled = Instant::now();
-        let fresh = ActionScope::new(&focus.lock().unwrap());
+        {
+            let generation = selection.lock().unwrap().generation;
+            let mut fresh = focus.lock().unwrap();
+            fresh.sampled = Instant::now();
+            fresh.routing_generation = generation;
+        }
+        let fresh = ActionScope::new(&focus.lock().unwrap(), cfg.controller.context_stale_ms);
         let worker = ActionWorker::spawn(policy, selection, focus).unwrap();
         assert!(worker.submit(Job::Lua {
             action: "key:ENTER".into(),
@@ -161,11 +193,11 @@ fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
         stream
             .set_read_timeout(Some(Duration::from_millis(500)))
             .unwrap();
-        let mut buffer = [0u8; 128];
-        let count = stream.read(&mut buffer).unwrap();
-        assert_eq!(&buffer[..count], b"/eval return 'owned-fresh'");
+        let request = hardening_request(&mut stream, "return 'owned-fresh'").unwrap();
+        assert!(request.contains("queued compositor focus changed"));
         stream.write_all(b"ok").unwrap();
         drop(stream);
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         let delivered = acceptance_observer::take();
         assert_eq!(delivered.len(), 1);

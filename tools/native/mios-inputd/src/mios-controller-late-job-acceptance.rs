@@ -44,7 +44,7 @@ fn actual_action_workers_drop_expired_and_aba_jobs_before_any_sink() {
             epoch: accepted.focus_epoch,
             queued
         }));
-        let results = h.finish_actions();
+        let results = h.finish_actions(2);
         trace(
             &format!("late-job-{mode}"),
             serde_json::json!({"worker_results":results}),

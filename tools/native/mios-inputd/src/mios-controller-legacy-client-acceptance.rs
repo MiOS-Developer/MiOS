@@ -34,7 +34,7 @@ fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached
         let mut initial = ContextSnapshot::new("console");
         initial.tmux_client = Some(stale.clone());
         let focus = Arc::new(Mutex::new(initial));
-        let scope = ActionScope::new(&focus.lock().unwrap());
+        let scope = ActionScope::new(&focus.lock().unwrap(), cfg.controller.context_stale_ms);
         let barrier = policy.lock().unwrap();
         let worker = ActionWorker::spawn(policy.clone(), selection.clone(), focus.clone()).unwrap();
         assert!(worker.submit(Job::Tmux {
@@ -59,6 +59,7 @@ fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached
             });
         }
         drop(barrier);
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         let current = replacement
             .unwrap_or_else(|| captured_tmux(&cfg, client.process.id()).unwrap().unwrap());
@@ -99,7 +100,7 @@ fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached
         let previous = focus.lock().unwrap().clone();
         advance_focus(&previous, &mut refreshed);
         *focus.lock().unwrap() = refreshed;
-        let scope = ActionScope::new(&focus.lock().unwrap());
+        let scope = ActionScope::new(&focus.lock().unwrap(), cfg.controller.context_stale_ms);
         let worker = ActionWorker::spawn(policy, selection, focus).unwrap();
         assert!(worker.submit(Job::Tmux {
             verb: "session-next".into(),
@@ -107,6 +108,7 @@ fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached
             console: true,
             scope,
         }));
+        acceptance_observer::wait_for_results(1);
         drop(worker);
         let delivered = acceptance_observer::take();
         assert_eq!(delivered.len(), 1);
@@ -131,7 +133,7 @@ fn actual_legacy_lua_worker_uses_remaining_queue_budget_for_reply() {
     if isolated() {
         return;
     }
-    use std::io::{Read, Write};
+    use std::io::Write;
     let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
     let directory = runtime.join("hypr").join(signature().unwrap());
     std::fs::create_dir_all(&directory).unwrap();
@@ -141,8 +143,13 @@ fn actual_legacy_lua_worker_uses_remaining_queue_budget_for_reply() {
     cfg.controller.context_stale_ms = 500;
     let policy = Arc::new(Mutex::new(cfg.clone()));
     let selection: SharedLogin = Default::default();
-    let focus = Arc::new(Mutex::new(ContextSnapshot::new("desktop-2d")));
-    let mut scope = ActionScope::new(&focus.lock().unwrap());
+    let focus = Arc::new(Mutex::new({
+        let mut focus = ContextSnapshot::new("desktop-2d");
+        focus.address = Some("0xowned".into());
+        focus.pid = Some(42);
+        focus
+    }));
+    let mut scope = ActionScope::new(&focus.lock().unwrap(), cfg.controller.context_stale_ms);
     scope.queued -= Duration::from_millis(400);
     let worker = ActionWorker::spawn(policy, selection, focus).unwrap();
     assert!(worker.submit(Job::Lua {
@@ -159,15 +166,15 @@ fn actual_legacy_lua_worker_uses_remaining_queue_budget_for_reply() {
     stream
         .set_read_timeout(Some(Duration::from_millis(500)))
         .unwrap();
-    let mut bytes = [0u8; 128];
-    let count = stream.read(&mut bytes).unwrap();
-    assert_eq!(&bytes[..count], b"/eval return 'owned-deadline'");
+    let request = hardening_request(&mut stream, "return 'owned-deadline'").unwrap();
+    assert!(request.contains("queued compositor focus changed"));
     let late = std::thread::spawn(move || {
         // The old independent150ms read deadline accepts this response;
         // only100ms of the actual queued scope remained at submission.
         std::thread::sleep(Duration::from_millis(120));
         let _ = stream.write_all(b"ok");
     });
+    acceptance_observer::wait_for_results(1);
     drop(worker);
     late.join().unwrap();
     let results = acceptance_observer::take();

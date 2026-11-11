@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4328,
-  "total_metadata_entries": 3466,
-  "total_hints": 3460,
+  "total_files_scanned": 4329,
+  "total_metadata_entries": 3467,
+  "total_hints": 3461,
   "total_functions_indexed": 2193,
-  "total_related_links": 6944,
+  "total_related_links": 6949,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -13703,6 +13703,21 @@
         "ActionWorker",
         "SessionWorker",
         "frozen controller vectors"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-scope-hardening-acceptance.rs",
+      "hint": "Actual-worker single-guard regressions; private C95 and compositor sockets only.",
+      "related": [
+        "SharedLogin",
+        "ActionScope",
+        "SessionWorker",
+        "ActionWorker",
+        "ipc_bounded"
       ],
       "functions": [],
       "doc": null,

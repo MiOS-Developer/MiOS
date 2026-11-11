@@ -253,8 +253,9 @@ impl Harness {
             .unwrap(),
         );
     }
-    fn finish_actions(&mut self) -> Vec<serde_json::Value> {
-        drop(self.sinks.actions.take()); // Join actual worker; results are observed, not simulated.
+    fn finish_actions(&mut self, expected: usize) -> Vec<serde_json::Value> {
+        crate::runtime::acceptance_observer::wait_for_results(expected);
+        drop(self.sinks.actions.take()); // Completion is observed before cancellation/Drop.
         crate::runtime::acceptance_observer::take()
     }
     fn boundary(&mut self, boundary: &str) {
@@ -494,7 +495,7 @@ fn failed_app_action(key: &str, id: &str) {
     h.event(EV_KEY, code, 0);
     let token = format!("input:app-key mon key:{key}");
     assert_eq!(h.requests, vec![token]);
-    let results = h.finish_actions();
+    let results = h.finish_actions(1);
     trace(id, serde_json::json!({"worker_results":results}));
     h.record(id);
     h.no_keyboard();
@@ -537,7 +538,7 @@ fn unsupported_app_control_has_no_pty_or_keyboard_fallback() {
         actions: vec!["input:app-key mon key:ENTER".into()],
         ..Default::default()
     });
-    let results = h.finish_actions();
+    let results = h.finish_actions(1);
     h.record("unsupported-app-control");
     h.no_keyboard();
     assert!(results
@@ -580,7 +581,7 @@ fn frozen_stale_application_and_process_witnesses_reject_late_jobs() {
             actions: vec!["input:app-key mon key:o".into()],
             ..Default::default()
         });
-        let results = h.finish_actions();
+        let results = h.finish_actions(1);
         trace(id, serde_json::json!({"worker_results":results}));
         h.record(id);
         h.no_keyboard();
@@ -856,3 +857,5 @@ fn actual_assigned_session_worker_refuses_failed_app_ipc_without_shell_fallback(
 include!("mios-controller-late-job-acceptance.rs");
 
 include!("mios-controller-legacy-job-acceptance.rs");
+
+include!("mios-controller-scope-hardening-acceptance.rs");
