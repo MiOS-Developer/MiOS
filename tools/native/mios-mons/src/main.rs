@@ -22,6 +22,7 @@ use std::{
 #[derive(Parser)]
 #[command(
     name = "mios-mons",
+    bin_name = "mios-mons",
     version,
     about = "MiOS-Mons: care, growth and a memory game"
 )]
