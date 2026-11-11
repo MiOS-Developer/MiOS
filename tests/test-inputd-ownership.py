@@ -190,19 +190,50 @@ for _,d in ipairs(D) do print('DISPATCH '..d.kind..' '..tostring(d.v)) end
         self.assertNotIn('fullscreen unset', d)
         self.assertNotIn('tag +mios-input-released', d)
 
-    def test_context_predicate_honours_release_for_every_window_kind(self):
+    def test_fullscreen_geometry_does_not_implicitly_capture_any_window_kind(self):
+        body = self.context_lua()
+        for cls in ('steam_app_570', 'looking-glass-client', 'org.any.Flatpak', 'Alacritty'):
+            with self.subTest(cls=cls):
+                window = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{}}}}"
+                state = json.loads(self.lua(body, window)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+                self.assertFalse(state['captured'], 'fullscreen geometry must preserve controller navigation')
+                self.assertFalse(state['released'])
+
+    def test_explicit_capture_and_release_apply_to_fullscreen_games_vms_and_apps(self):
+        body = self.context_lua()
+        for cls in ('steam_app_570', 'looking-glass-client', 'org.any.Flatpak', 'Alacritty'):
+            with self.subTest(cls=cls):
+                cap = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{'mios-input-captured*'}}}}"
+                rel = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{'mios-input-captured*','mios-input-released*'}}}}"
+                captured = json.loads(self.lua(body, cap)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+                released = json.loads(self.lua(body, rel)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+                self.assertTrue(captured['captured'], 'North capture remains available in fullscreen')
+                self.assertFalse(released['captured'], 'release wins over explicit capture')
+                self.assertTrue(released['released'])
+
+    def test_room_owner_captures_fullscreen_and_release_still_wins(self):
+        body = "hl.plugin={hypr3d={input_owner=function() return 0xabc end}}\n" + self.context_lua()
+        for tags, expected in (("{}", True), ("{'mios-input-released*'}", False)):
+            window = f"{{address='0xabc',class='org.any.Flatpak',pid=4,fullscreen=2,tags={tags}}}"
+            state = json.loads(self.lua(body, window)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+            self.assertEqual(state['captured'], expected)
+
+    def test_fullscreen_capture_remains_an_explicit_operator_opt_in(self):
+        self.host_layer('[keybindings.global.controller]\ncapture_fullscreen=true\n')
         body = self.context_lua()
         for cls in ('steam_app_570', 'looking-glass-client', 'org.any.Flatpak', 'Alacritty'):
             with self.subTest(cls=cls):
                 fs = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{}}}}"
-                rel = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{'mios-input-released'}}}}"
-                one = json.loads(self.lua(body, fs)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
-                two = json.loads(self.lua(body, rel)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
-                self.assertTrue(one['captured'] and not one['released'])
-                self.assertFalse(two['captured'], 'release_tag cancels fullscreen==2')
-                self.assertTrue(two['released'])
-        # The generated predicate (G1) wins when the session exposes it.
-        out = json.loads(self.lua(body, "{address='0xabc',class='x',pid=4,fullscreen=0,tags={}}",
+                rel = f"{{address='0xabc',class='{cls}',pid=4,fullscreen=2,tags={{'mios-input-released*'}}}}"
+                captured = json.loads(self.lua(body, fs)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+                released = json.loads(self.lua(body, rel)[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
+                self.assertTrue(captured['captured'], 'opt-in reproduces automatic fullscreen capture')
+                self.assertFalse(released['captured'], 'release also cancels opt-in fullscreen capture')
+
+    def test_generated_capture_policy_remains_authoritative(self):
+        body = self.context_lua()
+        window = "{address='0xabc',class='x',pid=4,fullscreen=0,tags={}}"
+        out = json.loads(self.lua(body, window,
                                   policy='{captured=function(w) return true end}')[0].split('MIOS_INPUT_CONTEXT:', 1)[1])
         self.assertTrue(out['captured'])
 
