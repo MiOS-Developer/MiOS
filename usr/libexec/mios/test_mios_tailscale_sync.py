@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided controls for mios-tailscale-sync -- SSOT [tailscale] is actually applied with `tailscale set`, the exit node is the first online peer from exit_nodes that offers one, else cleared, and a health gate drops an exit node worse than the direct uplink.
 # AI-related: usr/libexec/mios/mios-tailscale-sync, usr/share/mios/mios.toml, mios-tailscale-sync.timer
-# AI-functions: load_sync, run_sync, TestTailscaleSync
+# AI-functions: load_sync, run_sync, check_enrolls, TestTailscaleSync
 """WHEN mios-tailscale-sync runs THE SYSTEM SHALL apply [tailscale] to the live
 node, and route through the first exit_nodes peer that is online and offers
 itself as an exit node -- clearing the exit node when none does.
@@ -28,9 +28,14 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, "..", "..", ".."))
 _SCRIPT = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-tailscale-sync")
 _PRE_FIX = "150b5b461"
+# The script before enrollment existed: it only printed "run: tailscale up".
+_PRE_ENROLL = "46c4fe9"
 
 _FAKE = """#!/bin/sh
-if [ "$1" = status ]; then cat "$FAKE_STATUS"; exit 0; fi
+case " $* " in *" status "*) cat "$FAKE_STATUS"; exit 0;; esac
+for a in "$@"; do
+  case "$a" in --auth-key=file:*) cat "${a#--auth-key=file:}" > "$FAKE_DIR/seen-key";; esac
+done
 printf '%s\\n' "$*" >> "$FAKE_LOG"
 """
 # A direct probe (-I <uplink>) answers from ping-direct; any other probe goes
@@ -69,12 +74,15 @@ def load_sync(path: str):
 def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
              host_dropin: str = "", pings: dict | None = None,
              cooling: dict | None = None, out: dict | None = None,
-             active_exit: str = "") -> list[str]:
+             active_exit: str = "", args: tuple[str, ...] = (),
+             extra_env: dict | None = None) -> list[str]:
     """Run `script` under a fake tailscale; return the argv lines `set` recorded.
     `host_dropin` becomes a host-tier mios.d fragment over the vendor layer;
     `pings` maps "direct" or an exit-node IP to (loss %, avg RTT ms or None);
     `cooling` seeds the health state file and `out["state"]` receives it;
-    `active_exit` is the exit node the fake reports as already in use."""
+    `active_exit` is the exit node the fake reports as already in use;
+    `args` are the script's arguments, `extra_env` is added to its environment
+    and `out["seen_key"]` receives what an --auth-key=file: held at call time."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = os.path.join(tmp, "bin")
         os.mkdir(bindir)
@@ -110,7 +118,7 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
         log = os.path.join(tmp, "set.log")
         driver = (
             "import sys\n"
-            f"sys.argv = [{script!r}]\n"
+            f"sys.argv = [{script!r}, *{list(args)!r}]\n"
             "import importlib.machinery, importlib.util\n"
             f"l = importlib.machinery.SourceFileLoader('s', {script!r})\n"
             "m = importlib.util.module_from_spec(importlib.util.spec_from_loader('s', l))\n"
@@ -126,8 +134,14 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
                    MIOS_HOST_TOML=os.path.join(tmp, "absent.toml"), MIOS_HOST_TOML_D=host_d,
                    MIOS_USER_TOML=os.path.join(tmp, "absent-user.toml"),
                    MIOS_USER_TOML_D=os.path.join(tmp, "user.d"))
+        env.pop("TS_AUTHKEY", None)
+        env.update(extra_env or {})
         subprocess.run([sys.executable, "-I", "-c", driver], env=env,
                        capture_output=True, text=True, timeout=60)
+        seen = os.path.join(tmp, "seen-key")
+        if out is not None and os.path.exists(seen):
+            with open(seen) as f:
+                out["seen_key"] = f.read()
         if out is not None and os.path.exists(state_path):
             with open(state_path) as f:
                 out["state"] = json.load(f)
@@ -210,6 +224,37 @@ def check_standby(script: str) -> str | None:
     return None
 
 
+# The cloud overlay's launch parameters, as [deployment.cloud.overlay.tailscale] sets them.
+_CLOUD = _BASE + """hostname = "mios-cloud"
+advertise_exit_node = true
+shields_up = true
+"""
+_KEY = "tskey-auth-UNITTEST0000-notarealkey"
+
+
+def check_enrolls(script: str) -> str | None:
+    """None when a logged-out node with a key file is enrolled through
+    `up --auth-key=file:` carrying the SSOT launch parameters."""
+    with tempfile.TemporaryDirectory() as d:
+        key = os.path.join(d, "authkey")
+        with open(key, "w") as f:
+            f.write(_KEY)
+        out: dict = {}
+        calls = run_sync(script, _CLOUD + f'auth_key_file = "{key}"\n', {},
+                         state="NeedsLogin", out=out)
+    ups = [c for c in calls if c.startswith("up ")]
+    if not ups:
+        return f"logged-out node never enrolled: {calls!r}"
+    want = ("--reset", f"--auth-key=file:{key}", "--hostname=mios-cloud",
+            "--advertise-exit-node=true", "--shields-up=true", "--accept-dns=")
+    missing = [w for w in want if w not in ups[0]]
+    if missing:
+        return f"enrollment lacks {missing}: {ups[0]!r}"
+    if out.get("seen_key") != _KEY:
+        return f"key file not readable at enrollment: {out.get('seen_key')!r}"
+    return None
+
+
 class TestTailscaleSync(unittest.TestCase):
     def test_applies_ssot_with_first_preference(self) -> None:
         self.assertIsNone(check_applies(_SCRIPT))
@@ -236,6 +281,55 @@ class TestTailscaleSync(unittest.TestCase):
     def test_logged_out_node_is_not_reconfigured(self) -> None:
         calls = run_sync(_SCRIPT, _PREFS, {}, state="NeedsLogin")
         self.assertEqual(calls, [])
+
+    def test_enrolls_from_key_file_with_launch_params(self) -> None:
+        self.assertIsNone(check_enrolls(_SCRIPT))
+
+    def test_enrolls_from_env_key_without_exposing_it(self) -> None:
+        out: dict = {}
+        calls = run_sync(_SCRIPT, _CLOUD, {}, state="NeedsLogin", out=out,
+                         extra_env={"MIOS_TAILSCALE_AUTHKEY": _KEY})
+        self.assertEqual(len(calls), 1, calls)
+        self.assertTrue(calls[0].startswith("up --reset --auth-key=file:"), calls)
+        self.assertNotIn(_KEY, calls[0])  # never on the command line
+        self.assertEqual(out.get("seen_key"), _KEY)
+        tmp_key = calls[0].split("--auth-key=file:", 1)[1].split()[0]
+        self.assertFalse(os.path.exists(tmp_key), f"temporary key copy left at {tmp_key}")
+
+    def test_socket_argument_addresses_tailscaled(self) -> None:
+        calls = run_sync(_SCRIPT, _CLOUD, {}, args=("--socket=/run/ts/x.sock",))
+        self.assertEqual(len(calls), 1, calls)
+        self.assertTrue(calls[0].startswith("--socket=/run/ts/x.sock set "), calls)
+        self.assertIn("--advertise-exit-node=true", calls[0])
+        self.assertIn("--shields-up=true", calls[0])
+
+    def test_unset_exit_node_and_shields_are_left_alone(self) -> None:
+        calls = run_sync(_SCRIPT, _BASE, {})
+        self.assertEqual(len(calls), 1, calls)
+        for flag in ("--advertise-exit-node", "--shields-up", "--hostname"):
+            self.assertNotIn(flag, calls[0])
+
+    def test_exit_node_offer_suppresses_exit_node_use(self) -> None:
+        calls = run_sync(_SCRIPT, _PREFS + "advertise_exit_node = true\n",
+                         {"b": _peer("kabu", "100.89.218.102", True, True)})
+        self.assertEqual(len(calls), 1, calls)
+        self.assertNotIn("--exit-node=", calls[0])
+
+    def test_negative_pre_enrollment_script_never_enrolls(self) -> None:
+        old = subprocess.run(["git", "-C", _ROOT, "show",
+                              f"{_PRE_ENROLL}:usr/libexec/mios/mios-tailscale-sync"],
+                             capture_output=True, text=True)
+        if old.returncode != 0:
+            self.skipTest(f"pre-enrollment revision {_PRE_ENROLL} unavailable")
+        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
+                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
+            f.write(old.stdout)
+        try:
+            defect = check_enrolls(f.name)
+        finally:
+            os.unlink(f.name)
+        self.assertIsNotNone(defect)
+        self.assertIn("never enrolled", defect)
 
     def test_select_matches_hostname_dnsname_or_ip(self) -> None:
         mod = load_sync(_SCRIPT)

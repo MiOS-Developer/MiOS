@@ -195,17 +195,24 @@ class TestOverlayRender(Harness):
         with open(SSOT, "rb") as fh:
             want = tomllib.load(fh)["deployment"]["cloud"]["overlay"]
         self.assertEqual(want, tomllib.loads(render_overlay()))
-        for table in ("ai", "desktop", "blade"):
+        for table in ("ai", "desktop", "blade", "tailscale"):
             self.assertIn(table, want, f"[deployment.cloud.overlay.{table}] is gone")
 
     def test_resolver_merges_the_dropin_both_ways(self):
         self.assertEqual("true", self.get("ai", "firstboot_pulls", "x"))
         self.assertEqual("true", self.get("desktop", "runtime_installs", "x"))
         self.assertEqual("hybrid", self.get("blade", "type", "x"))
+        self.assertEqual("kernel", self.get("tailscale", "mode", "x"))
+        self.assertEqual("false", self.get("tailscale", "advertise_exit_node", "x"))
+        self.assertEqual("", self.get("tailscale", "socks5_server", "x"))
         self.apply_overlay()
         self.assertEqual("false", self.get("ai", "firstboot_pulls", "x"))
         self.assertEqual("false", self.get("desktop", "runtime_installs", "x"))
         self.assertEqual("headless", self.get("blade", "type", "x"))
+        self.assertEqual("userspace", self.get("tailscale", "mode", "x"))
+        self.assertEqual("true", self.get("tailscale", "advertise_exit_node", "x"))
+        self.assertEqual("true", self.get("tailscale", "shields_up", "x"))
+        self.assertEqual("127.0.0.1:1055", self.get("tailscale", "socks5_server", "x"))
 
 
 class TestFirstbootPulls(Harness):

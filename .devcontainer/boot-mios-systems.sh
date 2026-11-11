@@ -116,21 +116,28 @@ mios_create() {
     echo "[devcontainer:post-create] Full MiOS workspace and harness are ready."
 }
 
+# The node's launch parameters are SSOT [tailscale] (a cloud deployment takes
+# [deployment.cloud.overlay.tailscale]: userspace mode, loopback SOCKS5, exit node,
+# shields up); mios-tailscale-sync enrolls it from a pre-auth key file.
 start_tailscale_mesh() {
     command -v tailscaled >/dev/null 2>&1 || return 0
     local ts_state="${XDG_STATE_HOME:-${HOME}/.local/state}/mios/tailscale"
-    mkdir -p "$ts_state"
+    local toml_get=/usr/libexec/mios/mios-toml-get mode socks5
+    [[ -f /workspaces/MiOS/usr/libexec/mios/mios-toml-get ]] && toml_get=/workspaces/MiOS/usr/libexec/mios/mios-toml-get
+    mode="$("$toml_get" tailscale mode kernel 2>/dev/null || echo kernel)"
+    socks5="$("$toml_get" tailscale socks5_server "" 2>/dev/null || true)"
+    (umask 077 && mkdir -p "$ts_state") && chmod 0700 "$ts_state"
     if ! pgrep -x tailscaled >/dev/null 2>&1; then
-        local tun_arg=()
-        [[ -e /dev/net/tun ]] || tun_arg=(--tun=userspace-networking)
-        setsid tailscaled "${tun_arg[@]}" \
-            --statedir="$ts_state" \
-            --socket="$ts_state/tailscaled.sock" \
-            >"$ts_state/tailscaled.log" 2>&1 </dev/null &
+        local args=(--statedir="$ts_state" --socket="$ts_state/tailscaled.sock")
+        [[ "$mode" == userspace || ! -e /dev/net/tun ]] && args+=(--tun=userspace-networking)
+        [[ -n "$socks5" ]] && args+=(--socks5-server="$socks5")
+        (umask 077 && setsid tailscaled "${args[@]}" >"$ts_state/tailscaled.log" 2>&1 </dev/null &)
+        for _ in $(seq 1 20); do [[ -S "$ts_state/tailscaled.sock" ]] && break; sleep 0.5; done
     fi
     if [[ -x /usr/libexec/mios/mios-tailscale-sync ]]; then
         MIOS_TAILSCALE_AUTHKEY="${MIOS_TAILSCALE_AUTHKEY:-${TS_AUTHKEY:-${TAILSCALE_AUTHKEY:-}}}" \
-            /usr/libexec/mios/mios-tailscale-sync >/dev/null 2>&1 || true
+            /usr/libexec/mios/mios-tailscale-sync --socket="$ts_state/tailscaled.sock" \
+            >>"$ts_state/sync.log" 2>&1 || true
     fi
 }
 

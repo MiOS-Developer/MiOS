@@ -57,6 +57,30 @@ variables only to override it. A cold first build can exceed the setup budget:
 past `FEDORA_SETUP_BUDGET_S` the lifecycle is deferred, `mios-dev` says so, and
 `bash /opt/dev-loop-fedora/cloud-fedora-setup.sh --lifecycle` applies it.
 
+### Tailnet enrollment
+
+The cloud overlay (`/etc/mios/mios.d/50-cloud.toml`, rendered from
+`mios.toml [deployment.cloud.overlay]`) carries the node's launch parameters
+in `[deployment.cloud.overlay.tailscale]`: userspace networking (no TUN, an
+HTTPS-only egress proxy, so the tailnet is reached over DERP), a loopback
+SOCKS5 listener at `127.0.0.1:1055`, hostname `mios-cloud` (the tailnet
+suffixes duplicates), an exit-node offer, shields up and no DNS takeover. The
+devcontainer start (`boot-mios-systems.sh start`) launches `tailscaled` with
+them on a private socket and `mios-tailscale-sync` enrolls a logged-out node
+with `tailscale up --auth-key=file:...`.
+
+The pre-auth key is never in this repository, a command line or a log. Give
+the host one of: `TS_AUTHKEY_FILE` (a 0600 file), or `MIOS_TAILSCALE_AUTHKEY` /
+`TS_AUTHKEY` in the session environment. The lifecycle passes it into the
+container by name only (`podman exec -e NAME`), and the sync writes it to a
+temporary 0600 file for the enrollment and deletes it. Use a short-lived,
+pre-authorized key; an exit-node offer still needs approval in the tailnet
+admin console unless an `autoApprovers` rule covers the key's tag. Without a
+key the node stays logged out and `tailscale up` must be run by hand.
+
+SSH to a tailnet peer through the listener:
+`ssh -o ProxyCommand='nc -X 5 -x 127.0.0.1:1055 %h %p' <user>@<tailnet-ip>`.
+
 ## Codex Cloud environment
 
 The main [README's Codex Cloud section](../../README.md#codex-cloud-environment)
