@@ -256,7 +256,7 @@ dynamically only through an explicit, scoped exception in `mios.toml`:
 - `mios-gate static-linkage --census` reports each exempt binary with `exempt_scope` and
   `exempt_reason`, so the exception is visible in the audit output, not only in the SSOT.
 
-The one exception today is MiOS-Portal (`[desktop.portal.gecko]`): Firefox built with Surfer and
+MiOS-Portal (`[desktop.portal.gecko]`) is an upstream exception: Firefox built with Surfer and
 installed under `usr/lib/mios/portal` by phase 67. libxul and its helpers link glibc, GTK, Wayland
 and NSS/NSPR by design, and the artifact lane ships Mozilla's own compiled libxul. Scope consequences:
 
@@ -268,3 +268,42 @@ and NSS/NSPR by design, and the artifact lane ships Mozilla's own compiled libxu
 - `check_portal_product` (tools/drift-checks.py `portal-product`) fails when the exception stops
   naming the product binary, `libxul.so` or `plugin-container`, loses its reason, or leaves the
   audit scopes.
+
+### Accepted host-integrated upstream components
+
+The scoped exception mechanism also covers the existing RDP components and the
+accepted C95 tmux and private R2 greetd backends. C95 is upstream tmux 3.7c plus
+the pinned MiOS desktop patch. R2 is upstream greetd plus the pinned remote PAM
+patch. Neither is built from the MiOS Rust workspaces. These exceptions do not
+relax the fully static musl/static-PIE requirement for MiOS-built native Rust,
+including the MiOS desktop/login frontend, or for the historical fan artifact.
+
+C95 and R2 retain their existing canonical paths under `usr/libexec/mios`.
+That directory is an audit scope scanned in full. Each exception names only its
+one accepted executable and an `allowed_needed` set taken from the actual
+hash-checked ELF: C95 uses libtinfo, libevent_core, libm, libresolv and libc; R2
+uses libpam, libpam_misc, libgcc_s and libc. Other ELF names in that directory,
+the same names outside the scope, additional dependencies and missing reasons
+remain failures. Exact accepted component SHA-256 values and native/runtime
+acceptance receipts remain required independently of the linkage policy.
+
+The private greetd backend intentionally participates in the host Linux PAM
+module ABI: authentication modules are dynamically loaded. Its dynamic linkage
+is recorded explicitly; the static MiOS frontend does not inherit its exception.
+
+Tmux supports `--enable-static`; this exception does not claim that static tmux
+is unsupported. The accepted C95 build used the existing Fedora shared libraries.
+The observed native dependency probe found no libevent/libevent_core, tinfo,
+ncursesw, libc or PAM static archives at the checked `/usr/lib64` paths.
+`musl-gcc` exists; absence at one guessed musl libc archive path is not evidence
+that all musl libc inputs are missing. A future static tmux target must seal the
+musl-compatible libevent and ncurses inputs, produce the x86_64 static-PIE ELF
+required by SSOT, and repeat the actual focus, zoom, pointer, layout and timer
+acceptance against the newly hashed backend. Existing C95 acceptance cannot
+certify a differently linked artifact.
+
+Build-time component audits stage exact accepted bytes under the canonical
+install-directory suffix and use the gate's `--census` output. These results say
+`exempt`, with the approved scope, reason, interpreter and actual dependencies;
+they must never be relabelled as static. MiOS native binaries and the fan remain
+unexempt static ELF checks. Previously failed linkage receipts remain immutable.
