@@ -17638,9 +17638,9 @@ tools/native/mios-gen/src/global_bindings.rs	1673	1673	1	13	2751739b9204	STAY	lo
 tools/native/mios-gen/src/global_bindings.rs	1685	1687	3	46	3ff15874e5fc	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:3ff15874e5fc	46	0
 tools/native/mios-gen/src/global_bindings.rs	1731	1731	1	4	bea7cf07e06b	STAY	local-scoped		0				0
 tools/native/mios-gen/src/global_bindings.rs	1764	1764	1	11	321682895274	STAY	local-scoped		0				0
-tools/native/mios-gen/src/global_bindings.rs	1795	1795	1	6	de5104bf3663	STAY	local-scoped		0				0
-tools/native/mios-gen/src/global_bindings.rs	1824	1824	1	8	585684467535	STAY	local-scoped		0				0
-tools/native/mios-gen/src/global_bindings.rs	1836	1836	1	19	d7b1e42728c4	STAY	local-scoped		0				0
+tools/native/mios-gen/src/global_bindings.rs	1817	1817	1	6	de5104bf3663	STAY	local-scoped		0				0
+tools/native/mios-gen/src/global_bindings.rs	1846	1846	1	8	585684467535	STAY	local-scoped		0				0
+tools/native/mios-gen/src/global_bindings.rs	1858	1858	1	19	d7b1e42728c4	STAY	local-scoped		0				0
 tools/native/mios-gen/src/gpu_topology.rs	1	8	8	91	be0cb1e3c6c1	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/gpu_topology.rs	18	18	1	19	2cd0e872a43e	STAY	local-scoped		0				0
 tools/native/mios-gen/src/gpu_topology.rs	32	32	1	7	1f61f87f00c5	STAY	local-scoped		0				0

@@ -1775,23 +1775,45 @@ end
     #[test]
     fn overlay_controller_rows_come_from_the_ssot() {
         let r = rows(&vendor());
-        assert!(has(&r, "Pad L3 + R3", "release capture"), "{r:#?}");
+        assert!(
+            has(&r, "Pad L3 + R3", "Attach/detach focused window controls")
+                && has(&r, "Pad L3 + R3", "release returns cursor"),
+            "{r:#?}"
+        );
         assert!(
             has(&r, "Pad Guide + D-pad left", "Focus left")
                 && has(&r, "Pad Guide + East", "Close window")
         );
+        assert!(has(&r, "Pad North", "Capture the aimed window"));
         assert!(
-            has(&r, "Pad North", "Capture the aimed window") && has(&r, "Pad Start", "Cursor mode")
+            !has(&r, "Pad Start", "Cursor mode"),
+            "app options reserve Start when start_options is enabled: {r:#?}"
         );
+        let mut legacy = vendor();
+        legacy["keybindings"]["global"]["controller"]["global_capture_toggle"] =
+            Value::Boolean(false);
+        legacy["keybindings"]["global"]["controller"]["nav"]["start_options"] =
+            Value::Boolean(false);
+        let legacy_rows = rows(&legacy);
+        assert!(has(&legacy_rows, "Pad L3 + R3", "release capture"));
+        assert!(has(&legacy_rows, "Pad Start", "Cursor mode"));
         let mut d = vendor();
         d["desktop"]["hyprland"]["hypr3d"]["controller"]["toggle_chord"] =
             Value::Array(vec!["BTN_TL".into(), "BTN_TR".into()]);
         let r = rows(&d);
-        assert!(has(&r, "Pad LB + RB", "release capture"), "{r:#?}");
+        assert!(
+            has(&r, "Pad LB + RB", "Attach/detach focused window controls"),
+            "{r:#?}"
+        );
         assert!(
             !r.iter().any(|(k, _)| k.contains("L3 + R3")),
             "no hard-coded L3 + R3"
         );
+        legacy["desktop"]["hyprland"]["hypr3d"]["controller"]["toggle_chord"] =
+            Value::Array(vec!["BTN_TL".into(), "BTN_TR".into()]);
+        let legacy_rows = rows(&legacy);
+        assert!(has(&legacy_rows, "Pad LB + RB", "release capture"));
+        assert!(!legacy_rows.iter().any(|(k, _)| k.contains("L3 + R3")));
         // controller rows follow the master toggle
         let mut off = vendor();
         off["keybindings"]["controller"]["enabled"] = Value::Boolean(false);
