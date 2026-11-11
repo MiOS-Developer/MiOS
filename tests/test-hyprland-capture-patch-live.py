@@ -164,8 +164,10 @@ def main():
     ap.add_argument("--seat", required=True)
     ap.add_argument("--scenario", choices=["orphan", "closed", "both"], default="both")
     ap.add_argument("--expect", choices=["crash", "survive", "report"], default="report")
-    ap.add_argument("--logdir", default=tempfile.mkdtemp(prefix="capguard-"))
+    ap.add_argument("--logdir")
     a = ap.parse_args()
+    if a.logdir is None:
+        a.logdir = tempfile.mkdtemp(prefix="mios-capture-guard-")
     n = Nest(session(a.seat))
     os.makedirs(a.logdir, exist_ok=True)
     qml = os.path.join(a.logdir, "harness.qml")

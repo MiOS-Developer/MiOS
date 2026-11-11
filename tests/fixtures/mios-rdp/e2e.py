@@ -238,7 +238,7 @@ def main():
     label = opt("--label", "run")
     secs = float(opt("--seconds", "15"))
     window = opt("--window", "none")
-    d = opt("--dir", os.environ.get("MIOS_RDP_LIVE_DIR") or tempfile.mkdtemp(prefix="mios-rdp-e2e-"))
+    d = opt("--dir", os.environ.get("MIOS_RDP_LIVE_DIR")) or tempfile.mkdtemp(prefix="mios-rdp-e2e-")
     extra = a[a.index("--") + 1:] if "--" in a else []
     ensure_cert(d)
     if not os.path.exists(f"{d}/native.json"):
