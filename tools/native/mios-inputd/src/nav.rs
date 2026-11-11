@@ -233,8 +233,8 @@ impl NavConfig {
         }
         for (context, p) in &cfg.contexts {
             if p == "vpad" {
-                if context == "console" {
-                    return Err("nav.contexts.console: a VT has no virtual-pad consumer; name a profile".into());
+                if context == "console" || context == "shell" {
+                    return Err(format!("nav.contexts.{context}: no virtual-pad consumer; name a profile"));
                 }
                 continue;
             }
@@ -245,7 +245,14 @@ impl NavConfig {
             for n in names {
                 for (input, value) in &cfg.profiles[&n] {
                     let name = input.name();
-                    if context == "console" {
+                    if context == "shell" {
+                        // A focused shell layer owns the keyboard; no window capture or host command behind it.
+                        for action in value.actions() {
+                            if action!="none" && !action.starts_with("key:") {
+                                return Err(format!("nav.{n}.{name}: shell navigation uses key: or none"));
+                            }
+                        }
+                    } else if context == "console" {
                         // I3 (C-23): no compositor, shell or room on a VT: only projections that reach a VT.
                         for a in value.actions() {
                             if !console_capable(a) {
@@ -500,6 +507,21 @@ pub fn stroke(chord: &KeyChord) -> Vec<crate::router::Event> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shell_rows_use_only_keyboard_actions_but_may_claim_contract_buttons() {
+        let namespaces=vec!["key".into(),"quickshell".into(),"input".into()];
+        let keys=BTreeSet::new();
+        let ctx=super::Ctx {namespaces:&namespaces,tmux_prefix_keys:&keys,contexts:&["shell"],deadzone:0.15};
+        let parse=|body:&str| {
+            let value:toml::Value=format!("enabled=true\n[contexts]\nshell='shell'\n[shell]\n{body}").parse().unwrap();
+            super::NavConfig::from_value(Some(&value),&ctx)
+        };
+        assert!(parse("BTN_NORTH='key:COMPOSE'\nBTN_START='key:ENTER'\nTOGGLE_CHORD='key:ESC'").is_ok());
+        assert!(parse("BTN_NORTH='quickshell:drawer-toggle'").unwrap_err().contains("shell navigation"));
+        let value:toml::Value="enabled=true\n[contexts]\nshell='vpad'".parse().unwrap();
+        assert!(super::NavConfig::from_value(Some(&value),&ctx).unwrap_err().contains("no virtual-pad consumer"));
+    }
+
     use super::*;
     #[test]
     fn key_chords_parse_to_us_codes() {

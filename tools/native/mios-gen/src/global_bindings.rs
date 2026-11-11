@@ -21,6 +21,29 @@ fn bypass_prefix(data: &Value) -> Result<String,String> {
     let c=canonical(&format!("{m}+x"),"\0")?;
     Ok(c.strip_suffix("+x").ok_or("bypass_mod must be modifiers only")?.to_owned())
 }
+/// Explicit global action escapes are resolved to chords before literal handles are registered.
+fn always_active_chords(data:&Value,sep:&str)->Result<std::collections::BTreeSet<String>,String> {
+    let mut chords=std::collections::BTreeSet::new();
+    let Some(value)=at(data,"keybindings.global.always_active_actions") else {return Ok(chords)};
+    let actions=value.as_array().ok_or("global.always_active_actions must be an array of action strings")?
+        .iter().map(|action|action.as_str().filter(|action|!action.is_empty())
+            .ok_or("global.always_active_actions must contain nonempty action strings")).collect::<Result<std::collections::BTreeSet<_>,_>>()?;
+    if actions.is_empty() {return Ok(chords);}
+    let bindings=at(data,"keybindings.global.bindings").and_then(Value::as_array).ok_or("missing global bindings")?;
+    for binding in bindings {
+        if binding.get("scope").and_then(Value::as_str)==Some("app")
+            || !binding.get("action").and_then(Value::as_str).is_some_and(|action|actions.contains(action)) {continue;}
+        let chord=binding.get("chord").and_then(Value::as_str).ok_or("binding chord missing")?;
+        if chord.starts_with("BTN_") {continue;}
+        let chord=canonical(chord,sep)?;
+        if chord.contains(sep) {return Err("host multi-step chords require an explicit native submap".into());}
+        if let Some(keys)=release_chords(binding,&chord,sep)? {
+            for key in keys {chords.insert(canonical(&key,sep)?);}
+        }
+        chords.insert(chord);
+    }
+    Ok(chords)
+}
 fn is_bypass(chord: &str, prefix: &str) -> bool { chord.strip_prefix(prefix).is_some_and(|r|r.starts_with('+')) }
 /// Evaluate the literal part of a Lua string expression ("a" .. " + " .. "b"); None when any part is dynamic.
 fn lua_literal(expr: &str) -> Option<String> {
@@ -89,14 +112,17 @@ pub fn release_chords(binding:&Value,chord:&str,sep:&str)->Result<Option<Vec<Str
 }
 pub fn prelude(data: &Value) -> Result<String,String> {
     if at(data,"keybindings.global.enabled").and_then(Value::as_bool)!=Some(true) {return Ok(String::new());}
+    let sep=at(data,"keybindings.global.chord_sep").and_then(Value::as_str).ok_or("missing chord separator")?;
+    let always=always_active_chords(data,sep)?.into_iter().map(|chord|format!("[{}]=true",q(&chord))).collect::<Vec<_>>().join(",");
     // A local hl proxy captures only handles created by this projection. No
     // monkey-patching the compositor API or rewriting another client's bindings.
     // Every handle on bypass_mod is an escape (C-36): it keeps working, uninhibited, in app-capture and vm-passthrough.
     Ok(format!(r#"
--- MiOS global policy: native handles retain app shortcut inhibition by default; bypass_mod handles are escapes.
+-- MiOS global policy: ordinary handles respect app inhibition; bypass_mod and explicit global actions are escapes.
 local mios_native_hl = hl
 local mios_input_handles = {{}}
 local mios_input_bypass = {}
+local mios_input_always = {{{}}}
 local function mios_input_canonical(key)
  key=key:gsub('%s','')
  local mods,leaf={{}},nil
@@ -111,7 +137,7 @@ local function mios_input_canonical(key)
 end
 local function mios_input_is_bypass(key)
  local c=mios_input_canonical(key)
- return c:sub(1,#mios_input_bypass+1)==mios_input_bypass..'+'
+ return mios_input_always[c]==true or c:sub(1,#mios_input_bypass+1)==mios_input_bypass..'+'
 end
 local hl = setmetatable({{}}, {{__index=mios_native_hl}})
 hl.bind = function(key, dispatcher, flags)
@@ -125,7 +151,7 @@ hl.bind = function(key, dispatcher, flags)
  if handle then table.insert(mios_input_handles, {{handle=handle,key=key,dispatcher=dispatcher,flags=flags,escape=escape}}) end
  return handle
 end
-"#,q(&bypass_prefix(data)?)))
+"#,q(&bypass_prefix(data)?),always))
 }
 /// The global-input section. `literal` is the Lua emitted before it: rows whose chord it already binds get no
 /// dispatch bind of their own (no double binds, C-22).
@@ -134,6 +160,7 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
     let bindings=at(data,"keybindings.global.bindings").and_then(Value::as_array).ok_or("missing global bindings")?;
     let sep=at(data,"keybindings.global.chord_sep").and_then(Value::as_str).ok_or("missing chord separator")?;
     let prefix=bypass_prefix(data)?;
+    let always=always_active_chords(data,sep)?;
     let bound=literal_binds(literal,sep);
     let ctl=|k:&str| at(data,&format!("keybindings.global.controller.{k}"));
     let mut out=String::from("\nmios_section(\"global-input\", function()\n local policies={}\n local escapes={}\n");
@@ -158,7 +185,7 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
             // A modifier-only chord: every modifier key of the chord is a release handle (one fires per chord, in
             // either press order; none fires once another key was pressed, so SUPER+CTRL+<key> binds still work).
             let action=binding.get("action").and_then(Value::as_str).ok_or("binding action missing")?;
-            let escape=is_bypass(&chord,&prefix);
+            let escape=is_bypass(&chord,&prefix) || always.contains(&chord);
             for k in keys {
                 let c=canonical(&k,sep)?;
                 if c!=chord {out+=&format!(" policies[{}]=policies[{}]\n",q(&c),q(&chord));}
@@ -166,7 +193,7 @@ pub fn finish(data: &Value, literal: &str) -> Result<String,String> {
             }
             continue;
         }
-        let escape=is_bypass(&chord,&prefix);
+        let escape=is_bypass(&chord,&prefix) || always.contains(&chord);
         let flags=if escape {",{dont_inhibit=true,submap_universal=true}"} else {""};
         // C-22: the literal bind on this chord realizes the row -> no second handle. A literal that runs a different
         // action would make the row dead (no handle of its own) and hide the collision, so it is an error (D1).
@@ -522,7 +549,8 @@ mod tests {
     #[test] fn remapping_has_one_source() {let mut d:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();let b=d["keybindings"]["global"]["bindings"].as_array_mut().unwrap().iter_mut().find(|b|b["id"].as_str()==Some("fullscreen")).unwrap();b["chord"]=Value::String("SUPER+F10".into());assert_eq!(key(&d,"fullscreen","SUPER+F11"),"SUPER+F10");}
     #[test]
     fn native_tag_context_and_hold_release_lifecycle() {
-        let data:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        let mut data:Value=toml::from_str(include_str!("../../../../usr/share/mios/mios.toml")).unwrap();
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec![]));
         let fixture=r#"
 local window={address='0xabc',pid=42,class='looking-glass-client',tags={'mios-input-vm-passthrough*'}}
 local events,hooks,handles={},{},{}
@@ -631,6 +659,70 @@ local function handle(key) for _,v in ipairs(MIOS_INPUT_POLICY.handles) do if v.
         assert!(output.status.success()&&output.stdout.ends_with(b"ok"),"{}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
     }
 
+
+    #[test]
+    fn always_active_dock_uses_one_uninhibited_literal_handle_in_capture_and_vm() {
+        let mut data=vendor();
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec!["quickshell:drawer-toggle".into()]));
+        let literal="hl.bind(\"SUPER + Space\",hl.dsp.exec_cmd(\"quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call drawer toggle\"))\nassert(handles[#handles].flags.dont_inhibit and handles[#handles].flags.submap_universal,'flags must be set at native registration')\nhl.bind(\"SUPER + C\",hl.dsp.window.close())";
+        let rendered=finish(&data,literal).unwrap();
+        assert!(!rendered.contains("mios_native_hl.bind(\"SUPER+space\""),"reuse the actual literal handle");
+        run_lua(&data,literal,r#"
+local p=MIOS_INPUT_POLICY
+local dock=handle('SUPER + Space')
+local bypass=handle('SUPER+CTRL+space')
+local close=handle('SUPER + C')
+assert(dock and dock.escape and dock.handle.flags.dont_inhibit and dock.handle.flags.submap_universal)
+assert(bypass and bypass.escape and bypass.handle.flags.dont_inhibit and bypass.handle.flags.submap_universal)
+local count=0
+for _,v in ipairs(p.handles) do if mios_input_canonical(v.key)=='SUPER+space' then count=count+1 end end
+assert(count==1,'there must be exactly one normal dock handle')
+for _,tags in ipairs({{'mios-input-captured'},{'mios-input-game','mios-input-captured'},{'mios-input-vm-passthrough'},{'mios-input-vm-passthrough','mios-input-captured'}}) do
+ window.tags=tags;p.refresh()
+ assert(dock.handle.enabled and bypass.handle.enabled,'both dock shortcuts escape capture/VM inhibition')
+ assert(not close.handle.enabled,'ordinary window-close remains with the captured app/VM')
+end
+window.tags={};p.refresh();assert(close.handle.enabled)
+"#);
+    }
+    #[test]
+    fn always_active_escape_follows_action_remaps_and_an_empty_list_restores_inhibition() {
+        let mut data=vendor();
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec!["quickshell:drawer-toggle".into()]));
+        data["keybindings"]["global"]["bindings"].as_array_mut().unwrap().iter_mut()
+            .find(|row|row["action"].as_str()==Some("quickshell:drawer-toggle")).unwrap()["chord"]="SUPER+F8".into();
+        let literal="hl.bind(\"SUPER + F8\",hl.dsp.exec_cmd(\"quickshell ipc --path /usr/share/mios/quickshell/Config.qml --any-display call drawer toggle\"))\nhl.bind(\"SUPER + Space\",hl.dsp.exec_cmd(\"unrelated\"))";
+        run_lua(&data,literal,r#"
+window.tags={'mios-input-captured'};MIOS_INPUT_POLICY.refresh()
+assert(handle('SUPER + F8').escape and handle('SUPER + F8').handle.enabled)
+assert(not handle('SUPER + Space').escape and not handle('SUPER + Space').handle.enabled)
+"#);
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec![]));
+        run_lua(&data,literal,r#"
+window.tags={'mios-input-captured'};MIOS_INPUT_POLICY.refresh()
+assert(not handle('SUPER + F8').escape and not handle('SUPER + F8').handle.enabled)
+assert(not handle('SUPER + F8').handle.flags.dont_inhibit)
+assert(handle('SUPER+CTRL+space').handle.enabled,'the explicit bypass remains available')
+"#);
+    }
+    #[test]
+    fn always_active_rows_validate_types_ignore_app_scope_and_cover_generated_handles() {
+        let mut data=vendor();
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec!["quickshell:drawer-toggle".into()]));
+        let mut app:Value=toml::from_str("id='app-dock'\ntier=3\nscope='app'\nchord='ALT+F7'\naction='quickshell:drawer-toggle'").unwrap();
+        app["scope"]="app".into();data["keybindings"]["global"]["bindings"].as_array_mut().unwrap().push(app);
+        assert!(!always_active_chords(&data," ").unwrap().contains("ALT+f7"));
+        run_lua(&data,"",r#"
+window.tags={'mios-input-captured'};MIOS_INPUT_POLICY.refresh()
+assert(handle('SUPER+space').escape and handle('SUPER+space').handle.enabled)
+assert(handle('SUPER+space').handle.flags.dont_inhibit and handle('SUPER+space').handle.flags.submap_universal)
+"#);
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),"quickshell:drawer-toggle".into());
+        assert!(prelude(&data).unwrap_err().contains("must be an array"));
+        data["keybindings"]["global"].as_table_mut().unwrap().insert("always_active_actions".into(),Value::Array(vec![3.into()]));
+        assert!(prelude(&data).unwrap_err().contains("nonempty action strings"));
+    }
+
     /// C-36: every handle on bypass_mod is an escape (uninhibited, alive in app-capture and vm-passthrough); a chord
     /// off bypass_mod stays disabled there, including SUPER+ALT (not a prefix of SUPER+CTRL).
     #[test]
@@ -644,7 +736,7 @@ assert(scale and scale.escape==true,'session-scale handle must be an escape')
 assert(scale.handle.flags.dont_inhibit and scale.handle.flags.submap_universal,'escape must be uninhibited')
 assert(lit and lit.escape==true and lit.handle.flags.dont_inhibit,'a literal bypass_mod bind is an escape too')
 assert(close and not close.escape and alt and not alt.escape,'off-bypass handles are not escapes')
-window.fullscreen=2;p.refresh();assert(p.context()=='app-capture')
+window.fullscreen=2;window.tags={'mios-input-captured'};p.refresh();assert(p.context()=='app-capture')
 assert(scale.handle.enabled and lit.handle.enabled,'bypass chords reach the host in app-capture')
 assert(not close.handle.enabled and not alt.handle.enabled,'Super+C / Super+Alt stay with the captured app')
 window.fullscreen=0;window.class='looking-glass-client';window.tags={'mios-input-vm-passthrough*'};p.refresh()
@@ -662,7 +754,7 @@ window.tags={};p.refresh();assert(p.context()=='desktop-2d' and close.handle.ena
         run_lua(&d,"",r#"
 local scale=handle('SUPER+CTRL+equal')
 assert(scale and scale.escape==false and not scale.handle.flags.dont_inhibit)
-window.fullscreen=2;MIOS_INPUT_POLICY.refresh();assert(not scale.handle.enabled)
+window.fullscreen=2;window.tags={'mios-input-captured'};MIOS_INPUT_POLICY.refresh();assert(not scale.handle.enabled)
 "#);
     }
 
@@ -685,23 +777,63 @@ window.tags={'mios-input-captured'};assert(p.context()=='app-capture')
 "#);
     }
 
-    /// GT parity (C-35): the Lua predicate and mios-inputd's context template agree on every combination of
-    /// {fullscreen, capture_tag, input_owner}. release_tag joins the parity set when the inputd template reads it
-    /// (step I1); until then the Lua side alone is checked for it (capture_predicate_covers_input_owner_and_release_tag).
+    /// Fullscreen is geometry by default; only explicit ownership suppresses navigation.
+    #[test]
+    fn fullscreen_geometry_preserves_navigation_and_explicit_capture() {
+        let d = vendor();
+        assert_eq!(d["keybindings"]["global"]["controller"]["capture_fullscreen"].as_bool(), Some(false));
+        run_lua(&d, "", r#"
+local p=MIOS_INPUT_POLICY
+for _,entry in ipairs({
+ {'Alacritty','mios-input-terminal*','terminal'},
+ {'steam_app_570','mios-input-game*','game'},
+ {'looking-glass-client','mios-input-vm-passthrough*','vm-passthrough'},
+ {'org.any.Flatpak',nil,'desktop-2d'}
+}) do
+ window.class=entry[1];window.fullscreen=2;owner=0
+ window.tags=entry[2] and {entry[2]} or {}
+ assert(not p.captured(window),entry[1]..': fullscreen geometry is not ownership')
+ assert(p.context()==entry[3],entry[1]..': fullscreen retains its uncaptured context')
+ table.insert(window.tags,'mios-input-captured*')
+ assert(p.captured(window) and p.context()=='app-capture',entry[1]..': explicit North capture still owns input')
+ table.insert(window.tags,'mios-input-released*')
+ assert(not p.captured(window) and p.context()==entry[3],entry[1]..': release cancels explicit capture')
+ window.tags=entry[2] and {entry[2]} or {};owner=0xabc
+ assert(p.captured(window),entry[1]..': explicit room owner still captures')
+ table.insert(window.tags,'mios-input-released*')
+ assert(not p.captured(window),entry[1]..': release cancels room owner')
+end
+"#);
+        let mut automatic = d;
+        automatic["keybindings"]["global"]["controller"]["capture_fullscreen"] = Value::Boolean(true);
+        run_lua(&automatic, "", r#"
+local p=MIOS_INPUT_POLICY
+window.fullscreen=2;window.tags={};owner=0
+assert(p.captured(window) and p.context()=='app-capture','operator opt-in retains automatic fullscreen capture')
+window.tags={'mios-input-released*'}
+assert(not p.captured(window),'release overrides automatic capture')
+"#);
+    }
+
+    /// GT parity (C-35): test both fullscreen policies against inputd's independent fallback.
     #[test]
     fn capture_predicate_matches_the_inputd_template() {
-        let runtime=include_str!("../../mios-inputd/src/runtime.rs");
-        let start=runtime.find("let template=r#\"").expect("inputd context template")+"let template=r#\"".len();
-        let template=&runtime[start..start+runtime[start..].find("\"#;").unwrap()];
-        let template=template.replace("CAPTURE_FULLSCREEN","true").replace("CAPTURE_TAG","\"mios-input-captured\"");
-        let with_release=template.contains("RELEASE_TAG");
-        let template=template.replace("RELEASE_TAG","\"mios-input-released\"");
-        let mut d=vendor();
-        if with_release {d["keybindings"]["global"]["controller"].as_table_mut().unwrap().insert("release_tag".into(),Value::String("mios-input-released".into()));}
-        let n=if with_release {16} else {8};
-        let checks=format!(r#"
--- inputd's own copy: the template's fallback, with the generated policy hidden (a template that delegates to
--- MIOS_INPUT_POLICY.captured when present would otherwise compare the predicate with itself).
+        let runtime = include_str!("../../mios-inputd/src/runtime.rs");
+        let start = runtime.find("let template=r#\"").expect("inputd context template") + "let template=r#\"".len();
+        let template = &runtime[start..start + runtime[start..].find("\"#;").unwrap()];
+        let with_release = template.contains("RELEASE_TAG");
+        for capture_fullscreen in [false, true] {
+            let template = template.replace("CAPTURE_FULLSCREEN", if capture_fullscreen {"true"} else {"false"})
+                .replace("CAPTURE_TAG", "\"mios-input-captured\"")
+                .replace("RELEASE_TAG", "\"mios-input-released\"");
+            let mut d = vendor();
+            d["keybindings"]["global"]["controller"]["capture_fullscreen"] = Value::Boolean(capture_fullscreen);
+            if with_release {
+                d["keybindings"]["global"]["controller"].as_table_mut().unwrap().insert(
+                    "release_tag".into(), Value::String("mios-input-released".into()));
+            }
+            let n = if with_release {16} else {8};
+            let checks = format!(r#"
 local function inputd(w)
  local f=load({tpl})
  local saved=MIOS_INPUT_POLICY; MIOS_INPUT_POLICY=nil
@@ -718,8 +850,9 @@ for i=0,{last} do
  local a,b=MIOS_INPUT_POLICY.captured(window),inputd(window)
  assert(a==b,string.format('combination %d: lua=%s inputd=%s',i,tostring(a),tostring(b)))
 end
-"#,tpl=serde_json::to_string(&template).unwrap(),last=n-1);
-        run_lua(&d,"",&checks);
+"#, tpl=serde_json::to_string(&template).unwrap(), last=n-1);
+            run_lua(&d, "", &checks);
+        }
     }
 
     /// C-22: a row whose chord the compositor binds literally gets no second dispatch bind, and its bypass becomes the
@@ -745,7 +878,7 @@ for _,v in ipairs(MIOS_INPUT_POLICY.handles) do
 end
 assert(n==1,'exactly one Print handle, got '..n)
 assert(esc==1,'exactly one SUPER+CTRL+Print escape, got '..esc)
-window.fullscreen=2;MIOS_INPUT_POLICY.refresh()
+window.fullscreen=2;window.tags={'mios-input-captured'};MIOS_INPUT_POLICY.refresh()
 for _,v in ipairs(MIOS_INPUT_POLICY.handles) do
  if v.key=='SUPER+CTRL+print' then assert(v.handle.enabled,'screenshot bypass works over a captured app') end
  if v.key=='Print' then assert(not v.handle.enabled,'plain Print belongs to the captured app') end
