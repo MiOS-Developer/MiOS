@@ -43,9 +43,9 @@ are all in scope. Design ahead of hardware is legitimate here; presenting a
 | | Measured | Note |
 |---|---:|---|
 | Runs on | MiOS-DEV VM / WSL | Bare metal is **untried**; blade/mesh/vfio behaviour is design, not observation. |
-| Tracked files | 4,303 | The reading surface. |
-| Tracked size | 694 MB | Two vendored assets are most of it. |
-| Shell / Python / PowerShell / Rust | 68k / 338k / 35k / 299k lines | Law 14 makes Rust the native tier; PowerShell currently outweighs it 0.1x. |
+| Tracked files | 4,328 | The reading surface. |
+| Tracked size | 695 MB | Two vendored assets are most of it. |
+| Shell / Python / PowerShell / Rust | 68k / 340k / 35k / 318k lines | Law 14 makes Rust the native tier; PowerShell currently outweighs it 0.1x. |
 | Drift checks | 244 | Falsifiability audited per check, not assumed. |
 | Units reproducing from SSOT | 51 faithful of 283 | 52 registered as drifting: the largest hole in part 1 of the thesis. |
 <!-- ROADMAP_METRICS_END -->

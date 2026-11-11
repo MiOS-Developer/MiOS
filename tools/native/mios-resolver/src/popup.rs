@@ -1,5 +1,5 @@
 // AI-hint: Shared MiOS popup bounds inherited from existing launch sizes and font cells; centered consumers retain their own scrolling and input ownership.
-// AI-related: usr/share/mios/mios.toml [terminal.popups], miosd launcher, mios-gen tmux-os, mios-tamagotchi
+// AI-related: usr/share/mios/mios.toml [terminal.popups], miosd launcher, mios-gen tmux-os, mios-mons
 
 use toml::Value;
 
@@ -18,6 +18,212 @@ pub struct PopupPolicy {
     cell_width: f64,
     cell_height: f64,
     aspect: f64,
+}
+
+/// A rectangle in terminal cells, including any border allowance selected by
+/// the consumer. Geometry has no process, client, or input ownership authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SpiralPolicy {
+    share: f64,
+    start: u8,
+    clockwise: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpiralSplit {
+    pub cell: CellRect,
+    pub remainder: CellRect,
+    pub direction: u8,
+}
+
+impl SpiralPolicy {
+    /// Reuse the existing workspace SSOT for both tiled and floating cells.
+    pub fn from_workspace(workspace: &Value) -> Result<Self, String> {
+        let ratio = workspace.get("golden_ratio").map_or_else(
+            || Ok((1.0 + 5.0_f64.sqrt()) / 2.0),
+            |v| {
+                v.as_float()
+                    .filter(|n| n.is_finite() && *n > 1.0 && *n < 2.0)
+                    .ok_or_else(|| "invalid workspace golden_ratio".to_owned())
+            },
+        )?;
+        let layout = workspace.get("layout");
+        if layout.is_some_and(|v| !v.is_table()) {
+            return Err("workspace layout must be a table".into());
+        }
+        let field = |name: &str| layout.and_then(|v| v.get(name));
+        let share = field("spiral_share").map_or(Ok(1.0 / ratio), |v| {
+            v.as_float()
+                .filter(|n| n.is_finite() && (0.1..=0.9).contains(n))
+                .ok_or_else(|| "invalid workspace spiral_share".to_owned())
+        })?;
+        let start = match field("spiral_start")
+            .and_then(Value::as_str)
+            .unwrap_or("down")
+        {
+            "right" => 0,
+            "down" => 1,
+            "left" => 2,
+            "up" => 3,
+            _ => return Err("invalid workspace spiral_start".into()),
+        };
+        let clockwise = match field("spiral_turn")
+            .and_then(Value::as_str)
+            .unwrap_or("clockwise")
+        {
+            "clockwise" => true,
+            "counterclockwise" => false,
+            _ => return Err("invalid workspace spiral_turn".into()),
+        };
+        for name in ["spiral_start", "spiral_turn"] {
+            if field(name).is_some_and(|v| !v.is_str()) {
+                return Err(format!("invalid workspace {name}"));
+            }
+        }
+        Ok(Self {
+            share,
+            start,
+            clockwise,
+        })
+    }
+
+    pub fn start(&self) -> u8 {
+        self.start
+    }
+
+    pub fn turn(&self, direction: u8) -> u8 {
+        (direction % 4 + if self.clockwise { 1 } else { 3 }) % 4
+    }
+
+    /// A failed preferred direction may turn once, matching the established
+    /// native workspace planner. Never enlarge a fitted cell over its neighbor.
+    pub fn split(
+        &self,
+        area: CellRect,
+        direction: u8,
+        minimum: (u32, u32),
+        gap: u32,
+    ) -> Result<SpiralSplit, String> {
+        if minimum.0 == 0
+            || minimum.1 == 0
+            || area.width < minimum.0
+            || area.height < minimum.1
+            || area.x.checked_add(area.width).is_none()
+            || area.y.checked_add(area.height).is_none()
+        {
+            return Err("spiral has no usable terminal area".into());
+        }
+        for direction in [direction % 4, self.turn(direction % 4)] {
+            let horizontal = direction.is_multiple_of(2);
+            let size = if horizontal { area.width } else { area.height };
+            let floor = if horizontal { minimum.0 } else { minimum.1 };
+            let Some(available) = size.checked_sub(gap) else {
+                continue;
+            };
+            let first = (f64::from(available) * self.share).round() as u32;
+            let rest = available.saturating_sub(first);
+            if first < floor || rest < floor {
+                continue;
+            }
+            let (cell, remainder) = match direction {
+                0 => (
+                    CellRect {
+                        width: first,
+                        ..area
+                    },
+                    CellRect {
+                        x: area.x + first + gap,
+                        width: rest,
+                        ..area
+                    },
+                ),
+                1 => (
+                    CellRect {
+                        height: first,
+                        ..area
+                    },
+                    CellRect {
+                        y: area.y + first + gap,
+                        height: rest,
+                        ..area
+                    },
+                ),
+                2 => (
+                    CellRect {
+                        x: area.x + rest + gap,
+                        width: first,
+                        ..area
+                    },
+                    CellRect {
+                        width: rest,
+                        ..area
+                    },
+                ),
+                _ => (
+                    CellRect {
+                        y: area.y + rest + gap,
+                        height: first,
+                        ..area
+                    },
+                    CellRect {
+                        height: rest,
+                        ..area
+                    },
+                ),
+            };
+            return Ok(SpiralSplit {
+                cell,
+                remainder,
+                direction,
+            });
+        }
+        Err("spiral cannot fit the requested terminal cells".into())
+    }
+
+    /// Only real panes are supplied by callers. Failure leaves all existing
+    /// window geometry untouched so the caller can retain compact popups.
+    pub fn partition(
+        &self,
+        area: CellRect,
+        count: usize,
+        minimum: (u32, u32),
+        gap: u32,
+    ) -> Result<Vec<CellRect>, String> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if area.width < minimum.0
+            || area.height < minimum.1
+            || minimum.0 == 0
+            || minimum.1 == 0
+            || area.x.checked_add(area.width).is_none()
+            || area.y.checked_add(area.height).is_none()
+        {
+            return Err("spiral has no usable terminal area".into());
+        }
+        let mut cells = Vec::new();
+        let mut remaining = area;
+        let mut direction = self.start;
+        for index in 0..count {
+            if index + 1 == count {
+                cells.push(remaining);
+                break;
+            }
+            let step = self.split(remaining, direction, minimum, gap)?;
+            cells.push(step.cell);
+            remaining = step.remainder;
+            direction = self.turn(step.direction);
+        }
+        Ok(cells)
+    }
 }
 
 fn at<'a>(root: &'a Value, key: &str) -> Result<&'a Value, String> {
@@ -130,6 +336,87 @@ mod tests {
         include_str!("../../../../usr/share/mios/mios.toml")
             .parse()
             .unwrap()
+    }
+
+    #[test]
+    fn golden_blueprint_partitions_the_fibonacci_rectangle_without_overlap() {
+        let policy = SpiralPolicy::from_workspace(&vendor()["mcp"]["tmux"]["workspace"]).unwrap();
+        let bounds = CellRect {
+            x: 7,
+            y: 11,
+            width: 55,
+            height: 89,
+        };
+        let cells = policy.partition(bounds, 10, (1, 1), 0).unwrap();
+        let sizes: Vec<_> = cells.iter().map(|cell| (cell.width, cell.height)).collect();
+        assert_eq!(
+            sizes,
+            [
+                (55, 55),
+                (34, 34),
+                (21, 21),
+                (13, 13),
+                (8, 8),
+                (5, 5),
+                (3, 3),
+                (2, 2),
+                (1, 1),
+                (1, 1)
+            ]
+        );
+        assert_eq!(
+            cells.iter().map(|c| c.width * c.height).sum::<u32>(),
+            55 * 89
+        );
+        for (index, cell) in cells.iter().enumerate() {
+            assert!(cell.x >= bounds.x && cell.y >= bounds.y);
+            assert!(cell.x + cell.width <= bounds.x + bounds.width);
+            assert!(cell.y + cell.height <= bounds.y + bounds.height);
+            for other in &cells[index + 1..] {
+                assert!(
+                    cell.x + cell.width <= other.x
+                        || other.x + other.width <= cell.x
+                        || cell.y + cell.height <= other.y
+                        || other.y + other.height <= cell.y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn terminal_minimums_refuse_unusable_spirals_without_enlarging_cells() {
+        let policy = SpiralPolicy::from_workspace(&vendor()["mcp"]["tmux"]["workspace"]).unwrap();
+        let bounds = CellRect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 48,
+        };
+        let cells = policy.partition(bounds, 3, (30, 8), 1).unwrap();
+        assert!(cells.iter().all(|c| c.width >= 30 && c.height >= 8));
+        assert!(policy.partition(bounds, 10, (30, 8), 1).is_err());
+        assert!(policy
+            .partition(
+                CellRect {
+                    x: u32::MAX,
+                    ..bounds
+                },
+                1,
+                (1, 1),
+                0
+            )
+            .is_err());
+        assert!(policy.partition(bounds, 0, (30, 8), 1).unwrap().is_empty());
+        let mut custom = vendor()["mcp"]["tmux"]["workspace"].clone();
+        custom["layout"]["spiral_share"] = Value::Float(0.7);
+        let changed = SpiralPolicy::from_workspace(&custom)
+            .unwrap()
+            .partition(bounds, 2, (30, 8), 1)
+            .unwrap();
+        assert_eq!(changed[0].height, 33);
+        assert_ne!(cells[0].height, changed[0].height);
+        custom["layout"]["spiral_turn"] = Value::String("sideways".into());
+        assert!(SpiralPolicy::from_workspace(&custom).is_err());
     }
     #[test]
     fn existing_sizes_bound_each_surface_and_font_cells_keep_landscape() {

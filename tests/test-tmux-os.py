@@ -931,6 +931,195 @@ enabled = false
         h.keys("view", "Escape", "Escape")
         self.assertEqual(identity(), witnessed)
 
+    @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the native desktop opener is required")
+    def test_t15_canonical_bootstrap_uses_vendor_shell_for_an_older_operator_catalogue(self):
+        # Exercise the public opener itself: T14's manual pane setup cannot
+        # detect startup-shell failures before the owned server is created.
+        extra = CATALOGUE.replace("{scope}", '["env", "--"]').replace("{tag}", "old-catalogue")
+        h = Harness("canonical-startup", extra, global_popups=True)
+        self.addCleanup(h.close)
+        private_root = h.dir / "root"
+        vendor = private_root / "usr/share/mios/mios.toml"
+        vendor.parent.mkdir(parents=True)
+        vendor.write_text(VENDOR.read_text())
+        h.host.write_text(h.host.read_text() + f'''\n[terminal]
+socket_root = {str(h.dir)!r}
+[keybindings.tmux.desktop]
+binary = {str(DESKTOP_TMUX)!r}
+socket_name = {h.inner!r}
+session_name = "Canonical-Desktop"
+[keybindings.tmux.desktop.panel]
+enabled = false
+[keybindings.tmux.desktop.sidebar]
+enabled = false
+''')
+        before = h.host.read_text()
+        self.assertNotIn('id = "terminal-shell"', before)
+        env = dict(h.env, MIOS_VENDOR_TOML=str(vendor), XDG_RUNTIME_DIR=str(h.dir / "run"))
+        command = [str(MIOSD), "desktop", "--root", str(private_root), "--no-attach"]
+        def bootstrap():
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return __import__("json").loads(result.stdout)
+        first = bootstrap()
+        identity = h.I("display", "-p", "-t", first["canvas"], "#{pane_id}|#{pane_pid}|#{pane_tty}")
+        expected = next(row["argv"] for row in SSOT["terminal"]["tuis"] if row["id"] == "terminal-shell")
+        self.assertEqual(shlex.split(h.I("show-options", "-v", "-t", first["session"], "default-command")), expected)
+        self.assertEqual(h.host.read_text(), before, "the operator application list must not be replaced")
+        self.assertEqual(bootstrap(), first, "repeat startup reuses the witnessed server and canvas")
+        self.assertEqual(h.I("display", "-p", "-t", first["canvas"], "#{pane_id}|#{pane_pid}|#{pane_tty}"), identity)
+        h.host.write_text(before + '''\n[[terminal.tuis]]
+id = "terminal-shell"
+label = "Invalid explicit shell"
+section = "system"
+mode = "float"
+argv = []
+''')
+        invalid = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(invalid.returncode, 0, "a malformed explicit entry must not fall back")
+        self.assertEqual(h.I("display", "-p", "-t", first["canvas"], "#{pane_id}|#{pane_pid}|#{pane_tty}"), identity)
+
+    @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the native desktop opener is required")
+    def test_t16_canonical_top_panel_survives_resizes_with_one_collector_and_a_blank_canvas(self):
+        h = Harness("canonical-panel", global_popups=True)
+        self.addCleanup(h.close)
+        private_root = h.dir / "root"
+        vendor = private_root / "usr/share/mios/mios.toml"
+        vendor.parent.mkdir(parents=True)
+        vendor.write_text(VENDOR.read_text())
+        h.host.write_text(h.host.read_text() + f'''\n[terminal]
+socket_root = {str(h.dir)!r}
+[keybindings.tmux.desktop]
+binary = {str(DESKTOP_TMUX)!r}
+socket_name = {h.inner!r}
+session_name = "Canonical-Panel"
+[keybindings.tmux.desktop.panel]
+enabled = true
+argv = [{str(h.dir / "bin/fake-tui")!r}, "desktop-panel"]
+[keybindings.tmux.desktop.sidebar]
+enabled = false
+''')
+        env = dict(h.env, MIOS_VENDOR_TOML=str(vendor), XDG_RUNTIME_DIR=str(h.dir / "run"))
+        command = [str(MIOSD), "desktop", "--root", str(private_root), "--no-attach"]
+        def bootstrap():
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return __import__("json").loads(result.stdout)
+        first = bootstrap()
+        panel = h.I("show-options", "-wqv", "-t", first["window"], "@mios-desktop-panel-pane")
+        self.assertEqual(h.I("show-options", "-sqv", "focus-events"), "on", "the owned desktop must forward application focus loss immediately")
+        self.assertRegex(panel, r"^%[0-9]+$")
+        self.assertEqual(h.I("show-options", "-wqv", "-t", first["window"], "@mios-desktop-workarea-pane"), first["canvas"])
+        identity_format = "#{pane_id}|#{pane_pid}|#{pane_tty}"
+        identities = {pane: h.I("display", "-p", "-t", pane, identity_format) for pane in (panel, first["canvas"])}
+        app = h.I("new-pane", "-d", "-P", "-F", "#{pane_id}", "-t", first["canvas"], "-x", "25", "-y", "8", "-X", "10", "-Y", "20", "sleep 300")
+        geometry = "#{pane_id}|#{pane_pid}|#{pane_tty}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_floating_flag}"
+        app_identity = h.I("display", "-p", "-t", app, geometry)
+        h.view(session="Canonical-Panel", w=120, h=40)
+        for columns, rows in [(120, 40), (90, 30), (80, 24), (120, 40)]:
+            h.O("resize-window", "-t", "=v:", "-x", str(columns), "-y", str(rows))
+            self.assertTrue(wait(lambda: h.I("display", "-p", "-t", panel, "#{pane_height}") == h.I("display", "-p", "-t", panel, "#{E:@mios-desktop-panel-height}")), "native post-layout hook must fit the current viewport")
+            memo = h.I("show-options", "-wqv", "-t", first["window"], "@mios-desktop-panel-viewport")
+            self.assertEqual(memo, h.I("display", "-p", "-t", panel, "#{pane_width}x#{window_height}"))
+        h.I("set-option", "-s", "focus-events", "off")
+        self.assertEqual(bootstrap(), first)
+        self.assertEqual(h.I("show-options", "-sqv", "focus-events"), "on", "repeat open restores focus forwarding without replacing applications")
+        self.assertEqual({pane: h.I("display", "-p", "-t", pane, identity_format) for pane in identities}, identities)
+        self.assertEqual(h.I("display", "-p", "-t", app, geometry), app_identity)
+        self.assertTrue(wait(lambda: h.log.exists()))
+        self.assertEqual(h.log.read_text().splitlines().count("desktop-panel"), 1, "resizes and repeated open must reuse the panel collector")
+        label = SSOT["keybindings"]["tmux"]["desktop"]["labels"]["topbar"]
+        header = h.I("display", "-p", "-t", panel, "#{E:pane-border-format}")
+        self.assertIn(label, header, "native topbar must retain literal menu text")
+        self.assertNotIn("#{", header, "all dynamic padding formats must expand")
+        self.assertTrue(wait(lambda: not h.I("capture-pane", "-p", "-t", first["canvas"]).strip()), "the lower canvas must remain blank")
+
+    @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the native desktop opener is required")
+    def test_t17_canonical_desktop_roles_rotate_without_restarting_apps_or_covering_compact_chat(self):
+        h = Harness("canonical-sidebar", global_popups=True)
+        self.addCleanup(h.close)
+        private_root = h.dir / "root"
+        vendor = private_root / "usr/share/mios/mios.toml"
+        vendor.parent.mkdir(parents=True)
+        vendor.write_text(VENDOR.read_text())
+        stub = str(h.dir / "bin/fake-tui")
+        metrics_command = shlex.join([stub, "desktop-metrics"])
+        h.host.write_text(h.host.read_text().replace("[mcp.tmux.workspace]\n", f"[mcp.tmux.workspace]\nresource_command = {metrics_command!r}\n") + f'''\n[mcp]
+python = {stub!r}
+[terminal]
+socket_root = {str(h.dir)!r}
+[keybindings.tmux.desktop]
+binary = {str(DESKTOP_TMUX)!r}
+socket_name = {h.inner!r}
+session_name = "Canonical-Sidebar"
+[keybindings.tmux.desktop.panel]
+enabled = true
+argv = [{stub!r}, "desktop-panel"]
+''')
+        env = dict(h.env, MIOS_VENDOR_TOML=str(vendor), XDG_RUNTIME_DIR=str(h.dir / "run"))
+        command = [str(MIOSD), "desktop", "--root", str(private_root), "--no-attach"]
+        def bootstrap():
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return __import__("json").loads(result.stdout)
+        first = bootstrap()
+        roles = {"canvas": first["canvas"]}
+        for name in ("panel", "chat", "metrics"):
+            roles[name] = h.I("show-options", "-wqv", "-t", first["window"], f"@mios-desktop-{name}-pane")
+            self.assertRegex(roles[name], r"^%[0-9]+$")
+        self.assertEqual(len(set(roles.values())), 4)
+        identity = "#{pane_id}|#{pane_pid}|#{pane_tty}"
+        identities = {name: h.I("display", "-p", "-t", pane, identity) for name, pane in roles.items()}
+        h.view(session="Canonical-Sidebar", w=240, h=70)
+        def mode():
+            return h.I("show-options", "-wqv", "-t", first["window"], "@mios-desktop-layout-mode")
+        self.assertTrue(wait(lambda: mode() == "landscape-metrics"))
+        app = h.I("new-pane", "-d", "-P", "-F", "#{pane_id}", "-t", roles["canvas"], "-x", "30", "-y", "8", "-X", "120", "-Y", "30", "sleep 300")
+        geometry = "#{pane_id}|#{pane_pid}|#{pane_tty}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_floating_flag}"
+        app_identity = h.I("display", "-p", "-t", app, geometry)
+        def rectangle(pane):
+            return h.I("display", "-p", "-t", pane, "#{window_id}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}").split("|")
+        def layout_ready(columns, expected):
+            if mode() != expected or h.I("display", "-p", "-t", roles["panel"], "#{window_width}") != str(columns):
+                return False
+            if expected == "compact":
+                return rectangle(roles["panel"])[3] == rectangle(roles["chat"])[3] == str(columns)
+            share = SSOT["mcp"]["tmux"]["workspace"]["layout"]["column_share"]
+            return int(rectangle(roles["chat"])[3]) == round((columns - 1) * share)
+        for columns, rows, expected in [(80, 30, "compact"), (240, 70, "landscape-metrics"), (130, 42, "compact"), (240, 70, "landscape-metrics")]:
+            h.O("resize-window", "-t", "=v:", "-x", str(columns), "-y", str(rows))
+            self.assertTrue(wait(lambda: layout_ready(columns, expected)))
+            rectangles = {name: rectangle(pane) for name, pane in roles.items()}
+            workarea = h.I("show-options", "-wqv", "-t", first["window"], "@mios-desktop-workarea-pane")
+            if expected == "compact":
+                self.assertEqual(workarea, "", "an agent float must not cover the compact chat input")
+                self.assertEqual(rectangles["panel"][0], first["window"])
+                self.assertEqual(rectangles["chat"][0], first["window"])
+                self.assertLess(int(rectangles["panel"][2]), int(rectangles["chat"][2]))
+                self.assertEqual(rectangles["panel"][3], rectangles["chat"][3])
+                for name in ("canvas", "metrics"):
+                    self.assertNotEqual(rectangles[name][0], first["window"])
+                    self.assertTrue(h.I("show-options", "-wqv", "-t", roles[name], "@mios-desktop-storage-origin"))
+            else:
+                self.assertEqual(workarea, roles["canvas"])
+                self.assertTrue(all(rect[0] == first["window"] for rect in rectangles.values()))
+                self.assertEqual(rectangles["chat"][1], rectangles["metrics"][1])
+                self.assertLess(int(rectangles["chat"][2]), int(rectangles["metrics"][2]))
+                self.assertLess(int(rectangles["chat"][1]), int(rectangles["canvas"][1]))
+                self.assertLess(int(rectangles["panel"][2]), int(rectangles["canvas"][2]))
+        h.host.write_text(h.host.read_text().replace("resource_command =", "resource_min_columns = 100\nresource_command ="))
+        self.assertEqual(bootstrap(), first)
+        self.assertTrue(wait(lambda: mode() == "landscape"))
+        self.assertNotEqual(rectangle(roles["metrics"])[0], first["window"], "unfitting metrics are parked without stopping btop")
+        self.assertEqual(rectangle(roles["canvas"])[0], first["window"])
+        self.assertEqual({name: h.I("display", "-p", "-t", pane, identity) for name, pane in roles.items()}, identities)
+        self.assertEqual(h.I("display", "-p", "-t", app, geometry), app_identity)
+        self.assertTrue(wait(lambda: h.log.exists() and len(h.log.read_text().splitlines()) == 3))
+        lines = h.log.read_text().splitlines()
+        self.assertEqual(lines.count("desktop-panel"), 1)
+        self.assertEqual(lines.count("desktop-metrics"), 1)
+        self.assertEqual(sum(line.endswith("--desktop-chat") for line in lines), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "status": "authorized_initial_native_build_plan",
+  "source": "/workspace/mios-live-desktop-integration",
+  "source_base": "46c4fe9ebc68ea0d81176d68f5fc097e256177b5",
+  "image": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+  "native_state": "/home/mios/.local/state/mios/mios-live-desktop-integration",
+  "guard": {
+    "minimum_available_mb": 12288,
+    "memory": "3g",
+    "memory_swap": "3g",
+    "cpus": 2,
+    "jobs": 1,
+    "locks": [
+      "/home/mios/mios-desktop-work-1/heavy.lock",
+      "/var/lib/mios-build/heavy.lock"
+    ],
+    "offline": true,
+    "locked": true
+  },
+  "isolation": {
+    "base_git_archive": "46c4fe9ebc68ea0d81176d68f5fc097e256177b5",
+    "overlay": "all staged changes plus all untracked source modules/handoffs, exact hashes; no worker lane mutation",
+    "source_and_target": "independent private source archive and reflink target/cargo cache; original core never mounted writable",
+    "immutable_core_guards": "before/after source+target metadata tree and rustc_info SHA; private target clone inode distinct"
+  },
+  "phases": [
+    "Freeze all input bytes/source manifest; exact published46 archive plus overlay including new modules.",
+    "Native rustfmt only changed Rust files, skip_children=true; return formatted source before sealing/build.",
+    "Strict Clippy/tests tools/native resolver,gen,unit-gen,game,inputd,agent-relay; strict miosd Clippy/tests src/mios-rs.",
+    "Build musl static miosd,mios-gen,mios-unit-gen,mios-tamagotchi,mios-inputd,mios-agent-relay,resolver CLI; linkage/hash receipts.",
+    "Verify controls/fan own source unchanged; rebuild controls because linked Inputd validator changed; only fanctl historical reuse.",
+    "Verify exact R7 patch65de930f and accepted artifact105e827a; fresh C build via canonical helper if required, under same guards.",
+    "Verify dedicated greetd patch and accepted62645b46 backend provenance; Root controls PAM/runtime promotion.",
+    "Runtime owner runs private T15/T16/T17 plus genuine PTY/four-role/PID/start/TTY/six-resize/inert-float controls and Inputd\u2194R7 actor proof.",
+    "Validate integrated dedicated-PAM/cold/Auth6/schema increments and actual selected-PAM controls; publication waits for these proofs.",
+    "Root owns standing gates/projections/main publication/complete multi-artifact install/live verification."
+  ],
+  "release_packages": {
+    "tools/native": [
+      "mios-resolver",
+      "mios-gen",
+      "mios-unit-gen",
+      "mios-tamagotchi",
+      "mios-inputd",
+      "mios-agent-relay",
+      "mios-controls"
+    ],
+    "src/mios-rs": [
+      "miosd"
+    ]
+  },
+  "historical_reuse": [
+    "mios-fanctl"
+  ],
+  "runtime_plan": "/workspace/scratch/mios-private-sidebar-acceptance-plan.json",
+  "no_live_mutation": true
+}

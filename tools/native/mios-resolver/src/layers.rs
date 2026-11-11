@@ -1,7 +1,7 @@
 // AI-hint: Tier and fragment discovery -- builds the figment provider stack in vendor < vendor.d < host < host.d < user < user.d precedence order.
 // AI-related: usr/share/mios/mios.toml, /etc/mios/mios.toml
 use crate::error::ResolverError;
-use crate::merge::deep_merge;
+use crate::merge::{deep_merge, normalize_mons_layer};
 use figment::providers::Serialized;
 use figment::value::{Dict, Map};
 use figment::{Figment, Metadata, Profile, Provider};
@@ -216,7 +216,9 @@ pub fn merge_layer_files<P: AsRef<Path>>(paths: &[P]) -> Result<toml::Value, Res
                 path: path.display().to_string(),
                 source,
             })?;
-        deep_merge(&mut merged, toml::Value::Table(layer));
+        let mut layer = toml::Value::Table(layer);
+        normalize_mons_layer(&mut layer);
+        deep_merge(&mut merged, layer);
     }
     Ok(merged)
 }
@@ -411,6 +413,45 @@ mod tests {
             })
             .collect();
         (dir, paths)
+    }
+
+    #[test]
+    fn game_preferences_keep_tier_precedence_across_both_schema_spellings() {
+        let (_dir, paths) = layer_files(&[
+            "[mons]\nzoom_percent=100\nrenderer='ascii'\n",
+            "[tamagotchi]\nzoom_percent=125\n",
+            "[mons]\nzoom_percent=150\n",
+            "[tamagotchi]\nzoom_percent=''\nrenderer='braille'\n",
+        ]);
+        assert_eq!(
+            merge_layer_files(&paths[..2]).unwrap()["mons"]["zoom_percent"].as_integer(),
+            Some(125)
+        );
+        let merged = merge_layer_files(&paths).unwrap();
+        assert_eq!(merged["mons"]["zoom_percent"].as_integer(), Some(150));
+        assert_eq!(merged["mons"]["renderer"].as_str(), Some("braille"));
+        assert!(merged.get("tamagotchi").is_none());
+        let typed: toml::Value = figment_of(&paths).extract().unwrap();
+        assert_eq!(typed, merged);
+    }
+
+    #[test]
+    fn sorted_game_fragments_are_normalized_before_each_fold() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("20-new.toml"), "[mons]\nzoom_percent=175\n").unwrap();
+        fs::write(
+            dir.path().join("10-old.toml"),
+            "[tamagotchi]\nzoom_percent=125\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".99-hidden.toml"),
+            "[tamagotchi]\nzoom_percent=999\n",
+        )
+        .unwrap();
+        let merged = merge_layer_files(&fragments(dir.path())).unwrap();
+        assert_eq!(merged["mons"]["zoom_percent"].as_integer(), Some(175));
+        assert!(merged.get("tamagotchi").is_none());
     }
 
     #[test]

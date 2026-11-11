@@ -27,6 +27,12 @@ struct Args {
 
     #[arg(long, help = "Include DB authoritative overlay if enabled")]
     db_overlay: bool,
+
+    // Capability negotiation for a newly installed Python reader while an
+    // older resolver may still be on disk. Every resolution path in this
+    // binary already normalizes raw layers; older binaries reject this flag.
+    #[arg(long = "require-mons-layer-normalization", hide = true)]
+    _require_mons_layer_normalization: bool,
 }
 
 fn main() -> Result<()> {
@@ -126,5 +132,22 @@ fn main() -> Result<()> {
     } else {
         println!("[mios-resolver] Native compiled SSOT resolver. Use --check-parse to validate layers or --emit=shell/powershell/json/install-env.");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_layer_normalization_capability_is_accepted_without_version_guessing() {
+        let args = Args::try_parse_from([
+            "mios-resolver",
+            "--require-mons-layer-normalization",
+            "--emit=json",
+        ])
+        .unwrap();
+        assert!(args._require_mons_layer_normalization);
+        assert_eq!(args.emit.as_deref(), Some("json"));
     }
 }

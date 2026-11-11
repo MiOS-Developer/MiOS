@@ -388,6 +388,7 @@ pub struct Options {
     pub cell_px: [u32; 2],
     /// JSON-lines log (tests); the bridge never writes diagnostics to the terminal it serves.
     pub log: Option<PathBuf>,
+    pub policy: crate::config::GlobalConfig,
 }
 static WINCH: AtomicBool = AtomicBool::new(false);
 static HANGUP: AtomicBool = AtomicBool::new(false);
@@ -484,18 +485,33 @@ pub fn own_vt() -> Option<u32> {
 }
 fn gpm_connect(path: &Path, vt: u32) -> io::Result<std::os::unix::net::UnixStream> {
     let mut s = std::os::unix::net::UnixStream::connect(path)?;
-    // Gpm_Connect: eventMask, defaultMask (gpm keeps drawing its pointer), minMod, maxMod, pid, vc.
+    gpm_configure(&mut s, vt, false)?;
+    s.set_nonblocking(true)?;
+    Ok(s)
+}
+fn gpm_configure(
+    s: &mut std::os::unix::net::UnixStream,
+    vt: u32,
+    relative: bool,
+) -> io::Result<()> {
+    // Updating Gpm_Connect on this same connection is atomic at the daemon: defaultMask=0 consumes motion,
+    // whereas MOVE|HARD lets its selection handler draw the desktop pointer. Never close/reopen to switch modes.
     let mut req = Vec::with_capacity(16);
     req.extend(0xffffu16.to_ne_bytes());
-    req.extend((GPM_MOVE as u16 | GPM_HARD).to_ne_bytes());
+    req.extend(
+        (if relative {
+            0u16
+        } else {
+            GPM_MOVE as u16 | GPM_HARD
+        })
+        .to_ne_bytes(),
+    );
     req.extend(0u16.to_ne_bytes());
     req.extend(0xffffu16.to_ne_bytes());
     req.extend((std::process::id() as i32).to_ne_bytes());
     req.extend((vt as i32).to_ne_bytes());
     s.set_write_timeout(Some(Duration::from_millis(500)))?;
-    s.write_all(&req)?;
-    s.set_nonblocking(true)?;
-    Ok(s)
+    s.write_all(&req)
 }
 fn evdev_named(names: &[String]) -> Option<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -527,6 +543,47 @@ fn evdev_named(names: &[String]) -> Option<std::fs::File> {
     None
 }
 /// Run `argv` (a VT tmux client) on a new pty; copy the VT to it and back; own the mouse modes; feed pointer reports.
+fn submit_motion(
+    front: &crate::tmux_capture::Frontend,
+    dx: i32,
+    dy: i32,
+    worker: &Option<(String, crate::runtime::SessionWorker)>,
+    motion_at: &mut [Option<Instant>; 4],
+) {
+    let Some((address, worker)) = worker else {
+        return;
+    };
+    if *address != front.target.address() {
+        return;
+    }
+    let now = Instant::now();
+    for (direction, repeat) in front.motion(dx, dy) {
+        if motion_at[direction].is_none_or(|at| {
+            now.duration_since(at) >= Duration::from_millis(front.rate_ms[direction])
+        }) && worker.submit_repeat(front.camera[direction].clone(), repeat)
+        {
+            motion_at[direction] = Some(now);
+        }
+    }
+}
+fn frontend_watch(runtime: &Path) -> Option<std::fs::File> {
+    use std::os::fd::FromRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(runtime.as_os_str().as_bytes()).ok()?;
+    let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+    if fd < 0 {
+        return None;
+    }
+    let file = unsafe { std::fs::File::from_raw_fd(fd) };
+    let wd = unsafe {
+        libc::inotify_add_watch(
+            fd,
+            path.as_ptr(),
+            libc::IN_MOVED_TO | libc::IN_DELETE | libc::IN_CLOSE_WRITE,
+        )
+    };
+    (wd >= 0).then_some(file)
+}
 /// Returns the client's exit code.
 pub fn run(opt: Options) -> Result<i32, String> {
     let (program, rest) = opt
@@ -641,7 +698,47 @@ pub fn run(opt: Options) -> Result<i32, String> {
     let mut stdin_open = true;
     let mfd = master.as_raw_fd();
     let mut buf = vec![0u8; 16384];
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
+    let outer_start = crate::nested::start_time(Path::new("/proc"), child.id()).unwrap_or(0);
+    let mut relative = false;
+    let mut capture_worker: Option<(String, crate::runtime::SessionWorker)> = None;
+    let mut motion_at: [Option<Instant>; 4] = [None; 4];
+    // The existing owner's atomic manifest replacement wakes the pointer bridge, including on focus/release.
+    let watch = frontend_watch(&runtime);
     let status = loop {
+        let frontend = crate::tmux_capture::read_frontend(&runtime, child.id(), outer_start);
+        let next_address = frontend.as_ref().map(|f| f.target.address());
+        if capture_worker.as_ref().map(|(a, _)| a) != next_address.as_ref() {
+            capture_worker = frontend.as_ref().and_then(|f| {
+                crate::runtime::SessionWorker::frontend(f, opt.policy.clone())
+                    .ok()
+                    .map(|w| (f.target.address(), w))
+            });
+            motion_at = [None; 4];
+        }
+        let next_relative = frontend.is_some() && capture_worker.is_some();
+        if next_relative != relative {
+            relative = next_relative;
+            // A click that acquired capture may still be held. Drain its old terminal projection before reset.
+            let mut released = vec![];
+            for button in [Btn::Left, Btn::Middle, Btn::Right] {
+                pointer.button(button, false, 0, &modes, &mut released);
+            }
+            if !released.is_empty() && write_all(mfd, &released).is_err() {
+                break None;
+            }
+            pointer = Pointer::new(ws.ws_col, ws.ws_row, opt.cell_px);
+            gpm_buf.clear();
+            ev_buf.clear();
+            if let Some(g) = &mut gpm {
+                if gpm_configure(g, vt, relative).is_err() {
+                    gpm = None;
+                }
+            }
+            log(serde_json::json!({"input_capture":relative,"source":"mios-inputd"}));
+        }
         if HANGUP.swap(false, Ordering::Relaxed) {
             // SAFETY: signals the client's session (its own process group after setsid).
             unsafe { libc::kill(-(child.id() as i32), libc::SIGHUP) };
@@ -666,7 +763,10 @@ pub fn run(opt: Options) -> Result<i32, String> {
             if opt.mouse == "gpm" && gpm.is_none() {
                 last_try = Instant::now();
                 match gpm_connect(&opt.gpm_socket, vt) {
-                    Ok(s) => {
+                    Ok(mut s) => {
+                        if relative && gpm_configure(&mut s, vt, true).is_err() {
+                            continue;
+                        }
                         log(serde_json::json!({"gpm": "connected", "vt": vt}));
                         gpm = Some(s);
                     }
@@ -718,10 +818,18 @@ pub fn run(opt: Options) -> Result<i32, String> {
             });
             fds.len() - 1
         });
+        let wi = watch.as_ref().map(|watch| {
+            fds.push(libc::pollfd {
+                fd: watch.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            });
+            fds.len() - 1
+        });
         // Idle costs nothing: the poll sleeps until VT input, client output or a pointer event (a signal interrupts it).
         // It wakes early only to retry a missing pointer source while the client tracks the mouse.
         let waiting = tracking && gpm.is_none() && evdev.is_none() && opt.mouse != "off";
-        let timeout = if waiting { 500 } else { 5000 };
+        let timeout = if waiting || relative { 500 } else { 5000 };
         // SAFETY: a live, initialized pollfd array of the given length.
         let n = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout) };
         if n < 0 {
@@ -757,6 +865,14 @@ pub fn run(opt: Options) -> Result<i32, String> {
                 }
             }
         }
+        if let Some(i) = wi {
+            if fds[i].revents != 0 {
+                let mut discard = [0u8; 4096];
+                let _ = read_fd(fds[i].fd, &mut discard);
+            }
+        }
+        // Never route a queued movement using a lease invalidated during poll.
+        let frontend = crate::tmux_capture::read_frontend(&runtime, child.id(), outer_start);
         let mut reports = vec![];
         if let Some(i) = gi {
             if fds[i].revents != 0 {
@@ -766,7 +882,18 @@ pub fn run(opt: Options) -> Result<i32, String> {
                         gpm_buf.extend_from_slice(&b[..k]);
                         while gpm_buf.len() >= GPM_EVENT_SIZE {
                             let ev: Vec<u8> = gpm_buf.drain(..GPM_EVENT_SIZE).collect();
-                            reports.extend(pointer.gpm(&ev, ws.ws_col, ws.ws_row, &modes));
+                            if let Some(front) = &frontend {
+                                let kind = i32::from_ne_bytes(ev[12..16].try_into().unwrap());
+                                if kind & (GPM_MOVE | GPM_DRAG) != 0 {
+                                    let dx = i16::from_ne_bytes([ev[4], ev[5]]) as i32;
+                                    let dy = i16::from_ne_bytes([ev[6], ev[7]]) as i32;
+                                    submit_motion(front, dx, dy, &capture_worker, &mut motion_at);
+                                } else {
+                                    reports.extend(pointer.gpm(&ev, ws.ws_col, ws.ws_row, &modes));
+                                }
+                            } else {
+                                reports.extend(pointer.gpm(&ev, ws.ws_col, ws.ws_row, &modes));
+                            }
                         }
                     }
                     Some(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -790,9 +917,26 @@ pub fn run(opt: Options) -> Result<i32, String> {
                             let kind = u16::from_ne_bytes([e[16], e[17]]);
                             let code = u16::from_ne_bytes([e[18], e[19]]);
                             let value = i32::from_ne_bytes([e[20], e[21], e[22], e[23]]);
-                            reports.extend(
-                                pointer.evdev(kind, code, value, ws.ws_col, ws.ws_row, &modes),
-                            );
+                            if let Some(front) = &frontend {
+                                if kind == 2 && (code == 0 || code == 1) {
+                                    submit_motion(
+                                        front,
+                                        if code == 0 { value } else { 0 },
+                                        if code == 1 { value } else { 0 },
+                                        &capture_worker,
+                                        &mut motion_at,
+                                    );
+                                } else if kind != 0 {
+                                    reports
+                                        .extend(pointer.evdev(
+                                            kind, code, value, ws.ws_col, ws.ws_row, &modes,
+                                        ));
+                                }
+                            } else {
+                                reports.extend(
+                                    pointer.evdev(kind, code, value, ws.ws_col, ws.ws_row, &modes),
+                                );
+                            }
                         }
                     }
                     Some(Err(e)) if e.kind() == io::ErrorKind::WouldBlock => {}

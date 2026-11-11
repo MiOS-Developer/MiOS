@@ -1116,48 +1116,48 @@ usr/share/mios/virtio/*.iso
 !/tests/test-hypr3d-dock-capture.py
 !tests/test-machine-os-mirror.py
 
-# Native Tamagotchi terminal foundation; binaries and build caches stay untracked.
-!/tools/native/mios-tamagotchi/
-!/tools/native/mios-tamagotchi/Cargo.toml
-!/tools/native/mios-tamagotchi/src/
-!/tools/native/mios-tamagotchi/src/*.rs
-!/tools/native/mios-tamagotchi/tests/
-!/tools/native/mios-tamagotchi/tests/*.rs
-!/usr/share/doc/mios/tamagotchi-tui.md
+# Native MiOS-Mons terminal foundation; binaries and build caches stay untracked.
+!/tools/native/mios-mons/
+!/tools/native/mios-mons/Cargo.toml
+!/tools/native/mios-mons/src/
+!/tools/native/mios-mons/src/*.rs
+!/tools/native/mios-mons/tests/
+!/tools/native/mios-mons/tests/*.rs
+!/usr/share/doc/mios/mios-mons.md
 
 # Operator prompt for remote Blade agents and subagents.
 !/handoff.md
 
 !/usr/share/mios/vendored/wheels/llguidance-1.9.1-cp39-abi3-manylinux_2_31_x86_64.whl
 !/usr/share/mios/vendored/wheels/openai-2.24.0-py3-none-any.whl
-!tools/native/mios-tamagotchi/src/characters.rs
+!tools/native/mios-mons/src/characters.rs
 
-!tools/native/mios-tamagotchi/src/dialogs.rs
+!tools/native/mios-mons/src/dialogs.rs
 
 # Native build observation module, scaffolded from the canonical Rust template.
 !src/mios-rs/mios-build/src/monitor.rs
 
 # Original MiOS-Mons character research and acceptance context.
-!/usr/share/doc/mios/research/mios-tamagotchi-villager-model.md
+!/usr/share/doc/mios/research/mios-mons-villager-model.md
 
-!/tools/native/mios-tamagotchi/src/habitat.rs
+!/tools/native/mios-mons/src/habitat.rs
 
-!/tools/native/mios-tamagotchi/src/hud.rs
-!/tools/native/mios-tamagotchi/src/progression.rs
+!/tools/native/mios-mons/src/hud.rs
+!/tools/native/mios-mons/src/progression.rs
 
-!/tools/native/mios-tamagotchi/src/geometry.rs
+!/tools/native/mios-mons/src/geometry.rs
 
-!/tools/native/mios-tamagotchi/src/lighting.rs
+!/tools/native/mios-mons/src/lighting.rs
 
 # Seeded identities and isometric habitat renderer
-!/tools/native/mios-tamagotchi/src/genetics.rs
-!/tools/native/mios-tamagotchi/src/world.rs
+!/tools/native/mios-mons/src/genetics.rs
+!/tools/native/mios-mons/src/world.rs
 
 # Portable global MiOS skills export (operator-requested root directory)
 !/SKILLS/
 !/SKILLS/**
 
-!/tools/native/mios-tamagotchi/src/seed_entry.rs
+!/tools/native/mios-mons/src/seed_entry.rs
 
 # Portable operator-requested engineering handoff.
 !/.devloop/handoff/mios-render-r4.patch.gz
@@ -1230,3 +1230,13 @@ usr/share/mios/virtio/*.iso
 !/.devloop/handoff/mios-tui-desktop-live-verification.json
 
 !/.devloop/handoff/mios-menu-defect-controls-proof.tar.gz
+
+# MiOS remote authentication policy (reviewed, no credentials).
+!/etc/sudoers.d/40-mios-remote-login
+
+!/.devloop/handoff/mios-remote-login.json
+
+# Frozen controller runtime acceptance inputs.
+!/tools/native/mios-inputd/src/mios-controller-acceptance-pending-cancellation.json
+!/tools/native/mios-inputd/src/mios-controller-acceptance-neutralization.json
+!/tools/native/mios-inputd/src/mios-controller-acceptance-verified-target.json

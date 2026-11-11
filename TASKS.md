@@ -10,6 +10,55 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 <!-- overrides:begin -->
 <!-- One JSON object per line: {"id": "task_1", "status": "incomplete", "owner": "operator"}. Its fields are applied on top of the record whenever a task tool reads the list. -->
+<!-- Canonical current workstream label only; original task records, owners, statuses and proofs remain unchanged. -->
+{"id": "task_01M6HZR4AW35C5CA30JWXY02AB", "workstream": "MiOS-Mons"}
+{"id": "task_01M6HZR4AW7628561X4CB2GKQ8", "workstream": "MiOS-Mons"}
+{"id": "task_01M6HZR4AWDPNX1SNKWW9RBMBD", "workstream": "MiOS-Mons"}
+{"id": "task_01M6HZR4AWTAYCBQPS6Y5VHPP2", "workstream": "MiOS-Mons"}
+{"id": "task_01M6HZR4AWYHSCBEVSW9NP360W", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J16EGR3AWT0W9KGA2HFJZC", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J16GWRTN456YS975QYHSP4", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J71D7HR550VZA8CKG0G9KT", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J7M6H3B6Y5JKRT45MFFW5R", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J9VRTTGF34X4PHD8PR2RXW", "workstream": "MiOS-Mons"}
+{"id": "task_01M6J9VS1QF7QDVP0DF2NJWKA0", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KQV9HX8P7AVFVK2TYYPEKE", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KQV9R4849FK3SJH5N8DFDY", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KR97TTF08AEKMB3P11VYH5", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KWP4NBZE90MSPHAQG35YEP", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KWP4VZB6EV7D34J9QFHVF4", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KWP52JEXK6QETDVKV2ZMJB", "workstream": "MiOS-Mons"}
+{"id": "task_01M6KYARAKVFFB41RDJE3QTWWG", "workstream": "MiOS-Mons"}
+{"id": "task_01M6M2SG7Y1FR115F5AQ0P0XAF", "workstream": "MiOS-Mons"}
+{"id": "task_01M6M698NNARNS45QNFM0F7ZR3", "workstream": "MiOS-Mons"}
+{"id": "task_01M6M9M2YM7H0BJVT8J1EFPQFJ", "workstream": "MiOS-Mons"}
+{"id": "task_01M6M9M35QKVADV1TSPVP9538K", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MC1CJNEK1VM4HTY02GDQ71", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MC1CSWE7E5SNN5Z44KY2BW", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MDEV59YNT7NFKB4RGM9VSD", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MDEVBVXJ5ZPKGY7Y17PKQY", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MRK3VHKKJ5VSRDYTEZRFQZ", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MT4YWKVH74V9X86TQ35C2V", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MT4Z35G829TWATBFZRQYTB", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MT4Z9DD05SYTE52CSW08GS", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MWB5Z5CRNVZ985JSX21Q65", "workstream": "MiOS-Mons"}
+{"id": "task_01M6MWB65YP5PYCCAEB8KN1X8D", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PDKP2GD1GS83BTFW6CAZ4Z", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PDKP9531310J0MHM24QJNC", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PK9MV3EPFCRMZ4P5RRBW02", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PK9N17H3YW222KMYFJFPNM", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PN678BK30ATKQMM5RMKY2W", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PN67EXSJM5Z6PYYZRFCQV6", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PV8M6719G9T1YYP3JZXP2M", "workstream": "MiOS-Mons"}
+{"id": "task_01M6PVEK2509K4M14SW7DSB7X7", "workstream": "MiOS-Mons"}
+{"id": "task_01M6QCMQEAQ4YDVZK2TV582MYS", "workstream": "MiOS-Mons"}
+{"id": "task_01M6QD6MQRAYN0APDNDECGAGRD", "workstream": "MiOS-Mons"}
+{"id": "task_01M6QHHDW3HBDBSW2V6QKVCZHJ", "workstream": "MiOS-Mons"}
+{"id": "task_01M6QVK0558JPM0AXRYJDH8M1G", "workstream": "MiOS-Mons"}
+{"id": "task_01M6RRHAWS06MCYRFJHQ2ZTJ9Y", "workstream": "MiOS-Mons"}
+{"id": "task_01M6RW9DA8Z3HS9K5BK96XHJHD", "workstream": "MiOS-Mons"}
+{"id": "task_01M6RW9DS2RJ99ZPFD7MAHYF5S", "workstream": "MiOS-Mons"}
+{"id": "task_01M6RW9E7JXJ9NMCSBT9GC4NY0", "workstream": "MiOS-Mons"}
 <!-- overrides:end -->
 
 ## Summary
@@ -23,7 +72,60 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 | cancelled | 21 |
 | total | 3786 |
 
-0 record(s) carry at least one override.
+48 record(s) carry at least one override.
+
+## MiOS-Mons
+
+### No epic
+
+- `task_3702` Implement the researched Rust Tamagotchi terminal foundation -- completed · owner mios-tamagotchi · P1 · size M · workstream [override]
+- `task_3703` Integrate and verify the MiOS-Mons native binary in the MiOS image -- pending · P2 · size M · depends_on task_3702 · workstream [override]
+- `task_3704` Expose MiOS-Mons render settings through the bootstrap configurator -- pending · P2 · size M · depends_on task_3702 · workstream [override]
+- `task_3705` Verify MiOS-Mons terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702 · workstream [override]
+- `task_3706` Implement MiOS-Mons gameplay and persistence above the terminal foundation -- pending · P2 · size L · depends_on task_3702 · workstream [override]
+- `task_3707` Deliver a playable Tamagotchi sample with safe local saves -- completed · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702 · workstream [override]
+- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M · depends_on task_3707 · workstream [override]
+- `task_3709` Verify visible Tamagotchi user-local trial on mios x86_64 desktop -- completed · owner mios-tamagotchi-live-install · P1 · size M · workstream [override]
+- `task_3710` Independently verify Tamagotchi artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M · workstream [override]
+- `task_3711` Implement full-viewport Tamagotchi graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L · workstream [override]
+- `task_3712` Implement distinct animated pixel sprites and care reactions -- completed · owner mios-tamagotchi-sprite-worker · P1 · size M · workstream [override]
+- `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- completed · owner mios-mons-body-worker · P1 · workstream [override]
+- `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- completed · owner mios-mons-body-verifier · P1 · workstream [override]
+- `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- completed · owner mios-mons-habitat-worker · P1 · workstream [override]
+- `task_3723` Make voxel animal identities legible at larger resolutions -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · workstream [override]
+- `task_3724` Add framed zoom views and readable animated pet faces -- in_progress · owner mios-mons-camera-worker · P1 · workstream [override]
+- `task_3725` Verify readable MiOS-Mons zoom and animated facial states live -- completed · owner mios-mons-clarity-verifier · P1 · workstream [override]
+- `task_3726` Generate names and hatch statistics with trainable levels and bound identity colors -- completed · owner mios-mons-progression-worker · P1 · workstream [override]
+- `task_3727` Render doll-like animal heads and true head-surface kaomoji textures -- in_progress · owner mios-mons-doll-geometry-worker · P1 · workstream [override]
+- `task_3728` Verify final MiOS-Mon writer exclusion and terminal failure paths -- completed · owner mios-tamagotchi-live-coordinator · P1 · workstream [override]
+- `task_3729` Make phone-scale head-surface kaomoji readable at every zoom -- in_progress · owner mios-mons-face-legibility-worker · P1 · workstream [override]
+- `task_3730` Expose real Inputd bindings and direct keyboard mouse menu navigation -- in_progress · owner mios-mons-navigation-worker · P1 · workstream [override]
+- `task_3732` Expand readable kaomoji emotion cycles for MiOS-Mon -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · workstream [override]
+- `task_3733` Shade voxel forms with species-bound colors and ASCII tonal shadows -- in_progress · owner mios-mons-navigation-worker · P1 · workstream [override]
+- `task_3734` Make font and viewport changes drive one global automatic detail mode -- completed · owner mios-mons-navigation-worker · P1 · workstream [override]
+- `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- completed · owner mios-mons-face-legibility-worker · P1 · workstream [override]
+- `task_3737` Expose the verified live MiOS-Mon build in the native tmux-os catalogue -- completed · owner mios-tamagotchi-live-coordinator · P1 · workstream [override]
+- `task_3738` Render a rotating isometric voxel habitat around MiOS-Mon -- completed · owner mios-tamagotchi-live-coordinator · P1 · workstream [override]
+- `task_3739` Add discoverable world orbit camera controls and follow framing -- completed · owner mios-mons-world-voxel · P1 · workstream [override]
+- `task_3740` Implement deterministic depth-rendered voxel room geometry -- completed · owner mios-mons-world-voxel · P1 · workstream [override]
+- `task_3741` Group completed source agent sessions by date without losing live pets -- completed · owner mios-tamagotchi-live-coordinator · workstream [override]
+- `task_3742` Generate portable seeded Mon identities for save-free development -- completed · owner mios-tamagotchi-live-coordinator · workstream [override]
+- `task_3743` Replay shared Mon birth codes through the in-game keyboard and controller menus -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M · workstream [override]
+- `task_3744` Implement the bounded seed-code editor model and controller character wheel -- completed · owner mios-mons-seed-editor · P1 · size S · workstream [override]
+- `task_3745` Make seed entry touch navigable in compact MiOS-Mon viewports -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S · workstream [override]
+- `task_3746` Archive completed terminal sessions and retain only active development pets -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S · workstream [override]
+- `task_3748` Show all verified assigned controller-family bindings in MiOS-Mon prompts -- completed · owner mios-mons-controller-prompts · P1 · size M · workstream [override]
+- `task_3749` Make complete MiOS-Mon menus navigable by touch and terminal cursor keys -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M · workstream [override]
+- `task_3750` Overhaul the complete MiOS-Mon HUD and menus for consoles and remote viewports -- completed · owner mios-tamagotchi-live-coordinator · P1 · size L · workstream [override]
+- `task_3751` Frame face close-ups around the Mon head and expose orbiting camera perspectives -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M · workstream [override]
+- `task_3752` Improve Mon silhouettes and voxel texture shading across terminal scales -- completed · owner mios-claude-continuation · P1 · size L · workstream [override]
+- `task_3753` Condense HUD headers and expose contextual menu descriptions -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M · workstream [override]
+- `task_3754` Keep tracked Kaomoji eyes and mouths legible across face zoom and detail modes -- completed · owner mios-claude-continuation · P1 · size L · workstream [override]
+- `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- in_progress · owner mios-claude-continuation · P2 · size M · workstream [override]
+- `task_3757` Widen shaded voxel faces and preserve expressions at oblique and profile views -- in_progress · owner mios-claude-continuation · P1 · size M · workstream [override]
+- `task_3758` Add a shared camera rig across live pet and preview views -- in_progress · owner mios-claude-continuation · P1 · size L · workstream [override]
+- `task_3759` Route focused pet camera input through verified Inputd app profiles -- completed · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size L · workstream [override]
+- `task_3760` Make voxel faces and surface details readable across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L · workstream [override]
 
 ## WS-A1
 
@@ -4480,59 +4582,6 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 ### No epic
 
 - `task_3765` Account-sync containment before multiplayer account enablement -- pending · owner mios-tamagotchi-live-coordinator · P0 · size M
-
-## tamagotchi
-
-### No epic
-
-- `task_3702` Implement the researched Rust Tamagotchi terminal foundation -- completed · owner mios-tamagotchi · P1 · size M
-- `task_3703` Integrate and verify the Tamagotchi native binary in the MiOS image -- pending · P2 · size M · depends_on task_3702
-- `task_3704` Expose Tamagotchi render settings through the bootstrap configurator -- pending · P2 · size M · depends_on task_3702
-- `task_3705` Verify Tamagotchi terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702
-- `task_3706` Implement Tamagotchi gameplay and persistence above the terminal foundation -- pending · P2 · size L · depends_on task_3702
-- `task_3707` Deliver a playable Tamagotchi sample with safe local saves -- completed · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702
-- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M · depends_on task_3707
-- `task_3709` Verify visible Tamagotchi user-local trial on mios x86_64 desktop -- completed · owner mios-tamagotchi-live-install · P1 · size M
-- `task_3710` Independently verify Tamagotchi artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M
-- `task_3711` Implement full-viewport Tamagotchi graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L
-- `task_3712` Implement distinct animated pixel sprites and care reactions -- completed · owner mios-tamagotchi-sprite-worker · P1 · size M
-- `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- completed · owner mios-mons-body-worker · P1
-- `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- completed · owner mios-mons-body-verifier · P1
-- `task_3722` Generate persistent thematic pet habitats with earned and purchased furniture -- completed · owner mios-mons-habitat-worker · P1
-- `task_3723` Make voxel animal identities legible at larger resolutions -- in_progress · owner mios-tamagotchi-live-coordinator · P1
-- `task_3724` Add framed zoom views and readable animated pet faces -- in_progress · owner mios-mons-camera-worker · P1
-- `task_3725` Verify readable MiOS-Mons zoom and animated facial states live -- completed · owner mios-mons-clarity-verifier · P1
-- `task_3726` Generate names and hatch statistics with trainable levels and bound identity colors -- completed · owner mios-mons-progression-worker · P1
-- `task_3727` Render doll-like animal heads and true head-surface kaomoji textures -- in_progress · owner mios-mons-doll-geometry-worker · P1
-- `task_3728` Verify final MiOS-Mon writer exclusion and terminal failure paths -- completed · owner mios-tamagotchi-live-coordinator · P1
-- `task_3729` Make phone-scale head-surface kaomoji readable at every zoom -- in_progress · owner mios-mons-face-legibility-worker · P1
-- `task_3730` Expose real Inputd bindings and direct keyboard mouse menu navigation -- in_progress · owner mios-mons-navigation-worker · P1
-- `task_3732` Expand readable kaomoji emotion cycles for MiOS-Mon -- in_progress · owner mios-tamagotchi-live-coordinator · P1
-- `task_3733` Shade voxel forms with species-bound colors and ASCII tonal shadows -- in_progress · owner mios-mons-navigation-worker · P1
-- `task_3734` Make font and viewport changes drive one global automatic detail mode -- completed · owner mios-mons-navigation-worker · P1
-- `task_3735` Share adaptive detail policy and coarse habitat rendering across viewports -- completed · owner mios-mons-face-legibility-worker · P1
-- `task_3737` Expose the verified live MiOS-Mon build in the native tmux-os catalogue -- completed · owner mios-tamagotchi-live-coordinator · P1
-- `task_3738` Render a rotating isometric voxel habitat around MiOS-Mon -- completed · owner mios-tamagotchi-live-coordinator · P1
-- `task_3739` Add discoverable world orbit camera controls and follow framing -- completed · owner mios-mons-world-voxel · P1
-- `task_3740` Implement deterministic depth-rendered voxel room geometry -- completed · owner mios-mons-world-voxel · P1
-- `task_3741` Group completed source agent sessions by date without losing live pets -- completed · owner mios-tamagotchi-live-coordinator
-- `task_3742` Generate portable seeded Mon identities for save-free development -- completed · owner mios-tamagotchi-live-coordinator
-- `task_3743` Replay shared Mon birth codes through the in-game keyboard and controller menus -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3744` Implement the bounded seed-code editor model and controller character wheel -- completed · owner mios-mons-seed-editor · P1 · size S
-- `task_3745` Make seed entry touch navigable in compact MiOS-Mon viewports -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
-- `task_3746` Archive completed terminal sessions and retain only active development pets -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
-- `task_3748` Show all verified assigned controller-family bindings in MiOS-Mon prompts -- completed · owner mios-mons-controller-prompts · P1 · size M
-- `task_3749` Make complete MiOS-Mon menus navigable by touch and terminal cursor keys -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3750` Overhaul the complete MiOS-Mon HUD and menus for consoles and remote viewports -- completed · owner mios-tamagotchi-live-coordinator · P1 · size L
-- `task_3751` Frame face close-ups around the Mon head and expose orbiting camera perspectives -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3752` Improve Mon silhouettes and voxel texture shading across terminal scales -- completed · owner mios-claude-continuation · P1 · size L
-- `task_3753` Condense HUD headers and expose contextual menu descriptions -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
-- `task_3754` Keep tracked Kaomoji eyes and mouths legible across face zoom and detail modes -- completed · owner mios-claude-continuation · P1 · size L
-- `task_3755` Preserve camera continuity during rapid resize and refresh framing labels in the same frame -- in_progress · owner mios-claude-continuation · P2 · size M
-- `task_3757` Widen shaded voxel faces and preserve expressions at oblique and profile views -- in_progress · owner mios-claude-continuation · P1 · size M
-- `task_3758` Add a shared camera rig across live pet and preview views -- in_progress · owner mios-claude-continuation · P1 · size L
-- `task_3759` Route focused pet camera input through verified Inputd app profiles -- completed · owner opencode:serverbox-mios-inputd-focus-verify · P1 · size L
-- `task_3760` Make voxel faces and surface details readable across terminal scales -- in_progress · owner mios-claude-continuation · P1 · size L
 
 ## terminal
 

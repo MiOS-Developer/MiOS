@@ -56,6 +56,8 @@ struct RunningDevice {
     session_error: Option<String>,
     session_worker: Option<SessionWorker>,
     capture: Option<CaptureBinding>,
+    remote_input: Option<RemoteInput>,
+    login_generation: u64,
     capture_recovery_at: Instant,
     /// INV-8: another session owns the seat; the grab is released and nothing is routed until it returns.
     suspended: bool,
@@ -72,11 +74,104 @@ struct CapturedTmux {
 }
 #[derive(Clone)]
 struct CaptureReceipt {
+    native: Option<crate::tmux_capture::Target>,
     address: String,
     class: String,
     pid: u32,
     tmux: Option<CapturedTmux>,
     error: Option<String>,
+}
+struct RemoteInput {
+    target: crate::tmux_capture::Target,
+    keys: SessionWorker,
+}
+#[derive(Default)]
+struct PointerHolds {
+    sources: BTreeMap<u16, BTreeSet<PathBuf>>,
+    suppressed: BTreeMap<u16, BTreeSet<PathBuf>>,
+}
+impl PointerHolds {
+    fn project(
+        &mut self,
+        source: &Path,
+        events: &[crate::router::Event],
+        enabled: bool,
+    ) -> Vec<crate::router::Event> {
+        let mut out = vec![];
+        for event in events {
+            if event.kind == crate::router::EV_KEY && (0x110..=0x112).contains(&event.code) {
+                let suppressed = self.suppressed.entry(event.code).or_default();
+                let held = self.sources.entry(event.code).or_default();
+                if event.value > 0 {
+                    if !enabled {
+                        suppressed.insert(source.to_owned());
+                    }
+                    if suppressed.contains(source) {
+                        continue;
+                    }
+                    let first = held.is_empty();
+                    held.insert(source.to_owned());
+                    if first {
+                        out.push(*event);
+                    }
+                } else {
+                    suppressed.remove(source);
+                    let removed = held.remove(source);
+                    if removed && held.is_empty() {
+                        out.push(*event);
+                    }
+                }
+            } else if enabled {
+                out.push(*event);
+            }
+        }
+        out
+    }
+    /// Cancellation is a native hide/end boundary, never a synthetic application/chrome button-up.
+    /// Remaining real holds must reach release before they can press again; never replay their stale downs.
+    fn cancel(&mut self) {
+        for (button, sources) in &mut self.sources {
+            self.suppressed.entry(*button).or_default().append(sources);
+        }
+    }
+    fn retire_source(&mut self, source: &Path) -> bool {
+        if self.sources.values().any(|held| held.contains(source)) {
+            self.cancel();
+            true
+        } else {
+            false
+        }
+    }
+    fn retain(&mut self, mut live: impl FnMut(&Path) -> bool) -> bool {
+        for sources in self.suppressed.values_mut() {
+            sources.retain(|p| live(p));
+        }
+        let mut cancel = false;
+        for sources in self.sources.values_mut() {
+            let held = !sources.is_empty();
+            sources.retain(|p| live(p));
+            cancel |= held && sources.is_empty();
+        }
+        cancel
+    }
+}
+struct RemotePointerBus {
+    target: crate::tmux_capture::Target,
+    pointer: Option<crate::tmux_pointer::PointerWorker>,
+    cursors: BTreeSet<PathBuf>,
+    holds: PointerHolds,
+    visible: bool,
+    revoked: bool,
+    retry: Instant,
+}
+fn same_pointer_scope(a: &crate::tmux_capture::Target, b: &crate::tmux_capture::Target) -> bool {
+    a.uid == b.uid
+        && a.socket == b.socket
+        && (a.socket_dev, a.socket_ino) == (b.socket_dev, b.socket_ino)
+        && (a.server, a.server_start) == (b.server, b.server_start)
+        && (a.client, a.client_start, a.client_instance)
+            == (b.client, b.client_start, b.client_instance)
+        && a.login_generation == b.login_generation
 }
 struct CaptureBinding {
     address: String,
@@ -125,7 +220,9 @@ impl PlainCaptureWorker {
         action.starts_with("key:")
             && self.jobs.as_ref().is_some_and(|tx| {
                 tx.try_send(SessionJob {
+                    repeat: 1,
                     queued: Instant::now(),
+                    app_control: None,
                     action,
                 })
                 .is_ok()
@@ -140,7 +237,11 @@ impl Drop for PlainCaptureWorker {
     }
 }
 fn capture_navigation_context(cfg: &GlobalConfig, class: Option<&str>) -> Option<String> {
-    let base = cfg.classify_window(class, false, false);
+    let base = if class == Some("console") {
+        "console".into()
+    } else {
+        cfg.classify_window(class, false, false)
+    };
     cfg.controller
         .capture_navigation_contexts
         .contains(&base)
@@ -189,6 +290,41 @@ fn captured_tmux(cfg: &GlobalConfig, pid: u32) -> Result<Option<CapturedTmux>, S
         identity: (observed.pid, observed.window.into()),
     }))
 }
+fn native_receipt(target: crate::tmux_capture::Target) -> CaptureReceipt {
+    CaptureReceipt {
+        native: Some(target.clone()),
+        address: target.address(),
+        class: "console".into(),
+        pid: target.foreground,
+        tmux: Some(CapturedTmux {
+            client: target.client(),
+            start: target.client_start,
+            session: target.session_name,
+            pane: target.pane,
+            identity: (target.server, target.window),
+        }),
+        error: None,
+    }
+}
+fn native_snapshot(cfg: &GlobalConfig, client: &TmuxClient) -> Result<ContextSnapshot, String> {
+    let timeout = Duration::from_millis(cfg.controller.context_stale_ms);
+    let deadline = Instant::now() + timeout;
+    let outer = (
+        client.pid,
+        crate::nested::start_time(Path::new("/proc"), client.pid).ok_or("outer client vanished")?,
+    );
+    let client = crate::tmux_capture::leaf_client(cfg, client, timeout)?;
+    let (target, owned) =
+        crate::tmux_capture::current(&client, deadline.saturating_duration_since(Instant::now()))?;
+    let mut snap = ContextSnapshot::new(if owned { "app-capture" } else { "console" });
+    snap.address = Some(target.address());
+    snap.pid = Some(u64::from(target.foreground));
+    snap.class = Some("console".into());
+    snap.tmux_client = Some(target.client());
+    snap.native_target = Some(target);
+    snap.native_outer = Some(outer);
+    Ok(snap)
+}
 fn capture_binding(
     receipt: &CaptureReceipt,
     device: &Path,
@@ -203,11 +339,12 @@ fn capture_binding(
             pane: target.pane.clone(),
             ssh_host: None,
         };
-        Some(CaptureDispatcher::Tmux(SessionWorker::spawn_client(
+        Some(CaptureDispatcher::Tmux(SessionWorker::spawn_checked(
             route,
             cfg.clone(),
             Some((target.client.clone(), target.start)),
             Some(target.identity.clone()),
+            receipt.native.clone().map(|t| (t, true)),
         )?))
     } else if receipt.error.is_none() && receipt.pid > 0 {
         Some(CaptureDispatcher::Plain(PlainCaptureWorker::spawn(
@@ -228,16 +365,169 @@ fn capture_binding(
 /// Each controller has its own bounded dispatcher. A stalled SSH target cannot block another player's input.
 /// Queue age is checked before execution, so reconnect never replays stale button presses.
 struct SessionJob {
+    repeat: u8,
     queued: Instant,
     action: String,
+    app_control: Option<LocalAppControl>,
 }
 /// P3/P8: an explicit route's verified foreground app (its current pane only) and when it was verified.
 type RouteApp = std::sync::Arc<std::sync::Mutex<(Option<String>, Option<Instant>)>>;
-struct SessionWorker {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LocalAppIdentity {
+    route: crate::sessions::SessionRoute,
+    socket: (u64, u64),
+    server: u32,
+    server_start: u64,
+    window: String,
+    pane_pid: u32,
+    pane_start: u64,
+    app: String,
+    process: mios_resolver::app_input::Process,
+}
+#[derive(Clone)]
+struct LocalAppControl {
+    identity: LocalAppIdentity,
+    focus: mios_resolver::app_input::Focus,
+    at: Instant,
+}
+#[derive(Default)]
+struct LocalAppState {
+    epoch: u64,
+    channel: String,
+    current: Option<LocalAppControl>,
+}
+type LocalApps = std::sync::Arc<std::sync::Mutex<LocalAppState>>;
+fn local_app_identity(
+    route: &crate::sessions::SessionRoute,
+    cfg: &GlobalConfig,
+    timeout: Duration,
+    stop: &AtomicBool,
+) -> Result<LocalAppIdentity, String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    if route.ssh_host.is_some() {
+        return Err("cross-host app IPC requires future authenticated transport".into());
+    }
+    let uid = unsafe { libc::getuid() };
+    let meta = std::fs::symlink_metadata(&route.socket).map_err(|e| e.to_string())?;
+    let private_parent = route
+        .socket
+        .parent()
+        .and_then(|p| std::fs::symlink_metadata(p).ok())
+        .is_some_and(|p| p.is_dir() && p.uid() == uid && p.mode() & 0o077 == 0);
+    if !meta.file_type().is_socket()
+        || meta.uid() != uid
+        || (meta.mode() & 0o077 != 0 && !private_parent)
+    {
+        return Err("local app route has no private same-user socket authority".into());
+    }
+    let deadline = Instant::now() + timeout;
+    let run = |argv: Vec<String>| {
+        run_bounded_cancel(
+            &argv,
+            deadline.saturating_duration_since(Instant::now()),
+            Some(stop),
+        )
+    };
+    let inspected = run(crate::sessions::inspect_argv(route)?)?;
+    let (server, window) = session_identity(route, &inspected)?;
+    let server_start = mios_resolver::app_input::start(server)
+        .ok_or("local route server identity missing or foreign")?;
+    let pane_pid = run(crate::sessions::pane_pid_argv(route)?)?
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| "invalid local pane process")?;
+    let pane_start = mios_resolver::app_input::start(pane_pid)
+        .ok_or("local pane process identity missing or foreign")?;
+    let (_, pid) =
+        proc_groups(Path::new("/proc"), pane_pid).ok_or("local pane has no foreground process")?;
+    let app = app_of_pid(
+        Path::new("/proc"),
+        pid,
+        &cfg.controller.nav.apps,
+        uid,
+        &lstat_facts,
+    )
+    .ok_or("local pane has no registered foreground app")?;
+    let process = mios_resolver::app_input::Process {
+        pid,
+        start: mios_resolver::app_input::start(pid)
+            .ok_or("local app process identity missing or foreign")?,
+    };
+    let after = std::fs::symlink_metadata(&route.socket).map_err(|e| e.to_string())?;
+    if (meta.dev(), meta.ino()) != (after.dev(), after.ino())
+        || mios_resolver::app_input::start(server) != Some(server_start)
+    {
+        return Err("local route authority changed during verification".into());
+    }
+    Ok(LocalAppIdentity {
+        route: route.clone(),
+        socket: (meta.dev(), meta.ino()),
+        server,
+        server_start,
+        window,
+        pane_pid,
+        pane_start,
+        app,
+        process,
+    })
+}
+fn update_local_app(
+    state: &mut LocalAppState,
+    identity: Option<LocalAppIdentity>,
+    channel: &str,
+    at: Instant,
+) -> Option<LocalAppControl> {
+    state.channel = channel.into();
+    if state.current.as_ref().map(|control| &control.identity) != identity.as_ref() {
+        state.epoch = state.epoch.saturating_add(1);
+    }
+    state.current = identity.map(|identity| {
+        let address = format!(
+            "route:{}:{}:{}:{}:{}:{}:{}:{}",
+            identity.socket.0,
+            identity.socket.1,
+            identity.server,
+            identity.server_start,
+            identity.window,
+            identity.route.pane,
+            identity.pane_pid,
+            identity.pane_start
+        );
+        let focus = mios_resolver::app_input::Focus {
+            channel: channel.into(),
+            epoch: state.epoch,
+            address,
+            window_pid: u64::from(identity.process.pid),
+            generation: 0,
+            app: identity.app.clone(),
+            process: identity.process.clone(),
+        };
+        LocalAppControl {
+            identity,
+            focus,
+            at,
+        }
+    });
+    state.current.clone()
+}
+fn local_control_current(state: &LocalAppState, control: &LocalAppControl, stale_ms: u64) -> bool {
+    state
+        .current
+        .as_ref()
+        .is_some_and(|now| now.focus == control.focus && now.identity == control.identity)
+        && control.at.elapsed() < Duration::from_millis(stale_ms)
+}
+fn app_request(action: &str) -> Option<(&str, mios_resolver::app_input::Action)> {
+    let (app, key) = action.strip_prefix("input:app-key ")?.split_once(' ')?;
+    Some((app, mios_resolver::app_input::Action::from_key(key)?))
+}
+pub(crate) struct SessionWorker {
     jobs: Option<std::sync::mpsc::SyncSender<SessionJob>>,
     worker: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<AtomicBool>,
     app: RouteApp,
+    local_apps: LocalApps,
+    app_stale_ms: u64,
     verifier: Option<std::thread::JoinHandle<()>>,
 }
 impl SessionWorker {
@@ -250,10 +540,63 @@ impl SessionWorker {
         client: Option<(TmuxClient, u64)>,
         pin: Option<(u32, String)>,
     ) -> Result<Self, String> {
+        Self::spawn_checked(route, cfg, client, pin, None)
+    }
+    pub(crate) fn frontend(
+        front: &crate::tmux_capture::Frontend,
+        cfg: GlobalConfig,
+    ) -> Result<Self, String> {
+        let t = &front.target;
+        let route = crate::sessions::SessionRoute {
+            name: "native-mouse".into(),
+            controllers: vec![],
+            socket: t.socket.clone(),
+            session: t.session_name.clone(),
+            pane: t.pane.clone(),
+            ssh_host: None,
+        };
+        Self::spawn_checked(
+            route,
+            cfg,
+            Some((t.client(), t.client_start)),
+            Some((t.server, t.window.clone())),
+            Some((t.clone(), true)),
+        )
+    }
+    fn login(
+        target: crate::tmux_capture::Target,
+        device: &Path,
+        cfg: GlobalConfig,
+    ) -> Result<Self, String> {
+        let route = crate::sessions::SessionRoute {
+            name: "login-target".into(),
+            controllers: vec![device.to_owned()],
+            socket: target.socket.clone(),
+            session: target.session_name.clone(),
+            pane: target.pane.clone(),
+            ssh_host: None,
+        };
+        Self::spawn_checked(
+            route,
+            cfg,
+            Some((target.client(), target.client_start)),
+            Some((target.server, target.window.clone())),
+            Some((target, false)),
+        )
+    }
+    fn spawn_checked(
+        route: crate::sessions::SessionRoute,
+        cfg: GlobalConfig,
+        client: Option<(TmuxClient, u64)>,
+        pin: Option<(u32, String)>,
+        native: Option<(crate::tmux_capture::Target, bool)>,
+    ) -> Result<Self, String> {
         let (jobs, inbox) = std::sync::mpsc::sync_channel::<SessionJob>(16);
         let stop = std::sync::Arc::new(AtomicBool::new(false));
         let cancelled = stop.clone();
         let app: RouteApp = std::sync::Arc::new(std::sync::Mutex::new((None, None)));
+        let local_apps: LocalApps = Default::default();
+        let app_stale_ms = cfg.controller.context_stale_ms;
         let current = std::sync::Arc::new(std::sync::Mutex::new(route.clone()));
         // P3: only an explicit local route verifies its pane; a captured terminal's app comes from the focus snapshot.
         let verifier = if client.is_none()
@@ -265,12 +608,14 @@ impl SessionWorker {
                 cfg.clone(),
                 current.clone(),
                 app.clone(),
+                local_apps.clone(),
                 stop.clone(),
             )?)
         } else {
             None
         };
         let (moved, pane_app) = (current, app.clone());
+        let accepted_apps = local_apps.clone();
         let worker=std::thread::Builder::new().name(format!("mios-pad-{}",route.name)).spawn(move || {
             let timeout=Duration::from_millis(cfg.controller.context_stale_ms);
             let mut route=route;
@@ -283,16 +628,59 @@ impl SessionWorker {
                 }
                 let run=|argv:Vec<String>|run_bounded_cancel(&argv,timeout.saturating_sub(job.queued.elapsed()),Some(&cancelled));
                 let result=(|| -> Result<(),String> {
+                    if job.action.starts_with("input:app-key ") {
+                        let (app,semantic)=app_request(&job.action).ok_or("unsupported local app control")?;
+                        let control=job.app_control.as_ref().ok_or("local app control has no accepted process witness")?;
+                        if app!=control.identity.app || !accepted_apps.lock().is_ok_and(|state|local_control_current(&state,control,cfg.controller.context_stale_ms)) {return Err("local app focus visit expired".into());}
+                        let actual=local_app_identity(&route,&cfg,timeout.saturating_sub(job.queued.elapsed()),&cancelled)?;
+                        if actual!=control.identity {return Err("local app target changed since acceptance".into());}
+                        let state=accepted_apps.lock().map_err(|_|"local app authority lock failed")?;
+                        if cancelled.load(Ordering::Relaxed) || job.queued.elapsed()>=timeout || !local_control_current(&state,control,cfg.controller.context_stale_ms) {return Err("local app request cancelled".into());}
+                        let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("local app runtime missing")?;
+                        return mios_resolver::app_input::send(&runtime,control.identity.process.pid,control.identity.process.start,control.focus.clone(),semantic).map_err(|e|e.to_string());
+                    }
                     if let Some((client,start))=&client {
                         if proc_start(Path::new("/proc"),client.pid).map(|v|v.1)!=Some(*start) {return Err("captured client was replaced or detached".into())}
                     }
-                    let inspected=run(crate::sessions::inspect_argv(&route)?)?;
+                    if let Some((target,owned_only))=&native {
+                        if !crate::tmux_capture::live_target(target,*owned_only) {return Err("native input focus, owner generation or foreground identity changed".into());}
+                        if !owned_only {
+                            if let Some(verb)=job.action.strip_prefix("tmux:") {
+                                run_tmux_guarded(&cfg,&target.client(),verb,true,|| {
+                                    if cancelled.load(Ordering::Relaxed) || job.queued.elapsed()>=timeout {
+                                        return Err("session navigation expired or cancelled".into());
+                                    }
+                                    if !crate::tmux_capture::live_target(target,*owned_only) {
+                                        return Err("session navigation target changed".into());
+                                    }
+                                    Ok(timeout.saturating_sub(job.queued.elapsed()))
+                                })?;return Ok(());
+                            }
+                        }
+                    }
+                    // A mouse-only frontend has no physical controller assignment. Its existing owner lease
+                    // authorizes only key projection to this witnessed pane; never fabricate a controller node.
+                    let frontend=native.is_some() && route.controllers.is_empty();
+                    let native_argv=|rest:Vec<String>| {
+                        let mut argv=vec!["/usr/bin/tmux".into(),"-S".into(),route.socket.to_string_lossy().into_owned()];
+                        argv.extend(rest);argv
+                    };
+                    let inspected=run(if frontend {native_argv(vec!["display-message".into(),"-p".into(),"-t".into(),route.pane.clone(),crate::sessions::IDENTITY_FORMAT.into()])}
+                        else {crate::sessions::inspect_argv(&route)?})?;
                     let current=session_identity(&route,&inspected)?;
                     if identity.as_ref().is_some_and(|p|*p!=current) {
                         return Err("tmux server or window identity changed; rebind this controller".into());
                     }
                     identity=Some(current.clone());
-                    let plan=crate::sessions::plan(&route,&job.action,&cfg);
+                    let plan=(if frontend {
+                        job.action.strip_prefix("key:").ok_or_else(||"mouse frontend permits key projection only".to_string())
+                            .and_then(crate::sessions::tmux_key).map(|key|native_argv(vec!["send-keys".into(),"-t".into(),route.pane.clone(),key]))
+                    } else {crate::sessions::plan(&route,&job.action,&cfg)}).map(|mut argv|{
+                        if job.repeat>1 && job.action.starts_with("key:") {
+                            if let Some(key)=argv.last().cloned() {argv.extend(std::iter::repeat_n(key,usize::from(job.repeat-1)));}
+                        }
+                        argv
+                    });
                     let reply=if let (Err(_),Some((client,_)),Some(verb))=(&plan,&client,job.action.strip_prefix("tmux:")) {
                         // These UI verbs require the captured client, which must still select our controller's pane.
                         let switching=verb=="session-prev" || verb=="session-next";
@@ -321,6 +709,8 @@ impl SessionWorker {
                         if next.pane!=route.pane {
                             // P8: an app verified for the previous pane never applies to the next one.
                             *pane_app.lock().unwrap()=(None,None);
+                            let channel={let mut state=accepted_apps.lock().unwrap();let channel=state.channel.clone();update_local_app(&mut state,None,&channel,Instant::now());channel};
+                            if !channel.is_empty() {publish_app_lease(app_authority().as_ref(),&channel,None,Instant::now(),cfg.controller.context_stale_ms);}
                             *moved.lock().unwrap()=next.clone();
                         }
                         route=next;
@@ -336,6 +726,8 @@ impl SessionWorker {
             worker: Some(worker),
             stop,
             app,
+            local_apps,
+            app_stale_ms,
             verifier,
         })
     }
@@ -346,31 +738,56 @@ impl SessionWorker {
         cfg: GlobalConfig,
         current: std::sync::Arc<std::sync::Mutex<crate::sessions::SessionRoute>>,
         app: RouteApp,
+        local_apps: LocalApps,
         stop: std::sync::Arc<AtomicBool>,
     ) -> Result<std::thread::JoinHandle<()>, String> {
-        let uid = unsafe { libc::getuid() };
         std::thread::Builder::new()
             .name(format!("mios-pad-app-{name}"))
             .spawn(move || {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                let channel = format!("route:{}", NEXT.fetch_add(1, Ordering::Relaxed));
+                let authority = app_authority();
                 let nav = &cfg.controller.nav;
                 let timeout = Duration::from_millis(nav.app_query_timeout_ms);
                 while !stop.load(Ordering::Relaxed) {
                     let route = current.lock().unwrap().clone();
-                    let found = crate::sessions::pane_pid_argv(&route)
-                        .and_then(|argv| run_bounded_cancel(&argv, timeout, Some(&stop)))
-                        .ok()
-                        .and_then(|reply| reply.trim().parse::<u32>().ok())
-                        .and_then(|pid| {
-                            pane_app(Path::new("/proc"), pid, &nav.apps, uid, &lstat_facts)
-                        });
+                    let identity = local_app_identity(&route, &cfg, timeout, &stop).ok();
                     if *current.lock().unwrap() == route {
-                        *app.lock().unwrap() = (found, Some(Instant::now()));
+                        let at = Instant::now();
+                        let control = update_local_app(
+                            &mut local_apps.lock().unwrap(),
+                            identity,
+                            &channel,
+                            at,
+                        );
+                        *app.lock().unwrap() =
+                            (control.as_ref().map(|c| c.identity.app.clone()), Some(at));
+                        publish_app_lease(
+                            authority.as_ref(),
+                            &channel,
+                            control.map(|c| c.focus),
+                            at,
+                            cfg.controller.context_stale_ms,
+                        );
                     }
                     let until = Instant::now() + Duration::from_millis(nav.app_poll_ms);
                     while Instant::now() < until && !stop.load(Ordering::Relaxed) {
                         std::thread::sleep(Duration::from_millis(10));
                     }
                 }
+                update_local_app(
+                    &mut local_apps.lock().unwrap(),
+                    None,
+                    &channel,
+                    Instant::now(),
+                );
+                publish_app_lease(
+                    authority.as_ref(),
+                    &channel,
+                    None,
+                    Instant::now(),
+                    cfg.controller.context_stale_ms,
+                );
             })
             .map_err(|e| e.to_string())
     }
@@ -380,10 +797,37 @@ impl SessionWorker {
         app.filter(|_| at.is_some_and(|t| t.elapsed() < Duration::from_millis(stale_ms)))
     }
     fn submit(&self, action: String) -> bool {
+        self.submit_repeat(action, 1)
+    }
+    pub(crate) fn submit_repeat(&self, action: String, repeat: u8) -> bool {
+        if !(1..=8).contains(&repeat) {
+            return false;
+        }
+        let app_control = if action.starts_with("input:app-key ") {
+            let Some((app, _)) = app_request(&action) else {
+                return false;
+            };
+            let Ok(state) = self.local_apps.lock() else {
+                return false;
+            };
+            let Some(control) = state.current.as_ref().filter(|c| {
+                c.identity.app == app && local_control_current(&state, c, self.app_stale_ms)
+            }) else {
+                return false;
+            };
+            if repeat != 1 {
+                return false;
+            }
+            Some(control.clone())
+        } else {
+            None
+        };
         self.jobs.as_ref().is_some_and(|tx| {
             tx.try_send(SessionJob {
+                repeat,
                 queued: Instant::now(),
                 action,
+                app_control,
             })
             .is_ok()
         })
@@ -658,6 +1102,69 @@ pub(crate) fn ipc(request: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     Ok(out)
 }
+/// One absolute remaining-job deadline for queued compositor connection, write
+/// and read. A timeout cannot retract a request already accepted by the peer.
+fn ipc_bounded(
+    request: &str,
+    timeout: Duration,
+    authorize: impl Fn() -> Result<Duration, String>,
+) -> Result<String, String> {
+    let until = Instant::now()
+        .checked_add(timeout)
+        .ok_or("invalid compositor deadline")?;
+    let remaining = || {
+        let time = until
+            .saturating_duration_since(Instant::now())
+            .min(authorize()?);
+        if time.is_zero() {
+            Err("queued compositor deadline expired".to_owned())
+        } else {
+            Ok(time.min(Duration::from_millis(150)))
+        }
+    };
+    remaining()?;
+    let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| "XDG_RUNTIME_DIR missing")?;
+    let sig = signature()?;
+    if sig.contains('/') || sig.contains("..") {
+        return Err("invalid compositor signature".into());
+    }
+    let path = Path::new(&runtime)
+        .join("hypr")
+        .join(sig)
+        .join(".socket.sock");
+    // Reuse the existing nonblocking-connect/deadline and same-UID peer check.
+    let mut stream = crate::tmux_handoff::connect(&path, until)?;
+    let mut pending = request.as_bytes();
+    while !pending.is_empty() {
+        stream
+            .set_write_timeout(Some(remaining()?))
+            .map_err(|e| e.to_string())?;
+        match stream.write(pending) {
+            Ok(0) => return Err("compositor closed while writing".into()),
+            Ok(n) => pending = &pending[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let mut out = Vec::new();
+    let mut buffer = [0u8; 4096];
+    while out.len() < 1 << 20 {
+        stream
+            .set_read_timeout(Some(remaining()?))
+            .map_err(|e| e.to_string())?;
+        let available = buffer.len().min((1 << 20) - out.len());
+        match stream.read(&mut buffer[..available]) {
+            Ok(0) => {
+                remaining()?;
+                return String::from_utf8(out).map_err(|e| e.to_string());
+            }
+            Ok(n) => out.extend_from_slice(&buffer[..n]),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("compositor response exceeds limit".into())
+}
 #[derive(Clone, Debug)]
 pub struct ContextSnapshot {
     pub name: String,
@@ -669,6 +1176,11 @@ pub struct ContextSnapshot {
     pub class: Option<String>,
     /// C-09: the MiOS tmux client running under the focused terminal (or attached to the active VT), if any.
     pub tmux_client: Option<TmuxClient>,
+    pub native_target: Option<crate::tmux_capture::Target>,
+    pub native_outer: Option<(u32, u64)>,
+    pub remote: bool,
+    pub routing_generation: u64,
+    pub focus_epoch: u64,
     /// INV-8: why nothing may be routed now (another session owns the seat); None while this user's session is active.
     pub suspended: Option<String>,
     /// C-17: the VT of this user's graphical session (the console's TOGGLE_CHORD switches to it).
@@ -679,6 +1191,7 @@ pub struct ContextSnapshot {
     pub app: Option<String>,
     pub app_target: Option<(String, u64)>,
     pub app_at: Option<Instant>,
+    pub app_process: Option<mios_resolver::app_input::Process>,
 }
 impl ContextSnapshot {
     fn new(name: &str) -> Self {
@@ -691,12 +1204,18 @@ impl ContextSnapshot {
             sampled: Instant::now(),
             class: None,
             tmux_client: None,
+            native_target: None,
+            native_outer: None,
+            remote: false,
+            routing_generation: 0,
+            focus_epoch: 0,
             suspended: None,
             graphical_vt: None,
             shell_overlay: false,
             app: None,
             app_target: None,
             app_at: None,
+            app_process: None,
         }
     }
     /// The verified app while it is fresh (P3): an unverified or stale result selects nothing.
@@ -707,14 +1226,92 @@ impl ContextSnapshot {
         })
     }
 }
+type AppAuthority = std::sync::Arc<std::sync::Mutex<mios_resolver::app_input::Publisher>>;
+fn app_authority() -> Option<AppAuthority> {
+    static SHARED: std::sync::OnceLock<
+        std::sync::Mutex<std::sync::Weak<std::sync::Mutex<mios_resolver::app_input::Publisher>>>,
+    > = std::sync::OnceLock::new();
+    let mut slot = SHARED.get_or_init(Default::default).lock().ok()?;
+    if let Some(authority) = slot.upgrade() {
+        return Some(authority);
+    }
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from)?;
+    let authority = std::sync::Arc::new(std::sync::Mutex::new(
+        mios_resolver::app_input::Publisher::new(&runtime).ok()?,
+    ));
+    *slot = std::sync::Arc::downgrade(&authority);
+    Some(authority)
+}
+fn publish_app_lease(
+    authority: Option<&AppAuthority>,
+    channel: &str,
+    focus: Option<mios_resolver::app_input::Focus>,
+    sampled: Instant,
+    stale_ms: u64,
+) {
+    if let Some(authority) = authority {
+        if let Ok(mut writer) = authority.lock() {
+            let sampled_ns = mios_resolver::app_input::monotonic_ns()
+                .saturating_sub(sampled.elapsed().as_nanos() as u64);
+            let _ = writer.update(channel, focus, sampled_ns, stale_ms);
+        }
+    }
+}
+fn advance_focus(previous: &ContextSnapshot, next: &mut ContextSnapshot) {
+    let changed = previous.name != next.name
+        || previous.address != next.address
+        || previous.pid != next.pid
+        || previous.routing_generation != next.routing_generation
+        || previous.suspended != next.suspended
+        || previous.shell_overlay != next.shell_overlay
+        || previous.tmux_client != next.tmux_client
+        || previous.native_outer != next.native_outer
+        || previous.app != next.app
+        || previous.app_process != next.app_process;
+    next.focus_epoch = if changed {
+        previous.focus_epoch.saturating_add(1)
+    } else {
+        previous.focus_epoch
+    };
+}
+fn publish_focus(
+    cache: &std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+    mut next: ContextSnapshot,
+    authority: Option<&AppAuthority>,
+    stale_ms: u64,
+) {
+    let published = {
+        let mut old = cache.lock().unwrap();
+        advance_focus(&old, &mut next);
+        *old = next;
+        old.clone()
+    };
+    publish_app_lease(
+        authority,
+        "seat",
+        app_input_focus(&published, stale_ms),
+        published.sampled,
+        stale_ms,
+    );
+}
 /// A tmux client found under the focused window's process tree, by /proc alone (no spawn per focus change).
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TmuxClient {
     pub pid: u32,
     /// The client's tty: the `-c target-client` name.
     pub tty: String,
     /// The server socket (TMUX_TMPDIR, -L or -S resolved), so a verb reaches exactly the server that client uses.
     pub socket: PathBuf,
+    /// Process and socket identities witnessed by asynchronous focus discovery.
+    /// Missing legacy serialized witnesses never authorize a queued action.
+    #[serde(default)]
+    pub start: u64,
+    #[serde(default)]
+    pub instance: u64,
+    #[serde(default)]
+    pub socket_dev: u64,
+    #[serde(default)]
+    pub socket_ino: u64,
 }
 fn proc_parent(stat: &str) -> Option<u32> {
     let rest = &stat[stat.rfind(')')? + 1..];
@@ -764,7 +1361,12 @@ pub fn tmux_client_under(
     }
     None
 }
-fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> Option<TmuxClient> {
+pub(crate) fn tmux_client_at(
+    proc_root: &Path,
+    pid: u32,
+    sockets: &[String],
+    uid: u32,
+) -> Option<TmuxClient> {
     let dir = proc_root.join(pid.to_string());
     let cmdline = std::fs::read(dir.join("cmdline")).ok()?;
     let args: Vec<String> = cmdline
@@ -826,9 +1428,12 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
         return None;
     }
     use std::os::unix::fs::FileTypeExt;
-    if !std::fs::metadata(&socket).ok()?.file_type().is_socket() {
+    use std::os::unix::fs::MetadataExt;
+    let socket_meta = std::fs::symlink_metadata(&socket).ok()?;
+    if !socket_meta.file_type().is_socket() {
         return None;
     }
+    let start = crate::nested::start_time(proc_root, pid).filter(|start| *start > 0)?;
     let tty = std::fs::read_link(dir.join("fd/0"))
         .ok()?
         .to_str()?
@@ -840,7 +1445,15 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
     } else if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
         return None;
     }
-    Some(TmuxClient { pid, tty, socket })
+    Some(TmuxClient {
+        pid,
+        tty,
+        socket,
+        start,
+        instance: 0,
+        socket_dev: socket_meta.dev(),
+        socket_ino: socket_meta.ino(),
+    })
 }
 fn snapshot(cfg: &GlobalConfig, v: &serde_json::Value) -> ContextSnapshot {
     let class = v
@@ -863,12 +1476,18 @@ fn snapshot(cfg: &GlobalConfig, v: &serde_json::Value) -> ContextSnapshot {
         sampled: Instant::now(),
         class: class.map(str::to_owned),
         tmux_client: None,
+        native_target: None,
+        native_outer: None,
+        remote: false,
+        routing_generation: 0,
+        focus_epoch: 0,
         suspended: None,
         graphical_vt: None,
         shell_overlay: false,
         app: None,
         app_target: None,
         app_at: None,
+        app_process: None,
     }
 }
 /// C-09 on a VT: the MiOS tmux client attached to `tty` (directly, or below a process on that tty such as the console
@@ -1063,23 +1682,6 @@ pub fn pane_app(
     let (_, tpgid) = proc_groups(proc_root, pane_pid)?;
     app_of_pid(proc_root, tpgid, apps, uid, lstat)
 }
-/// `#{pane_pid}` of the client's active pane, bounded by app_query_timeout_ms.
-fn client_pane_pid(client: &TmuxClient, timeout: Duration) -> Result<u32, String> {
-    let argv = vec![
-        "/usr/bin/tmux".into(),
-        "-S".into(),
-        client.socket.to_string_lossy().into_owned(),
-        "display-message".into(),
-        "-p".into(),
-        "-c".into(),
-        client.tty.clone(),
-        "#{pane_pid}".into(),
-    ];
-    run_bounded(&argv, timeout)?
-        .trim()
-        .parse()
-        .map_err(|_| "tmux reported no pane pid".to_string())
-}
 /// The processes below `pid` (breadth first, depth 8, at most 4096 nodes), as tmux_client_under walks them.
 fn descendants(proc_root: &Path, pid: u32) -> Vec<u32> {
     let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -1182,31 +1784,55 @@ impl AppProbe {
             Self::Vt { .. } => None,
         }
     }
+    #[cfg(test)]
     fn verify(&self, cfg: &GlobalConfig, uid: u32) -> Option<String> {
+        self.identity(cfg, uid).map(|(app, _)| app)
+    }
+    fn identity(
+        &self,
+        cfg: &GlobalConfig,
+        uid: u32,
+    ) -> Option<(String, mios_resolver::app_input::Process)> {
         let nav = &cfg.controller.nav;
         let proc_root = Path::new("/proc");
-        match self {
+        let pids = match self {
             Self::Tmux { client, .. } => {
-                let pane = client_pane_pid(client, Duration::from_millis(nav.app_query_timeout_ms))
-                    .ok()?;
-                pane_app(proc_root, pane, &nav.apps, uid, &lstat_facts)
+                vec![
+                    crate::tmux_capture::observe(
+                        client,
+                        Duration::from_millis(nav.app_query_timeout_ms),
+                    )
+                    .ok()?
+                    .foreground,
+                ]
             }
-            Self::Plain { pid, .. } => {
-                let pids = descendants(proc_root, *pid);
-                foreground_app_among(proc_root, &pids, &nav.apps, uid, &lstat_facts)
-            }
-            Self::Vt { tty } => {
-                let pids = on_tty(proc_root, tty);
-                foreground_app_among(proc_root, &pids, &nav.apps, uid, &lstat_facts)
-            }
-        }
+            Self::Plain { pid, .. } => descendants(proc_root, *pid),
+            Self::Vt { tty } => on_tty(proc_root, tty),
+        };
+        pids.into_iter().find_map(|pid| {
+            proc_groups(proc_root, pid).filter(|(pgrp, tpgid)| *pgrp == pid && *tpgid == pid)?;
+            let name = app_of_pid(proc_root, pid, &nav.apps, uid, &lstat_facts)?;
+            Some((
+                name,
+                mios_resolver::app_input::Process {
+                    pid,
+                    start: proc_start(proc_root, pid)?.1,
+                },
+            ))
+        })
     }
 }
 /// P3: one verified result per probe identity. A focus, pid or tmux-client change is a new identity and verifies at
 /// once; the same identity re-verifies at most every app_poll_ms. A result is never reused for another identity.
+struct AppObservation {
+    probe: AppProbe,
+    at: Instant,
+    identity: Option<(String, mios_resolver::app_input::Process)>,
+}
 #[derive(Default)]
 pub struct AppCache {
     last: Option<(AppProbe, Instant, Option<String>)>,
+    instance: Option<AppObservation>,
 }
 impl AppCache {
     pub fn get(
@@ -1244,6 +1870,7 @@ fn verify_app(
     snapshot.app = None;
     snapshot.app_target = None;
     snapshot.app_at = None;
+    snapshot.app_process = None;
     if !wants_app(cfg, nav_context) {
         return;
     }
@@ -1263,11 +1890,31 @@ fn verify_app(
         },
     };
     let bound = probe.target();
+    let mut observed = None;
     let (app, at) = cache.get(
-        probe,
+        probe.clone(),
         Duration::from_millis(cfg.controller.nav.app_poll_ms),
-        |p| p.verify(cfg, uid),
+        |p| {
+            let identity = p.identity(cfg, uid);
+            let app = identity.as_ref().map(|(name, _)| name.clone());
+            observed = Some(identity);
+            app
+        },
     );
+    if let Some(identity) = observed {
+        cache.instance = Some(AppObservation {
+            probe: probe.clone(),
+            at,
+            identity,
+        });
+    }
+    snapshot.app_process = cache
+        .instance
+        .as_ref()
+        .filter(|observation| observation.probe == probe && observation.at == at)
+        .and_then(|observation| observation.identity.as_ref())
+        .filter(|(name, _)| Some(name) == app.as_ref())
+        .map(|(_, process)| process.clone());
     snapshot.app = app;
     snapshot.app_target = bound;
     snapshot.app_at = Some(at);
@@ -1393,21 +2040,62 @@ pub fn context(cfg: &GlobalConfig) -> Result<ContextSnapshot, String> {
 }
 /// `mios-inputd context` (P9): the focused window, plus the tmux client, the verified foreground app (one bounded
 /// query, app_query_timeout_ms) and the nav profile a router selects for exactly that snapshot.
+pub fn native_console_context(cfg: &GlobalConfig) -> Result<ContextSnapshot, String> {
+    let uid = unsafe { libc::getuid() };
+    let Seat::Console { tty, .. } = seat_view(Path::new("/run/systemd"), uid).seat else {
+        return Err("this user's local console session is not active".into());
+    };
+    let client = tmux_client_on_tty(
+        Path::new("/proc"),
+        &tty,
+        &cfg.controller.nav.tmux_sockets,
+        uid,
+    )
+    .ok_or("active console has no witnessed MiOS tmux client")?;
+    native_snapshot(cfg, &client)
+}
+pub fn native_console_active() -> bool {
+    matches!(
+        seat_view(Path::new("/run/systemd"), unsafe { libc::getuid() }).seat,
+        Seat::Console { .. }
+    )
+}
 pub fn context_report(
     cfg: &GlobalConfig,
     legacy: &LegacyConfig,
 ) -> Result<serde_json::Value, String> {
-    let mut c = context(cfg)?;
+    let uid = unsafe { libc::getuid() };
+    let console = matches!(
+        seat_view(Path::new("/run/systemd"), uid).seat,
+        Seat::Console { .. }
+    );
+    let mut c = if let Some((target, owned, remote)) = crate::tmux_capture::focused_target() {
+        let mut snap = ContextSnapshot::new(if owned { "app-capture" } else { "console" });
+        snap.address = Some(target.address());
+        snap.pid = Some(u64::from(target.foreground));
+        snap.class = Some("console".into());
+        snap.tmux_client = Some(target.client());
+        snap.routing_generation = target.login_generation;
+        snap.native_target = Some(target);
+        snap.remote = remote;
+        snap
+    } else if console {
+        native_console_context(cfg)?
+    } else {
+        context(cfg)?
+    };
     let uid = unsafe { libc::getuid() };
     c.shell_overlay = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .is_some_and(|r| shell_overlay_open(&r, cfg));
     let nav_context =
         capture_navigation_context(cfg, c.class.as_deref()).unwrap_or_else(|| c.name.clone());
-    if let (Some(pid), true) = (c.pid, wants_tmux(cfg, &nav_context)) {
-        c.tmux_client = u32::try_from(pid).ok().and_then(|p| {
-            tmux_client_under(Path::new("/proc"), p, &cfg.controller.nav.tmux_sockets, uid)
-        });
+    if c.native_target.is_none() {
+        if let (Some(pid), true) = (c.pid, wants_tmux(cfg, &nav_context)) {
+            c.tmux_client = u32::try_from(pid).ok().and_then(|p| {
+                tmux_client_under(Path::new("/proc"), p, &cfg.controller.nav.tmux_sockets, uid)
+            });
+        }
     }
     if !c.shell_overlay && c.name != "desktop-3d" {
         verify_app(
@@ -1430,7 +2118,7 @@ pub fn context_report(
     Ok(
         serde_json::json!({"context":c.name,"address":c.address,"pid":c.pid,"room_capture":c.room_capture,
         "released":c.released,"controller_owner":if Router::owns_controller(&c.name) {"app"} else {"mios"},
-        "tmux":c.tmux_client.is_some(),"app":router.app(),"nav_profile":router.nav_profile(),"camera":router.camera()}),
+        "tmux":c.tmux_client.is_some(),"native_tmux":c.native_target,"remote":c.remote,"routing_generation":c.routing_generation,"app":router.app(),"nav_profile":router.nav_profile(),"camera":router.camera()}),
     )
 }
 fn context_query(cfg: &GlobalConfig, lua: &str) -> Result<ContextSnapshot, String> {
@@ -1524,6 +2212,7 @@ fn capture_transaction(
         .and_then(|(_, r)| r.lines().next()?.trim().parse::<u32>().ok())
         .unwrap_or(0);
     let mut receipt = CaptureReceipt {
+        native: None,
         address: address.into(),
         class: class.trim().into(),
         pid,
@@ -1555,6 +2244,7 @@ fn inspect_capture(cfg: &GlobalConfig, expect: Option<&str>) -> Result<CaptureRe
     let class = snapshot.class.unwrap_or_default();
     let target = captured_tmux(cfg, pid);
     Ok(CaptureReceipt {
+        native: None,
         address,
         class,
         pid,
@@ -1585,11 +2275,39 @@ pub fn osd_message(mode: &str, class: &str, toggle_chord: &[String]) -> String {
     }
 }
 /// Run a short-lived helper with a hard deadline; its stdout (bounded) is the result.
-fn run_bounded(argv: &[String], timeout: Duration) -> Result<String, String> {
+pub(crate) fn run_bounded(argv: &[String], timeout: Duration) -> Result<String, String> {
     run_bounded_cancel(argv, timeout, None)
 }
 /// Nonblocking bounded output, with a private process group for cancellation. A descendant retaining stdout cannot
 /// extend the deadline or stall the input loop. Killing this group never signals the caller's group or tmux server.
+pub(crate) fn control_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    if matches!(
+        Path::new(program).file_name().and_then(|s| s.to_str()),
+        Some("tmux" | "mios-tmux")
+    ) {
+        // tmux's control protocol has a bounded identify environment; app children keep their own full environment.
+        let minimal: Vec<_> = std::env::vars_os()
+            .filter(|(k, _)| {
+                let k = k.to_string_lossy();
+                matches!(
+                    k.as_ref(),
+                    "HOME"
+                        | "PATH"
+                        | "TERM"
+                        | "LANG"
+                        | "USER"
+                        | "LOGNAME"
+                        | "SHELL"
+                        | "TMPDIR"
+                        | "TMUX_TMPDIR"
+                ) || k.starts_with("LC_")
+            })
+            .collect();
+        command.env_clear().envs(minimal);
+    }
+    command
+}
 fn run_bounded_cancel(
     argv: &[String],
     timeout: Duration,
@@ -1601,7 +2319,8 @@ fn run_bounded_cancel(
     if timeout.is_zero() || cancelled.is_some_and(|c| c.load(Ordering::Relaxed)) {
         return Err("input action expired or cancelled".into());
     }
-    let mut child = Command::new(program)
+    let mut command = control_command(program);
+    let mut child = command
         .args(rest)
         .env_remove("TMUX")
         .env_remove("TMUX_PANE")
@@ -1707,6 +2426,16 @@ pub fn tmux_argv(
     let words: Vec<_> = verb.split_whitespace().collect();
     Ok(match words.as_slice() {
         ["key", k] => base(&["send-keys", "-c", &client.tty, "-K", &cfg.tmux_prefix, k]),
+        ["desktop", action] => {
+            fn quote(s: &str) -> String {
+                format!("'{}'", s.replace('\'', "'\"'\"'"))
+            }
+            // Literal caller values cannot become tmux format code; only these fixed pane witnesses expand.
+            let socket = quote(&client.socket.to_string_lossy().replace('#', "##"));
+            let name = quote(&client.tty.replace('#', "##"));
+            let command=format!("/usr/bin/mios-gen tmux-os desktop {action} --socket {socket} --client {name} --pane '#{{pane_id}}' --expected-pid '#{{pane_pid}}' --expected-window '#{{window_id}}'");
+            base(&["run-shell", "-b", "-t", &client.tty, &command])
+        }
         ["session-prev"] => base(&["switch-client", "-c", &client.tty, "-p"]),
         ["session-next"] => base(&["switch-client", "-c", &client.tty, "-n"]),
         // U1: prefix + [keybindings.tmux].menu_key opens the generated MiOS menu on exactly this client.
@@ -1792,13 +2521,42 @@ fn write_private(path: &Path, text: &str) -> Result<(), String> {
 }
 /// Run a tmux verb (C-30), including the two-step ones: `focus` falls through to the compositor at the pane edge (on
 /// the desktop; on a VT it stops there), `keymap` renders the map file first.
+#[cfg(test)]
 fn run_tmux(
     cfg: &GlobalConfig,
     client: &TmuxClient,
     verb: &str,
     console: bool,
 ) -> Result<Vec<String>, String> {
+    run_tmux_guarded(cfg, client, verb, console, || Ok(Duration::from_secs(1)))
+}
+fn run_tmux_guarded(
+    cfg: &GlobalConfig,
+    client: &TmuxClient,
+    verb: &str,
+    console: bool,
+    remaining: impl Fn() -> Result<Duration, String>,
+) -> Result<Vec<String>, String> {
     let t = Duration::from_millis(1000);
+    remaining()?;
+    let run = |argv: &[String]| {
+        let began = Instant::now();
+        let budget = t.min(remaining()?);
+        if client.start == 0 || client.socket_ino == 0 {
+            return Err("queued tmux client has no process/socket witness".into());
+        }
+        // This blocking check runs only in the worker, after authority locks
+        // have been released. A cached tty cannot authorize its next occupant.
+        crate::tmux_capture::observe(client, budget)?;
+        let budget = budget.saturating_sub(began.elapsed()).min(remaining()?);
+        if budget.is_zero() {
+            return Err("queued tmux action deadline expired during client check".into());
+        }
+        // Legacy tty-targeted commands have no atomic server-side identity
+        // transaction; this is a fresh admission check, not cancellation of an
+        // already accepted command or a guarantee across a disconnect race.
+        run_bounded(argv, budget)
+    };
     let argv = tmux_argv(cfg, client, verb)?;
     let words: Vec<_> = verb.split_whitespace().collect();
     let mut ran = vec![argv[3..].join(" ")];
@@ -1816,15 +2574,15 @@ fn run_tmux(
                 &keymap_path(),
                 &cfg.controller.nav.text(cfg.controller.capture_hold_ms),
             )?;
-            run_bounded(&argv, t)?;
+            run(&argv)?;
         }
         ["focus", d] => {
-            let edge = run_bounded(&argv, t)?.trim() == "1";
+            let edge = run(&argv)?.trim() == "1";
             if edge && console {
                 ran.push("edge: a VT has no compositor focus".into());
             } else if edge {
                 let lua = command_for(&format!("hypr:movefocus {d}"))?.remove(2);
-                let reply = ipc(&format!("/eval {lua}"))?;
+                let reply = ipc_bounded(&format!("/eval {lua}"), remaining()?, &remaining)?;
                 ran.push(format!("hypr:movefocus {d} -> {}", reply.trim()));
             } else {
                 let k = match *d {
@@ -1834,12 +2592,12 @@ fn run_tmux(
                     _ => "l",
                 };
                 let step = tmux(&["send-keys", "-c", &client.tty, "-K", &cfg.tmux_prefix, k]);
-                run_bounded(&step, t)?;
+                run(&step)?;
                 ran.push(step[3..].join(" "));
             }
         }
         ["page-up"] | ["page-down"] => {
-            let out = run_bounded(&argv, t)?;
+            let out = run(&argv)?;
             let mut it = out.split_whitespace();
             let (pane, mode) = (it.next().unwrap_or("").to_owned(), it.next() == Some("1"));
             if !pane.starts_with('%') {
@@ -1852,26 +2610,87 @@ fn run_tmux(
             } else {
                 return Ok(ran);
             };
-            run_bounded(&step, t)?;
+            run(&step)?;
             ran.push(step[3..].join(" "));
         }
         _ => {
-            run_bounded(&argv, t)?;
+            run(&argv)?;
         }
     }
     Ok(ran)
 }
 /// Jobs that must not block the forwarding loop: tmux verbs, the capture OSD, and (fixture tier with --live-context)
 /// the compositor projections of key: and hypr: into the followed (nested) compositor.
+#[derive(Clone, Copy)]
+struct ActionScope {
+    generation: u64,
+    epoch: u64,
+    queued: Instant,
+}
+impl ActionScope {
+    fn new(focus: &ContextSnapshot) -> Self {
+        Self {
+            generation: focus.routing_generation,
+            epoch: focus.focus_epoch,
+            queued: Instant::now(),
+        }
+    }
+    fn current(
+        &self,
+        selection: &SharedLogin,
+        focus: &std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+        stale_ms: u64,
+    ) -> Result<(ContextSnapshot, Duration), String> {
+        let bound = Duration::from_millis(stale_ms);
+        if self.queued.elapsed() >= bound {
+            return Err("queued input action expired".into());
+        }
+        // Only clone the authority snapshot under the locks. Process queries,
+        // tmux and compositor IPC execute after this operation returns.
+        let current = with_login_focus(
+            selection,
+            focus,
+            self.generation,
+            self.epoch,
+            stale_ms,
+            |current| {
+                if current.remote || current.routing_generation != self.generation {
+                    return Err("local action login scope changed".into());
+                }
+                Ok(current.clone())
+            },
+        )?;
+        let remaining = bound.saturating_sub(self.queued.elapsed());
+        if remaining.is_zero() {
+            return Err("queued input action expired".into());
+        }
+        Ok((current, remaining))
+    }
+}
 enum Job {
     Tmux {
         verb: String,
         client: TmuxClient,
         console: bool,
+        scope: ActionScope,
     },
     Lua {
         action: String,
         lua: String,
+        scope: ActionScope,
+    },
+    WindowZoom {
+        native: Option<Box<crate::tmux_capture::Target>>,
+        window: Option<(String, u64)>,
+        generation: u64,
+        epoch: u64,
+        queued: Instant,
+    },
+    AppKey {
+        app: String,
+        action: String,
+        focus: Box<ContextSnapshot>,
+        queued: Instant,
     },
 }
 struct ActionWorker {
@@ -1879,19 +2698,75 @@ struct ActionWorker {
     worker: Option<std::thread::JoinHandle<()>>,
 }
 impl ActionWorker {
-    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
+    fn spawn(
+        policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+        selection: SharedLogin,
+        shared_focus: std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+    ) -> Result<Self, String> {
         let (jobs, inbox) = std::sync::mpsc::sync_channel::<Job>(16);
         let worker=std::thread::Builder::new().name("mios-actions".into()).spawn(move || {
             while let Ok(job)=inbox.recv() {
                 let cfg=match policy.lock() { Ok(c)=>c.clone(), Err(_)=>break };
                 match job {
-                    Job::Tmux{verb,client,console} => {
-                        let r=run_tmux(&cfg,&client,&verb,console);
+                    Job::Tmux{verb,client,console,scope} => {
+                        let remaining=|| {
+                            let (current,time)=scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms)?;
+                            if current.tmux_client.as_ref()!=Some(&client) { return Err("queued tmux client focus changed".into()); }
+                            Ok(time)
+                        };
+                        let r=run_tmux_guarded(&cfg,&client,&verb,console,remaining);
+                        #[cfg(test)] acceptance_observer::record_result("legacy-tmux", &r);
                         eprintln!("{}",serde_json::json!({"tmux":verb,"client":client.tty,"ok":r.is_ok(),"ran":r.as_ref().ok(),"error":r.as_ref().err()}));
                     }
-                    Job::Lua{action,lua} => {
-                        let r=ipc(&format!("/eval {lua}"));
+                    Job::Lua{action,lua,scope} => {
+                        let r=scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms).and_then(|(_,budget)| ipc_bounded(&format!("/eval {lua}"),budget,||scope.current(&selection,&shared_focus,cfg.controller.context_stale_ms).map(|(_,time)|time)));
+                        #[cfg(test)] acceptance_observer::record_result("legacy-lua", &r);
                         eprintln!("{}",serde_json::json!({"projected":action,"ok":r.as_ref().is_ok_and(|v|v.trim()=="ok"),"reply":r.as_ref().map(|v|v.trim().chars().take(200).collect::<String>()).unwrap_or_else(|e|e.clone())}));
+                    }
+                    Job::WindowZoom{native,window,generation,epoch,queued} => {
+                        let bound=Duration::from_millis(cfg.controller.context_stale_ms);
+                        let result=(|| -> Result<(),String> {
+                            let valid=||queued.elapsed()<bound && with_login_focus(&selection,&shared_focus,generation,epoch,cfg.controller.context_stale_ms,|_|Ok(())).is_ok();
+                            if !valid() {
+                                return Err("zoom login generation or request expired".into());
+                            }
+                            if let Some(target)=native {
+                                crate::tmux_capture::zoom(&target,bound.saturating_sub(queued.elapsed()),valid)
+                            } else if let Some((address,pid))=window {
+                                let reply=ipc(&format!("/eval {}",window_zoom_lua(&address,pid)))?;
+                                if reply.trim()=="ok" {Ok(())} else {Err("focused window zoom was not acknowledged".into())}
+                            } else {Err("zoom has no witnessed focused window".into())}
+                        })();
+                        #[cfg(test)] acceptance_observer::record_result("window-zoom", &result);
+                        eprintln!("{}",serde_json::json!({"projected":"input:window-zoom","ok":result.is_ok(),"error":result.err()}));
+                    }
+                    Job::AppKey{app,action,focus,queued} => {
+                        let result=(|| -> Result<(),String> {
+                            let bound=Duration::from_millis(cfg.controller.context_stale_ms);
+                            let expected=app_input_focus(&focus,cfg.controller.context_stale_ms).ok_or("app input scope expired")?;
+                            if queued.elapsed()>=bound || expected.app!=app {
+                                return Err("app input focus or login generation changed".into());
+                            }
+                            let check=|current:&ContextSnapshot| {
+                                if app_input_focus(current,cfg.controller.context_stale_ms).as_ref()==Some(&expected) {Ok(())} else {Err("app input focus scope changed".into())}
+                            };
+                            with_login_focus(&selection,&shared_focus,focus.routing_generation,focus.focus_epoch,cfg.controller.context_stale_ms,check)?;
+                            let semantic=mios_resolver::app_input::Action::from_key(&action).ok_or("unsupported app-owned control")?;
+                            let pid=app_input_process(&cfg,&focus,&app,bound.saturating_sub(queued.elapsed()))?;
+                            let start=expected.process.start;
+                            if queued.elapsed()>=bound {
+                                return Err("app input focus changed while verifying process".into());
+                            }
+                            // Retain the focus lock only through the nonblocking
+                            // send, never through process/tmux verification.
+                            let runtime=std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("app runtime missing")?;
+                            with_login_focus(&selection,&shared_focus,focus.routing_generation,focus.focus_epoch,cfg.controller.context_stale_ms,|current| {
+                                check(current)?;
+                                mios_resolver::app_input::send(&runtime,pid,start,expected.clone(),semantic).map_err(|e|e.to_string())
+                            })
+                        })();
+                        #[cfg(test)] acceptance_observer::record_result("app-key", &result);
+                        eprintln!("{}",serde_json::json!({"projected":"input:app-key","app":app,"ok":result.is_ok(),"error":result.err()}));
                     }
                 }
             }
@@ -1904,6 +2779,99 @@ impl ActionWorker {
     fn submit(&self, job: Job) -> bool {
         self.jobs.as_ref().is_some_and(|j| j.try_send(job).is_ok())
     }
+}
+/// A zoom uses the exact focused window and PID, never the compositor's implicit
+/// dispatch target. It changes geometry only; capture ownership remains intact.
+fn window_zoom_lua(address: &str, pid: u64) -> String {
+    let address = serde_json::to_string(address).unwrap();
+    format!("local w=hl.get_active_window();assert(w and tostring(w.address)=={address} and tonumber(w.pid)=={pid},'zoom focus changed');hl.dispatch(hl.dsp.window.fullscreen({{window=w,mode='maximized',action='toggle'}}))")
+}
+fn app_input_focus(
+    focus: &ContextSnapshot,
+    stale_ms: u64,
+) -> Option<mios_resolver::app_input::Focus> {
+    if focus.suspended.is_some()
+        || focus.shell_overlay
+        || focus.sampled.elapsed() >= Duration::from_millis(stale_ms)
+    {
+        return None;
+    }
+    let app = focus.fresh_app(stale_ms)?;
+    let (address, window_pid) = focus.address.clone().zip(focus.pid)?;
+    if focus.app_target.as_ref() != Some(&(address.clone(), window_pid)) {
+        return None;
+    }
+    Some(mios_resolver::app_input::Focus {
+        channel: "seat".into(),
+        epoch: focus.focus_epoch,
+        address,
+        window_pid,
+        generation: focus.routing_generation,
+        app: app.into(),
+        process: focus.app_process.clone()?,
+    })
+}
+fn with_login_focus<T>(
+    selection: &SharedLogin,
+    focus: &std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+    generation: u64,
+    epoch: u64,
+    stale_ms: u64,
+    operation: impl FnOnce(&ContextSnapshot) -> Result<T, String>,
+) -> Result<T, String> {
+    // Handoff commits use the same order. Never acquire selection while holding focus.
+    let state = selection
+        .lock()
+        .map_err(|_| "app login authority lock failed")?;
+    if state.generation != generation {
+        return Err("input login generation changed".into());
+    }
+    let current = focus.lock().map_err(|_| "app focus lock failed")?;
+    if current.focus_epoch != epoch
+        || current.suspended.is_some()
+        || current.sampled.elapsed() >= Duration::from_millis(stale_ms)
+    {
+        return Err("input focus visit changed or expired".into());
+    }
+    operation(&current)
+}
+fn app_input_process(
+    cfg: &GlobalConfig,
+    focus: &ContextSnapshot,
+    app: &str,
+    timeout: Duration,
+) -> Result<u32, String> {
+    let proc_root = Path::new("/proc");
+    let uid = unsafe { libc::getuid() };
+    let pinned = focus
+        .app_process
+        .as_ref()
+        .ok_or("app has no accepted process witness")?;
+    let candidate = if let Some(target) = &focus.native_target {
+        Some(crate::tmux_capture::app_process(target, timeout)?)
+    } else if let Some(client) = &focus.tmux_client {
+        Some(crate::tmux_capture::observe(client, timeout)?.foreground)
+    } else if !focus.remote {
+        let pid = focus
+            .pid
+            .and_then(|pid| u32::try_from(pid).ok())
+            .ok_or("app has no focused process tree")?;
+        descendants(proc_root, pid)
+            .contains(&pinned.pid)
+            .then_some(pinned.pid)
+    } else {
+        None
+    };
+    let pid = candidate.ok_or("app is no longer foreground")?;
+    if pid != pinned.pid
+        || proc_start(proc_root, pid).map(|(_, start)| start) != Some(pinned.start)
+        || !proc_groups(proc_root, pid).is_some_and(|(pgrp, tpgid)| pgrp == pid && tpgid == pid)
+        || app_of_pid(proc_root, pid, &cfg.controller.nav.apps, uid, &lstat_facts).as_deref()
+            != Some(app)
+    {
+        return Err("foreground executable no longer matches app policy".into());
+    }
+    Ok(pid)
 }
 impl Drop for ActionWorker {
     fn drop(&mut self) {
@@ -2101,7 +3069,67 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
 }
 /// Ownership transactions run off the forwarding loop; their result reverts a pending capture/release at once when the
 /// compositor refused it (C-03), instead of leaving the app or the room holding the pad.
-type OwnershipRequest = (u64, String, Option<String>, Vec<String>, Instant);
+#[derive(Clone)]
+struct NativeOwnership {
+    target: crate::tmux_capture::Target,
+    outer: Option<(u32, u64)>,
+}
+fn native_ownership(
+    cfg: &GlobalConfig,
+    request: &NativeOwnership,
+    mode: &str,
+    timeout: Duration,
+) -> Result<CaptureReceipt, String> {
+    if request.target.login_generation > 0 {
+        let (active, _, _) =
+            crate::tmux_capture::focused_target().ok_or("native login authority expired")?;
+        if !same_pointer_scope(&active, &request.target) {
+            return Err("native login target generation changed".into());
+        }
+    }
+    let client = if mode == "on" {
+        let (pid, start) = request
+            .outer
+            .ok_or("native capture has no witnessed outer client")?;
+        if crate::nested::start_time(Path::new("/proc"), pid) != Some(start) {
+            return Err("native outer client was replaced".into());
+        }
+        let outer = tmux_client_at(
+            Path::new("/proc"),
+            pid,
+            &cfg.controller.nav.tmux_sockets,
+            unsafe { libc::getuid() },
+        )
+        .ok_or("native outer client is no longer attached")?;
+        crate::tmux_capture::leaf_client(cfg, &outer, timeout)?
+    } else {
+        request.target.client()
+    };
+    let mut expected = request.target.clone();
+    expected.login_generation = 0;
+    let expected_address = expected.address();
+    let mut target = crate::tmux_capture::transaction(
+        &client,
+        if mode == "on-pinned" { "on" } else { mode },
+        if mode == "on" {
+            None
+        } else {
+            Some(&expected_address)
+        },
+        timeout,
+    )?;
+    target.login_generation = request.target.login_generation;
+    Ok(native_receipt(target))
+}
+type OwnershipRequest = (
+    u64,
+    String,
+    Option<String>,
+    Vec<String>,
+    Option<NativeOwnership>,
+    u64,
+    Instant,
+);
 struct OwnershipWorker {
     requests: Option<std::sync::mpsc::SyncSender<OwnershipRequest>>,
     results: std::sync::mpsc::Receiver<(u64, String, Result<CaptureReceipt, String>)>,
@@ -2110,7 +3138,10 @@ struct OwnershipWorker {
     stop: std::sync::Arc<AtomicBool>,
 }
 impl OwnershipWorker {
-    fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
+    fn spawn(
+        policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+        selection: SharedLogin,
+    ) -> Result<Self, String> {
         let (requests, inbox) = std::sync::mpsc::sync_channel::<OwnershipRequest>(16);
         let (outbox, results) = std::sync::mpsc::channel();
         let stop = std::sync::Arc::new(AtomicBool::new(false));
@@ -2131,15 +3162,21 @@ impl OwnershipWorker {
             .map_err(|e| e.to_string())?;
         let worker = std::thread::Builder::new().name("mios-ownership".into()).spawn(move || {
             let mut captured:Option<CaptureReceipt>=None;
-            while let Ok((seq, mode, expect, toggle, queued)) = inbox.recv() {
+            while let Ok((seq, mode, expect, toggle, native, generation, queued)) = inbox.recv() {
                 if cancelled.load(Ordering::Relaxed) { break; }
                 let cfg = policy.lock().map(|c| c.clone());
+                let request_mode=mode.clone();
+                let pinned=mode=="on-pinned";
+                let mode=if pinned {"on".to_owned()} else {mode};
                 // North down resolves focus atomically in Lua, rather than rejecting a just-clicked window against
                 // the context poll's old address. Its hold upgrade stays pinned to the confirmed capture.
-                let target=if mode=="on" {None} else if mode=="fullscreen" {captured.as_ref().map(|r|r.address.as_str()).or(expect.as_deref())} else {expect.as_deref()};
+                let target=if mode=="on" && !pinned {None} else if mode=="fullscreen" {captured.as_ref().map(|r|r.address.as_str()).or(expect.as_deref())} else {expect.as_deref()};
                 let mut result = match &cfg {
-                    Ok(cfg) if queued.elapsed()<Duration::from_millis(cfg.controller.context_stale_ms) =>
-                        if mode=="inspect" {inspect_capture(cfg,target)} else {capture_transaction(&mode, cfg, target)},
+                    Ok(cfg) if queued.elapsed()<Duration::from_millis(cfg.controller.context_stale_ms)
+                        && selection.lock().is_ok_and(|s|s.generation==generation) =>
+                        if let Some(request)=&native {
+                            native_ownership(cfg,request,&request_mode,Duration::from_millis(cfg.controller.context_stale_ms))
+                        } else if mode=="inspect" {inspect_capture(cfg,target)} else {capture_transaction(&mode, cfg, target)},
                     Ok(_) => Err("ownership request expired".into()),
                     Err(_) => Err("ownership policy lock failed".into()),
                 };
@@ -2151,10 +3188,11 @@ impl OwnershipWorker {
                     }
                 }
                 if let Ok(receipt)=&result { captured=if mode=="off" {None} else {Some(receipt.clone())}; }
+                #[cfg(test)] acceptance_observer::record_result("ownership", &result);
                 if outbox.send((seq, mode.clone(), result.clone())).is_err() { break; }
                 // C-32: one notice per confirmed capture or release, never for a refused transaction or a focus change.
                 if let (Ok(cfg), Ok(receipt)) = (&cfg, &result) {
-                    if cfg.controller.capture_osd && mode!="inspect" {
+                    if native.is_none() && cfg.controller.capture_osd && mode!="inspect" {
                         let message = osd_message(&mode, &receipt.class, &toggle);
                         let argv: Vec<String> = cfg.controller.capture_osd_argv.iter().map(|a| a.replace("{message}", &message)).collect();
                         let submitted=notices.try_send(argv).is_ok();
@@ -2171,17 +3209,30 @@ impl OwnershipWorker {
             stop,
         })
     }
+    fn invalidate(&mut self) {
+        self.last = self.last.saturating_add(1);
+    }
     fn submit(
         &mut self,
         mode: &str,
         expect: Option<String>,
         toggle: Vec<String>,
+        native: Option<NativeOwnership>,
+        generation: u64,
     ) -> Result<(), String> {
         self.last += 1;
         self.requests
             .as_ref()
             .ok_or("ownership worker stopped")?
-            .try_send((self.last, mode.into(), expect, toggle, Instant::now()))
+            .try_send((
+                self.last,
+                mode.into(),
+                expect,
+                toggle,
+                native,
+                generation,
+                Instant::now(),
+            ))
             .map_err(|_| "ownership queue unavailable".to_string())
     }
 }
@@ -2192,8 +3243,271 @@ impl Drop for OwnershipWorker {
         self.worker.take();
     }
 }
+// Inputd's per-user target authority. It changes routing only; physical assignments/Claims remain with run().
+#[derive(Clone)]
+struct AuthorizedLogin {
+    generation: u64,
+    witness: crate::tmux_handoff::LoginWitness,
+}
+#[derive(Default)]
+struct LoginSelection {
+    generation: u64,
+    remote: Option<AuthorizedLogin>,
+    local: Option<(TmuxClient, u64)>,
+    candidates: Vec<crate::tmux_handoff::LoginWitness>,
+}
+impl LoginSelection {
+    fn detach(&mut self, expected: u64) -> Result<u64, String> {
+        if expected != self.generation {
+            return Err("stale handoff generation; current login is unchanged".into());
+        }
+        let generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("handoff generation exhausted")?;
+        if let Some(detached) = self.remote.take() {
+            self.candidates.retain(|w| {
+                w.client != detached.witness.client
+                    || w.client_start != detached.witness.client_start
+            });
+        }
+        self.local = None;
+        self.generation = generation;
+        Ok(generation)
+    }
+
+    fn reconcile(
+        &mut self,
+        local_active: bool,
+        mut live: impl FnMut(&crate::tmux_handoff::LoginWitness) -> bool,
+    ) -> Option<AuthorizedLogin> {
+        self.candidates.retain(|w| live(w));
+        let previous = self
+            .remote
+            .as_ref()
+            .map(|r| (r.witness.client.clone(), r.witness.client_start));
+        let next = self
+            .remote
+            .as_ref()
+            .and_then(|r| {
+                self.candidates
+                    .iter()
+                    .find(|w| {
+                        w.client == r.witness.client && w.client_start == r.witness.client_start
+                    })
+                    .cloned()
+            })
+            .or_else(|| {
+                (!local_active)
+                    .then(|| self.candidates.last().cloned())
+                    .flatten()
+            });
+        let next_identity = next.as_ref().map(|w| (w.client.clone(), w.client_start));
+        if previous != next_identity {
+            self.generation = self.generation.saturating_add(1);
+            self.remote = next.map(|witness| AuthorizedLogin {
+                generation: self.generation,
+                witness,
+            });
+        }
+        self.remote.clone()
+    }
+}
+fn begin_login_handoff(
+    router: &mut Router,
+    current: &mut u64,
+    next: u64,
+    rearming: &mut bool,
+) -> Option<Output> {
+    if *current == next {
+        return None;
+    }
+    *current = next;
+    *rearming = true;
+    let neutral = router.reset();
+    router.cursor = false;
+    Some(neutral)
+}
+/// Drain only sinks that already belong to the previous login. Generic emit
+/// would select the new focus and can create a replacement output device.
+pub(crate) fn drain_login_outputs(
+    device: &Device,
+    neutral: &Output,
+    pad: Option<&mut VirtualDevice>,
+    pointer: Option<&mut VirtualDevice>,
+) -> Result<(), String> {
+    let app = pad.map_or(Ok(()), |pad| {
+        pad.write(&device.physical_events(&neutral.app))
+    });
+    // Attempt both releases even if the old gamepad endpoint has already gone.
+    let pointer = pointer.map_or(Ok(()), |pointer| pointer.write(&neutral.pointer));
+    app.and(pointer).map_err(|e| e.to_string())
+}
+type SharedLogin = std::sync::Arc<std::sync::Mutex<LoginSelection>>;
+struct HandoffService {
+    stop: std::sync::Arc<AtomicBool>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl HandoffService {
+    fn spawn(
+        selection: SharedLogin,
+        focus: std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+        policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+    ) -> Result<Self, String> {
+        Self::spawn_at(
+            crate::tmux_handoff::socket_path()?,
+            selection,
+            focus,
+            policy,
+        )
+    }
+    fn spawn_at(
+        path: PathBuf,
+        selection: SharedLogin,
+        focus: std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+        policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>,
+    ) -> Result<Self, String> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+        if let Ok(meta) = std::fs::symlink_metadata(&path) {
+            if !meta.file_type().is_socket() || meta.uid() != unsafe { libc::getuid() } {
+                return Err("refusing an untrusted Inputd handoff endpoint".into());
+            }
+            if crate::tmux_handoff::endpoint_live(&path)? {
+                return Err("another Inputd handoff authority is running".into());
+            }
+            let now = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+            if (now.dev(), now.ino()) != (meta.dev(), meta.ino()) {
+                return Err("Inputd handoff endpoint changed during recovery".into());
+            }
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
+        let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+        if unsafe { libc::listen(listener.as_raw_fd(), 16) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        let identity = (metadata.dev(), metadata.ino());
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stopping = stop.clone();
+        let worker=std::thread::Builder::new().name("mios-inputd-handoff".into()).spawn(move||{
+            while !stopping.load(Ordering::Relaxed) {
+                let mut poll=libc::pollfd{fd:listener.as_raw_fd(),events:libc::POLLIN,revents:0};
+                if unsafe{libc::poll(&mut poll,1,100)}<=0 {continue;}
+                let Ok((mut stream,_))=listener.accept() else {continue;};
+                let cfg=policy.lock().unwrap().clone();
+                let reply=(||->Result<serde_json::Value,String>{
+                    let peer=crate::tmux_handoff::peer_credentials(&stream)?;
+                    if peer.0!=unsafe{libc::getuid()} {return Err("handoff peer belongs to another user".into());}
+                    let deadline=Instant::now()+Duration::from_millis(cfg.controller.context_stale_ms);
+                    let req=crate::tmux_handoff::read_request(&mut stream,deadline.saturating_duration_since(Instant::now()))?;
+                    match req.op.as_str() {
+                        "attach"=>{
+                            let authenticated=crate::tmux_handoff::authenticate(&cfg,&req,peer);
+                            let local=if authenticated.is_err() {
+                                let actual=native_console_context(&cfg)?;
+                                let (pid,start)=actual.native_outer.ok_or("local console outer client missing")?;
+                                let client=tmux_client_at(Path::new("/proc"),pid,&cfg.controller.nav.tmux_sockets,peer.0)
+                                    .ok_or("local console client was replaced")?;
+                                let outer=crate::tmux_capture::observe(&client,Duration::from_millis(cfg.controller.context_stale_ms))?;
+                                if req.socket.as_ref()!=Some(&client.socket) || req.client.as_deref()!=Some(client.tty.as_str())
+                                    || req.pane.as_ref().is_some_and(|p|&outer.pane!=p) {
+                                    return Err("requested local client is not this user's active console".into());
+                                }
+                                Some((client,start))
+                            } else {None};
+                            let outer=authenticated.as_ref().map(|w|w.client.clone()).unwrap_or_else(|_|local.as_ref().unwrap().0.clone());
+                            let mut snapshot=native_snapshot(&cfg,&outer)?;
+                            if Instant::now()>=deadline {return Err("Inputd handoff request expired before commit".into());}
+                            let mut state=selection.lock().unwrap();
+                            let unchanged=match (&authenticated,&state.remote,&local,&state.local) {
+                                (Ok(w),Some(old),_,_)=>old.witness.client==w.client && old.witness.client_start==w.client_start
+                                    && old.witness.session_id==w.session_id && old.witness.leader_start==w.leader_start,
+                                (Err(_),None,Some(local),Some(old))=>local==old,
+                                _=>false,
+                            };
+                            if !unchanged {
+                                if let Ok(old)=focus.lock() {if let Some(target)=&old.native_target {let _=crate::tmux_capture::release_target(target,Duration::from_millis(cfg.controller.context_stale_ms));}}
+                                if Instant::now()>=deadline {return Err("Inputd handoff expired while releasing the old capture".into());}
+                                state.generation=state.generation.checked_add(1).ok_or("handoff generation exhausted")?;
+                                if let Ok(witness)=&authenticated {
+                                    state.candidates.retain(|w|w.client!=witness.client || w.client_start!=witness.client_start);
+                                    state.candidates.push(witness.clone());
+                                }
+                                state.remote=authenticated.ok().map(|witness|AuthorizedLogin{generation:state.generation,witness});
+                                state.local=local;
+                            }
+                            let generation=state.generation;
+                            snapshot.remote=state.remote.is_some();snapshot.routing_generation=generation;
+                            if let Some(target)=&mut snapshot.native_target {target.login_generation=generation;snapshot.address=Some(target.address());}
+                            let target=snapshot.native_target.as_ref().ok_or("attached target missing")?;
+                            Ok(serde_json::json!({"version":1,"ok":true,"uid":peer.0,"generation":generation,
+                                "client_pid":target.client,"client_start":target.client_start,"outer_client_pid":outer.pid,"outer_client_start":snapshot.native_outer.map(|w|w.1),
+                                "session":target.session,"session_name":target.session_name,"tmux_session_id":target.session,"tmux_session_name":target.session_name,
+                                "logind_session_id":state.remote.as_ref().map(|r|r.witness.session_id.as_str()),
+                                "window":target.window,"pane":target.pane,"foreground_pid":target.foreground,"foreground_start":target.foreground_start,
+                                "state":if unchanged {"unchanged"}else{"pending-neutral"}}))
+                        }
+                        "detach"=>{
+                            let mut state=selection.lock().unwrap();
+                            if req.generation!=Some(state.generation) {return Err("stale handoff generation; current login is unchanged".into());}
+                            if let Ok(old)=focus.lock() {if let Some(target)=&old.native_target {let _=crate::tmux_capture::release_target(target,Duration::from_millis(cfg.controller.context_stale_ms));}}
+                            let generation=state.detach(req.generation.ok_or("detach generation is missing")?)?;
+                            Ok(serde_json::json!({"version":1,"ok":true,"uid":peer.0,"generation":generation,"state":"released"}))
+                        }
+                        "window"=>{
+                            let mut snapshot=focus.lock().unwrap().clone();
+                            if snapshot.suspended.is_some() || snapshot.sampled.elapsed()>=Duration::from_millis(cfg.controller.context_stale_ms) {
+                                return Err("Inputd has no fresh authorized native target".into());
+                            }
+                            let mode=req.mode.as_deref().ok_or("missing window mode")?;
+                            let state=selection.lock().unwrap();
+                            if let Some(remote)=&state.remote {
+                                if !crate::tmux_handoff::live(&remote.witness) {return Err("authenticated remote login expired".into());}
+                                snapshot=native_snapshot(&cfg,&remote.witness.client)?;
+                            } else {snapshot=native_console_context(&cfg)?;}
+                            let mut target=snapshot.native_target.ok_or("authorized login has no native target")?;
+                            if req.frontend_pid.is_some_and(|p|p!=target.foreground)
+                                || req.frontend_start.is_some_and(|s|s!=target.foreground_start) {
+                                return Err("frontend is no longer this login's focused foreground process".into());
+                            }
+                            if Instant::now()>=deadline {return Err("Inputd window request expired before commit".into());}
+                            let generation=state.generation;
+                            let expected=target.address();
+                            target=crate::tmux_capture::transaction(&target.client(),mode,Some(&expected),Duration::from_millis(cfg.controller.context_stale_ms))?;
+                            target.login_generation=generation;
+                            Ok(serde_json::json!({"version":1,"ok":true,"uid":peer.0,"generation":generation,"window":target.address(),"class":"console","mode":mode}))
+                        }
+                        _=>Err("unsupported Inputd handoff operation".into()),
+                    }
+                })();
+                let reply=reply.unwrap_or_else(|error|serde_json::json!({"version":1,"ok":false,"error":error}));
+                let _=crate::tmux_handoff::write_reply(&mut stream,&reply);
+            }
+            if std::fs::symlink_metadata(&path).ok().is_some_and(|m|(m.dev(),m.ino())==identity) {let _=std::fs::remove_file(&path);}
+        }).map_err(|e|e.to_string())?;
+        Ok(Self {
+            stop,
+            worker: Some(worker),
+        })
+    }
+}
+impl Drop for HandoffService {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
 struct Sinks {
     pointer: Option<VirtualDevice>,
+    remote_pointer: Option<RemotePointerBus>,
+    ownership_generation: u64,
     keyboard: Option<VirtualDevice>,
     children: Vec<(Instant, Child)>,
     ownership: Option<OwnershipWorker>,
@@ -2246,7 +3560,17 @@ fn emit(
                 .session
                 .as_ref()
                 .ok_or("ambiguous controller assignment".to_owned())
-                .and_then(|route| crate::sessions::plan(route, &action, device.router.policy()));
+                .and_then(|route| {
+                    if action.starts_with("input:app-key ") {
+                        if route.ssh_host.is_none() && app_request(&action).is_some() {
+                            Ok(vec![])
+                        } else {
+                            Err("app-owned controls require an exact verified local route".into())
+                        }
+                    } else {
+                        crate::sessions::plan(route, &action, device.router.policy())
+                    }
+                });
             let submitted = planned.is_ok()
                 && sinks.execute_actions
                 && device
@@ -2263,7 +3587,12 @@ fn emit(
         return Ok(None);
     }
     if sinks.bridge {
-        if sinks.execute_actions && !sinks.nested && device.output.is_none() && !device.suspended {
+        if sinks.execute_actions
+            && !sinks.nested
+            && !focus.remote
+            && device.output.is_none()
+            && !device.suspended
+        {
             device.output =
                 Some(VirtualDevice::clone_gamepad(&device.device).map_err(|e| e.to_string())?);
         }
@@ -2275,6 +3604,7 @@ fn emit(
         }
         if sinks.execute_actions
             && !sinks.nested
+            && !focus.remote
             && !output.pointer.is_empty()
             && !(device.router.captured_navigation() && !device.router.half_capture())
         {
@@ -2298,10 +3628,136 @@ fn emit(
                 .map_err(|e| e.to_string())?;
         }
     }
+    if focus.remote && sinks.execute_actions {
+        if let Some(target) = focus
+            .native_target
+            .as_ref()
+            .filter(|_| focus.suspended.is_none())
+        {
+            if sinks
+                .remote_pointer
+                .as_ref()
+                .is_none_or(|p| !same_pointer_scope(&p.target, target))
+            {
+                sinks.remote_pointer = Some(RemotePointerBus {
+                    target: target.clone(),
+                    pointer: None,
+                    cursors: BTreeSet::new(),
+                    holds: PointerHolds::default(),
+                    visible: false,
+                    revoked: false,
+                    retry: Instant::now() - Duration::from_secs(10),
+                });
+            }
+            let bus = sinks.remote_pointer.as_mut().unwrap();
+            if device.router.cursor {
+                bus.cursors.insert(device.device.path.clone());
+            } else {
+                bus.cursors.remove(&device.device.path);
+            }
+            let cursor = !bus.cursors.is_empty();
+            let cfg = device.router.policy();
+            if bus.pointer.as_ref().is_some_and(|p| !p.alive()) {
+                bus.pointer = None;
+                bus.visible = false;
+                bus.revoked = true;
+                bus.holds.cancel();
+                device.neutral_rearming = true;
+            }
+            if output.actions.iter().any(|a| a == "input:cursor on") {
+                bus.revoked = false;
+            }
+            let intent = output.pointer.iter().any(|e| {
+                (e.kind == crate::router::EV_REL && e.value != 0)
+                    || (e.kind == crate::router::EV_KEY && e.value > 0)
+            }) || output.actions.iter().any(|a| a == "input:cursor on");
+            if bus.pointer.is_none()
+                && intent
+                && !bus.revoked
+                && bus.retry.elapsed() >= Duration::from_millis(cfg.controller.scan_ms)
+            {
+                bus.retry = Instant::now();
+                bus.pointer = crate::tmux_pointer::PointerWorker::spawn(
+                    target.clone(),
+                    cfg.controller.console.cell_px,
+                    Duration::from_millis(cfg.controller.context_stale_ms),
+                )
+                .ok();
+            }
+            // Router cursor/focus release outputs contain normal ups. Cancel the native gesture first,
+            // even when another controller keeps the shared cursor visible, so an exit cannot click chrome.
+            let cancel_source =
+                !device.router.cursor && bus.holds.retire_source(&device.device.path);
+            if let Some(pointer) = &bus.pointer {
+                if cancel_source && pointer.visible(false) {
+                    bus.visible = false;
+                }
+                if bus.visible != cursor && pointer.visible(cursor) {
+                    bus.visible = cursor;
+                    if !cursor {
+                        bus.holds.cancel();
+                    }
+                }
+                let projected =
+                    bus.holds
+                        .project(&device.device.path, &output.pointer, device.router.cursor);
+                if !projected.is_empty() && !pointer.submit(&projected) {
+                    bus.revoked = true;
+                    device.neutral_rearming = true;
+                }
+            }
+        }
+    }
     let mut ownership = None;
     for action in output.actions {
+        let action =
+            crate::router::console_action(device.router.policy(), device.router.console(), action);
+        if action == "none" {
+            continue;
+        }
         let mut submitted = false;
-        if device.router.shell_overlay() && action.starts_with("key:") {
+        if let Some(request) = action.strip_prefix("input:app-key ") {
+            if let Some((app, key)) = request.split_once(' ') {
+                if (sinks.execute_actions || sinks.project)
+                    && device.router.app() == Some(app)
+                    && app_input_focus(focus, device.router.policy().controller.context_stale_ms)
+                        .is_some()
+                {
+                    if let Some(worker) = &sinks.actions {
+                        submitted = worker.submit(Job::AppKey {
+                            app: app.into(),
+                            action: key.into(),
+                            focus: Box::new(focus.clone()),
+                            queued: Instant::now(),
+                        });
+                    }
+                }
+            }
+        } else if action == "input:window-zoom" {
+            let cfg = device.router.policy();
+            if focus.suspended.is_none()
+                && focus.sampled.elapsed() < Duration::from_millis(cfg.controller.context_stale_ms)
+                && (sinks.execute_actions || sinks.project)
+            {
+                if let Some(worker) = &sinks.actions {
+                    let native = fresh_native_target(focus, cfg).cloned().map(Box::new);
+                    let window = if native.is_none() && !focus.remote && !device.router.console() {
+                        focus.address.clone().zip(focus.pid)
+                    } else {
+                        None
+                    };
+                    if native.is_some() || window.is_some() {
+                        submitted = worker.submit(Job::WindowZoom {
+                            native,
+                            window,
+                            generation: focus.routing_generation,
+                            epoch: focus.focus_epoch,
+                            queued: Instant::now(),
+                        });
+                    }
+                }
+            }
+        } else if device.router.shell_overlay() && action.starts_with("key:") {
             let chord = crate::nav::parse_key_chord(action.strip_prefix("key:").unwrap())?;
             if sinks.execute_actions && !sinks.nested {
                 sinks.stroke(&chord)?;
@@ -2325,7 +3781,7 @@ fn emit(
         {
             // Captured terminal navigation never executes host-global commands.
         } else if let Some(mode) = action.strip_prefix("input:window ") {
-            if mode == "on" || mode == "off" {
+            if mode == "on" || mode == "on-pinned" || mode == "off" {
                 device.capture = None;
             }
             ownership = Some(mode != "off");
@@ -2334,6 +3790,11 @@ fn emit(
                     mode,
                     focus.address.clone(),
                     device.router.legacy_toggle_chord(),
+                    focus.native_target.as_ref().map(|t| NativeOwnership {
+                        target: t.clone(),
+                        outer: focus.native_outer,
+                    }),
+                    focus.routing_generation,
                 )?;
                 submitted = true;
             }
@@ -2343,7 +3804,13 @@ fn emit(
             // On a VT the kernel console reads the same uinput keyboard (C-16); the fixture tier writes the bytes the
             // console keymap would deliver into the pty that stands in for the VT.
             let chord = crate::nav::parse_key_chord(chord)?;
-            if sinks.execute_actions && !sinks.nested {
+            if focus.remote {
+                submitted = sinks.execute_actions
+                    && device
+                        .remote_input
+                        .as_ref()
+                        .is_some_and(|r| r.keys.submit(action.clone()));
+            } else if sinks.execute_actions && !sinks.nested {
                 sinks.stroke(&chord)?;
                 submitted = true;
             } else if let (true, Some(sink)) = (device.router.console(), &mut sinks.console_sink) {
@@ -2356,10 +3823,18 @@ fn emit(
                     submitted = worker.submit(Job::Lua {
                         action: action.clone(),
                         lua: key_lua(&chord, window),
+                        scope: ActionScope::new(focus),
                     });
                 }
             }
         } else if let Some(verb) = action.strip_prefix("tmux:") {
+            if focus.remote {
+                submitted = sinks.runs_tmux()
+                    && device
+                        .remote_input
+                        .as_ref()
+                        .is_some_and(|r| r.keys.submit(action.clone()));
+            } else
             // C-30: only against the tmux client discovery found; without one the *_plain profile is active.
             if sinks.runs_tmux() {
                 if let (Some(worker), Some(client)) = (&sinks.actions, &focus.tmux_client) {
@@ -2367,13 +3842,14 @@ fn emit(
                         verb: verb.into(),
                         client: client.clone(),
                         console: device.router.console(),
+                        scope: ActionScope::new(focus),
                     });
                 }
             }
         } else if action == "mios:graphical-vt" {
             // C-17: no graphical session (or a VT beyond F12) sends nothing.
             let chord = graphical_vt_chord(focus.graphical_vt);
-            if let Some(c) = &chord {
+            if let (false, Some(c)) = (focus.remote, &chord) {
                 let c = crate::nav::parse_key_chord(c)?;
                 if sinks.execute_actions {
                     sinks.stroke(&c)?;
@@ -2392,6 +3868,7 @@ fn emit(
                 submitted = worker.submit(Job::Lua {
                     action: action.clone(),
                     lua,
+                    scope: ActionScope::new(focus),
                 });
             }
         } else if sinks.execute_actions {
@@ -2451,13 +3928,104 @@ type Assigned = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
 type RawConsumers = std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, String>>>;
 type ReleasedDevices = std::sync::Arc<std::sync::Mutex<BTreeSet<PathBuf>>>;
 
+fn fresh_native_target<'a>(
+    focus: &'a ContextSnapshot,
+    cfg: &GlobalConfig,
+) -> Option<&'a crate::tmux_capture::Target> {
+    if focus.suspended.is_some()
+        || focus.sampled.elapsed() >= Duration::from_millis(cfg.controller.context_stale_ms)
+    {
+        None
+    } else {
+        focus.native_target.as_ref()
+    }
+}
+fn native_owned(focus: &ContextSnapshot, cfg: &GlobalConfig) -> bool {
+    focus.name == "app-capture"
+        && focus.suspended.is_none()
+        && focus.native_target.is_some()
+        && focus.sampled.elapsed() < Duration::from_millis(cfg.controller.context_stale_ms)
+}
+fn native_frontend(
+    focus: &ContextSnapshot,
+    cfg: &GlobalConfig,
+    cursor: bool,
+) -> Option<crate::tmux_capture::Frontend> {
+    if focus.name != "app-capture"
+        || cursor
+        || focus.suspended.is_some()
+        || focus.sampled.elapsed() >= Duration::from_millis(cfg.controller.context_stale_ms)
+    {
+        return None;
+    }
+    let app = focus.fresh_app(cfg.controller.context_stale_ms)?;
+    let nav = &cfg.controller.nav;
+    if !nav.apps.get(app)?.camera {
+        return None;
+    }
+    let profile = nav.profiles.get(&nav.app_profile(app, "console", true)?)?;
+    let mut camera: [String; 4] = Default::default();
+    let mut rate_ms = [0u64; 4];
+    for (i, dir) in [
+        crate::nav::Dir::Left,
+        crate::nav::Dir::Right,
+        crate::nav::Dir::Up,
+        crate::nav::Dir::Down,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let crate::nav::Value::Press(action) =
+            profile.get(&crate::nav::Input::Stick { right: true, dir })?
+        else {
+            return None;
+        };
+        crate::nav::parse_key_chord(action.strip_prefix("key:")?).ok()?;
+        camera[i] = action.clone();
+        rate_ms[i] = nav
+            .apps
+            .get(app)?
+            .repeat
+            .get(&crate::nav::Input::Stick { right: true, dir })
+            .or_else(|| {
+                nav.repeat
+                    .get(&crate::nav::Input::Stick { right: true, dir })
+            })?
+            .1;
+    }
+    let (outer_client, outer_start) = focus.native_outer?;
+    Some(crate::tmux_capture::Frontend {
+        target: focus.native_target.clone()?,
+        outer_client,
+        outer_start,
+        camera,
+        rate_ms,
+    })
+}
+struct ManifestFocus<'a> {
+    frontend: Option<&'a crate::tmux_capture::Frontend>,
+    stale_ms: u64,
+    target: Option<&'a crate::tmux_capture::Target>,
+    owned: bool,
+    remote: bool,
+    focus: Option<&'a ContextSnapshot>,
+}
 fn update_active_manifest(
     runtime: &Path,
     devices: &BTreeMap<PathBuf, RunningDevice>,
     raw_consumers: &BTreeMap<PathBuf, String>,
     bridge: bool,
     scan_ms: u64,
+    native: ManifestFocus<'_>,
 ) {
+    let ManifestFocus {
+        frontend,
+        stale_ms: frontend_stale_ms,
+        target: native_focus,
+        owned: native_owned,
+        remote: native_remote,
+        focus,
+    } = native;
     let path = runtime.join("mios-inputd-active.json");
     let me = std::process::id();
     let start_ticks = crate::nested::start_time(Path::new("/proc"), me).unwrap_or(0);
@@ -2491,6 +4059,14 @@ fn update_active_manifest(
         "bridge_start": start_ticks,
         "controller_return_protocol_version": 1,
         "controller_scan_ms": scan_ms,
+        "frontend":frontend,
+        "frontend_stale_ms":frontend_stale_ms,
+        "native_focus":native_focus,
+        "native_owned":native_owned,
+        "native_remote":native_remote,
+        "native_target_protocol_version":1,
+        "app_focus":focus.and_then(|f|app_input_focus(f,frontend_stale_ms)),
+        "app_focus_ns":focus.map(|f|mios_resolver::app_input::monotonic_ns().saturating_sub(f.sampled.elapsed().as_nanos() as u64)),
         "devices": devs,
         "raw_consumers": raws,
         "timestamp": now_dur.as_secs(),
@@ -2917,6 +4493,90 @@ where
     }
 }
 
+/// A neutral listener is not physical-device authority. Only the real host
+/// bridge uses this gate; fixtures and nested Claims retain their own rules.
+#[derive(Clone)]
+struct PhysicalAdmission {
+    focus: std::sync::Arc<std::sync::Mutex<ContextSnapshot>>,
+    logind_state: PathBuf,
+}
+impl PhysicalAdmission {
+    fn unavailable(
+        &self,
+        cfg: &GlobalConfig,
+        observed: Option<&ContextSnapshot>,
+    ) -> Option<String> {
+        let snapshot = match observed {
+            Some(snapshot) => snapshot.clone(),
+            None => match self.focus.lock() {
+                Ok(snapshot) => snapshot.clone(),
+                Err(_) => return Some("physical focus state unavailable".into()),
+            },
+        };
+        physical_readiness(cfg, &snapshot, || {
+            // Re-read active-seat ownership before the original device/uinput
+            // probes, so a cached local snapshot cannot admit a greeter pad.
+            // SAFETY: getuid only reads the process kernel identity.
+            let uid = unsafe { libc::getuid() };
+            if let Seat::Foreign(reason) = seat_view(&self.logind_state, uid).seat {
+                Some(reason)
+            } else {
+                seat_unavailable()
+            }
+        })
+    }
+}
+fn physical_readiness(
+    cfg: &GlobalConfig,
+    focus: &ContextSnapshot,
+    local_access: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    // Preserve existing explicit SessionRoute admission. Its own session_focus,
+    // target verification and Claim ownership still decide grab/output later.
+    if !cfg.controller.sessions.is_empty() {
+        return None;
+    }
+    if focus.remote {
+        return if fresh_native_target(focus, cfg).is_some_and(|target| {
+            target.login_generation != 0 && target.login_generation == focus.routing_generation
+        }) {
+            None
+        } else {
+            Some("waiting for a fresh authenticated remote target".into())
+        };
+    }
+    if let Some(reason) = &focus.suspended {
+        return Some(reason.clone());
+    }
+    if focus.sampled.elapsed() >= Duration::from_millis(cfg.controller.context_stale_ms) {
+        return Some("waiting for fresh local seat focus".into());
+    }
+    local_access()
+}
+fn retry_device_directory(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+    )
+}
+fn discovery_idle(reported: &mut Option<String>, reason: String, stop: &AtomicBool, scan_ms: u64) {
+    if reported.as_deref() != Some(reason.as_str()) {
+        eprintln!(
+            "{}",
+            serde_json::json!({"discovery":"idle","reason":reason})
+        );
+        *reported = Some(reason);
+    }
+    let until = Instant::now() + Duration::from_millis(scan_ms);
+    while !stop.load(Ordering::Relaxed) && Instant::now() < until {
+        std::thread::sleep(
+            until
+                .saturating_duration_since(Instant::now())
+                .min(Duration::from_millis(20)),
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn discovery_worker(
     explicit: Vec<PathBuf>,
@@ -2928,12 +4588,14 @@ fn discovery_worker(
     nested: bool,
     raw_consumers: RawConsumers,
     released: ReleasedDevices,
+    physical: Option<PhysicalAdmission>,
 ) -> Result<Discovery, String> {
     use std::os::unix::fs::MetadataExt;
     let (sender, receiver) = std::sync::mpsc::sync_channel(16);
     let worker=std::thread::Builder::new().name("mios-devices".into()).spawn(move || {
         let mut rejected=BTreeMap::new();let mut sent=BTreeMap::new();let mut previous=BTreeSet::new();
         let mut skipped:BTreeSet<PathBuf>=BTreeSet::new();
+        let mut idle_reason:Option<String>=None;
         // I4 --nested: a session node that vanished (its pad was destroyed) is gone for good: the bridge keeps serving
         // the session's other controllers, and never opens whatever device the kernel later gives the same path.
         let mut first_seen:BTreeMap<PathBuf,(u64,u64)>=BTreeMap::new();
@@ -2944,7 +4606,24 @@ fn discovery_worker(
             previous=current.clone();
             // Candidates declined by the forwarding loop (new nested claim, missing local sink) retry next scan.
             sent.retain(|path,_| current.contains(path));
-            let paths=if !explicit.is_empty() {Ok(explicit.clone())}else{linux::discover().map_err(|e|e.to_string())};
+            // Copy policy before touching focus or logind files: the context
+            // and handoff workers also use these locks in separate steps.
+            let cfg=policy.lock().unwrap().clone();
+            if let Some(admission)=&physical {
+                if let Some(reason)=admission.unavailable(&cfg,None) {
+                    discovery_idle(&mut idle_reason,reason,&stop,cfg.controller.scan_ms);
+                    continue;
+                }
+            }
+            let paths=if !explicit.is_empty() {Ok(explicit.clone())}else{match linux::discover() {
+                Ok(paths)=>Ok(paths),
+                Err(error) if physical.is_some() && retry_device_directory(&error)=>{
+                    discovery_idle(&mut idle_reason,format!("no /dev/input access: {error}"),&stop,cfg.controller.scan_ms);
+                    continue;
+                }
+                Err(error)=>Err(error.to_string()),
+            }};
+            if idle_reason.take().is_some() {eprintln!("{}",serde_json::json!({"discovery":"ready"}));}
             let held=assigned.lock().map(|a|a.clone()).unwrap_or_default();
             if !nested {
                 for h in held.keys() {
@@ -2964,6 +4643,13 @@ fn discovery_worker(
             for path in paths {
                 if stop.load(Ordering::Relaxed) {break;}
                 if current.contains(&path) {continue;}
+                if let Some(admission)=&physical {
+                    let cfg=policy.lock().unwrap().clone();
+                    if let Some(reason)=admission.unavailable(&cfg,None) {
+                        discovery_idle(&mut idle_reason,reason,&stop,cfg.controller.scan_ms);
+                        break;
+                    }
+                }
                 if nested && released_now.iter().any(|r| paths_match_exact_or_canonical(r, &path)) {
                     sent.remove(&path);
                     continue;
@@ -3055,7 +4741,8 @@ pub fn seat_unavailable() -> Option<String> {
 }
 /// logind's own runtime state (users/<uid>, sessions/<id>, seats/<seat>): read as files, so an idle serve never
 /// spawns a process per re-check (no loginctl, no interpreter, no D-Bus round trip). I3: any seated session of this
-/// user starts the bridge, a VT login included; an SSH-only login idles. Another session being active on the seat does
+/// user permits local discovery, a VT login included; SSH-only local hardware idles. The authenticated remote
+/// route is checked separately. Another session being active on the seat does
 /// not stop serve: the bridge then holds no grab and routes nothing until this user's session returns (INV-8).
 pub(crate) fn seat_from_logind_state(state: &Path, uid: u32) -> Option<String> {
     let user = state.join("users").join(uid.to_string());
@@ -3074,12 +4761,12 @@ pub(crate) fn seat_from_logind_state(state: &Path, uid: u32) -> Option<String> {
         _ => None,
     }
 }
-/// The user-unit entry point (C-05). Disabled by SSOT: exit 0. No seat or no device access: idle until it appears
-/// (SIGTERM exits 0) and never start a second pad owner. A bridge error: exit non-zero, so systemd restarts it
+/// The user-unit entry point (C-05). Disabled by SSOT: exit 0. The neutral authority starts without a physical seat;
+/// device discovery idles until authorized focus and access are available. A bridge error: exit non-zero, so systemd restarts it
 /// within the unit's start limit. There is no fallback process that could drive a game and the room at once.
 pub fn serve(
-    mut global: GlobalConfig,
-    mut legacy: LegacyConfig,
+    global: GlobalConfig,
+    legacy: LegacyConfig,
     root: Option<PathBuf>,
 ) -> Result<(), String> {
     let disabled =
@@ -3095,59 +4782,9 @@ pub fn serve(
     if unsafe { libc::geteuid() } == 0 {
         return Err("real input bridge must run as the active desktop user".into());
     }
-    install_stop_handlers();
-    STOP.store(false, Ordering::Relaxed);
-    let mut stamp = config_fingerprint(root.as_deref());
-    let mut reported: Option<String> = None;
-    loop {
-        if STOP.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-        let now = config_fingerprint(root.as_deref());
-        if now != stamp {
-            stamp = now;
-            match GlobalConfig::load(root.as_deref()) {
-                Ok((g, l)) => {
-                    global = g;
-                    legacy = l;
-                }
-                Err(e) => eprintln!("input policy reload rejected; keeping validated policy: {e}"),
-            }
-            if disabled(&global) {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({"serve":"disabled","reason":"SSOT disabled the controller bridge","exit":0})
-                );
-                return Ok(());
-            }
-        }
-        let unavailable = if global.controller.sessions.is_empty() {
-            seat_unavailable()
-        } else {
-            std::fs::read_dir("/dev/input")
-                .err()
-                .map(|e| format!("no /dev/input access: {e}"))
-        };
-        match unavailable {
-            None => break,
-            Some(reason) => {
-                if reported.as_deref() != Some(reason.as_str()) {
-                    eprintln!("{}", serde_json::json!({"serve":"idle","reason":reason}));
-                    reported = Some(reason);
-                }
-                let until = Instant::now() + Duration::from_millis(global.controller.scan_ms);
-                while !STOP.load(Ordering::Relaxed) && Instant::now() < until {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-            }
-        }
-    }
-    if reported.is_some() {
-        eprintln!(
-            "{}",
-            serde_json::json!({"serve":"bridge","reason":"seat and device access available"})
-        );
-    }
+    // The singleton and neutral handoff authority must be reachable even at
+    // the greeter or without /dev/input. Physical discovery and admission are
+    // gated inside run; listener startup grants no device access or routing.
     let pad_path = global.controller.legacy_pad_state_path.clone();
     run(
         global,
@@ -3252,6 +4889,7 @@ pub fn run(
     let start = Instant::now();
     let mut scan = start - Duration::from_secs(2);
     let mut last_tick = start;
+    let mut frontend_manifest_at = start;
     let mut last_reconcile = start;
     let mut focus = ContextSnapshot::new(opt.context.as_deref().unwrap_or("app-capture"));
     // INV-8: with a seat view, nothing is grabbed or routed before the first view says this user's session is active.
@@ -3270,18 +4908,38 @@ pub fn run(
     let boot_sample = focus.sampled;
     let shared_focus = std::sync::Arc::new(std::sync::Mutex::new(focus.clone()));
     let shared_policy = std::sync::Arc::new(std::sync::Mutex::new(global.clone()));
+    let login_selection: SharedLogin = Default::default();
+    let app_authority = app_authority();
+    let _handoff_service = if follow && opt.bridge && !nested && !opt.fixture_only {
+        Some(HandoffService::spawn(
+            login_selection.clone(),
+            shared_focus.clone(),
+            shared_policy.clone(),
+        )?)
+    } else {
+        None
+    };
     let mut sinks = Sinks {
         pointer: None,
+        remote_pointer: None,
+        ownership_generation: 0,
         children: vec![],
         ownership: if follow && opt.bridge {
-            Some(OwnershipWorker::spawn(shared_policy.clone())?)
+            Some(OwnershipWorker::spawn(
+                shared_policy.clone(),
+                login_selection.clone(),
+            )?)
         } else {
             None
         },
         actions: if opt.bridge
             && (!opt.fixture_only || opt.live_context || nested || console_sink.is_some())
         {
-            Some(ActionWorker::spawn(shared_policy.clone())?)
+            Some(ActionWorker::spawn(
+                shared_policy.clone(),
+                login_selection.clone(),
+                shared_focus.clone(),
+            )?)
         } else {
             None
         },
@@ -3296,7 +4954,9 @@ pub fn run(
     let cursor_requested = std::sync::Arc::new(AtomicBool::new(false));
     let cursor_signal = cursor_requested.clone();
     let context_worker = if follow {
+        let authority = app_authority.clone();
         let cache = shared_focus.clone();
+        let selection = login_selection.clone();
         let policy = shared_policy.clone();
         let stop = context_stop.clone();
         let (logind, console_tty, rediscover_on) = (
@@ -3319,6 +4979,49 @@ pub fn run(
                 let cfg = policy.lock().unwrap().clone();
                 let view = logind.as_deref().map(|state| seat_view(state, uid));
                 let graphical_vt = view.as_ref().and_then(|v| v.graphical_vt);
+                let selected = {
+                    let mut state = selection.lock().unwrap();
+                    let local_active = matches!(
+                        view.as_ref().map(|v| &v.seat),
+                        Some(Seat::Console { .. }) | Some(Seat::Graphical)
+                    );
+                    let remote = state.reconcile(local_active, crate::tmux_handoff::live);
+                    (state.generation, remote)
+                };
+                if let Some(remote) = selected.1 {
+                    if let Ok(mut snapshot) = native_snapshot(&cfg, &remote.witness.client) {
+                        snapshot.remote = true;
+                        snapshot.routing_generation = remote.generation;
+                        if let Some(target) = &mut snapshot.native_target {
+                            target.login_generation = remote.generation;
+                            snapshot.address = Some(target.address());
+                        }
+                        verify_app(&cfg, &mut snapshot, "console", None, &mut app_cache, uid);
+                        publish_focus(
+                            &cache,
+                            snapshot,
+                            authority.as_ref(),
+                            cfg.controller.context_stale_ms,
+                        );
+                    } else {
+                        let mut snapshot = ContextSnapshot::new("console");
+                        snapshot.remote = true;
+                        snapshot.routing_generation = remote.generation;
+                        snapshot.suspended =
+                            Some("authenticated SSH target is temporarily unavailable".into());
+                        publish_focus(
+                            &cache,
+                            snapshot,
+                            authority.as_ref(),
+                            cfg.controller.context_stale_ms,
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(
+                        cfg.controller.context_poll_ms.max(20),
+                    ));
+                    continue;
+                }
+
                 // C-16: the console context (a VT) when this user's tty session is active, or when the graphical
                 // session's compositor is gone for good (no live instance at all); INV-8: suspended when another
                 // session is active. The tty path may be a test pty on the fixture tier.
@@ -3327,12 +5030,18 @@ pub fn run(
                     Some(Seat::Foreign(reason)) => {
                         let mut snap = ContextSnapshot::new("console");
                         snap.suspended = Some(reason.clone());
+                        snap.routing_generation = selected.0;
                         snap.graphical_vt = graphical_vt;
                         if reported.as_deref() != Some(reason.as_str()) {
                             eprintln!("{}", serde_json::json!({"seat":"foreign","reason":reason}));
                             reported = Some(reason.clone());
                         }
-                        *cache.lock().unwrap() = snap;
+                        publish_focus(
+                            &cache,
+                            snap,
+                            authority.as_ref(),
+                            cfg.controller.context_stale_ms,
+                        );
                         std::thread::sleep(Duration::from_millis(
                             cfg.controller.context_poll_ms.max(20),
                         ));
@@ -3411,12 +5120,35 @@ pub fn run(
                         vt_cache = Some((tty.clone(), Instant::now(), found));
                     }
                     snap.tmux_client = vt_cache.as_ref().and_then(|(_, _, c)| c.clone());
+                    if let Some(client) = &snap.tmux_client {
+                        match native_snapshot(&cfg, client) {
+                            Ok(mut native) => {
+                                native.graphical_vt = graphical_vt;
+                                snap = native;
+                            }
+                            Err(_) => {
+                                snap.tmux_client = None;
+                                snap.suspended =
+                                    Some("native pane focus could not be verified".into());
+                            }
+                        }
+                    }
+                    snap.routing_generation = selected.0;
+                    if let Some(target) = &mut snap.native_target {
+                        target.login_generation = selected.0;
+                        snap.address = Some(target.address());
+                    }
                     verify_app(&cfg, &mut snap, "console", Some(&tty), &mut app_cache, uid);
                     if reported.as_deref() != Some("console") {
                         eprintln!("{}", serde_json::json!({"seat":"console","tty":tty}));
                         reported = Some("console".into());
                     }
-                    *cache.lock().unwrap() = snap;
+                    publish_focus(
+                        &cache,
+                        snap,
+                        authority.as_ref(),
+                        cfg.controller.context_stale_ms,
+                    );
                     std::thread::sleep(Duration::from_millis(
                         cfg.controller.context_poll_ms.max(20),
                     ));
@@ -3432,6 +5164,7 @@ pub fn run(
                 // A failed IPC read never invents terminal focus or resets held input.
                 if let Ok(mut snapshot) = result {
                     snapshot.graphical_vt = graphical_vt;
+                    snapshot.routing_generation = selected.0;
                     snapshot.shell_overlay = runtime
                         .as_ref()
                         .is_some_and(|r| shell_overlay_open(r, &cfg));
@@ -3459,7 +5192,12 @@ pub fn run(
                     if !snapshot.shell_overlay && snapshot.name != "desktop-3d" {
                         verify_app(&cfg, &mut snapshot, &nav_context, None, &mut app_cache, uid);
                     }
-                    *cache.lock().unwrap() = snapshot;
+                    publish_focus(
+                        &cache,
+                        snapshot,
+                        authority.as_ref(),
+                        cfg.controller.context_stale_ms,
+                    );
                 } else {
                     // A layer-input lease cannot outlive a failed compositor verification.
                     if let Ok(mut snapshot) = cache.lock() {
@@ -3493,6 +5231,17 @@ pub fn run(
         .as_ref()
         .map(|n| n.controllers.clone())
         .unwrap_or_else(|| opt.devices.clone());
+    let physical_admission = if opt.bridge && !opt.fixture_only && !nested {
+        Some(PhysicalAdmission {
+            focus: shared_focus.clone(),
+            logind_state: opt
+                .logind_state
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/run/systemd")),
+        })
+    } else {
+        None
+    };
     let (new_devices, discovery) = discovery_worker(
         explicit,
         opt.fixture_only,
@@ -3503,6 +5252,7 @@ pub fn run(
         nested,
         raw_consumers.clone(),
         released_devices.clone(),
+        physical_admission.clone(),
     )?;
     let mut ctx = focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
@@ -3546,6 +5296,19 @@ pub fn run(
             &raw_consumers.lock().unwrap(),
             opt.bridge,
             global.controller.scan_ms,
+            ManifestFocus {
+                frontend: native_frontend(
+                    &focus,
+                    &global,
+                    cursor_requested.load(Ordering::Relaxed),
+                )
+                .as_ref(),
+                stale_ms: global.controller.context_stale_ms,
+                target: fresh_native_target(&focus, &global),
+                owned: native_owned(&focus, &global),
+                remote: focus.remote,
+                focus: Some(&focus),
+            },
         );
     }
 
@@ -3654,6 +5417,19 @@ pub fn run(
                         &raw_consumers.lock().unwrap(),
                         opt.bridge,
                         global.controller.scan_ms,
+                        ManifestFocus {
+                            frontend: native_frontend(
+                                &focus,
+                                &global,
+                                cursor_requested.load(Ordering::Relaxed),
+                            )
+                            .as_ref(),
+                            stale_ms: global.controller.context_stale_ms,
+                            target: fresh_native_target(&focus, &global),
+                            owned: native_owned(&focus, &global),
+                            remote: focus.remote,
+                            focus: Some(&focus),
+                        },
                     );
                 }
                 if let Some(r) = &registry {
@@ -3686,6 +5462,19 @@ pub fn run(
                             &raw_consumers.lock().unwrap(),
                             opt.bridge,
                             global.controller.scan_ms,
+                            ManifestFocus {
+                                frontend: native_frontend(
+                                    &focus,
+                                    &global,
+                                    cursor_requested.load(Ordering::Relaxed),
+                                )
+                                .as_ref(),
+                                stale_ms: global.controller.context_stale_ms,
+                                target: fresh_native_target(&focus, &global),
+                                owned: native_owned(&focus, &global),
+                                remote: focus.remote,
+                                focus: Some(&focus),
+                            },
                         );
                     }
                     if let Ok(mut a) = assigned.lock() {
@@ -3842,6 +5631,21 @@ pub fn run(
                 if devices.contains_key(&path) {
                     continue;
                 }
+                // A handle queued under one login may arrive after focus or
+                // seat ownership changed. Recheck before any device ioctl,
+                // grab, local clone, or session sink is admitted.
+                let candidate_focus = if let Some(admission) = &physical_admission {
+                    let observed = match admission.focus.lock() {
+                        Ok(snapshot) => snapshot.clone(),
+                        Err(_) => continue,
+                    };
+                    if admission.unavailable(&global, Some(&observed)).is_some() {
+                        continue;
+                    }
+                    observed
+                } else {
+                    focus.clone()
+                };
                 if nested
                     && released_devices
                         .lock()
@@ -3885,8 +5689,11 @@ pub fn run(
                 };
                 let session = selection.as_ref().ok().cloned().flatten();
                 let session_error = selection.err();
-                let target_focus =
-                    session_focus(&focus, session.is_some(), session_error.as_deref());
+                let target_focus = session_focus(
+                    &candidate_focus,
+                    session.is_some(),
+                    session_error.as_deref(),
+                );
                 router.set_capture_navigation_context(
                     capture_navigation_context(&global, target_focus.class.as_deref()).as_deref(),
                 );
@@ -3921,10 +5728,18 @@ pub fn run(
                     }
                 }
                 let suspended = target_focus.suspended.is_some();
+                if physical_admission.as_ref().is_some_and(|admission| {
+                    admission
+                        .unavailable(&global, Some(&target_focus))
+                        .is_some()
+                }) {
+                    continue;
+                }
                 if opt.bridge
                     && !opt.fixture_only
                     && !nested
                     && !suspended
+                    && !target_focus.remote
                     && session.is_none()
                     && session_error.is_none()
                 {
@@ -3951,6 +5766,19 @@ pub fn run(
                                         &raw_consumers.lock().unwrap(),
                                         opt.bridge,
                                         global.controller.scan_ms,
+                                        ManifestFocus {
+                                            frontend: native_frontend(
+                                                &focus,
+                                                &global,
+                                                cursor_requested.load(Ordering::Relaxed),
+                                            )
+                                            .as_ref(),
+                                            stale_ms: global.controller.context_stale_ms,
+                                            target: fresh_native_target(&focus, &global),
+                                            owned: native_owned(&focus, &global),
+                                            remote: focus.remote,
+                                            focus: Some(&focus),
+                                        },
                                     );
                                 }
                                 // A raw holder may outlive abort_release. Keep the
@@ -3962,7 +5790,12 @@ pub fn run(
                         raw_consumers.lock().unwrap().remove(&path);
                     }
                     // A nested session sees only its own /dev/input: no clone (it would appear on the host).
-                    if nested || session.is_some() || session_error.is_some() || suspended {
+                    if nested
+                        || target_focus.remote
+                        || session.is_some()
+                        || session_error.is_some()
+                        || suspended
+                    {
                         None
                     } else {
                         Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?)
@@ -3993,6 +5826,8 @@ pub fn run(
                         session,
                         session_error,
                         capture: None,
+                        remote_input: None,
+                        login_generation: target_focus.routing_generation,
                         capture_recovery_at: Instant::now() - Duration::from_secs(10),
                         suspended,
                         neutral_rearming,
@@ -4005,6 +5840,19 @@ pub fn run(
                         &raw_consumers.lock().unwrap(),
                         opt.bridge,
                         global.controller.scan_ms,
+                        ManifestFocus {
+                            frontend: native_frontend(
+                                &focus,
+                                &global,
+                                cursor_requested.load(Ordering::Relaxed),
+                            )
+                            .as_ref(),
+                            stale_ms: global.controller.context_stale_ms,
+                            target: fresh_native_target(&focus, &global),
+                            owned: native_owned(&focus, &global),
+                            remote: focus.remote,
+                            focus: Some(&focus),
+                        },
                     );
                 }
             }
@@ -4021,6 +5869,24 @@ pub fn run(
                 focus.app = None;
             }
             ctx = focus.name.clone();
+            if sinks.ownership_generation != focus.routing_generation {
+                if let Some(worker) = &mut sinks.ownership {
+                    worker.invalidate();
+                }
+                sinks.ownership_generation = focus.routing_generation;
+            }
+            if !focus.remote
+                || focus.suspended.is_some()
+                || focus.native_target.as_ref().is_none_or(|t| {
+                    sinks
+                        .remote_pointer
+                        .as_ref()
+                        .is_some_and(|p| !same_pointer_scope(&p.target, t))
+                })
+            {
+                sinks.remote_pointer = None;
+            }
+
             // Ownership is per session: a capture/release requested by one pad applies to every pad (INV-7).
             let mut adopt: Vec<(PathBuf, bool)> = vec![];
             let mut manifest_dirty = false;
@@ -4029,14 +5895,74 @@ pub fn run(
                 let dev = devices.get_mut(&path).unwrap();
                 let mut target_focus =
                     session_focus(&focus, dev.session.is_some(), dev.session_error.as_deref());
-                if dev.session.is_none() && dev.session_error.is_none() && dev.output.is_none() {
+                if !focus.remote
+                    && dev.session.is_none()
+                    && dev.session_error.is_none()
+                    && dev.output.is_none()
+                {
                     if let Some(reason) = &local_sink_error {
                         target_focus.suspended = Some(reason.clone());
                     }
                 }
                 let focus = &target_focus;
+                if dev.session.is_none() && dev.session_error.is_none() {
+                    if let Some(neutral) = begin_login_handoff(
+                        &mut dev.router,
+                        &mut dev.login_generation,
+                        focus.routing_generation,
+                        &mut dev.neutral_rearming,
+                    ) {
+                        // Cancel old queued strokes, then release existing local
+                        // outputs before destroying their devices. No new focus
+                        // or lazy sink creation participates in this drain.
+                        dev.capture = None;
+                        dev.remote_input = None;
+                        let drained = drain_login_outputs(
+                            &dev.device,
+                            &neutral,
+                            dev.output.as_mut(),
+                            sinks.pointer.as_mut(),
+                        );
+                        dev.output = None;
+                        // The pointer is shared: disconnect also clears holds
+                        // from other old pads before they individually reset.
+                        sinks.pointer = None;
+                        sinks.keyboard = None;
+                        drained?;
+                    }
+                    if focus.remote && focus.suspended.is_none() {
+                        if let Some(target) = &focus.native_target {
+                            let changed = dev
+                                .remote_input
+                                .as_ref()
+                                .is_none_or(|r| !r.target.matches(target));
+                            if changed {
+                                dev.remote_input = Some(RemoteInput {
+                                    target: target.clone(),
+                                    keys: SessionWorker::login(
+                                        target.clone(),
+                                        &dev.device.path,
+                                        global.clone(),
+                                    )?,
+                                });
+                            }
+                        }
+                    } else {
+                        dev.remote_input = None;
+                    }
+                }
                 // INV-8: another session (or the greeter) owns the seat: release the grab so its session gets the pad,
                 // neutralize every output, and route nothing until this user's session is active again.
+                // A temporarily unavailable authenticated SSH target retains its already assigned grab while
+                // output is neutral; it must not expose that user's pad to the physical greeter.
+                if focus.suspended.is_some()
+                    && !focus.remote
+                    && dev.suspended
+                    && dev.device.grabbed()
+                {
+                    dev.device.release();
+                    manifest_dirty = true;
+                }
                 match (&focus.suspended, dev.suspended) {
                     (Some(reason), false) => {
                         // Suppress lazy local clone creation while resetting a pad whose sink is unavailable.
@@ -4045,17 +5971,24 @@ pub fn run(
                         emit(out, dev, &mut sinks, focus)?;
                         dev.session_worker = None;
                         dev.capture = None;
-                        dev.device.release();
+                        dev.remote_input = None;
+                        if !focus.remote {
+                            dev.device.release();
+                        }
                         dev.suspended = true;
                         manifest_dirty = true;
                         eprintln!(
                             "{}",
-                            serde_json::json!({"seat":"released","device":path,"reason":reason})
+                            serde_json::json!({"seat":if focus.remote {"remote-paused"}else{"released"},"device":path,"reason":reason,"grab_retained":dev.device.grabbed()})
                         );
                     }
                     (None, true) => {
                         if opt.bridge {
-                            if let Err(e) = dev.device.grab() {
+                            if let Err(e) = if dev.device.grabbed() {
+                                Ok(())
+                            } else {
+                                dev.device.grab()
+                            } {
                                 if !nested && e.raw_os_error() == Some(libc::EBUSY) {
                                     raw_consumers.lock().unwrap().insert(
                                         path.clone(),
@@ -4156,7 +6089,16 @@ pub fn run(
                         >= Duration::from_millis(global.controller.scan_ms)
                 {
                     if let Some(worker) = &mut sinks.ownership {
-                        let _ = worker.submit("inspect", focus.address.clone(), vec![]);
+                        let _ = worker.submit(
+                            "inspect",
+                            focus.address.clone(),
+                            vec![],
+                            focus.native_target.as_ref().map(|t| NativeOwnership {
+                                target: t.clone(),
+                                outer: focus.native_outer,
+                            }),
+                            focus.routing_generation,
+                        );
                         dev.capture_recovery_at = Instant::now();
                     }
                 }
@@ -4233,6 +6175,19 @@ pub fn run(
                     &raw_consumers.lock().unwrap(),
                     opt.bridge,
                     global.controller.scan_ms,
+                    ManifestFocus {
+                        frontend: native_frontend(
+                            &focus,
+                            &global,
+                            cursor_requested.load(Ordering::Relaxed),
+                        )
+                        .as_ref(),
+                        stale_ms: global.controller.context_stale_ms,
+                        target: fresh_native_target(&focus, &global),
+                        owned: native_owned(&focus, &global),
+                        remote: focus.remote,
+                        focus: Some(&focus),
+                    },
                 );
                 manifest_dirty = false;
             }
@@ -4277,12 +6232,14 @@ pub fn run(
                 if let Some(owned) = emit(out, dev, &mut sinks, focus)? {
                     adopt.push((path.clone(), owned));
                 }
-                // I4 --nested: a captured app in the session reads the assigned node itself, so the grab is released
-                // while the app owns the pad (the bridge still sees the held toggle_chord that releases it).
+                // I4 --nested: a raw captured app reads its assigned node itself.
+                // Captured terminal navigation remains projected by this bridge,
+                // including MiOS-Mons camera input, so it keeps the sole grab.
                 // Until the session compositor has answered once, the bridge keeps the grab: the placeholder context
                 // would otherwise release the node for a moment at start, where any host reader could see it.
                 if nested && opt.bridge {
-                    let want = !dev.router.app_owned() || (follow && focus.sampled == boot_sample);
+                    let want =
+                        dev.router.bridge_owns_input() || (follow && focus.sampled == boot_sample);
                     if want && !dev.device.grabbed() {
                         dev.device
                             .grab()
@@ -4304,6 +6261,19 @@ pub fn run(
                     &raw_consumers.lock().unwrap(),
                     opt.bridge,
                     global.controller.scan_ms,
+                    ManifestFocus {
+                        frontend: native_frontend(
+                            &focus,
+                            &global,
+                            cursor_requested.load(Ordering::Relaxed),
+                        )
+                        .as_ref(),
+                        stale_ms: global.controller.context_stale_ms,
+                        target: fresh_native_target(&focus, &global),
+                        owned: native_owned(&focus, &global),
+                        remote: focus.remote,
+                        focus: Some(&focus),
+                    },
                 );
             }
             for (source, owned) in adopt {
@@ -4312,6 +6282,31 @@ pub fn run(
                         dev.capture = None;
                         let out = dev.router.adopt_ownership(owned);
                         emit(out, dev, &mut sinks, &focus)?;
+                    }
+                }
+            }
+            if let Some(bus) = &mut sinks.remote_pointer {
+                let live = |path: &Path| {
+                    devices.get(path).is_some_and(|d| {
+                        !d.suspended
+                            && d.session.is_none()
+                            && d.session_error.is_none()
+                            && d.router.cursor
+                    })
+                };
+                bus.cursors.retain(|p| live(p));
+                let cancel = bus.holds.retain(live);
+                if let Some(pointer) = &bus.pointer {
+                    let visible = !bus.cursors.is_empty();
+                    // Hide is the native neutral boundary: a normal up here could activate a close/menu binding.
+                    if cancel || (bus.visible && !visible) {
+                        bus.holds.cancel();
+                        if pointer.visible(false) {
+                            bus.visible = false;
+                        }
+                    }
+                    if bus.visible != visible && pointer.visible(visible) {
+                        bus.visible = visible;
                     }
                 }
             }
@@ -4329,12 +6324,39 @@ pub fn run(
                         && !d.router.shell_overlay()
                 });
             cursor_requested.store(cursor_active, Ordering::Relaxed);
+            // Refresh the logical frontend lease at the existing context cadence, including with no pad attached.
+            if !nested
+                && frontend_manifest_at.elapsed()
+                    >= Duration::from_millis(global.controller.context_poll_ms)
+            {
+                frontend_manifest_at = Instant::now();
+                update_active_manifest(
+                    &runtime,
+                    &devices,
+                    &raw_consumers.lock().unwrap(),
+                    opt.bridge,
+                    global.controller.scan_ms,
+                    ManifestFocus {
+                        frontend: native_frontend(&focus, &global, cursor_active).as_ref(),
+                        stale_ms: global.controller.context_stale_ms,
+                        target: fresh_native_target(&focus, &global),
+                        owned: native_owned(&focus, &global),
+                        remote: focus.remote,
+                        focus: Some(&focus),
+                    },
+                );
+            }
             let mut failed = vec![];
             if let Some(worker) = &sinks.ownership {
                 while let Ok((seq, mode, result)) = worker.results.try_recv() {
                     match result {
                         Ok(receipt) => {
-                            if seq == worker.last {
+                            if seq == worker.last
+                                && receipt
+                                    .native
+                                    .as_ref()
+                                    .is_none_or(|t| t.login_generation == focus.routing_generation)
+                            {
                                 for dev in devices.values_mut().filter(|d| {
                                     d.session.is_none() && d.session_error.is_none() && !d.suspended
                                 }) {
@@ -4460,6 +6482,13 @@ pub fn run(
         let _ = worker.join();
     }
     let _ = discovery.join();
+    publish_app_lease(
+        app_authority.as_ref(),
+        "seat",
+        None,
+        Instant::now(),
+        global.controller.context_stale_ms,
+    );
     if !nested {
         let _ = std::fs::remove_file(runtime.join("mios-inputd-active.json"));
     }
@@ -4522,6 +6551,10 @@ pub fn configured_command(action: &str, global: &GlobalConfig) -> Result<Vec<Str
 pub(crate) fn action_supported(global: &GlobalConfig, action: &str) -> bool {
     let probe = TmuxClient {
         pid: 0,
+        start: 0,
+        instance: 0,
+        socket_dev: 0,
+        socket_ino: 0,
         tty: "/dev/pts/0".into(),
         socket: PathBuf::from("/tmp/probe"),
     };
@@ -4651,6 +6684,191 @@ mod tests {
         cfg.controller.virtual_pointer = "mios-vctl-pointer".into();
         let script=format!("local calls={{}};hl={{plugin={{mios_pacing={{controller_cursor=function(...) table.insert(calls,table.pack(...)) end}}}}}};{}{}assert(#calls==2 and calls[1].n==4 and calls[1][1]==true and calls[1][2]=='crosshair' and calls[1][3]=='mios-vctl-pointer' and calls[1][4]=={} and calls[2].n==1 and calls[2][1]==false)",
             controller_cursor_lua(&cfg,true),controller_cursor_lua(&cfg,false),cfg.controller.context_stale_ms);
+        let mut child = Command::new("/usr/bin/lua")
+            .arg("-")
+            .stdin(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(script.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    #[test]
+    fn app_input_scope_expires_and_never_survives_overlay_focus_or_login_changes() {
+        let mut focus = ContextSnapshot::new("terminal");
+        focus.address = Some("0xapp".into());
+        focus.pid = Some(42);
+        focus.app = Some("mon".into());
+        focus.app_target = Some(("0xapp".into(), 42));
+        focus.app_at = Some(Instant::now());
+        focus.routing_generation = 7;
+        focus.app_process = Some(mios_resolver::app_input::Process { pid: 40, start: 41 });
+        let original = app_input_focus(&focus, 1000).unwrap();
+        focus.routing_generation = 8;
+        assert_ne!(app_input_focus(&focus, 1000).unwrap(), original);
+        focus.shell_overlay = true;
+        assert!(app_input_focus(&focus, 1000).is_none());
+        focus.shell_overlay = false;
+        focus.address = Some("0xother".into());
+        assert!(app_input_focus(&focus, 1000).is_none());
+        focus.address = Some("0xapp".into());
+        focus.suspended = Some("other user".into());
+        assert!(app_input_focus(&focus, 1000).is_none());
+        focus.suspended = None;
+        focus.app_at = Some(Instant::now() - Duration::from_secs(2));
+        assert!(app_input_focus(&focus, 1000).is_none());
+    }
+    #[test]
+    fn observed_focus_aba_and_replacement_processes_never_revalidate_old_jobs() {
+        let mut a = ContextSnapshot::new("terminal");
+        a.address = Some("0xa".into());
+        a.pid = Some(10);
+        a.app = Some("mon".into());
+        a.app_target = Some(("0xa".into(), 10));
+        a.app_at = Some(Instant::now());
+        a.app_process = Some(mios_resolver::app_input::Process { pid: 40, start: 41 });
+        a.focus_epoch = 1;
+        let accepted = app_input_focus(&a, 1000).unwrap();
+        let mut b = a.clone();
+        b.address = Some("0xb".into());
+        advance_focus(&a, &mut b);
+        assert_eq!(b.focus_epoch, 2);
+        let mut returned = a.clone();
+        advance_focus(&b, &mut returned);
+        assert_eq!(returned.focus_epoch, 3);
+        assert_ne!(app_input_focus(&returned, 1000).unwrap(), accepted);
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(returned.clone()));
+        let selection: SharedLogin = Default::default();
+        assert!(
+            with_login_focus(&selection, &shared, 0, accepted.epoch, 1000, |_| Ok(())).is_err(),
+            "old app and zoom jobs stay cancelled after returning"
+        );
+        let mut replaced = returned.clone();
+        replaced.app_process = Some(mios_resolver::app_input::Process { pid: 50, start: 51 });
+        advance_focus(&returned, &mut replaced);
+        assert_eq!(replaced.focus_epoch, 4);
+        assert_ne!(
+            app_input_focus(&replaced, 1000).unwrap().process,
+            accepted.process
+        );
+        let mut refreshed = replaced.clone();
+        refreshed.sampled = Instant::now();
+        advance_focus(&replaced, &mut refreshed);
+        assert_eq!(
+            refreshed.focus_epoch, 4,
+            "ordinary refresh is not a new visit"
+        );
+    }
+    #[test]
+    fn app_checks_wait_for_login_selection_without_holding_focus_or_deadlocking_handoff() {
+        let selection: SharedLogin = Default::default();
+        let focus = std::sync::Arc::new(std::sync::Mutex::new(ContextSnapshot::new("terminal")));
+        let selected = selection.lock().unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker_selection = selection.clone();
+        let worker_focus = focus.clone();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = with_login_focus(&worker_selection, &worker_focus, 0, 0, 1000, |_| Ok(()));
+            done.send(result).unwrap();
+        });
+        ready.recv_timeout(Duration::from_millis(200)).unwrap();
+        let until = Instant::now() + Duration::from_millis(50);
+        let mut focus_blocked = false;
+        while Instant::now() < until {
+            if focus.try_lock().is_err() {
+                focus_blocked = true;
+                break;
+            }
+            std::thread::yield_now();
+        }
+        // This is the handoff's selection->focus order while the app request
+        // waits. Release selection before asserting so a bad old order fails
+        // the test without leaving a permanently blocked worker.
+        drop(selected);
+        finished
+            .recv_timeout(Duration::from_millis(500))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert!(
+            !focus_blocked,
+            "an app request must not retain focus while waiting for selection"
+        );
+    }
+    #[test]
+    fn exact_local_route_state_rejects_aba_replacement_and_remote_app_transport() {
+        let route = crate::sessions::SessionRoute {
+            name: "own".into(),
+            controllers: vec![],
+            socket: "/private/own.sock".into(),
+            session: "own".into(),
+            pane: "%1".into(),
+            ssh_host: None,
+        };
+        let identity = LocalAppIdentity {
+            route: route.clone(),
+            socket: (1, 2),
+            server: 3,
+            server_start: 4,
+            window: "@1".into(),
+            pane_pid: 5,
+            pane_start: 6,
+            app: "mon".into(),
+            process: mios_resolver::app_input::Process { pid: 40, start: 41 },
+        };
+        let mut state = LocalAppState::default();
+        let accepted = update_local_app(
+            &mut state,
+            Some(identity.clone()),
+            "route:1",
+            Instant::now(),
+        )
+        .unwrap();
+        assert!(local_control_current(&state, &accepted, 1000));
+        update_local_app(&mut state, None, "route:1", Instant::now());
+        update_local_app(
+            &mut state,
+            Some(identity.clone()),
+            "route:1",
+            Instant::now(),
+        );
+        assert!(
+            !local_control_current(&state, &accepted, 1000),
+            "returning to the same pane cannot revive a queued job"
+        );
+        let current = state.current.clone().unwrap();
+        let mut replaced = identity;
+        replaced.process = mios_resolver::app_input::Process { pid: 50, start: 51 };
+        update_local_app(&mut state, Some(replaced), "route:1", Instant::now());
+        assert!(!local_control_current(&state, &current, 1000));
+        let mut remote = route;
+        remote.ssh_host = Some("future-transport".into());
+        let (cfg, _) = crate::config::tests::fixture();
+        assert!(local_app_identity(
+            &remote,
+            &cfg,
+            Duration::from_millis(1),
+            &AtomicBool::new(false)
+        )
+        .unwrap_err()
+        .contains("future authenticated transport"));
+    }
+    #[test]
+    fn compositor_zoom_refuses_other_window_or_reused_pid_without_dispatching() {
+        let lua = window_zoom_lua("0xapp", 42);
+        let script=format!("local calls=0;local w={{address='0xapp',pid=42}};hl={{get_active_window=function() return w end,dsp={{window={{fullscreen=function(x) assert(x.window==w and x.mode=='maximized' and x.action=='toggle');return x end}}}},dispatch=function(x) calls=calls+1 end}};local function zoom() {lua} end;zoom();assert(calls==1);w={{address='0xother',pid=42}};assert(not pcall(zoom) and calls==1);w={{address='0xapp',pid=43}};assert(not pcall(zoom) and calls==1)");
         let mut child = Command::new("/usr/bin/lua")
             .arg("-")
             .stdin(Stdio::piped())
@@ -4809,7 +7027,11 @@ mod tests {
     fn fake_proc(t: &Path, pid: u32, ppid: u32, comm: &str, argv: &[&str], env: &str, tty: &str) {
         let d = t.join(pid.to_string());
         std::fs::create_dir_all(d.join("fd")).unwrap();
-        std::fs::write(d.join("stat"), format!("{pid} ({comm}) S {ppid} 1 1 0")).unwrap();
+        std::fs::write(
+            d.join("stat"),
+            format!("{pid} ({comm}) S {ppid} 1 1 0{} {pid}", " 0".repeat(14)),
+        )
+        .unwrap();
         std::fs::write(d.join("comm"), format!("{comm}\n")).unwrap();
         std::fs::write(
             d.join("cmdline"),
@@ -4888,6 +7110,10 @@ mod tests {
         let (cfg, _) = crate::config::tests::fixture_nav();
         let c = TmuxClient {
             pid: 1,
+            start: 0,
+            instance: 0,
+            socket_dev: 0,
+            socket_ino: 0,
             tty: "/dev/pts/7".into(),
             socket: "/run/t/mios-human".into(),
         };
@@ -5307,7 +7533,11 @@ mod tests {
                 alias,
             );
             assert!(tmux_client_at(&p, 11, &socks, 1000).is_none());
-            std::fs::write(p.join("11/stat"), "11 (tmux: client) S 10 11 11 1027 0").unwrap();
+            std::fs::write(
+                p.join("11/stat"),
+                format!("11 (tmux: client) S 10 11 11 1027 0{} 11", " 0".repeat(13)),
+            )
+            .unwrap();
             assert_eq!(
                 tmux_client_at(&p, 11, &socks, 1000)
                     .map(|c| c.tty)
@@ -5621,10 +7851,13 @@ mod tests {
             fn bytes(&self, file: &str) -> Vec<u8> {
                 std::fs::read(self.dir.path().join(file)).unwrap_or_default()
             }
-            fn wait(mut condition: impl FnMut() -> bool) {
+            fn wait(condition: impl FnMut() -> bool) {
+                Self::wait_named("private receiver", condition);
+            }
+            fn wait_named(name: &str, mut condition: impl FnMut() -> bool) {
                 let end = Instant::now() + Duration::from_secs(3);
                 while !condition() {
-                    assert!(Instant::now() < end, "private receiver timed out");
+                    assert!(Instant::now() < end, "{name} timed out");
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
@@ -5697,6 +7930,9 @@ mod tests {
         }
         impl PrivateClient {
             fn attach(server: &PrivateServer, session: &str) -> Self {
+                Self::attach_reusable(server, session, false)
+            }
+            fn attach_reusable(server: &PrivateServer, session: &str, reuse: bool) -> Self {
                 use std::os::fd::{AsRawFd, FromRawFd};
                 use std::os::unix::process::CommandExt;
                 let (mut master, mut slave) = (-1, -1);
@@ -5736,7 +7972,11 @@ mod tests {
                 command
                     .args([
                         "-c",
-                        "/usr/bin/tmux \"$@\"; wait",
+                        if reuse {
+                            "/usr/bin/tmux \"$@\"; /usr/bin/tmux \"$@\"; wait"
+                        } else {
+                            "/usr/bin/tmux \"$@\"; wait"
+                        },
                         "mios-private-client",
                         "-S",
                     ])
@@ -5807,6 +8047,7 @@ mod tests {
         fn receipt(client: &PrivateClient, address: &str) -> CaptureReceipt {
             let cfg = capture_config();
             CaptureReceipt {
+                native: None,
                 address: address.into(),
                 class: "Alacritty".into(),
                 pid: client.process.id(),
@@ -6030,7 +8271,9 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .send(SessionJob {
+                    repeat: 1,
                     queued: Instant::now() - age,
+                    app_control: None,
                     action: "key:X".into(),
                 })
                 .unwrap();
@@ -6111,7 +8354,7 @@ mod tests {
             PrivateServer::wait(|| server.bytes("output") == b"a");
         }
         /// The P1 app layer with `exe` registered as the per-user candidate (user_exe), as the operator registers
-        /// ~/.local/bin/mios-tamagotchi-sample in the user tier.
+        /// ~/.local/bin/mios-mons-sample in the user tier.
         fn mon_config(exe: &Path) -> GlobalConfig {
             let (mut cfg, _) = crate::config::tests::fixture_mon();
             cfg.controller.nav.apps.get_mut("mon").unwrap().user_exe =
@@ -6164,13 +8407,17 @@ mod tests {
             let file = server.dir.path().join("beta");
             let shell = format!("stty raw -echo; cat > '{}'; :", file.display());
             let b = new_pane(&server, "beta", &["/bin/sh", "-c", &shell]);
-            PrivateServer::wait(|| file.exists());
+            PrivateServer::wait_named("beta receiver file", || file.exists());
             let cfg = mon_config(&sleep);
             let stale = cfg.controller.context_stale_ms;
             let wa = SessionWorker::spawn(server.route("alpha", &a), cfg.clone()).unwrap();
             let wb = SessionWorker::spawn(server.route("beta", &b), cfg.clone()).unwrap();
-            PrivateServer::wait(|| wa.app(stale).as_deref() == Some("mon"));
-            PrivateServer::wait(|| wb.app.lock().unwrap().1.is_some());
+            PrivateServer::wait_named("alpha registered foreground app", || {
+                wa.app(stale).as_deref() == Some("mon")
+            });
+            PrivateServer::wait_named("beta negative app probe completion", || {
+                wb.app.lock().unwrap().1.is_some()
+            });
             assert_eq!(wb.app(stale), None, "a shell pane selects no app");
             assert_eq!(
                 wa.app(0),
@@ -6196,7 +8443,9 @@ mod tests {
             assert!(wb.submit("key:ALT+4".into()));
             assert!(wb.submit("key:ALT+MINUS".into()));
             drained(wb);
-            PrivateServer::wait(|| server.bytes("beta") == b"\x1b4\x1b-");
+            PrivateServer::wait_named("beta exact key bytes", || {
+                server.bytes("beta") == b"\x1b4\x1b-"
+            });
             let mut ssh = server.route("alpha", &a);
             ssh.ssh_host = Some("blade-two".into());
             assert!(crate::sessions::pane_pid_argv(&ssh).is_err());
@@ -6208,7 +8457,7 @@ mod tests {
         fn a_tmux_client_pane_is_verified_bounded_and_bound_to_its_window() {
             let mut server = PrivateServer::new();
             let (_keep, sleep) = private_binary();
-            new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
+            let pane = new_pane(&server, "alpha", &[sleep.to_str().unwrap(), "60"]);
             let client = PrivateClient::attach(&server, "alpha");
             let mut cfg = mon_config(&sleep);
             cfg.controller.nav.tmux_sockets.push("tmux".into());
@@ -6240,6 +8489,44 @@ mod tests {
                 uid,
             );
             assert_eq!(snap.app.as_deref(), Some("mon"));
+            let accepted = snap.clone();
+            let accepted_process = accepted
+                .app_process
+                .clone()
+                .expect("context acceptance pins the app process");
+            server.tmux(&[
+                "respawn-pane",
+                "-k",
+                "-t",
+                &pane,
+                sleep.to_str().unwrap(),
+                "60",
+            ]);
+            PrivateServer::wait_named("replacement foreground identity", || {
+                probe
+                    .identity(&cfg, uid)
+                    .is_some_and(|(_, process)| process != accepted_process)
+            });
+            assert!(
+                app_input_process(
+                    &cfg,
+                    &accepted,
+                    "mon",
+                    Duration::from_millis(cfg.controller.nav.app_query_timeout_ms)
+                )
+                .is_err(),
+                "queued action cannot choose the replacement app in the same terminal"
+            );
+            verify_app(
+                &cfg,
+                &mut snap,
+                "terminal",
+                None,
+                &mut AppCache::default(),
+                uid,
+            );
+            assert_eq!(snap.app.as_deref(), Some("mon"));
+            assert_ne!(snap.app_process, Some(accepted_process));
             assert_eq!(
                 snap.app_target,
                 Some(("0xterm".into(), 7)),
@@ -6264,6 +8551,10 @@ mod tests {
             );
             server.resume();
         }
+        mod controller_acceptance {
+            include!("mios-controller-runtime-acceptance.rs");
+            include!("mios-controller-legacy-client-acceptance.rs");
+        }
     }
 }
 
@@ -6283,6 +8574,14 @@ mod app_detection {
             &std::collections::BTreeMap::new(),
             true,
             2000,
+            ManifestFocus {
+                frontend: None,
+                stale_ms: 750,
+                focus: None,
+                target: None,
+                owned: false,
+                remote: false,
+            },
         );
         let record: serde_json::Value = serde_json::from_slice(
             &std::fs::read(runtime.path().join("mios-inputd-active.json")).unwrap(),
@@ -6361,8 +8660,8 @@ mod app_detection {
             ] {
                 std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
-            let sample = bin.join("mios-tamagotchi-sample");
-            let elsewhere = other.join("mios-tamagotchi-sample");
+            let sample = bin.join("mios-mons-sample");
+            let elsewhere = other.join("mios-mons-sample");
             for f in [&sample, &elsewhere] {
                 std::fs::write(f, b"\x7fELF fixture").unwrap();
                 std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -6408,7 +8707,7 @@ mod app_detection {
                 ("/home/mios/.local", me, 0o755, FileKind::Dir),
                 ("/home/mios/.local/bin", me, 0o755, FileKind::Dir),
                 (
-                    "/home/mios/.local/bin/mios-tamagotchi-sample",
+                    "/home/mios/.local/bin/mios-mons-sample",
                     me,
                     0o755,
                     FileKind::File,
@@ -6433,7 +8732,7 @@ mod app_detection {
             }
             move |p: &Path| m.get(p).copied()
         };
-        let sample = Path::new("/home/mios/.local/bin/mios-tamagotchi-sample");
+        let sample = Path::new("/home/mios/.local/bin/mios-mons-sample");
         let ok = |over: &[(&str, u32, u32, FileKind)], path: &Path, owner: u32| {
             trusted_candidate(path, owner, me, &fs(over)).is_some()
         };
@@ -6442,7 +8741,7 @@ mod app_detection {
             ok(&[], Path::new("/tmp/x/mon"), me),
             "a root-owned sticky ancestor"
         );
-        let file = "/home/mios/.local/bin/mios-tamagotchi-sample";
+        let file = "/home/mios/.local/bin/mios-mons-sample";
         for (why, over, owner) in [
             (
                 "owned by another uid",
@@ -6489,7 +8788,7 @@ mod app_detection {
         );
         for path in [
             "relative/mon",
-            "/home/mios/../mios/.local/bin/mios-tamagotchi-sample",
+            "/home/mios/../mios/.local/bin/mios-mons-sample",
             "/home/mios/.local/bin/missing",
         ] {
             assert!(!ok(&[], Path::new(path), me), "{path}");
@@ -6551,13 +8850,13 @@ mod app_detection {
         assert!(app_of_pid(&t.proc_root, 10, &registered, me, &lstat).is_some());
         // A registered symlink never matches: not when the kernel names its target, not when it names the link, and
         // not when the link resolves to a target nobody listed.
-        let link = t.sample.with_file_name("mios-tamagotchi-link");
+        let link = t.sample.with_file_name("mios-mons-link");
         std::os::unix::fs::symlink(&t.sample, &link).unwrap();
         let via_link = apps(&[], &[&link]);
         assert_eq!(app_of_pid(&t.proc_root, 10, &via_link, me, &lstat), None);
         entry(&t.proc_root, 12, 1, 12, 12, &link, None);
         assert_eq!(app_of_pid(&t.proc_root, 12, &via_link, me, &lstat), None);
-        let stray = t.sample.with_file_name("mios-tamagotchi-stray");
+        let stray = t.sample.with_file_name("mios-mons-stray");
         std::os::unix::fs::symlink(&t.elsewhere, &stray).unwrap();
         entry(&t.proc_root, 13, 1, 13, 13, &t.elsewhere, None);
         assert_eq!(
@@ -6568,7 +8867,7 @@ mod app_detection {
         let deleted = PathBuf::from(format!("{} (deleted)", t.sample.display()));
         entry(&t.proc_root, 14, 1, 14, 14, &deleted, None);
         assert_eq!(app_of_pid(&t.proc_root, 14, &registered, me, &lstat), None);
-        let gone = t.sample.with_file_name("mios-tamagotchi-gone");
+        let gone = t.sample.with_file_name("mios-mons-gone");
         std::fs::copy(&t.sample, &gone).unwrap();
         entry(&t.proc_root, 15, 1, 15, 15, &gone, None);
         let gone_app = apps(&[], &[&gone]);
@@ -6975,4 +9274,508 @@ mod app_detection {
         );
         assert_eq!(router.axes[&0].value, 0);
     }
+}
+
+#[cfg(test)]
+mod login_handoff_contract {
+    use super::*;
+    use crate::router::{Event, EV_KEY};
+    fn witness(uid: u32, client: u32) -> crate::tmux_handoff::LoginWitness {
+        crate::tmux_handoff::LoginWitness {
+            uid,
+            session_id: format!("c{client}"),
+            leader: client + 100,
+            leader_start: client as u64 + 200,
+            client: TmuxClient {
+                pid: client,
+                start: client as u64 + 300,
+                instance: 0,
+                socket_dev: 0,
+                socket_ino: 0,
+                tty: format!("/dev/pts/{client}"),
+                socket: format!("/run/user/{uid}/tmux/mios-desktop").into(),
+            },
+            client_start: client as u64 + 300,
+        }
+    }
+    #[test]
+    fn registered_ssh_follows_its_user_after_local_logout_without_touching_another_users_target() {
+        let a = witness(1000, 10);
+        let b = witness(1001, 20);
+        let mut user_a = LoginSelection {
+            generation: 3,
+            candidates: vec![a.clone()],
+            ..Default::default()
+        };
+        let mut user_b = LoginSelection {
+            generation: 7,
+            candidates: vec![b.clone()],
+            ..Default::default()
+        };
+        let b_selected = user_b.reconcile(false, |_| true).unwrap();
+        assert!(
+            user_a.reconcile(true, |_| true).is_none(),
+            "active local login retains its target until an explicit handoff or logout"
+        );
+        let a_selected = user_a.reconcile(false, |_| true).unwrap();
+        assert_eq!(a_selected.witness, a);
+        assert_eq!(
+            a_selected.generation, 4,
+            "greetd at seat0 does not revoke an authenticated SSH target"
+        );
+        assert_eq!(user_b.remote.as_ref().unwrap().witness, b_selected.witness);
+        assert_eq!(
+            user_b.generation, b_selected.generation,
+            "A's handoff never changes B's generation"
+        );
+        assert_eq!(
+            user_a.reconcile(false, |_| true).unwrap().generation,
+            4,
+            "unchanged focus observations coalesce"
+        );
+        assert!(
+            user_a.reconcile(false, |_| false).is_none(),
+            "disconnect releases only the expired login lease"
+        );
+        assert_eq!(user_a.generation, 5);
+        assert_eq!(user_b.remote.as_ref().unwrap().witness, b);
+        assert_eq!(user_b.generation, b_selected.generation);
+    }
+    #[test]
+    fn exact_generation_detach_never_reselects_the_released_login_or_removes_a_newer_one() {
+        let older = witness(1000, 10);
+        let current = witness(1000, 11);
+        let mut state = LoginSelection {
+            generation: 4,
+            candidates: vec![older.clone(), current.clone()],
+            remote: Some(AuthorizedLogin {
+                generation: 4,
+                witness: current.clone(),
+            }),
+            local: None,
+        };
+        assert!(state.detach(3).is_err());
+        assert_eq!(state.remote.as_ref().unwrap().witness, current);
+        assert_eq!(state.detach(4).unwrap(), 5);
+        assert!(state.candidates.iter().all(|w| w.client != current.client));
+        assert_eq!(
+            state.reconcile(false, |_| true).unwrap().witness,
+            older,
+            "only another still-authorized login can be a fallback"
+        );
+        let next = state.generation;
+        assert!(state.detach(4).is_err());
+        assert_eq!(state.generation, next);
+    }
+    #[test]
+    fn shared_client_pointer_keeps_each_controllers_hold_until_its_own_release_or_disconnect() {
+        let a = Path::new("/dev/input/mios-fixture-a");
+        let b = Path::new("/dev/input/mios-fixture-b");
+        let down = Event::new(EV_KEY, 0x110, 1);
+        let up = Event::new(EV_KEY, 0x110, 0);
+        let mut held = PointerHolds::default();
+        assert_eq!(held.project(a, &[down], true), vec![down]);
+        assert!(
+            held.project(b, &[down], true).is_empty(),
+            "one native client lease receives one aggregate press"
+        );
+        assert!(
+            held.project(a, &[up], true).is_empty(),
+            "A cannot release B's hold"
+        );
+        assert_eq!(held.project(b, &[up], true), vec![up]);
+        assert_eq!(held.project(a, &[down], true), vec![down]);
+        assert!(held.project(b, &[down], true).is_empty());
+        assert!(
+            !held.retain(|p| p != a),
+            "disconnect A preserves B's active hold"
+        );
+        assert!(
+            held.retain(|_| false),
+            "final disconnect requests native cancellation, never a synthetic up"
+        );
+    }
+    #[test]
+    fn native_pointer_cancel_does_not_complete_chrome_click_or_replay_another_controllers_held_press(
+    ) {
+        let a = Path::new("/dev/input/mios-fixture-a");
+        let b = Path::new("/dev/input/mios-fixture-b");
+        let left = Event::new(EV_KEY, 0x110, 1);
+        let right = Event::new(EV_KEY, 0x111, 1);
+        let up = Event::new(EV_KEY, 0x111, 0);
+        let mut held = PointerHolds::default();
+        assert_eq!(held.project(a, &[left], true), vec![left]);
+        assert_eq!(held.project(b, &[right], true), vec![right]);
+        assert!(held.retain(|p| p != a));
+        held.cancel(); // Runtime queues native hide, then show if B still requests the cursor.
+        assert!(
+            held.project(b, &[right], true).is_empty(),
+            "B's pre-cancel hold is not replayed"
+        );
+        assert!(
+            held.project(b, &[up], true).is_empty(),
+            "no chrome-release action after cancellation"
+        );
+        assert_eq!(
+            held.project(b, &[right], true),
+            vec![right],
+            "fresh post-neutral press works"
+        );
+        held.cancel();
+        assert!(
+            held.project(b, &[up], false).is_empty(),
+            "release while hidden clears the rearm barrier"
+        );
+        assert_eq!(held.project(b, &[right], true), vec![right]);
+    }
+    #[test]
+    fn source_cursor_exit_cancels_before_its_synthetic_up_while_another_cursor_stays_active() {
+        let a = Path::new("/dev/input/mios-fixture-a");
+        let b = Path::new("/dev/input/mios-fixture-b");
+        let down = Event::new(EV_KEY, 0x110, 1);
+        let up = Event::new(EV_KEY, 0x110, 0);
+        let mut held = PointerHolds::default();
+        assert_eq!(held.project(a, &[down], true), vec![down]);
+        assert!(
+            !held.retire_source(b),
+            "another cursor with no hold needs no cancellation"
+        );
+        assert!(
+            held.retire_source(a),
+            "native hide must be queued before show/projecting Router release outputs"
+        );
+        assert!(
+            held.project(a, &[up], false).is_empty(),
+            "synthetic exit-up cannot complete chrome click"
+        );
+        assert_eq!(
+            held.project(b, &[down], true),
+            vec![down],
+            "remaining cursor accepts a fresh press"
+        );
+        assert_eq!(
+            held.project(a, &[down], true),
+            vec![],
+            "aggregate press still has one consumer"
+        );
+    }
+    #[test]
+    fn queued_ownership_from_an_old_login_is_rejected_before_any_compositor_or_tmux_transaction() {
+        let (cfg, _) = crate::config::tests::fixture();
+        let selection: SharedLogin = Default::default();
+        selection.lock().unwrap().generation = 2;
+        let mut worker =
+            OwnershipWorker::spawn(std::sync::Arc::new(std::sync::Mutex::new(cfg)), selection)
+                .unwrap();
+        worker.submit("on", None, vec![], None, 1).unwrap();
+        let (_, _, result) = worker.results.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(
+            result.err().as_deref(),
+            Some("ownership request expired"),
+            "the generation gate runs before external IPC"
+        );
+    }
+    #[test]
+    fn login_generation_change_drains_holds_and_waits_for_complete_neutral_snapshot() {
+        let (global, legacy) = crate::config::tests::fixture();
+        let mut router = Router::new(global, legacy, BTreeMap::new());
+        router.set_focus("app-capture", Some(("old-login".into(), 10)), false);
+        let mut generation = 1;
+        let mut rearming = false;
+        router.cursor = true;
+        assert!(router
+            .event(Event::new(EV_KEY, 304, 1), 1)
+            .app
+            .contains(&Event::new(EV_KEY, 304, 1)));
+        let neutral = begin_login_handoff(&mut router, &mut generation, 2, &mut rearming).unwrap();
+        assert!(
+            neutral.app.contains(&Event::new(EV_KEY, 304, 0)),
+            "old held controls release before the target changes"
+        );
+        assert!(neutral
+            .app
+            .iter()
+            .any(|e| e.kind == EV_SYN && e.code == SYN_REPORT));
+        assert!(rearming && !router.cursor);
+        let moving = crate::router::Axis {
+            min: -100,
+            max: 100,
+            value: 80,
+        };
+        assert!(step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((BTreeSet::from([304]), BTreeMap::from([(0, moving)]))),
+            0.2,
+            0.5
+        ));
+        assert!(
+            rearming,
+            "neither a held button nor a deflected stick may enter the next login"
+        );
+        assert!(!step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((
+                BTreeSet::new(),
+                BTreeMap::from([(0, crate::router::Axis { value: 0, ..moving })])
+            )),
+            0.2,
+            0.5
+        ));
+        assert!(!rearming);
+        assert!(
+            begin_login_handoff(&mut router, &mut generation, 2, &mut rearming).is_none(),
+            "the same generation never resets live input again"
+        );
+    }
+    #[test]
+    fn cold_greeter_broker_answers_neutrally_without_opening_even_an_explicit_candidate() {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let root = tempfile::tempdir().unwrap();
+        let candidate = root.path().join("must-not-open");
+        std::fs::write(&candidate, b"private admission sentinel").unwrap();
+        // Observe actual file opens; a gate regression reaches Device::open
+        // before its evdev ioctls can reject this ordinary private sentinel.
+        let monitor = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+        assert!(monitor >= 0);
+        let monitor = unsafe { OwnedFd::from_raw_fd(monitor) };
+        let name = std::ffi::CString::new(candidate.as_os_str().as_encoded_bytes()).unwrap();
+        assert!(
+            unsafe { libc::inotify_add_watch(monitor.as_raw_fd(), name.as_ptr(), libc::IN_OPEN) }
+                >= 0
+        );
+        let (mut cfg, _) = crate::config::tests::fixture();
+        cfg.controller.sessions.clear();
+        cfg.controller.scan_ms = 20;
+        let mut cold = ContextSnapshot::new("console");
+        cold.suspended = Some("seat not read yet".into());
+        let focus = std::sync::Arc::new(std::sync::Mutex::new(cold));
+        let policy = std::sync::Arc::new(std::sync::Mutex::new(cfg));
+        let selection: SharedLogin = Default::default();
+        let endpoint = root.path().join("neutral.sock");
+        let service = HandoffService::spawn_at(
+            endpoint.clone(),
+            selection.clone(),
+            focus.clone(),
+            policy.clone(),
+        )
+        .unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (_candidates, worker) = discovery_worker(
+            vec![candidate],
+            false,
+            policy,
+            Default::default(),
+            stop.clone(),
+            Default::default(),
+            false,
+            Default::default(),
+            Default::default(),
+            Some(PhysicalAdmission {
+                focus,
+                logind_state: root.path().join("no-logind"),
+            }),
+        )
+        .unwrap();
+        let mut client = UnixStream::connect(&endpoint).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        crate::tmux_handoff::write_reply(
+            &mut client,
+            &serde_json::json!({
+                "version": 1, "op": "window", "mode": "off",
+            }),
+        )
+        .unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut header = [0u8; 4];
+        client.read_exact(&mut header).unwrap();
+        let length = u32::from_be_bytes(header) as usize;
+        assert!(
+            (1..=8192).contains(&length),
+            "reply length must satisfy the handoff frame bound"
+        );
+        let mut bytes = vec![0u8; length];
+        client.read_exact(&mut bytes).unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("no fresh authorized native target"));
+        assert_eq!(
+            selection.lock().unwrap().generation,
+            0,
+            "listener startup grants no login/device ownership"
+        );
+        std::thread::sleep(Duration::from_millis(45));
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+        let mut events = [0u8; 512];
+        let count = unsafe {
+            libc::read(
+                monitor.as_raw_fd(),
+                events.as_mut_ptr().cast(),
+                events.len(),
+            )
+        };
+        assert!(
+            count < 0,
+            "cold discovery must not open the sentinel device"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        drop(service);
+        assert!(!endpoint.exists());
+    }
+
+    fn admission_target(generation: u64) -> crate::tmux_capture::Target {
+        crate::tmux_capture::Target {
+            uid: 1000,
+            generation: 1,
+            login_generation: generation,
+            socket: "/private/owned/mios-desktop".into(),
+            socket_dev: 1,
+            socket_ino: 2,
+            server: 10,
+            server_start: 20,
+            client: 30,
+            client_start: 40,
+            client_instance: 50,
+            tty: "/dev/pts/99".into(),
+            session: "$1".into(),
+            session_name: "private".into(),
+            window: "@1".into(),
+            pane: "%1".into(),
+            pane_pid: 60,
+            pane_start: 70,
+            foreground: 60,
+            foreground_start: 70,
+            zoomed: false,
+        }
+    }
+
+    #[test]
+    fn physical_admission_requires_fresh_authority_and_keeps_local_uinput_checks_separate() {
+        let (mut cfg, _) = crate::config::tests::fixture();
+        cfg.controller.sessions.clear();
+        cfg.controller.context_stale_ms = 10_000;
+        let mut focus = ContextSnapshot::new("console");
+        focus.suspended = Some("physical greeter owns the seat".into());
+        assert!(
+            physical_readiness(&cfg, &focus, || panic!("no probe before local focus")).is_some()
+        );
+        focus.remote = true;
+        focus.suspended = None;
+        focus.routing_generation = 3;
+        assert!(
+            physical_readiness(&cfg, &focus, || panic!("a remote boolean is not authority"))
+                .is_some()
+        );
+        for wrong in [0, 2, 4] {
+            focus.native_target = Some(admission_target(wrong));
+            assert!(
+                physical_readiness(&cfg, &focus, || panic!("no local sink probe for remote"))
+                    .is_some()
+            );
+        }
+        focus.native_target = Some(admission_target(3));
+        assert!(physical_readiness(&cfg, &focus, || panic!(
+            "authorized remote does not require host uinput"
+        ))
+        .is_none());
+        focus.sampled = Instant::now() - Duration::from_millis(cfg.controller.context_stale_ms + 1);
+        assert!(physical_readiness(&cfg, &focus, || None).is_some());
+        focus.sampled = Instant::now();
+        focus.suspended = Some("authenticated target unavailable".into());
+        assert!(physical_readiness(&cfg, &focus, || None).is_some());
+        focus.remote = false;
+        focus.suspended = None;
+        assert_eq!(
+            physical_readiness(&cfg, &focus, || Some("no /dev/uinput access".into())).as_deref(),
+            Some("no /dev/uinput access")
+        );
+        assert_eq!(
+            physical_readiness(&cfg, &focus, || Some(
+                "physical greeter owns the seat".into()
+            ))
+            .as_deref(),
+            Some("physical greeter owns the seat")
+        );
+        assert!(physical_readiness(&cfg, &focus, || None).is_none());
+        assert!(retry_device_directory(&std::io::Error::from(
+            std::io::ErrorKind::NotFound
+        )));
+        assert!(retry_device_directory(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+        assert!(!retry_device_directory(&std::io::Error::from(
+            std::io::ErrorKind::InvalidData
+        )));
+        assert!(!retry_device_directory(&std::io::Error::from(
+            std::io::ErrorKind::Other
+        )));
+        cfg.controller.sessions.push(crate::sessions::SessionRoute {
+            name: "private".into(),
+            controllers: vec!["/private/device".into()],
+            socket: "/private/socket".into(),
+            session: "private".into(),
+            pane: "%1".into(),
+            ssh_host: None,
+        });
+        focus.suspended = Some("another user owns the seat".into());
+        assert!(physical_readiness(&cfg, &focus, || panic!(
+            "explicit routes keep their own policy"
+        ))
+        .is_none());
+        assert_eq!(
+            session_focus(&focus, true, None).suspended.as_deref(),
+            Some("another user owns the seat"),
+            "an explicit route never overrides a foreign active seat"
+        );
+    }
+
+    #[test]
+    fn remote_to_local_return_uses_existing_neutral_drain_and_rearm() {
+        let (global, legacy) = crate::config::tests::fixture();
+        let mut router = Router::new(global, legacy, BTreeMap::new());
+        router.set_focus("app-capture", Some(("remote-login".into(), 10)), false);
+        let mut generation = 2;
+        let mut rearming = false;
+        assert!(router
+            .event(Event::new(EV_KEY, 304, 1), 1)
+            .app
+            .contains(&Event::new(EV_KEY, 304, 1)));
+        let neutral = begin_login_handoff(&mut router, &mut generation, 3, &mut rearming).unwrap();
+        assert!(neutral.app.contains(&Event::new(EV_KEY, 304, 0)));
+        assert!(rearming);
+        assert!(step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((BTreeSet::from([304]), BTreeMap::new())),
+            0.2,
+            0.5
+        ));
+        assert!(!step_neutral_rearming(
+            &mut rearming,
+            &mut router,
+            Ok((BTreeSet::new(), BTreeMap::new())),
+            0.2,
+            0.5
+        ));
+        assert!(!rearming);
+        assert!(begin_login_handoff(&mut router, &mut generation, 3, &mut rearming).is_none());
+    }
+}
+
+#[cfg(test)]
+mod acceptance_observer {
+    include!("mios-controller-acceptance-observer.rs");
 }

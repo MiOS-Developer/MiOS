@@ -61,7 +61,7 @@ impl NameRegistry {
                     .aliases
                     .iter()
                     .filter(|alias| {
-                        alias.semantics == "same-value"
+                        matches!(alias.semantics, "same-value" | "input-only")
                             && !self.ambiguous_aliases.contains_key(&alias.name)
                     })
                     .map(|alias| alias.name.clone())
@@ -88,8 +88,10 @@ pub fn registry(merged: &Value) -> Result<NameRegistry, String> {
                 "canonical variable collision {canonical}: {previous} and {key}"
             ));
         }
+        let input_only = input_only_aliases(&key);
         let aliases = get_aliases(&key)
             .into_iter()
+            .chain(input_only.iter().cloned())
             .filter(|name| name != &canonical)
             .map(|name| {
                 alias_names.insert(name.clone());
@@ -97,8 +99,9 @@ pub fn registry(merged: &Value) -> Result<NameRegistry, String> {
                     .entry(name.clone())
                     .or_default()
                     .insert(key.clone());
-                let semantics = if key.starts_with("image.sidecars.") && name.ends_with("_VERSION")
-                {
+                let semantics = if input_only.contains(&name) {
+                    "input-only"
+                } else if key.starts_with("image.sidecars.") && name.ends_with("_VERSION") {
                     "image-tag"
                 } else {
                     "same-value"
@@ -137,6 +140,13 @@ pub fn overlay_inputs(
     environment: impl Fn(&str) -> Option<String>,
 ) -> Result<(), String> {
     let registry = registry(merged)?;
+    let input_only: BTreeSet<_> = registry
+        .entries
+        .iter()
+        .flat_map(|entry| entry.aliases.iter())
+        .filter(|alias| alias.semantics == "input-only")
+        .map(|alias| alias.name.clone())
+        .collect();
     let mut overrides = BTreeMap::new();
     for (canonical, aliases) in registry.input_aliases() {
         let canonical_input = environment(&canonical).filter(|v| !v.is_empty());
@@ -162,7 +172,9 @@ pub fn overlay_inputs(
         if let Some(value) = value {
             overrides.insert(canonical, Value::String(value.clone()));
             for alias in aliases {
-                overrides.insert(alias, Value::String(value.clone()));
+                if !input_only.contains(&alias) {
+                    overrides.insert(alias, Value::String(value.clone()));
+                }
             }
         }
     }
@@ -177,6 +189,20 @@ pub fn overlay_inputs(
         .ok_or("SSOT env must be a table")?;
     env.extend(overrides);
     Ok(())
+}
+
+/// The existing category fields were exported before the game rename. Accept
+/// those historical process inputs without projecting their old names again.
+/// The game section remains excluded by the walk; no new game input is added.
+fn input_only_aliases(dotted_path: &str) -> Vec<String> {
+    dotted_path
+        .strip_prefix("rust.categories.mons.")
+        .map(|rest| {
+            vec![canonical_name(&format!(
+                "rust.categories.tamagotchi.{rest}"
+            ))]
+        })
+        .unwrap_or_default()
 }
 
 pub fn get_aliases(dotted_path: &str) -> Vec<String> {
@@ -609,6 +635,43 @@ fn py_key(rest: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_game_category_inputs_are_input_only_and_canonical_values_win() {
+        let original: Value = "[rust.categories.mons]\nbinary='mios-mons'\ndescription='game'\n"
+            .parse()
+            .unwrap();
+        let metadata = registry(&original).unwrap();
+        let entry = metadata
+            .entries
+            .iter()
+            .find(|entry| entry.key == "rust.categories.mons.binary")
+            .unwrap();
+        assert!(entry.aliases.iter().any(|alias| alias.name
+            == "MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY"
+            && alias.semantics == "input-only"));
+        let mut legacy = original.clone();
+        overlay_inputs(&mut legacy, |name| {
+            (name == "MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY").then(|| "custom-bin".into())
+        })
+        .unwrap();
+        let exports = crate::emit::build_exports_map(&legacy, 0);
+        assert_eq!(exports["MIOS_RUST_CATEGORIES_MONS_BINARY"], "custom-bin");
+        assert!(!exports.contains_key("MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY"));
+        let mut canonical = original.clone();
+        overlay_inputs(&mut canonical, |name| match name {
+            "MIOS_RUST_CATEGORIES_MONS_BINARY" => Some("canonical-bin".into()),
+            "MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY" => Some("legacy-bin".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(
+            crate::emit::build_exports_map(&canonical, 0)["MIOS_RUST_CATEGORIES_MONS_BINARY"],
+            "canonical-bin"
+        );
+        assert!(get_aliases("mons.zoom_percent").is_empty());
+        assert!(input_only_aliases("mons.zoom_percent").is_empty());
+    }
 
     #[test]
     fn canonical_names_follow_capabilities_without_reader_abbreviations() {

@@ -69,6 +69,26 @@ impl Output {
         self.actions.extend(other.actions);
     }
 }
+/// One semantic-to-native lookup at the console emit boundary; missing GUI adapters are consumed.
+/// Already native input/key/tmux/pointer actions never recurse through this table.
+pub(crate) fn console_action(global: &GlobalConfig, console: bool, action: String) -> String {
+    if console
+        && !global.controller.nav.console_actions.is_empty()
+        && !["input:", "key:", "tmux:", "pointer:"]
+            .iter()
+            .any(|prefix| action.starts_with(*prefix))
+    {
+        global
+            .controller
+            .nav
+            .console_actions
+            .get(&action)
+            .cloned()
+            .unwrap_or_else(|| "none".into())
+    } else {
+        action
+    }
+}
 #[derive(Default, Clone, Debug, Serialize)]
 pub struct PadState {
     pub lx: f32,
@@ -217,6 +237,22 @@ struct GuidePending {
     elapsed: f64,
     single: GuideSingle,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GlobalGesture {
+    Capture,
+    Zoom,
+}
+#[derive(Clone, Debug)]
+struct DeferredGlobalButton {
+    at: u64,
+    elapsed_ms: f64,
+}
+#[derive(Clone, Debug)]
+struct GlobalChord {
+    gesture: GlobalGesture,
+    target: Option<(String, u64)>,
+    owned: bool,
+}
 enum CaptureConfirmation {
     Pending,
     Selected(String),
@@ -315,6 +351,11 @@ pub struct Router {
     guide_clean: Option<(u64, f64)>,
     /// The first tap's original owner resolves only when a second tap can no longer join.
     guide_single: Option<GuidePending>,
+    /// Global chord members never reach either single-button action before
+    /// their physical release. State belongs to this physical device only.
+    global_pending: BTreeMap<u16, DeferredGlobalButton>,
+    global_chord: Option<GlobalChord>,
+    resolving_global_single: bool,
     /// Keyboard navigation belongs to the open shell surface, independently of window capture.
     shell_overlay: bool,
     shell_cursor: Option<SavedShellCursor>,
@@ -373,6 +414,9 @@ impl Router {
             guide_tap: None,
             guide_clean: None,
             guide_single: None,
+            global_pending: BTreeMap::new(),
+            global_chord: None,
+            resolving_global_single: false,
             shell_overlay: false,
             shell_cursor: None,
             guide_thumb: None,
@@ -435,6 +479,7 @@ impl Router {
         if context == self.capture_navigation_context {
             return Output::default();
         }
+        self.cancel_global_gestures();
         let mut out = if self.app_owned() {
             self.release_outputs()
         } else {
@@ -454,6 +499,7 @@ impl Router {
         if self.shell_overlay == open {
             return Output::default();
         }
+        self.cancel_global_gestures();
         let mut out = self.release_outputs();
         out.extend(self.nav_flush());
         if open {
@@ -502,6 +548,12 @@ impl Router {
                     .is_some()
             })
     }
+    /// A captured terminal still consumes the bridge's verified navigation
+    /// projection. Only a raw captured application reads the assigned node
+    /// itself; releasing our grab for a navigation consumer creates two readers.
+    pub fn bridge_owns_input(&self) -> bool {
+        !self.app_owned() || self.captured_navigation()
+    }
     /// Bind a successful capture to the window the compositor selected, rather than the pre-press cached focus.
     /// The caller supplies only the latest successful capture receipt; failures use ownership_failed instead.
     pub fn confirm_capture_target(&mut self, address: &str) {
@@ -520,6 +572,7 @@ impl Router {
     ) -> Output {
         let target_changed = self.capture_target != target;
         if target_changed {
+            self.cancel_global_gestures();
             self.escape_elapsed = 0.0;
             self.escape_fired = false;
             self.guide_clean = None;
@@ -573,6 +626,7 @@ impl Router {
     /// C-09: whether a MiOS tmux client runs under the focused terminal. A profile change flushes nav state.
     pub fn set_tmux(&mut self, tmux: bool) -> Output {
         if self.tmux != tmux {
+            self.cancel_global_gestures();
             self.guide_clean = None;
             self.guide_single = None;
         }
@@ -590,6 +644,7 @@ impl Router {
             .map(str::to_owned);
         let mut out = Output::default();
         if self.app != app {
+            self.cancel_global_gestures();
             self.guide_clean = None;
             self.guide_single = None;
             self.app = app;
@@ -634,6 +689,7 @@ impl Router {
         // Pointer drags, held keys and cursor mode survive focus moving between uncaptured clients of any kind
         // (and a compositor confirming a capture this bridge already applied). Ownership or room boundaries reset.
         if self.context != context {
+            self.cancel_global_gestures();
             self.guide_clean = None;
             self.guide_single = None;
         }
@@ -642,6 +698,7 @@ impl Router {
             return self.nav_sync();
         }
         self.context = previous;
+        self.cancel_global_gestures();
         let mut o = self.release_outputs();
         self.suppressed.extend(&self.pressed);
         self.blocked.extend(&self.pressed);
@@ -667,6 +724,8 @@ impl Router {
         o
     }
     pub fn reset(&mut self) -> Output {
+        self.global_pending.clear();
+        self.global_chord = None;
         self.guide_clean = None;
         self.guide_single = None;
         self.shell_cursor = None;
@@ -782,6 +841,7 @@ impl Router {
     fn room(&self) -> bool {
         !self.shell_overlay
             && !self.app_owned()
+            && !(self.global.controller.global_capture_toggle && self.cursor)
             && (self.context == "desktop-3d"
                 || (self.capture_override == Some(false) && self.room_capture))
     }
@@ -828,6 +888,7 @@ impl Router {
             || axis_code(&self.legacy.resize_axis).ok() == Some(code)
     }
     fn set_ownership(&mut self, owned: bool) -> Output {
+        self.cancel_global_gestures();
         self.escape_elapsed = 0.0;
         self.escape_fired = false;
         self.guide_clean = None;
@@ -923,6 +984,202 @@ impl Router {
             .filter_map(|n| button_code(n).ok())
             .collect()
     }
+    fn global_gesture(&self, code: u16) -> Option<GlobalGesture> {
+        if self.global.controller.global_capture_toggle
+            && self
+                .legacy
+                .toggle_chord
+                .iter()
+                .any(|button| button_code(button).ok() == Some(code))
+        {
+            Some(GlobalGesture::Capture)
+        } else if self
+            .global
+            .controller
+            .window_zoom_chord
+            .iter()
+            .any(|button| button_code(button).ok() == Some(code))
+        {
+            Some(GlobalGesture::Zoom)
+        } else {
+            None
+        }
+    }
+    fn global_codes(&self, gesture: GlobalGesture) -> Vec<u16> {
+        let buttons = match gesture {
+            GlobalGesture::Capture => &self.legacy.toggle_chord,
+            GlobalGesture::Zoom => &self.global.controller.window_zoom_chord,
+        };
+        buttons
+            .iter()
+            .filter_map(|button| button_code(button).ok())
+            .collect()
+    }
+    fn cancel_global_gestures(&mut self) {
+        self.global_pending.clear();
+        self.global_chord = None;
+        let held = self
+            .pressed
+            .iter()
+            .copied()
+            .filter(|code| self.global_gesture(*code).is_some())
+            .collect::<Vec<_>>();
+        self.blocked.extend(&held);
+        self.suppressed.extend(held);
+    }
+    fn resolve_global_single(
+        &mut self,
+        code: u16,
+        pending: DeferredGlobalButton,
+        now: u64,
+    ) -> Output {
+        self.pressed.remove(&code);
+        self.chord_times.remove(&code);
+        if self.repairing {
+            return Output::default();
+        }
+        self.resolving_global_single = true;
+        let mut out = self.event_inner(Event::new(EV_KEY, code, 1), pending.at);
+        // Preserve the selected single's tap/hold decision without advancing
+        // another button's timer, repeating a stick or replaying a held menu.
+        let elapsed = pending
+            .elapsed_ms
+            .max(now.saturating_sub(pending.at) as f64);
+        if elapsed >= self.global.controller.capture_hold_ms as f64 {
+            let hold = self
+                .nav
+                .held
+                .get_mut(&Input::Button(code))
+                .and_then(|held| {
+                    if let Value::TapHold(_, action) = &held.value {
+                        if !held.fired {
+                            held.fired = true;
+                            return Some(action.clone());
+                        }
+                    }
+                    None
+                });
+            if let Some(action) = hold {
+                self.nav_fire(Input::Button(code), &action, &mut out);
+            }
+            let hold = self.room_pending.get_mut(&code).and_then(|pending| {
+                if !pending.fired && !pending.cancelled {
+                    let action = pending.hold.clone()?;
+                    pending.fired = true;
+                    Some(action)
+                } else {
+                    None
+                }
+            });
+            if let Some(action) = hold {
+                self.room_fire(&action, &mut out);
+            }
+        }
+        out.extend(self.event_inner(Event::new(EV_KEY, code, 0), now));
+        self.resolving_global_single = false;
+        out
+    }
+    /// Arbitrate the two global chords before either app replay or ordinary
+    /// navigation. A late second member still suppresses both singles; holding
+    /// or re-pressing a member cannot retrigger until both are physically up.
+    fn global_button(&mut self, event: Event, now: u64) -> Option<Output> {
+        if self.resolving_global_single || event.kind != EV_KEY {
+            return None;
+        }
+        if let Some(active) = self.global_chord.clone() {
+            let codes = self.global_codes(active.gesture);
+            if codes.contains(&event.code) || active.gesture == GlobalGesture::Capture {
+                if event.value == 0 {
+                    self.pressed.remove(&event.code);
+                    self.blocked.remove(&event.code);
+                    self.suppressed.remove(&event.code);
+                    self.chord_times.remove(&event.code);
+                } else {
+                    self.pressed.insert(event.code);
+                    self.suppressed.insert(event.code);
+                }
+                let mut out = Output::default();
+                if !codes.iter().any(|code| self.pressed.contains(code)) {
+                    self.global_chord = None;
+                    if !self.repairing
+                        && active.target.is_some()
+                        && active.target == self.capture_target
+                        && active.owned == self.app_owned()
+                    {
+                        match active.gesture {
+                            GlobalGesture::Capture if active.owned => {
+                                out.extend(self.release_window());
+                                // Global detach returns a visible host pointer,
+                                // including capture acquired from the 3D room.
+                                self.room_capture = false;
+                                self.cursor = true;
+                                out.actions.push("input:cursor on".into());
+                            }
+                            GlobalGesture::Capture => {
+                                out.extend(self.set_ownership(true));
+                                out.actions.push("input:window on-pinned".into());
+                            }
+                            GlobalGesture::Zoom => out.actions.push("input:window-zoom".into()),
+                        }
+                    }
+                }
+                return Some(out);
+            }
+        }
+        let guide = button_code(&self.global.controller.guide_button).unwrap();
+        if event.code == guide && event.value == 1 {
+            let reserved = self.global_pending.keys().copied().collect::<Vec<_>>();
+            for code in reserved {
+                if self.global_pending.remove(&code).is_some() {
+                    self.suppressed.insert(code);
+                }
+            }
+        }
+        let gesture = self.global_gesture(event.code)?;
+        if self.blocked.contains(&event.code)
+            || self.suppressed.contains(&event.code)
+            || self.pressed.contains(&guide)
+        {
+            return None;
+        }
+        if event.value == 0 {
+            return self
+                .global_pending
+                .remove(&event.code)
+                .map(|pending| self.resolve_global_single(event.code, pending, now));
+        }
+        if event.value != 1 || self.pressed.contains(&event.code) {
+            return Some(Output::default());
+        }
+        self.pressed.insert(event.code);
+        self.chord_times.insert(event.code, now);
+        self.global_pending.insert(
+            event.code,
+            DeferredGlobalButton {
+                at: now,
+                elapsed_ms: 0.0,
+            },
+        );
+        let codes = self.global_codes(gesture);
+        if !codes
+            .iter()
+            .all(|code| self.global_pending.contains_key(code))
+        {
+            return Some(Output::default());
+        }
+        let active = GlobalChord {
+            gesture,
+            target: self.capture_target.clone(),
+            owned: self.app_owned(),
+        };
+        self.global_pending.clear();
+        let mut out = self.release_outputs();
+        out.extend(self.nav_flush());
+        self.suppressed.extend(&self.pressed);
+        self.pad.neutralize();
+        self.global_chord = Some(active);
+        Some(out)
+    }
     fn stick_deflected(&self, code: u16) -> bool {
         let (x, y) = if code == button_code("BTN_THUMBL").unwrap_or(0x13d) {
             (0, 1)
@@ -978,7 +1235,9 @@ impl Router {
     }
     fn legacy_action(&mut self, code: u16, now: u64, o: &mut Output) -> bool {
         let room = self.room();
-        if code == button_code(&self.global.controller.cursor_mode_button).unwrap() {
+        if !self.global.controller.nav.start_options
+            && code == button_code(&self.global.controller.cursor_mode_button).unwrap()
+        {
             if room {
                 self.pad.increment(1);
             } else if self
@@ -1051,7 +1310,7 @@ impl Router {
     fn guide_double_enabled(&self) -> bool {
         self.global.enabled
             && self.global.controller.enabled
-            && !self.console()
+            && !self.legacy_console()
             && self.global.controller.guide_double_press_ms > 0
             && !self.global.controller.guide_double_press_action.is_empty()
             && self.global.controller.guide_double_press_action != "none"
@@ -1155,6 +1414,17 @@ impl Router {
         if !self.global.enabled || !self.global.controller.enabled {
             o.app.push(e);
             return o;
+        }
+        if self
+            .global_chord
+            .as_ref()
+            .is_some_and(|chord| chord.gesture == GlobalGesture::Capture)
+            && e.kind != EV_KEY
+        {
+            return o;
+        }
+        if let Some(output) = self.global_button(e, now) {
+            return output;
         }
         // After the hold qualifies, input stays drained until the physical chord has fully released.
         if self.escape_fired && e.kind != EV_KEY {
@@ -1293,7 +1563,7 @@ impl Router {
             let owned = self.app_owned();
             // I3: on a VT no compositor runs: no system layer behind Guide (R-08), no capture, no room, no ShaderGlass;
             // every button is a nav input and the toggle chord fires the console profile's TOGGLE_CHORD.
-            let console = self.console();
+            let console = self.legacy_console();
             let half = self.half_capture();
             // The captured app owns Guide and every button (full and half capture alike). Only the
             // mode_override_chord (half-capture toggle), Start in half-capture and the held toggle_chord are host input.
@@ -1309,6 +1579,7 @@ impl Router {
                 return o;
             }
             if half
+                && !self.global.controller.nav.start_options
                 && e.value == 1
                 && !already
                 && e.code == button_code(&self.global.controller.cursor_mode_button).unwrap()
@@ -1522,7 +1793,8 @@ impl Router {
                     .iter()
                     .map(|n| button_code(n).unwrap())
                     .collect();
-                if !owned
+                if !self.global.controller.global_capture_toggle
+                    && !owned
                     && toggle.contains(&e.code)
                     && toggle.iter().all(|c| self.pressed.contains(c))
                 {
@@ -1753,6 +2025,17 @@ impl Router {
         } else {
             0.0
         };
+        for pending in self.global_pending.values_mut() {
+            pending.elapsed_ms += dt * 1000.0;
+        }
+        if self
+            .global_chord
+            .as_ref()
+            .is_some_and(|chord| chord.gesture == GlobalGesture::Capture)
+        {
+            self.pad.neutralize();
+            return o;
+        }
         // task3773: the focus-gesture tracker's monotonic clock (ms).
         self.nav.focus.now_ms += dt * 1000.0;
         if self.capture_override.is_some() {
@@ -1809,7 +2092,11 @@ impl Router {
             }
         }
         let held = self.legacy.toggle_chord.iter().all(|b| self.button(b));
-        if self.app_owned() && held && !self.escape_fired {
+        if !self.global.controller.global_capture_toggle
+            && self.app_owned()
+            && held
+            && !self.escape_fired
+        {
             self.escape_elapsed += dt;
             if self.escape_elapsed * 1000.0 >= self.global.controller.capture_hold_ms as f64 {
                 self.escape_fired = true;
@@ -1968,13 +2255,18 @@ impl Router {
             .get(&input)
             .cloned()
     }
-    /// The Linux console (I3): no compositor runs, so nothing behind it can capture, toggle the room or hold Guide.
+    /// Native console transport, including its captured navigation consumer. Shared gestures require console_actions.
     pub fn console(&self) -> bool {
-        self.context == "console"
+        self.context == "console" || self.capture_navigation_context.as_deref() == Some("console")
     }
-    /// Guide held as the system-layer modifier (never on a VT, R-08).
+    fn legacy_console(&self) -> bool {
+        self.console() && self.global.controller.nav.console_actions.is_empty()
+    }
+    /// Guide uses the same system layer on native consoles that opt into the shared adapter contract.
     fn guide_layer(&self) -> bool {
-        !self.shell_overlay && !self.console() && self.button(&self.global.controller.guide_button)
+        !self.shell_overlay
+            && !self.legacy_console()
+            && self.button(&self.global.controller.guide_button)
     }
     /// The Guide system layer is live: Guide held, a compositor runs, and no captured app owns Guide (unless the SSOT
     /// sets captured_system_layer). Its actions come from [controller.system_layer], keyed by button or LS_*/RS_*.
@@ -2042,6 +2334,20 @@ impl Router {
             return;
         }
         o.actions.push(action.to_owned());
+    }
+    fn nav_fire(&mut self, input: Input, action: &str, o: &mut Output) {
+        if self.global.controller.nav.start_options
+            && matches!(input, Input::Button(0x13a | 0x13b))
+            && action.starts_with("key:")
+        {
+            if let Some(app) = self.nav.app.as_deref() {
+                // These app-owned controls never enter a terminal's input
+                // stream. A missing app IPC endpoint consumes the action.
+                o.actions.push(format!("input:app-key {app} {action}"));
+                return;
+            }
+        }
+        self.fire(action, o);
     }
     /// INV-6: cancel every tap/hold timer and auto-repeat, and forget held nav inputs (their release fires nothing).
     /// Key output is atomic strokes, so no virtual key is ever left down. A stick (in a camera profile: each of its
@@ -2118,7 +2424,7 @@ impl Router {
         let repeat = match &value {
             Value::Press(a) if !thumb => {
                 let a = a.clone();
-                self.fire(&a, o);
+                self.nav_fire(input, &a, o);
                 self.repeat_for(input)
             }
             _ => None,
@@ -2144,8 +2450,8 @@ impl Router {
             return;
         }
         match &h.value {
-            Value::TapHold(t, _) if !h.fired => self.fire(t, o),
-            Value::Press(a) if h.deferred => self.fire(a, o),
+            Value::TapHold(t, _) if !h.fired => self.nav_fire(input, t, o),
+            Value::Press(a) if h.deferred => self.nav_fire(input, a, o),
             _ => {}
         }
     }
@@ -2550,18 +2856,18 @@ impl Router {
         let hold = self.global.controller.capture_hold_ms as f64;
         let ms = dt * 1000.0;
         let mut fire = vec![];
-        for h in self.nav.held.values_mut() {
+        for (input, h) in &mut self.nav.held {
             h.elapsed += ms;
             match &h.value {
                 Value::TapHold(_, hold_action) if !h.fired && h.elapsed + 1e-6 >= hold => {
                     h.fired = true;
-                    fire.push(hold_action.clone());
+                    fire.push((*input, hold_action.clone()));
                 }
                 Value::Press(a) if !h.deferred => {
                     if let Some((_, rate)) = h.repeat {
                         let mut n = 0;
                         while h.elapsed + 1e-6 >= h.next && n < 16 {
-                            fire.push(a.clone());
+                            fire.push((*input, a.clone()));
                             h.next += rate as f64;
                             n += 1;
                         }
@@ -2570,9 +2876,9 @@ impl Router {
                 _ => {}
             }
         }
-        for a in fire {
+        for (input, a) in fire {
             let cursor = a == crate::nav::CURSOR;
-            self.fire(&a, o);
+            self.nav_fire(input, &a, o);
             if cursor {
                 // P7: the toggle flushed every held input; nothing else of this tick fires after it.
                 break;
@@ -3859,6 +4165,14 @@ mod held_parity {
         r.set_context("desktop-3d");
         r
     }
+    /// Compatibility mode keeps the original room chord and eager hold timing.
+    /// The vendor defaults are exercised separately below and in global_controller_gestures.
+    fn legacy_room() -> Router {
+        let mut r = vendor_room();
+        r.global.controller.global_capture_toggle = false;
+        r.global.controller.window_zoom_chord.clear();
+        r
+    }
     const EAST: u16 = 0x131;
     const SELECT: u16 = 0x13a;
     const GUIDE: u16 = 0x13c;
@@ -3901,7 +4215,7 @@ mod held_parity {
     }
     #[test]
     fn room_stick_click_overlap_is_the_room_toggle_never_a_single() {
-        let mut r = vendor_room();
+        let mut r = legacy_room();
         key(&mut r, L3, 1, 10);
         let o = key(&mut r, R3, 1, 30);
         assert_eq!(
@@ -3916,7 +4230,7 @@ mod held_parity {
             "NEGATIVE: the chord never also fires sprint or recenter: {all:?}"
         );
         // slow overlap (outside debounce): no toggle and still no singles (R-23)
-        let mut r = vendor_room();
+        let mut r = legacy_room();
         key(&mut r, L3, 1, 10);
         let mut all = key(&mut r, R3, 1, 410).actions;
         all.extend(key(&mut r, R3, 0, 450).actions);
@@ -3932,7 +4246,7 @@ mod held_parity {
     }
     #[test]
     fn room_select_tap_is_the_view_slot_and_hold_is_the_keymap() {
-        let mut r = vendor_room();
+        let mut r = legacy_room();
         key(&mut r, SELECT, 1, 10);
         let o = key(&mut r, SELECT, 0, 100);
         assert!(
@@ -3962,6 +4276,46 @@ mod held_parity {
             r.pad.sequences[0], 1,
             "NEGATIVE: a hold does not also cycle the view"
         );
+    }
+    #[test]
+    fn default_room_overlap_attaches_and_detaches_on_full_release_without_room_singles() {
+        let mut r = vendor_room();
+        r.set_focus("desktop-3d", Some(("0xroom".into(), 1)), false);
+        assert!(key(&mut r, L3, 1, 10).actions.is_empty());
+        assert!(key(&mut r, R3, 1, 30).actions.is_empty());
+        assert!(key(&mut r, L3, 0, 80).actions.is_empty());
+        assert_eq!(key(&mut r, R3, 0, 90).actions, ["input:window on-pinned"]);
+        assert!(r.app_owned());
+        r.confirm_capture_target("0xroom");
+        assert!(key(&mut r, R3, 1, 200).actions.is_empty());
+        assert!(key(&mut r, L3, 1, 600).actions.is_empty());
+        assert!(key(&mut r, R3, 0, 650).actions.is_empty());
+        assert_eq!(
+            key(&mut r, L3, 0, 660).actions,
+            ["input:window off", "input:cursor on"]
+        );
+        assert!(!r.app_owned() && r.cursor && !r.room());
+    }
+    #[test]
+    fn default_room_select_hold_waits_for_release_and_late_zoom_suppresses_both_singles() {
+        let mut r = vendor_room();
+        r.set_focus("desktop-3d", Some(("0xroom".into(), 1)), false);
+        key(&mut r, SELECT, 1, 10);
+        assert!((0..15).all(|_| r.tick(0.1).actions.is_empty()));
+        assert_eq!(
+            key(&mut r, SELECT, 0, 1600).actions,
+            ["quickshell:keymap-toggle"]
+        );
+        assert_eq!(r.pad.sequences[0], 0, "a hold never cycles the view");
+        key(&mut r, SELECT, 1, 2000);
+        assert!(key(&mut r, SELECT, 0, 2050).actions.is_empty());
+        assert_eq!(r.pad.sequences[0], 1);
+        key(&mut r, SELECT, 1, 3000);
+        assert!((0..7).all(|_| r.tick(0.1).actions.is_empty()));
+        assert!(key(&mut r, 0x13b, 1, 3800).actions.is_empty());
+        assert!(key(&mut r, SELECT, 0, 3850).actions.is_empty());
+        assert_eq!(key(&mut r, 0x13b, 0, 3860).actions, ["input:window-zoom"]);
+        assert_eq!(r.pad.sequences[0], 1, "zoom never also cycles the view");
     }
     #[test]
     fn room_guide_tap_opens_the_drawer_only_as_a_clean_tap() {
@@ -4113,13 +4467,15 @@ mod nav_contract {
     /// removes the vendor focus_gesture table: an absent table is the documented
     /// legacy policy, and nothing here is silently re-qualified as a gesture.
     fn nav(context: &str) -> Router {
-        let (c, l) = crate::config::tests::try_fixture_nav_with(|v| {
+        let (mut c, l) = crate::config::tests::try_fixture_nav_with(|v| {
             v["keybindings"]["global"]["controller"]["nav"]
                 .as_table_mut()
                 .unwrap()
                 .remove("focus_gesture");
         })
         .unwrap();
+        // Historical cursor/room contract; global_controller_gestures covers the new SSOT mode.
+        c.controller.nav.start_options = false;
         Router::with_context(c, l, axes(), context)
     }
     fn plain(context: &str) -> Router {
@@ -4164,6 +4520,10 @@ mod nav_contract {
         for tmux in [false, true] {
             let mut r = captured_terminal(tmux);
             assert!(r.app_owned() && r.captured_navigation() && r.nav_active());
+            assert!(
+                r.bridge_owns_input(),
+                "the navigation bridge remains the sole physical reader"
+            );
             assert_eq!(
                 r.nav_profile().as_deref(),
                 Some(if tmux {
@@ -4278,6 +4638,10 @@ mod nav_contract {
             r.set_focus(context, Some(("0xraw".into(), 7)), false);
             tap(&mut r, NORTH, 50);
             assert!(r.app_owned() && !r.captured_navigation() && !r.nav_active());
+            assert!(
+                !r.bridge_owns_input(),
+                "raw app capture retains its existing node handoff"
+            );
             let out = tap(&mut r, SOUTH, 50);
             assert!(out.actions.is_empty());
             assert!(
@@ -4889,26 +5253,38 @@ mod console_contract {
         axes
     }
     fn vt(tmux: bool) -> Router {
-        let (c, l) = crate::config::tests::fixture_nav();
+        let (mut c, l) = crate::config::tests::fixture_nav();
+        // Historical Start-cursor policy remains supported when start_options is absent.
+        c.controller.nav.start_options = false;
         let mut r = Router::new(c, l, axes());
         r.tmux = tmux;
         r.set_context("console");
         r
     }
+    fn projected(r: &Router, mut out: Output) -> Output {
+        out.actions = out
+            .actions
+            .into_iter()
+            .map(|a| console_action(r.policy(), r.console(), a))
+            .filter(|a| a != "none")
+            .collect();
+        out
+    }
     fn key(r: &mut Router, c: u16, v: i32) -> Output {
-        r.event(Event::new(EV_KEY, c, v), 0)
+        let out = r.event(Event::new(EV_KEY, c, v), 0);
+        projected(r, out)
     }
     fn abs(r: &mut Router, c: u16, v: i32) -> Output {
         let mut o = r.event(Event::new(EV_ABS, c, v), 0);
         o.extend(r.event(Event::new(EV_SYN, SYN_REPORT, 0), 0));
-        o
+        projected(r, o)
     }
     fn wait(r: &mut Router, ms: u64) -> Output {
         let mut o = Output::default();
         for _ in 0..ms / 10 {
             o.extend(r.tick(0.01));
         }
-        o
+        projected(r, o)
     }
     fn tap(r: &mut Router, c: u16, ms: u64) -> Output {
         let mut o = key(r, c, 1);
@@ -4935,10 +5311,14 @@ mod console_contract {
         );
         assert_eq!(
             tap(&mut r, NORTH, 50).actions,
-            vec!["tmux:key z"],
-            "no compositor: North zooms the pane, never captures"
+            vec!["input:window on"],
+            "North uses the shared capture transaction on a witnessed native pane"
         );
-        assert_eq!(tap(&mut r, LB, 50).actions, vec!["tmux:session-prev"]);
+        let mut r = vt(true);
+        assert!(
+            tap(&mut r, LB, 50).actions.is_empty(),
+            "unsupported shader action is consumed, never rebound"
+        );
         assert_eq!(tap(&mut r, TR2, 50).actions, vec!["tmux:key n"]);
         let mut o = abs(&mut r, 1, -30000);
         o.extend(wait(&mut r, 800));
@@ -4965,21 +5345,25 @@ mod console_contract {
         );
         assert!(o.pointer.is_empty());
         abs(&mut r, 1, 0);
-        assert_eq!(
-            tap(&mut r, LB, 50).actions,
-            vec!["key:SHIFT+TAB"],
-            "bumpers = BTab / Tab"
+        assert!(
+            tap(&mut r, LB, 50).actions.is_empty(),
+            "desktop shader adapter is explicitly none on a console"
         );
-        assert_eq!(tap(&mut r, 0x137, 50).actions, vec!["key:TAB"]);
+        assert!(tap(&mut r, 0x137, 50).actions.is_empty());
         assert_eq!(
             tap(&mut r, TR2, 50).actions,
             vec!["key:PAGEDOWN"],
             "triggers = PageUp / PageDown"
         );
         assert_eq!(tap(&mut r, 0x138, 50).actions, vec!["key:PAGEUP"]);
-        for b in [NORTH, GUIDE, L3] {
+        assert_eq!(
+            tap(&mut vt(false), NORTH, 50).actions,
+            vec!["input:window on"],
+            "same capture request; authority rejects a missing pane instead of inventing one"
+        );
+        for b in [GUIDE, L3] {
             assert!(
-                tap(&mut r, b, 50).actions.is_empty(),
+                tap(&mut vt(false), b, 50).actions.is_empty(),
                 "{b:#x} is none on a bare VT"
             );
         }
@@ -5011,12 +5395,15 @@ mod console_contract {
         }
     }
     #[test]
-    fn toggle_chord_switches_to_the_graphical_vt_never_the_room() {
+    fn console_consumes_unsupported_room_toggle_without_switching_the_physical_vt() {
         for tmux in [true, false] {
             let mut r = vt(tmux);
             key(&mut r, L3, 1);
             let o = key(&mut r, R3, 1);
-            assert_eq!(o.actions, vec!["mios:graphical-vt"], "tmux={tmux}");
+            assert!(
+                o.actions.is_empty(),
+                "unsupported room action is consumed for tmux={tmux}"
+            );
             let mut o = wait(&mut r, 800);
             o.extend(key(&mut r, L3, 0));
             o.extend(key(&mut r, R3, 0));
@@ -5032,7 +5419,7 @@ mod console_contract {
         assert_eq!(key(&mut r, R3, 1).actions, vec!["mios:hyprland-3d-toggle"]);
     }
     #[test]
-    fn guide_is_no_modifier_on_a_vt() {
+    fn console_guide_uses_the_shared_layer_and_native_session_adapter() {
         let mut r = vt(true);
         assert_eq!(
             tap(&mut r, GUIDE, 50).actions,
@@ -5045,7 +5432,7 @@ mod console_contract {
         assert_eq!(
             o.actions,
             vec!["tmux:session-prev"],
-            "R-08: Guide+LB is plain LB on a VT, and no Guide tap"
+            "Guide+LB shares workspace semantics and adapts exactly once to native session navigation"
         );
         // Negative: with a compositor, Guide+LB is the system layer.
         let (c, l) = crate::config::tests::fixture_nav();
@@ -5059,15 +5446,15 @@ mod console_contract {
         let mut r = vt(true);
         assert_eq!(
             tap(&mut r, START, 50).actions,
-            vec!["tmux:key y"],
-            "VT tmux: Start tap = copy mode"
+            vec!["input:cursor on"],
+            "Start tap uses the desktop cursor gesture"
         );
         assert_eq!(
             tap(&mut r, START, 600).actions,
-            vec!["input:cursor on"],
-            "Start hold = cursor mode"
+            vec!["input:cursor off"],
+            "Start hold has the same single press edge, no second gesture"
         );
-        assert_eq!(tap(&mut r, START, 600).actions, vec!["input:cursor off"]);
+        assert_eq!(tap(&mut r, START, 600).actions, vec!["input:cursor on"]);
         let mut r = vt(false);
         assert_eq!(
             tap(&mut r, START, 50).actions,
@@ -5099,6 +5486,22 @@ mod console_contract {
         );
         assert_eq!(tap(&mut r, START, 50).actions, vec!["input:cursor off"]);
         assert!(!r.cursor);
+    }
+    #[test]
+    fn custom_console_without_adapters_retains_its_explicit_legacy_profile() {
+        let (mut cfg, legacy) = crate::config::tests::fixture_nav();
+        cfg.controller.nav.console_actions.clear();
+        cfg.controller
+            .nav
+            .profiles
+            .get_mut("console_tmux")
+            .unwrap()
+            .insert(Input::Button(NORTH), Value::Press("tmux:key z".into()));
+        let mut r = Router::new(cfg, legacy, axes());
+        r.set_tmux(true);
+        r.set_context("console");
+        assert!(r.legacy_console());
+        assert_eq!(tap(&mut r, NORTH, 50).actions, vec!["tmux:key z"]);
     }
     #[test]
     fn host_controller_bindings_without_contexts_skip_the_console() {
@@ -5301,8 +5704,26 @@ mod guide_layer_contract {
     fn right_stick_flick_moves_the_window_and_no_pointer_moves_under_guide() {
         let mut r = vendor("desktop-2d");
         let o = key(&mut r, 0x13b, 1);
-        assert!(o.actions.iter().any(|a| a == "input:cursor on"), "{o:?}");
-        key(&mut r, 0x13b, 0);
+        assert!(
+            o.actions.is_empty() && !r.cursor,
+            "unknown-app Start is consumed: {o:?}"
+        );
+        assert!(key(&mut r, 0x13b, 0).actions.is_empty());
+        r.set_focus("desktop-2d", Some(("0xguide".into(), 1)), false);
+        let capture_chord = |r: &mut Router| {
+            let mut out = Output::default();
+            for (code, value) in [(0x13d, 1), (0x13e, 1), (0x13d, 0), (0x13e, 0)] {
+                out.extend(key(r, code, value));
+            }
+            out
+        };
+        assert_eq!(capture_chord(&mut r).actions, ["input:window on-pinned"]);
+        r.confirm_capture_target("0xguide");
+        assert_eq!(
+            capture_chord(&mut r).actions,
+            ["input:window off", "input:cursor on"]
+        );
+        assert!(r.cursor && !r.app_owned());
         let mut o = key(&mut r, GUIDE, 1);
         o.extend(abs(&mut r, 3, 32767));
         o.extend(wait(&mut r, 300));
@@ -5407,17 +5828,34 @@ mod guide_layer_contract {
         assert!(o.actions.is_empty(), "{:?}", o.actions);
     }
     #[test]
-    fn guide_stays_no_modifier_on_a_vt() {
+    fn native_console_guide_shares_semantics_and_adapts_without_graphical_ipc() {
         let mut r = vendor("console");
         let mut o = key(&mut r, GUIDE, 1);
         o.extend(abs(&mut r, 16, -1));
         o.extend(abs(&mut r, 1, -32767));
+        assert_eq!(o.actions, vec!["hypr:movefocus left", "mios:volume up"]);
+        let native: Vec<_> = o
+            .actions
+            .into_iter()
+            .map(|a| console_action(r.policy(), true, a))
+            .collect();
+        assert_eq!(native, vec!["tmux:focus left", "mios:volume up"]);
         assert!(
-            !o.actions
+            o.app.iter().all(|e| e.kind == EV_SYN
+                || (e.kind == EV_KEY && e.value == 0)
+                || (e.kind == EV_ABS
+                    && r.axes
+                        .get(&e.code)
+                        .is_some_and(|axis| e.value == axis.neutral(e.code)))),
+            "Guide may drain neutral holds but must not forward live controls: {:?}",
+            o.app
+        );
+        assert!(
+            o.pointer
                 .iter()
-                .any(|a| a.starts_with("hypr:") || a.starts_with("mios:volume")),
-            "{:?}",
-            o.actions
+                .all(|e| e.kind == EV_SYN || (e.kind == EV_KEY && e.value == 0)),
+            "Guide must not move/press the pointer: {:?}",
+            o.pointer
         );
     }
 }
@@ -5690,17 +6128,39 @@ mod guide_dock_contract {
         assert!(!router.cursor);
     }
     #[test]
-    fn console_never_defers_guide_for_a_global_ui_gesture() {
+    fn console_shares_guide_double_timing_then_uses_the_native_menu_adapter() {
         let mut router = router("console");
         router.set_tmux(true);
         router.set_shell_overlay(true);
         assert!(
             !router.shell_overlay(),
-            "a graphical overlay is never attached to a VT or headless console route"
+            "a graphical overlay is never attached to a console"
         );
-        assert_eq!(tap(&mut router, GUIDE, 100).actions, ["tmux:menu"]);
-        assert_eq!(tap(&mut router, GUIDE, 200).actions, ["tmux:menu"]);
-        assert!(wait(&mut router, 400).actions.is_empty());
+        assert!(
+            tap(&mut router, GUIDE, 100).actions.is_empty(),
+            "shared single tap waits for double window"
+        );
+        let out = tap(&mut router, GUIDE, 200);
+        assert_eq!(
+            out.actions,
+            vec!["quickshell:drawer-toggle"],
+            "shared double semantics"
+        );
+        assert_eq!(
+            console_action(router.policy(), true, out.actions[0].clone()),
+            "tmux:menu"
+        );
+        assert!(
+            wait(&mut router, 400).actions.is_empty(),
+            "no delayed duplicate single action"
+        );
+        assert!(tap(&mut router, GUIDE, 1000).actions.is_empty());
+        let out = wait(&mut router, 400);
+        assert_eq!(
+            out.actions,
+            vec!["tmux:menu"],
+            "single Guide keeps configured console navigation after shared delay"
+        );
     }
 }
 
@@ -5752,7 +6212,9 @@ mod camera_contract {
     }
     /// A terminal (tmux client) whose verified foreground app is `app`.
     fn mon(app: Option<&str>) -> Router {
-        let (c, l) = crate::config::tests::fixture_mon();
+        let (mut c, l) = crate::config::tests::fixture_mon();
+        // Preserve the old Start-cursor flush case; new app options use IPC tests below.
+        c.controller.nav.start_options = false;
         let mut r = Router::with_context(c, l, axes(), "terminal");
         r.set_tmux(true);
         r.set_app(app, None);
@@ -6602,5 +7064,235 @@ mod focus_gesture_contract {
         o.extend(abs(&mut r, 3, 0));
         o.extend(wait(&mut r, 250));
         assert_eq!(actions(&o), ["tmux:focus right"]);
+    }
+}
+
+#[cfg(test)]
+mod native_console_ownership {
+    use super::*;
+    #[test]
+    fn native_console_uses_shared_capture_and_does_not_change_another_users_router() {
+        let (mut cfg, legacy) = crate::config::tests::fixture_nav();
+        cfg.controller.nav.console_actions.insert(
+            "hypr:togglefloating".into(),
+            "tmux:desktop toggle-float".into(),
+        );
+        cfg.controller
+            .capture_navigation_contexts
+            .push("console".into());
+        let mut a = Router::new(cfg.clone(), legacy.clone(), BTreeMap::new());
+        let mut b = Router::new(cfg, legacy, BTreeMap::new());
+        a.set_capture_navigation_context(Some("console"));
+        a.set_tmux(true);
+        b.set_capture_navigation_context(Some("console"));
+        b.set_tmux(true);
+        a.set_focus("app-capture", Some(("A:login1:g1".into(), 10)), false);
+        b.set_focus("app-capture", Some(("B:login1:g1".into(), 20)), false);
+        assert!(a.console() && a.captured_navigation() && a.bridge_owns_input());
+        assert!(!a.legacy_console());
+        let b_target = b.capture_target.clone();
+        let b_owned = b.app_owned();
+        a.set_focus("console", Some(("A:login2:g0".into(), 30)), false);
+        assert!(!a.app_owned());
+        assert_eq!(b.capture_target, b_target);
+        assert_eq!(b.app_owned(), b_owned);
+        assert!(b.captured_navigation() && b.bridge_owns_input());
+    }
+}
+
+#[cfg(test)]
+mod global_controller_gestures {
+    use super::*;
+    const SELECT: u16 = 0x13a;
+    const START: u16 = 0x13b;
+    const L3: u16 = 0x13d;
+    const R3: u16 = 0x13e;
+    const GUIDE: u16 = 0x13c;
+    fn router(context: &str) -> Router {
+        let (mut cfg, legacy) = crate::config::tests::fixture_nav();
+        cfg.controller.global_capture_toggle = true;
+        cfg.controller.window_zoom_chord = vec!["BTN_SELECT".into(), "BTN_START".into()];
+        cfg.controller.nav.start_options = true;
+        cfg.controller
+            .system_layer
+            .insert("BTN_START".into(), "mios:system-monitor".into());
+        let mut r = Router::with_context(cfg, legacy, BTreeMap::new(), context);
+        r.set_tmux(true);
+        if context == "console" {
+            r.set_capture_navigation_context(Some("console"));
+        } else {
+            r.set_capture_navigation_context(Some("terminal"));
+        }
+        r.set_focus(context, Some(("focus-A:g1".into(), 42)), false);
+        r
+    }
+    fn key(r: &mut Router, code: u16, value: i32, at: u64) -> Output {
+        r.event(Event::new(EV_KEY, code, value), at)
+    }
+    fn wait(r: &mut Router, ms: u64) -> Output {
+        let mut out = Output::default();
+        for _ in 0..ms / 10 {
+            out.extend(r.tick(0.01));
+        }
+        out
+    }
+    fn chord(r: &mut Router, a: u16, b: u16, at: u64) -> Output {
+        let mut out = key(r, a, 1, at);
+        out.extend(key(r, b, 1, at + 1));
+        out.extend(key(r, a, 0, at + 2));
+        out.extend(key(r, b, 0, at + 3));
+        out
+    }
+    #[test]
+    fn same_controller_chords_attach_detach_and_zoom_exactly_once_in_either_order() {
+        for context in ["terminal", "console", "desktop-3d"] {
+            for reverse in [false, true] {
+                let mut r = router(context);
+                let (a, b) = if reverse { (R3, L3) } else { (L3, R3) };
+                assert_eq!(chord(&mut r, a, b, 1).actions, ["input:window on-pinned"]);
+                assert!(r.app_owned());
+                r.confirm_capture_target("focus-A:g1");
+                let (a, b) = if reverse {
+                    (START, SELECT)
+                } else {
+                    (SELECT, START)
+                };
+                assert_eq!(chord(&mut r, a, b, 100).actions, ["input:window-zoom"]);
+                assert!(r.app_owned(), "zoom does not release capture");
+                let out = chord(&mut r, L3, R3, 200);
+                assert_eq!(out.actions, ["input:window off", "input:cursor on"]);
+                assert!(!r.app_owned() && r.cursor && !r.room());
+            }
+        }
+    }
+    #[test]
+    fn late_second_press_holds_repeats_and_partial_releases_cannot_leak_singles_or_retrigger() {
+        for (a, b, action) in [
+            (SELECT, START, "input:window-zoom"),
+            (L3, R3, "input:window on-pinned"),
+        ] {
+            let mut r = router("terminal");
+            assert!(key(&mut r, a, 1, 1).actions.is_empty());
+            assert!(wait(&mut r, 700).actions.is_empty());
+            assert!(key(&mut r, b, 1, 800).actions.is_empty());
+            assert!(key(&mut r, a, 2, 900).actions.is_empty());
+            assert!(wait(&mut r, 1500).actions.is_empty());
+            assert!(key(&mut r, a, 0, 2400).actions.is_empty());
+            assert!(key(&mut r, a, 1, 2401).actions.is_empty());
+            assert!(key(&mut r, b, 0, 2402).actions.is_empty());
+            let out = key(&mut r, a, 0, 2403);
+            assert_eq!(out.actions, [action]);
+            assert!(out.app.is_empty());
+            assert!(key(&mut r, a, 0, 2404).actions.is_empty());
+        }
+    }
+    #[test]
+    fn separate_physical_routers_cannot_form_a_chord_and_unknown_shell_start_is_consumed() {
+        let mut a = router("terminal");
+        let mut b = router("terminal");
+        assert!(key(&mut a, SELECT, 1, 1).actions.is_empty());
+        assert!(key(&mut b, START, 1, 2).actions.is_empty());
+        assert!(!a.app_owned() && !b.app_owned());
+        assert_eq!(key(&mut a, SELECT, 0, 3).actions, ["tmux:key w"]);
+        let out = key(&mut b, START, 0, 4);
+        assert!(out.actions.is_empty() && out.app.is_empty() && !b.cursor);
+    }
+    #[test]
+    fn app_menu_and_pause_use_private_ipc_and_keep_distinct_singles() {
+        let mut r = router("console");
+        let target = r.target().cloned();
+        r.set_app(Some("mon"), target.as_ref());
+        assert_eq!(r.nav_profile().as_deref(), Some("mon_console_tmux"));
+        assert!(key(&mut r, SELECT, 1, 1).actions.is_empty());
+        assert_eq!(
+            key(&mut r, SELECT, 0, 2).actions,
+            ["input:app-key mon key:o"]
+        );
+        assert!(key(&mut r, START, 1, 3).actions.is_empty());
+        assert_eq!(
+            key(&mut r, START, 0, 4).actions,
+            ["input:app-key mon key:p"]
+        );
+        assert!(!r.cursor && !r.app_owned());
+        assert_eq!(
+            chord(&mut r, SELECT, START, 10).actions,
+            ["input:window-zoom"]
+        );
+        assert!(key(&mut r, SELECT, 1, 20).actions.is_empty());
+        wait(&mut r, 600);
+        assert_eq!(key(&mut r, SELECT, 0, 620).actions, ["tmux:keymap"]);
+    }
+    #[test]
+    fn focus_app_handoff_reset_and_drop_cancel_pending_chords_until_physical_release() {
+        for formed in [false, true] {
+            for change in 0..6 {
+                let mut r = router("terminal");
+                key(&mut r, SELECT, 1, 1);
+                if formed {
+                    key(&mut r, START, 1, 2);
+                }
+                match change {
+                    0 => {
+                        r.set_focus("terminal", Some(("focus-B:g2".into(), 43)), false);
+                    }
+                    1 => {
+                        let target = r.target().cloned();
+                        r.set_app(Some("mon"), target.as_ref());
+                    }
+                    2 => {
+                        r.reset();
+                    }
+                    3 => {
+                        r.event(Event::new(EV_SYN, SYN_DROPPED, 0), 3);
+                    }
+                    4 => {
+                        r.set_capture_navigation_context(Some("console"));
+                    }
+                    _ => {
+                        r.adopt_ownership(true);
+                    }
+                }
+                assert!(
+                    key(&mut r, SELECT, 0, 4).actions.is_empty(),
+                    "change {change}"
+                );
+                assert!(
+                    key(&mut r, START, 0, 5).actions.is_empty(),
+                    "change {change}"
+                );
+            }
+        }
+        let mut r = router("console");
+        r.set_focus("console", None, false);
+        assert!(
+            chord(&mut r, L3, R3, 1).actions.is_empty(),
+            "a bare VT never fabricates capture"
+        );
+        assert!(chord(&mut r, SELECT, START, 10).actions.is_empty());
+    }
+    #[test]
+    fn guide_system_layer_and_half_capture_have_priority_over_reserved_singles() {
+        let mut r = router("terminal");
+        key(&mut r, GUIDE, 1, 1);
+        let expected = r.global.controller.system_layer["BTN_START"].clone();
+        assert_eq!(key(&mut r, START, 1, 2).actions, [expected]);
+        key(&mut r, START, 0, 3);
+        key(&mut r, GUIDE, 0, 4);
+        assert!(key(&mut r, SELECT, 1, 10).actions.is_empty());
+        key(&mut r, GUIDE, 1, 11);
+        let out = key(&mut r, SELECT, 0, 12);
+        assert!(!out
+            .actions
+            .iter()
+            .any(|a| a == "input:window-zoom" || a == "tmux:key w"));
+    }
+    #[test]
+    fn old_policy_without_global_flags_retains_start_cursor_and_room_toggle_contract() {
+        let (cfg, legacy) = crate::config::tests::fixture();
+        assert!(
+            !cfg.controller.global_capture_toggle && cfg.controller.window_zoom_chord.is_empty()
+        );
+        let mut r = Router::with_context(cfg, legacy, BTreeMap::new(), "terminal");
+        assert_eq!(key(&mut r, START, 1, 1).actions, ["input:cursor on"]);
     }
 }

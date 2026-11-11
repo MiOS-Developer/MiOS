@@ -339,15 +339,20 @@ mod pipe_boundaries {
     struct Restorer {
         target: PathBuf,
         original_content: String,
+        original_permissions: fs::Permissions,
     }
 
     impl Restorer {
         fn new(path: &Path) -> Self {
             let original_content =
                 fs::read_to_string(path).expect("Failed to read original content for restorer");
+            let original_permissions = fs::metadata(path)
+                .expect("Failed to read original permissions for restorer")
+                .permissions();
             Self {
                 target: path.to_path_buf(),
                 original_content,
+                original_permissions,
             }
         }
     }
@@ -355,7 +360,29 @@ mod pipe_boundaries {
     impl Drop for Restorer {
         fn drop(&mut self) {
             let _ = fs::write(&self.target, &self.original_content);
+            let _ = fs::set_permissions(&self.target, self.original_permissions.clone());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restorer_preserves_content_and_permissions_after_recreation() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("manifest.json");
+        fs::write(&path, "original\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        {
+            let _restorer = Restorer::new(&path);
+            fs::remove_file(&path).unwrap();
+            fs::write(&path, "replacement\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "original\n");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
     }
 
     #[test]
@@ -414,6 +441,7 @@ mod pipe_boundaries {
 
         // 3. Negative control: mutate pipe-boundaries.manifest.json with stale content
         let manifest_path = root.join("usr/share/mios/pipe-boundaries.manifest.json");
+        let original_permissions = fs::metadata(&manifest_path).unwrap().permissions();
         {
             let _restorer = Restorer::new(&manifest_path);
             let mut mutated = fs::read_to_string(&manifest_path).expect("read manifest");
@@ -497,6 +525,11 @@ mod pipe_boundaries {
         assert!(
             restored_output.status.success(),
             "Post-restoration check failed"
+        );
+        assert_eq!(
+            fs::metadata(&manifest_path).unwrap().permissions(),
+            original_permissions,
+            "missing-manifest negative control must restore the original permissions"
         );
     }
 }

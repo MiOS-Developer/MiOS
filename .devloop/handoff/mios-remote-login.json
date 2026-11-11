@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "milestone": "mios-remote-login",
+  "status": "source and native session-only proof complete; password and UI acceptance pending",
+  "source_base": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+  "source_hashes": {
+    "src/mios-rs/miosd/src/remote_login.rs": "483e85bb48be19442f1f9b694759b52bd689bb3a2ba8306c9b06636796f380b3",
+    "src/mios-rs/miosd/src/main.rs": "39553dd52d34c6e3d810c02b80ad4b065dfc0833bfef1447b5f4ec2c0533ef5a",
+    "usr/share/mios/mios.toml": "ae51e7cf3f1cfa1185266bd02c39d43ace3708e3f02ca6a0e5e0dcdcd9e5ee01",
+    "usr/lib/pam.d/mios-remote-login": "cefe9032dd0afd89e9d103a6d5dd4a206b40d960a1d0f09d5fd2872968092496",
+    "usr/lib/pam.d/mios-remote-greeter": "d1872f3e85bb90f28667d27ff56a224e6541e2b8e746b06622de7e51e48e7c97",
+    "usr/share/mios/pam/remote-login.conf": "3844c285027039939b14439b5479fe9363739798480cf7d73044d5e28c34cf10",
+    "etc/sudoers.d/40-mios-remote-login": "f97681a4a2d08bc5c1c73160a8c52e576b583563c4568f427772d5c628ba34ed",
+    "tools/patches/greetd-remote.patch": "ffa925c455c905adb8498fb606ca4ee90c83082c77535822c608cc73ad6922c7",
+    "usr/libexec/mios/mios-terminal": "796eb9f953736016b86c2dbd874ba9fd294447710fc950a20476f6c6acc6fe14"
+  },
+  "upstream": {
+    "repository": "https://github.com/kennylevinsen/greetd.git",
+    "version": "0.10.3",
+    "revision": "08efe60feceea8c81f9571c666880ff1e1c2e3ff",
+    "license": "GPL-3.0-only",
+    "cargo_lock_sha256": "aea2c4ff895be900baa7b2d6a1da167cd3e4cc0bddf1a37479d4001a3f34cb69",
+    "patch": "tools/patches/greetd-remote.patch",
+    "source_paths": [
+      "greetd/src/config/mod.rs",
+      "greetd/src/context.rs",
+      "greetd/src/server.rs",
+      "greetd/src/session/interface.rs",
+      "greetd/src/session/worker.rs"
+    ],
+    "purpose": "Private backend sets trusted PAM_RHOST before authenticate/account/session and enforces seatless root-default configuration; physical greetd is unchanged."
+  },
+  "artifacts": [
+    {
+      "source": "/home/mios/.local/state/mios/mios-remote-login-integration/target-native/x86_64-unknown-linux-musl/release/miosd",
+      "candidate": "/home/mios/.local/state/mios/mios-remote-login-integration/artifacts/miosd-auth5",
+      "sha256": "4f2eb5bc29873e3b6255a58479c6900e465bf3ada1a14aa2075d0aab3de5e572",
+      "source_inode": 1756453100,
+      "candidate_inode": 2170652363,
+      "size": 21914208,
+      "uid": 1000,
+      "mode": "0o755",
+      "independent_inode": true
+    },
+    {
+      "source": "/home/mios/.local/state/mios/mios-private-greetd/target/release/greetd",
+      "candidate": "/home/mios/.local/state/mios/mios-private-greetd/artifacts/greetd-remote",
+      "sha256": "62645b4665681a8ff78758733c05628f0abe8aedd15149607f14f15b4e5a5f8e",
+      "source_inode": 1756453094,
+      "candidate_inode": 2176662232,
+      "size": 891136,
+      "uid": 1000,
+      "mode": "0o755",
+      "independent_inode": true
+    }
+  ],
+  "build": {
+    "image": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "admission": {
+      "admitted": true,
+      "available_mb": 23359,
+      "min_available_mb": 12288
+    },
+    "strict_clippy": "passed",
+    "focused_remote_login_tests": 11,
+    "full_miosd_tests_passed": 438,
+    "ignored": 1,
+    "upstream_greetd_tests_passed": 9,
+    "locked_offline": true,
+    "sealed_core_cache_unchanged": true,
+    "sealed_core_binaries": 9,
+    "independent_cache_regular_files": 38571
+  },
+  "native_proofs": {
+    "private_backend_root_socket": "Root-owned mode0700 from creation; unprivileged connect denied before PAM workers.",
+    "different_uid_pty": "Fresh selected-UID PTY, controlling terminal and real tmux attachment; original caller PTY unchanged.",
+    "system_scope": "Exact trusted systemd-run preserves PID/start/PTY and moves daemon outside caller SSH cgroup.",
+    "session_only": "Real PAM session-only initial_session for UID1001; distinct logind session, Remote1, dedicated fixture service, seatless metadata and UID1001 mode0700 runtime directory matched host mount. No pam_authenticate or password supplied.",
+    "cleanup": "Natural session exit and full owned scope/runtime/record cleanup; existing user sessions/manager/linger and physical greetd PID/start/VT unchanged.",
+    "production_guard": "Selected account must prove its own real remote logind record and runtime directory before Desktop or fullscreen admission."
+  },
+  "proofs": {
+    "mios-remote-login-auth5-metadata.json": {
+      "path": "/workspace/scratch/mios-remote-login-auth5-metadata.json",
+      "sha256": "7563b9ebcafd3988a3ab9fdd68b81ef9cb376ed3f1115069dade75e0e9130049"
+    },
+    "mios-remote-greetd-build2-evidence.json": {
+      "path": "/workspace/scratch/mios-remote-greetd-build2-evidence.json",
+      "sha256": "63eeaae1eca0c2c9248912aec80f7b72ca63f2fc567c4d6542cf65c9e9d83b36"
+    },
+    "mios-remote-greetd-session2-result.json": {
+      "path": "/workspace/scratch/mios-remote-greetd-session2-result.json",
+      "sha256": "24ae1810467f5f2a720a48d1800a592e6bf2f4f511f98fd033079997f2144b23"
+    },
+    "mios-remote-greetd-session2-post-cleanup.json": {
+      "path": "/workspace/scratch/mios-remote-greetd-session2-post-cleanup.json",
+      "sha256": "3e1a5f7d82877bc5474fc83dd4a68f1c5017b1307d655b52d528e74f475c63ff"
+    },
+    "mios-remote-owned-pty-proof.json": {
+      "path": "/workspace/scratch/mios-remote-owned-pty-proof.json",
+      "sha256": "bdfbb01ccdd68ca3c38d2de917caad7e05903abb25b8c5277e19ef4f62bed7a1"
+    },
+    "mios-remote-login-candidates.json": {
+      "path": "/workspace/scratch/mios-remote-login-candidates.json",
+      "sha256": "26aa04a092d35e9be5e50468a03fa87d99810371e1eca3b03d5ddada17233a59"
+    },
+    "system_scope": {
+      "path": "/workspace/scratch/mios-remote-scope-proof/receipt-sanitized.json",
+      "sha256": "39fd1b30b7158b228129439d1d0d7f41fa2a48b3c3b7a9a7db48e9d7ec1de308"
+    }
+  },
+  "integration_notes": [
+    "Common mios-terminal shim is copied unchanged from the desktop entry lane; its desktop login CLI route and physical-console bridge remain integration-owner changes.",
+    "This isolated main adds only remote-login. Combined main must include the desktop entry and controller changes before live UI acceptance.",
+    "No host PAM/sudoers/private backend or candidate miosd installation was performed in this lane.",
+    "Actual password authentication, cancellation/logout, disconnect and interactive resize/fullscreen acceptance remain pending after source integration."
+  ],
+  "next_action": "Integrate reviewed module, main route, trusted policy and private backend alongside desktop entry/controller changes; build the combined candidate, install the authorized live milestone and exercise real authentication and UI lifetime."
+}

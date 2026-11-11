@@ -14,40 +14,64 @@ pub mod rde;
 #[cfg(unix)]
 pub mod wallpaper;
 pub mod native_generator {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
-    pub fn command(root: &Path, verb: &str, check: bool) -> Result<Command, String> {
+    fn default_candidates(root: &Path, name: &str, executable: Option<&Path>) -> Vec<PathBuf> {
+        let installed = [
+            root.join("usr/bin").join(name),
+            root.join("usr/libexec/mios").join(name),
+        ];
+        let checkout = root.join("tools/native/target/release").join(name);
+        let system_root = !cfg!(windows)
+            && root
+                .canonicalize()
+                .is_ok_and(|resolved| resolved == Path::new("/"));
+        let mut candidates = Vec::new();
+        if system_root {
+            candidates.extend(installed);
+            candidates.push(checkout);
+        } else {
+            candidates.push(checkout);
+            candidates.extend(installed);
+        }
+        if let Some(parent) = executable.and_then(Path::parent) {
+            candidates.push(parent.join(name));
+        }
+        candidates.extend([
+            Path::new("/usr/bin").join(name),
+            Path::new("/usr/libexec/mios").join(name),
+        ]);
+        candidates
+    }
+
+    fn command_with_paths(
+        root: &Path,
+        verb: &str,
+        check: bool,
+        explicit: Option<PathBuf>,
+        catalog: Option<PathBuf>,
+        executable: Option<PathBuf>,
+    ) -> Result<Command, String> {
         let name = if cfg!(windows) {
             "mios-gen.exe"
         } else {
             "mios-gen"
         };
-        let mut candidates = Vec::new();
-        if let Some(explicit) = std::env::var_os("MIOS_GEN_BIN") {
-            candidates.push(explicit.into());
+        let (candidates, configured) = if let Some(explicit) = explicit {
+            (vec![explicit], Some("MIOS_GEN_BIN"))
+        } else if let Some(catalog) = catalog {
+            (vec![catalog.join(name)], Some("MIOS_NATIVE_BIN_DIR"))
         } else {
-            candidates.extend([
-                root.join("tools/native/target/release").join(name),
-                root.join("usr/bin").join(name),
-                root.join("usr/libexec/mios").join(name),
-            ]);
-            if let Ok(executable) = std::env::current_exe() {
-                if let Some(parent) = executable.parent() {
-                    candidates.push(parent.join(name));
-                }
-            }
-            candidates.extend([
-                Path::new("/usr/bin").join(name),
-                Path::new("/usr/libexec/mios").join(name),
-            ]);
-        }
-        let binary = candidates
-            .into_iter()
-            .find(|p| p.is_file())
-            .ok_or_else(|| {
+            (default_candidates(root, name, executable.as_deref()), None)
+        };
+        let binary = candidates.into_iter().find(|path| path.is_file()).ok_or_else(|| {
+            if let Some(source) = configured {
+                format!("{verb}: configured {source} native {name} is missing; no fallback is permitted")
+            } else {
                 format!("{verb}: native {name} is required; build/install the SSOT release catalog")
-            })?;
+            }
+        })?;
         let mut command = Command::new(binary);
         command
             .arg(verb)
@@ -60,12 +84,174 @@ pub mod native_generator {
         Ok(command)
     }
 
+    pub fn command(root: &Path, verb: &str, check: bool) -> Result<Command, String> {
+        command_with_paths(
+            root,
+            verb,
+            check,
+            std::env::var_os("MIOS_GEN_BIN").map(PathBuf::from),
+            std::env::var_os("MIOS_NATIVE_BIN_DIR")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from),
+            std::env::current_exe().ok(),
+        )
+    }
+
     pub fn run(root: &Path, verb: &str, check: bool) -> Result<(), Box<dyn std::error::Error>> {
         let status = command(root, verb, check)?.status()?;
         if !status.success() {
             return Err(format!("native mios-gen {verb} failed: {status}").into());
         }
         Ok(())
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn tool(path: &Path, marker: &str) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!("#!/bin/sh\nprintf '%s\\n' '{marker}'\nprintf '%s\\n' \"$@\"\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        #[test]
+        fn fresh_catalog_dispatch_beats_owned_stale_checkout_and_missing_catalog_refuses() {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("selected source");
+            let stale = root.join("tools/native/target/release/mios-gen");
+            tool(&stale, "stale-checkout");
+            let catalog = fixture.path().join("fresh catalog");
+            let fresh = catalog.join("mios-gen");
+            tool(&fresh, "fresh-catalog");
+            let mut command =
+                command_with_paths(&root, "render-greetd", true, None, Some(catalog), None)
+                    .unwrap();
+            assert_eq!(command.get_program(), fresh.as_os_str());
+            assert!(command
+                .get_envs()
+                .any(|(key, value)| key == "MIOS_ROOT" && value == Some(root.as_os_str())));
+            let output = command.output().unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                format!(
+                    "fresh-catalog\nrender-greetd\n--root\n{}\n--check\n",
+                    root.display()
+                )
+            );
+            let error = command_with_paths(
+                &root,
+                "render-greetd",
+                false,
+                None,
+                Some(fixture.path().join("missing catalog")),
+                None,
+            )
+            .unwrap_err();
+            assert!(error.contains("MIOS_NATIVE_BIN_DIR") && error.contains("no fallback"));
+            assert!(stale.is_file());
+        }
+
+        #[test]
+        fn explicit_generator_keeps_highest_exclusive_precedence_over_catalog() {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("source");
+            tool(&root.join("tools/native/target/release/mios-gen"), "stale");
+            let catalog = fixture.path().join("catalog");
+            tool(&catalog.join("mios-gen"), "catalog");
+            let explicit = fixture.path().join("chosen-generator");
+            tool(&explicit, "explicit");
+            let mut selected = command_with_paths(
+                &root,
+                "tmux-os",
+                false,
+                Some(explicit.clone()),
+                Some(catalog.clone()),
+                None,
+            )
+            .unwrap();
+            assert_eq!(selected.get_program(), explicit.as_os_str());
+            let output = selected.output().unwrap();
+            assert!(output.status.success());
+            assert!(String::from_utf8(output.stdout)
+                .unwrap()
+                .starts_with("explicit\n"));
+            let error = command_with_paths(
+                &root,
+                "tmux-os",
+                false,
+                Some(fixture.path().join("missing-explicit")),
+                Some(catalog),
+                None,
+            )
+            .unwrap_err();
+            assert!(error.contains("MIOS_GEN_BIN") && error.contains("no fallback"));
+        }
+
+        #[test]
+        fn non_system_checkout_and_current_executable_fallback_order_is_preserved() {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("source");
+            let stale = root.join("tools/native/target/release/mios-gen");
+            tool(&stale, "development");
+            let installed = root.join("usr/bin/mios-gen");
+            tool(&installed, "root-installed");
+            let sibling = fixture.path().join("sibling/mios-gen");
+            tool(&sibling, "executable-sibling");
+            let executable = sibling.parent().unwrap().join("miosd");
+            assert_eq!(
+                command_with_paths(&root, "sync", false, None, None, Some(executable.clone()))
+                    .unwrap()
+                    .get_program(),
+                stale.as_os_str()
+            );
+            std::fs::remove_file(&stale).unwrap();
+            assert_eq!(
+                command_with_paths(&root, "sync", false, None, None, Some(executable.clone()))
+                    .unwrap()
+                    .get_program(),
+                installed.as_os_str()
+            );
+            std::fs::remove_file(&installed).unwrap();
+            assert_eq!(
+                command_with_paths(&root, "sync", false, None, None, Some(executable))
+                    .unwrap()
+                    .get_program(),
+                sibling.as_os_str()
+            );
+        }
+
+        #[test]
+        fn actual_system_root_and_its_alias_put_installed_paths_before_checkout() {
+            let root = Path::new("/");
+            let paths = default_candidates(root, "mios-gen", None);
+            assert_eq!(
+                &paths[..3],
+                &[
+                    root.join("usr/bin/mios-gen"),
+                    root.join("usr/libexec/mios/mios-gen"),
+                    root.join("tools/native/target/release/mios-gen")
+                ]
+            );
+            let fixture = tempfile::tempdir().unwrap();
+            let alias = fixture.path().join("system-alias");
+            std::os::unix::fs::symlink("/", &alias).unwrap();
+            let paths = default_candidates(&alias, "mios-gen", None);
+            assert_eq!(
+                &paths[..3],
+                &[
+                    alias.join("usr/bin/mios-gen"),
+                    alias.join("usr/libexec/mios/mios-gen"),
+                    alias.join("tools/native/target/release/mios-gen")
+                ]
+            );
+        }
     }
 }
 pub mod secret {

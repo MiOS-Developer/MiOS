@@ -12,6 +12,12 @@ pub mod router;
 #[cfg(target_os = "linux")]
 pub mod runtime;
 pub mod sessions;
+#[cfg(target_os = "linux")]
+pub mod tmux_capture;
+#[cfg(target_os = "linux")]
+pub mod tmux_handoff;
+#[cfg(target_os = "linux")]
+mod tmux_pointer;
 pub use config::{normalize_chord, Binding, GlobalConfig};
 pub mod vm;
 #[cfg(target_os = "linux")]

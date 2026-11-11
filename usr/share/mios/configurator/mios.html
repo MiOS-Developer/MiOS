@@ -1956,6 +1956,10 @@
               <legend>Responsive terminal workspace</legend>
               <label>Apply to human tmux sessions <input type="text" data-key="mcp.tmux.workspace.global_sessions" data-type="bool"></label>
               <label>Enter tmux from local and interactive SSH shells <input type="text" data-key="terminal.startup.auto_attach" data-type="bool"></label>
+              <label>Open the native desktop at login <input type="text" data-key="keybindings.tmux.desktop.enabled" data-type="bool"></label>
+              <label>Desktop chat and metrics sidebar <input type="text" data-key="keybindings.tmux.desktop.sidebar.enabled" data-type="bool"></label>
+              <label>Persistent unified desktop monitor <input type="text" data-key="keybindings.tmux.desktop.panel.enabled" data-type="bool"></label>
+              <label>Desktop panel launch-size kind <select data-key="keybindings.tmux.desktop.panel.size_kind"><option value="menu">Menu</option><option value="window">Window</option><option value="dialog">Dialog</option><option value="tooltip">Tooltip</option></select></label>
               <label>Allow a caller-owned root terminal <input type="text" data-key="terminal.allow_root_session" data-type="bool"></label>
               <label>Desktop border lines <input type="text" data-key="mcp.tmux.workspace.desktop_border_lines"></label>
               <label>Compact border lines <input type="text" data-key="mcp.tmux.workspace.compact_border_lines"></label>
@@ -3375,202 +3379,202 @@
     <p>Species sets the primary color; personality sets the accent. New names and innate stats roll at hatching. Training uses food and energy. Landscape and portrait HUDs inherit the native workspace golden ratio.</p>
     <div class="grid">
       <fieldset><legend>Camera and responsive HUD</legend>
-        <label for="f-mon-tamagotchi-view-mode">Sprite view</label>
-        <select id="f-mon-tamagotchi-view-mode" data-inherit="true" data-key="tamagotchi.view_mode">
+        <label for="f-mon-mons-view-mode">Sprite view</label>
+        <select id="f-mon-mons-view-mode" data-inherit="true" data-key="mons.view_mode">
           <option value="">Inherit vendor</option>
           <option value="voxel">Voxel 3D</option>
           <option value="pixel">Classic pixel</option>
         </select>
-        <label for="f-mon-tamagotchi-sprite-style">Sprite detail</label>
-        <select id="f-mon-tamagotchi-sprite-style" data-inherit="true" data-key="tamagotchi.sprite_style">
+        <label for="f-mon-mons-sprite-style">Sprite detail</label>
+        <select id="f-mon-mons-sprite-style" data-inherit="true" data-key="mons.sprite_style">
           <option value="">Inherit vendor</option>
           <option value="eight-bit">8-bit</option>
           <option value="sixteen-bit">16-bit</option>
         </select>
-        <label for="f-mon-tamagotchi-camera-view">Starting camera</label>
-        <select id="f-mon-tamagotchi-camera-view" data-inherit="true" data-key="tamagotchi.camera_view">
+        <label for="f-mon-mons-camera-view">Starting camera</label>
+        <select id="f-mon-mons-camera-view" data-inherit="true" data-key="mons.camera_view">
           <option value="">Inherit vendor</option>
           <option value="room">Room</option>
           <option value="pet">Pet body</option>
           <option value="face">Face close-up</option>
         </select>
 <p>Isometric room: fixed30 degree elevation, rotatable azimuth, follows the autonomous Mon.</p>
-<label for="f-mon-tamagotchi-world-width_tiles">Room width in tiles</label>
-<input type="number" id="f-mon-tamagotchi-world-width_tiles" data-inherit="true" data-key="tamagotchi.world.width_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+<label for="f-mon-mons-world-width_tiles">Room width in tiles</label>
+<input type="number" id="f-mon-mons-world-width_tiles" data-inherit="true" data-key="mons.world.width_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
 
-<label for="f-mon-tamagotchi-world-depth_tiles">Room depth in tiles</label>
-<input type="number" id="f-mon-tamagotchi-world-depth_tiles" data-inherit="true" data-key="tamagotchi.world.depth_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
+<label for="f-mon-mons-world-depth_tiles">Room depth in tiles</label>
+<input type="number" id="f-mon-mons-world-depth_tiles" data-inherit="true" data-key="mons.world.depth_tiles" data-type="int" placeholder="Inherit vendor" min="4" max="24" step="1">
 
-<label for="f-mon-tamagotchi-world-wall_height">Wall height in tiles</label>
-<input type="number" id="f-mon-tamagotchi-world-wall_height" data-inherit="true" data-key="tamagotchi.world.wall_height" data-type="int" placeholder="Inherit vendor" min="2" max="8" step="1">
+<label for="f-mon-mons-world-wall_height">Wall height in tiles</label>
+<input type="number" id="f-mon-mons-world-wall_height" data-inherit="true" data-key="mons.world.wall_height" data-type="int" placeholder="Inherit vendor" min="2" max="8" step="1">
 
-<label for="f-mon-tamagotchi-world-pet_height_percent">Pet height relative to wall (%)</label>
-<input type="number" id="f-mon-tamagotchi-world-pet_height_percent" data-inherit="true" data-key="tamagotchi.world.pet_height_percent" data-type="int" placeholder="Inherit vendor" min="10" max="150" step="1">
+<label for="f-mon-mons-world-pet_height_percent">Pet height relative to wall (%)</label>
+<input type="number" id="f-mon-mons-world-pet_height_percent" data-inherit="true" data-key="mons.world.pet_height_percent" data-type="int" placeholder="Inherit vendor" min="10" max="150" step="1">
 
-<label for="f-mon-tamagotchi-world-default_yaw_degrees">Starting world orbit (degrees)</label>
-<input type="number" id="f-mon-tamagotchi-world-default_yaw_degrees" data-inherit="true" data-key="tamagotchi.world.default_yaw_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="359" step="1">
+<label for="f-mon-mons-world-default_yaw_degrees">Starting world orbit (degrees)</label>
+<input type="number" id="f-mon-mons-world-default_yaw_degrees" data-inherit="true" data-key="mons.world.default_yaw_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="359" step="1">
 
-<label for="f-mon-tamagotchi-world-orbit_step_degrees">Orbit step (degrees)</label>
-<input type="number" id="f-mon-tamagotchi-world-orbit_step_degrees" data-inherit="true" data-key="tamagotchi.world.orbit_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="180" step="1">
+<label for="f-mon-mons-world-orbit_step_degrees">Orbit step (degrees)</label>
+<input type="number" id="f-mon-mons-world-orbit_step_degrees" data-inherit="true" data-key="mons.world.orbit_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="180" step="1">
 
-<label for="f-mon-tamagotchi-world-elevation_degrees">Isometric elevation (fixed)</label>
-<input type="number" id="f-mon-tamagotchi-world-elevation_degrees" data-inherit="true" data-key="tamagotchi.world.elevation_degrees" data-type="int" placeholder="Inherit vendor" min="30" max="30" step="1">
+<label for="f-mon-mons-world-elevation_degrees">Isometric elevation (fixed)</label>
+<input type="number" id="f-mon-mons-world-elevation_degrees" data-inherit="true" data-key="mons.world.elevation_degrees" data-type="int" placeholder="Inherit vendor" min="30" max="30" step="1">
 
-<label for="f-mon-tamagotchi-world-follow_percent">Camera follow (%)</label>
-<input type="number" id="f-mon-tamagotchi-world-follow_percent" data-inherit="true" data-key="tamagotchi.world.follow_percent" data-type="int" placeholder="Inherit vendor" min="0" max="100" step="1">
+<label for="f-mon-mons-world-follow_percent">Camera follow (%)</label>
+<input type="number" id="f-mon-mons-world-follow_percent" data-inherit="true" data-key="mons.world.follow_percent" data-type="int" placeholder="Inherit vendor" min="0" max="100" step="1">
 
-<label for="f-mon-tamagotchi-world-backdrop">Backdrop palette index</label>
-<input type="number" id="f-mon-tamagotchi-world-backdrop" data-inherit="true" data-key="tamagotchi.world.backdrop" data-type="int" placeholder="Inherit vendor" min="0" max="15" step="1">
+<label for="f-mon-mons-world-backdrop">Backdrop palette index</label>
+<input type="number" id="f-mon-mons-world-backdrop" data-inherit="true" data-key="mons.world.backdrop" data-type="int" placeholder="Inherit vendor" min="0" max="15" step="1">
 
-<label for="f-mon-world-enabled">Voxel room</label><select id="f-mon-world-enabled" data-inherit="true" data-key="tamagotchi.world.enabled" data-type="bool"><option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Legacy room</option></select>
+<label for="f-mon-world-enabled">Voxel room</label><select id="f-mon-world-enabled" data-inherit="true" data-key="mons.world.enabled" data-type="bool"><option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Legacy room</option></select>
 
-<label for="f-mon-genetics-likes">Likes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-likes" data-inherit="true" data-key="tamagotchi.genetics.likes" data-array="csv" placeholder="Inherit vendor">
+<label for="f-mon-genetics-likes">Likes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-likes" data-inherit="true" data-key="mons.genetics.likes" data-array="csv" placeholder="Inherit vendor">
 
-<label for="f-mon-genetics-dislikes">Dislikes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-dislikes" data-inherit="true" data-key="tamagotchi.genetics.dislikes" data-array="csv" placeholder="Inherit vendor">
+<label for="f-mon-genetics-dislikes">Dislikes vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-dislikes" data-inherit="true" data-key="mons.genetics.dislikes" data-array="csv" placeholder="Inherit vendor">
 
-<label for="f-mon-genetics-traits">Trait vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-traits" data-inherit="true" data-key="tamagotchi.genetics.traits" data-array="csv" placeholder="Inherit vendor">
+<label for="f-mon-genetics-traits">Trait vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-traits" data-inherit="true" data-key="mons.genetics.traits" data-array="csv" placeholder="Inherit vendor">
 
-<label for="f-mon-genetics-tropes">Character trope vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-tropes" data-inherit="true" data-key="tamagotchi.genetics.tropes" data-array="csv" placeholder="Inherit vendor">
+<label for="f-mon-genetics-tropes">Character trope vocabulary (comma separated)</label><input type="text" id="f-mon-genetics-tropes" data-inherit="true" data-key="mons.genetics.tropes" data-array="csv" placeholder="Inherit vendor">
 
-<label for="f-mon-tamagotchi-game-training-hatch_bonus">Seeded hatch bonus</label>
-<input type="number" id="f-mon-tamagotchi-game-training-hatch_bonus" data-inherit="true" data-key="tamagotchi.game.training.hatch_bonus" data-type="int" placeholder="Inherit vendor" min="0" max="20" step="1">
-        <label for="f-mon-tamagotchi-hud-mode">HUD layout</label>
-        <select id="f-mon-tamagotchi-hud-mode" data-inherit="true" data-key="tamagotchi.hud_mode">
+<label for="f-mon-mons-game-training-hatch_bonus">Seeded hatch bonus</label>
+<input type="number" id="f-mon-mons-game-training-hatch_bonus" data-inherit="true" data-key="mons.game.training.hatch_bonus" data-type="int" placeholder="Inherit vendor" min="0" max="20" step="1">
+        <label for="f-mon-mons-hud-mode">HUD layout</label>
+        <select id="f-mon-mons-hud-mode" data-inherit="true" data-key="mons.hud_mode">
           <option value="">Inherit vendor</option>
           <option value="auto">Automatic</option>
           <option value="minimal">Minimal</option>
           <option value="full">Full</option>
         </select>
-        <label for="f-mon-tamagotchi-zoom-percent">Starting zoom (%)</label>
-        <input type="number" id="f-mon-tamagotchi-zoom-percent" data-inherit="true" data-key="tamagotchi.zoom_percent" placeholder="Inherit vendor" data-type="int" min="50" max="400" step="1">
-        <label for="f-mon-tamagotchi-zoom-step-percent">Zoom step (%)</label>
-        <input type="number" id="f-mon-tamagotchi-zoom-step-percent" data-inherit="true" data-key="tamagotchi.zoom_step_percent" placeholder="Inherit vendor" data-type="int" min="5" max="100" step="1">
-        <label for="f-mon-tamagotchi-zoom-transition-frames">Transition length (animation frames)</label>
-        <input type="number" id="f-mon-tamagotchi-zoom-transition-frames" data-inherit="true" data-key="tamagotchi.zoom_transition_frames" placeholder="Inherit vendor" data-type="int" min="1" max="60" step="1">
-        <label for="f-mon-tamagotchi-hud-minimal-width">Automatic minimal HUD below this width (cells)</label>
-        <input type="number" id="f-mon-tamagotchi-hud-minimal-width" data-inherit="true" data-key="tamagotchi.hud_minimal_width" placeholder="Inherit vendor" data-type="int" min="20" max="200" step="1">
-        <label for="f-mon-tamagotchi-hud-minimal-height">Automatic minimal HUD below this height (cells)</label>
-        <input type="number" id="f-mon-tamagotchi-hud-minimal-height" data-inherit="true" data-key="tamagotchi.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
+        <label for="f-mon-mons-zoom-percent">Starting zoom (%)</label>
+        <input type="number" id="f-mon-mons-zoom-percent" data-inherit="true" data-key="mons.zoom_percent" placeholder="Inherit vendor" data-type="int" min="50" max="400" step="1">
+        <label for="f-mon-mons-zoom-step-percent">Zoom step (%)</label>
+        <input type="number" id="f-mon-mons-zoom-step-percent" data-inherit="true" data-key="mons.zoom_step_percent" placeholder="Inherit vendor" data-type="int" min="5" max="100" step="1">
+        <label for="f-mon-mons-zoom-transition-frames">Transition length (animation frames)</label>
+        <input type="number" id="f-mon-mons-zoom-transition-frames" data-inherit="true" data-key="mons.zoom_transition_frames" placeholder="Inherit vendor" data-type="int" min="1" max="60" step="1">
+        <label for="f-mon-mons-hud-minimal-width">Automatic minimal HUD below this width (cells)</label>
+        <input type="number" id="f-mon-mons-hud-minimal-width" data-inherit="true" data-key="mons.hud_minimal_width" placeholder="Inherit vendor" data-type="int" min="20" max="200" step="1">
+        <label for="f-mon-mons-hud-minimal-height">Automatic minimal HUD below this height (cells)</label>
+        <input type="number" id="f-mon-mons-hud-minimal-height" data-inherit="true" data-key="mons.hud_minimal_height" placeholder="Inherit vendor" data-type="int" min="8" max="80" step="1">
         <label for="f-mon-mcp-tmux-workspace-portrait-ratio-percent">Workspace portrait aspect threshold (%)</label>
         <input type="number" id="f-mon-mcp-tmux-workspace-portrait-ratio-percent" data-inherit="true" data-key="mcp.tmux.workspace.portrait_ratio_percent" placeholder="Inherit vendor" data-type="int" min="100" max="400" step="1">
       </fieldset><fieldset><legend>Camera controls</legend>
         <p>Numpad 4 6 8 2 pan, 7 9 orbit, 1 3 tilt and 5 resets; controller sticks send the same Alt keys. The camera never moves the Mon and is never saved. Camera axes follow elapsed time while the pet keeps its own animation clock. Reset finishes within its accumulated camera transition limit and cuts to the resting pose at that deadline, even with slower speed settings; zero cuts immediately. New camera input cancels that reset deadline. The stop threshold is per-mille of each axis's own input step.</p>
-        <label for="f-mon-tamagotchi-animation_frame_ms">Pet animation frame interval (ms)</label>
-        <input type="number" id="f-mon-tamagotchi-animation_frame_ms" data-inherit="true" data-key="tamagotchi.animation_frame_ms" data-type="int" placeholder="Inherit vendor" min="40" max="2000" step="1">
-        <label for="f-mon-tamagotchi-camera-follow_half_life_ms">Camera smoothing half-time (ms)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-follow_half_life_ms" data-inherit="true" data-key="tamagotchi.camera.follow_half_life_ms" data-type="int" placeholder="Inherit vendor" min="20" max="1000" step="1">
-        <label for="f-mon-tamagotchi-camera-motion_frame_ms">Camera motion redraw interval (ms)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-motion_frame_ms" data-inherit="true" data-key="tamagotchi.camera.motion_frame_ms" data-type="int" placeholder="Inherit vendor" min="16" max="140" step="1">
-        <label for="f-mon-tamagotchi-camera-orbit_rate_deg_s">Orbit speed (degrees per second)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-orbit_rate_deg_s" data-inherit="true" data-key="tamagotchi.camera.orbit_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="10" max="720" step="1">
-        <label for="f-mon-tamagotchi-camera-tilt_rate_deg_s">Tilt speed (degrees per second)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-tilt_rate_deg_s" data-inherit="true" data-key="tamagotchi.camera.tilt_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="5" max="360" step="1">
-        <label for="f-mon-tamagotchi-camera-pan_rate_permille_s">Pan speed (per-mille of the scene per second)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-pan_rate_permille_s" data-inherit="true" data-key="tamagotchi.camera.pan_rate_permille_s" data-type="int" placeholder="Inherit vendor" min="50" max="2000" step="1">
-        <label for="f-mon-tamagotchi-camera-zoom_rate_percent_s">Zoom speed (percent per second)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-zoom_rate_percent_s" data-inherit="true" data-key="tamagotchi.camera.zoom_rate_percent_s" data-type="int" placeholder="Inherit vendor" min="25" max="800" step="1">
-        <label for="f-mon-tamagotchi-camera-reset_glide_ms">Reset transition limit (ms; zero is instant)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-reset_glide_ms" data-inherit="true" data-key="tamagotchi.camera.reset_glide_ms" data-type="int" placeholder="Inherit vendor" min="0" max="2000" step="1">
-        <label for="f-mon-tamagotchi-camera-rest_epsilon_permille">Camera stop threshold (per-mille of one step)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-rest_epsilon_permille" data-inherit="true" data-key="tamagotchi.camera.rest_epsilon_permille" data-type="int" placeholder="Inherit vendor" min="1" max="50" step="1">
-        <label for="f-mon-tamagotchi-camera-pan_step_permille">Pan step (per-mille of the scene)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-pan_step_permille" data-inherit="true" data-key="tamagotchi.camera.pan_step_permille" data-type="int" placeholder="Inherit vendor" min="5" max="200" step="1">
-        <label for="f-mon-tamagotchi-camera-pan_max_permille">Pan limit per axis (per-mille; 0 disables pan)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-pan_max_permille" data-inherit="true" data-key="tamagotchi.camera.pan_max_permille" data-type="int" placeholder="Inherit vendor" min="0" max="400" step="1">
-        <label for="f-mon-tamagotchi-camera-pan_margin_permille">Subject margin inside the scene (per-mille)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-pan_margin_permille" data-inherit="true" data-key="tamagotchi.camera.pan_margin_permille" data-type="int" placeholder="Inherit vendor" min="0" max="250" step="1">
-        <label for="f-mon-tamagotchi-camera-tilt_step_degrees">Tilt step (degrees)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-tilt_step_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="30" step="1">
-        <label for="f-mon-tamagotchi-camera-tilt_min_degrees">Lowest tilt offset from the rest pitch (degrees)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-tilt_min_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_min_degrees" data-type="int" placeholder="Inherit vendor" min="-17" max="0" step="1">
-        <label for="f-mon-tamagotchi-camera-tilt_max_degrees">Highest tilt offset from the rest pitch (degrees)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-tilt_max_degrees" data-inherit="true" data-key="tamagotchi.camera.tilt_max_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="55" step="1">
-        <label for="f-mon-tamagotchi-camera-orbit_fine_step_degrees">Fine orbit step (degrees)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-orbit_fine_step_degrees" data-inherit="true" data-key="tamagotchi.camera.orbit_fine_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="90" step="1">
-        <label for="f-mon-tamagotchi-camera-max_lead_steps">Held input lead limit (steps)</label>
-        <input type="number" id="f-mon-tamagotchi-camera-max_lead_steps" data-inherit="true" data-key="tamagotchi.camera.max_lead_steps" data-type="int" placeholder="Inherit vendor" min="1" max="10" step="1">
-        <label for="f-mon-tamagotchi-camera-preview_orbit_pauses_turntable">Explicit orbit pauses the Roster/Studio turntable</label>
-        <select id="f-mon-tamagotchi-camera-preview_orbit_pauses_turntable" data-inherit="true" data-key="tamagotchi.camera.preview_orbit_pauses_turntable" data-type="bool">
+        <label for="f-mon-mons-animation_frame_ms">Pet animation frame interval (ms)</label>
+        <input type="number" id="f-mon-mons-animation_frame_ms" data-inherit="true" data-key="mons.animation_frame_ms" data-type="int" placeholder="Inherit vendor" min="40" max="2000" step="1">
+        <label for="f-mon-mons-camera-follow_half_life_ms">Camera smoothing half-time (ms)</label>
+        <input type="number" id="f-mon-mons-camera-follow_half_life_ms" data-inherit="true" data-key="mons.camera.follow_half_life_ms" data-type="int" placeholder="Inherit vendor" min="20" max="1000" step="1">
+        <label for="f-mon-mons-camera-motion_frame_ms">Camera motion redraw interval (ms)</label>
+        <input type="number" id="f-mon-mons-camera-motion_frame_ms" data-inherit="true" data-key="mons.camera.motion_frame_ms" data-type="int" placeholder="Inherit vendor" min="16" max="140" step="1">
+        <label for="f-mon-mons-camera-orbit_rate_deg_s">Orbit speed (degrees per second)</label>
+        <input type="number" id="f-mon-mons-camera-orbit_rate_deg_s" data-inherit="true" data-key="mons.camera.orbit_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="10" max="720" step="1">
+        <label for="f-mon-mons-camera-tilt_rate_deg_s">Tilt speed (degrees per second)</label>
+        <input type="number" id="f-mon-mons-camera-tilt_rate_deg_s" data-inherit="true" data-key="mons.camera.tilt_rate_deg_s" data-type="int" placeholder="Inherit vendor" min="5" max="360" step="1">
+        <label for="f-mon-mons-camera-pan_rate_permille_s">Pan speed (per-mille of the scene per second)</label>
+        <input type="number" id="f-mon-mons-camera-pan_rate_permille_s" data-inherit="true" data-key="mons.camera.pan_rate_permille_s" data-type="int" placeholder="Inherit vendor" min="50" max="2000" step="1">
+        <label for="f-mon-mons-camera-zoom_rate_percent_s">Zoom speed (percent per second)</label>
+        <input type="number" id="f-mon-mons-camera-zoom_rate_percent_s" data-inherit="true" data-key="mons.camera.zoom_rate_percent_s" data-type="int" placeholder="Inherit vendor" min="25" max="800" step="1">
+        <label for="f-mon-mons-camera-reset_glide_ms">Reset transition limit (ms; zero is instant)</label>
+        <input type="number" id="f-mon-mons-camera-reset_glide_ms" data-inherit="true" data-key="mons.camera.reset_glide_ms" data-type="int" placeholder="Inherit vendor" min="0" max="2000" step="1">
+        <label for="f-mon-mons-camera-rest_epsilon_permille">Camera stop threshold (per-mille of one step)</label>
+        <input type="number" id="f-mon-mons-camera-rest_epsilon_permille" data-inherit="true" data-key="mons.camera.rest_epsilon_permille" data-type="int" placeholder="Inherit vendor" min="1" max="50" step="1">
+        <label for="f-mon-mons-camera-pan_step_permille">Pan step (per-mille of the scene)</label>
+        <input type="number" id="f-mon-mons-camera-pan_step_permille" data-inherit="true" data-key="mons.camera.pan_step_permille" data-type="int" placeholder="Inherit vendor" min="5" max="200" step="1">
+        <label for="f-mon-mons-camera-pan_max_permille">Pan limit per axis (per-mille; 0 disables pan)</label>
+        <input type="number" id="f-mon-mons-camera-pan_max_permille" data-inherit="true" data-key="mons.camera.pan_max_permille" data-type="int" placeholder="Inherit vendor" min="0" max="400" step="1">
+        <label for="f-mon-mons-camera-pan_margin_permille">Subject margin inside the scene (per-mille)</label>
+        <input type="number" id="f-mon-mons-camera-pan_margin_permille" data-inherit="true" data-key="mons.camera.pan_margin_permille" data-type="int" placeholder="Inherit vendor" min="0" max="250" step="1">
+        <label for="f-mon-mons-camera-tilt_step_degrees">Tilt step (degrees)</label>
+        <input type="number" id="f-mon-mons-camera-tilt_step_degrees" data-inherit="true" data-key="mons.camera.tilt_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="30" step="1">
+        <label for="f-mon-mons-camera-tilt_min_degrees">Lowest tilt offset from the rest pitch (degrees)</label>
+        <input type="number" id="f-mon-mons-camera-tilt_min_degrees" data-inherit="true" data-key="mons.camera.tilt_min_degrees" data-type="int" placeholder="Inherit vendor" min="-17" max="0" step="1">
+        <label for="f-mon-mons-camera-tilt_max_degrees">Highest tilt offset from the rest pitch (degrees)</label>
+        <input type="number" id="f-mon-mons-camera-tilt_max_degrees" data-inherit="true" data-key="mons.camera.tilt_max_degrees" data-type="int" placeholder="Inherit vendor" min="0" max="55" step="1">
+        <label for="f-mon-mons-camera-orbit_fine_step_degrees">Fine orbit step (degrees)</label>
+        <input type="number" id="f-mon-mons-camera-orbit_fine_step_degrees" data-inherit="true" data-key="mons.camera.orbit_fine_step_degrees" data-type="int" placeholder="Inherit vendor" min="1" max="90" step="1">
+        <label for="f-mon-mons-camera-max_lead_steps">Held input lead limit (steps)</label>
+        <input type="number" id="f-mon-mons-camera-max_lead_steps" data-inherit="true" data-key="mons.camera.max_lead_steps" data-type="int" placeholder="Inherit vendor" min="1" max="10" step="1">
+        <label for="f-mon-mons-camera-preview_orbit_pauses_turntable">Explicit orbit pauses the Roster/Studio turntable</label>
+        <select id="f-mon-mons-camera-preview_orbit_pauses_turntable" data-inherit="true" data-key="mons.camera.preview_orbit_pauses_turntable" data-type="bool">
           <option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Disabled</option>
         </select>
       </fieldset><fieldset><legend>Global responsive detail</legend>
         <p>The terminal font size applies to all text. The resulting cell grid and zoom select one shared detail level for the pet, face, habitat and previews.</p>
         <label for="f-mon-detail-automatic">Automatic 8-bit / 16-bit detail</label>
-        <select id="f-mon-detail-automatic" data-inherit="true" data-key="tamagotchi.presentation.automatic" data-type="bool">
+        <select id="f-mon-detail-automatic" data-inherit="true" data-key="mons.presentation.automatic" data-type="bool">
           <option value="">Inherit vendor</option><option value="true">Automatic</option><option value="false">Manual sprite style</option>
         </select>
         <label for="f-mon-detail-min-width">Detailed mode minimum width (packed pixels)</label>
-        <input type="number" id="f-mon-detail-min-width" data-inherit="true" data-key="tamagotchi.presentation.min_width" placeholder="Inherit vendor" data-type="int" min="8" max="1024" step="1">
+        <input type="number" id="f-mon-detail-min-width" data-inherit="true" data-key="mons.presentation.min_width" placeholder="Inherit vendor" data-type="int" min="8" max="1024" step="1">
         <label for="f-mon-detail-min-height">Detailed mode minimum height (packed pixels)</label>
-        <input type="number" id="f-mon-detail-min-height" data-inherit="true" data-key="tamagotchi.presentation.min_height" placeholder="Inherit vendor" data-type="int" min="4" max="1024" step="1">
+        <input type="number" id="f-mon-detail-min-height" data-inherit="true" data-key="mons.presentation.min_height" placeholder="Inherit vendor" data-type="int" min="4" max="1024" step="1">
         <label for="f-mon-detail-hysteresis-percent">Resize stability band (%)</label>
-        <input type="number" id="f-mon-detail-hysteresis-percent" data-inherit="true" data-key="tamagotchi.presentation.hysteresis_percent" placeholder="Inherit vendor" data-type="int" min="0" max="50" step="1">
+        <input type="number" id="f-mon-detail-hysteresis-percent" data-inherit="true" data-key="mons.presentation.hysteresis_percent" placeholder="Inherit vendor" data-type="int" min="0" max="50" step="1">
       </fieldset><fieldset><legend>Voxel shading</legend>
         <p>Lighting keeps the species palette and adds shape to ears, muzzles, limbs and tails. ASCII views use a tonal character ramp.</p>
         <label for="f-mon-light-enabled">Directional shading</label>
-        <select id="f-mon-light-enabled" data-inherit="true" data-key="tamagotchi.voxel_lighting.enabled" data-type="bool">
+        <select id="f-mon-light-enabled" data-inherit="true" data-key="mons.voxel_lighting.enabled" data-type="bool">
           <option value="">Inherit vendor</option><option value="true">Enabled</option><option value="false">Disabled</option>
         </select>
         <label for="f-mon-light-ambient-percent">Ambient light (%)</label>
-        <input type="number" id="f-mon-light-ambient-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.ambient_percent" placeholder="Inherit vendor" data-type="int" min="20" max="100" step="1">
+        <input type="number" id="f-mon-light-ambient-percent" data-inherit="true" data-key="mons.voxel_lighting.ambient_percent" placeholder="Inherit vendor" data-type="int" min="20" max="100" step="1">
         <label for="f-mon-light-diffuse-percent">Directional light (%)</label>
-        <input type="number" id="f-mon-light-diffuse-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.diffuse_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <input type="number" id="f-mon-light-diffuse-percent" data-inherit="true" data-key="mons.voxel_lighting.diffuse_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
         <label for="f-mon-light-occlusion-percent">Contact shadow strength (%)</label>
-        <input type="number" id="f-mon-light-occlusion-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.occlusion_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <input type="number" id="f-mon-light-occlusion-percent" data-inherit="true" data-key="mons.voxel_lighting.occlusion_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
         <label for="f-mon-light-outline-percent">Silhouette edge shade (%)</label>
-        <input type="number" id="f-mon-light-outline-percent" data-inherit="true" data-key="tamagotchi.voxel_lighting.outline_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <input type="number" id="f-mon-light-outline-percent" data-inherit="true" data-key="mons.voxel_lighting.outline_percent" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
         <label for="f-mon-light-direction">Light direction: right, up, viewer (three comma-separated values)</label>
-        <input type="text" id="f-mon-light-direction" data-inherit="true" data-key="tamagotchi.voxel_lighting.light_direction" data-array="csv-int" placeholder="Inherit vendor">
+        <input type="text" id="f-mon-light-direction" data-inherit="true" data-key="mons.voxel_lighting.light_direction" data-array="csv-int" placeholder="Inherit vendor">
         <label for="f-mon-light-ascii-ramp">ASCII shading: dim to bright</label>
-        <input type="text" id="f-mon-light-ascii-ramp" data-inherit="true" data-key="tamagotchi.voxel_lighting.ascii_ramp" placeholder="Inherit vendor">
+        <input type="text" id="f-mon-light-ascii-ramp" data-inherit="true" data-key="mons.voxel_lighting.ascii_ramp" placeholder="Inherit vendor">
       </fieldset><fieldset><legend>Hatch identity and training</legend>
-        <label for="f-mon-tamagotchi-game-training-name-starts">Name first syllables (comma separated)</label>
-        <input type="text" id="f-mon-tamagotchi-game-training-name-starts" data-inherit="true" data-key="tamagotchi.game.training.name_starts" placeholder="Inherit vendor" data-array="csv">
-        <label for="f-mon-tamagotchi-game-training-name-ends">Name final syllables (comma separated)</label>
-        <input type="text" id="f-mon-tamagotchi-game-training-name-ends" data-inherit="true" data-key="tamagotchi.game.training.name_ends" placeholder="Inherit vendor" data-array="csv">
-        <label for="f-mon-tamagotchi-game-training-species-colors">Species palette indices: cat, fox, tanuki, rabbit, bear, frog, bird, turtle</label>
-        <input type="text" id="f-mon-tamagotchi-game-training-species-colors" data-inherit="true" data-key="tamagotchi.game.training.species_colors" placeholder="Inherit vendor" data-array="csv-int">
-        <label for="f-mon-tamagotchi-game-training-hatch-min">Minimum innate hatch stat</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-hatch-min" data-inherit="true" data-key="tamagotchi.game.training.hatch_min" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
-        <label for="f-mon-tamagotchi-game-training-hatch-max">Maximum innate hatch stat</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-hatch-max" data-inherit="true" data-key="tamagotchi.game.training.hatch_max" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
-        <label for="f-mon-tamagotchi-game-training-max-level">Maximum trained level</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-max-level" data-inherit="true" data-key="tamagotchi.game.training.max_level" placeholder="Inherit vendor" data-type="int" min="1" max="99" step="1">
-        <label for="f-mon-tamagotchi-game-training-xp-base">Base XP threshold</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-xp-base" data-inherit="true" data-key="tamagotchi.game.training.xp_base" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
-        <label for="f-mon-tamagotchi-game-training-xp-per-level">Additional threshold XP per level</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-xp-per-level" data-inherit="true" data-key="tamagotchi.game.training.xp_per_level" placeholder="Inherit vendor" data-type="int" min="0" max="10000" step="1">
-        <label for="f-mon-tamagotchi-game-training-xp-gain-min">Minimum training XP gain</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-min" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_min" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
-        <label for="f-mon-tamagotchi-game-training-xp-gain-max">Maximum training XP gain</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-xp-gain-max" data-inherit="true" data-key="tamagotchi.game.training.xp_gain_max" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
-        <label for="f-mon-tamagotchi-game-training-energy-cost">Energy cost per session</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-energy-cost" data-inherit="true" data-key="tamagotchi.game.training.energy_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
-        <label for="f-mon-tamagotchi-game-training-fullness-cost">Food cost per session</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-fullness-cost" data-inherit="true" data-key="tamagotchi.game.training.fullness_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
-        <label for="f-mon-tamagotchi-game-training-happiness-gain">Happiness gain per session</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-happiness-gain" data-inherit="true" data-key="tamagotchi.game.training.happiness_gain" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
-        <label for="f-mon-tamagotchi-game-training-cooldown-ticks">Active ticks between sessions</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-cooldown-ticks" data-inherit="true" data-key="tamagotchi.game.training.cooldown_ticks" placeholder="Inherit vendor" data-type="int" min="1" max="1000000" step="1">
-        <label for="f-mon-tamagotchi-game-training-level-coin-reward">Coins per earned level</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-level-coin-reward" data-inherit="true" data-key="tamagotchi.game.training.level_coin_reward" placeholder="Inherit vendor" data-type="int" min="0" max="1000" step="1">
+        <label for="f-mon-mons-game-training-name-starts">Name first syllables (comma separated)</label>
+        <input type="text" id="f-mon-mons-game-training-name-starts" data-inherit="true" data-key="mons.game.training.name_starts" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-mons-game-training-name-ends">Name final syllables (comma separated)</label>
+        <input type="text" id="f-mon-mons-game-training-name-ends" data-inherit="true" data-key="mons.game.training.name_ends" placeholder="Inherit vendor" data-array="csv">
+        <label for="f-mon-mons-game-training-species-colors">Species palette indices: cat, fox, tanuki, rabbit, bear, frog, bird, turtle</label>
+        <input type="text" id="f-mon-mons-game-training-species-colors" data-inherit="true" data-key="mons.game.training.species_colors" placeholder="Inherit vendor" data-array="csv-int">
+        <label for="f-mon-mons-game-training-hatch-min">Minimum innate hatch stat</label>
+        <input type="number" id="f-mon-mons-game-training-hatch-min" data-inherit="true" data-key="mons.game.training.hatch_min" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-mons-game-training-hatch-max">Maximum innate hatch stat</label>
+        <input type="number" id="f-mon-mons-game-training-hatch-max" data-inherit="true" data-key="mons.game.training.hatch_max" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-mons-game-training-max-level">Maximum trained level</label>
+        <input type="number" id="f-mon-mons-game-training-max-level" data-inherit="true" data-key="mons.game.training.max_level" placeholder="Inherit vendor" data-type="int" min="1" max="99" step="1">
+        <label for="f-mon-mons-game-training-xp-base">Base XP threshold</label>
+        <input type="number" id="f-mon-mons-game-training-xp-base" data-inherit="true" data-key="mons.game.training.xp_base" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-mons-game-training-xp-per-level">Additional threshold XP per level</label>
+        <input type="number" id="f-mon-mons-game-training-xp-per-level" data-inherit="true" data-key="mons.game.training.xp_per_level" placeholder="Inherit vendor" data-type="int" min="0" max="10000" step="1">
+        <label for="f-mon-mons-game-training-xp-gain-min">Minimum training XP gain</label>
+        <input type="number" id="f-mon-mons-game-training-xp-gain-min" data-inherit="true" data-key="mons.game.training.xp_gain_min" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-mons-game-training-xp-gain-max">Maximum training XP gain</label>
+        <input type="number" id="f-mon-mons-game-training-xp-gain-max" data-inherit="true" data-key="mons.game.training.xp_gain_max" placeholder="Inherit vendor" data-type="int" min="1" max="10000" step="1">
+        <label for="f-mon-mons-game-training-energy-cost">Energy cost per session</label>
+        <input type="number" id="f-mon-mons-game-training-energy-cost" data-inherit="true" data-key="mons.game.training.energy_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-mons-game-training-fullness-cost">Food cost per session</label>
+        <input type="number" id="f-mon-mons-game-training-fullness-cost" data-inherit="true" data-key="mons.game.training.fullness_cost" placeholder="Inherit vendor" data-type="int" min="1" max="100" step="1">
+        <label for="f-mon-mons-game-training-happiness-gain">Happiness gain per session</label>
+        <input type="number" id="f-mon-mons-game-training-happiness-gain" data-inherit="true" data-key="mons.game.training.happiness_gain" placeholder="Inherit vendor" data-type="int" min="0" max="100" step="1">
+        <label for="f-mon-mons-game-training-cooldown-ticks">Active ticks between sessions</label>
+        <input type="number" id="f-mon-mons-game-training-cooldown-ticks" data-inherit="true" data-key="mons.game.training.cooldown_ticks" placeholder="Inherit vendor" data-type="int" min="1" max="1000000" step="1">
+        <label for="f-mon-mons-game-training-level-coin-reward">Coins per earned level</label>
+        <input type="number" id="f-mon-mons-game-training-level-coin-reward" data-inherit="true" data-key="mons.game.training.level_coin_reward" placeholder="Inherit vendor" data-type="int" min="0" max="1000" step="1">
       </fieldset><fieldset><legend>Distinct personality accent indices (0..15)</legend>
-        <label for="f-mon-tamagotchi-game-training-personality-colors-cozy">Cozy</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-cozy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.cozy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-athletic">Athletic</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-athletic" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.athletic" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-grumbly">Grumbly</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-grumbly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.grumbly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-showy">Showy</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-showy" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.showy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-neighborly">Neighborly</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-neighborly" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.neighborly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-sunny">Sunny</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-sunny" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.sunny" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-refined">Refined</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-refined" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.refined" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
-        <label for="f-mon-tamagotchi-game-training-personality-colors-protective">Protective</label>
-        <input type="number" id="f-mon-tamagotchi-game-training-personality-colors-protective" data-inherit="true" data-key="tamagotchi.game.training.personality_colors.protective" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-cozy">Cozy</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-cozy" data-inherit="true" data-key="mons.game.training.personality_colors.cozy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-athletic">Athletic</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-athletic" data-inherit="true" data-key="mons.game.training.personality_colors.athletic" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-grumbly">Grumbly</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-grumbly" data-inherit="true" data-key="mons.game.training.personality_colors.grumbly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-showy">Showy</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-showy" data-inherit="true" data-key="mons.game.training.personality_colors.showy" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-neighborly">Neighborly</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-neighborly" data-inherit="true" data-key="mons.game.training.personality_colors.neighborly" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-sunny">Sunny</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-sunny" data-inherit="true" data-key="mons.game.training.personality_colors.sunny" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-refined">Refined</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-refined" data-inherit="true" data-key="mons.game.training.personality_colors.refined" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
+        <label for="f-mon-mons-game-training-personality-colors-protective">Protective</label>
+        <input type="number" id="f-mon-mons-game-training-personality-colors-protective" data-inherit="true" data-key="mons.game.training.personality_colors.protective" placeholder="Inherit vendor" data-type="int" min="0" max="15" step="1">
       </fieldset>
     </div>
   </div>
@@ -3684,6 +3688,12 @@
         <label>Performance CPU energy preference <input data-key="host.tuning.profiles.mios-host-performance.cpu.energy_performance_preference" type="text"></label>
 
         <label>Agent monitoring poll interval (seconds) <input data-key="terminal.monitor.agent_poll_s" data-type="float" type="number" min="0.1" step="0.1"></label>
+        <label>Desktop monitor default view <select data-key="terminal.monitor.desktop_panel.default_view"><option value="agents">Agents</option><option value="system">System</option><option value="logs">Logs</option><option value="tasks">Tasks</option><option value="input">Input</option></select></label>
+        <label>Desktop monitor compact columns <input data-key="terminal.monitor.desktop_panel.compact_columns" data-type="int" type="number" min="1"></label>
+        <label>Desktop monitor compact rows <input data-key="terminal.monitor.desktop_panel.compact_rows" data-type="int" type="number" min="1"></label>
+        <label>Side-by-side monitor minimum columns <input data-key="terminal.monitor.desktop_panel.overview_columns" data-type="int" type="number" min="1"></label>
+        <label>Side-by-side monitor minimum rows <input data-key="terminal.monitor.desktop_panel.overview_rows" data-type="int" type="number" min="1"></label>
+        <label>Desktop monitor poll interval (seconds) <input data-key="terminal.monitor.desktop_panel.poll_s" data-type="float" type="number" min="0.1" step="0.1"></label>
 
         <label>Client fullscreen projection enabled <input data-key="agent_cli.interaction.enabled" data-type="bool" type="text"></label>
         <label>Native client screen mode <input data-key="agent_cli.interaction.clients.agy.values.altScreenMode" type="text"></label>
@@ -3715,6 +3725,8 @@
         <label>Captured-dock glow lease (ms) <input data-key="desktop.dock.capture.border_glow.lease_ms" data-type="int" type="number" min="100" max="10000"></label>
         <label>Controller system button <input data-key="keybindings.global.controller.guide_button" type="text"></label>
         <label>Controller cursor button <input data-key="keybindings.global.controller.cursor_mode_button" type="text"></label>
+        <label>Global L3+R3 attach/detach <input data-key="keybindings.global.controller.global_capture_toggle" type="checkbox"></label>
+        <label>Focused window zoom chord <textarea data-key="keybindings.global.controller.window_zoom_chord" data-type="json-array" placeholder='["BTN_SELECT", "BTN_START"]'></textarea></label>
         <label>Controller input ownership <input data-key="keybindings.global.controller.exclusive_grab" type="checkbox"></label>
         <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
@@ -3737,6 +3749,8 @@
         <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
         <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
         <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <label>Start opens focused app pause/options <input data-key="keybindings.global.controller.nav.start_options" type="checkbox"></label>
+        <p class="hint">L3+R3 attaches or releases controls and returns the cursor. Select+Start zooms the focused pane once after both buttons release. Select opens its navigation/view menu; Start uses the verified app's private input endpoint. Unsupported apps consume Start.</p>
         <details>
           <summary>Focused MiOS-Mon controls</summary>
           <p class="hint">Inputd verifies the foreground executable in the focused terminal or console. These bindings navigate menus and the camera; the pet moves autonomously. Blank fields inherit the vendor policy. User-local samples require their exact absolute executable paths in the user configuration. Install a compatible Inputd daemon and command before applying these profiles.</p>
@@ -5490,6 +5504,70 @@ const FLATPAK_CATEGORY_LABELS = {
 };
 const FLATPAK_CATEGORY_ORDER = ["session", "appmgmt", "dev", "virt", "gaming", "gnome", "other"];
 
+function normalizeMonsSections(sections) {
+  // The editor stores FLAT dotted section names. Normalize one imported
+  // document before hydration/diffing, never a completed stack of tiers.
+  const table = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const copy = value => Array.isArray(value) ? value.map(copy) : table(value)
+    ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, copy(item)])) : value;
+  const merge = (lower, upper) => {
+    if (upper === "" && lower !== undefined && lower !== "") return copy(lower);
+    if (table(lower) && table(upper)) {
+      const result = copy(lower);
+      for (const [key, value] of Object.entries(upper)) {
+        Object.defineProperty(result, key, {value: Object.hasOwn(result, key) ? merge(result[key], value) : copy(value),
+          enumerable: true, writable: true, configurable: true});
+      }
+      return result;
+    }
+    return copy(upper);
+  };
+  const result = copy(sections);
+  for (const [section, values] of Object.entries(sections)) {
+    let canonical;
+    if (section === "tamagotchi" || section.startsWith("tamagotchi.")) {
+      canonical = "mons" + section.slice("tamagotchi".length);
+    } else if (section === "rust.categories.tamagotchi") {
+      canonical = "rust.categories.mons";
+    } else continue;
+    result[canonical] = Object.hasOwn(sections, canonical) ? merge(values, sections[canonical]) : copy(values);
+    delete result[section];
+  }
+  const tokens = (value, oldName, newName) => Array.isArray(value)
+    ? value.map(item => item === oldName ? newName : item) : value;
+  for (const [section, values] of Object.entries(result)) {
+    if (!table(values)) continue;
+    if (section === "terminal.popups") {
+      for (const key of ["window_size_source", "menu_width_source", "menu_height_source", "dialog_width_source",
+          "dialog_height_source", "tooltip_width_source", "tooltip_height_source", "font_width_source", "font_height_source", "aspect_source"]) {
+        if (typeof values[key] === "string" && values[key].startsWith("tamagotchi.")) {
+          values[key] = "mons." + values[key].slice("tamagotchi.".length);
+        }
+      }
+    } else if (section === "generation.walk") {
+      if (Object.hasOwn(values, "excluded_sections")) values.excluded_sections = tokens(values.excluded_sections, "tamagotchi", "mons");
+    } else if (section === "rust.categories") {
+      if (Object.hasOwn(values, "binaries")) values.binaries = tokens(values.binaries, "mios-tamagotchi", "mios-mons");
+    } else if (section === "rust.categories.owners" || section === "rust.categories.roles") {
+      for (const key of Object.keys(values)) values[key] = tokens(values[key], "tamagotchi", "mons");
+    } else if (section.startsWith("rust.categories.")) {
+      if (values.binary === "mios-tamagotchi") values.binary = "mios-mons";
+      if (Object.hasOwn(values, "crates")) values.crates = tokens(values.crates, "mios-tamagotchi", "mios-mons");
+    } else if (section === "build.native") {
+      for (const key of ["windows_only", "windows_shared"]) {
+        if (Object.hasOwn(values, key)) values[key] = tokens(values[key], "mios-tamagotchi", "mios-mons");
+      }
+    } else if (section.startsWith("build.native.categories.")) {
+      if (Object.hasOwn(values, "binaries")) values.binaries = tokens(values.binaries, "mios-tamagotchi", "mios-mons");
+    } else if (section.startsWith("build.native.aliases.")) {
+      if (values.binary === "mios-tamagotchi") values.binary = "mios-mons";
+    } else if (section === "keybindings.global.controller.nav.apps.mon") {
+      if (Object.hasOwn(values, "exe")) values.exe = tokens(values.exe, "/usr/bin/mios-tamagotchi", "/usr/bin/mios-mons");
+    }
+  }
+  return result;
+}
+
 function parseToml(text) {
   // Returns: { 'identity': {username:'...'}, ..., 'desktop': {flatpaks: [...]}, ... }
   // Handles single-line and multi-line arrays, and array-of-tables (e.g. [[autounattend.accounts]]).
@@ -5555,15 +5633,19 @@ function parseToml(text) {
     }
     i++;
   }
-  return sections;
+  return normalizeMonsSections(sections);
 }
 
 function parseTomlValue(v) {
   if (/^".*"$/.test(v)) return v.slice(1, -1).replace(/\\"/g, '"');
+  // Literal strings are common in older saved profiles and have no escapes.
+  if (/^'.*'$/.test(v)) return v.slice(1, -1);
   if (/^(true|false)$/i.test(v)) return /^true$/i.test(v);
   if (/^-?\d+(\.\d+)?$/.test(v)) return Number(v);
   if (/^\[.*\]$/.test(v)) {
     return v.slice(1, -1).split(",").map(s => {
+      const literal = s.trim();
+      if (/^'.*'$/.test(literal)) return literal.slice(1, -1);
       const trimmed = s.trim().replace(/^"|"$/g, "");
       // Coerce numeric items so [0, 5, 15, 30] round-trips as ints,
       // not strings. String items (with quotes) keep their string type.
@@ -5575,6 +5657,7 @@ function parseTomlValue(v) {
 }
 
 function emitToml(sections) {
+  sections = normalizeMonsSections(sections);
   // Emit a deterministic TOML block in MiOS section order.
   const isTableArray = v => Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && !Array.isArray(v[0]);
   // An array-of-tables header changes TOML scope: emit parent fields first.
@@ -6336,6 +6419,7 @@ function updateFlatpakCount() {
 }
 
 function gatherFromForm() {
+  DATA = normalizeMonsSections(DATA);
   storeGpuResourceTables(DATA, document.getElementById("f-gpu-resources").value);
   document.querySelectorAll("[data-key]").forEach(el => {
     if (el.dataset.customOf) return;
@@ -6400,15 +6484,15 @@ function gatherFromForm() {
         "keybindings.global.controller.nav.app_query_timeout_ms": [20, 1000]
       }[el.dataset.key];
       const cameraBounds = {
-        "tamagotchi.animation_frame_ms": [40, 2000],
-        "tamagotchi.camera.follow_half_life_ms": [20, 1000],
-        "tamagotchi.camera.motion_frame_ms": [16, 140],
-        "tamagotchi.camera.orbit_rate_deg_s": [10, 720],
-        "tamagotchi.camera.tilt_rate_deg_s": [5, 360],
-        "tamagotchi.camera.pan_rate_permille_s": [50, 2000],
-        "tamagotchi.camera.zoom_rate_percent_s": [25, 800],
-        "tamagotchi.camera.reset_glide_ms": [0, 2000],
-        "tamagotchi.camera.rest_epsilon_permille": [1, 50]
+        "mons.animation_frame_ms": [40, 2000],
+        "mons.camera.follow_half_life_ms": [20, 1000],
+        "mons.camera.motion_frame_ms": [16, 140],
+        "mons.camera.orbit_rate_deg_s": [10, 720],
+        "mons.camera.tilt_rate_deg_s": [5, 360],
+        "mons.camera.pan_rate_permille_s": [50, 2000],
+        "mons.camera.zoom_rate_percent_s": [25, 800],
+        "mons.camera.reset_glide_ms": [0, 2000],
+        "mons.camera.rest_epsilon_permille": [1, 50]
       }[el.dataset.key];
       if (cameraBounds) {
         const n = Number(el.value);
@@ -6440,7 +6524,7 @@ function gatherFromForm() {
   });
   const nav = DATA["keybindings.global.controller.nav"];
   if (nav && Number.isInteger(nav.app_poll_ms) && Number.isInteger(nav.app_query_timeout_ms) && nav.app_query_timeout_ms > nav.app_poll_ms) throw new Error("Controller app query timeout must not exceed poll interval");
-  const camera = DATA["tamagotchi.camera"], mon = DATA.tamagotchi;
+  const camera = DATA["mons.camera"], mon = DATA.mons;
   if (camera && mon && Number.isInteger(camera.motion_frame_ms) && Number.isInteger(mon.animation_frame_ms) && camera.motion_frame_ms > mon.animation_frame_ms) throw new Error("Camera motion interval must not exceed pet animation interval");
   if (camera && Number.isInteger(camera.follow_half_life_ms) && Number.isInteger(camera.reset_glide_ms) && camera.reset_glide_ms !== 0 && camera.follow_half_life_ms > camera.reset_glide_ms) throw new Error("Camera smoothing half-time must not exceed reset transition limit");
   const gesture = DATA["keybindings.global.controller.nav.focus_gesture"];

@@ -187,5 +187,99 @@ class TestDashboardEntry(unittest.TestCase):
         self.assertFalse(self.marker.exists())
 
 
+class TestDesktopPanelSources(unittest.TestCase):
+    def function(self, name, **env):
+        source = ROOT / "usr/libexec/mios/mios-mon.py"
+        node = next(n for n in ast.parse(source.read_text()).body
+                    if isinstance(n, ast.FunctionDef) and n.name == name)
+        namespace = dict(os=os, stat=__import__("stat"), Path=Path, json=json,
+                         subprocess=subprocess, time=__import__("time"),
+                         clean=lambda value, limit=100: str(value)[:limit])
+        namespace.update(env)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
+        return namespace[name]
+
+    def test_tasks_use_existing_read_only_api_without_truncating_rows(self):
+        from unittest.mock import Mock
+        rows = [{"id": f"task-{i}", "number": i, "priority": "P1", "title": f"Work {i}", "owner": None}
+                for i in range(1, 501)]
+        runner = Mock(return_value=type("Result", (), {"returncode": 0, "stdout": json.dumps(rows)})())
+        collect = self.function("collect_panel_tasks", subprocess=type("Process", (), {"run": runner}))
+        result = collect("/private-root")
+        self.assertEqual(len(result), 500)
+        self.assertEqual(result[-1][0], "task-500")
+        self.assertIn("Work 500", result[-1][1][1])
+        self.assertEqual(runner.call_args.args[0], ["/usr/bin/mios-task", "ready", "--json", "--root", "/private-root"])
+        self.assertNotIn("--limit", runner.call_args.args[0])
+
+    def test_input_manifest_requires_live_identity_and_never_exposes_private_fields(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix="mios-panel-input-") as directory:
+            root = Path(directory)
+            proc = root / "proc" / "123"
+            proc.mkdir(parents=True)
+            fields = ["S", "1"] + ["0"] * 17 + ["77"]
+            (proc / "stat").write_text("123 (input daemon) " + " ".join(fields))
+            manifest = root / "mios-inputd-active.json"
+            data = {"controller_return_protocol_version": 1, "bridge_pid": 123, "bridge_start": 77,
+                    "timestamp_ms": 1000000, "controller_scan_ms": 2000,
+                    "devices": [{"path": "/dev/input/private", "name": "Controller", "rearmed": True}],
+                    "raw_consumers": [], "native_focus": {"session_name": "PRIVATE-TARGET", "token": "PRIVATE-TOKEN"},
+                    "nonce": "PRIVATE-NONCE"}
+            manifest.write_text(json.dumps(data))
+            manifest.chmod(0o600)
+            collect = self.function("collect_panel_input",
+                                    Path=lambda path: root / "proc" if path == "/proc" else Path(path),
+                                    time=type("Clock", (), {"time": staticmethod(lambda: 1000)}))
+            with patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):
+                result = dict(collect())
+                self.assertEqual(result["daemon"][1], "Online")
+                self.assertEqual(result["rearmed"][1], "1")
+                self.assertEqual(result["target"][1], "Unavailable")
+                self.assertNotIn("PRIVATE-", json.dumps(result))
+                data["bridge_start"] = 78
+                manifest.write_text(json.dumps(data))
+                stale = dict(collect())
+                self.assertIn("Stale", stale["daemon"][1])
+                self.assertEqual(stale["rearmed"][1], "Unknown")
+                manifest.chmod(0o644)
+                with self.assertRaisesRegex(RuntimeError, "unavailable"):
+                    collect()
+                manifest.unlink()
+                manifest.symlink_to(proc / "stat")
+                with self.assertRaises(OSError):
+                    collect()
+
+    def test_panel_policy_reads_ssot_and_refuses_nonfinite_cadence(self):
+        policy = {"default_view": "input", "compact_columns": 51, "compact_rows": 9, "poll_s": 7}
+        resolve = self.function("desktop_panel_config", monitor_config=lambda: {"terminal": {"monitor": {"desktop_panel": policy}}})
+        self.assertEqual(resolve(), policy)
+        policy["poll_s"] = float("nan")
+        with self.assertRaises(ValueError):
+            resolve()
+
+    def test_legacy_status_workers_start_once_on_demand(self):
+        import threading
+        from unittest.mock import Mock
+        factory = Mock()
+        start = self.function("start_status_collectors", _STATUS_COLLECTORS_STARTED=False,
+                              _STATUS_COLLECTORS_LOCK=threading.Lock(),
+                              _bg_update_usb=lambda: None, _bg_update_git=lambda: None,
+                              threading=type("Threads", (), {"Thread": factory}))
+        for _ in range(100):
+            start()
+        self.assertEqual(factory.call_count, 2)
+        self.assertEqual(factory.return_value.start.call_count, 2)
+
+    def test_overview_thresholds_read_ssot_and_refuse_invalid_sizes(self):
+        policy = {"default_view": "agents", "compact_columns": 51, "compact_rows": 9, "poll_s": 7,
+                  "overview_columns": 92, "overview_rows": 14}
+        resolve = self.function("desktop_panel_config", monitor_config=lambda: {"terminal": {"monitor": {"desktop_panel": policy}}})
+        self.assertEqual(resolve(), policy)
+        policy["overview_rows"] = 0
+        with self.assertRaisesRegex(ValueError, "overview sizes"):
+            resolve()
+
+
 if __name__ == '__main__':
     unittest.main()

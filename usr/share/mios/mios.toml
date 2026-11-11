@@ -2121,7 +2121,7 @@ windows_shared = [
   "mios-size-ceiling",
   "mios-ssot-lint",
   "mios-task",
-  "mios-tamagotchi",
+  "mios-mons",
   "mios-toml-get",
   "mios-template-compile",
   "mios-template-conform",
@@ -2220,8 +2220,8 @@ expose_bin = false
 compat_dirs = ["/usr/libexec/mios"]
 
 [build.native.categories.apps]
-# Native terminal apps. mios-launch is Windows-only; mios-tamagotchi is portable.
-binaries = ["mios-launch", "mios-tamagotchi"]
+# Native terminal apps. mios-launch is Windows-only; mios-mons is portable.
+binaries = ["mios-launch", "mios-mons"]
 install_dir = "/usr/bin"
 expose_bin = false
 compat_dirs = []
@@ -4534,6 +4534,15 @@ min_rows = 10
 snap_margin = 2
 resize_debounce_ms = 40
 
+[keybindings.tmux.desktop.panel]
+enabled = true
+argv = ["/usr/libexec/mios/mios-mon.py", "--desktop-panel", "--root", "/"]
+size_kind = "menu" # shared [terminal.popups] launch scale, fitted to the actual viewport
+min_canvas_rows_source = "keybindings.tmux.desktop.min_rows" # reserve the lower work area plus native float borders
+
+[keybindings.tmux.desktop.sidebar]
+enabled = true # uses existing [mcp.tmux.workspace.layout] roles/shares and compact thresholds
+
 [keybindings.tmux.desktop.source]
 version = "3.7c"
 url = "https://github.com/tmux/tmux/releases/download/3.7c/tmux-3.7c.tar.gz"
@@ -4547,6 +4556,7 @@ apps = "Apps"
 windows = "Windows"
 topbar = "MiOS | Apps | Windows | System"
 canvas_title = "MiOS Desktop"
+storage_title = "MiOS Desktop background"
 canvas_subtitle = "Terminal applications in floating windows"
 canvas_help = "Alt-Space: Apps | Right-click border: actions | Drag border: move or resize"
 center = "Center"
@@ -4971,7 +4981,7 @@ enabled = true
 sessions = []
 exclusive_grab = true                # one physical evdev owner; false (or enabled = false) = serve exits 0
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
-capture_navigation_contexts = ["terminal"] # captured terminals keep navigation through their selected pane
+capture_navigation_contexts = ["terminal", "console"] # captured terminals and native console panes keep verified navigation
 capture_fullscreen = false             # fullscreen preserves navigation; North explicitly captures any application
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
 release_tag = "mios-input-released"            # set by a held L3+R3 release; cancels fullscreen==2, capture_tag and
@@ -4992,10 +5002,12 @@ guide_double_press_action = "quickshell:drawer-toggle"
 cursor_shape = "crosshair"          # controller-driven 2D pointer; the native compositor hook restores physical-mouse cursors
 virtual_pointer = "mios-vctl-pointer"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
-cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
-cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough"]   # every uncaptured window alike
+global_capture_toggle = true       # L3+R3 attaches/detaches the focused window; both physical releases commit once
+window_zoom_chord = ["BTN_SELECT", "BTN_START"] # focused window/pane zoom; suppress both singles until release
+cursor_mode_button = "BTN_START"     # legacy fallback only when nav.start_options is false
+cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough", "console"]   # every uncaptured window alike
 legacy_pad_state_path = "/tmp/mios-hypr3d-pad.bin"
-debounce_ms = 250                     # toggle_chord: both sticks within this window = one chord
+debounce_ms = 250                     # legacy chord debounce; shared global chords use physical overlap without an intermember deadline
 scan_ms = 2000                        # device scan; also how often serve re-checks seat/device access while idle
 pointer_hz = 250
 stick_deadzone = 0.12                 # THE deadzone for pointer, scroll and nav flicks
@@ -5005,7 +5017,8 @@ pointer_response_exponent = 2.0     # radial response: 1 linear, >1 gives fine c
 pointer_smoothing_ms = 60.0         # velocity response time; center stops immediately (no drift)
 scroll_sensitivity = 45.0
 
-# Guide held + button (uncaptured contexts with a compositor; none on a VT). One action per press, never repeated.
+# Guide held + button (uncaptured contexts; native VT projections are declared in nav.console_actions).
+# One action per press, never repeated. A missing/unsupported VT projection is consumed, never an ordinary button.
 # BTN_DPAD_* matches BTN_DPAD pads and HAT d-pads alike (I4 folds ABS_HAT0X/Y into BTN_DPAD_*), BTN_TL2/TR2 also fire
 # from analog-only triggers (xpad) at trigger_threshold, and LS_*/RS_* are stick flicks (one per deflection past
 # nav.flick_on, re-armed below nav.flick_off). With Guide held the sticks never move the pointer or scroll.
@@ -5044,22 +5057,62 @@ RS_DOWN = "hypr:movewindow down"
 #   BTN_SELECT/START, BTN_MODE (Guide TAP: released before capture_hold_ms with nothing else pressed), BTN_THUMBL/R
 #   (ignored while their own stick is deflected), BTN_DPAD_* (HAT folded in), LS_*/RS_* (stick directions; RS fires one
 #   flick per deflection), TOGGLE_CHORD (the configured toggle_chord).
-# Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, BTN_START cursor mode, the
-#   toggle_chord room toggle and hold-release. A console profile may claim them, because no compositor runs there.
+# Not in nav (contract or room owned): BTN_NORTH capture, BTN_TL/TR ShaderGlass, and the global
+#   toggle_chord attach/detach. Select+Start zoom is reserved before profile singles; Start is app pause/options.
+#   Console profiles share these gestures when console_actions is set;
+#   a legacy operator profile without that table may still claim them.
 # Namespaces: key: = the mios-vctl-keyboard virtual keyboard, pinned to the "us" layout (the kernel console reads the
 #   same device on a VT). pointer: = analog wheel; pointer:cursor (a button) toggles cursor mode. tmux: = commands for
 #   the tmux client in the focused terminal or on the active VT: key <k> (prefix-table key k), focus <dir> (falls
 #   through to hypr:movefocus at the window edge; stops there on a VT), page-up, page-down, session-prev, session-next,
-#   menu, keymap (a popup of `mios-inputd map --text`). mios:graphical-vt = Ctrl+Alt+F<VTNr> of this user's graphical
-#   session (I3). Console profiles may use only key:, tmux:, mios:graphical-vt, pointer:cursor and "none".
+#   menu, keymap (a popup of `mios-inputd map --text`), desktop <action> (a witnessed native desktop operation).
+#   mios:graphical-vt = Ctrl+Alt+F<VTNr> of this user's graphical
+#   session (I3). Console profiles use key:, tmux:, native volume/media, mios:graphical-vt, pointer:cursor or "none".
 [keybindings.global.controller.nav]
 enabled = true
+start_options = true               # app-owned menu/options IPC; unsupported shells consume Start
 flick_on = 0.6                      # right-stick radial deflection (after stick_deadzone) that fires one flick
 flick_off = 0.3                     # the stick must fall below this before it can flick again
 app_poll_ms = 250                   # recheck the verified foreground executable without blocking input
 app_query_timeout_ms = 150          # a failed/late query restores the ordinary context profile
 # tmux servers (-L names) whose clients select a *_tmux profile; the verbs reach exactly that client and server.
 tmux_sockets = ["mios-human", "mios-nested", "mios-desktop"]
+
+# One gesture map for graphical and console sessions. Translate its desktop action exactly once for a VT;
+# input:window on/fullscreen/off and input:cursor retain the shared ownership protocol rather than this table.
+# Pane operations target a verified client/pane; volume/media use the native session services. "none" consumes
+# an unsupported action without running
+# a graphical command, substituting a different app, or falling through as its unmodified button.
+[keybindings.global.controller.nav.console_actions]
+# Stable labels keep the global environment projection unambiguous; exact verbs are values.
+workspace_prev = { action = "hypr:workspace e-1", native = "tmux:session-prev" }
+workspace_next = { action = "hypr:workspace e+1", native = "tmux:session-next" }
+move_workspace_prev = { action = "hypr:movetoworkspace e-1", native = "none" }
+move_workspace_next = { action = "hypr:movetoworkspace e+1", native = "none" }
+toggle_float = { action = "hypr:togglefloating", native = "tmux:desktop toggle-float" }
+close_window = { action = "hypr:killactive", native = "tmux:desktop close" }
+new_terminal = { action = "exec:mios-terminal", native = "tmux:desktop new" }
+browser = { action = "mios:launch-browser", native = "none" }
+monitor = { action = "mios:system-monitor", native = "tmux:desktop monitor" }
+lock = { action = "quickshell:lock", native = "none" }
+vm_passthrough = { action = "mios:toggle_vm_passthrough", native = "none" }
+focus_left = { action = "hypr:movefocus left", native = "tmux:focus left" }
+focus_right = { action = "hypr:movefocus right", native = "tmux:focus right" }
+focus_up = { action = "hypr:movefocus up", native = "tmux:focus up" }
+focus_down = { action = "hypr:movefocus down", native = "tmux:focus down" }
+volume_up = { action = "mios:volume up", native = "mios:volume up" }
+volume_down = { action = "mios:volume down", native = "mios:volume down" }
+media_previous = { action = "mios:media previous", native = "mios:media previous" }
+media_next = { action = "mios:media next", native = "mios:media next" }
+snap_left = { action = "hypr:movewindow left", native = "tmux:desktop snap-left" }
+snap_right = { action = "hypr:movewindow right", native = "tmux:desktop snap-right" }
+snap_top = { action = "hypr:movewindow up", native = "tmux:desktop snap-top" }
+snap_bottom = { action = "hypr:movewindow down", native = "tmux:desktop snap-bottom" }
+app_drawer = { action = "quickshell:drawer-toggle", native = "tmux:menu" }
+keymap = { action = "quickshell:keymap-toggle", native = "tmux:keymap" }
+shaderglass_toggle = { action = "mios:shaderglass toggle", native = "none" }
+shaderglass_cycle = { action = "mios:shaderglass cycle", native = "none" }
+room_toggle = { action = "mios:hyprland-3d-toggle", native = "none" }
 
 
 # task3773: a deliberate short out-and-return RIGHT-stick gesture is the only way to move
@@ -5103,7 +5156,7 @@ BTN_SOUTH = "key:ENTER"
 BTN_EAST = "key:ESC"
 BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
 BTN_NORTH = "key:COMPOSE"
-BTN_START = "key:ENTER"
+BTN_START = "none"
 BTN_SELECT = "key:COMPOSE"
 BTN_MODE = "key:ESC"
 BTN_DPAD_UP = "key:UP"
@@ -5127,6 +5180,7 @@ RS_LEFT = "key:SHIFT+TAB"
 RS_RIGHT = "key:TAB"
 
 [keybindings.global.controller.nav.desktop]
+BTN_START = "none"                 # no generic pause/options key is safe for an unknown foreground app
 BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
 BTN_EAST = ["key:ESC", "key:ALT+LEFT"]
 BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
@@ -5174,8 +5228,9 @@ BTN_THUMBL = "exec:mios-terminal"
 # I3: the Linux console (a VT; no compositor, shell or room). The uinput keyboard reaches the kernel console, so the
 # key: rows are the desktop's own strokes. West hold = Shift+Tab, as on the desktop (O-6): the installed `us` console
 # keymaps map Shift+Tab to Meta_Tab = ESC TAB, which is BTab (kcbt) in the linux terminfo, so tmux and ncurses programs
-# read it as back-tab. Start toggles cursor mode: the sticks move the virtual pointer, which gpm draws on the VT and the
-# console bridge reports to tmux while its mouse mode is on.
+# read it as back-tab. Global L3+R3 attaches/detaches the verified pane and returns the pointer;
+# Select+Start zooms it, Select opens navigation/view and Start uses verified app pause/options.
+# North still captures (hold adds fullscreen); Guide+Select enters half-capture.
 [keybindings.global.controller.nav.console_tmux]
 inherits = "terminal_tmux"
 BTN_SOUTH = "key:ENTER"              # the VT sends the same byte for Shift+Enter
@@ -5184,18 +5239,14 @@ LS_UP = "tmux:page-up"
 LS_DOWN = "tmux:page-down"
 LS_LEFT = "none"
 LS_RIGHT = "none"
-BTN_NORTH = "tmux:key z"
-BTN_TL = "tmux:session-prev"
-BTN_TR = "tmux:session-next"
 BTN_SELECT = ["tmux:key w", "tmux:keymap"]
-BTN_START = ["tmux:key y", "pointer:cursor"]
 BTN_MODE = "tmux:menu"
-TOGGLE_CHORD = "mios:graphical-vt"
 
 # A bare VT (a shell, the session selector or any TUI): operator decision C-18. Sticks and d-pad = arrows, South =
-# Enter, East = Esc (hold Ctrl+C), West and the bumpers = Tab / BTab, triggers = PageUp / PageDown, Start = cursor
-# mode. Linux >= 5.9 has no console scrollback, so nothing pages the console itself.
+# Enter, East = Esc (hold Ctrl+C), West = Tab / BTab, triggers = PageUp / PageDown; unknown-app Start is consumed.
+# Capture needs a verified native pane; a bare VT never invents one. Linux >= 5.9 has no console scrollback.
 [keybindings.global.controller.nav.console_plain]
+BTN_START = "none"
 BTN_SOUTH = "key:ENTER"
 BTN_EAST = ["key:ESC", "key:CTRL+c"]
 BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
@@ -5211,24 +5262,20 @@ RS_LEFT = "none"                     # the right stick is the pointer in cursor 
 RS_RIGHT = "none"
 RS_UP = "none"
 RS_DOWN = "none"
-BTN_TL = "key:SHIFT+TAB"
-BTN_TR = "key:TAB"
 BTN_TL2 = "key:PAGEUP"
 BTN_TR2 = "key:PAGEDOWN"
-BTN_NORTH = "none"
 BTN_SELECT = "none"
-BTN_START = "pointer:cursor"         # gpm: RT selects, LT extends; nothing pastes
 BTN_MODE = "none"
 BTN_THUMBL = "none"
 BTN_THUMBR = "none"
-TOGGLE_CHORD = "mios:graphical-vt"
 
 # Focused MiOS-Mon uses the verified foreground executable, not a title or window class.
 # User-local samples register their exact absolute user_exe paths in the user TOML tier.
 # Sticks and triggers operate the HUD/camera; movement and pet simulation stay autonomous.
-# The app profiles inherit menu, capture/release, cursor and system-layer ownership.
+# App menu/pause use private PID/start-scoped IPC; app exit never sends these keys to a shell.
+# Camera/stick rows and global capture, zoom and system-layer ownership remain shared.
 [keybindings.global.controller.nav.apps.mon]
-exe = ["/usr/bin/mios-tamagotchi"]
+exe = ["/usr/bin/mios-mons"]
 camera = true
 contexts = { terminal = "mon", console = "mon_console" }
 
@@ -5246,6 +5293,8 @@ BTN_TR2 = [250, 90]
 
 [keybindings.global.controller.nav.mon_tmux]
 inherits = "terminal_tmux"
+BTN_SELECT = ["key:o", "quickshell:keymap-toggle"]
+BTN_START = "key:p"
 LS_LEFT = "key:ALT+4"
 LS_RIGHT = "key:ALT+6"
 LS_UP = "key:ALT+8"
@@ -5261,6 +5310,8 @@ BTN_THUMBR = "key:ALT+5"
 
 [keybindings.global.controller.nav.mon_plain]
 inherits = "terminal_plain"
+BTN_SELECT = ["key:o", "quickshell:keymap-toggle"]
+BTN_START = "key:p"
 LS_LEFT = "key:ALT+4"
 LS_RIGHT = "key:ALT+6"
 LS_UP = "key:ALT+8"
@@ -5276,6 +5327,8 @@ BTN_THUMBR = "key:ALT+5"
 
 [keybindings.global.controller.nav.mon_console_tmux]
 inherits = "console_tmux"
+BTN_SELECT = ["key:o", "tmux:keymap"]
+BTN_START = "key:p"
 LS_LEFT = "key:ALT+4"
 LS_RIGHT = "key:ALT+6"
 LS_UP = "key:ALT+8"
@@ -5291,6 +5344,8 @@ BTN_THUMBR = "key:ALT+5"
 
 [keybindings.global.controller.nav.mon_console_plain]
 inherits = "console_plain"
+BTN_SELECT = "key:o"
+BTN_START = "key:p"
 LS_LEFT = "key:ALT+4"
 LS_RIGHT = "key:ALT+6"
 LS_UP = "key:ALT+8"
@@ -11898,18 +11953,49 @@ launch_program = "/usr/libexec/mios/mios-launch"
 probe_program = "/usr/libexec/mios/mios-computer-use"
 
 # Apps and TUIs launcher: one catalogue for prefix e in tmux-os and the "TUI apps" section of miosd sessions.
+# Remote SSH transport remains authenticated by SSH. This optional second
+# boundary authorizes the selected MiOS account through genuine greetd/PAM.
+# Privileged readers use only root-owned vendor/host layers; no user overrides.
+[terminal.remote_login]
+enabled = true
+minimum_uid = 1000
+maximum_uid = 60000
+state_directory = "/run/mios-remote-login"
+sudo = "/usr/bin/sudo"
+runuser = "/usr/bin/runuser"
+greetd = "/usr/libexec/mios/greetd-remote"
+# Exact independently built private backend; capability JSON alone cannot authorize it.
+greetd_sha256 = "1cc5e065a2241216c937589e668c9fcbd3e00aa1ccccd58879264be2504cc14e"
+greetd_source_revision = "08efe60feceea8c81f9571c666880ff1e1c2e3ff"
+systemd_run = "/usr/bin/systemd-run"
+tuigreet = "/usr/bin/tuigreet"
+worker = "/usr/bin/miosd"
+pam_service = "mios-remote-login"
+greeter_pam_service = "mios-remote-greeter"
+pam_environment = "/usr/share/mios/pam/remote-login.conf"
+session_command = ["/usr/bin/miosd", "desktop", "--root", "/"]
+command_timeout_ms = 2000
+startup_timeout_ms = 10000
+auth_timeout_seconds = 300
+message_limit_bytes = 65536
+
+[terminal.remote_login.labels]
+title = "MiOS remote login"
+greeting = "Select a MiOS user to sign in"
+background = "MiOS remote access"
+
 # Global MiOS console surfaces inherit existing per-type launch sizes. Native
 # consumers center and clamp them using physical font cells, without permanent
 # sidebars. These source references stay configurable in every SSOT layer.
 [terminal.popups]
 enabled = true
 window_size_source = "desktop.hyprland.hypr3d.spawn.landscape_cells"
-menu_width_source = "tamagotchi.popup_min_width"
-menu_height_source = "tamagotchi.popup_min_height"
-dialog_width_source = "tamagotchi.popup_min_width"
-dialog_height_source = "tamagotchi.popup_min_height"
-tooltip_width_source = "tamagotchi.popup_min_width"
-tooltip_height_source = "tamagotchi.inline_dialog_rows"
+menu_width_source = "mons.popup_min_width"
+menu_height_source = "mons.popup_min_height"
+dialog_width_source = "mons.popup_min_width"
+dialog_height_source = "mons.popup_min_height"
+tooltip_width_source = "mons.popup_min_width"
+tooltip_height_source = "mons.inline_dialog_rows"
 font_width_source = "theme.font.cell_w_px"
 font_height_source = "theme.font.cell_h_px"
 aspect_source = "desktop.hyprland.placement.aspect"
@@ -11969,7 +12055,7 @@ label = "MiOS-Mons"
 section = "mios"
 mode = "window"
 vt_ok = true
-argv = ["/usr/bin/mios-tamagotchi"]
+argv = ["/usr/bin/mios-mons"]
 
 [[terminal.tuis]]
 id = "controls"
@@ -12143,6 +12229,14 @@ title               = "MiOS Build Monitor"
 cols                = 80
 rows                = 20      # 80x20 is the native SSOT size globally
 worker_split_percent    = 50  # fullscreen right-side worker grid
+
+[terminal.monitor.desktop_panel]
+default_view = "agents"
+compact_columns = 78
+compact_rows = 12
+poll_s = 5
+overview_columns = 78
+overview_rows = 8 # matches mcp.tmux.workspace.layout.monitor_min_rows so a slim native panel can split Agents/System
 
 [terminal.reading]
 cols                = 100
@@ -19297,7 +19391,7 @@ max_untested_crates = 0
 binaries = [
   "mios-gate", "mios-gen", "mios-resolver", "mios-serve", "mios-probe",
   "mios-install", "mios-build", "mios-task", "mios-node", "mios-launch",
-  "mios-wallpaperd", "mios-inputd", "mios-pip-gravity", "miosd", "mios-fanctl", "mios-displays", "mios-shot", "mios-tamagotchi",
+  "mios-wallpaperd", "mios-inputd", "mios-pip-gravity", "miosd", "mios-fanctl", "mios-displays", "mios-shot", "mios-mons",
 ]
 max_unowned = 128
 universe = [
@@ -19309,7 +19403,7 @@ universe = [
 port-lane = ["gate", "gen"]
 native-tier = [
   "resolver", "serve", "probe", "install", "build", "task", "node", "apps",
-  "wallpaperd", "daemon_meta", "fan", "shot", "input", "tamagotchi",
+  "wallpaperd", "daemon_meta", "fan", "shot", "input", "mons",
 ]
 agent-plane = ["ai-plane"]
 build-lane = ["automation-glue"]
@@ -19319,7 +19413,7 @@ qa-lane = ["tests"]
 cli = ["gate", "gen", "resolver", "probe", "install", "build", "task", "daemon_meta", "fan", "shot"]
 services = ["serve"]
 daemons = ["node", "wallpaperd", "input"]
-apps = ["apps", "tamagotchi"]
+apps = ["apps", "mons"]
 exempt = ["ai-plane", "automation-glue", "tests"]
 
 [rust.categories.gate]
@@ -19470,8 +19564,8 @@ description = "Windows native terminal launcher and desktop client"
 replaces = []
 crates = ["mios-browser"]
 
-[rust.categories.tamagotchi]
-binary = "mios-tamagotchi"
+[rust.categories.mons]
+binary = "mios-mons"
 description = "Playable local virtual pet with care, memory game and atomic saves"
 replaces = []
 
@@ -19536,7 +19630,7 @@ scope = ["tests/**", "tools/test_*.py"]
 # Sections a renderer or a direct TOML reader owns; never exported as variables.
 # ci/tests: the suite registry reader parses the TOML itself. units: mios-unit-gen
 # renders unit files from mios.toml and never reads globals.
-excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation", "tamagotchi"]
+excluded_sections = ["containers", "verbs", "recipes", "packages", "dotfiles", "btop", "theme", "install_phases", "messages", "ci", "tests", "units", "generation", "mons"]
 # Sections whose canonical names are suppressed, except the emit_keep names below.
 # Their legacy aliases still emit.
 mostly_dead_sections = ["ai", "image", "bootstrap", "profile", "sandbox", "security"]
@@ -20314,7 +20408,7 @@ Service = 'mios-agent-pipe.service'
 WantedBy = 'sockets.target'
 
 # Playable local virtual-pet sample; social features and full device emulation remain separate tasks.
-[tamagotchi]
+[mons]
 renderer = "auto"       # auto, ascii, half-block, quadrant, braille; glyphs are independent of color
 color = "auto"          # auto, mono, ansi, indexed, rgb; NO_COLOR always disables color
 scale = 0               # 0 = largest fitting integer scale; or 1, 2, 4, 8, 16
@@ -20352,11 +20446,11 @@ controller_timeout_ms = 250  # maximum native query duration
 controller_stale_ms = 2000   # fall back to keyboard if native focus/device evidence expires
 controller_max_bytes = 262144 # bounded native query output
 
-state_directory = "mios/tamagotchi" # relative to XDG_STATE_HOME, or HOME/.local/state
+state_directory = "mios/mons" # relative to XDG_STATE_HOME, or HOME/.local/state
 autosave_seconds = 10
 
 # Original voxel materials keep their species/personality hues under lighting.
-[tamagotchi.voxel_lighting]
+[mons.voxel_lighting]
 enabled = true
 ambient_percent = 55       # base surface illumination,20..100
 diffuse_percent = 65       # directional contribution,0..100; sum with ambient<=180
@@ -20366,17 +20460,17 @@ light_direction = [-45, 65, 45] # view-space X/right Y/up Z/viewer, each-100..10
 ascii_ramp = ".:-=+*#%@"    # low-to-high density, printable ASCII; occupied surfaces remain visible
 
 # One shared interactive detail decision follows cell budget, font-driven resize and zoom.
-# AI-hint: Isometric voxel room at a 30-degree rest elevation; azimuth, framing and the [tamagotchi.camera] tilt offset change during play.
-# AI-related: tools/native/mios-tamagotchi/src/world.rs, render.rs, ui.rs
+# AI-hint: Isometric voxel room at a 30-degree rest elevation; azimuth, framing and the [mons.camera] tilt offset change during play.
+# AI-related: tools/native/mios-mons/src/world.rs, render.rs, ui.rs
 # AI-hint: Version-one birth identity vocabulary; code replay uses the same generation settings.
-# AI-related: tools/native/mios-tamagotchi/src/genetics.rs
-[tamagotchi.genetics]
+# AI-related: tools/native/mios-mons/src/genetics.rs
+[mons.genetics]
 likes = ["gardening", "stargazing", "puddles", "shells", "music", "picnics", "clouds", "puzzles", "snow", "lanterns", "stories", "flowers"]
 dislikes = ["loud noises", "muddy paws", "bitter food", "untidy rooms", "cold rain", "being rushed", "empty plates", "bright lights"]
 traits = ["curious", "patient", "bold", "gentle", "tidy", "dreamy", "mischievous", "steady"]
 tropes = ["tiny guardian", "sleepy scholar", "garden friend", "shy performer", "puddle explorer", "star dreamer", "cozy host", "determined rookie"]
 
-[tamagotchi.world]
+[mons.world]
 enabled = true
 width_tiles = 8
 depth_tiles = 8
@@ -20388,9 +20482,9 @@ elevation_degrees = 30
 follow_percent = 100
 backdrop = 6
 
-# Interactive camera (presentation only; never saved, never steers the Mon). Zoom keeps [tamagotchi] zoom_*,
-# coarse orbit keeps [tamagotchi.world] orbit_step_degrees, and every axis eases over zoom_transition_frames.
-[tamagotchi.camera]
+# Interactive camera (presentation only; never saved, never steers the Mon). Zoom keeps [mons] zoom_*,
+# coarse orbit keeps [mons.world] orbit_step_degrees, and every axis eases over zoom_transition_frames.
+[mons.camera]
 pan_step_permille = 25        # one pan step (key, stick repeat), per-mille of the scene width (x) or height (y),5..200
 pan_max_permille = 300        # pan target limit per axis, per-mille of the scene,0..400; 0 disables pan
 pan_margin_permille = 100     # the subject centre stays this far inside every scene edge,0..250; max+margin<=500
@@ -20410,13 +20504,13 @@ zoom_rate_percent_s = 300
 reset_glide_ms = 350         # maximum accumulated camera transition ms; deadline cuts to reset pose,0 cuts immediately
 rest_epsilon_permille = 2    # stop threshold: per-mille of the axis's own input step, not raw degrees/percent
 
-[tamagotchi.presentation]
+[mons.presentation]
 automatic = true
 min_width = 64           # minimum packed-raster width for detailed mode
 min_height = 48          # minimum packed-raster height for detailed mode
 hysteresis_percent = 15  # retain detailed mode through minor size fluctuations
 
-[tamagotchi.game]
+[mons.game]
 tick_seconds = 2          # accelerated sample clock; offline time is frozen
 hatch_ticks = 3
 child_ticks = 20
@@ -20435,12 +20529,12 @@ starting_coins = 10
 memory_reveal_ticks = 2
 
 # AI-hint: Original Japanese-inspired animal identities and voices for task_3716; merge into the canonical SSOT.
-# AI-related: tools/native/mios-tamagotchi/src/characters.rs, usr/share/mios/mios.toml [tamagotchi]
+# AI-related: tools/native/mios-mons/src/characters.rs, usr/share/mios/mios.toml [mons]
 # Shape families repeat modulo eight: cat, fox, tanuki, rabbit, bear, frog, bird, turtle.
 # Palette indices use the existing sixteen-color palette; every body and accent index occurs once.
 # Each archetype has two gender-neutral voices; these characters and lines are original.
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 0
 name = "Mio"
 species = "cat / neko"
@@ -20458,7 +20552,7 @@ hatch = "New paws, new patch! Stay close while I grow."
 adult = "My paws grew; now I can stitch a bigger quilt."
 dead = "Keep our little quilt in a sunny place."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 1
 name = "Yuzu"
 species = "fox / kitsune"
@@ -20476,7 +20570,7 @@ hatch = "Tiny paws on the starting line. Zip-zest!"
 adult = "Longer legs, bigger trails! I will pace myself."
 dead = "Remember our trails when the wind feels warm."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 2
 name = "Mugi"
 species = "tanuki / raccoon dog"
@@ -20494,7 +20588,7 @@ hatch = "New paws. New stones. Well, that is promising."
 adult = "Grown paws sort faster. Do not rush the river."
 dead = "Leave one round pebble beside our quiet river."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 3
 name = "Tofu"
 species = "rabbit / usagi"
@@ -20512,7 +20606,7 @@ hatch = "Ta-da-hop! A tiny dancer enters the room."
 adult = "My ears grew into the grand finale!"
 dead = "Let my ribbon flutter in your happiest memories."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 4
 name = "Kumo"
 species = "bear / kuma"
@@ -20530,7 +20624,7 @@ hatch = "A little cub, a little cup. Hello, neighbor!"
 adult = "My paws grew big enough to carry two cups."
 dead = "May our shared cup keep your afternoons warm."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 5
 name = "Nori"
 species = "frog / kaeru, kappa-inspired"
@@ -20548,7 +20642,7 @@ hatch = "Plip! A tiny ripple says hello to the world."
 adult = "Bigger feet, brighter puddle beats!"
 dead = "Listen for my happy plips in the gentle rain."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 6
 name = "Sora"
 species = "bird / tsuru-inspired"
@@ -20566,7 +20660,7 @@ hatch = "A small wing unfolds. How lovely to meet you."
 adult = "My wings grew; my lanterns can hang a little higher."
 dead = "Keep a lantern glowing for our quiet evenings."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 7
 name = "Raku"
 species = "turtle / kame"
@@ -20584,7 +20678,7 @@ hatch = "Small shell, big promise: I will tend this garden."
 adult = "My shell grew; there is shade for one more sprout."
 dead = "Let the little garden grow where we once rested."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 8
 name = "Suzu"
 species = "cat / neko"
@@ -20602,7 +20696,7 @@ hatch = "A tiny note, a new beginning. Ting-hush."
 adult = "My paws grew steady enough to tune the softest bell."
 dead = "May a soft bell bring our afternoons to mind."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 9
 name = "Aki"
 species = "fox / kitsune"
@@ -20620,7 +20714,7 @@ hatch = "Tiny paws, first leaf! There is room beside me."
 adult = "My tail grew fluffy enough for bigger leaf piles."
 dead = "Keep our warmest leaf between your favorite pages."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 10
 name = "Hinoki"
 species = "tanuki / raccoon dog"
@@ -20638,7 +20732,7 @@ hatch = "Tiny paws, sturdy plans. Knock-kind!"
 adult = "My paws grew stronger; I can build a wider doorway."
 dead = "May our little roof keep sheltering new friends."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 11
 name = "Haru"
 species = "rabbit / usagi"
@@ -20656,7 +20750,7 @@ hatch = "Kite-kip! Tiny ears are ready for a new breeze."
 adult = "Bigger hops, longer kite string! Hello up there!"
 dead = "Look for a cheerful kite when a kind breeze visits."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 12
 name = "Mochi"
 species = "bear / kuma"
@@ -20674,7 +20768,7 @@ hatch = "Tiny cub, first foothold. Stomp-puff!"
 adult = "My paws grew sturdy; I can climb with a friend."
 dead = "Remember our brave little climbs and wide views."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 13
 name = "Puku"
 species = "frog / kaeru"
@@ -20692,7 +20786,7 @@ hatch = "Bloop-bravo! A little voice joins the pond."
 adult = "My voice grew round enough for a grand pond solo!"
 dead = "Let a drifting bubble carry our sweetest song."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 14
 name = "Kiri"
 species = "bird / tsuru-inspired"
@@ -20710,7 +20804,7 @@ hatch = "New wings. Same unruly sky. I suppose it is lovely."
 adult = "My wings grew; the clouds still refuse my directions."
 dead = "Save one odd little cloud on our map of the sky."
 
-[[tamagotchi.characters]]
+[[mons.characters]]
 id = 15
 name = "Iwa"
 species = "turtle / kame"
@@ -20729,15 +20823,15 @@ adult = "My paws grew; I can paint a welcome for the whole lane."
 dead = "Keep our welcome stone where new friends can find it."
 
 # AI-hint: Original procedural room themes and explicit purchase/earned decoration catalogue.
-# AI-related: tools/native/mios-tamagotchi/src/habitat.rs
+# AI-related: tools/native/mios-mons/src/habitat.rs
 # IDs are stable contiguous numeric save identities; append, do not reorder.
 # Pattern: plain, stripes, checks, dots, waves, leaves, stars, brick (0..7).
 # Kind: plant, seat, table, lamp, rug, shelf, ornament, trophy (0..7).
 # Slot 0..15 selects one seeded anchor; placing another item there stores the old one.
 # Reward thresholds use actual memory wins/active age ticks; both must hold when set.
-[tamagotchi.habitat]
+[mons.habitat]
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 0
 name = "Mosslight Nook"
 wall = 15
@@ -20745,7 +20839,7 @@ floor = 11
 accent = 3
 pattern = 5
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 1
 name = "Tideglass Bay"
 wall = 13
@@ -20753,7 +20847,7 @@ floor = 9
 accent = 2
 pattern = 4
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 2
 name = "Emberleaf Loft"
 wall = 4
@@ -20761,7 +20855,7 @@ floor = 14
 accent = 8
 pattern = 7
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 3
 name = "Moonbell Attic"
 wall = 10
@@ -20769,7 +20863,7 @@ floor = 6
 accent = 7
 pattern = 6
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 4
 name = "Peachcloud Porch"
 wall = 5
@@ -20777,7 +20871,7 @@ floor = 4
 accent = 12
 pattern = 3
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 5
 name = "Fernpost Library"
 wall = 11
@@ -20785,7 +20879,7 @@ floor = 14
 accent = 15
 pattern = 1
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 6
 name = "Honeytile Kitchen"
 wall = 7
@@ -20793,7 +20887,7 @@ floor = 4
 accent = 8
 pattern = 2
 
-[[tamagotchi.habitat.themes]]
+[[mons.habitat.themes]]
 id = 7
 name = "Snowreed Studio"
 wall = 2
@@ -20801,77 +20895,77 @@ floor = 13
 accent = 9
 pattern = 0
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 0
 name = "Dewpot Sprout"
 price = 3
 kind = 0
 slot = 0
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 1
 name = "Pebble Stool"
 price = 5
 kind = 1
 slot = 4
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 2
 name = "Pocket Table"
 price = 7
 kind = 2
 slot = 5
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 3
 name = "Firefly Lamp"
 price = 8
 kind = 3
 slot = 1
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 4
 name = "Ripple Mat"
 price = 6
 kind = 4
 slot = 8
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 5
 name = "Seedbook Shelf"
 price = 9
 kind = 5
 slot = 2
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 6
 name = "Comet Mobile"
 price = 12
 kind = 6
 slot = 3
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 7
 name = "Cloud Cushion"
 price = 4
 kind = 1
 slot = 6
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 8
 name = "Teacup Stand"
 price = 10
 kind = 2
 slot = 7
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 9
 name = "Moon Vase"
 price = 15
 kind = 6
 slot = 9
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 10
 name = "First Note Trophy"
 price = 0
@@ -20879,7 +20973,7 @@ kind = 7
 slot = 10
 reward_wins = 1
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 11
 name = "Trail Badge Trophy"
 price = 0
@@ -20887,7 +20981,7 @@ kind = 7
 slot = 10
 reward_wins = 3
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 12
 name = "Sapling Bench"
 price = 0
@@ -20895,7 +20989,7 @@ kind = 1
 slot = 4
 reward_age = 20
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 13
 name = "Grown Tree Planter"
 price = 0
@@ -20903,21 +20997,21 @@ kind = 0
 slot = 0
 reward_age = 60
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 14
 name = "Shell Clock"
 price = 18
 kind = 6
 slot = 11
 
-[[tamagotchi.habitat.items]]
+[[mons.habitat.items]]
 id = 15
 name = "Starfold Screen"
 price = 20
 kind = 5
 slot = 12
 
-[tamagotchi.game.training]
+[mons.game.training]
 name_starts = ["Mi", "Yu", "Ko", "Ra", "Su", "No", "Hi", "Ta"]
 name_ends = ["mo", "ri", "na", "ku", "po", "li", "to", "ya"]
 species_colors = [4, 8, 14, 15, 14, 11, 7, 1]
@@ -20935,7 +21029,7 @@ happiness_gain = 3
 cooldown_ticks = 1
 level_coin_reward = 2
 
-[tamagotchi.game.training.personality_colors]
+[mons.game.training.personality_colors]
 cozy = 3
 athletic = 6
 grumbly = 5

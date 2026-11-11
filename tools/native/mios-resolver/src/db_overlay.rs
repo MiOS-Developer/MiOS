@@ -1,6 +1,6 @@
 // AI-hint: DB-authoritative overlay hook -- inert by default unless MIOS_ACCOUNTS_DB_BACKED is enabled or --db-overlay is set.
 // AI-related: usr/lib/mios/mios_toml.py, usr/lib/mios/mios_db_config.py
-use crate::merge::deep_merge;
+use crate::merge::{deep_merge, normalize_mons_layer};
 use std::process::Command;
 use toml::Value;
 
@@ -25,12 +25,17 @@ pub fn maybe_apply_db_overlay(dst: &mut Value, force_db: bool) {
             if let Ok(json_str) = String::from_utf8(out.stdout) {
                 if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&json_str) {
                     if let Ok(toml_val) = json_to_toml(&json_val) {
-                        deep_merge(dst, toml_val);
+                        apply_db_layer(dst, toml_val);
                     }
                 }
             }
         }
     }
+}
+
+fn apply_db_layer(dst: &mut Value, mut layer: Value) {
+    normalize_mons_layer(&mut layer);
+    deep_merge(dst, layer);
 }
 
 fn json_to_toml(j: &serde_json::Value) -> Result<Value, ()> {
@@ -71,6 +76,20 @@ fn json_to_toml(j: &serde_json::Value) -> Result<Value, ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_database_game_preferences_outrank_canonical_file_values() {
+        let mut merged: Value = "[mons]\nzoom_percent=100\nrenderer='ascii'\n"
+            .parse()
+            .unwrap();
+        let db = serde_json::json!({"tamagotchi":{"zoom_percent":125,"renderer":""},"mons":{"zoom_percent":150}});
+        apply_db_layer(&mut merged, json_to_toml(&db).unwrap());
+        assert_eq!(merged["mons"]["zoom_percent"].as_integer(), Some(150));
+        assert_eq!(merged["mons"]["renderer"].as_str(), Some("ascii"));
+        assert!(merged.get("tamagotchi").is_none());
+        apply_db_layer(&mut merged, "tamagotchi=false".parse().unwrap());
+        assert_eq!(merged["mons"].as_bool(), Some(false));
+    }
 
     #[test]
     fn test_db_authoritative_default() {

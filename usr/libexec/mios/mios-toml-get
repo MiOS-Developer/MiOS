@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Thin shell-facing CLI over the shared usr/lib/mios/mios_toml.py resolver, with native tools/native/mios-toml-get dispatch.
 # AI-related: ../../lib/mios/mios_toml.py, ./mios-sync-theme, tools/native/mios-toml-get/
-# AI-functions: main
+# AI-functions: _native_bin, main
 """Shell CLI over the shared mios_toml resolver: native dispatch with fallback."""
 
 from __future__ import annotations
@@ -13,27 +13,55 @@ import sys
 
 def _native_bin() -> str | None:
     exe = "mios-toml-get.exe" if os.name == "nt" else "mios-toml-get"
+
+    def usable(path: str) -> bool:
+        if not os.path.isfile(path) or not os.access(path, os.X_OK):
+            return False
+        # Installed compatibility links must not launch this delegator again.
+        try:
+            return not os.path.samefile(path, __file__)
+        except OSError:
+            return os.path.realpath(path) != os.path.realpath(__file__)
+
+    catalog = os.environ.get("MIOS_NATIVE_BIN_DIR")
+    if catalog:
+        selected = os.path.join(catalog, exe)
+        if not usable(selected):
+            raise RuntimeError("configured native getter is missing, not executable or recursive: " + selected)
+        return selected
+
     root = os.environ.get("MIOS_TOML_ROOT") or os.environ.get("MIOS_ROOT") or os.path.abspath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
     )
-    for p in (
+    checkout = (
         os.path.join(root, "tools", "native", "target", "release", exe),
         os.path.join(root, "tools", "native", "target", "debug", exe),
+    )
+    installed = (
         os.path.join("/usr/bin", exe),
         os.path.join("/usr/local/bin", exe),
-    ):
-        if os.path.isfile(p):
+    )
+    system_root = os.name != "nt" and os.path.realpath(root) == os.path.sep
+    for p in (installed + checkout if system_root else checkout + installed):
+        if usable(p):
             return p
     return None
 
 
 def main(argv: list[str]) -> int:
-    nb = _native_bin()
+    try:
+        nb = _native_bin()
+    except RuntimeError as error:
+        sys.stderr.write("mios-toml-get: " + str(error) + "\n")
+        return 1
     if nb:
         try:
             res = subprocess.run([nb] + argv[1:], stdout=sys.stdout, stderr=sys.stderr)
             return res.returncode
         except Exception:
+            if os.environ.get("MIOS_NATIVE_BIN_DIR"):
+                sys.stderr.write("mios-toml-get: configured native getter could not be executed\n")
+                return 1
             pass
 
     args = argv[1:]

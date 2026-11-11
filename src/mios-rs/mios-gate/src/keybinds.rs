@@ -23,7 +23,13 @@ const CONTEXTS: &[&str] = &[
 const CONSOLE: &str = "console";
 /// Namespaces that act on a VT (no compositor, no Quickshell): key projection, tmux client verbs, the VT switch.
 const CONSOLE_NAMESPACES: &[&str] = &["key", "tmux"];
-const CONSOLE_ACTIONS: &[&str] = &["mios:graphical-vt"];
+const CONSOLE_ACTIONS: &[&str] = &[
+    "mios:graphical-vt",
+    "mios:volume up",
+    "mios:volume down",
+    "mios:media previous",
+    "mios:media next",
+];
 
 fn cannot_run(why: impl Into<String>) -> Report {
     Report {
@@ -784,6 +790,7 @@ pub fn analyze(ssot: &Value, lua: Option<&str>) -> Result<Analysis, String> {
 
 fn console_capable(action: &str) -> bool {
     action == "none"
+        || action == CURSOR
         || CONSOLE_ACTIONS.contains(&action)
         || action
             .split_once(':')
@@ -844,6 +851,7 @@ const NAV_CONTEXTS: &[&str] = &[
 /// Settings of [keybindings.global.controller.nav] that are not profiles (mios-inputd nav.rs RESERVED).
 const NAV_SETTINGS: &[&str] = &[
     "enabled",
+    "start_options",
     "flick_on",
     "flick_off",
     "contexts",
@@ -853,6 +861,7 @@ const NAV_SETTINGS: &[&str] = &[
     "app_poll_ms",
     "app_query_timeout_ms",
     "focus_gesture",
+    "console_actions",
 ];
 /// The base contexts a foreground app may refine (mios-inputd nav.rs APP_CONTEXTS).
 const APP_CONTEXTS: &[&str] = &["terminal", "console"];
@@ -886,6 +895,24 @@ const TMUX_VERBS: &[&str] = &[
     "menu",
     "keymap",
     "key",
+    "desktop",
+];
+const TMUX_DESKTOP_ACTIONS: &[&str] = &[
+    "center",
+    "maximize",
+    "restore",
+    "float",
+    "tile",
+    "toggle-float",
+    "new",
+    "monitor",
+    "minimize",
+    "close",
+    "context",
+    "snap-left",
+    "snap-right",
+    "snap-top",
+    "snap-bottom",
 ];
 
 fn input_known(name: &str) -> bool {
@@ -1004,6 +1031,8 @@ pub fn controller_audit(
                     let (v, arg) = verb.split_once(' ').unwrap_or((verb, ""));
                     if !TMUX_VERBS.contains(&v) {
                         out.push(format!("{tag}: unknown tmux verb {v:?}"));
+                    } else if v == "desktop" && !TMUX_DESKTOP_ACTIONS.contains(&arg) {
+                        out.push(format!("{tag}: unsupported tmux desktop action {arg:?}"));
                     } else if v == "menu" && menu_key.is_none() {
                         out.push(format!("{tag}: tmux:menu needs [keybindings.tmux].menu_key (its client-exact route is send-keys -c <client> -K <tmux_prefix> <menu_key>)"));
                     } else if v == "key" && !prefix_keys.contains(arg) {
@@ -1041,14 +1070,68 @@ pub fn controller_audit(
             )),
         };
     let chord = |v: Option<&Value>| str_list(v).into_iter().collect::<BTreeSet<String>>();
-    let toggle = chord(
-        ssot.get("desktop")
-            .and_then(|d| d.get("hyprland"))
-            .and_then(|h| h.get("hypr3d"))
-            .and_then(|h| h.get("controller"))
-            .and_then(|c| c.get("toggle_chord")),
-    );
+    let toggle_value = ssot
+        .get("desktop")
+        .and_then(|d| d.get("hyprland"))
+        .and_then(|h| h.get("hypr3d"))
+        .and_then(|h| h.get("controller"))
+        .and_then(|c| c.get("toggle_chord"));
+    let toggle = chord(toggle_value);
     let over = chord(ctl.get("mode_override_chord"));
+    let guide = ctl
+        .get("guide_button")
+        .and_then(Value::as_str)
+        .unwrap_or("BTN_MODE");
+    let physical = |value: &str| mios_resolver::keybindings::button_code(value).ok();
+    if let Some(flag) = ctl.get("global_capture_toggle") {
+        if flag.as_bool().is_none() {
+            out.push("controller.global_capture_toggle: must be a boolean".into());
+        }
+        if flag.as_bool() == Some(true) {
+            let codes = toggle
+                .iter()
+                .filter_map(|button| physical(button))
+                .collect::<BTreeSet<_>>();
+            let raw = toggle_value.and_then(Value::as_array);
+            if !raw.is_some_and(|buttons| {
+                buttons.len() == 2
+                    && buttons
+                        .iter()
+                        .all(|button| button.as_str().and_then(physical).is_some())
+            }) || toggle.len() != 2
+                || codes.len() != 2
+                || physical(guide).is_some_and(|guide| codes.contains(&guide))
+            {
+                out.push("controller.global_capture_toggle: requires two distinct non-Guide physical toggle_chord buttons".into());
+            }
+        }
+    }
+    if let Some(value) = ctl.get("window_zoom_chord") {
+        let zoom = str_list(Some(value));
+        let codes = zoom
+            .iter()
+            .filter_map(|button| physical(button))
+            .collect::<BTreeSet<_>>();
+        if !value
+            .as_array()
+            .is_some_and(|values| values.len() == zoom.len())
+            || (!zoom.is_empty()
+                && (zoom.len() != 2
+                    || codes.len() != 2
+                    || physical(guide).is_some_and(|guide| codes.contains(&guide))))
+        {
+            out.push("controller.window_zoom_chord: requires two distinct non-Guide physical buttons or an empty array".into());
+        }
+        if toggle
+            .iter()
+            .filter_map(|button| physical(button))
+            .any(|button| codes.contains(&button))
+        {
+            out.push(
+                "controller.window_zoom_chord: must not overlap the capture toggle_chord".into(),
+            );
+        }
+    }
     let both: Vec<_> = toggle.intersection(&over).cloned().collect();
     if !both.is_empty() {
         out.push(format!(
@@ -1098,6 +1181,66 @@ pub fn controller_audit(
     let Some(nav) = ctl.get("nav").and_then(Value::as_table) else {
         return out;
     };
+    if nav
+        .get("start_options")
+        .is_some_and(|value| value.as_bool().is_none())
+    {
+        out.push("controller.nav.start_options: must be a boolean".into());
+    }
+    let start_options = nav.get("start_options").and_then(Value::as_bool) == Some(true);
+    let contract =
+        |input: &str| CONTRACT_INPUTS.contains(&input) && !(start_options && input == "BTN_START");
+    let shared_console = nav
+        .get("console_actions")
+        .and_then(Value::as_table)
+        .is_some_and(|table| !table.is_empty());
+    if let Some(value) = nav.get("console_actions") {
+        if let Some(table) = value.as_table() {
+            let mut sources = BTreeSet::new();
+            for (label, value) in table {
+                let tag = format!("controller.nav.console_actions.{label}");
+                if !label.starts_with(|c: char| c.is_ascii_lowercase())
+                    || !label.split('_').all(|word| {
+                        !word.is_empty()
+                            && word
+                                .bytes()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    })
+                {
+                    out.push(format!("{tag}: label must use lowercase snake_case"));
+                }
+                let Some(record) = value.as_table() else {
+                    out.push(format!("{tag}: action/native record required"));
+                    continue;
+                };
+                if record
+                    .keys()
+                    .any(|key| !["action", "native"].contains(&key.as_str()))
+                {
+                    out.push(format!("{tag}: only action and native fields are accepted"));
+                }
+                let (Some(source), Some(action)) = (
+                    record.get("action").and_then(Value::as_str),
+                    record.get("native").and_then(Value::as_str),
+                ) else {
+                    out.push(format!("{tag}: action and native strings required"));
+                    continue;
+                };
+                check_action(&format!("{tag}.action"), source, false, true, &mut out);
+                check_action(&format!("{tag}.native"), action, true, true, &mut out);
+                if source.trim() != source || action.trim() != action || !console_capable(action) {
+                    out.push(format!(
+                        "{tag}: requires one validated native console projection"
+                    ));
+                }
+                if !sources.insert(source) {
+                    out.push(format!("{tag}: duplicate desktop action {source}"));
+                }
+            }
+        } else {
+            out.push("controller.nav.console_actions: must be a table".into());
+        }
+    }
     if nav.get("enabled").and_then(Value::as_bool) == Some(false) {
         return out;
     }
@@ -1216,7 +1359,7 @@ pub fn controller_audit(
                 continue;
             };
             let tag = format!("controller.nav {ctx} ({name})");
-            let required: Vec<&str> = if console || shell {
+            let required: Vec<&str> = if (console && !shared_console) || shell {
                 NAV_REQUIRED
                     .iter()
                     .chain(CONTRACT_INPUTS)
@@ -1251,9 +1394,20 @@ pub fn controller_audit(
                     }
                 }
             }
-            if !console && !shell {
+            if start_options
+                && map
+                    .get("BTN_START")
+                    .is_some_and(|value| value.as_str() != Some("none"))
+            {
+                out.push(format!(
+                    "{tag}: Start pause/options requires none outside a verified app"
+                ));
+            }
+            if !shell && (!console || shared_console) {
                 for input in CONTRACT_INPUTS {
-                    if map.contains_key(*input) {
+                    if contract(input)
+                        && map.get(*input).is_some_and(|v| v.as_str() != Some("none"))
+                    {
                         out.push(format!("{tag}: {input} is owned by the capture contract or the room on a compositor; it cannot be remapped here"));
                     }
                 }
@@ -1466,9 +1620,42 @@ fn app_audit(nav: &toml::Table, check_value: &BindingValidator<'_>, out: &mut Ve
                 };
                 let ptag = format!("controller.nav {ctx} app {name} ({n})");
                 for (input, v) in &map {
+                    if nav.get("start_options").and_then(Value::as_bool) == Some(true) {
+                        let actions = match v {
+                            Value::String(action) => vec![action.as_str()],
+                            Value::Array(actions) => {
+                                actions.iter().filter_map(Value::as_str).collect()
+                            }
+                            _ => vec![],
+                        };
+                        if input == "BTN_START"
+                            && actions.iter().any(|action| {
+                                !["none", "key:o", "key:F1", "key:p"].contains(action)
+                            })
+                        {
+                            out.push(format!("{ptag}: Start pause/options requires an app-owned menu/pause key or none"));
+                        }
+                        if input == "BTN_SELECT"
+                            && actions.iter().any(|action| {
+                                action.starts_with("key:") && !["key:o", "key:F1"].contains(action)
+                            })
+                        {
+                            out.push(format!(
+                                "{ptag}: app view/menu keys require the app-owned menu endpoint"
+                            ));
+                        }
+                    }
                     if console {
                         check_value(&format!("{ptag}.{input}"), input, v, true, out);
-                    } else if CONTRACT_INPUTS.contains(&input.as_str())
+                    }
+                    if (ctx != CONSOLE
+                        || nav
+                            .get("console_actions")
+                            .and_then(Value::as_table)
+                            .is_some_and(|table| !table.is_empty()))
+                        && CONTRACT_INPUTS.contains(&input.as_str())
+                        && !(input == "BTN_START"
+                            && nav.get("start_options").and_then(Value::as_bool) == Some(true))
                         && v.as_str() != Some("none")
                     {
                         out.push(format!("{ptag}: {input} is owned by the capture contract or the room on a compositor; it cannot be remapped here"));
@@ -2355,8 +2542,8 @@ BTN_TL2 = \"key:ALT+MINUS\"\nBTN_TR2 = \"key:ALT+EQUAL\"\nBTN_THUMBL = \"key:ALT
         );
         out += r#"
 [keybindings.global.controller.nav.apps.mon]
-exe = ["/usr/bin/mios-tamagotchi"]
-user_exe = ["/home/mios/.local/bin/mios-tamagotchi-sample"]
+exe = ["/usr/bin/mios-mons"]
+user_exe = ["/home/mios/.local/bin/mios-mons-sample"]
 camera = true
 contexts = { terminal = "mon", console = "mon_console" }
 [keybindings.global.controller.nav.apps.mon.repeat]
@@ -2386,6 +2573,122 @@ BTN_TL2 = [250, 90]
         let f = audit(&ok);
         assert!(f.is_empty(), "{f:#?}");
         assert!(!f.iter().any(|x| x.contains("unknown controller input mon")));
+    }
+    #[test]
+    fn global_chords_and_explicit_start_options_are_audited_without_legacy_profile_bypass() {
+        let base=NAV.replacen("mode_override_chord = [\"BTN_MODE\", \"BTN_SELECT\"]",
+            "mode_override_chord = [\"BTN_MODE\", \"BTN_SELECT\"]\nglobal_capture_toggle = true\nwindow_zoom_chord = [\"BTN_SELECT\", \"BTN_START\"]",1)
+            .replacen("enabled = true\nflick_on", "enabled = true\nstart_options = true\nflick_on",1)
+            .replace("TOGGLE_CHORD = \"mios:graphical-vt\"","TOGGLE_CHORD = \"none\"");
+        let mut ok = with_mon(&base);
+        for profile in [
+            "mon_tmux",
+            "mon_plain",
+            "mon_console_tmux",
+            "mon_console_plain",
+        ] {
+            ok=ok.replace(&format!("[keybindings.global.controller.nav.{profile}]\n"),
+                &format!("[keybindings.global.controller.nav.{profile}]\nBTN_SELECT = \"key:o\"\nBTN_START = \"key:p\"\n"));
+        }
+        ok+="\n[keybindings.global.controller.nav.console_actions]\nworkspace_next = { action = \"hypr:workspace e+1\", native = \"tmux:session-next\" }\n";
+        assert!(audit(&ok).is_empty(), "{:?}", audit(&ok));
+        for (from, to, want) in [
+            (
+                "toggle_chord = [\"BTN_THUMBL\", \"BTN_THUMBR\"]",
+                "toggle_chord = [\"BTN_THUMBL\", \"BTN_THUMBR\", \"BTN_THUMBL\"]",
+                "global_capture_toggle: requires two distinct",
+            ),
+            (
+                "toggle_chord = [\"BTN_THUMBL\", \"BTN_THUMBR\"]",
+                "toggle_chord = [\"BTN_THUMBL\", 1, \"BTN_THUMBR\"]",
+                "global_capture_toggle: requires two distinct",
+            ),
+            (
+                "toggle_chord = [\"BTN_THUMBL\", \"BTN_THUMBR\"]",
+                "toggle_chord = [\"BTN_THUMBL\", \"LS_UP\"]",
+                "global_capture_toggle: requires two distinct",
+            ),
+            (
+                "window_zoom_chord = [\"BTN_SELECT\", \"BTN_START\"]",
+                "window_zoom_chord = [\"BTN_SELECT\", \"BTN_SELECT\"]",
+                "two distinct",
+            ),
+            (
+                "window_zoom_chord = [\"BTN_SELECT\", \"BTN_START\"]",
+                "window_zoom_chord = [\"BTN_MODE\", \"BTN_START\"]",
+                "non-Guide",
+            ),
+            (
+                "window_zoom_chord = [\"BTN_SELECT\", \"BTN_START\"]",
+                "window_zoom_chord = [1]",
+                "two distinct",
+            ),
+            (
+                "window_zoom_chord = [\"BTN_SELECT\", \"BTN_START\"]",
+                "window_zoom_chord = [\"BTN_THUMBL\", \"BTN_START\"]",
+                "must not overlap",
+            ),
+            (
+                "BTN_START = \"key:p\"",
+                "BTN_START = \"key:CTRL+z\"",
+                "app-owned menu/pause",
+            ),
+            (
+                "BTN_START = \"none\"",
+                "BTN_START = [\"tmux:key y\", \"pointer:cursor\"]",
+                "Start pause/options",
+            ),
+            (
+                "native = \"tmux:session-next\"",
+                "native = \"hypr:killactive\"",
+                "native console projection",
+            ),
+        ] {
+            let findings = audit(&ok.replacen(from, to, 1));
+            assert!(
+                findings.iter().any(|finding| finding.contains(want)),
+                "{to}: {findings:?}"
+            );
+        }
+    }
+    #[test]
+    fn vendor_native_desktop_adapters_pass_and_unknown_desktop_actions_are_refused() {
+        let mut vendor: Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
+        let inspect = |value: &Value| {
+            let global = &value["keybindings"]["global"];
+            let namespaces = str_list(global.get("action_namespaces"))
+                .into_iter()
+                .collect();
+            let implemented = global["action_argv"]
+                .as_table()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            let planned = str_list(global.get("planned_actions"))
+                .into_iter()
+                .collect();
+            controller_audit(
+                value,
+                &namespaces,
+                &implemented,
+                &planned,
+                global.get("native_actions").and_then(Value::as_table),
+            )
+        };
+        assert!(inspect(&vendor).is_empty(), "{:?}", inspect(&vendor));
+        for verb in ["kill-server", "snap-left extra", ""] {
+            vendor["keybindings"]["global"]["controller"]["nav"]["console_actions"]
+                ["close_window"]["native"] = format!("tmux:desktop {verb}").into();
+            assert!(
+                inspect(&vendor)
+                    .iter()
+                    .any(|finding| finding.contains("unsupported tmux desktop action")),
+                "{verb}"
+            );
+        }
     }
 
     /// task3773: the gate mirrors the native focus_gesture grammar -- the vendor-shaped
@@ -2455,22 +2758,22 @@ direction_deg = 20\nreturn_ms = 250\ncooldown_ms = 400\n";
         let app = "[keybindings.global.controller.nav.apps.mon]\n";
         for (from, to, why) in [
             (
-                "exe = [\"/usr/bin/mios-tamagotchi\"]",
-                "exe = [\"usr/bin/mios-tamagotchi\"]",
+                "exe = [\"/usr/bin/mios-mons\"]",
+                "exe = [\"usr/bin/mios-mons\"]",
                 "apps.mon.exe: 1 to 8 absolute paths",
             ),
             (
-                "exe = [\"/usr/bin/mios-tamagotchi\"]",
+                "exe = [\"/usr/bin/mios-mons\"]",
                 "exe = []",
                 "apps.mon.exe: 1 to 8 absolute paths",
             ),
             (
-                "user_exe = [\"/home/mios/.local/bin/mios-tamagotchi-sample\"]",
-                "user_exe = [\"mios-tamagotchi-sample\"]",
+                "user_exe = [\"/home/mios/.local/bin/mios-mons-sample\"]",
+                "user_exe = [\"mios-mons-sample\"]",
                 "never a basename",
             ),
             (
-                "user_exe = [\"/home/mios/.local/bin/mios-tamagotchi-sample\"]",
+                "user_exe = [\"/home/mios/.local/bin/mios-mons-sample\"]",
                 "user_exe = [\"/home/mios/../x\"]",
                 "apps.mon.user_exe",
             ),

@@ -1,0 +1,7 @@
+# AI-hint: Narrow sudo gate for the validated MiOS remote PTY greetd broker.
+# AI-related: src/mios-rs/miosd/src/remote_login.rs, usr/lib/pam.d/mios-remote-login
+# Worker accepts only caller terminal witnesses, never a config or command.
+# It independently validates SUDO_UID, NSS, PTY, ancestor, executable and pane.
+Cmnd_Alias MIOS_REMOTE_LOGIN = /usr/bin/miosd remote-login worker *
+Defaults!MIOS_REMOTE_LOGIN env_reset, !setenv, use_pty
+ALL ALL=(root) NOPASSWD: NOSETENV: MIOS_REMOTE_LOGIN

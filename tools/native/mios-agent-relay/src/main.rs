@@ -1938,7 +1938,6 @@ struct WorkspacePolicy {
     monitor: Option<f64>,
     // Floor (cells along the split axis) that keeps a slim monitor readable.
     monitor_min: usize,
-    spiral: Option<f64>,
     chat_first: bool,
     start: usize,
     clockwise: bool,
@@ -2031,12 +2030,12 @@ fn workspace_policy(config: &Value) -> Result<WorkspacePolicy, String> {
             .map(|n| n as usize)
             .ok_or_else(|| invalid("monitor_min_rows"))
     })?;
+    share("spiral_share")?; // Shared SpiralPolicy owns the resolved share.
     Ok(WorkspacePolicy {
         column: share("column_share")?,
         chat: share("chat_share")?,
         monitor: share("monitor_share")?,
         monitor_min,
-        spiral: share("spiral_share")?,
         chat_first,
         start,
         clockwise,
@@ -2135,25 +2134,34 @@ fn workspace_nested(
     }
     let policy = workspace_policy(config)?;
     let minimum_columns = workspace_number(config, "worker_min_columns", 3, 100)?;
-    let mut direction = direction % 4;
-    let extent = |direction: usize| -> Result<Option<usize>, String> {
-        let horizontal = direction.is_multiple_of(2);
-        let size = if horizontal { rect.w } else { rect.h };
-        let minimum = if horizontal { minimum_columns } else { 2 };
-        if size <= 2 {
-            return Ok(None);
-        }
-        let first = policy.cells(config, policy.spiral, size - 1, true)?;
-        let rest = (size - 1).saturating_sub(first);
-        Ok((first >= 1 && first.min(rest) >= minimum).then_some(first))
-    };
-    let mut first = extent(direction)?;
-    if first.is_none() {
-        direction = policy.turn(direction);
-        first = extent(direction)?;
+    // Existing JSON clients may explicitly send layout:null for defaults.
+    // TOML has no null; preserve that contract before using the shared policy.
+    let mut split_config = std::borrow::Cow::Borrowed(config);
+    if config.get("layout") == Some(&Value::Null) {
+        split_config
+            .to_mut()
+            .as_object_mut()
+            .ok_or("workspace config must be a table")?
+            .remove("layout");
     }
-    let first = first.ok_or("workspace cannot fit its worker reservations")?;
-    let (cell, rest) = workspace_carve(rect, direction, first);
+    let document =
+        toml::Value::try_from(split_config.as_ref()).map_err(|error| error.to_string())?;
+    let spiral = mios_resolver::popup::SpiralPolicy::from_workspace(&document)?;
+    let area = mios_resolver::popup::CellRect {
+        x: u32::try_from(rect.x).map_err(|_| "workspace coordinates overflow")?,
+        y: u32::try_from(rect.y).map_err(|_| "workspace coordinates overflow")?,
+        width: u32::try_from(rect.w).map_err(|_| "workspace width overflow")?,
+        height: u32::try_from(rect.h).map_err(|_| "workspace height overflow")?,
+    };
+    let step = spiral.split(area, (direction % 4) as u8, (minimum_columns as u32, 2), 1)?;
+    let convert = |r: mios_resolver::popup::CellRect| WorkspaceRect {
+        w: r.width as usize,
+        h: r.height as usize,
+        x: r.x as usize,
+        y: r.y as usize,
+    };
+    let direction = usize::from(step.direction);
+    let (cell, rest) = (convert(step.cell), convert(step.remainder));
     let cell = cell.leaf(&panes[0])?;
     let rest = workspace_nested(rest, &panes[1..], policy.turn(direction), config)?;
     Ok(rect.branch(
@@ -2446,6 +2454,292 @@ fn workspace_remote_viewer(socket: &str, session: &str, w: usize) -> Result<bool
     Ok(workspace_pid_is_remote_in(Path::new("/proc"), pid))
 }
 
+fn workspace_process_start(pid: u32) -> Result<u64, String> {
+    let path = PathBuf::from(format!("/proc/{pid}"));
+    if !owned_path(&path) {
+        return Err("worker process belongs to another user".into());
+    }
+    let record = fs::read_to_string(path.join("stat")).map_err(|_| "worker process exited")?;
+    let (_, fields) = record
+        .rsplit_once(") ")
+        .ok_or("invalid worker process identity")?;
+    let fields: Vec<_> = fields.split_whitespace().collect();
+    if fields.first() == Some(&"Z") {
+        return Err("worker process exited".into());
+    }
+    fields
+        .get(19)
+        .ok_or("missing worker process start")?
+        .parse()
+        .map_err(|_| "invalid worker process start".into())
+}
+
+/// Place only a newly created, explicitly owned MCP float. A global upstream
+/// slot identifies its owner; its stable layout cell belongs to this window.
+fn workspace_desktop_place(
+    request: &Value,
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+) -> Result<Value, String> {
+    let head = string(request, "head")?;
+    let pane = string(request, "pane")?;
+    let numeric_id = |id: &str, prefix: char| {
+        id.strip_prefix(prefix)
+            .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if !numeric_id(head, '%') || !numeric_id(pane, '%') || pane == head {
+        return Err("invalid new worker pane".into());
+    }
+    let owner = string(request, "owner")?;
+    identifier(owner)?;
+    let slot = request["slot"]
+        .as_u64()
+        .filter(|n| (1..=64).contains(n))
+        .ok_or("invalid worker slot")?;
+    let pid = request["expected_pid"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or("missing worker PID")?;
+    let start = request["expected_start"]
+        .as_u64()
+        .filter(|n| *n > 0)
+        .ok_or("missing worker process start")?;
+    let context_format = "#{session_name}|#{session_id}|#{window_id}|#{@mios-desktop-enabled}|#{@mios-desktop-workarea-pane}";
+    let context_snapshot = tmux(&["display-message", "-p", "-t", head, context_format])?;
+    let context: Vec<_> = context_snapshot.split('|').collect();
+    if context.len() != 5
+        || context[0] != string(request, "session")?
+        || !numeric_id(context[1], '$')
+        || !numeric_id(context[2], '@')
+        || context[3] != "1"
+    {
+        return Err("worker placement requires its witnessed desktop window".into());
+    }
+    // The bridge already serializes allocation, but native callers also need a
+    // per-window transaction rather than racing for the same free layout cell.
+    let _placement_lock = request["socket"]
+        .as_str()
+        .map(|socket| {
+            workspace_lock(
+                Path::new(socket),
+                &format!("mios-desktop-place-{}.lock", digest(context[2])),
+            )
+        })
+        .transpose()?;
+    let witness_format = "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pane_tty}|#{pane_floating_flag}|#{@mios-mcp-owner}|#{@mcp_slot}|#{@mcp_owner}|#{@mcp_pane}|#{E:@mios-managed-pane}|#{@mios-desktop-canvas}";
+    let before = tmux(&["display-message", "-p", "-t", pane, witness_format])?;
+    let fields: Vec<_> = before.split('|').collect();
+    let tty_ok = |tty: &str| {
+        tty.strip_prefix("/dev/pts/")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if fields.len() != 12
+        || fields[0] != context[1]
+        || fields[1] != context[2]
+        || fields[2] != pane
+        || fields[3] != pid.to_string()
+        || !tty_ok(fields[4])
+        || fields[5] != "1"
+        || fields[6] != owner
+        || fields[7] != slot.to_string()
+        || fields[8] != "agent"
+        || fields[9] != pane
+        || !fields[10].is_empty()
+        || fields[11] == "1"
+        || workspace_process_start(pid)? != start
+    {
+        return Err("new worker owner, window, or process identity changed".into());
+    }
+    const RECEIPT: &str = "@mios-mcp-placement-receipt";
+    if !tmux(&["show-options", "-pqv", "-t", pane, RECEIPT])?.is_empty() {
+        return Err("worker already has a placement receipt".into());
+    }
+    if context[4].is_empty() {
+        return Ok(json!({"managed":true,"placed":false,"reason":"compact"}));
+    }
+    let canvas_pane = context[4];
+    if !numeric_id(canvas_pane, '%') {
+        return Err("invalid desktop work area pane".into());
+    }
+    let canvas_format = "#{window_id}|#{@mios-desktop-canvas}|#{pane_floating_flag}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}";
+    let canvas_snapshot = tmux(&["display-message", "-p", "-t", canvas_pane, canvas_format])?;
+    let canvas: Vec<_> = canvas_snapshot.split('|').collect();
+    if canvas.len() != 7 || canvas[0] != context[2] || canvas[1] != "1" || canvas[2] != "0" {
+        return Err("desktop work area identity changed".into());
+    }
+    let cell = |value: &str| {
+        value
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n <= 4096)
+            .ok_or("invalid desktop work area".to_owned())
+    };
+    let bounds = mios_resolver::popup::CellRect {
+        x: cell(canvas[3])?,
+        y: cell(canvas[4])?,
+        width: cell(canvas[5])?,
+        height: cell(canvas[6])?,
+    };
+    let doc = mios_resolver::resolve_merged(Some(Path::new("/")), false)
+        .map_err(|_| "desktop placement policy unavailable")?;
+    let at = |name: &str| {
+        name.split('.')
+            .try_fold(&doc, |value, name| value.get(name))
+    };
+    if at("keybindings.tmux.desktop.enabled").and_then(toml::Value::as_bool) != Some(true) {
+        return Err("desktop placement is disabled by policy".into());
+    }
+    let setting = |name: &str| -> Result<u32, String> {
+        at(name)
+            .and_then(toml::Value::as_integer)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| (2..=4096).contains(n))
+            .ok_or_else(|| format!("invalid {name}"))
+    };
+    let minimum = (
+        setting("keybindings.tmux.desktop.min_columns")?,
+        setting("keybindings.tmux.desktop.min_rows")?,
+    );
+    let config = at("mcp.tmux.workspace").ok_or("desktop workspace policy is missing")?;
+    let spiral = mios_resolver::popup::SpiralPolicy::from_workspace(config)?;
+    // A live receipt, not a global slot or an idle-looking pane, occupies a cell.
+    let rows = tmux(&["list-panes", "-t", context[2], "-F", "#{pane_id}\t#{pane_pid}\t#{pane_tty}\t#{pane_floating_flag}\t#{@mios-mcp-owner}\t#{@mcp_slot}\t#{@mios-mcp-placement-receipt}"])?;
+    let mut occupied = std::collections::BTreeSet::new();
+    for row in rows.lines() {
+        let parts: Vec<_> = row.split('\t').collect();
+        if parts.len() != 7
+            || parts[0] == pane
+            || parts[3] != "1"
+            || !tty_ok(parts[2])
+            || parts[6].len() > 4096
+        {
+            continue;
+        }
+        let Ok(receipt) = serde_json::from_str::<Value>(parts[6]) else {
+            continue;
+        };
+        let (Some(worker_pid), Some(worker_start), Some(placement_cell)) = (
+            receipt["pid"].as_u64().and_then(|n| u32::try_from(n).ok()),
+            receipt["start"].as_u64(),
+            receipt["placement_cell"]
+                .as_u64()
+                .filter(|n| (1..=64).contains(n)),
+        ) else {
+            continue;
+        };
+        if receipt["schema"] == 1
+            && receipt["window"] == context[2]
+            && receipt["session"] == context[1]
+            && receipt["pane"] == parts[0]
+            && receipt["tty"] == parts[2]
+            && receipt["owner"] == parts[4]
+            && identifier(parts[4]).is_ok()
+            && receipt["upstream_slot"]
+                .as_u64()
+                .is_some_and(|slot| parts[5] == slot.to_string())
+            && parts[1] == worker_pid.to_string()
+            && workspace_process_start(worker_pid).ok() == Some(worker_start)
+        {
+            occupied.insert(placement_cell);
+        }
+    }
+    let placement_cell = (1..=64_u64)
+        .find(|cell| !occupied.contains(cell))
+        .ok_or("desktop has no free worker cells")?;
+    let mut area = bounds;
+    let mut direction = spiral.start();
+    for index in 0..placement_cell {
+        match spiral.split(area, direction, (minimum.0 + 2, minimum.1 + 2), 0) {
+            Ok(step) if index + 1 == placement_cell => {
+                area = step.cell;
+                break;
+            }
+            Ok(step) => {
+                area = step.remainder;
+                direction = spiral.turn(step.direction);
+            }
+            Err(_)
+                if index + 1 == placement_cell
+                    && area.width >= minimum.0 + 2
+                    && area.height >= minimum.1 + 2 =>
+            {
+                break
+            }
+            Err(_) => return Ok(json!({"managed":true,"placed":false,"reason":"compact"})),
+        }
+    }
+    let available = (area.width - 2, area.height - 2);
+    let popup = mios_resolver::popup::PopupPolicy::from_value(&doc)?;
+    let (width, height) = popup.size(
+        mios_resolver::popup::SurfaceKind::Window,
+        available.0 as u16,
+        available.1 as u16,
+    );
+    let width = u32::from(width).max(minimum.0).min(available.0);
+    let height = u32::from(height).max(minimum.1).min(available.1);
+    let x = area.x + 1 + (available.0 - width) / 2;
+    let y = area.y + 1 + (available.1 - height) / 2;
+    if tmux(&["display-message", "-p", "-t", pane, witness_format])? != before
+        || workspace_process_start(pid)? != start
+        || tmux(&["display-message", "-p", "-t", head, context_format])? != context_snapshot
+        || tmux(&["display-message", "-p", "-t", canvas_pane, canvas_format])? != canvas_snapshot
+    {
+        return Err("worker or desktop work area changed before placement".into());
+    }
+    // All values embedded below have numeric IDs/coordinates or validated
+    // owner/PTY grammar. Session names are checked above, never format source.
+    let eq = |format: &str, value: &str| format!("#{{==:{format},{value}}}");
+    let pane_guard =
+        |id: &str, predicate: &str| format!("#{{P:#{{?#{{==:#{{pane_id}},{id}}},{predicate},}}}}");
+    let safe_context =
+        "#{session_id}|#{window_id}|#{@mios-desktop-enabled}|#{@mios-desktop-workarea-pane}";
+    let head_guard = pane_guard(head, &eq(safe_context, &context[1..].join("|")));
+    let canvas_guard = pane_guard(canvas_pane, &eq(canvas_format, &canvas_snapshot));
+    let guard = format!(
+        "#{{&&:{},#{{&&:{},#{{&&:{head_guard},{canvas_guard}}}}}}}",
+        eq(witness_format, &before),
+        eq("#{@mios-mcp-placement-receipt}", "")
+    );
+    let receipt = json!({"schema":1,"pane":pane,"pid":pid,"start":start,"tty":fields[4],"owner":owner,"upstream_slot":slot,"placement_cell":placement_cell,"window":context[2],"session":context[1]});
+    let receipt_text = receipt.to_string();
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    let apply = format!("float-pane -d -t {pane} -x {width} -y {height} -X {x} -Y {y} ; set-option -p -t {pane} {RECEIPT} {} ; display-message -p mios-worker-placement-applied", quote(&receipt_text));
+    if tmux(&[
+        "if-shell",
+        "-F",
+        "-t",
+        pane,
+        &guard,
+        &apply,
+        "display-message -p mios-worker-placement-refused",
+    ])? != "mios-worker-placement-applied"
+    {
+        return Err("worker or desktop work area changed at placement".into());
+    }
+    if tmux(&["display-message", "-p", "-t", pane, witness_format])? != before
+        || workspace_process_start(pid)? != start
+        || tmux(&["display-message", "-p", "-t", head, context_format])? != context_snapshot
+        || tmux(&["display-message", "-p", "-t", canvas_pane, canvas_format])? != canvas_snapshot
+    {
+        return Err("worker or desktop work area changed during placement".into());
+    }
+    let actual = tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
+    ])?;
+    if actual != format!("{x}|{y}|{width}|{height}")
+        || tmux(&["show-options", "-pqv", "-t", pane, RECEIPT])? != receipt_text
+    {
+        return Err("worker placement was not applied".into());
+    }
+    Ok(
+        json!({"managed":true,"placed":true,"pane":pane,"placement_cell":placement_cell,"x":x,"y":y,"width":width,"height":height}),
+    )
+}
+
 fn workspace(request: &Value) -> Result<Value, String> {
     let config = &request["workspace"];
     if config["enabled"] != true {
@@ -2504,6 +2798,9 @@ fn workspace(request: &Value) -> Result<Value, String> {
     }
     let tmux = |args: &[&str]| workspace_tmux(socket, args);
     let action = string(request, "action")?;
+    if action == "desktop-place" {
+        return workspace_desktop_place(request, &tmux);
+    }
     let mut head = request["head"].as_str().unwrap_or("").to_string();
     if action == "ensure" {
         if std::env::var("TMUX_PANE").ok().as_deref() != Some(head.as_str()) {
@@ -5410,6 +5707,26 @@ mod tmuxos_layout_tests {
         assert!(workspace_policy(&cfg).is_err());
     }
 
+    #[test]
+    fn explicit_null_layout_keeps_legacy_default_geometry() {
+        let mut absent = config();
+        absent.as_object_mut().unwrap().remove("layout");
+        let mut explicit_null = absent.clone();
+        explicit_null["layout"] = Value::Null;
+        let panes = workers(4);
+        for (w, h) in [(180, 48), (320, 90)] {
+            assert_eq!(
+                workspace_layout(&explicit_null, w, h, "%0", &panes, Some("%1"), Some("%2"))
+                    .unwrap(),
+                workspace_layout(&absent, w, h, "%0", &panes, Some("%1"), Some("%2")).unwrap()
+            );
+            assert_eq!(
+                workspace_worker_capacity(&explicit_null, w, h, &panes, false).unwrap(),
+                workspace_worker_capacity(&absent, w, h, &panes, false).unwrap()
+            );
+        }
+    }
+
     // Operator sketch 3 ("slim this!" -> "Bigger Agents pane sizing"): the
     // monitor is a slim golden strip (1/phi^3) above the agents spiral.
     fn slim_config() -> Value {
@@ -5559,6 +5876,277 @@ mod tmuxos_layout_tests {
                 "{w}x{h}: monitor {monitor} < floor {floor}"
             );
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod desktop_worker_placement_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn actual_owned_floats_follow_phi_without_splitting_the_desktop_roles() {
+        let temp = tempfile::Builder::new()
+            .prefix("mios-worker-placement-")
+            .tempdir()
+            .unwrap();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = temp.path().join("default").to_str().unwrap().to_owned();
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = workspace_tmux(&self.0, &["kill-server"]);
+            }
+        }
+        let _cleanup = Cleanup(socket.clone());
+        let tmux = |args: &[&str]| workspace_tmux(&socket, args);
+        let head = tmux(&[
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-s",
+            "mios-phi-proof",
+            "-x",
+            "320",
+            "-y",
+            "120",
+            "exec /usr/bin/sleep 120",
+        ])
+        .unwrap();
+        let canvas = tmux(&[
+            "split-window",
+            "-h",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &head,
+            "exec /usr/bin/sleep 120",
+        ])
+        .unwrap();
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &head,
+            "@mios-desktop-enabled",
+            "1",
+        ])
+        .unwrap();
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &head,
+            "@mios-desktop-workarea-pane",
+            &canvas,
+        ])
+        .unwrap();
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &canvas,
+            "@mios-desktop-canvas",
+            "1",
+        ])
+        .unwrap();
+        let geometry = "#{pane_id}|#{pane_pid}|#{pane_tty}|#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}|#{pane_floating_flag}";
+        let head_before = tmux(&["display-message", "-p", "-t", &head, geometry]).unwrap();
+        let canvas_before = tmux(&["display-message", "-p", "-t", &canvas, geometry]).unwrap();
+        // Global upstream slots in another window must not consume a local
+        // placement cell or push this window into the compact fallback.
+        let unrelated = tmux(&[
+            "new-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            "mios-phi-proof:",
+            "exec /usr/bin/sleep 120",
+        ])
+        .unwrap();
+        tmux(&["set-option", "-p", "-t", &unrelated, "@mcp_slot", "1"]).unwrap();
+        let mut rectangles = Vec::new();
+        let mut first_request = None;
+        for (cell, slot) in [(1, 17), (2, 33)] {
+            let pane = tmux(&[
+                "new-pane",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-t",
+                &head,
+                "-x",
+                "40",
+                "-y",
+                "10",
+                "exec /usr/bin/sleep 120",
+            ])
+            .unwrap();
+            let pid: u32 = tmux(&["display-message", "-p", "-t", &pane, "#{pane_pid}"])
+                .unwrap()
+                .parse()
+                .unwrap();
+            let start = workspace_process_start(pid).unwrap();
+            tmux(&[
+                "set-option",
+                "-p",
+                "-t",
+                &pane,
+                "@mios-mcp-owner",
+                "mios-phi-proof",
+            ])
+            .unwrap();
+            tmux(&[
+                "set-option",
+                "-p",
+                "-t",
+                &pane,
+                "@mcp_slot",
+                &slot.to_string(),
+            ])
+            .unwrap();
+            tmux(&["set-option", "-p", "-t", &pane, "@mcp_owner", "agent"]).unwrap();
+            tmux(&["set-option", "-p", "-t", &pane, "@mcp_pane", &pane]).unwrap();
+            let request = json!({"socket":socket,"head":head,"pane":pane,"session":"mios-phi-proof","owner":"mios-phi-proof", "slot":slot,"expected_pid":pid,"expected_start":start});
+            if first_request.is_none() {
+                first_request = Some(request.clone());
+            }
+            let before = tmux(&["display-message", "-p", "-t", &pane, geometry]).unwrap();
+            for (field, invalid) in [
+                ("owner", json!("another-owner")),
+                ("expected_start", json!(start + 1)),
+                ("expected_pid", json!(std::process::id())),
+            ] {
+                let mut bad = request.clone();
+                bad[field] = invalid;
+                assert!(
+                    workspace_desktop_place(&bad, &tmux).is_err(),
+                    "{field} must refuse"
+                );
+                assert_eq!(
+                    tmux(&["display-message", "-p", "-t", &pane, geometry]).unwrap(),
+                    before
+                );
+            }
+            let result = workspace_desktop_place(&request, &tmux).unwrap();
+            assert_eq!(result["placed"], true);
+            assert_eq!(
+                result["placement_cell"], cell,
+                "global upstream slot is only an ownership witness"
+            );
+            let rect = (
+                result["x"].as_u64().unwrap(),
+                result["y"].as_u64().unwrap(),
+                result["width"].as_u64().unwrap(),
+                result["height"].as_u64().unwrap(),
+            );
+            let area: Vec<u64> = tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &canvas,
+                "#{pane_left}|#{pane_top}|#{pane_width}|#{pane_height}",
+            ])
+            .unwrap()
+            .split('|')
+            .map(|v| v.parse().unwrap())
+            .collect();
+            assert!(rect.0 > area[0] && rect.1 > area[1]);
+            assert!(rect.0 + rect.2 < area[0] + area[2] && rect.1 + rect.3 < area[1] + area[3]);
+            let after = tmux(&["display-message", "-p", "-t", &pane, geometry]).unwrap();
+            assert_eq!(
+                before.split('|').take(3).collect::<Vec<_>>(),
+                after.split('|').take(3).collect::<Vec<_>>()
+            );
+            rectangles.push(rect);
+        }
+        let (a, b) = (rectangles[0], rectangles[1]);
+        assert!(a.0 + a.2 <= b.0 || b.0 + b.2 <= a.0 || a.1 + a.3 <= b.1 || b.1 + b.3 <= a.1);
+        assert_eq!(
+            tmux(&["display-message", "-p", "-t", &head, geometry]).unwrap(),
+            head_before
+        );
+        assert_eq!(
+            tmux(&["display-message", "-p", "-t", &canvas, geometry]).unwrap(),
+            canvas_before
+        );
+        assert_eq!(
+            tmux(&["list-panes", "-t", &head, "-F", "#{pane_floating_flag}"])
+                .unwrap()
+                .lines()
+                .filter(|v| *v == "0")
+                .count(),
+            2
+        );
+        assert!(
+            workspace_desktop_place(&first_request.unwrap(), &tmux).is_err(),
+            "an existing receipt must not be re-placed"
+        );
+
+        let pane = tmux(&[
+            "new-pane",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-t",
+            &head,
+            "-x",
+            "40",
+            "-y",
+            "10",
+            "exec /usr/bin/sleep 120",
+        ])
+        .unwrap();
+        let pid: u32 = tmux(&["display-message", "-p", "-t", &pane, "#{pane_pid}"])
+            .unwrap()
+            .parse()
+            .unwrap();
+        for (key, value) in [
+            ("@mios-mcp-owner", "mios-phi-proof"),
+            ("@mcp_slot", "34"),
+            ("@mcp_owner", "agent"),
+            ("@mcp_pane", pane.as_str()),
+        ] {
+            tmux(&["set-option", "-p", "-t", &pane, key, value]).unwrap();
+        }
+        let request = json!({"socket":socket,"head":head,"pane":pane,"session":"mios-phi-proof","owner":"mios-phi-proof","slot":34,"expected_pid":pid,"expected_start":workspace_process_start(pid).unwrap()});
+        let before = tmux(&["display-message", "-p", "-t", &pane, geometry]).unwrap();
+        let injected = std::cell::Cell::new(false);
+        let racing_tmux = |args: &[&str]| {
+            if args.first() == Some(&"if-shell") && !injected.replace(true) {
+                tmux(&["resize-pane", "-t", &canvas, "-x", "140"])?;
+            }
+            tmux(args)
+        };
+        assert!(
+            workspace_desktop_place(&request, &racing_tmux).is_err(),
+            "a real canvas resize at the mutation boundary must refuse"
+        );
+        assert!(
+            injected.get(),
+            "exercise the native atomic mutation boundary"
+        );
+        assert_eq!(
+            tmux(&["display-message", "-p", "-t", &pane, geometry]).unwrap(),
+            before
+        );
+        assert!(tmux(&[
+            "show-options",
+            "-pqv",
+            "-t",
+            &pane,
+            "@mios-mcp-placement-receipt"
+        ])
+        .unwrap()
+        .is_empty());
     }
 }
 

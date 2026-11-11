@@ -1,4 +1,4 @@
-// AI-hint: Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.
+// AI-hint: Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, explicit console action adapters sharing desktop ownership gestures, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.
 // AI-related: usr/share/mios/mios.toml [keybindings.global.controller.nav], tools/native/mios-inputd/src/router.rs, docs/design/mios-global-bindings-final.md (section 3)
 // AI-functions: NavConfig::from_value, NavConfig::profile_name, NavConfig::app_profile, NavConfig::text, parse_key_chord, stroke, keysym, vt_bytes, validate_tmux
 use serde::Serialize;
@@ -179,6 +179,9 @@ pub struct FocusGesture {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct NavConfig {
     pub enabled: bool,
+    /// Start uses the focused profile's pause/options action, rather than the
+    /// legacy global cursor toggle. App menu/options keys use app-owned IPC.
+    pub start_options: bool,
     pub flick_on: f64,
     pub flick_off: f64,
     /// Context -> profile name, or "vpad" (forward the pad to the virtual gamepad, the behaviour before nav).
@@ -188,6 +191,9 @@ pub struct NavConfig {
     pub tmux_sockets: Vec<String>,
     /// task3773: right-stick focus-gesture qualification; None keeps the legacy magnitude flicks.
     pub focus_gesture: Option<FocusGesture>,
+    /// Desktop action -> explicit native console projection. Missing actions are consumed, never run on the host.
+    /// A nonempty table enables the shared capture/cursor contract on console profiles too.
+    pub console_actions: BTreeMap<String, String>,
     pub profiles: BTreeMap<String, Profile>,
     /// P1: re-verify the focused terminal's foreground app at most this often (0 without `apps`).
     pub app_poll_ms: u64,
@@ -200,8 +206,9 @@ pub struct NavConfig {
     #[serde(skip)]
     app_only_profiles: BTreeSet<String>,
 }
-const RESERVED: [&str; 10] = [
+const RESERVED: [&str; 12] = [
     "enabled",
+    "start_options",
     "flick_on",
     "flick_off",
     "contexts",
@@ -211,10 +218,11 @@ const RESERVED: [&str; 10] = [
     "app_poll_ms",
     "app_query_timeout_ms",
     "focus_gesture",
+    "console_actions",
 ];
 /// The base contexts an app layer may refine (P2): a terminal window (captured or not) and the Linux console.
 pub const APP_CONTEXTS: [&str; 2] = ["terminal", "console"];
-/// Inputs the ownership contract or the room owns wherever a compositor runs; a desktop profile may not claim them.
+/// Inputs the ownership contract or the room owns; console profiles reserve them when console_actions is enabled.
 const CONTRACT: [&str; 5] = ["BTN_NORTH", "BTN_TL", "BTN_TR", "BTN_START", "TOGGLE_CHORD"];
 
 /// `[delay_ms, rate_ms]` of one repeat row (the bounds of [nav.repeat] and every app repeat table).
@@ -397,6 +405,9 @@ impl NavConfig {
             enabled: t.get("enabled").map_or(Ok(false), |v| {
                 v.as_bool().ok_or("nav.enabled must be a boolean")
             })?,
+            start_options: t.get("start_options").map_or(Ok(false), |v| {
+                v.as_bool().ok_or("nav.start_options must be a boolean")
+            })?,
             flick_on: num("flick_on", 0.6)?,
             flick_off: num("flick_off", 0.3)?,
             ..Self::default()
@@ -408,6 +419,60 @@ impl NavConfig {
             && cfg.flick_on <= 1.0)
         {
             return Err("nav: 0 <= flick_off < flick_on <= 1".into());
+        }
+        if let Some(actions) = t.get("console_actions") {
+            for (label, value) in actions
+                .as_table()
+                .ok_or("nav.console_actions must be a table")?
+            {
+                let what = format!("nav.console_actions.{label}");
+                // Labels are canonical lowercase words, not punctuation-bearing
+                // action verbs: global environment flattening stays injective.
+                if !label.starts_with(|c: char| c.is_ascii_lowercase())
+                    || !label.split('_').all(|word| {
+                        !word.is_empty()
+                            && word
+                                .bytes()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                    })
+                {
+                    return Err(format!("{what}: label must use lowercase snake_case"));
+                }
+                let record = value
+                    .as_table()
+                    .ok_or_else(|| format!("{what}: action/native record is required"))?;
+                if record
+                    .keys()
+                    .any(|key| !["action", "native"].contains(&key.as_str()))
+                {
+                    return Err(format!(
+                        "{what}: unknown record field; only action and native are accepted"
+                    ));
+                }
+                let source = record
+                    .get("action")
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| format!("{what}: one desktop action string is required"))?;
+                let action = record
+                    .get("native")
+                    .and_then(toml::Value::as_str)
+                    .ok_or_else(|| format!("{what}: one native action string is required"))?;
+                crate::config::validate_action_in(source, ctx.namespaces)
+                    .map_err(|e| format!("{what}: {e}"))?;
+                if source.trim() != source || action.trim() != action || !console_capable(action) {
+                    return Err(format!("{what}: native projection uses key:, tmux:, native volume/media, mios:graphical-vt, pointer:cursor or none"));
+                }
+                // An adapter is one discrete action, not an analog wheel or a tap/hold policy of its own.
+                validate_value(action, Input::Button(0x13c), ctx)
+                    .map_err(|e| format!("{what}: {e}"))?;
+                if cfg
+                    .console_actions
+                    .insert(source.into(), action.into())
+                    .is_some()
+                {
+                    return Err(format!("{what}: duplicate desktop action {source}"));
+                }
+            }
         }
         if let Some(g) = t.get("focus_gesture") {
             let what = "controller.nav.focus_gesture";
@@ -667,7 +732,7 @@ impl NavConfig {
                 }
                 continue;
             }
-            cfg.context_profiles(context, p, &format!("nav.contexts.{context}"))?;
+            cfg.context_profiles(context, p, &format!("nav.contexts.{context}"), false)?;
         }
         let _ = ctx.deadzone;
         Ok(cfg)
@@ -720,6 +785,7 @@ impl NavConfig {
                     context,
                     p,
                     &format!("nav.apps.{app}.contexts.{context}"),
+                    true,
                 )?;
                 if !a.camera {
                     continue;
@@ -775,7 +841,13 @@ impl NavConfig {
         None
     }
     /// The per-context rules for the profile(s) one context name selects; returns those profile names.
-    fn context_profiles(&self, context: &str, p: &str, what: &str) -> Result<Vec<String>, String> {
+    fn context_profiles(
+        &self,
+        context: &str,
+        p: &str,
+        what: &str,
+        app: bool,
+    ) -> Result<Vec<String>, String> {
         let names = self.candidates(p);
         if names.is_empty() {
             return Err(format!(
@@ -785,6 +857,24 @@ impl NavConfig {
         for n in &names {
             for (input, value) in &self.profiles[n] {
                 let name = input.name();
+                if self.start_options
+                    && name == "BTN_START"
+                    && value.actions().iter().any(|action| {
+                        *action != "none"
+                            && (!app || !["key:o", "key:F1", "key:p"].contains(action))
+                    })
+                {
+                    return Err(format!("nav.{n}.BTN_START: Start pause/options requires none outside a verified app, or an app-owned menu/pause key"));
+                }
+                if self.start_options
+                    && app
+                    && name == "BTN_SELECT"
+                    && value.actions().iter().any(|action| {
+                        action.starts_with("key:") && !["key:o", "key:F1"].contains(action)
+                    })
+                {
+                    return Err(format!("nav.{n}.BTN_SELECT: app view/menu keys require the app-owned menu endpoint"));
+                }
                 if context == "shell" {
                     // A focused shell layer owns the keyboard; no window capture or host command behind it.
                     for action in value.actions() {
@@ -798,16 +888,24 @@ impl NavConfig {
                     // I3 (C-23): no compositor, shell or room on a VT: only projections that reach a VT.
                     for a in value.actions() {
                         if !console_capable(a) {
-                            return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, mios:graphical-vt, pointer:cursor or none)"));
+                            return Err(format!("nav.{n}.{name}: {a} cannot reach a VT (console rows use key:, tmux:, native volume/media, mios:graphical-vt, pointer:cursor or none)"));
                         }
                     }
-                } else if CONTRACT.contains(&name.as_str()) && value != &Value::Press("none".into())
-                {
+                    if !self.console_actions.is_empty()
+                        && self.contract_input(&name)
+                        && value != &Value::Press("none".into())
+                    {
+                        return Err(format!("nav.{n}.{name}: owned by the shared capture contract (nav.console_actions)"));
+                    }
+                } else if self.contract_input(&name) && value != &Value::Press("none".into()) {
                     return Err(format!("nav.{n}.{name}: owned by the capture contract or the room wherever a compositor runs ({context})"));
                 }
             }
         }
         Ok(names)
+    }
+    fn contract_input(&self, name: &str) -> bool {
+        CONTRACT.contains(&name) && !(self.start_options && name == "BTN_START")
     }
     /// The profiles a context name can select: the profile itself, or its `_tmux` / `_plain` pair.
     fn candidates(&self, p: &str) -> Vec<String> {
@@ -846,7 +944,7 @@ impl NavConfig {
         let p = self.apps.get(app)?.contexts.get(context)?;
         Some(self.resolve(p, tmux))
     }
-    /// Every action a nav profile can fire, for the bridge's unresolved-action check.
+    /// Every profile action and native console adapter, for the bridge's unresolved-action check.
     pub fn actions(&self) -> BTreeSet<String> {
         self.profiles
             .values()
@@ -854,12 +952,17 @@ impl NavConfig {
                 p.values()
                     .flat_map(|v| v.actions().into_iter().map(str::to_owned))
             })
+            .chain(self.console_actions.values().cloned())
             .collect()
     }
     /// The resolved controller map as text (`mios-inputd map --text`, the tmux:keymap popup): context -> profile, then
     /// each profile's inputs with their tap/hold actions.
     pub fn text(&self, hold_ms: u64) -> String {
-        let mut out = format!("MiOS controller map (uncaptured). A hold is {hold_ms} ms; North captures the focused window, a held L3+R3 releases it.\n\n");
+        let mut out = if self.start_options {
+            format!("MiOS controller map. A hold is {hold_ms} ms. Select: view/navigation; Start: focused app pause/options. App controls use private IPC, never terminal keys.\n\n")
+        } else {
+            format!("MiOS controller map (uncaptured). A hold is {hold_ms} ms; North captures the focused window, a held L3+R3 releases it.\n\n")
+        };
         for (context, p) in &self.contexts {
             out += &format!(
                 "  {context:<16} {}\n",
@@ -869,6 +972,16 @@ impl NavConfig {
                     format!("{p}_tmux (tmux client) / {p}_plain")
                 }
             );
+        }
+        if !self.console_actions.is_empty() {
+            out += if self.start_options {
+                "\nConsole shares global attach/detach, focused-window zoom and distinct view/options controls.\nNative console actions (unmapped actions are consumed):\n"
+            } else {
+                "\nConsole shares Start cursor, North capture/hold fullscreen, Guide+Select half-capture, and held L3+R3 release.\nNative console actions (unmapped actions are consumed):\n"
+            };
+            for (source, action) in &self.console_actions {
+                out += &format!("  {source} -> {action}\n");
+            }
         }
         if let Some(e) = &self.app_error {
             out += &format!("\nForeground apps disabled (the base profiles apply): {e}\n");
@@ -925,11 +1038,18 @@ impl NavConfig {
 /// I3: the nav value that toggles cursor mode (the sticks drive the virtual pointer, RT/LT click). A button value only.
 pub const CURSOR: &str = "pointer:cursor";
 /// The projections a VT can receive: the uinput keyboard (the kernel console reads it), tmux verbs for the client on
-/// the active VT, the graphical-VT switch, cursor mode (the virtual pointer moves the gpm pointer) and "none".
+/// the active VT, native audio/media session actions, the graphical-VT switch, cursor mode and "none".
 pub fn console_capable(action: &str) -> bool {
     action == "none"
         || action == "mios:graphical-vt"
         || action == CURSOR
+        || [
+            "mios:volume up",
+            "mios:volume down",
+            "mios:media previous",
+            "mios:media next",
+        ]
+        .contains(&action)
         || action.starts_with("key:")
         || action.starts_with("tmux:")
 }
@@ -979,7 +1099,14 @@ pub fn validate_tmux(verb: &str, prefix_keys: &BTreeSet<String>) -> Result<(), S
             Ok(())
         }
         ["page-up"] | ["page-down"] | ["session-prev"] | ["session-next"] | ["menu"] | ["keymap"] => Ok(()),
-        _ => Err(format!("unknown tmux verb {verb} (key <k>, focus <dir>, page-up, page-down, session-prev, session-next, menu, keymap)")),
+        ["desktop", action]
+            if [
+                "center", "maximize", "restore", "float", "tile", "toggle-float", "new",
+                "monitor", "minimize", "close", "context", "snap-left", "snap-right",
+                "snap-top", "snap-bottom",
+            ]
+            .contains(action) => Ok(()),
+        _ => Err(format!("unknown tmux verb {verb} (key <k>, focus <dir>, page-up, page-down, session-prev, session-next, menu, keymap, desktop <action>)")),
     }
 }
 
@@ -1315,10 +1442,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("cannot reach a VT"), "{e}");
-        assert!(
-            console_edit("console_plain", "BTN_NORTH", "key:ENTER".into()).is_ok(),
-            "a VT may claim the contract inputs"
-        );
+        let e = console_edit("console_plain", "BTN_NORTH", "key:ENTER".into()).unwrap_err();
+        assert!(e.contains("shared capture contract"), "{e}");
         let e = console_edit("desktop", "TOGGLE_CHORD", "mios:graphical-vt".into()).unwrap_err();
         assert!(
             e.contains("capture contract"),
@@ -1335,6 +1460,257 @@ mod tests {
         assert!(e.contains("only a button"), "{e}");
         let e = console_edit("contexts", "console", "vpad".into()).unwrap_err();
         assert!(e.contains("no virtual-pad consumer"), "{e}");
+    }
+    #[test]
+    fn console_policy_shares_contract_without_changing_menu_or_camera_rows() {
+        let (cfg, _) = crate::config::tests::fixture_nav();
+        let nav = &cfg.controller.nav;
+        assert!(cfg
+            .controller
+            .cursor_mode_contexts
+            .iter()
+            .any(|c| c == "console"));
+        for name in [
+            "console_tmux",
+            "console_plain",
+            "mon_console_tmux",
+            "mon_console_plain",
+        ] {
+            for input in CONTRACT {
+                if !nav.contract_input(input) {
+                    continue;
+                }
+                assert!(
+                    !nav.profiles[name].contains_key(&Input::parse(input).unwrap()),
+                    "{name}.{input} must stay with the shared ownership state machine"
+                );
+            }
+        }
+        assert_eq!(
+            nav.profiles["console_tmux"][&Input::parse("BTN_WEST").unwrap()],
+            Value::TapHold("key:TAB".into(), "key:SHIFT+TAB".into())
+        );
+        let camera_left = Input::Stick {
+            right: true,
+            dir: Dir::Left,
+        };
+        assert_eq!(
+            nav.profiles["mon_console_tmux"][&camera_left], nav.profiles["mon_tmux"][&camera_left],
+            "camera gestures retain the verified app profile"
+        );
+        let vendor: toml::Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
+        let controller = &vendor["keybindings"]["global"]["controller"];
+        for source in controller["system_layer"]
+            .as_table()
+            .unwrap()
+            .values()
+            .filter_map(toml::Value::as_str)
+            .chain(controller["guide_double_press_action"].as_str())
+        {
+            assert!(
+                nav.console_actions.contains_key(source),
+                "unmapped vendor action {source}"
+            );
+        }
+        assert_eq!(
+            nav.console_actions["hypr:togglefloating"],
+            "tmux:desktop toggle-float"
+        );
+        assert_eq!(
+            nav.console_actions["exec:mios-terminal"],
+            "tmux:desktop new"
+        );
+        assert_eq!(
+            nav.console_actions["mios:system-monitor"],
+            "tmux:desktop monitor"
+        );
+        assert_eq!(nav.console_actions["quickshell:lock"], "none");
+        for action in [
+            "mios:volume up",
+            "mios:volume down",
+            "mios:media previous",
+            "mios:media next",
+        ] {
+            assert_eq!(nav.console_actions[action], action);
+            assert!(console_capable(action), "native session service {action}");
+        }
+        assert!(
+            nav.actions().contains("tmux:desktop toggle-float"),
+            "startup validates adapters too"
+        );
+        assert!(nav
+            .text(500)
+            .contains("hypr:killactive -> tmux:desktop close"));
+    }
+    fn console_adapter_edit(field: &str, value: toml::Value) -> Result<(), String> {
+        crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["console_actions"]["close_window"]
+                .as_table_mut()
+                .expect("close_window adapter fixture is a record")
+                .insert(field.to_owned(), value);
+        })
+        .map(|_| ())
+    }
+
+    #[test]
+    fn console_adapter_records_reject_duplicate_semantics_labels_and_unknown_fields() {
+        let duplicate = crate::config::tests::try_fixture_nav_with(|v| {
+            let records = v["keybindings"]["global"]["controller"]["nav"]["console_actions"]
+                .as_table_mut()
+                .unwrap();
+            records.insert("duplicate_close".into(), records["close_window"].clone());
+        })
+        .unwrap_err();
+        assert!(
+            duplicate.contains("duplicate desktop action"),
+            "{duplicate}"
+        );
+        for label in [
+            "hypr:workspace e-1",
+            "hypr:workspace e+1",
+            "Close",
+            "_close",
+            "close_",
+            "close__window",
+        ] {
+            let error = crate::config::tests::try_fixture_nav_with(|v| {
+                let records = v["keybindings"]["global"]["controller"]["nav"]["console_actions"]
+                    .as_table_mut()
+                    .unwrap();
+                let record = records.remove("close_window").unwrap();
+                records.insert(label.into(), record);
+            })
+            .unwrap_err();
+            assert!(error.contains("lowercase snake_case"), "{label}: {error}");
+        }
+        let error = console_adapter_edit("typo", "none".into()).unwrap_err();
+        assert!(error.contains("unknown record field"), "{error}");
+        for field in ["action", "native"] {
+            let error = crate::config::tests::try_fixture_nav_with(|v| {
+                v["keybindings"]["global"]["controller"]["nav"]["console_actions"]["close_window"]
+                    .as_table_mut()
+                    .unwrap()
+                    .remove(field);
+            })
+            .unwrap_err();
+            assert!(
+                error.contains("action string is required"),
+                "{field}: {error}"
+            );
+        }
+        let error = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["console_actions"]["close_window"] =
+                "none".into();
+        })
+        .unwrap_err();
+        assert!(error.contains("action/native record"), "{error}");
+    }
+
+    #[test]
+    fn console_adapters_reject_compositor_commands_and_malformed_native_verbs() {
+        for action in [
+            "hypr:killactive",
+            "exec:mios-terminal",
+            "quickshell:drawer-toggle",
+            "mios:system-monitor",
+            "mios:volume toggle",
+            "mios:media play",
+            "pointer:wheel-up",
+            "tmux:desktop typo",
+            "tmux:desktop close --pane %1",
+            "tmux:key unbound",
+            "key:BOGUS",
+            " none",
+        ] {
+            let error = console_adapter_edit("native", action.into()).unwrap_err();
+            assert!(error.contains("nav.console_actions"), "{action}: {error}");
+        }
+        for value in [
+            toml::Value::Integer(1),
+            toml::Value::Array(vec!["none".into(), "tmux:menu".into()]),
+        ] {
+            let error = console_adapter_edit("native", value).unwrap_err();
+            assert!(error.contains("one native action string"), "{error}");
+        }
+        for source in [
+            "none",
+            "input:window off",
+            "unknown:action",
+            "hypr:killactive\n",
+        ] {
+            let error = console_adapter_edit("action", source.into()).unwrap_err();
+            assert!(error.contains("nav.console_actions"), "{source:?}: {error}");
+        }
+        let error = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["console_actions"] = "none".into();
+        })
+        .unwrap_err();
+        assert!(
+            error.contains("nav.console_actions must be a table"),
+            "{error}"
+        );
+    }
+    #[test]
+    fn console_legacy_contract_requires_an_absent_or_empty_adapter_table() {
+        for empty_table in [false, true] {
+            let result = crate::config::tests::try_fixture_nav_with(|v| {
+                let nav = v["keybindings"]["global"]["controller"]["nav"]
+                    .as_table_mut()
+                    .unwrap();
+                if empty_table {
+                    nav.insert(
+                        "console_actions".into(),
+                        toml::Value::Table(Default::default()),
+                    );
+                } else {
+                    nav.remove("console_actions");
+                }
+                nav.get_mut("console_plain")
+                    .unwrap()
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("BTN_NORTH".into(), "key:ENTER".into());
+            });
+            assert!(
+                result.is_ok(),
+                "legacy adapter table empty={empty_table}: {result:?}"
+            );
+        }
+        for input in CONTRACT {
+            let error = console_edit("console_tmux", input, "key:ENTER".into()).unwrap_err();
+            assert!(
+                error.contains(if input == "BTN_START" {
+                    "Start pause/options"
+                } else {
+                    "shared capture contract"
+                }),
+                "{input}: {error}"
+            );
+        }
+        let (cfg, _) = crate::config::tests::try_fixture_nav_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["mon_console_tmux"]
+                .as_table_mut()
+                .unwrap()
+                .insert("BTN_START".into(), "pointer:cursor".into());
+        })
+        .unwrap();
+        assert!(
+            cfg.controller.nav.apps.is_empty(),
+            "an app profile cannot steal shared Start"
+        );
+        assert!(cfg
+            .controller
+            .nav
+            .app_error
+            .as_deref()
+            .unwrap()
+            .contains("Start pause/options"));
+        assert!(
+            cfg.controller.nav.profile_name("console", true).is_some(),
+            "invalid app keeps base navigation"
+        );
     }
     #[test]
     fn map_text_lists_contexts_and_both_halves() {
@@ -1357,7 +1733,7 @@ mod tests {
         assert_eq!((nav.app_poll_ms, nav.app_query_timeout_ms), (250, 150));
         let mon = &nav.apps["mon"];
         assert!(mon.camera);
-        assert_eq!(mon.exe, ["/usr/bin/mios-tamagotchi"]);
+        assert_eq!(mon.exe, ["/usr/bin/mios-mons"]);
         let rs_up = Input::Stick {
             right: true,
             dir: Dir::Up,
@@ -1394,10 +1770,44 @@ mod tests {
             Value::Press("tmux:menu".into()),
             "Guide is inherited"
         );
-        assert!(
-            !p.contains_key(&Input::Button(0x13b)),
-            "Start stays contract"
+        assert_eq!(
+            p.get(&Input::Button(0x13b)),
+            Some(&Value::Press("none".into())),
+            "the camera-only P1 fixture inherits the safe base Start action"
         );
+        let (current, _) = crate::config::tests::fixture_nav();
+        assert!(current.controller.nav.start_options);
+        assert!(!current.controller.nav.contract_input("BTN_START"));
+        for profile in [
+            "mon_tmux",
+            "mon_plain",
+            "mon_console_tmux",
+            "mon_console_plain",
+        ] {
+            let bindings = &current.controller.nav.profiles[profile];
+            assert_eq!(
+                bindings[&Input::Button(0x13b)],
+                Value::Press("key:p".into())
+            );
+            assert_eq!(bindings[&Input::Button(0x13a)].actions()[0], "key:o");
+        }
+        let (legacy, _) = crate::config::tests::try_fixture_mon_with(|v| {
+            v["keybindings"]["global"]["controller"]["nav"]["start_options"] = false.into();
+            v["keybindings"]["global"]["controller"]["nav"]["mon_tmux"]
+                .as_table_mut()
+                .unwrap()
+                .insert("BTN_START".into(), "key:ENTER".into());
+        })
+        .unwrap();
+        assert!(legacy.controller.nav.contract_input("BTN_START"));
+        assert!(legacy.controller.nav.apps.is_empty());
+        assert!(legacy
+            .controller
+            .nav
+            .app_error
+            .as_deref()
+            .unwrap()
+            .contains("capture contract"));
         // P0: a base context mapped to vpad has no navigation, so no app layer either.
         let (vpad, _) = crate::config::tests::try_fixture_mon_with(|v| {
             v["keybindings"]["global"]["controller"]["nav"]["contexts"]["terminal"] = "vpad".into();
@@ -1420,7 +1830,7 @@ mod tests {
         let text = nav.text(500);
         assert!(
             text.contains("Foreground apps (verified every 250 ms, one query at most 150 ms")
-                && text.contains("mon              exe /usr/bin/mios-tamagotchi  camera")
+                && text.contains("mon              exe /usr/bin/mios-mons  camera")
                 && text.contains("terminal       mon_tmux (tmux client) / mon_plain")
                 && text
                     .contains("console        mon_console_tmux (tmux client) / mon_console_plain")
@@ -1466,7 +1876,7 @@ mod tests {
         for (path, val, why) in [
             (
                 vec!["apps", "mon", "exe"],
-                arr(&["usr/bin/mios-tamagotchi"]),
+                arr(&["usr/bin/mios-mons"]),
                 "not an absolute path",
             ),
             (
@@ -1519,7 +1929,7 @@ mod tests {
             (
                 vec!["mon_tmux", "BTN_START"],
                 "key:ENTER".into(),
-                "capture contract",
+                "Start pause/options",
             ),
             (
                 vec!["apps", "mon", "camera"],

@@ -15,24 +15,154 @@ index 26e48df..9fc53eb 100644
  
  	/* Send first command. */
  	if (msg == MSG_COMMAND) {
+diff --git a/cmd-display-menu.c b/cmd-display-menu.c
+index e1766fc..5ca72a5 100644
+--- a/cmd-display-menu.c
++++ b/cmd-display-menu.c
+@@ -305,6 +305,7 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
+ 		return (CMD_RETURN_NORMAL);
+ 
+ 	if (args_has(args, 'C')) {
++		flags |= MENU_INITIAL_CHOICE;
+ 		if (strcmp(args_get(args, 'C'), "-") == 0)
+ 			starting_choice = -1;
+ 		else {
+@@ -366,7 +367,7 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
+ 
+ 	if (args_has(args, 'O'))
+ 		flags |= MENU_STAYOPEN;
+-	if (!event->m.valid && !args_has(args, 'M'))
++	if (!event->m.valid && !args_has(args, 'M') && !args_has(args, 'C'))
+ 		flags |= MENU_NOMOUSE;
+ 	if (menu_display(menu, flags, starting_choice, item, px, py, tc, lines,
+ 	    style, selected_style, border_style, target, NULL, NULL) != 0)
+diff --git a/cmd-queue.c b/cmd-queue.c
+index 2a22151..9dfcf4a 100644
+--- a/cmd-queue.c
++++ b/cmd-queue.c
+@@ -607,6 +607,11 @@ cmdq_fire_command(struct cmdq_item *item)
+ 	int			 flags, quiet = 0;
+ 	char			*tmp;
+ 
++	/* A queued mouse binding may outlive its Inputd control lease. */
++	if (state->event.m.pointer_generation != 0 &&
++	    !server_client_pointer_valid(&state->event.m))
++		return (CMD_RETURN_NORMAL);
++
+ 	if (cfg_finished)
+ 		cmdq_add_message(item);
+ 	if (log_get_level() > 1) {
 diff --git a/cmd-resize-pane.c b/cmd-resize-pane.c
-index 8ad2655..ec9464e 100644
+index 8ad2655..d9fe038 100644
 --- a/cmd-resize-pane.c
 +++ b/cmd-resize-pane.c
-@@ -27,6 +27,9 @@
+@@ -27,6 +27,11 @@
   * Increase or decrease pane size.
   */
  
 +static enum cmd_retval	cmd_float_pane_exec(struct cmd *, struct cmdq_item *);
++static enum cmd_retval	cmd_client_window_action_exec(struct cmd *,
++			    struct cmdq_item *);
 +static enum cmd_retval	cmd_resize_pane_floating(struct cmd *,
 +			    struct cmdq_item *, u_int);
  static enum cmd_retval	cmd_resize_pane_exec(struct cmd *, struct cmdq_item *);
  
  static enum cmd_retval	cmd_resize_pane_mouse_update(struct cmd *,
-@@ -36,6 +39,115 @@ static void		cmd_resize_pane_mouse_update_floating(struct client *,
+@@ -36,6 +41,206 @@ static void		cmd_resize_pane_mouse_update_floating(struct client *,
  static void		cmd_resize_pane_mouse_update_tiled(struct client *,
  			    struct mouse_event *);
  
++/* A stale controller request must not resolve through a default client. */
++const struct cmd_entry cmd_client_window_action_entry = {
++	.name = "client-window-action",
++	.alias = NULL,
++	.args = { "C:I:p:P:s:t:w:", 1, 1, NULL },
++	.usage = "-t exact-client -C client-pid -I client-instance "
++		 "-s session-id -w window-id -p pane-id -P pane-pid zoom",
++	.flags = CMD_CLIENT_TFLAG,
++	.exec = cmd_client_window_action_exec
++};
++
++static int
++cmd_client_window_action_id(struct args *args, u_char flag, char prefix,
++    u_int id)
++{
++	char value[32];
++
++	if (!args_has(args, flag))
++		return (0);
++	xsnprintf(value, sizeof value, "%c%u", prefix, id);
++	return (strcmp(args_get(args, flag), value) == 0);
++}
++
++/* All identity checks and the layout mutation run in the same event turn. */
++static enum cmd_retval
++cmd_client_window_action_exec(struct cmd *self, struct cmdq_item *item)
++{
++	struct args		*args = cmd_get_args(self);
++	struct client		*owner = cmdq_get_client(item);
++	struct client		*c = cmdq_get_target_client(item);
++	struct window_pane	*wp;
++	struct window		*w;
++	char			*cause = NULL;
++	long long		 client_pid, instance, pane_pid;
++	int			 changed;
++
++	if (strcmp(args_string(args, 0), "zoom") != 0) {
++		cmdq_error(item, "unsupported client window action");
++		return (CMD_RETURN_ERROR);
++	}
++	if (owner == NULL || c == NULL || !args_has(args, 't') ||
++	    strcmp(args_get(args, 't'), c->name) != 0 ||
++	    (owner->flags & CLIENT_READONLY) ||
++	    !(c->flags & CLIENT_TERMINAL) ||
++	    (c->flags & (CLIENT_CONTROL|CLIENT_READONLY|CLIENT_SUSPENDED|
++	    CLIENT_UNATTACHEDFLAGS)) || owner->peer == NULL || c->peer == NULL ||
++	    proc_get_peer_uid(c->peer) == (uid_t)-1 ||
++	    proc_get_peer_uid(c->peer) != proc_get_peer_uid(owner->peer) ||
++	    c->session == NULL || c->session->curw == NULL ||
++	    c->tty.sx == 0 || c->tty.sy == 0) {
++		cmdq_error(item, "window action requires an exact writable terminal client");
++		return (CMD_RETURN_ERROR);
++	}
++	client_pid = args_strtonum(args, 'C', 1, INT_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++	instance = args_strtonum(args, 'I', 1, LLONG_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++	pane_pid = args_strtonum(args, 'P', 1, INT_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++
++	wp = server_client_get_pane(c);
++	w = c->session->curw->window;
++	if (client_pid != c->pid || (uint64_t)instance != c->instance ||
++	    wp == NULL || wp->window != w || pane_pid != wp->pid ||
++	    window_pane_exited(wp) || !window_pane_visible(wp) ||
++	    !cmd_client_window_action_id(args, 's', '$', c->session->id) ||
++	    !cmd_client_window_action_id(args, 'w', '@', w->id) ||
++	    !cmd_client_window_action_id(args, 'p', '%', wp->id)) {
++		cmdq_error(item, "focused client window identity changed");
++		return (CMD_RETURN_ERROR);
++	}
++
++	/* The native zoom tree retains floating geometry, process and PTY too. */
++	if (w->flags & WINDOW_ZOOMED)
++		changed = (window_unzoom(w, 1) == 0);
++	else
++		changed = (window_zoom(wp) == 0);
++	if (changed)
++		server_redraw_window(w);
++	cmdq_print(item, "ok");
++	return (CMD_RETURN_NORMAL);
++
++invalid:
++	cmdq_error(item, "invalid window action number: %s", cause);
++	free(cause);
++	return (CMD_RETURN_ERROR);
++}
++
 +/* Native MiOS desktop API: retain the pane, process and PTY. */
 +const struct cmd_entry cmd_float_pane_entry = {
 +	.name = "float-pane",
@@ -145,7 +275,7 @@ index 8ad2655..ec9464e 100644
  const struct cmd_entry cmd_resize_pane_entry = {
  	.name = "resize-pane",
  	.alias = "resizep",
-@@ -99,6 +211,9 @@ cmd_resize_pane_exec(struct cmd *self, struct cmdq_item *item)
+@@ -99,6 +304,9 @@ cmd_resize_pane_exec(struct cmd *self, struct cmdq_item *item)
  		}
  	}
  
@@ -155,7 +285,7 @@ index 8ad2655..ec9464e 100644
  	if (args_has(args, 'x')) {
  		x = args_percentage(args, 'x', 0, INT_MAX, w->sx, &cause);
  		if (cause != NULL) {
-@@ -224,8 +339,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
+@@ -224,8 +432,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
  			new_sy = PANE_MINIMUM;
  		new_xoff = x + 1; /* because mouse is on border at xoff - 1 */
  		new_yoff = y + 1;
@@ -165,7 +295,7 @@ index 8ad2655..ec9464e 100644
  	} else if ((lx == right + 1 || lx == right) &&
  	    ly == wp->yoff - 1) {
  		/* Top right corner. */
-@@ -236,8 +350,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
+@@ -236,8 +443,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
  		if (new_sy < PANE_MINIMUM)
  			new_sy = PANE_MINIMUM;
  		new_yoff = y + 1;
@@ -175,7 +305,7 @@ index 8ad2655..ec9464e 100644
  	} else if ((lx == left || lx == left + 1) &&
  	    ly == wp->yoff + sy) {
  		/* Bottom left corner. */
-@@ -248,8 +361,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
+@@ -248,8 +454,7 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
  		if (new_sy < PANE_MINIMUM)
  			return;
  		new_xoff = x + 1;
@@ -185,7 +315,7 @@ index 8ad2655..ec9464e 100644
  	} else if ((lx == right + 1 || lx == right) &&
  	    ly == wp->yoff + sy) {
  		/* Bottom right corner. */
-@@ -259,41 +371,36 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
+@@ -259,41 +464,36 @@ cmd_resize_pane_mouse_update_floating(struct client *c, struct mouse_event *m)
  		new_sy = y - lc->yoff;
  		if (new_sy < PANE_MINIMUM)
  			new_sy = PANE_MINIMUM;
@@ -233,8 +363,100 @@ index 8ad2655..ec9464e 100644
  	}
  }
  
+diff --git a/cmd-send-keys.c b/cmd-send-keys.c
+index 86e7dae..23a7b98 100644
+--- a/cmd-send-keys.c
++++ b/cmd-send-keys.c
+@@ -18,6 +18,7 @@
+ 
+ #include <sys/types.h>
+ 
++#include <limits.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -243,3 +244,79 @@ cmd_send_keys_exec(struct cmd *self, struct cmdq_item *item)
+ 
+ 	return (CMD_RETURN_NORMAL);
+ }
++
++/* Native client mouse projection: only a persistent control client may own it. */
++static enum cmd_retval cmd_client_pointer_exec(struct cmd *, struct cmdq_item *);
++const struct cmd_entry cmd_client_pointer_entry = {
++	.name = "client-pointer",
++	.alias = NULL,
++	.args = { "b:I:P:rt:x:y:", 1, 1, NULL },
++	.usage = "-t exact-client -P client-pid -I client-instance [-r] [-x n -y n] [-b left|middle|right] action",
++	.flags = CMD_CLIENT_TFLAG|CMD_READONLY,
++	.exec = cmd_client_pointer_exec
++};
++
++static enum cmd_retval
++cmd_client_pointer_exec(struct cmd *self, struct cmdq_item *item)
++{
++	struct args *args = cmd_get_args(self);
++	struct client *owner = cmdq_get_client(item), *c = cmdq_get_target_client(item);
++	const char *action = args_string(args, 0), *button;
++	char *cause = NULL;
++	long long pid, instance, x = 0, y = 0;
++	int b = -1, move = strcmp(action, "move") == 0;
++	int wheel = strcmp(action, "wheel") == 0;
++	int edge = strcmp(action, "down") == 0 || strcmp(action, "up") == 0;
++	if (owner == NULL || !(owner->flags & CLIENT_CONTROL) ||
++	    c == NULL || owner == c || !args_has(args, 't') ||
++	    strcmp(args_get(args, 't'), c->name) != 0 ||
++	    !(c->flags & CLIENT_TERMINAL) ||
++	    (c->flags & (CLIENT_CONTROL|CLIENT_READONLY|CLIENT_UNATTACHEDFLAGS)) ||
++	    c->peer == NULL || owner->peer == NULL ||
++	    proc_get_peer_uid(c->peer) == (uid_t)-1 ||
++	    proc_get_peer_uid(c->peer) != proc_get_peer_uid(owner->peer) ||
++	    c->session == NULL || c->tty.sx == 0 || c->tty.sy == 0) {
++		cmdq_error(item, "pointer requires an exact writable terminal client and a control owner");
++		return (CMD_RETURN_ERROR);
++	}
++	pid = args_strtonum(args, 'P', 1, INT_MAX, &cause);
++	if (cause != NULL) goto invalid;
++	instance = args_strtonum(args, 'I', 1, LLONG_MAX, &cause);
++	if (cause != NULL) goto invalid;
++	if (pid != c->pid || (uint64_t)instance != c->instance) {
++		cmdq_error(item, "pointer client identity changed");
++		return (CMD_RETURN_ERROR);
++	}
++	if (!move && !wheel && !edge && strcmp(action, "begin") != 0 &&
++	    strcmp(action, "show") != 0 && strcmp(action, "hide") != 0 &&
++	    strcmp(action, "end") != 0) goto syntax;
++	if (args_has(args, 'r') && !move) goto syntax;
++	if (args_has(args, 'b') != edge) goto syntax;
++	if (args_has(args, 'x') != (move || wheel) ||
++	    args_has(args, 'y') != (move || wheel)) goto syntax;
++	if (edge) {
++		button = args_get(args, 'b');
++		if (strcmp(button, "left") == 0) b = 0;
++		else if (strcmp(button, "middle") == 0) b = 1;
++		else if (strcmp(button, "right") == 0) b = 2;
++		else goto syntax;
++	}
++	if (move || wheel) {
++		long long bound = wheel ? 32 : (args_has(args, 'r') ? 64 : 32767);
++		x = args_strtonum(args, 'x', -bound, bound, &cause);
++		if (cause != NULL) goto invalid;
++		y = args_strtonum(args, 'y', -bound, bound, &cause);
++		if (cause != NULL) goto invalid;
++		if (wheel && llabs(x) + llabs(y) > 32) goto syntax;
++	}
++	if (!server_client_pointer(owner, c, action, args_has(args, 'r'), x, y, b, item))
++		return (CMD_RETURN_ERROR);
++	return (CMD_RETURN_NORMAL);
++syntax:
++	cmdq_error(item, "invalid pointer action or flags");
++	return (CMD_RETURN_ERROR);
++invalid:
++	cmdq_error(item, "invalid pointer number: %s", cause);
++	free(cause);
++	return (CMD_RETURN_ERROR);
++}
 diff --git a/cmd.c b/cmd.c
-index 6916da7..242e68a 100644
+index 6916da7..533b60e 100644
 --- a/cmd.c
 +++ b/cmd.c
 @@ -83,6 +83,7 @@ extern const struct cmd_entry cmd_previous_window_entry;
@@ -245,7 +467,25 @@ index 6916da7..242e68a 100644
  extern const struct cmd_entry cmd_resize_pane_entry;
  extern const struct cmd_entry cmd_resize_window_entry;
  extern const struct cmd_entry cmd_respawn_pane_entry;
-@@ -176,6 +177,7 @@ const struct cmd_entry *cmd_table[] = {
+@@ -93,6 +94,8 @@ extern const struct cmd_entry cmd_save_buffer_entry;
+ extern const struct cmd_entry cmd_select_layout_entry;
+ extern const struct cmd_entry cmd_select_pane_entry;
+ extern const struct cmd_entry cmd_select_window_entry;
++extern const struct cmd_entry cmd_client_pointer_entry;
++extern const struct cmd_entry cmd_client_window_action_entry;
+ extern const struct cmd_entry cmd_send_keys_entry;
+ extern const struct cmd_entry cmd_send_prefix_entry;
+ extern const struct cmd_entry cmd_server_access_entry;
+@@ -129,6 +132,8 @@ const struct cmd_entry *cmd_table[] = {
+ 	&cmd_choose_tree_entry,
+ 	&cmd_clear_history_entry,
+ 	&cmd_clear_prompt_history_entry,
++	&cmd_client_pointer_entry,
++	&cmd_client_window_action_entry,
+ 	&cmd_clock_mode_entry,
+ 	&cmd_command_prompt_entry,
+ 	&cmd_confirm_before_entry,
+@@ -176,6 +181,7 @@ const struct cmd_entry *cmd_table[] = {
  	&cmd_refresh_client_entry,
  	&cmd_rename_session_entry,
  	&cmd_rename_window_entry,
@@ -298,10 +538,91 @@ index c35f94d..b66bbb1 100644
  	return (0);
  }
 diff --git a/format.c b/format.c
-index 1a6d73a..9b3ad46 100644
+index 1a6d73a..88dc74f 100644
 --- a/format.c
 +++ b/format.c
-@@ -1950,6 +1950,57 @@ format_cb_mouse_utf8_flag(struct format_tree *ft)
+@@ -1534,6 +1534,80 @@ format_cb_client_last_session(struct format_tree *ft)
+ 	return (NULL);
+ }
+ 
++/* Stable only within this server, including detach/reattach of the same tty. */
++static void *
++format_cb_client_instance(struct format_tree *ft)
++{
++	char *value;
++	if (ft->c == NULL) return (NULL);
++	xasprintf(&value, "%llu", (unsigned long long)ft->c->instance);
++	return (value);
++}
++
++/* Explicit client input focus; pane_id keeps its existing window semantics. */
++static struct window_pane *
++format_client_input_pane(struct format_tree *ft)
++{
++	struct window_pane	*wp;
++
++	if (ft->c == NULL || ft->c->session == NULL ||
++	    ft->c->session->curw == NULL)
++		return (NULL);
++	wp = server_client_get_pane(ft->c);
++	if (wp == NULL || wp->window != ft->c->session->curw->window ||
++	    window_pane_exited(wp))
++		return (NULL);
++	return (wp);
++}
++
++static void *
++format_cb_client_pane_id(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("%%%u", wp->id));
++	return (NULL);
++}
++
++static void *
++format_cb_client_pane_pid(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("%ld", (long)wp->pid));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_id(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("@%u", wp->window->id));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_zoomed_flag(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (xstrdup((wp->window->flags & WINDOW_ZOOMED) ? "1" : "0"));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_action_version(struct format_tree *ft)
++{
++	if (ft->c != NULL)
++		return (xstrdup("1"));
++	return (NULL);
++}
++
+ /* Callback for client_name. */
+ static void *
+ format_cb_client_name(struct format_tree *ft)
+@@ -1950,6 +2024,57 @@ format_cb_mouse_utf8_flag(struct format_tree *ft)
  	return (NULL);
  }
  
@@ -359,7 +680,46 @@ index 1a6d73a..9b3ad46 100644
  /* Callback for mouse_x. */
  static void *
  format_cb_mouse_x(struct format_tree *ft)
-@@ -3383,6 +3434,12 @@ static const struct format_table_entry format_table[] = {
+@@ -3236,6 +3361,9 @@ static const struct format_table_entry format_table[] = {
+ 	{ "client_height", FORMAT_TABLE_STRING,
+ 	  format_cb_client_height
+ 	},
++	{ "client_instance", FORMAT_TABLE_STRING,
++	  format_cb_client_instance
++	},
+ 	{ "client_key_table", FORMAT_TABLE_STRING,
+ 	  format_cb_client_key_table
+ 	},
+@@ -3248,6 +3376,12 @@ static const struct format_table_entry format_table[] = {
+ 	{ "client_name", FORMAT_TABLE_STRING,
+ 	  format_cb_client_name
+ 	},
++	{ "client_pane_id", FORMAT_TABLE_STRING,
++	  format_cb_client_pane_id
++	},
++	{ "client_pane_pid", FORMAT_TABLE_STRING,
++	  format_cb_client_pane_pid
++	},
+ 	{ "client_pid", FORMAT_TABLE_STRING,
+ 	  format_cb_client_pid
+ 	},
+@@ -3287,6 +3421,15 @@ static const struct format_table_entry format_table[] = {
+ 	{ "client_width", FORMAT_TABLE_STRING,
+ 	  format_cb_client_width
+ 	},
++	{ "client_window_action_version", FORMAT_TABLE_STRING,
++	  format_cb_client_window_action_version
++	},
++	{ "client_window_id", FORMAT_TABLE_STRING,
++	  format_cb_client_window_id
++	},
++	{ "client_window_zoomed_flag", FORMAT_TABLE_STRING,
++	  format_cb_client_window_zoomed_flag
++	},
+ 	{ "client_written", FORMAT_TABLE_STRING,
+ 	  format_cb_client_written
+ 	},
+@@ -3383,6 +3526,12 @@ static const struct format_table_entry format_table[] = {
  	{ "mouse_utf8_flag", FORMAT_TABLE_STRING,
  	  format_cb_mouse_utf8_flag
  	},
@@ -372,6 +732,27 @@ index 1a6d73a..9b3ad46 100644
  	{ "mouse_word", FORMAT_TABLE_STRING,
  	  format_cb_mouse_word
  	},
+diff --git a/input-keys.c b/input-keys.c
+index fdce540..9758c14 100644
+--- a/input-keys.c
++++ b/input-keys.c
+@@ -802,7 +802,7 @@ input_key_mouse(struct window_pane *wp, struct mouse_event *m)
+ 	size_t		 len;
+ 
+ 	/* Ignore events if no mouse mode or the pane is not visible. */
+-	if (m->ignore || (s->mode & ALL_MOUSE_MODES) == 0)
++	if (!server_client_pointer_valid(m) || m->ignore || (s->mode & ALL_MOUSE_MODES) == 0)
+ 		return;
+ 	if (cmd_mouse_at(wp, m, &x, &y, 0) != 0)
+ 		return;
+@@ -810,6 +810,7 @@ input_key_mouse(struct window_pane *wp, struct mouse_event *m)
+ 		return;
+ 	if (!input_key_get_mouse(s, m, x, y, &buf, &len))
+ 		return;
++	server_client_pointer_delivered(wp, m, x, y);
+ 	log_debug("writing mouse %.*s to %%%u", (int)len, buf, wp->id);
+ 	input_key_write(__func__, wp->event, buf, len);
+ }
 diff --git a/layout.c b/layout.c
 index 157093d..3d9d0da 100644
 --- a/layout.c
@@ -532,6 +913,163 @@ index 157093d..3d9d0da 100644
  }
  
  /* Count the number of available cells in a layout. */
+diff --git a/menu.c b/menu.c
+index 31f4529..30e12ab 100644
+--- a/menu.c
++++ b/menu.c
+@@ -319,6 +319,8 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 	const char			*name = NULL;
+ 	const struct menu_item		*item;
+ 	struct cmdq_state		*state;
++	struct key_event		 cause_event;
++	uint64_t			 pointer_generation = event->m.pointer_generation;
+ 	enum cmd_parse_status		 status;
+ 	char				*error;
+ 
+@@ -328,12 +330,12 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 				return (1);
+ 			return (0);
+ 		}
+-		if (m->x < md->px ||
+-		    m->x > md->px + 4 + menu->width ||
++		if (m->x <= md->px ||
++		    m->x >= md->px + 3 + menu->width ||
+ 		    m->y < md->py + 1 ||
+ 		    m->y > md->py + 1 + count - 1) {
+ 			if (~md->flags & MENU_STAYOPEN) {
+-				if (MOUSE_RELEASE(m->b))
++				if (MOUSE_RELEASE(m->b) && !MOUSE_DRAG(m->b))
+ 					return (1);
+ 			} else {
+ 				if (!MOUSE_RELEASE(m->b) &&
+@@ -347,16 +349,17 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 			}
+ 			return (0);
+ 		}
++		/* A click without prior motion must choose its own interior row. */
++		md->choice = m->y - (md->py + 1);
++		if (md->choice != old)
++			c->flags |= CLIENT_REDRAWOVERLAY;
+ 		if (~md->flags & MENU_STAYOPEN) {
+-			if (MOUSE_RELEASE(m->b))
++			if (MOUSE_RELEASE(m->b) && !MOUSE_DRAG(m->b))
+ 				goto chosen;
+ 		} else {
+ 			if (!MOUSE_WHEEL(m->b) && !MOUSE_DRAG(m->b))
+ 				goto chosen;
+ 		}
+-		md->choice = m->y - (md->py + 1);
+-		if (md->choice != old)
+-			c->flags |= CLIENT_REDRAWOVERLAY;
+ 		return (0);
+ 	}
+ 	for (i = 0; i < (u_int)count; i++) {
+@@ -498,6 +501,14 @@ chosen:
+ 		event = cmdq_get_event(md->item);
+ 	else
+ 		event = NULL;
++	/* Preserve the menu's source context, but use the selecting input's lease. */
++	if (event != NULL || pointer_generation != 0) {
++		memset(&cause_event, 0, sizeof cause_event);
++		cause_event.key = KEYC_NONE;
++		if (event != NULL) memcpy(&cause_event, event, sizeof cause_event);
++		cause_event.m.pointer_generation = pointer_generation;
++		event = &cause_event;
++	}
+ 	state = cmdq_new_state(&md->fs, event, 0);
+ 
+ 	status = cmd_parse_and_append(item->command, NULL, c, state, &error);
+@@ -589,7 +600,7 @@ menu_prepare(struct menu *menu, int flags, int starting_choice,
+ 	md->menu = menu;
+ 	md->choice = -1;
+ 
+-	if (md->flags & MENU_NOMOUSE) {
++	if (md->flags & (MENU_NOMOUSE|MENU_INITIAL_CHOICE)) {
+ 		if (starting_choice >= (int)menu->count) {
+ 			starting_choice = menu->count - 1;
+ 			choice = starting_choice + 1;
+diff --git a/popup.c b/popup.c
+index 908b2a7..1f5363b 100644
+--- a/popup.c
++++ b/popup.c
+@@ -73,6 +73,10 @@ struct popup_data {
+ 	u_int			  lx;
+ 	u_int			  ly;
+ 	u_int			  lb;
++	uint64_t		  pointer_drag_generation;
++	uint64_t		  pointer_generation;
++	u_int			  pointer_buttons;
++	u_int			  pointer_x, pointer_y;
+ };
+ 
+ struct popup_editor {
+@@ -472,6 +476,7 @@ popup_menu_done(__unused struct menu *menu, __unused u_int choice,
+ 		pb = paste_get_top(NULL);
+ 		if (pb != NULL) {
+ 			buf = paste_buffer_data(pb, &len);
++
+ 			bufferevent_write(job_get_event(pd->job), buf, len);
+ 		}
+ 		break;
+@@ -614,6 +619,7 @@ popup_key_cb(struct client *c, void *data, struct key_event *event)
+ 				pd->dragging = MOVE;
+ 			else if (MOUSE_BUTTONS(m->lb) == MOUSE_BUTTON_3)
+ 				pd->dragging = SIZE;
++			pd->pointer_drag_generation = m->pointer_generation;
+ 			pd->dx = m->lx - pd->px;
+ 			pd->dy = m->ly - pd->py;
+ 			goto out;
+@@ -638,6 +644,15 @@ popup_key_cb(struct client *c, void *data, struct key_event *event)
+ 			}
+ 			if (!input_key_get_mouse(&pd->s, m, px, py, &buf, &len))
+ 				return (0);
++			if (m->pointer_generation != 0) {
++				u_int button = MOUSE_BUTTONS(m->sgr_b);
++				pd->pointer_generation = m->pointer_generation;
++				pd->pointer_x = px; pd->pointer_y = py;
++				if (button < 3 && m->sgr_type == 'm')
++					pd->pointer_buttons &= ~(1U << button);
++				else if (button < 3 && !MOUSE_DRAG(m->b))
++					pd->pointer_buttons |= 1U << button;
++			}
+ 			bufferevent_write(job_get_event(pd->job), buf, len);
+ 			return (0);
+ 		}
+@@ -982,3 +997,34 @@ popup_editor(struct client *c, const char *buf, size_t len,
+ 	free(cmd);
+ 	return (0);
+ }
++
++/* Cancel only injected popup presses; never run menu/title release actions. */
++void
++popup_pointer_cancel(struct client *c, uint64_t generation)
++{
++	struct popup_data *pd;
++	struct mouse_event m;
++	const char *buf;
++	size_t len;
++	u_int i;
++	if (c->overlay_key != popup_key_cb)
++		return;
++	pd = c->overlay_data;
++	if (pd->pointer_drag_generation == generation) {
++		pd->dragging = OFF;
++		pd->pointer_drag_generation = 0;
++	}
++	if (pd->pointer_generation != generation)
++		return;
++	for (i = 0; i < 3; i++) {
++		if (!(pd->pointer_buttons & (1U << i)) || pd->job == NULL)
++			continue;
++		memset(&m, 0, sizeof m);
++		m.b = 3; m.sgr_b = i; m.sgr_type = 'm';
++		if (input_key_get_mouse(&pd->s, &m, pd->pointer_x,
++		    pd->pointer_y, &buf, &len))
++			bufferevent_write(job_get_event(pd->job), buf, len);
++	}
++	pd->pointer_buttons = 0;
++	pd->pointer_generation = 0;
++}
 diff --git a/screen-redraw.c b/screen-redraw.c
 index e1d8c62..8226de8 100644
 --- a/screen-redraw.c
@@ -580,10 +1118,247 @@ index e1d8c62..8226de8 100644
  				/*
  				 * If floating pane completely covers this range
 diff --git a/server-client.c b/server-client.c
-index 52886f0..c0eb67c 100644
+index 52886f0..702da9b 100644
 --- a/server-client.c
 +++ b/server-client.c
-@@ -166,10 +166,19 @@ server_client_ranges_is_empty(struct visible_ranges *r)
+@@ -50,6 +50,236 @@ static int	server_client_dispatch_identify(struct client *, struct imsg *);
+ static int	server_client_dispatch_shell(struct client *);
+ static void	server_client_report_theme(struct client *, enum client_theme);
+ 
++static uint64_t server_client_instance;
++static uint64_t server_pointer_generation;
++static void server_client_pointer_cancel(struct client *, int);
++
++/* A control client's mouse is a lease on one witnessed terminal client. */
++static struct client *
++server_client_pointer_find(uint64_t generation)
++{
++	struct client *c;
++	TAILQ_FOREACH(c, &clients, entry) {
++		if (c->pointer_owner != NULL && c->pointer_generation == generation)
++			return (c);
++	}
++	return (NULL);
++}
++
++int
++server_client_pointer_valid(struct mouse_event *m)
++{
++	return (m->pointer_generation == 0 ||
++	    server_client_pointer_find(m->pointer_generation) != NULL);
++}
++
++void
++server_client_pointer_delivered(struct window_pane *wp, struct mouse_event *m,
++    u_int x, u_int y)
++{
++	struct client *c;
++	struct pointer_press *p;
++	u_int button;
++	if (m->pointer_generation == 0 ||
++	    (c = server_client_pointer_find(m->pointer_generation)) == NULL)
++		return;
++	button = MOUSE_BUTTONS(m->sgr_b);
++	if (button >= 3)
++		return;
++	p = &c->pointer_presses[button];
++	if (m->sgr_type == 'm')
++		p->pane = -1;
++	else if (!MOUSE_DRAG(m->b) || p->pane == (int)wp->id) {
++		p->pane = wp->id; p->pid = wp->pid;
++		p->x = x; p->y = y;
++	}
++}
++
++static void
++server_client_pointer_cancel(struct client *c, int end)
++{
++	struct window_pane *wp;
++	struct mouse_event m;
++	struct pointer_press *p;
++	const char *buf;
++	size_t len;
++	u_int i;
++	if (c->pointer_owner == NULL)
++		return;
++	/* Release only presses actually encoded to a still-identical app PTY. */
++	for (i = 0; i < 3; i++) {
++		p = &c->pointer_presses[i];
++		wp = p->pane < 0 ? NULL : window_pane_find_by_id(p->pane);
++		if (wp != NULL && wp->pid == p->pid && wp->event != NULL) {
++			memset(&m, 0, sizeof m);
++			m.b = 3; m.sgr_b = i; m.sgr_type = 'm';
++			if (input_key_get_mouse(wp->screen, &m,
++			    p->x, p->y, &buf, &len))
++				bufferevent_write(wp->event, buf, len);
++		}
++		p->pane = -1;
++	}
++	popup_pointer_cancel(c, c->pointer_generation);
++	/* No MouseUp binding: disconnect must never activate a title/dock. */
++	if (c->pointer_drag_generation == c->pointer_generation) {
++		window_copy_cancel_pointer_drag(c, c->pointer_generation);
++		c->tty.mouse_drag_update = NULL;
++		c->tty.mouse_drag_release = NULL;
++		c->tty.mouse_drag_flag = c->tty.mouse_scrolling_flag = 0;
++		c->tty.mouse_slider_mpos = c->tty.mouse_last_pane = -1;
++		c->pointer_drag_generation = 0;
++	}
++	c->tty.mouse_last_b = 3;
++	evtimer_del(&c->click_timer);
++	c->flags &= ~(CLIENT_DOUBLECLICK|CLIENT_TRIPLECLICK);
++	c->pointer_buttons = 0;
++	c->pointer_visible = 0;
++	c->pointer_motion = NULL;
++	/* Invalidate copies held by queues and asynchronous mouse bindings. */
++	if (++server_pointer_generation == 0)
++		fatalx("pointer generation exhausted");
++	c->pointer_generation = server_pointer_generation;
++	c->pointer_last_b = 3;
++	if (end)
++		c->pointer_owner = NULL;
++}
++
++static void
++server_client_pointer_clamp(struct client *c)
++{
++	if (c->pointer_x >= c->tty.sx) c->pointer_x = c->tty.sx - 1;
++	if (c->pointer_y >= c->tty.sy) c->pointer_y = c->tty.sy - 1;
++	if (c->pointer_last_x >= c->tty.sx) c->pointer_last_x = c->tty.sx - 1;
++	if (c->pointer_last_y >= c->tty.sy) c->pointer_last_y = c->tty.sy - 1;
++}
++
++static void
++server_client_pointer_event(struct client *c, u_int b, u_int sgr, int up,
++    int motion)
++{
++	struct key_event *event;
++	struct mouse_event *m;
++	if (motion && c->pointer_motion != NULL) {
++		c->pointer_motion->m.x = c->pointer_x;
++		c->pointer_motion->m.y = c->pointer_y;
++		c->pointer_last_x = c->pointer_x;
++		c->pointer_last_y = c->pointer_y;
++		return;
++	}
++	event = xcalloc(1, sizeof *event);
++	event->key = KEYC_MOUSE;
++	event->pointer_queued = 1;
++	m = &event->m;
++	m->pointer_generation = c->pointer_generation;
++	m->x = c->pointer_x; m->y = c->pointer_y;
++	m->lx = c->pointer_last_x; m->ly = c->pointer_last_y;
++	m->lb = c->pointer_last_b; m->b = b;
++	m->sgr_b = sgr; m->sgr_type = up ? 'm' : 'M';
++	c->pointer_last_x = m->x; c->pointer_last_y = m->y;
++	c->pointer_last_b = b;
++	if (motion)
++		c->pointer_motion = event;
++	else
++		c->pointer_motion = NULL;
++	c->pointer_pending++;
++	if (!server_client_handle_key(c, event)) {
++		c->pointer_pending--;
++		if (c->pointer_motion == event)
++			c->pointer_motion = NULL;
++		free(event);
++	}
++}
++
++int
++server_client_pointer(struct client *owner, struct client *c,
++    const char *action, int relative, int x, int y, int button,
++    struct cmdq_item *item)
++{
++	long long px, py;
++	u_int i, b = 3, count = 1;
++	int move = strcmp(action, "move") == 0;
++	int wheel = strcmp(action, "wheel") == 0;
++	if (strcmp(action, "begin") == 0) {
++		if (c->pointer_owner != NULL && c->pointer_owner != owner)
++			goto busy;
++		if (c->pointer_owner == NULL) {
++			if (c->pointer_physical_buttons != 0 || c->tty.mouse_drag_flag)
++				goto busy;
++			if (++server_pointer_generation == 0)
++				fatalx("pointer generation exhausted");
++			c->pointer_generation = server_pointer_generation;
++			c->pointer_owner = owner;
++			c->pointer_visible = 0;
++			c->pointer_x = c->tty.sx / 2;
++			c->pointer_y = c->tty.sy / 2;
++			c->pointer_last_x = c->pointer_x;
++			c->pointer_last_y = c->pointer_y;
++			c->pointer_last_b = 3;
++			for (i = 0; i < 3; i++) c->pointer_presses[i].pane = -1;
++		}
++		goto ack;
++	}
++	if (c->pointer_owner != owner) {
++		cmdq_error(item, "pointer lease is not owned by this control connection");
++		return (0);
++	}
++	if (strcmp(action, "hide") == 0 || strcmp(action, "end") == 0) {
++		server_client_pointer_cancel(c, strcmp(action, "end") == 0);
++		goto ack;
++	}
++	if (strcmp(action, "show") == 0) {
++		c->pointer_visible = 1;
++		goto ack;
++	}
++	if (move && c->pointer_motion != NULL) count = 0;
++	if (wheel) count = abs(x) + abs(y);
++	/* Reject before any position/button mutation when the native queue is full. */
++	if (c->pointer_pending + count > 64) {
++		cmdq_error(item, "pointer event queue is full");
++		return (0);
++	}
++	server_client_pointer_clamp(c);
++	if (move) {
++		px = relative ? (long long)c->pointer_x + x : x;
++		py = relative ? (long long)c->pointer_y + y : y;
++		if (px < 0) px = 0;
++		if (py < 0) py = 0;
++		if (px >= c->tty.sx) px = c->tty.sx - 1;
++		if (py >= c->tty.sy) py = c->tty.sy - 1;
++		if (c->pointer_x == (u_int)px && c->pointer_y == (u_int)py)
++			goto ack;
++		c->pointer_x = px; c->pointer_y = py;
++		for (i = 0; i < 3; i++) if (c->pointer_buttons & (1U << i)) {b = i; break;}
++		server_client_pointer_event(c, b|MOUSE_MASK_DRAG, b|MOUSE_MASK_DRAG, 0, 1);
++	} else if (wheel) {
++		for (i = 0; i < (u_int)abs(y); i++) {
++			b = y > 0 ? 64 : 65;
++			server_client_pointer_event(c, b, b, 0, 0);
++		}
++		for (i = 0; i < (u_int)abs(x); i++) {
++			b = x > 0 ? 67 : 66;
++			server_client_pointer_event(c, b, b, 0, 0);
++		}
++	} else if (strcmp(action, "down") == 0) {
++		if (c->pointer_buttons & (1U << button)) goto ack;
++		c->pointer_buttons |= 1U << button;
++		server_client_pointer_event(c, button, button, 0, 0);
++	} else {
++		if (!(c->pointer_buttons & (1U << button))) goto ack;
++		c->pointer_buttons &= ~(1U << button);
++		server_client_pointer_event(c, 3, button, 1, 0);
++	}
++ack:
++	server_client_pointer_clamp(c);
++	cmdq_print(item, "pointer-v1 %llu %u %u %d %u",
++	    (unsigned long long)c->instance, c->pointer_x, c->pointer_y,
++	    c->pointer_visible, c->pointer_buttons);
++	return (1);
++busy:
++	cmdq_error(item, "pointer is busy");
++	return (0);
++}
++
+ /* Compare client windows. */
+ static int
+ server_client_window_cmp(struct client_window *cw1,
+@@ -166,10 +396,19 @@ server_client_ranges_is_empty(struct visible_ranges *r)
  void
  server_client_ensure_ranges(struct visible_ranges *r, u_int n)
  {
@@ -605,11 +1380,265 @@ index 52886f0..c0eb67c 100644
  }
  
  /*
+@@ -292,6 +531,9 @@ server_client_create(int fd)
+ 
+ 	c = xcalloc(1, sizeof *c);
+ 	c->references = 1;
++	if (++server_client_instance == 0)
++		fatalx("client instance exhausted");
++	c->instance = server_client_instance;
+ 	c->peer = proc_add_peer(server_proc, fd, server_client_dispatch, c);
+ 
+ 	if (gettimeofday(&c->creation_time, NULL) != 0)
+@@ -437,6 +679,12 @@ server_client_lost(struct client *c)
+ 	struct client_file	*cf, *cf1;
+ 	struct client_window	*cw, *cw1;
+ 
++	struct client *pointer_client;
++
++	TAILQ_FOREACH(pointer_client, &clients, entry) {
++		if (pointer_client == c || pointer_client->pointer_owner == c)
++			server_client_pointer_cancel(pointer_client, 1);
++	}
+ 	c->flags |= CLIENT_DEAD;
+ 
+ 	server_client_clear_overlay(c);
+@@ -990,6 +1238,7 @@ have_event:
+ 		 */
+ 		type = KEYC_TYPE_MOUSEDRAGEND;
+ 		c->tty.mouse_drag_flag = 0;
++		c->pointer_drag_generation = 0;
+ 		c->tty.mouse_slider_mpos = -1;
+ 		c->tty.mouse_last_pane = -1;
+ 	}
+@@ -1017,6 +1266,7 @@ have_event:
+ 		 * where the user grabbed.
+ 		 */
+ 		c->tty.mouse_drag_flag = MOUSE_BUTTONS(b) + 1;
++		c->pointer_drag_generation = m->pointer_generation;
+ 
+ 		/* Only change pane if not already dragging a pane border. */
+ 		if (lwp == NULL) {
+@@ -1187,6 +1437,19 @@ server_client_key_callback(struct cmdq_item *item, void *data)
+ 	struct cmd_find_state		 fs;
+ 	key_code			 key0, prefix, prefix2;
+ 
++	if (m->pointer_generation != 0) {
++		if (event->pointer_queued && c->pointer_pending != 0)
++			c->pointer_pending--;
++		if (c->pointer_motion == event)
++			c->pointer_motion = NULL;
++		if (!server_client_pointer_valid(m) || c->tty.sx == 0 || c->tty.sy == 0)
++			goto out;
++		/* A queued mouse event may be older than the terminal's latest resize. */
++		if (m->x >= c->tty.sx) m->x = c->tty.sx - 1;
++		if (m->y >= c->tty.sy) m->y = c->tty.sy - 1;
++		if (m->lx >= c->tty.sx) m->lx = c->tty.sx - 1;
++		if (m->ly >= c->tty.sy) m->ly = c->tty.sy - 1;
++	}
+ 	/* Check the client is good to accept input. */
+ 	if (s == NULL || (c->flags & CLIENT_UNATTACHEDFLAGS))
+ 		goto out;
+@@ -1449,6 +1712,29 @@ server_client_handle_key(struct client *c, struct key_event *event)
+ 	if (s == NULL || (c->flags & CLIENT_UNATTACHEDFLAGS))
+ 		return (0);
+ 
++	if (event->key == KEYC_MOUSE && event->m.pointer_generation == 0) {
++		struct mouse_event *m = &event->m;
++		u_int button = MOUSE_BUTTONS(m->sgr_b);
++		if (c->pointer_owner != NULL) {
++			server_client_pointer_cancel(c, 1);
++			m->lx = m->x; m->ly = m->y; m->lb = 3;
++			c->tty.mouse_last_x = m->x;
++			c->tty.mouse_last_y = m->y;
++			c->tty.mouse_last_b = m->b;
++		}
++		if (m->sgr_type == 'm' && button < 3)
++			c->pointer_physical_buttons &= ~(1U << button);
++		else if (!MOUSE_DRAG(m->b) && MOUSE_RELEASE(m->b))
++			c->pointer_physical_buttons = 0;
++		else if (!MOUSE_DRAG(m->b) && MOUSE_BUTTONS(m->b) < 3)
++			c->pointer_physical_buttons |= 1U << MOUSE_BUTTONS(m->b);
++		else if (MOUSE_DRAG(m->b) && !MOUSE_RELEASE(m->b) &&
++		    c->pointer_physical_buttons == 0)
++			return (0); /* no inherited virtual press can start a physical drag */
++	} else if (KEYC_IS_MOUSE(event->key) && event->m.pointer_generation != 0 &&
++	    !server_client_pointer_valid(&event->m))
++		return (0);
++
+ 	/*
+ 	 * Handle theme reporting keys before overlays so they work even when a
+ 	 * popup is open.
+@@ -1793,8 +2079,14 @@ server_client_reset_state(struct client *c)
+ 	tty_region_off(tty);
+ 	tty_margin_off(tty);
+ 
+-	/* Move cursor to pane cursor and offset. */
+-	if (c->prompt_string != NULL) {
++	/* The pointer is terminal-local: never change the grid or pane layout. */
++	if (c->pointer_owner != NULL && c->pointer_visible) {
++		if (c->pointer_x >= tty->sx) c->pointer_x = tty->sx - 1;
++		if (c->pointer_y >= tty->sy) c->pointer_y = tty->sy - 1;
++		cx = c->pointer_x; cy = c->pointer_y;
++		mode |= MODE_CURSOR;
++		mode &= ~(MODE_CURSOR_BLINKING|MODE_CURSOR_BLINKING_SET);
++	} else if (c->prompt_string != NULL) {
+ 		n = options_get_number(oo, "status-position");
+ 		if (n == 0)
+ 			cy = status_prompt_line_at(c);
+@@ -1858,7 +2150,17 @@ server_client_reset_state(struct client *c)
+ 		mode &= ~MODE_BRACKETPASTE;
+ 
+ 	/* Set the terminal mode and reset attributes. */
+-	tty_update_mode(tty, mode, s);
++	if (c->pointer_owner != NULL && c->pointer_visible) {
++		struct screen pointer_screen;
++		int nocursor = tty->flags & TTY_NOCURSOR;
++		memset(&pointer_screen, 0, sizeof pointer_screen);
++		pointer_screen.cstyle = SCREEN_CURSOR_BLOCK;
++		pointer_screen.ccolour = pointer_screen.default_ccolour = -1;
++		tty->flags &= ~TTY_NOCURSOR;
++		tty_update_mode(tty, mode, &pointer_screen);
++		tty->flags |= nocursor;
++	} else
++		tty_update_mode(tty, mode, s);
+ 	tty_reset(tty);
+ 
+ 	/* All writing must be done, send a sync end (if it was started). */
 diff --git a/tmux.1 b/tmux.1
-index f0dafb1..d899ed8 100644
+index f0dafb1..2403cc0 100644
 --- a/tmux.1
 +++ b/tmux.1
-@@ -6552,6 +6552,8 @@ The following variables are available, where appropriate:
+@@ -3835,6 +3835,105 @@ if
+ is specified and the window is linked to only one session, it is unlinked and
+ destroyed.
+ .El
++.Sh CLIENT WINDOW ACTION
++The MiOS
++.Ic client-window-action
++command performs a guarded window action for an exact terminal client.
++It requires
++.Fl t Ar exact-client-name ,
++.Fl C Ar expected-client-pid ,
++.Fl I Ar client-instance ,
++.Fl s Ar session-id ,
++.Fl w Ar window-id ,
++.Fl p Ar pane-id
++and
++.Fl P Ar expected-pane-pid .
++All flags precede the final action,
++.Ic zoom .
++.Pp
++The invoking peer and target client must have the same UID.
++The target must be an attached, writable, nonsuspended terminal client.
++The session, window and pane must match its actual input focus, including an
++.Li active-pane
++override. Hidden or exited panes are refused.
++The checks and zoom toggle run synchronously in the server event loop:
++there is no default-client lookup or deferred shell callback.
++Success prints exactly
++.Li ok ;
++invalid or stale identities return an error without changing the layout.
++.Pp
++The action uses the same shared-window zoom tree as
++.Ic resize-pane
++.Fl Z .
++Both tiled and floating panes retain their process, PTY and saved layout.
++Clients sharing that window observe the standard shared zoom state; this
++command does not create per-client layouts.
++.Pp
++The dedicated
++.Li client_pane_id , client_pane_pid , client_window_id
++and
++.Li client_window_zoomed_flag
++formats describe the client's actual input pane without changing the meaning
++of existing pane formats.
++They are empty when that live pane is unavailable.
++.Li client_window_action_version
++is
++.Li 1
++when these fields and the guarded action are supported.
++.Sh CLIENT POINTER
++The MiOS
++.Ic client-pointer
++command provides a native per-client mouse projection for a persistent control
++client. It requires
++.Fl t Ar exact-client-name ,
++.Fl P Ar expected-client-pid
++and
++.Fl I Ar client-instance
++(the decimal
++.Li client_instance
++format). The target must be an attached writable terminal client; the invoking
++client must be a control client. A read-only control client is permitted.
++.Pp
++The final argument is
++.Ic begin , show , hide , end , move , down , up
++or
++.Ic wheel .
++.Ic begin
++leases the pointer to that control connection and centers it, initially hidden.
++.Ic move
++requires signed
++.Fl x
++and
++.Fl y
++terminal cell coordinates including status rows; with
++.Fl r
++they are deltas, each from -64 to 64. Absolute values are from -32767 to 32767,
++then clamped to the target terminal viewport.
++.Ic down
++and
++.Ic up
++require
++.Fl b Ar left|middle|right .
++.Ic wheel
++requires signed X/Y detents (positive right/up), each at most 32 in magnitude
++and combined at most 32. All flags precede the final action.
++.Pp
++Successful commands print
++.Li "pointer-v1 INSTANCE X Y VISIBLE BUTTON_MASK"
++inside the standard control response. Bits 0, 1 and 2 of the mask are left,
++middle and right. Errors do not mutate pointer state. One control connection
++owns the lease; other clients cannot update it. The queue is bounded to 64
++injected events with consecutive motion coalescing. Mouse bindings, menus,
++status hit testing and pane drag/resize use the normal native input path.
++.Pp
++.Ic hide , end
++or a lost target/control connection cancels owned drag/click state and
++neutralizes only button presses actually delivered to app PTYs, without firing
++mouse-up title or menu actions. Pending events from the old lease are ignored.
++Physical terminal mouse input takes over immediately; a virtual lease cannot
++begin while physical buttons or a drag are held. The visible pointer uses the
++terminal cursor without changing screen cells or pane layout. Hiding or ending
++it restores the application's cursor.
+ .Sh KEY BINDINGS
+ .Nm
+ allows a command to be bound to most keys, with or without a prefix key.
+@@ -6478,9 +6577,12 @@ The following variables are available, where appropriate:
+ .It Li "client_discarded" Ta "" Ta "Bytes discarded when client behind"
+ .It Li "client_flags" Ta "" Ta "List of client flags"
+ .It Li "client_height" Ta "" Ta "Height of client"
++.It Li "client_instance" Ta "" Ta "Client lifetime identity, unique within the running server"
+ .It Li "client_key_table" Ta "" Ta "Current key table"
+ .It Li "client_last_session" Ta "" Ta "Name of the client's last session"
+ .It Li "client_name" Ta "" Ta "Name of client"
++.It Li "client_pane_id" Ta "" Ta "Client's actual live input pane ID"
++.It Li "client_pane_pid" Ta "" Ta "PID of client's actual live input pane"
+ .It Li "client_pid" Ta "" Ta "PID of client process"
+ .It Li "client_prefix" Ta "" Ta "1 if prefix key has been pressed"
+ .It Li "client_readonly" Ta "" Ta "1 if client is read-only"
+@@ -6493,6 +6595,9 @@ The following variables are available, where appropriate:
+ .It Li "client_user" Ta "" Ta "User of client process"
+ .It Li "client_utf8" Ta "" Ta "1 if client supports UTF\-8"
+ .It Li "client_width" Ta "" Ta "Width of client"
++.It Li "client_window_action_version" Ta "" Ta "Guarded client window action protocol (1)"
++.It Li "client_window_id" Ta "" Ta "Window ID of client's actual live input pane"
++.It Li "client_window_zoomed_flag" Ta "" Ta "1 if client's input window is zoomed"
+ .It Li "client_written" Ta "" Ta "Bytes written to client"
+ .It Li "command" Ta "" Ta "Name of command in use, if any"
+ .It Li "command_list_alias" Ta "" Ta "Command alias if listing commands"
+@@ -6552,6 +6657,8 @@ The following variables are available, where appropriate:
  .It Li "mouse_status_line" Ta "" Ta "Status line on which mouse event took place"
  .It Li "mouse_status_range" Ta "" Ta "Range type or argument of mouse event on status line"
  .It Li "mouse_utf8_flag" Ta "" Ta "Pane mouse UTF\-8 flag"
@@ -618,11 +1647,94 @@ index f0dafb1..d899ed8 100644
  .It Li "mouse_word" Ta "" Ta "Word under mouse, if any"
  .It Li "mouse_x" Ta "" Ta "Mouse X position, if any"
  .It Li "mouse_y" Ta "" Ta "Mouse Y position, if any"
+@@ -7329,8 +7436,15 @@ is a format for the menu title (see
+ .Sx FORMATS ) .
+ .Pp
+ .Fl C
+-sets the menu item selected by default, if the menu is not bound to a mouse key
+-binding.
++sets the menu item selected by default, including mouse-capable menus.
++An explicit
++.Fl C
++also enables mouse interaction for menus opened by keyboard or controller.
++The value
++.Li -
++starts without a selection.
++An explicit No or Cancel choice therefore remains safe for Enter while a
++direct mouse click selects its own enabled interior row.
+ .Pp
+ .Fl x
+ and
+@@ -7384,7 +7498,9 @@ must be clicked to choose an item.
+ tells
+ .Nm
+ the menu should handle mouse events; by default only menus opened from mouse
+-key bindings do so.
++key bindings or with an explicit
++.Fl C
++do so.
+ .Pp
+ The following keys are available in menus:
+ .Bl -column "Key" "Function" -offset indent
 diff --git a/tmux.h b/tmux.h
-index 5dc86b2..e6a1b29 100644
+index 5dc86b2..8d7d653 100644
 --- a/tmux.h
 +++ b/tmux.h
-@@ -3526,6 +3526,8 @@ void		 layout_make_node(struct layout_cell *, enum layout_type);
+@@ -1610,10 +1610,12 @@ struct mouse_event {
+ 
+ 	u_int		sgr_type;
+ 	u_int		sgr_b;
++	uint64_t		pointer_generation; /* native control lease, zero for physical input */
+ };
+ 
+ /* Key event. */
+ struct key_event {
++	int			 pointer_queued;
+ 	key_code		 key;
+ 	struct mouse_event	 m;
+ 
+@@ -2031,6 +2033,12 @@ typedef void (*overlay_draw_cb)(struct client *, void *,
+ typedef int (*overlay_key_cb)(struct client *, void *, struct key_event *);
+ typedef void (*overlay_free_cb)(struct client *, void *);
+ typedef void (*overlay_resize_cb)(struct client *, void *);
++struct pointer_press {
++	int		pane;
++	pid_t		pid;
++	u_int		x, y;
++};
++
+ struct client {
+ 	const char		*name;
+ 	struct tmuxpeer		*peer;
+@@ -2048,6 +2056,16 @@ struct client {
+ 	struct event		 event;
+ 	int			 retval;
+ 
++	uint64_t		 instance;
++	struct client		*pointer_owner;
++	uint64_t		 pointer_generation;
++	uint64_t		 pointer_drag_generation;
++	u_int			 pointer_x, pointer_y, pointer_buttons;
++	u_int			 pointer_last_x, pointer_last_y, pointer_last_b;
++	u_int			 pointer_pending, pointer_physical_buttons;
++	int			 pointer_visible;
++	struct key_event	*pointer_motion;
++	struct pointer_press	 pointer_presses[3];
+ 	struct timeval		 creation_time;
+ 	struct timeval		 activity_time;
+ 	struct timeval	 	 last_activity_time;
+@@ -3076,6 +3094,10 @@ void	 server_client_set_key_table(struct client *, const char *);
+ const char *server_client_get_key_table(struct client *);
+ int	 server_client_check_nested(struct client *);
+ int	 server_client_handle_key(struct client *, struct key_event *);
++int	 server_client_pointer(struct client *, struct client *, const char *, int, int, int, int, struct cmdq_item *);
++int	 server_client_pointer_valid(struct mouse_event *);
++void	 server_client_pointer_delivered(struct window_pane *, struct mouse_event *, u_int, u_int);
++void	 popup_pointer_cancel(struct client *, uint64_t);
+ struct client *server_client_create(int);
+ int	 server_client_open(struct client *, char **);
+ void	 server_client_unref(struct client *);
+@@ -3526,6 +3548,8 @@ void		 layout_make_node(struct layout_cell *, enum layout_type);
  void		 layout_fix_zindexes(struct window *, struct layout_cell *);
  void		 layout_fix_offsets(struct window *);
  void		 layout_fix_panes(struct window *, struct window_pane *);
@@ -631,3 +1743,58 @@ index 5dc86b2..e6a1b29 100644
  void		 layout_resize_adjust(struct window *, struct layout_cell *,
  		     enum layout_type, int);
  void		 layout_init(struct window *, struct window_pane *);
+@@ -3629,6 +3653,7 @@ void		 window_copy_scroll(struct window_pane *, int, u_int, u_int, int);
+ void		 window_copy_pageup(struct window_pane *, int);
+ void		 window_copy_pagedown(struct window_pane *, int, int);
+ void		 window_copy_start_drag(struct client *, struct mouse_event *);
++void		 window_copy_cancel_pointer_drag(struct client *, uint64_t);
+ char		*window_copy_get_word(struct window_pane *, u_int, u_int);
+ char		*window_copy_get_line(struct window_pane *, u_int);
+ int		 window_copy_get_current_offset(struct window_pane *, u_int *,
+@@ -3776,6 +3801,7 @@ __dead void printflike(1, 2) fatalx(const char *, ...);
+ #define MENU_NOMOUSE 0x1
+ #define MENU_TAB 0x2
+ #define MENU_STAYOPEN 0x4
++#define MENU_INITIAL_CHOICE 0x8
+ struct menu	*menu_create(const char *);
+ void		 menu_add_items(struct menu *, const struct menu_item *,
+ 		    struct cmdq_item *, struct client *,
+diff --git a/tty-keys.c b/tty-keys.c
+index d3a93f1..a485644 100644
+--- a/tty-keys.c
++++ b/tty-keys.c
+@@ -1305,6 +1305,7 @@ tty_keys_mouse(struct tty *tty, const char *buf, size_t len, size_t *size,
+ 		return (-1);
+ 
+ 	/* Fill mouse event. */
++	m->pointer_generation = 0;
+ 	m->lx = tty->mouse_last_x;
+ 	m->x = x;
+ 	m->ly = tty->mouse_last_y;
+diff --git a/window-copy.c b/window-copy.c
+index 916d12e..9d691dc 100644
+--- a/window-copy.c
++++ b/window-copy.c
+@@ -6645,3 +6645,22 @@ window_copy_acquire_cursor_down(struct window_mode_entry *wme, u_int hsize,
+ 	if (window_copy_update_selection(wme, 1, no_reset))
+ 		window_copy_redraw_lines(wme, oldy, nd);
+ }
++
++/* Stop only an Inputd lease's autoscroll; no selection/copy/release binding. */
++void
++window_copy_cancel_pointer_drag(struct client *c, uint64_t generation)
++{
++	struct window_pane *wp;
++	struct window_mode_entry *wme;
++	struct window_copy_mode_data *data;
++	if (generation == 0 || c->pointer_drag_generation != generation ||
++	    c->tty.mouse_last_pane < 0)
++		return;
++	wp = window_pane_find_by_id(c->tty.mouse_last_pane);
++	if (wp == NULL || (wme = TAILQ_FIRST(&wp->modes)) == NULL)
++		return;
++	if (wme->mode != &window_copy_mode && wme->mode != &window_view_mode)
++		return;
++	data = wme->data;
++	evtimer_del(&data->dragtimer);
++}

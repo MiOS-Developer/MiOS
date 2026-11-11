@@ -1,6 +1,6 @@
 // AI-hint: MiOS TTY desktop window actions preserve app processes and PTYs and verify the explicit socket, client, server and pane before mutation.
 // AI-related: usr/share/mios/mios.toml [keybindings.tmux.desktop], tools/native/mios-resolver/src/popup.rs, tools/native/mios-gen/src/tmux_os.rs
-// AI-functions: run, geometry, context, minimize, restore, dock_state
+// AI-functions: run, geometry, context, minimize, restore, dock_state, desktop_app, launch_app
 // Scaffolded by native miosd scaffold rust mios-gen/src/tmux_desktop; canonical template SHA256 2a9bf43dc4c1e0af3fd0b26f3b42217740a5dea7c86a7e619254f8cb62683203.
 
 #![forbid(unsafe_code)]
@@ -591,8 +591,9 @@ fn guard(
     p: &Pane,
     a: &Args,
     allow_hidden: bool,
+    allow_canvas: bool,
 ) -> Result<(), String> {
-    if p.managed || p.canvas {
+    if p.managed || (p.canvas && !allow_canvas) {
         return Err(
             "managed agents and the desktop canvas cannot be rearranged by desktop actions".into(),
         );
@@ -902,6 +903,7 @@ fn context(
     );
     let mut args = vec![
         "display-menu".to_owned(),
+        "-M".into(),
         "-c".into(),
         c.name.clone(),
         "-t".into(),
@@ -1018,6 +1020,7 @@ fn close(
     )?;
     server.cmd(&[
         "display-menu",
+        "-M",
         "-c",
         &c.name,
         "-t",
@@ -1249,6 +1252,81 @@ fn apps(root: &Path, merged: &Value, server: &Server, client: &Client) -> Result
     Ok(())
 }
 
+/// The semantic desktop actions select catalog IDs, leaving executable arguments and launch geometry in SSOT.
+fn desktop_app(verb: &str) -> Option<&'static str> {
+    match verb {
+        "new" => Some("terminal-shell"),
+        "monitor" => Some("btop"),
+        _ => None,
+    }
+}
+
+fn launch_app(
+    root: &Path,
+    merged: &Value,
+    server: &Server,
+    client: &Client,
+    pane: &Pane,
+    app: &str,
+) -> Result<(), String> {
+    server.require_float()?;
+    let term = server.cmd(&[
+        "display-message",
+        "-p",
+        "-c",
+        &client.name,
+        "-t",
+        &pane.id,
+        "#{client_termname}",
+    ])?;
+    let console = mios_unit_gen::tmux_os::console_client(merged, &term, client_ssh(client)?)?;
+    let session = client
+        .session
+        .strip_prefix('$')
+        .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        .ok_or("invalid application session identity")?;
+    let socket = server
+        .socket
+        .to_str()
+        .ok_or("invalid application socket path")?;
+    let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    // Preserve application services and explicit resolver layers for the existing SSOT application executor.
+    command
+        .args(["tmux-os", "--root"])
+        .arg(root)
+        .args([
+            "app",
+            app,
+            "--client",
+            &client.name,
+            "--console",
+            if console { "1" } else { "0" },
+            "--mode",
+            "float",
+        ])
+        .env(
+            "TMUX",
+            format!("{socket},{},{session}", server.identity.server.pid),
+        )
+        .env("TMUX_PANE", &pane.id);
+    let now = server.client(&client.name)?;
+    if now.process != client.process || now.session != client.session || now.window != client.window
+    {
+        return Err("application client changed before launch".into());
+    }
+    let current = server.witness(pane)?;
+    if current.session != client.session || current.window != client.window {
+        return Err("application source pane moved before launch".into());
+    }
+    let status = command
+        .status()
+        .map_err(|e| format!("MiOS desktop application: {e}"))?;
+    if !status.success() {
+        return Err(format!("MiOS desktop application failed: {status}"));
+    }
+    Ok(())
+}
+
 /// Called only with an explicit tmux socket and verified client. Never restarts an app or server.
 pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
     let mut a = parse(args)?;
@@ -1298,7 +1376,15 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
         a.verb.as_str(),
         "restore" | "focus" | "context" | "close" | "close-confirm"
     );
-    guard(&server, &client, &pane, &a, hidden)?;
+    let app = desktop_app(&a.verb);
+    guard(&server, &client, &pane, &a, hidden, app.is_some())?;
+    if let Some(app) = app {
+        launch_app(root, &merged, &server, &client, &pane, app)?;
+        return Ok(0);
+    }
+    if a.verb == "toggle-float" {
+        a.verb = if pane.floating { "tile" } else { "float" }.into();
+    }
     let mut r = record(&server, &pane)?.unwrap_or_else(|| Record::new(&server, &pane));
     match a.verb.as_str() {
         "center" | "float" | "snap-left" | "snap-right" | "snap-top" | "snap-bottom"
@@ -1357,8 +1443,16 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
                     })
                     .max_by_key(|p| u64::from(p.rect.w) * u64::from(p.rect.h))
                     .ok_or("no safe tiled target")?;
+                if pane.zoomed {
+                    server.cmd(&["resize-pane", "-Z", "-t", &pane.id])?;
+                }
                 server.cmd(&["join-pane", "-d", "-h", "-s", &pane.id, "-t", &target.id])?;
-                server.witness(&pane)?;
+                let after = server.witness(&pane)?;
+                if after.floating || after.window != pane.window || after.session != pane.session {
+                    return Err(
+                        "join-pane did not tile the witnessed pane in its original window".into(),
+                    );
+                }
                 focus(&server, &client, &server.pane(&pane.id)?)?;
             }
         }
@@ -1379,6 +1473,20 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_desktop_app_actions_select_only_existing_catalog_entries() {
+        let merged: Value = include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap();
+        let catalog = mios_resolver::terminal_tuis::catalog(&merged).unwrap();
+        for verb in ["new", "monitor"] {
+            let app = desktop_app(verb).unwrap();
+            assert!(catalog.iter().any(|entry| entry.id == app && entry.vt_ok));
+        }
+        for verb in ["float", "toggle-float", "exec:sh", "new;kill-server"] {
+            assert_eq!(desktop_app(verb), None);
+        }
+    }
     #[test]
     fn left_title_controls_match_native_border_origin_and_reject_body_and_old_right_side() {
         let rect = Rect {

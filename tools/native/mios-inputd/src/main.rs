@@ -3,6 +3,7 @@
 use clap::{Parser, Subcommand};
 use mios_inputd::GlobalConfig;
 use std::path::PathBuf;
+use std::time::Duration;
 #[derive(Parser)]
 #[command(about = "MiOS native global input router")]
 struct Cli {
@@ -112,6 +113,28 @@ enum Operation {
     /// toggle_chord run, for every window kind.
     Window {
         mode: String,
+        /// Native frontend's foreground process identity; both values are required together.
+        #[arg(long, requires = "frontend_start")]
+        frontend_pid: Option<u32>,
+        #[arg(long, requires = "frontend_pid")]
+        frontend_start: Option<u64>,
+    },
+    /// Read-only proven login/tty metadata for a per-login desktop namespace; grants no input assignment.
+    LoginIdentity {
+        #[arg(long, default_value_t = 0)]
+        tty_fd: i32,
+    },
+    /// Request Inputd's witnessed per-user login target handoff; this grants no device assignment.
+    Handoff {
+        operation: String,
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
+        client: Option<String>,
+        #[arg(long)]
+        pane: Option<String>,
+        #[arg(long)]
+        generation: Option<u64>,
     },
     Fixture,
     #[command(hide = true)]
@@ -241,6 +264,7 @@ fn run() -> Result<(), String> {
             pointer_names: c.pointer_names.clone(),
             cell_px: c.cell_px,
             log: log.clone(),
+            policy: global.clone(),
         })?;
         std::process::exit(code);
     }
@@ -311,12 +335,72 @@ fn run() -> Result<(), String> {
                 mios_inputd::runtime::context_report(&global, &legacy)?
             )
         }
-        Operation::Window { mode } => {
-            let (address, class) = mios_inputd::runtime::window_transaction(&mode, &global, None)?;
-            println!(
-                "{}",
-                serde_json::json!({"window":address,"class":class,"mode":mode,"ok":true})
-            );
+        Operation::LoginIdentity { tty_fd } => {
+            println!("{}", mios_inputd::tmux_handoff::login_identity(tty_fd)?)
+        }
+        Operation::Handoff {
+            operation,
+            socket,
+            client,
+            pane,
+            generation,
+        } => {
+            let request = mios_inputd::tmux_handoff::HandoffRequest {
+                op: operation,
+                socket,
+                client,
+                pane,
+                generation,
+                ..Default::default()
+            };
+            let reply = mios_inputd::tmux_handoff::request(
+                &request,
+                Duration::from_millis(global.controller.context_stale_ms),
+            )?;
+            if reply["ok"].as_bool() != Some(true) {
+                return Err(reply["error"]
+                    .as_str()
+                    .unwrap_or("Inputd refused handoff")
+                    .into());
+            }
+            println!("{reply}");
+        }
+        Operation::Window {
+            mode,
+            frontend_pid,
+            frontend_start,
+        } => {
+            let native = mios_inputd::runtime::native_console_active()
+                || mios_inputd::tmux_capture::focused_target().is_some()
+                || mios_inputd::console::own_vt().is_some()
+                || frontend_pid.is_some();
+            if native {
+                let request = mios_inputd::tmux_handoff::HandoffRequest {
+                    op: "window".into(),
+                    mode: Some(mode),
+                    frontend_pid,
+                    frontend_start,
+                    ..Default::default()
+                };
+                let reply = mios_inputd::tmux_handoff::request(
+                    &request,
+                    Duration::from_millis(global.controller.context_stale_ms),
+                )?;
+                if reply["ok"].as_bool() != Some(true) {
+                    return Err(reply["error"]
+                        .as_str()
+                        .unwrap_or("Inputd refused native window transaction")
+                        .into());
+                }
+                println!("{reply}");
+            } else {
+                let (address, class) =
+                    mios_inputd::runtime::window_transaction(&mode, &global, None)?;
+                println!(
+                    "{}",
+                    serde_json::json!({"window":address,"class":class,"mode":mode,"ok":true})
+                );
+            }
         }
         Operation::Dispatch { action } => {
             use std::os::unix::process::CommandExt;
@@ -343,6 +427,10 @@ fn run() -> Result<(), String> {
                 tmux_client
                     .map(|tty| mios_inputd::runtime::TmuxClient {
                         pid: 0,
+                        start: 0,
+                        instance: 0,
+                        socket_dev: 0,
+                        socket_ino: 0,
                         tty,
                         socket: tmux_socket,
                     })
@@ -442,6 +530,10 @@ fn run() -> Result<(), String> {
                 .clone()
                 .map(|tty| mios_inputd::runtime::TmuxClient {
                     pid: 0,
+                    start: 0,
+                    instance: 0,
+                    socket_dev: 0,
+                    socket_ino: 0,
                     tty,
                     socket: "/tmp/tmux-socket".into(),
                 });

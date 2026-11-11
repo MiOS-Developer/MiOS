@@ -65,6 +65,14 @@ pub struct ControllerConfig {
     #[serde(default)]
     pub guide_double_press_action: String,
     pub mode_override_chord: Vec<String>,
+    /// The legacy thumbstick chord controls focused-window ownership in every
+    /// backend. Absent keeps the earlier room-toggle/held-release contract.
+    #[serde(default)]
+    pub global_capture_toggle: bool,
+    /// A reserved per-controller focused-window zoom chord. Its singles wait
+    /// for release so neither a menu nor an app button leaks into the chord.
+    #[serde(default)]
+    pub window_zoom_chord: Vec<String>,
     pub pointer_hz: u32,
     pub stick_deadzone: f64,
     /// Legacy pixels per poll, read only when the per-second policy is absent.
@@ -583,6 +591,32 @@ impl GlobalConfig {
             .try_into()
             .map_err(|e: toml::de::Error| e.to_string())?;
         legacy.validate()?;
+        if cfg.controller.global_capture_toggle {
+            let codes = legacy
+                .toggle_chord
+                .iter()
+                .map(|button| button_code(button))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            if legacy.toggle_chord.len() != 2
+                || codes.len() != 2
+                || codes.contains(&button_code(&cfg.controller.guide_button)?)
+            {
+                return Err(
+                    "global capture toggle requires two distinct non-Guide controller buttons"
+                        .into(),
+                );
+            }
+        }
+        if cfg.controller.window_zoom_chord.iter().any(|button| {
+            legacy
+                .toggle_chord
+                .iter()
+                .any(|capture| button_code(capture).ok() == button_code(button).ok())
+        }) {
+            return Err(
+                "window zoom and capture chords must use separate controller buttons".into(),
+            );
+        }
         // The ownership contract is not a room binding: North captures, the toggle_chord (as a chord) toggles/releases.
         for button in cfg.controller.room.keys() {
             if button_code(button)? == button_code(&legacy.fullscreen_button)? {
@@ -947,6 +981,21 @@ impl GlobalConfig {
         let real = button_code;
         real(&c.guide_button)?;
         real(&c.cursor_mode_button)?;
+        if !c.window_zoom_chord.is_empty() {
+            let codes = c
+                .window_zoom_chord
+                .iter()
+                .map(|button| real(button))
+                .collect::<Result<BTreeSet<_>, _>>()?;
+            if c.window_zoom_chord.len() != 2
+                || codes.len() != 2
+                || codes.contains(&real(&c.guide_button)?)
+            {
+                return Err(
+                    "window_zoom_chord requires two distinct non-Guide controller buttons".into(),
+                );
+            }
+        }
         if c.scan_ms == 0
             || c.scan_ms > 60_000
             || c.debounce_ms == 0
@@ -971,7 +1020,14 @@ impl GlobalConfig {
                 .and_then(|contexts| contexts.get(context))
                 .and_then(toml::Value::as_str)
                 .is_some();
-            if !["desktop-2d", "terminal", "game", "vm-passthrough"].contains(&context.as_str())
+            if ![
+                "desktop-2d",
+                "terminal",
+                "game",
+                "vm-passthrough",
+                "console",
+            ]
+            .contains(&context.as_str())
                 || !configured
                 || !capture_contexts.insert(context)
             {
@@ -1304,6 +1360,19 @@ BTN_TR="hypr:workspace e+1"
             "action_namespaces".into(),
             vendor["keybindings"]["global"]["action_namespaces"].clone(),
         );
+        let action_argv = g
+            .entry("action_argv")
+            .or_insert_with(|| toml::Value::Table(Default::default()))
+            .as_table_mut()
+            .unwrap();
+        for (action, argv) in vendor["keybindings"]["global"]["action_argv"]
+            .as_table()
+            .unwrap()
+        {
+            action_argv
+                .entry(action.clone())
+                .or_insert_with(|| argv.clone());
+        }
         let c = g.get_mut("controller").unwrap().as_table_mut().unwrap();
         c.insert(
             "nav".into(),
@@ -1319,6 +1388,25 @@ BTN_TR="hypr:workspace e+1"
             .insert("global".into(), global);
         edit(&mut v);
         v
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn vendor_navigation_fixture_keeps_its_implemented_media_and_volume_handlers() {
+        let (cfg, _) = fixture_nav();
+        for action in [
+            "mios:volume up",
+            "mios:volume down",
+            "mios:media previous",
+            "mios:media next",
+        ] {
+            let argv = crate::runtime::configured_command(action, &cfg).unwrap();
+            assert_eq!(argv, cfg.action_argv[action]);
+            assert!(matches!(
+                argv[0].as_str(),
+                "/usr/bin/wpctl" | "/usr/bin/playerctl"
+            ));
+        }
+        assert!(crate::runtime::unsupported_actions(&cfg).is_empty());
     }
     /// The twelve camera rows every `mon_*` profile restates (protocol P1).
     const MON_ROWS: &str = r#"LS_LEFT = "key:ALT+4"
@@ -1339,7 +1427,7 @@ BTN_THUMBR = "key:ALT+5"
         let mut text = r#"app_poll_ms = 250
 app_query_timeout_ms = 150
 [apps.mon]
-exe = ["/usr/bin/mios-tamagotchi"]
+exe = ["/usr/bin/mios-mons"]
 camera = true
 contexts = { terminal = "mon", console = "mon_console" }
 # The spec's multi-line inline `repeat = { ... }` is not TOML 1.0 (inline tables are one line): a sub-table.
@@ -1398,7 +1486,7 @@ BTN_TR2 = [250, 90]
             }
         });
         std::fs::write(&vendor, toml::to_string(&value).unwrap()).unwrap();
-        let sample = "/home/mios/.local/bin/mios-tamagotchi-sample";
+        let sample = "/home/mios/.local/bin/mios-mons-sample";
         std::fs::write(
             &user,
             format!("[keybindings.global.controller.nav.apps.mon]\nuser_exe = [\"{sample}\"]\n"),
@@ -1408,11 +1496,7 @@ BTN_TR2 = [250, 90]
         let (cfg, _) = GlobalConfig::from_value(&merged).unwrap();
         let mon = &cfg.controller.nav.apps["mon"];
         assert_eq!(mon.user_exe, [sample]);
-        assert_eq!(
-            mon.exe,
-            ["/usr/bin/mios-tamagotchi"],
-            "the vendor list is kept"
-        );
+        assert_eq!(mon.exe, ["/usr/bin/mios-mons"], "the vendor list is kept");
         assert!(mon.camera && mon.contexts.contains_key("terminal") && !mon.repeat.is_empty());
         let (vendor_only, _) = GlobalConfig::from_value(
             &mios_resolver::layers::merge_layer_files(&[&vendor]).unwrap(),
@@ -1424,8 +1508,8 @@ BTN_TR2 = [250, 90]
         );
         // An invalid registration (relative, a basename) is reported and drops only the app layer.
         for bad in [
-            "mios-tamagotchi-sample",
-            "~/.local/bin/mios-tamagotchi-sample",
+            "mios-mons-sample",
+            "~/.local/bin/mios-mons-sample",
             "/a/../b",
         ] {
             std::fs::write(
@@ -1913,10 +1997,12 @@ BTN_TR2 = [250, 90]
         assert_eq!(c.classify("not-Alacritty", false), "desktop-2d");
     }
     #[test]
-    fn captured_navigation_contexts_require_configured_window_profiles() {
+    fn captured_navigation_contexts_require_configured_window_or_console_profiles() {
         for contexts in [
             vec![],
             vec!["terminal"],
+            vec!["console"],
+            vec!["terminal", "console"],
             vec!["desktop-2d", "terminal", "game", "vm-passthrough"],
         ] {
             let (cfg, _) = fixture_nav_with(|value| {
@@ -1934,11 +2020,11 @@ BTN_TR2 = [250, 90]
         assert!(missing.controller.capture_navigation_contexts.is_empty());
         for contexts in [
             vec!["app-capture"],
-            vec!["console"],
             vec!["desktop-3d"],
             vec!["controller"],
             vec!["invented"],
             vec!["terminal", "terminal"],
+            vec!["console", "console"],
         ] {
             let error = try_fixture_nav_with(|value| {
                 value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] =
@@ -1952,15 +2038,17 @@ BTN_TR2 = [250, 90]
                 toml::Value::Array(vec![toml::Value::Integer(7)]);
         })
         .is_err());
-        assert!(try_fixture_nav_with(|value| {
-            value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] =
-                toml::Value::try_from(vec!["terminal"]).unwrap();
-            value["keybindings"]["global"]["controller"]["nav"]["contexts"]
-                .as_table_mut()
-                .unwrap()
-                .remove("terminal");
-        })
-        .is_err());
+        for context in ["terminal", "console"] {
+            let result = try_fixture_nav_with(|value| {
+                value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] =
+                    toml::Value::try_from(vec![context]).unwrap();
+                value["keybindings"]["global"]["controller"]["nav"]["contexts"]
+                    .as_table_mut()
+                    .unwrap()
+                    .remove(context);
+            });
+            assert!(result.is_err(), "unconfigured captured context {context}");
+        }
     }
     #[test]
     fn controller_cursor_shape_requires_an_explicit_virtual_pointer() {

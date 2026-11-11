@@ -17,7 +17,8 @@ const DESKTOP: &str = "#{@mios-desktop-enabled}";
 const MUTABLE: &str =
     "#{?#{@mios-desktop-enabled},#{?#{E:@mios-managed-pane},0,#{?#{@mios-desktop-canvas},0,1}},0}";
 const DOCK_ITEM: &str = "#{m/r:^(apps|p:%[0-9]+)$,#{mouse_status_range}}";
-const TOPBAR: &str = "#{?#{@mios-desktop-enabled},#{?#{E:@mios-managed-pane},0,#{&&:#{@mios-desktop-canvas},#{==:#{mouse_y},0}}},0}";
+const TOPBAR: &str = "#{?#{@mios-desktop-enabled},#{?#{@mios-desktop-panel-pane},0,#{&&:#{@mios-desktop-canvas},#{==:#{mouse_y},0}}},0}";
+const PANEL_TOPBAR: &str = "#{&&:#{@mios-desktop-enabled},#{&&:#{@mios-desktop-panel},#{==:#{mouse_window_y},#{e|-:#{pane_top},1}}}}";
 
 fn error(message: impl Into<String>) -> UnitGenError {
     UnitGenError::GoldenMaster(message.into())
@@ -162,7 +163,7 @@ pub fn render(doc: &Value) -> Result<String, UnitGenError> {
     // title-click handler. The engine verifies the source PID/window again
     // before acting; managed/canvas titles never advertise window controls.
     let border_format = if titles {
-        "#{?#{E:@mios-managed-pane},#{pane_id},#{?#{@mios-desktop-canvas},,#{?#{>=:#{pane_width},12},#[align=left][x][_][+] #{pane_current_command},#{pane_id}}}}"
+        "#{?#{E:@mios-managed-pane},#{pane_id},#{?#{@mios-desktop-canvas},,#{?#{e|>=:#{pane_width},12},#[align=left][x][_][+] #{pane_current_command},#{pane_id}}}}"
     } else {
         ""
     };
@@ -224,8 +225,8 @@ pub fn render(doc: &Value) -> Result<String, UnitGenError> {
     bind(
         &mut out,
         "MouseDown1Border",
-        MUTABLE,
-        "select-pane -t =",
+        PANEL_TOPBAR,
+        &callback("dock-click", true, " --item apps"),
         "select-pane -t =",
         true,
     );
@@ -317,6 +318,13 @@ windows = "Windows"
             .unwrap();
         assert!(topbar.contains(TOPBAR));
         assert!(topbar.contains("send-keys -M"));
+        let panel_bar = out
+            .lines()
+            .find(|line| line.contains("MouseDown1Border"))
+            .unwrap();
+        assert!(panel_bar.contains(PANEL_TOPBAR));
+        assert!(panel_bar.contains("--item apps"));
+        assert!(panel_bar.contains("mouse_window_y"));
         assert!(!out.contains("MouseUp1Pane"));
         assert!(!out.contains("MouseDown3Pane") && !out.contains("MouseUp3Pane"));
         assert!(!out.contains("resize-pane -x") && !out.contains("resize-pane -y"));

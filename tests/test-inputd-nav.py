@@ -186,7 +186,7 @@ class MonProfiles(Base):
         self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
         try:
             for old, new, why in [
-                ('exe = ["/usr/bin/mios-tamagotchi"]', 'exe = ["sample"]', 'absolute paths'),
+                ('exe = ["/usr/bin/mios-mons"]', 'exe = ["sample"]', 'absolute paths'),
                 ('contexts = { terminal = "mon", console = "mon_console" }',
                  'contexts = { terminal = "missing", console = "mon_console" }', 'missing'),
                 ('[keybindings.global.controller.nav.mon_tmux]',
@@ -211,7 +211,7 @@ class MonProfiles(Base):
 
     def test_mon_user_registration_and_malformed_policy_fail_closed(self):
         self.host_layer('[keybindings.global.controller.nav.apps.mon]\n'
-                        'user_exe = ["/home/fixture/.local/bin/mios-tamagotchi-sample"]\n')
+                        'user_exe = ["/home/fixture/.local/bin/mios-mons-sample"]\n')
         good = self.run_bin('check')
         self.assertEqual(good.returncode, 0, good.stderr)
         for body, why in [('user_exe = ["sample"]', 'absolute path'),

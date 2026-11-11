@@ -1,0 +1,417 @@
+diff --git a/cmd-display-menu.c b/cmd-display-menu.c
+index e1766fc..5ca72a5 100644
+--- a/cmd-display-menu.c
++++ b/cmd-display-menu.c
+@@ -305,6 +305,7 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
+ 		return (CMD_RETURN_NORMAL);
+ 
+ 	if (args_has(args, 'C')) {
++		flags |= MENU_INITIAL_CHOICE;
+ 		if (strcmp(args_get(args, 'C'), "-") == 0)
+ 			starting_choice = -1;
+ 		else {
+@@ -366,7 +367,7 @@ cmd_display_menu_exec(struct cmd *self, struct cmdq_item *item)
+ 
+ 	if (args_has(args, 'O'))
+ 		flags |= MENU_STAYOPEN;
+-	if (!event->m.valid && !args_has(args, 'M'))
++	if (!event->m.valid && !args_has(args, 'M') && !args_has(args, 'C'))
+ 		flags |= MENU_NOMOUSE;
+ 	if (menu_display(menu, flags, starting_choice, item, px, py, tc, lines,
+ 	    style, selected_style, border_style, target, NULL, NULL) != 0)
+diff --git a/cmd-resize-pane.c b/cmd-resize-pane.c
+index ec9464e..d9fe038 100644
+--- a/cmd-resize-pane.c
++++ b/cmd-resize-pane.c
+@@ -28,6 +28,8 @@
+  */
+ 
+ static enum cmd_retval	cmd_float_pane_exec(struct cmd *, struct cmdq_item *);
++static enum cmd_retval	cmd_client_window_action_exec(struct cmd *,
++			    struct cmdq_item *);
+ static enum cmd_retval	cmd_resize_pane_floating(struct cmd *,
+ 			    struct cmdq_item *, u_int);
+ static enum cmd_retval	cmd_resize_pane_exec(struct cmd *, struct cmdq_item *);
+@@ -39,6 +41,97 @@ static void		cmd_resize_pane_mouse_update_floating(struct client *,
+ static void		cmd_resize_pane_mouse_update_tiled(struct client *,
+ 			    struct mouse_event *);
+ 
++/* A stale controller request must not resolve through a default client. */
++const struct cmd_entry cmd_client_window_action_entry = {
++	.name = "client-window-action",
++	.alias = NULL,
++	.args = { "C:I:p:P:s:t:w:", 1, 1, NULL },
++	.usage = "-t exact-client -C client-pid -I client-instance "
++		 "-s session-id -w window-id -p pane-id -P pane-pid zoom",
++	.flags = CMD_CLIENT_TFLAG,
++	.exec = cmd_client_window_action_exec
++};
++
++static int
++cmd_client_window_action_id(struct args *args, u_char flag, char prefix,
++    u_int id)
++{
++	char value[32];
++
++	if (!args_has(args, flag))
++		return (0);
++	xsnprintf(value, sizeof value, "%c%u", prefix, id);
++	return (strcmp(args_get(args, flag), value) == 0);
++}
++
++/* All identity checks and the layout mutation run in the same event turn. */
++static enum cmd_retval
++cmd_client_window_action_exec(struct cmd *self, struct cmdq_item *item)
++{
++	struct args		*args = cmd_get_args(self);
++	struct client		*owner = cmdq_get_client(item);
++	struct client		*c = cmdq_get_target_client(item);
++	struct window_pane	*wp;
++	struct window		*w;
++	char			*cause = NULL;
++	long long		 client_pid, instance, pane_pid;
++	int			 changed;
++
++	if (strcmp(args_string(args, 0), "zoom") != 0) {
++		cmdq_error(item, "unsupported client window action");
++		return (CMD_RETURN_ERROR);
++	}
++	if (owner == NULL || c == NULL || !args_has(args, 't') ||
++	    strcmp(args_get(args, 't'), c->name) != 0 ||
++	    (owner->flags & CLIENT_READONLY) ||
++	    !(c->flags & CLIENT_TERMINAL) ||
++	    (c->flags & (CLIENT_CONTROL|CLIENT_READONLY|CLIENT_SUSPENDED|
++	    CLIENT_UNATTACHEDFLAGS)) || owner->peer == NULL || c->peer == NULL ||
++	    proc_get_peer_uid(c->peer) == (uid_t)-1 ||
++	    proc_get_peer_uid(c->peer) != proc_get_peer_uid(owner->peer) ||
++	    c->session == NULL || c->session->curw == NULL ||
++	    c->tty.sx == 0 || c->tty.sy == 0) {
++		cmdq_error(item, "window action requires an exact writable terminal client");
++		return (CMD_RETURN_ERROR);
++	}
++	client_pid = args_strtonum(args, 'C', 1, INT_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++	instance = args_strtonum(args, 'I', 1, LLONG_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++	pane_pid = args_strtonum(args, 'P', 1, INT_MAX, &cause);
++	if (cause != NULL)
++		goto invalid;
++
++	wp = server_client_get_pane(c);
++	w = c->session->curw->window;
++	if (client_pid != c->pid || (uint64_t)instance != c->instance ||
++	    wp == NULL || wp->window != w || pane_pid != wp->pid ||
++	    window_pane_exited(wp) || !window_pane_visible(wp) ||
++	    !cmd_client_window_action_id(args, 's', '$', c->session->id) ||
++	    !cmd_client_window_action_id(args, 'w', '@', w->id) ||
++	    !cmd_client_window_action_id(args, 'p', '%', wp->id)) {
++		cmdq_error(item, "focused client window identity changed");
++		return (CMD_RETURN_ERROR);
++	}
++
++	/* The native zoom tree retains floating geometry, process and PTY too. */
++	if (w->flags & WINDOW_ZOOMED)
++		changed = (window_unzoom(w, 1) == 0);
++	else
++		changed = (window_zoom(wp) == 0);
++	if (changed)
++		server_redraw_window(w);
++	cmdq_print(item, "ok");
++	return (CMD_RETURN_NORMAL);
++
++invalid:
++	cmdq_error(item, "invalid window action number: %s", cause);
++	free(cause);
++	return (CMD_RETURN_ERROR);
++}
++
+ /* Native MiOS desktop API: retain the pane, process and PTY. */
+ const struct cmd_entry cmd_float_pane_entry = {
+ 	.name = "float-pane",
+diff --git a/cmd.c b/cmd.c
+index 4b68ba8..533b60e 100644
+--- a/cmd.c
++++ b/cmd.c
+@@ -95,6 +95,7 @@ extern const struct cmd_entry cmd_select_layout_entry;
+ extern const struct cmd_entry cmd_select_pane_entry;
+ extern const struct cmd_entry cmd_select_window_entry;
+ extern const struct cmd_entry cmd_client_pointer_entry;
++extern const struct cmd_entry cmd_client_window_action_entry;
+ extern const struct cmd_entry cmd_send_keys_entry;
+ extern const struct cmd_entry cmd_send_prefix_entry;
+ extern const struct cmd_entry cmd_server_access_entry;
+@@ -132,6 +133,7 @@ const struct cmd_entry *cmd_table[] = {
+ 	&cmd_clear_history_entry,
+ 	&cmd_clear_prompt_history_entry,
+ 	&cmd_client_pointer_entry,
++	&cmd_client_window_action_entry,
+ 	&cmd_clock_mode_entry,
+ 	&cmd_command_prompt_entry,
+ 	&cmd_confirm_before_entry,
+diff --git a/format.c b/format.c
+index 680c30a..88dc74f 100644
+--- a/format.c
++++ b/format.c
+@@ -1544,6 +1544,70 @@ format_cb_client_instance(struct format_tree *ft)
+ 	return (value);
+ }
+ 
++/* Explicit client input focus; pane_id keeps its existing window semantics. */
++static struct window_pane *
++format_client_input_pane(struct format_tree *ft)
++{
++	struct window_pane	*wp;
++
++	if (ft->c == NULL || ft->c->session == NULL ||
++	    ft->c->session->curw == NULL)
++		return (NULL);
++	wp = server_client_get_pane(ft->c);
++	if (wp == NULL || wp->window != ft->c->session->curw->window ||
++	    window_pane_exited(wp))
++		return (NULL);
++	return (wp);
++}
++
++static void *
++format_cb_client_pane_id(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("%%%u", wp->id));
++	return (NULL);
++}
++
++static void *
++format_cb_client_pane_pid(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("%ld", (long)wp->pid));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_id(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (format_printf("@%u", wp->window->id));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_zoomed_flag(struct format_tree *ft)
++{
++	struct window_pane	*wp = format_client_input_pane(ft);
++
++	if (wp != NULL)
++		return (xstrdup((wp->window->flags & WINDOW_ZOOMED) ? "1" : "0"));
++	return (NULL);
++}
++
++static void *
++format_cb_client_window_action_version(struct format_tree *ft)
++{
++	if (ft->c != NULL)
++		return (xstrdup("1"));
++	return (NULL);
++}
++
+ /* Callback for client_name. */
+ static void *
+ format_cb_client_name(struct format_tree *ft)
+@@ -3312,6 +3376,12 @@ static const struct format_table_entry format_table[] = {
+ 	{ "client_name", FORMAT_TABLE_STRING,
+ 	  format_cb_client_name
+ 	},
++	{ "client_pane_id", FORMAT_TABLE_STRING,
++	  format_cb_client_pane_id
++	},
++	{ "client_pane_pid", FORMAT_TABLE_STRING,
++	  format_cb_client_pane_pid
++	},
+ 	{ "client_pid", FORMAT_TABLE_STRING,
+ 	  format_cb_client_pid
+ 	},
+@@ -3351,6 +3421,15 @@ static const struct format_table_entry format_table[] = {
+ 	{ "client_width", FORMAT_TABLE_STRING,
+ 	  format_cb_client_width
+ 	},
++	{ "client_window_action_version", FORMAT_TABLE_STRING,
++	  format_cb_client_window_action_version
++	},
++	{ "client_window_id", FORMAT_TABLE_STRING,
++	  format_cb_client_window_id
++	},
++	{ "client_window_zoomed_flag", FORMAT_TABLE_STRING,
++	  format_cb_client_window_zoomed_flag
++	},
+ 	{ "client_written", FORMAT_TABLE_STRING,
+ 	  format_cb_client_written
+ 	},
+diff --git a/menu.c b/menu.c
+index 38e4c15..30e12ab 100644
+--- a/menu.c
++++ b/menu.c
+@@ -330,8 +330,8 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 				return (1);
+ 			return (0);
+ 		}
+-		if (m->x < md->px ||
+-		    m->x > md->px + 4 + menu->width ||
++		if (m->x <= md->px ||
++		    m->x >= md->px + 3 + menu->width ||
+ 		    m->y < md->py + 1 ||
+ 		    m->y > md->py + 1 + count - 1) {
+ 			if (~md->flags & MENU_STAYOPEN) {
+@@ -349,6 +349,10 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 			}
+ 			return (0);
+ 		}
++		/* A click without prior motion must choose its own interior row. */
++		md->choice = m->y - (md->py + 1);
++		if (md->choice != old)
++			c->flags |= CLIENT_REDRAWOVERLAY;
+ 		if (~md->flags & MENU_STAYOPEN) {
+ 			if (MOUSE_RELEASE(m->b) && !MOUSE_DRAG(m->b))
+ 				goto chosen;
+@@ -356,9 +360,6 @@ menu_key_cb(struct client *c, void *data, struct key_event *event)
+ 			if (!MOUSE_WHEEL(m->b) && !MOUSE_DRAG(m->b))
+ 				goto chosen;
+ 		}
+-		md->choice = m->y - (md->py + 1);
+-		if (md->choice != old)
+-			c->flags |= CLIENT_REDRAWOVERLAY;
+ 		return (0);
+ 	}
+ 	for (i = 0; i < (u_int)count; i++) {
+@@ -599,7 +600,7 @@ menu_prepare(struct menu *menu, int flags, int starting_choice,
+ 	md->menu = menu;
+ 	md->choice = -1;
+ 
+-	if (md->flags & MENU_NOMOUSE) {
++	if (md->flags & (MENU_NOMOUSE|MENU_INITIAL_CHOICE)) {
+ 		if (starting_choice >= (int)menu->count) {
+ 			starting_choice = menu->count - 1;
+ 			choice = starting_choice + 1;
+diff --git a/tmux.1 b/tmux.1
+index 291821c..2403cc0 100644
+--- a/tmux.1
++++ b/tmux.1
+@@ -3835,6 +3835,51 @@ if
+ is specified and the window is linked to only one session, it is unlinked and
+ destroyed.
+ .El
++.Sh CLIENT WINDOW ACTION
++The MiOS
++.Ic client-window-action
++command performs a guarded window action for an exact terminal client.
++It requires
++.Fl t Ar exact-client-name ,
++.Fl C Ar expected-client-pid ,
++.Fl I Ar client-instance ,
++.Fl s Ar session-id ,
++.Fl w Ar window-id ,
++.Fl p Ar pane-id
++and
++.Fl P Ar expected-pane-pid .
++All flags precede the final action,
++.Ic zoom .
++.Pp
++The invoking peer and target client must have the same UID.
++The target must be an attached, writable, nonsuspended terminal client.
++The session, window and pane must match its actual input focus, including an
++.Li active-pane
++override. Hidden or exited panes are refused.
++The checks and zoom toggle run synchronously in the server event loop:
++there is no default-client lookup or deferred shell callback.
++Success prints exactly
++.Li ok ;
++invalid or stale identities return an error without changing the layout.
++.Pp
++The action uses the same shared-window zoom tree as
++.Ic resize-pane
++.Fl Z .
++Both tiled and floating panes retain their process, PTY and saved layout.
++Clients sharing that window observe the standard shared zoom state; this
++command does not create per-client layouts.
++.Pp
++The dedicated
++.Li client_pane_id , client_pane_pid , client_window_id
++and
++.Li client_window_zoomed_flag
++formats describe the client's actual input pane without changing the meaning
++of existing pane formats.
++They are empty when that live pane is unavailable.
++.Li client_window_action_version
++is
++.Li 1
++when these fields and the guarded action are supported.
+ .Sh CLIENT POINTER
+ The MiOS
+ .Ic client-pointer
+@@ -6536,6 +6581,8 @@ The following variables are available, where appropriate:
+ .It Li "client_key_table" Ta "" Ta "Current key table"
+ .It Li "client_last_session" Ta "" Ta "Name of the client's last session"
+ .It Li "client_name" Ta "" Ta "Name of client"
++.It Li "client_pane_id" Ta "" Ta "Client's actual live input pane ID"
++.It Li "client_pane_pid" Ta "" Ta "PID of client's actual live input pane"
+ .It Li "client_pid" Ta "" Ta "PID of client process"
+ .It Li "client_prefix" Ta "" Ta "1 if prefix key has been pressed"
+ .It Li "client_readonly" Ta "" Ta "1 if client is read-only"
+@@ -6548,6 +6595,9 @@ The following variables are available, where appropriate:
+ .It Li "client_user" Ta "" Ta "User of client process"
+ .It Li "client_utf8" Ta "" Ta "1 if client supports UTF\-8"
+ .It Li "client_width" Ta "" Ta "Width of client"
++.It Li "client_window_action_version" Ta "" Ta "Guarded client window action protocol (1)"
++.It Li "client_window_id" Ta "" Ta "Window ID of client's actual live input pane"
++.It Li "client_window_zoomed_flag" Ta "" Ta "1 if client's input window is zoomed"
+ .It Li "client_written" Ta "" Ta "Bytes written to client"
+ .It Li "command" Ta "" Ta "Name of command in use, if any"
+ .It Li "command_list_alias" Ta "" Ta "Command alias if listing commands"
+@@ -7386,8 +7436,15 @@ is a format for the menu title (see
+ .Sx FORMATS ) .
+ .Pp
+ .Fl C
+-sets the menu item selected by default, if the menu is not bound to a mouse key
+-binding.
++sets the menu item selected by default, including mouse-capable menus.
++An explicit
++.Fl C
++also enables mouse interaction for menus opened by keyboard or controller.
++The value
++.Li -
++starts without a selection.
++An explicit No or Cancel choice therefore remains safe for Enter while a
++direct mouse click selects its own enabled interior row.
+ .Pp
+ .Fl x
+ and
+@@ -7441,7 +7498,9 @@ must be clicked to choose an item.
+ tells
+ .Nm
+ the menu should handle mouse events; by default only menus opened from mouse
+-key bindings do so.
++key bindings or with an explicit
++.Fl C
++do so.
+ .Pp
+ The following keys are available in menus:
+ .Bl -column "Key" "Function" -offset indent
+diff --git a/tmux.h b/tmux.h
+index 0642a4d..8d7d653 100644
+--- a/tmux.h
++++ b/tmux.h
+@@ -3801,6 +3801,7 @@ __dead void printflike(1, 2) fatalx(const char *, ...);
+ #define MENU_NOMOUSE 0x1
+ #define MENU_TAB 0x2
+ #define MENU_STAYOPEN 0x4
++#define MENU_INITIAL_CHOICE 0x8
+ struct menu	*menu_create(const char *);
+ void		 menu_add_items(struct menu *, const struct menu_item *,
+ 		    struct cmdq_item *, struct client *,

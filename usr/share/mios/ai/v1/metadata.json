@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4303,
-  "total_metadata_entries": 3451,
-  "total_hints": 3445,
-  "total_functions_indexed": 2157,
-  "total_related_links": 6908,
+  "total_files_scanned": 4328,
+  "total_metadata_entries": 3466,
+  "total_hints": 3460,
+  "total_functions_indexed": 2187,
+  "total_related_links": 6944,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3856,6 +3856,18 @@
       "has_shebang": false
     },
     {
+      "path": "etc/sudoers.d/40-mios-remote-login",
+      "hint": "Narrow sudo gate for the validated MiOS remote PTY greetd broker.",
+      "related": [
+        "src/mios-rs/miosd/src/remote_login.rs",
+        "usr/lib/pam.d/mios-remote-login"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "etc/sysctl.d/20-memory.conf",
       "hint": "Host override configuration for proactive memory compaction (task_744).",
       "related": [],
@@ -5444,7 +5456,11 @@
       ],
       "functions": [
         "open",
+        "open_with_login_fd",
+        "login",
         "reserve_config",
+        "ensure_sidebar",
+        "desktop_layout_command",
         "run",
         "config",
         "paint",
@@ -5870,6 +5886,28 @@
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/rde.md",
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/miosd/src/remote_login.rs",
+      "hint": "Isolated PTY greetd/tuigreet portal; real PAM owns authentication and session lifetime, with no physical seat or VT.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "usr/lib/pam.d/mios-remote-login",
+        "usr/share/mios/pam/remote-login.conf",
+        "usr/share/mios/mios.toml [terminal.remote_login]"
+      ],
+      "functions": [
+        "run",
+        "open",
+        "entry",
+        "worker",
+        "greeter",
+        "prepare_portal",
+        "proxy_request"
+      ],
+      "doc": null,
       "comment_style": "slash",
       "has_shebang": false
     },
@@ -13333,7 +13371,9 @@
         "context",
         "minimize",
         "restore",
-        "dock_state"
+        "dock_state",
+        "desktop_app",
+        "launch_app"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -13602,8 +13642,76 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-inputd/src/mios-controller-acceptance-linux.rs",
+      "hint": "cfg(test) regular-file descriptors only; no ioctl discovery, grab or uinput creation.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-acceptance-observer.rs",
+      "hint": "cfg(test) observation only; worker routing and results are unchanged.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-late-job-acceptance.rs",
+      "hint": "Additional cfg(test) late-job coverage; no hardware or live login operations.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-legacy-client-acceptance.rs",
+      "hint": "Private actual-worker client identity and remaining IPC deadline regressions; no hardware or live session access.",
+      "related": [
+        "runtime::TmuxClient",
+        "runtime::ActionWorker",
+        "tmux_capture::observe"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-legacy-job-acceptance.rs",
+      "hint": "Actual worker revocation and positive controls on private C95 clients and owned compositor sockets.",
+      "related": [
+        "runtime::ActionScope",
+        "runtime::ActionWorker",
+        "mios-controller-runtime-acceptance.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/mios-controller-runtime-acceptance.rs",
+      "hint": "Unapplied cfg(test) controller acceptance module; no device discovery or physical input.",
+      "related": [
+        "runtime::emit",
+        "OwnershipWorker",
+        "ActionWorker",
+        "SessionWorker",
+        "frozen controller vectors"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-inputd/src/nav.rs",
-      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, the console (VT) profile rules, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.",
+      "hint": "Controller navigation grammar (steps I2, I3): [keybindings.global.controller.nav] profiles with inherits, [tap, hold] values, the repeat table, flick thresholds, the key:/pointer:/tmux: projections and their validation, explicit console action adapters sharing desktop ownership gestures, the verified foreground-app layer ([nav.apps.<name>], camera profiles) and the Linux console byte translation of a key: stroke.",
       "related": [
         "usr/share/mios/mios.toml [keybindings.global.controller.nav]",
         "tools/native/mios-inputd/src/router.rs",
@@ -13682,6 +13790,65 @@
         "validate",
         "route_for_device",
         "plan"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/tmux_capture.rs",
+      "hint": "Witnessed native tmux focus and logical input ownership; no device reader or compositor IPC.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "runtime::OwnershipWorker",
+        "console::run"
+      ],
+      "functions": [
+        "observe",
+        "transaction",
+        "leaf_client",
+        "frontend"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/tmux_handoff.rs",
+      "hint": "Same-host authenticated SSH tmux handoff validation and bounded private socket framing; ownership stays in Inputd.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "runtime::OwnershipWorker",
+        "tmux_capture::Target",
+        "/run/systemd/sessions"
+      ],
+      "functions": [
+        "authenticate",
+        "live",
+        "request",
+        "read_request",
+        "write_reply",
+        "socket_path",
+        "peer_credentials"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-inputd/src/tmux_pointer.rs",
+      "hint": "Persistent authenticated tmux client-pointer actor; consumes Inputd pointer projections without device readers or host uinput fallback.",
+      "related": [
+        "/usr/share/mios/templates/rust",
+        "tmux_capture::focused_target",
+        "runtime::control_command",
+        "router::Event"
+      ],
+      "functions": [
+        "PointerWorker::spawn",
+        "PointerWorker::submit",
+        "PointerWorker::visible",
+        "PointerWorker::alive"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -13805,6 +13972,339 @@
         "usr/share/mios/windows/mios-native-client-setup.ps1",
         "usr/share/mios/mios.toml",
         "usr/share/mios/windows/mios-pc-control.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/Cargo.toml",
+      "hint": "Playable native virtual pet with deterministic care, memory game and atomic local saves.",
+      "related": [
+        "tools/native/Cargo.toml",
+        "usr/share/mios/mios.toml",
+        "specs/mios-mons"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/capabilities.rs",
+      "hint": "Independent glyph, color and stream policies; terminal heuristics never certify font coverage.",
+      "related": [
+        "config.rs",
+        "render.rs",
+        "specs/mios-mons/mios-mons-graphics-spec.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/characters.rs",
+      "hint": "Validated original animal catalogue and pure state-aware speech; presentation never advances gameplay RNG.",
+      "related": [
+        "game.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [mons.characters]"
+      ],
+      "functions": [
+        "validate_catalogue",
+        "character",
+        "speech",
+        "thought"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/config.rs",
+      "hint": "Validate layered [mons] SSOT before entering raw mode; no private configuration defaults.",
+      "related": [
+        "usr/share/mios/mios.toml [mons]",
+        "capabilities.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/dialogs.rs",
+      "hint": "Bounded native tmux dialogues with private replies and explicit inline fallback.",
+      "related": [
+        "input.rs",
+        "config.rs",
+        "ui.rs",
+        "task_3717"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/game.rs",
+      "hint": "Deterministic virtual-pet care, accelerated growth and a three-arrow memory game; no wall-clock catch-up.",
+      "related": [
+        "config.rs",
+        "save.rs",
+        "ui.rs",
+        "usr/share/mios/mios.toml [mons.game]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/game_tests.rs",
+      "hint": "Deterministic gameplay and real save-file controls, including locking, corruption and reset confirmation.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "ui.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/genetics.rs",
+      "hint": "Versioned transmissible birth codes and pure seeded Mon identities; progress is separate.",
+      "related": [
+        "game.rs",
+        "progression.rs",
+        "config.rs",
+        "ui.rs",
+        "usr/share/mios/mios.toml [mons.genetics]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/geometry.rs",
+      "hint": "Original compact doll animal volumes; pure geometry, no facial glyph meshes or game state.",
+      "related": [
+        "sprite.rs",
+        "game.rs",
+        "/usr/share/mios/templates/rust"
+      ],
+      "functions": [
+        "anatomy"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/habitat.rs",
+      "hint": "Deterministic cosmetic rooms, validated SSOT catalogues and explicit decoration transactions.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [mons.habitat]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/hud.rs",
+      "hint": "Cell-budgeted golden-ratio HUD geometry and exact compact status labels.",
+      "related": [
+        "ui.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [mcp.tmux.workspace]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/input.rs",
+      "hint": "Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.",
+      "related": [
+        "game.rs",
+        "ui.rs",
+        "tools/native/mios-inputd/src/nav.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/lib.rs",
+      "hint": "Reusable terminal capability, sprite packing and input foundation for the MiOS-Mons TUI.",
+      "related": [
+        "specs/mios-mons",
+        "usr/share/mios/mios.toml [mons]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/lighting.rs",
+      "hint": "Pure SSOT-configured voxel lighting and visible ASCII tonal shading.",
+      "related": [
+        "config.rs",
+        "render.rs",
+        "sprite.rs",
+        "usr/share/mios/mios.toml [mons.voxel_lighting]"
+      ],
+      "functions": [
+        "validate",
+        "brightness",
+        "shade_rgb",
+        "glyph"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/main.rs",
+      "hint": "Playable local virtual pet with explicit sample mode, read-only snapshots and single-writer saves.",
+      "related": [
+        "ui.rs",
+        "game.rs",
+        "save.rs",
+        "usr/share/mios/mios.toml [mons]",
+        "task_3707"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/progression.rs",
+      "hint": "Original generated Mon names, independent hatch genetics and bounded care-funded training.",
+      "related": [
+        "game.rs",
+        "save.rs",
+        "config.rs",
+        "usr/share/mios/mios.toml [mons.game.training]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/render.rs",
+      "hint": "Signed camera projection samples only the viewport; indexed packing retains terminal color semantics.",
+      "related": [
+        "sprite.rs",
+        "capabilities.rs",
+        "ratatui::symbols::pixel::QUADRANTS"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/save.rs",
+      "hint": "Versioned, bounded per-user saves with an OS-held single-writer lock and atomic durable replacement.",
+      "related": [
+        "game.rs",
+        "main.rs",
+        "usr/share/doc/mios/mios-mons.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/seed_entry.rs",
+      "hint": "Pure bounded ASCII shared-code editor; validation delegates to MonCode.",
+      "related": [
+        "genetics.rs",
+        "ui.rs",
+        "input.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/sprite.rs",
+      "hint": "Indexed legacy sprites, solid CPU voxel rasterization and safe viewport fitting.",
+      "related": [
+        "render.rs",
+        "specs/mios-mons/mios-mons-sprites-spec.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/tests.rs",
+      "hint": "Positive/negative controls for stream policy, sprite validation, cell geometry and projected keys.",
+      "related": [
+        "capabilities.rs",
+        "config.rs",
+        "input.rs",
+        "render.rs",
+        "sprite.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/ui.rs",
+      "hint": "Full-viewport pet room, responsive framed menus and animated care reactions; schema-1 game state stays independent of presentation.",
+      "related": [
+        "sprite.rs",
+        "render.rs",
+        "input.rs",
+        "config.rs",
+        "specs/mios-mons"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/src/world.rs",
+      "hint": "Deterministic CPU room solids, orthographic camera and depth-tested surface metadata.",
+      "related": [
+        "render.rs HabitatView",
+        "sprite.rs",
+        "usr/share/mios/mios.toml [mons.world]"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-mons/tests/cli.rs",
+      "hint": "Actual CLI controls with isolated layered SSOT and redirected streams.",
+      "related": [
+        "src/main.rs",
+        "usr/share/mios/mios.toml [mons]"
       ],
       "functions": [],
       "doc": null,
@@ -13937,6 +14437,18 @@
       "functions": [],
       "doc": null,
       "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-resolver/src/app_input.rs",
+      "hint": "App-owned semantic controller input. Never writes terminal input or reads hardware.",
+      "related": [
+        "mios-inputd::runtime",
+        "mios-mons::input"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
       "has_shebang": false
     },
     {
@@ -14108,7 +14620,7 @@
         "usr/share/mios/mios.toml [terminal.popups]",
         "miosd launcher",
         "mios-gen tmux-os",
-        "mios-tamagotchi"
+        "mios-mons"
       ],
       "functions": [],
       "doc": null,
@@ -14370,339 +14882,6 @@
         "usr/lib/mios/mios_toml.py (walk_rules)",
         "tools/native/mios-resolver/src/emit.rs",
         "tests/test-resolver-dropin-parity.py"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/Cargo.toml",
-      "hint": "Playable native virtual pet with deterministic care, memory game and atomic local saves.",
-      "related": [
-        "tools/native/Cargo.toml",
-        "usr/share/mios/mios.toml",
-        "specs/tamagotchi-tui"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/capabilities.rs",
-      "hint": "Independent glyph, color and stream policies; terminal heuristics never certify font coverage.",
-      "related": [
-        "config.rs",
-        "render.rs",
-        "specs/tamagotchi-tui/tamagotchi-graphics-spec.md"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/characters.rs",
-      "hint": "Validated original animal catalogue and pure state-aware speech; presentation never advances gameplay RNG.",
-      "related": [
-        "game.rs",
-        "config.rs",
-        "usr/share/mios/mios.toml [tamagotchi.characters]"
-      ],
-      "functions": [
-        "validate_catalogue",
-        "character",
-        "speech",
-        "thought"
-      ],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/config.rs",
-      "hint": "Validate layered [tamagotchi] SSOT before entering raw mode; no private configuration defaults.",
-      "related": [
-        "usr/share/mios/mios.toml [tamagotchi]",
-        "capabilities.rs"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/dialogs.rs",
-      "hint": "Bounded native tmux dialogues with private replies and explicit inline fallback.",
-      "related": [
-        "input.rs",
-        "config.rs",
-        "ui.rs",
-        "task_3717"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/game.rs",
-      "hint": "Deterministic virtual-pet care, accelerated growth and a three-arrow memory game; no wall-clock catch-up.",
-      "related": [
-        "config.rs",
-        "save.rs",
-        "ui.rs",
-        "usr/share/mios/mios.toml [tamagotchi.game]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/game_tests.rs",
-      "hint": "Deterministic gameplay and real save-file controls, including locking, corruption and reset confirmation.",
-      "related": [
-        "game.rs",
-        "save.rs",
-        "ui.rs"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/genetics.rs",
-      "hint": "Versioned transmissible birth codes and pure seeded Mon identities; progress is separate.",
-      "related": [
-        "game.rs",
-        "progression.rs",
-        "config.rs",
-        "ui.rs",
-        "usr/share/mios/mios.toml [tamagotchi.genetics]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/geometry.rs",
-      "hint": "Original compact doll animal volumes; pure geometry, no facial glyph meshes or game state.",
-      "related": [
-        "sprite.rs",
-        "game.rs",
-        "/usr/share/mios/templates/rust"
-      ],
-      "functions": [
-        "anatomy"
-      ],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/habitat.rs",
-      "hint": "Deterministic cosmetic rooms, validated SSOT catalogues and explicit decoration transactions.",
-      "related": [
-        "game.rs",
-        "save.rs",
-        "config.rs",
-        "usr/share/mios/mios.toml [tamagotchi.habitat]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/hud.rs",
-      "hint": "Cell-budgeted golden-ratio HUD geometry and exact compact status labels.",
-      "related": [
-        "ui.rs",
-        "config.rs",
-        "usr/share/mios/mios.toml [mcp.tmux.workspace]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/input.rs",
-      "hint": "Keyboard and Inputd projected-key actions; releases never act and explicit repeat events only navigate.",
-      "related": [
-        "game.rs",
-        "ui.rs",
-        "tools/native/mios-inputd/src/nav.rs"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/lib.rs",
-      "hint": "Reusable terminal capability, sprite packing and input foundation for the Tamagotchi TUI.",
-      "related": [
-        "specs/tamagotchi-tui",
-        "usr/share/mios/mios.toml [tamagotchi]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/lighting.rs",
-      "hint": "Pure SSOT-configured voxel lighting and visible ASCII tonal shading.",
-      "related": [
-        "config.rs",
-        "render.rs",
-        "sprite.rs",
-        "usr/share/mios/mios.toml [tamagotchi.voxel_lighting]"
-      ],
-      "functions": [
-        "validate",
-        "brightness",
-        "shade_rgb",
-        "glyph"
-      ],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/main.rs",
-      "hint": "Playable local virtual pet with explicit sample mode, read-only snapshots and single-writer saves.",
-      "related": [
-        "ui.rs",
-        "game.rs",
-        "save.rs",
-        "usr/share/mios/mios.toml [tamagotchi]",
-        "task_3707"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/progression.rs",
-      "hint": "Original generated Mon names, independent hatch genetics and bounded care-funded training.",
-      "related": [
-        "game.rs",
-        "save.rs",
-        "config.rs",
-        "usr/share/mios/mios.toml [tamagotchi.game.training]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/render.rs",
-      "hint": "Signed camera projection samples only the viewport; indexed packing retains terminal color semantics.",
-      "related": [
-        "sprite.rs",
-        "capabilities.rs",
-        "ratatui::symbols::pixel::QUADRANTS"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/save.rs",
-      "hint": "Versioned, bounded per-user saves with an OS-held single-writer lock and atomic durable replacement.",
-      "related": [
-        "game.rs",
-        "main.rs",
-        "usr/share/doc/mios/tamagotchi-tui.md"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/seed_entry.rs",
-      "hint": "Pure bounded ASCII shared-code editor; validation delegates to MonCode.",
-      "related": [
-        "genetics.rs",
-        "ui.rs",
-        "input.rs"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/sprite.rs",
-      "hint": "Indexed legacy sprites, solid CPU voxel rasterization and safe viewport fitting.",
-      "related": [
-        "render.rs",
-        "specs/tamagotchi-tui/tamagotchi-sprites-spec.md"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/tests.rs",
-      "hint": "Positive/negative controls for stream policy, sprite validation, cell geometry and projected keys.",
-      "related": [
-        "capabilities.rs",
-        "config.rs",
-        "input.rs",
-        "render.rs",
-        "sprite.rs"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/ui.rs",
-      "hint": "Full-viewport pet room, responsive framed menus and animated care reactions; schema-1 game state stays independent of presentation.",
-      "related": [
-        "sprite.rs",
-        "render.rs",
-        "input.rs",
-        "config.rs",
-        "specs/tamagotchi-tui"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/src/world.rs",
-      "hint": "Deterministic CPU room solids, orthographic camera and depth-tested surface metadata.",
-      "related": [
-        "render.rs HabitatView",
-        "sprite.rs",
-        "usr/share/mios/mios.toml [tamagotchi.world]"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "slash",
-      "has_shebang": false
-    },
-    {
-      "path": "tools/native/mios-tamagotchi/tests/cli.rs",
-      "hint": "Actual CLI controls with isolated layered SSOT and redirected streams.",
-      "related": [
-        "src/main.rs",
-        "usr/share/mios/mios.toml [tamagotchi]"
       ],
       "functions": [],
       "doc": null,
@@ -21111,6 +21290,7 @@
         "clean",
         "peer_name",
         "sync_rows",
+        "set_table_header",
         "ClientView",
         "AgentView",
         "SystemSummary"
@@ -21398,6 +21578,31 @@
       "related": [
         "/usr/libexec/mios/mios-cephfs-provision",
         "/usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/pam.d/mios-remote-greeter",
+      "hint": "Root-only private greetd launcher, which immediately drops to the witnessed caller via fixed runuser argv.",
+      "related": [
+        "src/mios-rs/miosd/src/remote_login.rs",
+        "usr/lib/pam.d/mios-remote-login",
+        "usr/share/mios/pam/remote-login.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/pam.d/mios-remote-login",
+      "hint": "Genuine remote greetd PAM service; no physical seat or VT is claimed.",
+      "related": [
+        "usr/share/mios/pam/remote-login.conf",
+        "src/mios-rs/miosd/src/remote_login.rs"
       ],
       "functions": [],
       "doc": null,
@@ -29708,6 +29913,7 @@
         "tools/native/mios-toml-get/"
       ],
       "functions": [
+        "_native_bin",
         "main"
       ],
       "doc": null,
@@ -37193,6 +37399,20 @@
       "has_shebang": false
     },
     {
+      "path": "usr/share/doc/mios/mios-mons.md",
+      "hint": "Playable local virtual-pet sample, safe save contract and per-Blade installation handoff.",
+      "related": [
+        "tools/native/mios-mons",
+        "usr/share/mios/mios.toml [mons]",
+        "task_3707",
+        "task_3708"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "usr/share/doc/mios/quickshell-candidate.md",
       "hint": "Staged Quickshell 0.3.2 candidate that fixes the shell's Qt update-group freeze and Hyprland event-socket deafness: how it is built against the host Qt, how it was validated in an owned nested session, and the lead's install / rollback plan for the live desktop.",
       "related": [
@@ -38002,11 +38222,11 @@
       "has_shebang": false
     },
     {
-      "path": "usr/share/doc/mios/research/mios-tamagotchi-villager-model.md",
+      "path": "usr/share/doc/mios/research/mios-mons-villager-model.md",
       "hint": "Evidence-backed design notes for original personality-driven MiOS-Mons; distinguish Nintendo statements, community reverse engineering and our implementation decisions.",
       "related": [
-        "tools/native/mios-tamagotchi",
-        "specs/tamagotchi-tui",
+        "tools/native/mios-mons",
+        "specs/mios-mons",
         "task_3716",
         "task_3717"
       ],
@@ -38035,20 +38255,6 @@
         "usr/bin/mios-shaderglass",
         "usr/share/mios/mios.toml [desktop.shaderglass]",
         "tests/test-shaderglass-state.py"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "xml",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/doc/mios/tamagotchi-tui.md",
-      "hint": "Playable local virtual-pet sample, safe save contract and per-Blade installation handoff.",
-      "related": [
-        "tools/native/mios-tamagotchi",
-        "usr/share/mios/mios.toml [tamagotchi]",
-        "task_3707",
-        "task_3708"
       ],
       "functions": [],
       "doc": null,
@@ -40317,6 +40523,17 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tools.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/pam/remote-login.conf",
+      "hint": "Private remote PAM environment applied before session/logind modules.",
+      "related": [
+        "usr/lib/pam.d/mios-remote-login"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },

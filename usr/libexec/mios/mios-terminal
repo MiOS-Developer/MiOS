@@ -29,9 +29,24 @@ if [[ -n "$_test_dir" ]]; then
     [[ -z "${MIOS_TERMINAL_TEST_GEN:-}" ]] || { _gen="$MIOS_TERMINAL_TEST_GEN"; _libgen="$MIOS_TERMINAL_TEST_GEN"; }
     [[ -z "${MIOS_TERMINAL_TEST_MIOSD:-}" ]] || _miosd="$MIOS_TERMINAL_TEST_MIOSD"
 fi
+_mios_desktop_entry() {
+    if [[ -n "$_test_dir" ]]; then
+        # The native desktop has its own namespace policy. A fixture must
+        # explicitly point that policy at the already validated private root;
+        # a normal host desktop can never be adopted by a test invocation.
+        local _socket _root
+        _socket=$(/usr/bin/mios-toml-get keybindings.tmux.desktop socket_name) || return 64
+        _root=$(/usr/bin/mios-toml-get terminal socket_root) || return 64
+        [[ "$_socket" == "$_test_sock" && "$(realpath -e -- "$_root" 2>/dev/null)" == "$_test_real" ]] \
+            || { printf 'mios-terminal: test desktop must use the private test socket and root\n' >&2; return 64; }
+    fi
+    # The canonical opener owns its witnessed client, shell theme and inputd
+    # handoff. Do not copy controller assignments or create an input reader.
+    exec "$_miosd" desktop "$@"
+}
 case "${1:-}" in
-    --desktop) shift; exec "$_miosd" desktop "$@" ;;
-    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]] [--session NAME] [--new] [--bare] [--app ID [--console 0|1]] [--launcher] [--desktop]\nInside MiOS-Tmux: --launcher | --menu apps | --app ID | --float shell|lift|reap | --session-cycle next|prev | --new (each with --client NAME) | --reload\nWith no option outside tmux, opens the global session selector ([terminal.sessions]). --session attaches NAME; --new starts a Tmux-OS session; --bare starts a bare Tmux-OS session; --app opens a TUI from [[terminal.tuis]]; --launcher enters the bare Tmux-OS session and opens the tmux-os launcher.\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
+    --desktop) shift; _mios_desktop_entry "$@"; exit $? ;;
+    -h|--help) printf 'Usage: mios-terminal [--action terminal|ai|agents|system] [--agent NAME ARGS...] [--workspace [NAME ARGS...]] [--session NAME] [--new] [--bare] [--app ID [--console 0|1]] [--launcher] [--desktop]\nInside MiOS-Tmux: --launcher | --menu apps | --app ID | --float shell|lift|reap | --session-cycle next|prev | --new (each with --client NAME) | --reload\nWith no option outside tmux, opens MiOS Desktop when [keybindings.tmux.desktop].enabled; an external SSH terminal first follows the administrator remote-login policy. When desktop mode is disabled, [terminal.sessions].selector retains the legacy chooser. --session attaches NAME; --new starts a Tmux-OS session; --bare starts a bare Tmux-OS session; --app opens a TUI from [[terminal.tuis]]; --launcher enters the bare Tmux-OS session and opens the tmux-os launcher.\nAttach or create the MiOS human tmux session. AI workspaces resize between desktop and portrait layouts.\n'; exit 0 ;;
     --menu|--float|--session-cycle)
         # Bindings run these as `run-shell -b` jobs with an explicit TMUX_PANE; the executor names every target.
         [[ -n "${TMUX:-}" ]] || { printf 'mios-terminal: %s works inside MiOS-Tmux only\n' "$1" >&2; exit 64; }
@@ -72,8 +87,23 @@ case "${1:-}" in
         _mios_new=1; _mios_action=terminal ;;
     --bare) _mios_new=1; _mios_bare_opt=1; _mios_action=terminal ;;
     '')
-        if [[ -z "${TMUX:-}" && "$(/usr/bin/mios-toml-get terminal.sessions selector 2>/dev/null)" == true ]]; then
-            exec /usr/bin/miosd sessions --root /
+        if [[ -z "${TMUX:-}" ]]; then
+            # SSH has already authenticated the transport user. The native
+            # portal separately applies the administrator's real-PAM policy;
+            # user-layer flags and shell variables cannot disable that gate.
+            if [[ -z "$_test_dir" && -n "${SSH_CONNECTION:-}" && -n "${SSH_TTY:-}" && -t 0 && -t 1 ]]; then
+                exec "$_miosd" desktop login --root /
+            fi
+            _mios_desktop_enabled=$(/usr/bin/mios-toml-get keybindings.tmux.desktop enabled) \
+                || { printf 'mios-terminal: desktop startup policy could not be resolved\n' >&2; exit 64; }
+            case "$_mios_desktop_enabled" in
+                true) _mios_desktop_entry; exit $? ;;
+                false) ;;
+                *) printf 'mios-terminal: desktop enabled policy must be boolean\n' >&2; exit 64 ;;
+            esac
+            if [[ "$(/usr/bin/mios-toml-get terminal.sessions selector 2>/dev/null)" == true ]]; then
+                exec "$_miosd" sessions --root /
+            fi
         fi ;;
     *) printf 'mios-terminal: unsupported option: %s\n' "$1" >&2; exit 64 ;;
 esac

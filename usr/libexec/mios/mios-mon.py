@@ -21,6 +21,8 @@ import argparse
 import threading
 import queue
 import signal
+import stat
+from pathlib import Path
 import xml.etree.ElementTree as ET
 from collections import deque
 
@@ -73,12 +75,12 @@ if os.environ.get("TMUX") and os.environ.get("TERM", "").startswith(("tmux", "sc
 try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
-    from textual.widgets import Header, Footer, Static, RichLog, TabbedContent, TabPane, DataTable, Sparkline, Label
+    from textual.widgets import Header, Footer, Static, RichLog, TabbedContent, TabPane, DataTable, Sparkline, Label, Button
     from textual.containers import Grid, Vertical, Horizontal
     from textual.reactive import reactive
     from textual.theme import Theme
     from textual import on
-    from mios_agent_tui import ClientView, AgentView, InventoryDetails, SystemSummary, sync_rows
+    from mios_agent_tui import ClientView, AgentView, InventoryDetails, SystemSummary, sync_rows, set_table_header, clean
     import psutil
     TEXTUAL_AVAILABLE = True
 except ImportError:
@@ -110,6 +112,8 @@ TAB_CHOICE = None
 
 _MONITOR_CONFIG_CACHE = None
 _AGENT_SNAPSHOT_CACHE = None
+_STATUS_COLLECTORS_STARTED = False
+_STATUS_COLLECTORS_LOCK = threading.Lock()
 
 def monitor_config():
     """Reuse parsed SSOT until a layer or fragment changes on disk."""
@@ -157,6 +161,89 @@ def monitor_sources_config():
             "flush_interval_s": max(1, int(pipeline.get("flush_interval_s", 5))),
             "scrollback_rows": max(100, int(terminal.get("scrollback_rows", 9000))),
             "distros": (f"podman-{vm.get('machine_name', 'MiOS-DEV')}", vm.get("wsl_distro", "MiOS"))}
+
+def desktop_panel_config():
+    """Presentation policy; the native desktop owns the panel's actual geometry."""
+    monitor = monitor_config().get("terminal", {}).get("monitor", {})
+    panel = monitor.get("desktop_panel", {})
+    view = panel.get("default_view", "agents")
+    if view not in {"agents", "system", "logs", "tasks", "input"}:
+        raise ValueError("terminal.monitor.desktop_panel.default_view is invalid")
+    policy = {"default_view": view,
+              "compact_columns": int(panel.get("compact_columns", 78)),
+              "compact_rows": int(panel.get("compact_rows", 12)),
+              "poll_s": float(panel.get("poll_s", monitor.get("agent_poll_s", 5)))}
+    for key in ("overview_columns", "overview_rows"):
+        if key in panel:
+            policy[key] = int(panel[key])
+    if any(policy[key] <= 0 for key in ("compact_columns", "compact_rows")) or not 0 < policy["poll_s"] < float("inf"):
+        raise ValueError("terminal.monitor.desktop_panel sizes and cadence must be positive")
+    if any(policy[key] <= 0 for key in ("overview_columns", "overview_rows") if key in policy):
+        raise ValueError("terminal.monitor.desktop_panel overview sizes must be positive")
+    return policy
+
+def collect_panel_tasks(root):
+    """Use the existing read-only native task API, including every ready row."""
+    result = subprocess.run(["/usr/bin/mios-task", "ready", "--json", "--root", str(root)],
+                            capture_output=True, text=True, timeout=5)
+    if result.returncode:
+        raise RuntimeError("Task source unavailable")
+    rows = json.loads(result.stdout)
+    if not isinstance(rows, list) or any(not isinstance(row, dict) or not row.get("id") for row in rows):
+        raise RuntimeError("Task source unavailable")
+    return [(str(row["id"]), (clean(row.get("number") or row["id"], 80),
+             " · ".join((clean(row.get("priority", ""), 20), clean(row.get("title", ""), 1000),
+                         clean(row.get("owner") or "Unassigned", 100))))) for row in rows]
+
+def collect_panel_input():
+    """Sanitized facts from our daemon's manifest, without opening input devices."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime or not os.path.isabs(runtime):
+        raise RuntimeError("Input status unavailable")
+    path = os.path.join(runtime, "mios-inputd-active.json")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        meta = os.fstat(stream.fileno())
+        if not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid() or stat.S_IMODE(meta.st_mode) != 0o600:
+            raise RuntimeError("Input status unavailable")
+        raw = stream.read(65537)
+    if len(raw) > 65536:
+        raise RuntimeError("Input status unavailable")
+    data = json.loads(raw)
+    if not isinstance(data, dict) or data.get("controller_return_protocol_version") != 1:
+        raise RuntimeError("Input status unavailable")
+    pid, start = data.get("bridge_pid"), data.get("bridge_start")
+    if type(pid) is not int or type(start) is not int or pid <= 0 or start <= 0:
+        raise RuntimeError("Input status unavailable")
+    proc = Path("/proc") / str(pid)
+    try:
+        record = (proc / "stat").read_text()
+        fields = record[record.rfind(")") + 2:].split()
+        live = proc.stat().st_uid == os.getuid() and int(fields[19]) == start and fields[0] != "Z"
+    except (OSError, ValueError, IndexError):
+        live = False
+    scan = data.get("controller_scan_ms", 0)
+    stamp = data.get("timestamp_ms", 0)
+    if type(scan) is not int or scan <= 0 or type(stamp) is not int:
+        raise RuntimeError("Input status unavailable")
+    age = time.time() * 1000 - stamp
+    fresh = live and 0 <= age <= max(5000, scan * 4)
+    devices, consumers = data.get("devices"), data.get("raw_consumers")
+    if not isinstance(devices, list) or not isinstance(consumers, list) or any(not isinstance(d, dict) for d in devices):
+        raise RuntimeError("Input status unavailable")
+    rows = [("daemon", ("Input daemon", "Online" if fresh else "Stale · presence unknown")),
+            ("controllers", ("Controllers", str(len(devices)) if fresh else "Unknown")),
+            ("rearmed", ("Rearmed", str(sum(d.get("rearmed") is True for d in devices)) if fresh else "Unknown")),
+            ("consumers", ("Raw consumers", str(len(consumers)) if fresh else "Unknown")),
+            ("target", ("Desktop target", "Unavailable"))]
+    # Routing/capture fields are not assignment authority. A future published
+    # status API may expose their safe labels; never print the private manifest.
+    for index, device in enumerate(devices):
+        rows.append(("device:" + str(device.get("path", index)),
+                     (clean(device.get("name", "Controller"), 100),
+                      "Rearmed" if fresh and device.get("rearmed") is True else
+                      "Awaiting neutral" if fresh else "Unknown")))
+    return rows
 
 def parse_windows_events(output):
     """wevtutil emits adjacent Event XML records, without a wrapper element."""
@@ -376,13 +463,22 @@ def _bg_update_git():
         _resolve_git_status()
         time.sleep(5)
 
-threading.Thread(target=_bg_update_usb, daemon=True).start()
-threading.Thread(target=_bg_update_git, daemon=True).start()
+def start_status_collectors():
+    """Only the legacy USB/Git widgets need these persistent background loops."""
+    global _STATUS_COLLECTORS_STARTED
+    with _STATUS_COLLECTORS_LOCK:
+        if _STATUS_COLLECTORS_STARTED:
+            return
+        _STATUS_COLLECTORS_STARTED = True
+        threading.Thread(target=_bg_update_usb, daemon=True).start()
+        threading.Thread(target=_bg_update_git, daemon=True).start()
 
 def get_usb_drive_info():
+    start_status_collectors()
     return _USB_INFO_CACHE
 
 def get_git_tree_status():
+    start_status_collectors()
     return _GIT_STATUS_CACHE
 
 def get_credentials_text():
@@ -641,11 +737,23 @@ if TEXTUAL_AVAILABLE:
         TITLE = "MiOS Unified System & AI Monitor"
         refresh_interval = reactive(0.5)
 
-        def __init__(self, ui_request=None, ui_mode=None, observer=None, collectors=True, **kwargs):
+        def __init__(self, ui_request=None, ui_mode=None, observer=None, collectors=True,
+                     desktop_panel=False, client_chooser=False, root="/", **kwargs):
             super().__init__(**kwargs)
+            if desktop_panel and client_chooser:
+                raise ValueError("Desktop panel and client chooser are separate modes")
             self.ui_request = ui_request or {}
-            self.ui_mode = ui_mode
-            self.collectors_enabled = collectors
+            self.client_chooser = client_chooser
+            self.ui_mode = "clients" if client_chooser else ui_mode
+            self.desktop_panel = desktop_panel
+            self.panel_root = root
+            self.panel_policy = desktop_panel_config() if desktop_panel else {}
+            self._panel_logs_started = False
+            self._panel_overview_split = False
+            self._panel_last_started = {}
+            self._panel_log_lines = deque(maxlen=monitor_sources_config()["scrollback_rows"]) if desktop_panel else None
+            self._panel_log_lock = threading.Lock()
+            self.collectors_enabled = collectors and not client_chooser
             self.collectors_started = False
             self._snapshot_jobs = set()
             self._snapshot_queues = {}
@@ -653,7 +761,7 @@ if TEXTUAL_AVAILABLE:
             self.observer = observer or self.observe_agents
             self.agent_inventory = None
             self.agent_federation = None
-            self.enable_agent_federation = observer is None and collectors
+            self.enable_agent_federation = observer is None and self.collectors_enabled
 
         def observe_agents(self):
             request = self.ui_request.get("observation_request")
@@ -852,6 +960,17 @@ if TEXTUAL_AVAILABLE:
         #ai-container > AgentView {{ width: 1fr; height: 100%; }}
         #ai-container > #ai-log-box {{ width: 1fr; height: 100%; border: round {SSOT['success']}; background: {PANEL_BACKGROUND}; }}
         .compact #ai-container > AgentView {{ width: 100%; height: 100%; }}
+        .desktop-panel #desktop-nav {{ height: 1; min-height: 1; max-height: 1; width: 100%; padding: 0; overflow: hidden; background: {SSOT['bg']}; }}
+        .desktop-panel #desktop-nav Button {{ height: 1; min-height: 1; max-height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent; text-wrap: nowrap; text-overflow: clip; }}
+        .desktop-panel #desktop-nav Button.panel-selected {{ background: {SSOT['accent']}; color: {SSOT['fg']}; }}
+        .desktop-panel Tabs, .desktop-panel ContentTabs {{ display: none; }}
+        .desktop-panel #system-summary {{ display: block; height: 1fr; }}
+        .desktop-panel #panel-overview {{ height: 1fr; min-height: 0; width: 100%; }}
+        .desktop-panel #panel-overview > AgentView, .desktop-panel #panel-overview > SystemSummary {{ height: 100%; width: 1fr; }}
+        .desktop-panel #panel-overview.panel-overview-split > SystemSummary {{ border-left: solid {SSOT['accent']}; }}
+        .desktop-panel #log-box {{ border: none; padding: 0 1; }}
+        .desktop-panel .panel-status {{ height: 1; color: {SSOT['warning']}; }}
+        .desktop-panel .panel-table {{ height: 1fr; min-height: 1; overflow-y: auto; scrollbar-size-vertical: 1; }}
         """
 
         BINDINGS = [
@@ -877,11 +996,27 @@ if TEXTUAL_AVAILABLE:
             ("kp_plus", "slow_down", "Slower (+)"),
         ]
 
-        def _activate_tab(self, tab_id: str):
+        def _activate_tab(self, tab_id: str, *, focus=True):
+            if self.client_chooser:
+                if focus:
+                    self.query_one("#client-input").focus()
+                return
             if tab_id == "tab-ai":
                 tab_id = "tab-agents"
-            self.set_focus(None)
+            if not self.desktop_panel or focus:
+                self.set_focus(None)
             self.query_one(TabbedContent).active = tab_id
+            if self.desktop_panel:
+                for button in self.query("#desktop-nav Button"):
+                    button.set_class(button.id == "panel-nav-" + tab_id.removeprefix("tab-"), "panel-selected")
+                target = {"tab-agents": "peer-table", "tab-global": "metric-table",
+                          "tab-logs": "log-box", "tab-tasks": "panel-tasks", "tab-input": "panel-input"}.get(tab_id)
+                self.layout_panel_overview(self.size.width, self.size.height)
+                if target and focus:
+                    self.query_one("#" + target).focus(scroll_visible=False)
+                if self.collectors_enabled:
+                    self.update_panel_view()
+                return
             if tab_id == "tab-clients":
                 try: self.query_one("#client-input").focus()
                 except Exception: pass
@@ -892,21 +1027,33 @@ if TEXTUAL_AVAILABLE:
                 try: self.query_one("#svc-table").focus()
                 except Exception: pass
 
-        def action_tab_global(self): self._activate_tab("tab-global")
+        def action_tab_global(self): self._activate_tab("tab-logs" if self.desktop_panel else "tab-global")
         def action_close_or_quit(self):
             if isinstance(self.screen, InventoryDetails):
                 self.screen.dismiss()
+            elif self.desktop_panel:
+                self._activate_tab("tab-agents")
             else:
                 self.exit()
 
-        def action_tab_build(self): self._activate_tab("tab-build")
-        def action_tab_flash(self): self._activate_tab("tab-flash")
+        def action_quit(self):
+            if self.desktop_panel:
+                self.action_close_or_quit()
+            else:
+                self.exit()
+
+        def action_tab_build(self): self._activate_tab("tab-tasks" if self.desktop_panel else "tab-build")
+        def action_tab_flash(self): self._activate_tab("tab-input" if self.desktop_panel else "tab-flash")
         def action_tab_ai(self): self._activate_tab("tab-agents")
-        def action_tab_clients(self): self._activate_tab("tab-clients")
-        def action_tab_agents(self): self._activate_tab("tab-agents")
+        def action_tab_clients(self): self._activate_tab("tab-agents" if self.desktop_panel else "tab-clients")
+        def action_tab_agents(self): self._activate_tab("tab-global" if self.desktop_panel else "tab-agents")
 
         def cycle_view(self, step):
+            if self.client_chooser:
+                return
             views = ["tab-clients", "tab-agents", "tab-global", "tab-build", "tab-flash"]
+            if self.desktop_panel:
+                views = ["tab-agents", "tab-global", "tab-logs", "tab-tasks", "tab-input"]
             tabs = self.query_one(TabbedContent)
             next_tab = views[(views.index(tabs.active) + step) % len(views)]
             self._activate_tab(next_tab)
@@ -921,6 +1068,9 @@ if TEXTUAL_AVAILABLE:
         @on(TabbedContent.TabActivated)
         def view_changed(self, event):
             view = event.tab.id.removeprefix("--content-tab-")
+            if self.desktop_panel:
+                self.layout_panel_overview(self.size.width, self.size.height)
+                return
             title = {"tab-clients": "Clients", "tab-agents": "Agents & AI", "tab-global": "System",
                      "tab-build": "Build", "tab-flash": "Flash"}.get(view, "Monitor")
             self.query_one("#monitor-title", Static).update(f"MiOS Monitor · {title}")
@@ -930,6 +1080,37 @@ if TEXTUAL_AVAILABLE:
                 self.start_collectors()
 
         def compose(self) -> ComposeResult:
+            if self.client_chooser:
+                yield ClientView(self.ui_request.get("agents", []))
+                return
+            if self.desktop_panel:
+                self.add_class("desktop-panel")
+                with Horizontal(id="desktop-nav"):
+                    for key, label in (("agents", "F1 Agents"), ("global", "F2 System"),
+                                       ("logs", "F3 Logs"), ("tasks", "F4 Tasks"), ("input", "F5 Input")):
+                        yield Button(label, id="panel-nav-" + key)
+                initial = self.panel_policy["default_view"]
+                initial = "global" if initial == "system" else initial
+                # These widgets keep one parent and one collector each across
+                # overview, selected-view and tiny-viewport transitions.
+                with Horizontal(id="panel-overview"):
+                    yield AgentView(self.observer, self.ui_request.get("observation_request", {}).get("observation", {}).get("refresh_s", 2), id="agent-view")
+                    yield SystemSummary(get_telemetry, get_services, managed=True, id="system-summary")
+                with TabbedContent(initial="tab-" + initial):
+                    with TabPane("Agents", id="tab-agents"):
+                        pass
+                    with TabPane("System", id="tab-global"):
+                        pass
+                    with TabPane("Logs", id="tab-logs"):
+                        yield MonitorLog(id="log-box", markup=False, wrap=True,
+                                         max_lines=monitor_sources_config()["scrollback_rows"])
+                    with TabPane("Tasks", id="tab-tasks"):
+                        yield Static("Ready tasks · read-only", id="panel-task-status", classes="panel-status", markup=False)
+                        yield DataTable(id="panel-tasks", classes="panel-table", cursor_type="row", zebra_stripes=True)
+                    with TabPane("Input", id="tab-input"):
+                        yield Static("Input status · read-only", id="panel-input-status", classes="panel-status", markup=False)
+                        yield DataTable(id="panel-input", classes="panel-table", cursor_type="row", zebra_stripes=True)
+                return
             yield Header(show_clock=True)
             yield Static("MiOS Monitor", id="monitor-title", markup=False)
             mode = "agents" if self.ui_mode == "ai" else self.ui_mode
@@ -970,6 +1151,10 @@ if TEXTUAL_AVAILABLE:
             yield Static("F1–F5 views · Ctrl+←/→ · Esc quit", id="monitor-help", markup=False)
 
         def on_mount(self) -> None:
+            if self.desktop_panel:
+                # DEFAULT_CSS is scoped to MiosMonitorApp. Its mode selectors
+                # need a descendant class, rather than only the App's class.
+                self.screen.add_class("desktop-panel")
             if self.enable_agent_federation:
                 try:
                     import mios_mcp_federation
@@ -1002,6 +1187,27 @@ if TEXTUAL_AVAILABLE:
             self.register_theme(custom_theme)
             self.theme = "mios-ssot"
 
+            if self.client_chooser:
+                self.call_after_refresh(self._activate_tab, "tab-clients")
+                return
+
+            if self.desktop_panel:
+                for table_id, titles in (("panel-tasks", ("Task", "Ready work")),
+                                         ("panel-input", ("Input", "State"))):
+                    table = self.query_one("#" + table_id, DataTable)
+                    for title in titles:
+                        table.add_column(title, width=12)
+                sync_rows(self.query_one("#panel-tasks", DataTable), [("panel-loading", ("Tasks", "Not loaded"))])
+                sync_rows(self.query_one("#panel-input", DataTable), [
+                    ("daemon", ("Input daemon", "Unknown")), ("target", ("Desktop target", "Unavailable"))])
+                self.apply_responsive_layout(self.size.width, self.size.height)
+                initial = self.panel_policy["default_view"]
+                self.call_after_refresh(self._activate_tab, "tab-" + ("global" if initial == "system" else initial))
+                if self.collectors_enabled:
+                    self.collectors_started = True
+                    self.set_interval(self.panel_policy["poll_s"], self.update_panel_view)
+                return
+
             table = self.query_one("#svc-table", DataTable)
             table.add_columns("Service", "Port", "Status")
             table.zebra_stripes = True
@@ -1012,6 +1218,92 @@ if TEXTUAL_AVAILABLE:
             self.call_after_refresh(self._activate_tab, initial)
             if not self.ui_mode:
                 self.start_collectors()
+
+        @on(Button.Pressed, "#desktop-nav Button")
+        def panel_navigation(self, event):
+            event.stop()
+            self._activate_tab("tab-" + event.button.id.removeprefix("panel-nav-"))
+
+        @on(DataTable.RowSelected, "#panel-tasks")
+        @on(DataTable.RowSelected, "#panel-input")
+        def inspect_panel_row(self, event):
+            event.stop()
+            cells = event.data_table.get_row(event.row_key)
+            self.push_screen(InventoryDetails(" · ".join(clean(cell, 2000) for cell in cells)))
+
+        def collect_panel_view(self, view):
+            try:
+                if view == "tab-global":
+                    return {"data": (get_telemetry(), get_services())}
+                if view == "tab-tasks":
+                    return {"data": collect_panel_tasks(self.panel_root)}
+                if view == "tab-input":
+                    return {"data": collect_panel_input()}
+            except Exception:
+                # Do not forward private source errors, manifest payloads or
+                # subprocess stderr into a persistent desktop panel/log.
+                return {"unavailable": True}
+
+        def apply_panel_view(self, view, sample):
+            if view == "tab-global":
+                summary = self.query_one(SystemSummary)
+                if sample.get("unavailable"):
+                    summary.query_one("#system-status", Static).update("System unavailable · last snapshot")
+                else:
+                    summary.render_snapshot(*sample["data"])
+                return
+            table = self.query_one("#panel-tasks" if view == "tab-tasks" else "#panel-input", DataTable)
+            status = self.query_one("#panel-task-status" if view == "tab-tasks" else "#panel-input-status", Static)
+            if sample.get("unavailable"):
+                if view == "tab-input":
+                    previous = [(row.key.value, tuple(table.get_row(row.key))) for row in table.ordered_rows]
+                    sync_rows(table, [(key, (cells[0], "Unavailable" if key == "target" else "Unknown"))
+                                      for key, cells in previous])
+                status.update("Unavailable · last snapshot; status unknown")
+                return
+            sync_rows(table, sample["data"], ordered=True)
+            status.update(f"Ready tasks: {len(sample['data'])} · read-only" if view == "tab-tasks"
+                          else "Input facts · read-only; target unavailable")
+
+        def update_panel_view(self):
+            if not self.desktop_panel or not self.collectors_enabled:
+                return
+            view = self.query_one(TabbedContent).active
+            if self._panel_overview_split and view in {"tab-agents", "tab-global"}:
+                view = "tab-global"
+            if view == "tab-logs":
+                if not self._panel_logs_started:
+                    self._panel_logs_started = True
+                    self.tailing = True
+                    self.journal_procs = []
+                    self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True,
+                                                       name="mios-panel-journal")
+                    self.log_thread.start()
+                    self.set_interval(monitor_sources_config()["flush_interval_s"], self.flush_panel_logs)
+            elif view in {"tab-global", "tab-tasks", "tab-input"}:
+                now = time.monotonic()
+                if now - self._panel_last_started.get(view, float("-inf")) < self.panel_policy["poll_s"]:
+                    return
+                if self._start_snapshot("panel-" + view, lambda: self.collect_panel_view(view),
+                                        lambda sample: self.apply_panel_view(view, sample)):
+                    self._panel_last_started[view] = now
+
+        def write_monitor_log(self, widget, content):
+            if self.desktop_panel:
+                with self._panel_log_lock:
+                    self._panel_log_lines.append(content)
+            else:
+                self.call_from_thread(widget.write, content)
+
+        def flush_panel_logs(self):
+            if self.query_one(TabbedContent).active != "tab-logs":
+                return
+            batch = []
+            with self._panel_log_lock:
+                for _ in range(min(len(self._panel_log_lines), monitor_sources_config()["batch_size"])):
+                    batch.append(self._panel_log_lines.popleft())
+            if batch:
+                self.query_one("#log-box", MonitorLog).write(Group(*batch))
 
         def _start_snapshot(self, name, collect, apply):
             if self._snapshot_closing or name in self._snapshot_jobs:
@@ -1087,6 +1379,8 @@ if TEXTUAL_AVAILABLE:
             except Exception: pass
 
         def action_speed_up(self):
+            if self.desktop_panel or self.client_chooser:
+                return
             self.refresh_interval = max(0.1, self.refresh_interval - 0.1)
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
@@ -1094,6 +1388,8 @@ if TEXTUAL_AVAILABLE:
             self.update_titles()
 
         def action_slow_down(self):
+            if self.desktop_panel or self.client_chooser:
+                return
             self.refresh_interval = min(5.0, self.refresh_interval + 0.1)
             if hasattr(self, "telemetry_timer"):
                 self.telemetry_timer.stop()
@@ -1128,7 +1424,7 @@ if TEXTUAL_AVAILABLE:
                         rendered = Text(line)
                         if is_err: rendered.stylize(SSOT['error'])
                         elif is_warn: rendered.stylize(SSOT['warning'])
-                        self.call_from_thread(log_box.write,
+                        self.write_monitor_log(log_box,
                                               Text.assemble((f"[Linux:{label}] ", f"dim {SSOT['subtle']}"), rendered))
                     try:
                         proc.terminate()
@@ -1138,7 +1434,7 @@ if TEXTUAL_AVAILABLE:
                             self.journal_procs.remove(proc)
                 except Exception as exc:
                     if self.tailing:
-                        self.call_from_thread(log_box.write, Text(f"[Linux:{label}] collector: {exc}", style=SSOT['warning']))
+                        self.write_monitor_log(log_box, Text(f"[Linux:{label}] collector: {exc}", style=SSOT['warning']))
 
             def stream_windows_events():
                 cursors = {"System": None, "Application": None}
@@ -1166,10 +1462,10 @@ if TEXTUAL_AVAILABLE:
                                 rendered = Text(f"[Windows:{channel}] {message}")
                                 if level in (1, 2): rendered.stylize(SSOT['error'])
                                 elif level == 3: rendered.stylize(SSOT['warning'])
-                                self.call_from_thread(log_box.write, rendered)
+                                self.write_monitor_log(log_box, rendered)
                                 cursors[channel] = record
                         except (OSError, subprocess.TimeoutExpired) as exc:
-                            self.call_from_thread(log_box.write,
+                            self.write_monitor_log(log_box,
                                                   Text(f"[Windows:{channel}] collector: {exc}", style=SSOT['warning']))
                     time.sleep(settings["flush_interval_s"])
 
@@ -1236,7 +1532,7 @@ if TEXTUAL_AVAILABLE:
                             if line:
                                 self.last_flash_log_time = time.time()
                                 self.call_from_thread(flash_log_box.write, Text(line))
-                                self.call_from_thread(log_box.write, Text.assemble(("flash ", "dim"), Text(line)))
+                                self.write_monitor_log(log_box, Text.assemble(("flash ", "dim"), Text(line)))
                             idle_count = 0
                         else:
                             idle_count += 1
@@ -1265,7 +1561,7 @@ if TEXTUAL_AVAILABLE:
                                      if name.casefold() in running)
                     if selected != last_running:
                         status = ", ".join(selected) if selected else "waiting for a running MiOS distro"
-                        self.call_from_thread(log_box.write,
+                        self.write_monitor_log(log_box,
                                               Text(f"[Linux] {status}", style=SSOT['subtle']))
                         last_running = selected
                     for configured in settings["distros"]:
@@ -1551,7 +1847,55 @@ if TEXTUAL_AVAILABLE:
                                     Text(label, style=f"{color} bold"))))
             sync_rows(self.query_one("#svc-table", DataTable), rows)
 
+        def layout_panel_overview(self, width, height):
+            tabs = self.query_one(TabbedContent)
+            overview = self.query_one("#panel-overview", Horizontal)
+            agents, system = self.query_one(AgentView), self.query_one(SystemSummary)
+            selected = tabs.active
+            showing = selected in {"tab-agents", "tab-global"}
+            split = (showing and width >= self.panel_policy.get("overview_columns", self.panel_policy["compact_columns"])
+                     and height >= self.panel_policy.get("overview_rows", self.panel_policy["compact_rows"]))
+            old_focus = self.focused
+            agents_visible = showing and (split or selected == "tab-agents")
+            system_visible = showing and (split or selected == "tab-global")
+            hidden_focus = old_focus and ((not agents_visible and (old_focus is agents or agents in old_focus.ancestors))
+                                         or (not system_visible and (old_focus is system or system in old_focus.ancestors)))
+            self._panel_overview_split = split
+            overview.display = showing
+            tabs.display = not showing
+            overview.set_class(split, "panel-overview-split")
+            agents.display, system.display = agents_visible, system_visible
+            if hidden_focus and showing:
+                self.query_one("#peer-table" if selected == "tab-agents" else "#metric-table").focus(scroll_visible=False)
+
         def apply_responsive_layout(self, width: int, height: int) -> None:
+            if self.client_chooser:
+                return
+            if self.desktop_panel:
+                self.layout_panel_overview(width, height)
+                self.set_class(width < self.panel_policy["compact_columns"] or
+                               height < self.panel_policy["compact_rows"], "compact")
+                for button in self.query("#desktop-nav Button"):
+                    key = button.id.removeprefix("panel-nav-")
+                    index, name = {"agents": (1, "Agents"), "global": (2, "System"),
+                                   "logs": (3, "Logs"), "tasks": (4, "Tasks"), "input": (5, "Input")}[key]
+                    label = name[0] if width < 25 else f"F{index} {name}" if width >= 60 else name
+                    if str(button.label) != label:
+                        button.label = label
+                for table in self.query(".panel-table"):
+                    set_table_header(table, height >= 5)
+                    if table.columns:
+                        first = min(18, max(1, width // 3))
+                        changed = False
+                        for column, wanted in zip(table.columns.values(), (first, max(1, width - first - 4))):
+                            if column.width != wanted:
+                                column.width = wanted
+                                changed = True
+                        if changed:
+                            table.refresh(layout=True)
+                for status in self.query(".panel-status"):
+                    status.display = height >= 5
+                return
             self.set_class(width < 95 or height < 28, "compact")
             try:
                 main_c = self.query_one("#main-container")
@@ -1673,6 +2017,21 @@ if TEXTUAL_AVAILABLE:
             # Touch: compact/phone views hide the tab strip and have no F1-F5 keys, so
             # tapping a plain status/heading line cycles to the next view. Tables,
             # inputs and logs keep their own tap behaviour (row select, focus, scroll).
+            if self.client_chooser:
+                return
+            if self.desktop_panel:
+                if self._panel_overview_split:
+                    try:
+                        widget, _ = self.get_widget_at(event.screen_x, event.screen_y)
+                        for view, parent in (("tab-agents", self.query_one(AgentView)),
+                                             ("tab-global", self.query_one(SystemSummary))):
+                            if widget is parent or parent in widget.ancestors:
+                                if self.query_one(TabbedContent).active != view:
+                                    self._activate_tab(view, focus=False)
+                                break
+                    except Exception:
+                        pass
+                return
             if not self.has_class("compact"):
                 return
             try:
@@ -1727,9 +2086,14 @@ def main():
     parser.add_argument("--tab", choices=["global", "build", "flash", "ai"], default=None,
                         help="initial active tab")
     parser.add_argument("--ui-mode", choices=["clients", "agents"], help="initial embedded workspace view")
+    parser.add_argument("--desktop-panel", action="store_true", help="persistent unified panel inside the native Desktop")
+    parser.add_argument("--client-chooser", action="store_true", help="lean client chooser without monitoring views or collectors")
+    parser.add_argument("--root", default=os.environ.get("MIOS_ROOT", "/"), help="system root for native read-only task status")
     parser.add_argument("--ui-request-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--once", action="store_true", help="print snapshot once and exit")
     args, unknown = parser.parse_known_args()
+    if args.client_chooser and (args.desktop_panel or args.ui_mode not in (None, "clients")):
+        parser.error("--client-chooser requires the clients view and excludes --desktop-panel")
     PIPELINE_MODE = args.pipeline
     unknown_lower = [a.lower() for a in unknown]
     AI_MODE = args.ai or (args.tab == "ai") or ("ai" in unknown_lower)
@@ -1741,6 +2105,8 @@ def main():
         mode = "mini"
     elif args.dash or "-dash" in unknown_lower or os.environ.get("MIOS_DASH_SERVICES") == "1":
         mode = "dash"
+    if args.desktop_panel or args.client_chooser:
+        mode = "monitor"
 
     if args.once:
         if mode == "dash":
@@ -1757,6 +2123,9 @@ def main():
         sys.exit(0)
 
     if not TEXTUAL_AVAILABLE:
+        if args.desktop_panel or args.client_chooser:
+            print("[MiOS-Mon] Interactive workspace requires the packaged textual and psutil dependencies.", file=sys.stderr)
+            return 1
         if _install_deps(["textual", "psutil"]):
             try:
                 os.execv(sys.executable, [sys.executable] + sys.argv)
@@ -1801,7 +2170,9 @@ def main():
             except Exception:
                 request = {}
     while True:
-        selected = _run_monitor_app(ui_request=request, ui_mode=args.ui_mode, ansi_color=TRANSPARENT_TERMINAL)
+        selected = _run_monitor_app(ui_request=request, ui_mode=args.ui_mode,
+                                    desktop_panel=args.desktop_panel, client_chooser=args.client_chooser, root=args.root,
+                                    ansi_color=TRANSPARENT_TERMINAL)
         if not selected:
             break
         if IS_WINDOWS:
@@ -1810,4 +2181,4 @@ def main():
             subprocess.run(["/usr/bin/mios", "agent", selected], check=False)
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

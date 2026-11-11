@@ -92,12 +92,92 @@ def deep_merge(dst, src):
             dst[k] = v
     return dst
 
+def normalize_mons_layer(layer):
+    """Normalize one raw game-schema input layer, never a completed tier fold.
+
+    Canonical nonempty values win within this document. Normalizing before
+    deep_merge preserves higher-tier preferences written with the legacy key.
+    Typed catalogues/pointers are exact aliases; paths, prose, env and state
+    values are not general replacement targets. Rust peer: merge.rs.
+    """
+    if not isinstance(layer, dict):
+        return layer
+
+    def rename(table):
+        if "tamagotchi" in table:
+            previous = table.pop("tamagotchi")
+            if "mons" in table:
+                current = table.pop("mons")
+                if isinstance(previous, dict) and isinstance(current, dict):
+                    previous = deep_merge(previous, current)
+                elif current != "" or previous == "":
+                    previous = current
+            table["mons"] = previous
+
+    def at(*path):
+        current = layer
+        for part in path:
+            if not isinstance(current, dict):
+                return None
+            current = current.get(part)
+        return current
+
+    def tokens(items, old, new):
+        if isinstance(items, list):
+            for index, item in enumerate(items):
+                if isinstance(item, str) and item == old:
+                    items[index] = new
+
+    rename(layer)
+    categories = at("rust", "categories")
+    if isinstance(categories, dict):
+        rename(categories)
+        for group in ("owners", "roles"):
+            groups = categories.get(group)
+            if isinstance(groups, dict):
+                for members in groups.values():
+                    tokens(members, "tamagotchi", "mons")
+        tokens(categories.get("binaries"), "mios-tamagotchi", "mios-mons")
+        for category in categories.values():
+            if isinstance(category, dict):
+                if category.get("binary") == "mios-tamagotchi":
+                    category["binary"] = "mios-mons"
+                tokens(category.get("crates"), "mios-tamagotchi", "mios-mons")
+    tokens(at("generation", "walk", "excluded_sections"), "tamagotchi", "mons")
+    # Retained canonical app lists must name the new real executable; custom
+    # user executable registrations still require their existing strict proof.
+    tokens(at("keybindings", "global", "controller", "nav", "apps", "mon", "exe"),
+           "/usr/bin/mios-tamagotchi", "/usr/bin/mios-mons")
+    native = at("build", "native")
+    if isinstance(native, dict):
+        for field in ("windows_only", "windows_shared"):
+            tokens(native.get(field), "mios-tamagotchi", "mios-mons")
+        categories = native.get("categories")
+        if isinstance(categories, dict):
+            for category in categories.values():
+                if isinstance(category, dict):
+                    tokens(category.get("binaries"), "mios-tamagotchi", "mios-mons")
+        aliases = native.get("aliases")
+        if isinstance(aliases, dict):
+            for alias in aliases.values():
+                if isinstance(alias, dict) and alias.get("binary") == "mios-tamagotchi":
+                    alias["binary"] = "mios-mons"
+    popups = at("terminal", "popups")
+    if isinstance(popups, dict):
+        for field in ("window_size_source", "menu_width_source", "menu_height_source",
+                      "dialog_width_source", "dialog_height_source", "tooltip_width_source",
+                      "tooltip_height_source", "font_width_source", "font_height_source", "aspect_source"):
+            value = popups.get(field)
+            if isinstance(value, str) and value.startswith("tamagotchi."):
+                popups[field] = "mons." + value[len("tamagotchi."):]
+    return layer
+
 def _load_one(path):
     if not path or not os.path.isfile(path) or _toml is None:
         return {}
     try:
         with open(path, "rb") as fh:
-            return _toml.load(fh)
+            return normalize_mons_layer(_toml.load(fh))
     except Exception:  # noqa: BLE001 -- a broken overlay layer must not crash a reader
         return {}
 
@@ -112,7 +192,11 @@ def _native_resolver_json():
     if not binary:
         return None
     try:
-        res = subprocess.run([binary, "--emit=json"], capture_output=True, text=True, timeout=5)
+        # Require the raw-layer normalization capability explicitly. Versions
+        # share one package number; an older installed binary must fail this
+        # handshake and leave each raw file to the Python compatibility peer.
+        res = subprocess.run([binary, "--require-mons-layer-normalization", "--emit=json"],
+                             capture_output=True, text=True, timeout=5)
         if res.returncode == 0:
             return json.loads(res.stdout)
     except Exception:
@@ -208,7 +292,13 @@ def load_merged(layers=None):
     # Native resolution supplies the file-layer baseline; the DB overlay and
     # derived ports still apply before caching, just as in the Python fallback.
     nat = _native_resolver_json() if layers is None else None
-    if isinstance(nat, dict) and isinstance(nat.get("merged"), dict):
+    # An older installed resolver may return both spellings after losing their
+    # tier provenance. Detect that result and re-read individual raw files;
+    # never merge the completed legacy and canonical roots after the fact.
+    import copy
+    native_canonical = (isinstance(nat, dict) and isinstance(nat.get("merged"), dict)
+                        and normalize_mons_layer(copy.deepcopy(nat["merged"])) == nat["merged"])
+    if native_canonical:
         merged = nat["merged"]
     else:
         merged = {}
@@ -222,7 +312,7 @@ def load_merged(layers=None):
                 db_cfg = mios_db_config.load_db_config()
                 if db_cfg:
                     orig_packages = merged.get("packages")
-                    deep_merge(merged, db_cfg)
+                    deep_merge(merged, normalize_mons_layer(db_cfg))
                     if orig_packages:
                         if "packages" not in merged or not isinstance(merged["packages"], dict) or not merged["packages"]:
                             merged["packages"] = orig_packages
@@ -272,7 +362,7 @@ def get(sect, key, default=None, data=None):
             if mios_db_config.is_db_authoritative():
                 db_cfg = mios_db_config.load_db_config()
                 if db_cfg:
-                    sect_dict = section(db_cfg, sect)
+                    sect_dict = section(normalize_mons_layer(db_cfg), sect)
                     if key in sect_dict:
                         return sect_dict[key]
         except Exception:
@@ -960,7 +1050,7 @@ def input_aliases(data: dict) -> dict[str, list[str]]:
             raise ValueError(f"canonical variable collision {canonical}: {canonical_owners[canonical]} and {key}")
         canonical_owners[canonical] = key
         owners.setdefault(canonical, set()).add(key)
-        aliases = [alias for alias in get_aliases(key) if alias != canonical]
+        aliases = [alias for alias in get_aliases(key) + _input_only_aliases(key) if alias != canonical]
         for alias in aliases:
             owners.setdefault(alias, set()).add(key)
         entries.append((key, canonical, aliases))
@@ -971,9 +1061,18 @@ def input_aliases(data: dict) -> dict[str, list[str]]:
     }
 
 
+def _input_only_aliases(dotted_path):
+    """Accept the existing category input names without re-emitting them."""
+    prefix = "rust.categories.mons."
+    if dotted_path.startswith(prefix):
+        return [canonical_name("rust.categories.tamagotchi." + dotted_path[len(prefix):])]
+    return []
+
+
 def overlay_inputs(data: dict, environment=os.environ.get) -> None:
     """Normalize process inputs without persisting values or revealing conflicts."""
     overrides = {}
+    input_only = {alias for key, _ in walk(data) for alias in _input_only_aliases(key)}
     for canonical, aliases in input_aliases(data).items():
         value = environment(canonical)
         if not value:
@@ -987,7 +1086,7 @@ def overlay_inputs(data: dict, environment=os.environ.get) -> None:
                 value, chosen = candidate, alias
         if value:
             overrides[canonical] = value
-            overrides.update((alias, value) for alias in aliases)
+            overrides.update((alias, value) for alias in aliases if alias not in input_only)
     if overrides:
         env = data.setdefault("env", {})
         if not isinstance(env, dict):

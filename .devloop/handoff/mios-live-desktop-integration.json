@@ -1,0 +1,520 @@
+{
+  "schema": 1,
+  "status": "combined_source_frozen_for_native_format_and_generation",
+  "base": "46c4fe9ebc68ea0d81176d68f5fc097e256177b5",
+  "preserve_vendor_counter": 695,
+  "owner": "codex:mios-desktop-platform-f3e48872",
+  "inputs": {
+    "sidebar-full": {
+      "original_path": "/workspace/scratch/mios-desktop-sidebar-identity-full-source.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/sidebar-full.patch",
+      "sha256": "6d5553f3b35037ca76b60fee10a2eda3423ae856aa3d825d4d21e7776a6be1df",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
+    "engine-v7": {
+      "original_path": "/workspace/scratch/mios-inputd-session-follow-v7-full.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/engine-v7.patch",
+      "sha256": "cc8f34cc584be7781244c009b130f27f3d7c1541a79862bb59a6f20dcf065b9a",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
+    "popup-r8": {
+      "original_path": "/workspace/scratch/mios-unified-top-panel-r8-full.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/popup-r8.patch",
+      "sha256": "7732097d9ac75efdcb4150675ba616e6f4ca786500ea6235b9035962a33e7d1b",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
+    "adaptive-final": {
+      "original_path": "/workspace/mios-adaptive-client-workspace",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/adaptive-final.patch",
+      "sha256": "d3eed448653ad008692239482dcc915fd046051afd227d7a0401e35bdf2c6421",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+      "files": {
+        "tools/native/mios-resolver/src/popup.rs": "2478cebe2af3307c07fece001a36658cf00c5c459601d386a77677dea3140aec",
+        "tools/native/mios-agent-relay/src/main.rs": "5fdaa6e900e4da784c1d101c9b8683e80db75dd4d583945f51d5310e96c96b00",
+        "usr/libexec/mios/mios-mcp-server": "a8872ebc3f52dc0bf1e3f0d6f28a2e4e741ce7eaec139fca5610e458a08a001c"
+      }
+    },
+    "tmux-r7": {
+      "original_path": "/workspace/mios-tmux-client-pointer",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/tmux-r7.patch",
+      "sha256": "8cc3257ec5fd61228077990586c95a56966e024b06cefedca751d69ab2afbe72",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49",
+      "files": {
+        "tools/patches/tmux-desktop.patch": "65de930f524a0d68d62fbc93a25b47d74ce359cf899f2faff7f09ad9688b97aa"
+      }
+    },
+    "auth-a2195ed3": {
+      "commit": "a2195ed3d53a366b89c66e226ba087f56004d96b",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/auth-a2195ed3.patch",
+      "sha256": "9d6bf883c515cc094e531c13ab475e93af8b9102db7d8e680d98638cf0ce2f68",
+      "base": "84ae9c5248f147cd831b896a56e98058dd10ce49"
+    },
+    "engine-v7-native-format": {
+      "original_path": "/workspace/scratch/mios-inputd-native-format-v7.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/engine-v7-native-format.patch",
+      "sha256": "626c063b80e4231ed551a1afa05fcc89f3abdd3e55ad8614882cbf01ba3a20f2",
+      "base": "engine-v7"
+    },
+    "shell-focus-events": {
+      "original_path": "/workspace/scratch/mios-desktop-focus-events-source.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/shell-focus-events.patch",
+      "sha256": "f488f20d446dbb4c9334941cf22563cd83127075048019a908240e6751856342",
+      "base": "sidebar-full"
+    },
+    "console-actions-record-schema": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/console-actions-record-schema.patch",
+      "original_path": "/workspace/scratch/mios-console-actions-record-schema.patch",
+      "sha256": "e06ced1ba938f2201e5baf269c6f42ba19a05d723496df12477e7dfc13fecf0f",
+      "base": "combined39 after engine-v7-native-format",
+      "files": {
+        "tools/native/mios-inputd/src/nav.rs": "4db84acd7a5ad2268772cd4142a01e52deb774786281359f971eb7c4c356fa3f",
+        "usr/share/mios/mios.toml": "d7e364bf082df46c9e47e162209fadc7c809f60a28b0fcbd2d7126de5d739a05",
+        "docs/design/mios-global-bindings-final.md": "00edb742f3c41ebc61e958fdd41472a1d08012dd1a276b3c108f0b5ebf629e55"
+      },
+      "actual_failure": "/workspace/scratch/mios-inputd-v7-coordinator-read.json",
+      "contract": "stable snake_case label -> {action exact semantic,native adapter}; internal exact semantic BTreeMap unchanged"
+    },
+    "selected-pam-after-v7": {
+      "original_path": "/workspace/scratch/mios-inputd-selected-pam-after-v7.patch",
+      "path": "/workspace/scratch/mios-live-desktop-inputs/selected-pam-after-v7.patch",
+      "sha256": "7ac16b02c67df7e736dfc16e908a812195dee983091035f2b870ccd997ba9d33",
+      "base": "engine-v7-native-format",
+      "status": "draft_source_compiler_and_real_trial_unrun"
+    },
+    "selected-pam-v2-after-v7": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/selected-pam-v2-after-v7.patch",
+      "sha256": "bcf12326f0cf88d6cc4deba6d0d9bec5bcdd679686fd12674b44c9fae1fe27ea",
+      "base": "engine-v7-native-format",
+      "target_file": "tools/native/mios-inputd/src/tmux_handoff.rs",
+      "target_sha256": "ed935d42fceffb2a07c9950f6981ef27b7f0177c262a13873318038dba8e06ad",
+      "supersedes": "selected-pam-after-v7",
+      "change": "Only successful policy approvals cached; failed admission repair rechecked; regression tests added",
+      "status": "source frozen; native compiler/real trial pending"
+    },
+    "selected-pam-missing-parent": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/selected-pam-missing-parent.patch",
+      "original_path": "/workspace/scratch/mios-inputd-selected-pam-missing-parent-incremental.patch",
+      "sha256": "704d87e9140532e03ff5be346c1ff998fd9ab9d28079f788621ca24493fb341e",
+      "base": "ed935d42fceffb2a07c9950f6981ef27b7f0177c262a13873318038dba8e06ad",
+      "target_sha256": "be4288e643d09dfc8fcb3ce747369dda14d4baae988e021e4fb63c1cb7849101",
+      "status": "source frozen; strict compiler/test/real-PAM trial pending"
+    },
+    "inputd-cold-start": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/inputd-cold-start.patch",
+      "original_path": "/workspace/scratch/mios-inputd-cold-start-source.patch",
+      "sha256": "81a079f5b77a3a5becdbd287a09838fbfe29d369191d60224b4980030f518dbd",
+      "base": "1098fb0e4bc36a2663699a69730cde085a31159925476e12eab9a1286d6f54e6",
+      "target_sha256": "048c87ac044c17fd5e03d5d22433bb95fe5adf524c7dd3c5ad8a5446bd0a7f53",
+      "status": "Root/Engine review and native combined compiler/test pending; static proposal only"
+    },
+    "inputd-pointer-no-server-start": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/inputd-pointer-no-server-start.patch",
+      "original_path": "/workspace/scratch/mios-inputd-pointer-no-server-start.patch",
+      "sha256": "cc07d343aa8ced885d0a8bc23b45da27e372e688f1da4f4d537f98c1259d1808",
+      "target_sha256": "580d43ed9077ede3d3338d3d336d79b6b040ff6021dbc5316095facde13b5338",
+      "status": "one -N flag added; compiler/privatepaired regression pending"
+    },
+    "console-schema-fixture-result": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/console-schema-fixture-result.patch",
+      "sha256": "51a81fbe7dc839055e0eecaed1f44dd2bd1de8ed5408b980b26c4f4af76b6b45",
+      "base": "console-actions-record-schema e06ced1b",
+      "change": "Test helper maps existing Result<(GlobalConfig,LegacyConfig)> to unit, matching its callers; production schema unchanged",
+      "status": "typed source signature mismatch corrected before native compile"
+    },
+    "auth6-focus-cleanup": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/auth6-focus-cleanup.patch",
+      "original_path": "/workspace/scratch/mios-remote-login-auth6-focus-cleanup.patch",
+      "sha256": "ee6e1b8e985af442aa67b557ea711bce2d5011599fec0fcd7cf4b3b2f63d2c2e",
+      "base": "a2195ed3 remote_login.rs",
+      "target_sha256": "b533d8b4d311686f4913045f5d5d1d8ed5119d9efc80990b2b5cba5db21eb025",
+      "status": "source only; native compile/unmutant/real auth UI proof pending; Auth5 baseline retained"
+    },
+    "inputd-cold-start-wire-fix": {
+      "path": "/workspace/scratch/mios-live-desktop-inputs/inputd-cold-start-wire-fix.patch",
+      "original_path": "/workspace/scratch/mios-inputd-cold-start-wire-fix.patch",
+      "sha256": "ea719a8d6cf563f2c90c825289ddebdf0444e4f84a32219197a0d08e1ef9c450",
+      "base": "inputd-cold-start81a079f5",
+      "change": "Test-only public u32BE frame writer/reader; production and other tests unchanged",
+      "status": "native test pending"
+    }
+  },
+  "applied": [
+    {
+      "name": "adaptive-final",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "tmux-r7",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "auth-a2195ed3",
+      "exit": 1,
+      "conflicts": [
+        ".gitignore"
+      ]
+    },
+    {
+      "name": "sidebar-full",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "engine-v7",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "popup-r8",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "engine-v7-native-format",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "shell-focus-events",
+      "exit": 0,
+      "conflicts": []
+    },
+    {
+      "name": "selected-pam-after-v7",
+      "exit": 0
+    },
+    {
+      "name": "console-actions-record-schema",
+      "exit": 0,
+      "static": "old/new exact semantic mappings equal; all56 env names unique; compiler pending"
+    },
+    {
+      "name": "selected-pam-v2-after-v7",
+      "exit": 0,
+      "method": "exactv7 base reconstructed+strict patch; current onlyv1 verified and preserved; target equals frozen worker bytes"
+    },
+    {
+      "name": "selected-pam-missing-parent",
+      "exit": 0
+    },
+    {
+      "name": "inputd-cold-start",
+      "exit": 0
+    },
+    {
+      "name": "inputd-pointer-no-server-start",
+      "exit": 0
+    },
+    {
+      "name": "console-schema-fixture-result",
+      "exit": 0
+    },
+    {
+      "name": "auth6-focus-cleanup",
+      "exit": 0
+    },
+    {
+      "name": "inputd-cold-start-wire-fix",
+      "exit": 0
+    }
+  ],
+  "pending": [
+    "Native formatting, actual projection generation and strict combined compiler/tests pending",
+    "Auth6 focusfix/cold/PAM/noN/schema increments are source-only until native proofs",
+    "Actual selected-PAM handoff/cross-user controls and private T15/T16/T17 acceptance unrun"
+  ],
+  "commits": false,
+  "pushes": false,
+  "builds": false,
+  "installs": false,
+  "resolutions": [
+    {
+      "file": ".gitignore",
+      "sources": [
+        "published46 metadata whitelists",
+        "auth a2195ed3 PAM/handoff whitelist"
+      ],
+      "resolution": "union of both appended whitelist sets; no removal"
+    }
+  ],
+  "source_files": {
+    ".devloop/handoff/mios-remote-login.json": {
+      "sha256": "c2da38248a6f9e03b1f78ccc6c90ec9c70b3b76c6de3c3bb35bc74cbbd0dbf6e",
+      "bytes": 6734,
+      "mode": "0o600"
+    },
+    ".gitignore": {
+      "sha256": "0381f90b43a53fdd5c55b74683b7a6f597ee632f9b2f45c68259fe4d312fffda",
+      "bytes": 34389,
+      "mode": "0o600"
+    },
+    "docs/design/mios-global-bindings-final.md": {
+      "sha256": "00edb742f3c41ebc61e958fdd41472a1d08012dd1a276b3c108f0b5ebf629e55",
+      "bytes": 63069,
+      "mode": "0o600"
+    },
+    "etc/sudoers.d/40-mios-remote-login": {
+      "sha256": "f97681a4a2d08bc5c1c73160a8c52e576b583563c4568f427772d5c628ba34ed",
+      "bytes": 494,
+      "mode": "0o600"
+    },
+    "src/mios-rs/miosd/src/desktop.rs": {
+      "sha256": "f10504f187c567253e2be879f35684a59dd69a111352b82a79fb48980b5d51bb",
+      "bytes": 97343,
+      "mode": "0o600"
+    },
+    "src/mios-rs/miosd/src/main.rs": {
+      "sha256": "90a02a4e503b89d93f8b8869dc4fd83447f496e175c5ad8eb96348cec15e5e22",
+      "bytes": 140712,
+      "mode": "0o600"
+    },
+    "src/mios-rs/miosd/src/remote_login.rs": {
+      "sha256": "b533d8b4d311686f4913045f5d5d1d8ed5119d9efc80990b2b5cba5db21eb025",
+      "bytes": 139891,
+      "mode": "0o600"
+    },
+    "tests/test-tmux-os.py": {
+      "sha256": "890803ca4131bb6f88fdf1544c3d6f9b563f532f77be0192e1ee99ea3de400ba",
+      "bytes": 66989,
+      "mode": "0o600"
+    },
+    "tools/native/mios-agent-relay/src/main.rs": {
+      "sha256": "5fdaa6e900e4da784c1d101c9b8683e80db75dd4d583945f51d5310e96c96b00",
+      "bytes": 243087,
+      "mode": "0o600"
+    },
+    "tools/native/mios-gen/src/tmux_desktop.rs": {
+      "sha256": "7ed471085bb0c7f5cb5ae1cffcae94931f473adf772b7a21543dc81a3482db2f",
+      "bytes": 55373,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/config.rs": {
+      "sha256": "49f9d16885c16ed282cebb3fe9c0f5f5b67be34b40074e6c3df990bec4f6a5e9",
+      "bytes": 88173,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/console.rs": {
+      "sha256": "3463e3f0aeec1f7c07b067a5ee9863f3423c8a7fc0fe1fdffd52caae2de90563",
+      "bytes": 44049,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/lib.rs": {
+      "sha256": "6a0cbf783de34f9bab5e175fa53bab3bfac745adbb91ca2867d20def077f3552",
+      "bytes": 668,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/main.rs": {
+      "sha256": "c6117e5d30b8f242776f2c3460803369870773c7fc9c8d4a900af86c1c48d874",
+      "bytes": 30744,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/nav.rs": {
+      "sha256": "2f7fed5f0e4ed2870e9e79ff1e62ed3cdf6b0da376c4e70d08a74438bb39025b",
+      "bytes": 90593,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/router.rs": {
+      "sha256": "5e06e52ddd751e2eb92a42c91c461cfb6addeb8a3e50fe25f51bbdf400b45e2c",
+      "bytes": 265747,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/runtime.rs": {
+      "sha256": "a73fb7f06f34c48d8cbf511022208b409cd185f783f8df9384ba6da8f152b7e0",
+      "bytes": 368107,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/sessions.rs": {
+      "sha256": "6477679f45f9e4748c0886ea3d0b2471359deed4fa1dacd061f7ab680eccfc1b",
+      "bytes": 29556,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/tmux_capture.rs": {
+      "sha256": "b267134945dcd3cc213166bc72d2eb0d6ae86044dbcd0be6900caa5d2c36c1b5",
+      "bytes": 27321,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/tmux_handoff.rs": {
+      "sha256": "be4288e643d09dfc8fcb3ce747369dda14d4baae988e021e4fb63c1cb7849101",
+      "bytes": 49836,
+      "mode": "0o600"
+    },
+    "tools/native/mios-inputd/src/tmux_pointer.rs": {
+      "sha256": "580d43ed9077ede3d3338d3d336d79b6b040ff6021dbc5316095facde13b5338",
+      "bytes": 36139,
+      "mode": "0o600"
+    },
+    "tools/native/mios-resolver/src/popup.rs": {
+      "sha256": "2478cebe2af3307c07fece001a36658cf00c5c459601d386a77677dea3140aec",
+      "bytes": 16424,
+      "mode": "0o600"
+    },
+    "tools/native/mios-tamagotchi/src/input.rs": {
+      "sha256": "96e149390d8f94ab46ad0a77130f6716e6f544dc23d6a8cef922032eaaef8623",
+      "bytes": 91689,
+      "mode": "0o600"
+    },
+    "tools/native/mios-tamagotchi/src/ui.rs": {
+      "sha256": "31664802862894d877ef7c088d7f3810fec77d47ac1da67a685baa7ffbe20b90",
+      "bytes": 498395,
+      "mode": "0o600"
+    },
+    "tools/native/mios-unit-gen/src/tmux_desktop.rs": {
+      "sha256": "89a44a1aa84a125bf505863b64b8d99b0181e7be84621062766f4c67d64a6240",
+      "bytes": 14444,
+      "mode": "0o600"
+    },
+    "tools/native/mios-unit-gen/src/tmux_os.rs": {
+      "sha256": "26cc633480ea72221240415bf61d68e57c83cd76c1a9926c6825802bda531c27",
+      "bytes": 87104,
+      "mode": "0o600"
+    },
+    "tools/patches/greetd-remote.patch": {
+      "sha256": "ffa925c455c905adb8498fb606ca4ee90c83082c77535822c608cc73ad6922c7",
+      "bytes": 10901,
+      "mode": "0o600"
+    },
+    "tools/patches/tmux-desktop.patch": {
+      "sha256": "65de930f524a0d68d62fbc93a25b47d74ce359cf899f2faff7f09ad9688b97aa",
+      "bytes": 49492,
+      "mode": "0o600"
+    },
+    "tools/test_monitor_runtime.py": {
+      "sha256": "f1dfb00735a9203d0859ae420553d3df0e53ef01f2c90a602859a53662998351",
+      "bytes": 14270,
+      "mode": "0o600"
+    },
+    "usr/lib/mios/agent-pipe/test_mios_agent_tui.py": {
+      "sha256": "c347ba0ec7761c59cd9dd98607a355d2ec7dd0da483176bf1f5b8a76cc4182c8",
+      "bytes": 47647,
+      "mode": "0o600"
+    },
+    "usr/lib/mios/mios_agent_tui.py": {
+      "sha256": "b65957d67210ed7473bb2bb1d0947aa6d1a69b2bc21c3cba2b1d2990c1f61051",
+      "bytes": 26225,
+      "mode": "0o600"
+    },
+    "usr/lib/pam.d/mios-remote-greeter": {
+      "sha256": "d1872f3e85bb90f28667d27ff56a224e6541e2b8e746b06622de7e51e48e7c97",
+      "bytes": 861,
+      "mode": "0o600"
+    },
+    "usr/lib/pam.d/mios-remote-login": {
+      "sha256": "cefe9032dd0afd89e9d103a6d5dd4a206b40d960a1d0f09d5fd2872968092496",
+      "bytes": 863,
+      "mode": "0o600"
+    },
+    "usr/libexec/mios/mios-mcp-server": {
+      "sha256": "a8872ebc3f52dc0bf1e3f0d6f28a2e4e741ce7eaec139fca5610e458a08a001c",
+      "bytes": 154178,
+      "mode": "0o700"
+    },
+    "usr/libexec/mios/mios-mon.py": {
+      "sha256": "8ba4afbf0e6f3ad5fd7d025e4125f4a627493d0cd545b0f15da66c974f9fbabc",
+      "bytes": 109465,
+      "mode": "0o700"
+    },
+    "usr/libexec/mios/mios-terminal": {
+      "sha256": "796eb9f953736016b86c2dbd874ba9fd294447710fc950a20476f6c6acc6fe14",
+      "bytes": 18317,
+      "mode": "0o700"
+    },
+    "usr/share/mios/configurator/mios.html": {
+      "sha256": "5536cd6d98184264f66d9bc3d10c62bb5915985e0cdde91bbefe4dac619b6e31",
+      "bytes": 550030,
+      "mode": "0o600"
+    },
+    "usr/share/mios/mios.toml": {
+      "sha256": "d7e364bf082df46c9e47e162209fadc7c809f60a28b0fcbd2d7126de5d739a05",
+      "bytes": 1167255,
+      "mode": "0o600"
+    },
+    "usr/share/mios/pam/remote-login.conf": {
+      "sha256": "3844c285027039939b14439b5479fe9363739798480cf7d73044d5e28c34cf10",
+      "bytes": 377,
+      "mode": "0o600"
+    }
+  },
+  "static": {
+    "git_diff_check": true,
+    "no_unmerged_files": true,
+    "python_ast": true,
+    "bash_syntax": true,
+    "toml_parse": true,
+    "published_metadata_preserved_git_blobs": {
+      ".devloop/LEDGER.md": "91f90c600b8206eb099fa36dc288858df2a41c3d",
+      ".devloop/handoff/mios-menu-defect-controls-proof.tar.gz": "5e41504f5a1e5d1019e0cd9b2ea504c29873ac4c",
+      ".devloop/handoff/mios-tui-desktop-live-verification.json": "9de2330595a744867c3934470510f5d40a81a428",
+      ".devloop/handoff/mios-tui-desktop.json": "16531aa88578098dfcff3acce41da5b0fc636da0",
+      "ROADMAP.md": "e332dab6dc821efcec80cf51b8aebe42112bc95b",
+      "TASKS.md": "f2fdc8d38ee2e26adde49dbca3c3be23bd24786d",
+      "automation/lib/globals.ps1": "aff55c9262a26b9733c5ffe9e534f635e63df4a7",
+      "automation/lib/globals.sh": "bb9fcd2193a5e360894dad27b783a419946fc06b",
+      "automation/manifest.json": "0befecb717726491df03507cf65ee3deaa70d955",
+      "tasks.jsonl": "1ee4373949fbb57b2786e64dbd4f14d62348a60a",
+      "usr/share/mios/ai/v1/metadata.json": "79749c35b477635fc22aed8ff7c9ffb46f5078aa",
+      "usr/share/mios/reference/env-baseline.txt": "bf6363f38fa4523c13d01350f04ebc6d5af12880",
+      "usr/share/mios/reference/manual-corpus.tsv": "39e6dd61c036f07ffa4f004d820dfcb6b52c5583",
+      "usr/share/mios/tmux/mios-keys.tmux.conf": "b391045c95d5d9602ca907b4643d733a7d953227"
+    },
+    "checkout_filters_preserved": "globals.ps1 has eol=crlf; compare canonical Git blobs, no rewrite",
+    "vendor_counter_keys_preserved": [
+      "legibility.max_tracked_mb"
+    ],
+    "terminal_shim_same_as_both_sources": true
+  },
+  "limits": [
+    "Dedicated-PAM admission/cold broker/Auth6 focus source is integrated but uncompiled/unrun; no cross-user control claim.",
+    "Native combined T15/T16/T17/focus/six-resize acceptance is unrun until candidate release.",
+    "Existing C0 servers retain C0 code; separate owned R7 namespace before Root-authorized rollout."
+  ],
+  "ui_r8_proof": {
+    "archive": "/workspace/scratch/mios-unified-top-panel-tests-r8-proof.tar.gz",
+    "sha256": "c5e9d7f34485802b4b037f75afdf94a92337d74784c13bc1f7ba6f0ad38da8cf",
+    "tests": 44,
+    "tiny_smoke": 1,
+    "source4_match_receipt": "/workspace/scratch/mios-unified-top-panel-r8-integration-match.json",
+    "status": "native_pass_accepted"
+  },
+  "native_component_checkpoint_2026_11_11": {
+    "scope": "Component checkpoint only. Final combined release, publication and live acceptance use separate exact-source receipts.",
+    "main_base": "46c4fe9ebc68ea0d81176d68f5fc097e256177b5",
+    "relay_coordinator": "mios:cloud-connection-f3e48872",
+    "native_image_sha256": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "controller": {
+      "native_state": "/home/mios/.local/state/mios/mios-legacy-action-scope-validation-r3",
+      "tests_passed": 325,
+      "strict_clippy_exit": 0,
+      "release_exit": 0,
+      "compiled_negative_mutant": "Actual stale tmux client switch reproduced with assertion failure; exact guarded source restored before the full passing suite.",
+      "source_map_sha256": "3300b2130b6f5ba2eca048f672c3807996a29575405f9c63c2e81575ea437239",
+      "source_tree": "ce5cede6eef610ed019092a4721a32fd95072f52",
+      "physical_controller_acceptance": false
+    },
+    "tmux_component": {
+      "sha256": "95b479aafe4c4d454cbe029fa22677a9e7043de28def816ea4ff2d7470af900e",
+      "patch_sha256": "776b3ba7d335ccb523ca1dcf225fee38abf5245c0229030e4532aea6f3a88e3c",
+      "receipt_sha256": "b608bb7f150caf559baadee05c990e51177829ff87450f0ed182e0670d8977b8",
+      "existing_servers_upgraded": false
+    },
+    "private_remote_auth_component": {
+      "frontend_sha256": "697f09f5431fa5caf883a1d2356418e9641b348590b437f5fb3426393c447b8a",
+      "backend_sha256": "1cc5e065a2241216c937589e668c9fcbd3e00aa1ccccd58879264be2504cc14e",
+      "pam_sha256": "ed32a815edf8abaf905c411c73a1fd23571652a94418e20de0249fee1a2d5d52",
+      "actual_lifecycle_checks_passed": 12,
+      "receipt_sha256": "02e7066d8b9c7360ddd2be08749feae7184abdd4b1ab5c1c126313a42128cbd6",
+      "final_combined_frontend_retrial_required": true
+    },
+    "name_finalization": {
+      "name": "MiOS-Mons",
+      "preservation": "Per-layer typed legacy compatibility and atomic default-store alias exchange retain original saves and writer locks; compatibility spellings and historical proofs remain.",
+      "first_native_format_state": "/home/mios/.local/state/mios/mios-final-name-format-r3",
+      "first_native_format_source_tree": "480d0e957eeba98ff6faa0644671aaa54aa7e7ad",
+      "first_bootstrap_failure": "Four unsupported TOML Map values_mut calls; source repaired to supported iter_mut loops. Original compiler exit101 remains recorded.",
+      "failure_log_sha256": "d62dc9f23f8a9003bf137012ec7fdaa7d12764a56f0c29bdb1f8666fd1d5fe8e"
+    },
+    "publication_or_install_claim": false,
+    "future_network_input_transport_enabled": false
+  }
+}

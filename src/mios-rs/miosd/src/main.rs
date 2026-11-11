@@ -18,6 +18,8 @@ mod launcher;
 #[cfg(target_os = "linux")]
 mod placement;
 #[cfg(target_os = "linux")]
+mod remote_login;
+#[cfg(target_os = "linux")]
 mod sessions;
 #[cfg(target_os = "linux")]
 mod shaderglass;
@@ -531,6 +533,12 @@ enum Commands {
         #[arg(long)]
         list: bool,
     },
+    /// Real remote user authentication in an isolated terminal portal
+    #[cfg(target_os = "linux")]
+    RemoteLogin {
+        #[command(subcommand)]
+        action: remote_login::Action,
+    },
     /// Internal greetd PAM session ownership handoff for the controlling Linux VT
     #[cfg(target_os = "linux")]
     ConsoleSession,
@@ -543,12 +551,15 @@ enum Commands {
     /// Open the native terminal desktop, or run its persistent background canvas
     #[cfg(target_os = "linux")]
     Desktop {
-        #[arg(default_value = "open", value_parser = ["open", "canvas"])]
+        #[arg(default_value = "open", value_parser = ["open", "canvas", "login"])]
         action: String,
         #[arg(long, default_value = "/")]
         root: String,
         #[arg(long)]
         no_attach: bool,
+        /// Original authenticated terminal, retained across the inputd bridge
+        #[arg(long, hide = true)]
+        login_tty_fd: Option<i32>,
     },
     /// Real application menus of the focused window (GTK org.gtk.Menus + dbusmenu registrar)
     #[cfg(target_os = "linux")]
@@ -1898,6 +1909,13 @@ async fn main() {
             }
         }
         #[cfg(target_os = "linux")]
+        Commands::RemoteLogin { action } => {
+            if let Err(error) = remote_login::run(action.clone()).await {
+                eprintln!("[miosd] remote login: {error}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(target_os = "linux")]
         Commands::ConsoleSession => {
             if let Err(error) = console_session::run() {
                 eprintln!("[miosd] console session: {error}");
@@ -1916,11 +1934,14 @@ async fn main() {
             action,
             root,
             no_attach,
+            login_tty_fd,
         } => {
             let result = if action == "canvas" {
                 desktop::run(std::path::Path::new(root))
+            } else if action == "login" {
+                desktop::login(std::path::Path::new(root))
             } else {
-                desktop::open(std::path::Path::new(root), *no_attach)
+                desktop::open_with_login_fd(std::path::Path::new(root), *no_attach, *login_tty_fd)
             };
             if let Err(error) = result {
                 eprintln!("[miosd] desktop: {error}");

@@ -12,6 +12,7 @@ import os
 import hashlib
 import json
 import re
+import runpy
 import shutil
 import shlex
 import subprocess
@@ -20,6 +21,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 BOOTSTRAP = os.path.join(ROOT, ".devcontainer/cloud-shell/bootstrap.sh")
@@ -556,6 +558,85 @@ class TestGetterExecutableContract(unittest.TestCase):
         script = 'set -euo pipefail\ndie() { echo "$*" >&2; exit 1; }\nROOT="$MIOS_TEST_ROOT"\n'
         return subprocess.run(["bash", "-c", script + self.ssot + "\nssot --vendor probe value\n"],
                               env=self.env(helper), text=True, capture_output=True, timeout=30)
+
+    def dispatch(self, **selected):
+        # Exercise the real Python delegator directly. bootstrap.ssot itself
+        # already bypasses the delegator when a native catalog is configured.
+        environment = self.env(self.cold)
+        environment.update(MIOS_TOML_ROOT=str(self.project))
+        environment.update(selected)
+        return subprocess.run([sys.executable, str(self.cold), "--vendor", "probe", "value"],
+                              env=environment, text=True, capture_output=True, timeout=10)
+
+    def test_python_delegator_catalog_is_exclusive_and_dev_checkout_order_is_preserved(self):
+        release = self.project / "tools/native/target/release/mios-toml-get"
+        debug = self.project / "tools/native/target/debug/mios-toml-get"
+        catalog = self.root / "fresh native catalog"
+        fresh = catalog / "mios-toml-get"
+        for path, marker in [(release, "checkout-release"), (debug, "checkout-debug"),
+                             (fresh, "catalog-fresh")]:
+            _write(str(path), '#!/bin/sh\nprintf "' + marker + '\\n"\n', 0o755)
+        selected = self.dispatch(MIOS_NATIVE_BIN_DIR=str(catalog))
+        self.assertEqual((selected.returncode, selected.stdout), (0, "catalog-fresh\n"), selected.stderr)
+        development = self.dispatch()
+        self.assertEqual((development.returncode, development.stdout), (0, "checkout-release\n"), development.stderr)
+        release.unlink()
+        development = self.dispatch()
+        self.assertEqual((development.returncode, development.stdout), (0, "checkout-debug\n"), development.stderr)
+        fresh.unlink()
+        refused = self.dispatch(MIOS_NATIVE_BIN_DIR=str(catalog))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stdout, "")
+        self.assertIn("configured native getter", refused.stderr)
+
+    def test_python_delegator_rejects_bad_or_recursive_explicit_catalog_without_fallback(self):
+        catalog = self.root / "selected catalog"
+        candidate = catalog / "mios-toml-get"
+        _write(str(candidate), "not executable\n", 0o644)
+        refused = self.dispatch(MIOS_NATIVE_BIN_DIR=str(catalog))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stdout, "")
+        self.assertIn("configured native getter", refused.stderr)
+        candidate.unlink()
+        candidate.symlink_to(self.cold)
+        refused = self.dispatch(MIOS_NATIVE_BIN_DIR=str(catalog))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stdout, "")
+        self.assertIn("recursive", refused.stderr)
+        candidate.unlink()
+        # Executable mode alone is not enough: an execution error must not
+        # silently select a host binary or the cold Python resolver either.
+        candidate.write_bytes(b"\x7fELFnot-a-real-executable")
+        candidate.chmod(0o755)
+        refused = self.dispatch(MIOS_NATIVE_BIN_DIR=str(catalog))
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(refused.stdout, "")
+        self.assertIn("configured native getter could not be executed", refused.stderr)
+
+    def test_python_delegator_system_root_prefers_installed_and_excludes_its_own_image(self):
+        namespace = runpy.run_path(str(self.cold), run_name="mios_getter_selection_probe")
+        canonical = "/usr/bin/mios-toml-get"
+        cached = "/tools/native/target/release/mios-toml-get"
+        present = {canonical, cached}
+        with mock.patch.dict(os.environ, {"MIOS_TOML_ROOT": "/"}, clear=True), \
+                mock.patch("os.path.isfile", side_effect=lambda path: path in present), \
+                mock.patch("os.access", return_value=True), \
+                mock.patch("os.path.samefile", return_value=False):
+            self.assertEqual(namespace["_native_bin"](), canonical)
+        with mock.patch.dict(os.environ, {"MIOS_ROOT": "/"}, clear=True), \
+                mock.patch("os.path.isfile", side_effect=lambda path: path in present), \
+                mock.patch("os.access", return_value=True), \
+                mock.patch("os.path.samefile", side_effect=lambda path, source: path == canonical):
+            self.assertEqual(namespace["_native_bin"](), cached)
+        alias = self.root / "system-root-alias"
+        alias.symlink_to("/", target_is_directory=True)
+        present = {canonical, str(alias / "tools/native/target/release/mios-toml-get")}
+        with mock.patch.dict(os.environ, {"MIOS_TOML_ROOT": str(alias)}, clear=True), \
+                mock.patch("os.path.isfile", side_effect=lambda path: path in present), \
+                mock.patch("os.access", return_value=True), \
+                mock.patch("os.path.samefile", return_value=False):
+            self.assertEqual(namespace["_native_bin"](), canonical)
+        self.assertTrue(self.cold.read_bytes().startswith(b"#!/usr/bin/env python3\n"))
 
     def test_cold_python_shebang_and_hot_native_elf_are_both_executed(self):
         cold = self.query(self.cold)

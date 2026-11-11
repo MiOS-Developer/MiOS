@@ -531,5 +531,304 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
             os.close(terminal)
 
 
+class TestDesktopPanel(unittest.IsolatedAsyncioTestCase):
+    def app(self):
+        app = monitor.MiosMonitorApp(desktop_panel=True, collectors=False,
+                                    observer=lambda: copy.deepcopy(SNAPSHOT))
+        app.panel_policy.update(default_view="agents", compact_columns=78, compact_rows=12,
+                                overview_columns=78, overview_rows=12, poll_s=5)
+        return app
+
+    def test_standalone_entry_resolves_native_relay_request_once(self):
+        request = {"observation_request": {"config": {"binary": "/private/relay"}},
+                   "observation_command": ["/private/python", "/private/server", "--observe-stream"],
+                   "state": "/private/state", "agents": []}
+        reply = type("Reply", (), {"stdout": json.dumps(request)})()
+        for mode in ("--desktop-panel", "--client-chooser"):
+            with self.subTest(mode=mode), \
+                 patch.object(sys, "argv", ["mios-mon.py", mode, "--root", "/private-root"]), \
+                 patch.object(monitor, "monitor_config", return_value={"mcp": {"python": "/private/python"}}), \
+                 patch.object(monitor.subprocess, "run", return_value=reply) as run, \
+                 patch.object(monitor, "_run_monitor_app", return_value=None) as launch:
+                monitor.main()
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0][-1], "--monitor-request")
+            self.assertEqual(run.call_args.args[0][0], "/private/python")
+            self.assertEqual(launch.call_args.kwargs["ui_request"], request)
+            self.assertEqual(launch.call_args.kwargs["desktop_panel"], mode == "--desktop-panel")
+            self.assertEqual(launch.call_args.kwargs["client_chooser"], mode == "--client-chooser")
+            self.assertEqual(launch.call_args.kwargs["root"], "/private-root")
+
+    async def test_one_app_keeps_navigation_and_inventory_through_tiny_resizes(self):
+        app = self.app()
+        with patch.object(app, "_start_snapshot", return_value=True) as collect:
+            async with app.run_test(size=(80, 12)) as pilot:
+                await pilot.pause()
+                inventory = app.query_one(AgentView)
+                table = app.query_one("#peer-table", DataTable)
+                self.assertEqual(app.focused, table)
+                self.assertEqual(len(app.query("#monitor-title")), 0)
+                await pilot.click("#panel-nav-tasks")
+                self.assertEqual(app.query_one(TabbedContent).active, "tab-tasks")
+                for key, expected in (("f2", "tab-global"), ("f3", "tab-logs"),
+                                      ("f4", "tab-tasks"), ("f5", "tab-input"), ("f1", "tab-agents")):
+                    await pilot.press(key)
+                    self.assertEqual(app.query_one(TabbedContent).active, expected)
+                for width, height in ((35, 8), (20, 4), (8, 2), (120, 18), (80, 12)):
+                    await pilot.resize_terminal(width, height)
+                    await pilot.pause()
+                    self.assertIs(app.query_one(AgentView), inventory)
+                    self.assertIs(app.query_one("#peer-table", DataTable), table)
+                    nav = app.query_one("#desktop-nav")
+                    self.assertEqual(nav.size.height, 1)
+                    self.assertEqual(str(nav.styles.height), "1")
+                    for button in app.query("#desktop-nav Button"):
+                        self.assertEqual(button.region.height, 1)
+                        self.assertLessEqual(button.region.right, width)
+                    self.assertGreaterEqual(table.size.height, 1)
+                    self.assertLessEqual(table.region.right, width)
+                await pilot.press("q", "escape")
+                self.assertTrue(app.is_running)
+                self.assertEqual(app.query_one(TabbedContent).active, "tab-agents")
+                collect.assert_not_called()
+
+    async def test_all_task_rows_and_independent_scroll_anchor_survive_refresh_and_resize(self):
+        app = self.app()
+        async with app.run_test(size=(80, 12)) as pilot:
+            await pilot.pause()
+            app._activate_tab("tab-tasks")
+            table = app.query_one("#panel-tasks", DataTable)
+            rows = [(f"task-{i}", (str(i), f"P1 · Work {i} · Owner")) for i in range(300)]
+            app.apply_panel_view("tab-tasks", {"data": rows})
+            await pilot.pause()
+            self.assertEqual(table.row_count, 300)
+            table.move_cursor(row=180, scroll=False)
+            table.scroll_to(y=160, animate=False, force=True, immediate=True)
+            await pilot.pause()
+            reordered = rows[290:291] + rows[:290] + rows[291:]
+            app.apply_panel_view("tab-tasks", {"data": reordered})
+            await pilot.pause()
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "task-180")
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "task-160")
+            await pilot.resize_terminal(35, 6)
+            app.apply_panel_view("tab-tasks", {"data": reordered})
+            await pilot.pause()
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, "task-160")
+            app.apply_panel_view("tab-tasks", {"unavailable": True})
+            self.assertEqual(table.row_count, 300)
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "task-180")
+
+    async def test_input_failure_retains_rows_but_invalidates_live_facts(self):
+        app = self.app()
+        async with app.run_test(size=(60, 10)) as pilot:
+            await pilot.pause()
+            app._activate_tab("tab-input")
+            table = app.query_one("#panel-input", DataTable)
+            app.apply_panel_view("tab-input", {"data": [("daemon", ("Input daemon", "Online")),
+                                  ("target", ("Desktop target", "Unavailable")),
+                                  ("device:one", ("Controller", "Rearmed"))]})
+            await pilot.pause()
+            table.move_cursor(row=2, scroll=False)
+            app.apply_panel_view("tab-input", {"unavailable": True})
+            await pilot.pause()
+            self.assertEqual(table.row_count, 3)
+            self.assertEqual(str(table.get_row("daemon")[1]), "Unknown")
+            self.assertEqual(str(table.get_row("device:one")[1]), "Unknown")
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, "device:one")
+
+    async def test_view_key_bursts_and_resize_cannot_restart_collection(self):
+        app = self.app()
+        async with app.run_test(size=(80, 12)) as pilot:
+            await pilot.pause()
+            app.collectors_enabled = True
+            with patch.object(app, "_start_snapshot", return_value=True) as collect:
+                app._activate_tab("tab-global")
+                for _ in range(30):
+                    app.update_panel_view()
+                    app.apply_responsive_layout(60, 9)
+                self.assertEqual(collect.call_count, 1)
+                app._activate_tab("tab-tasks")
+                self.assertEqual(collect.call_count, 2)
+                app._activate_tab("tab-global")
+                self.assertEqual(collect.call_count, 2)
+            app.collectors_enabled = False
+
+    async def test_panel_journal_is_bounded_and_does_not_force_reader_to_bottom(self):
+        settings = {"scrollback_rows": 100, "batch_size": 20, "flush_interval_s": 1}
+        with patch.object(monitor, "monitor_sources_config", return_value=settings):
+            app = self.app()
+            async with app.run_test(size=(60, 10)) as pilot:
+                await pilot.pause()
+                app._activate_tab("tab-logs")
+                log = app.query_one("#log-box", monitor.MonitorLog)
+                for i in range(200):
+                    app.write_monitor_log(log, f"Journal line {i}")
+                self.assertEqual(len(app._panel_log_lines), 100)
+                app.flush_panel_logs()
+                await pilot.pause()
+                log.scroll_to(y=3, animate=False, force=True, immediate=True)
+                await pilot.pause()
+                before = log.scroll_y
+                app.flush_panel_logs()
+                await pilot.pause()
+                self.assertEqual(log.scroll_y, before)
+                self.assertEqual(len(app._panel_log_lines), 60)
+
+    async def test_overview_keeps_one_widget_pair_and_selected_view_at_ssot_breakpoints(self):
+        app = self.app()
+        app.panel_policy.update(overview_columns=90, overview_rows=10)
+        with patch.object(app, "_start_snapshot", return_value=True) as collect:
+            async with app.run_test(size=(120, 18)) as pilot:
+                await pilot.pause()
+                agents, system = app.query_one(AgentView), app.query_one(SystemSummary)
+                tabs = app.query_one(TabbedContent)
+                self.assertEqual(tabs.active, "tab-agents")
+                self.assertTrue(app._panel_overview_split)
+                self.assertTrue(agents.display and system.display)
+                self.assertLessEqual(agents.region.right, system.region.x)
+                self.assertGreater(system.size.width, 20)
+                ids = [widget.id for widget in app.query("*") if widget.id]
+                self.assertEqual(len(ids), len(set(ids)))
+                for size, split in (((89, 18), False), ((90, 9), False), ((90, 10), True)):
+                    await pilot.resize_terminal(*size)
+                    await pilot.pause()
+                    self.assertEqual(app._panel_overview_split, split)
+                    self.assertTrue(agents.display)
+                    self.assertEqual(system.display, split)
+                    self.assertIs(app.query_one(AgentView), agents)
+                    self.assertIs(app.query_one(SystemSummary), system)
+                await pilot.resize_terminal(60, 8)
+                await pilot.press("f2")
+                self.assertEqual(tabs.active, "tab-global")
+                self.assertTrue(system.display)
+                self.assertFalse(agents.display)
+                await pilot.resize_terminal(120, 18)
+                await pilot.pause()
+                self.assertEqual(tabs.active, "tab-global")
+                self.assertTrue(agents.display and system.display)
+                await pilot.resize_terminal(60, 8)
+                await pilot.pause()
+                self.assertIs(app.focused, app.query_one("#metric-table"))
+                for overview_rows, expected_split in ((8, True), (12, False)):
+                    app.panel_policy.update(overview_columns=78, overview_rows=overview_rows)
+                    await pilot.resize_terminal(98, 9)
+                    app.apply_responsive_layout(98, 9)
+                    await pilot.pause()
+                    self.assertEqual(app._panel_overview_split, expected_split)
+                    self.assertEqual(agents.display, expected_split)
+                    self.assertTrue(system.display)
+                    self.assertLessEqual(system.region.right, 98)
+                    self.assertIs(app.query_one(SystemSummary), system)
+                collect.assert_not_called()
+
+    async def test_overview_visibility_preserves_inventory_and_summary_scroll(self):
+        snapshot = {"agents": [{"agent_id": f"agent-{i:03}", "label": f"Agent {i:03}", "online": True}
+                               for i in range(300)], "panes": [], "messages": [], "errors": []}
+        app = monitor.MiosMonitorApp(desktop_panel=True, collectors=False, observer=lambda: copy.deepcopy(snapshot))
+        app.panel_policy.update(default_view="agents", compact_columns=78, compact_rows=12,
+                                overview_columns=90, overview_rows=10, poll_s=5)
+        async with app.run_test(size=(120, 18)) as pilot:
+            await pilot.pause()
+            table = app.query_one("#peer-table", DataTable)
+            summary = app.query_one(SystemSummary)
+            summary.render_snapshot((10, 20, 30, 0, "1.0"), [(f"Service {i}", 0, True) for i in range(60)])
+            await pilot.pause()
+            table.move_cursor(row=180, scroll=False)
+            table.scroll_to(y=160, animate=False, force=True, immediate=True)
+            summary.scroll_to(y=12, animate=False, force=True, immediate=True)
+            await pilot.pause()
+            key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+            top = table.ordered_rows[int(table.scroll_y)].key.value
+            summary_y = summary.scroll_y
+            self.assertGreater(summary_y, 0)
+            await pilot.resize_terminal(60, 8)
+            await pilot.press("f2")
+            await pilot.pause()
+            await pilot.resize_terminal(120, 18)
+            await pilot.pause()
+            self.assertEqual(table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value, key)
+            self.assertEqual(table.ordered_rows[int(table.scroll_y)].key.value, top)
+            self.assertEqual(summary.scroll_y, summary_y)
+            services = summary.query_one("#summary-services", DataTable)
+            self.assertGreaterEqual(services.region.height, services.virtual_size.height)
+            summary.scroll_to(y=summary.max_scroll_y, animate=False, force=True, immediate=True)
+            await pilot.pause()
+            self.assertLessEqual(services.region.bottom, summary.content_region.bottom)
+            self.assertGreater(services.region.bottom, summary.content_region.y)
+
+    async def test_overview_uses_existing_system_job_without_collecting_on_resize(self):
+        app = self.app()
+        app.panel_policy.update(overview_columns=90, overview_rows=10)
+        async with app.run_test(size=(60, 8)) as pilot:
+            await pilot.pause()
+            app.collectors_enabled = True
+            with patch.object(app, "_start_snapshot", return_value=True) as collect:
+                app.update_panel_view()
+                collect.assert_not_called()
+                for _ in range(10):
+                    app.apply_responsive_layout(120, 18)
+                collect.assert_not_called()
+                app.update_panel_view()
+                self.assertEqual(collect.call_count, 1)
+                self.assertEqual(collect.call_args.args[0], "panel-tab-global")
+                app._activate_tab("tab-global")
+                app._activate_tab("tab-agents")
+                app.apply_responsive_layout(60, 8)
+                app.apply_responsive_layout(120, 18)
+                app.update_panel_view()
+                self.assertEqual(collect.call_count, 1)
+            app.collectors_enabled = False
+
+    async def test_lean_chooser_mounts_only_clients_without_collectors_across_input_and_resize(self):
+        with patch.object(monitor, "start_status_collectors") as status, \
+             patch.object(monitor.MiosMonitorApp, "observe_agents", side_effect=AssertionError("chooser observed agents")) as observe, \
+             patch.object(monitor.MiosMonitorApp, "_start_snapshot", side_effect=AssertionError("chooser started collector")) as collect:
+            app = monitor.MiosMonitorApp(client_chooser=True, ui_mode="clients", ui_request={"agents": CLIENTS})
+            async with app.run_test(size=(50, 16)) as pilot:
+                await pilot.pause()
+                chooser = app.query_one(monitor.ClientView)
+                self.assertEqual(len(app.query(AgentView)), 0)
+                self.assertEqual(len(app.query(SystemSummary)), 0)
+                self.assertEqual(len(app.query(TabbedContent)), 0)
+                self.assertFalse(app.collectors_enabled)
+                self.assertFalse(app.enable_agent_federation)
+                for size in ((35, 10), (20, 5), (90, 24), (50, 16)):
+                    await pilot.resize_terminal(*size)
+                    await pilot.press("down", "up", "f1", "f2", "ctrl+right", "minus")
+                    await pilot.pause()
+                    self.assertIs(app.query_one(monitor.ClientView), chooser)
+                    self.assertEqual(app.query_one("#client-table", DataTable).row_count, len(CLIENTS))
+                self.assertFalse(app.collectors_started)
+                self.assertEqual(app._snapshot_jobs, set())
+                self.assertIsNone(app.agent_inventory)
+                self.assertIsNone(app.agent_federation)
+                observe.assert_not_called()
+                collect.assert_not_called()
+                status.assert_not_called()
+
+    async def test_lean_chooser_validates_catalogue_then_selects_by_keyboard_and_mouse(self):
+        catalogue = [{"name": "ready", "installed": True, "mcp": True},
+                     {"name": "missing", "installed": False},
+                     {"name": "invalid;command", "installed": True}]
+        for selection in ("keyboard", "mouse"):
+            app = monitor.MiosMonitorApp(client_chooser=True, ui_mode="clients", ui_request={"agents": catalogue})
+            async with app.run_test(size=(50, 12)) as pilot:
+                await pilot.pause()
+                self.assertEqual(app.query_one("#client-table", DataTable).row_count, 2)
+                field = app.query_one("#client-input", Input)
+                for invalid in ("missing", "unknown", "invalid;command"):
+                    field.value = invalid
+                    await pilot.press("enter")
+                    self.assertTrue(app.is_running)
+                    self.assertIsNone(app.return_value)
+                if selection == "keyboard":
+                    field.value = "1"
+                    await pilot.press("enter")
+                else:
+                    await pilot.click("#client-table", offset=(4, 1))
+                await pilot.pause()
+            self.assertEqual(app.return_value, "ready")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

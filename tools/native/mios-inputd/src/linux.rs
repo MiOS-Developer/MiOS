@@ -1193,3 +1193,160 @@ pub fn fixture_pad(layout: &str) -> Result<(), String> {
         std::io::stdout().flush().map_err(|e| e.to_string())?;
     }
 }
+
+#[cfg(test)]
+include!("mios-controller-acceptance-linux.rs");
+
+#[cfg(test)]
+mod login_output_tests {
+    use super::*;
+
+    #[test]
+    fn login_handoff_drains_real_remapped_releases_and_axes_before_old_sinks_retire() {
+        use crate::router::{Output, Router};
+
+        fn ledger(path: &Path) -> Vec<Event> {
+            let bytes = std::fs::read(path).unwrap();
+            let size = std::mem::size_of::<InputEvent>();
+            assert_eq!(bytes.len() % size, 0);
+            bytes
+                .chunks_exact(size)
+                .map(|bytes| {
+                    // SAFETY: VirtualDevice::write serialized one initialized
+                    // InputEvent into each complete ordinary-file record.
+                    let event =
+                        unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<InputEvent>()) };
+                    Event::new(event.kind, event.code, event.value)
+                })
+                .collect()
+        }
+
+        let axes: BTreeMap<_, _> = [0, 1, 3, 4, 2, 5]
+            .into_iter()
+            .map(|code| {
+                (
+                    code,
+                    Axis {
+                        min: if code == 2 || code == 5 { 0 } else { -32768 },
+                        max: if code == 2 || code == 5 { 255 } else { 32767 },
+                        value: 0,
+                    },
+                )
+            })
+            .collect();
+        // Ordinary files exercise the real serializer and inverse quirk map;
+        // no evdev reader, uinput device or input grab is created.
+        let device = Device {
+            file: tempfile::tempfile().unwrap(),
+            path: PathBuf::from("owned-inert-login-fixture"),
+            name: "inert".into(),
+            axes: axes.clone(),
+            keys: vec![0x131],
+            abs: BTreeMap::new(),
+            id: InputId::default(),
+            grabbed: false,
+            remap: BTreeMap::from([(0x131, 0x130)]),
+            unmap: BTreeMap::from([(0x130, 0x131)]),
+            quirks: vec![],
+        };
+        let pad_file = tempfile::NamedTempFile::new().unwrap();
+        let pointer_file = tempfile::NamedTempFile::new().unwrap();
+        let mut pad = VirtualDevice {
+            file: pad_file.reopen().unwrap(),
+            name: "ordinary-file-pad".into(),
+        };
+        let mut pointer = VirtualDevice {
+            file: pointer_file.reopen().unwrap(),
+            name: "ordinary-file-pointer".into(),
+        };
+        let (mut cfg, legacy) = crate::config::tests::fixture();
+        cfg.controller.global_capture_toggle = true;
+        cfg.controller.window_zoom_chord = vec!["BTN_SELECT".into(), "BTN_START".into()];
+        let mut router = Router::new(cfg, legacy, axes);
+        router.analog_triggers = true;
+        router.set_focus("app-capture", Some(("old-login".into(), 10)), false);
+        let mut held = router.event(Event::new(EV_KEY, 0x130, 1), 1);
+        for (code, value) in [
+            (0, 23000),
+            (1, -23000),
+            (3, 18000),
+            (4, -18000),
+            (2, 255),
+            (5, 255),
+        ] {
+            held.extend(router.event(Event::new(EV_ABS, code, value), 2));
+        }
+        held.extend(router.event(Event::new(EV_SYN, SYN_REPORT, 0), 2));
+        router.cursor = true;
+        held.extend(router.tick(0.02));
+        // A pending global single must not turn into an action at retirement.
+        held.extend(router.event(Event::new(EV_KEY, 0x13a, 1), 3));
+        assert!(held.app.contains(&Event::new(EV_KEY, 0x130, 1)));
+        assert!(held.pointer.contains(&Event::new(EV_KEY, 0x110, 1)));
+        pad.write(&device.physical_events(&held.app)).unwrap();
+        pointer.write(&held.pointer).unwrap();
+        let neutral = router.reset();
+        assert!(neutral.actions.is_empty());
+        crate::runtime::drain_login_outputs(&device, &neutral, Some(&mut pad), Some(&mut pointer))
+            .unwrap();
+
+        let app = ledger(pad_file.path());
+        let mouse = ledger(pointer_file.path());
+        assert!(app.contains(&Event::new(EV_KEY, 0x131, 1)));
+        assert_eq!(
+            app.iter()
+                .filter(|e| e.kind == EV_KEY && e.code == 0x131)
+                .map(|e| e.value)
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
+        assert!(!app.iter().any(|e| e.kind == EV_KEY && e.code == 0x130));
+        for code in [0, 1, 3, 4, 2, 5] {
+            let values = app
+                .iter()
+                .filter(|e| e.kind == EV_ABS && e.code == code)
+                .map(|e| e.value)
+                .collect::<Vec<_>>();
+            assert!(
+                values.iter().any(|v| *v != 0),
+                "axis {code} was held before handoff"
+            );
+            assert_eq!(
+                values.last(),
+                Some(&0),
+                "axis {code} neutral while old sink still exists"
+            );
+        }
+        assert_eq!(
+            mouse
+                .iter()
+                .filter(|e| e.kind == EV_KEY && e.code == 0x110)
+                .map(|e| e.value)
+                .collect::<Vec<_>>(),
+            [1, 0]
+        );
+        assert!(router.tick(1.0).actions.is_empty());
+        drop(pad);
+        drop(pointer);
+        assert_eq!(
+            ledger(pad_file.path()),
+            app,
+            "neutral writes preceded sink retirement"
+        );
+        assert_eq!(ledger(pointer_file.path()), mouse);
+
+        // No existing outputs means no new sink and no new-focus forwarding.
+        crate::runtime::drain_login_outputs(
+            &device,
+            &Output {
+                actions: vec!["key:p".into()],
+                ..neutral
+            },
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(ledger(pad_file.path()), app);
+        assert_eq!(ledger(pointer_file.path()), mouse);
+    }
+}

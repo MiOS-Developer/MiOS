@@ -1,0 +1,1156 @@
+<!-- AI-hint: Playable local virtual-pet sample, safe save contract and per-Blade installation handoff. -->
+<!-- AI-related: tools/native/mios-mons, usr/share/mios/mios.toml [mons], task_3707, task_3708 -->
+# Playable MiOS-Mons sample
+
+The native `mios-mons` sample now supports feeding, cleaning, rest,
+medicine, illness, death, accelerated growth, a three-arrow memory game,
+coin rewards, pause, confirmed pet reset, and versioned local saves.
+The goal is a healthy, happy adult. The sample includes original character
+profiles, dialogue, seeded habitats, decoration purchases and training. Social
+play, breeding, multiple mini-games and full device emulation remain future
+work under task_3706.
+
+## Graphical room and menus
+
+The interactive view composes the whole terminal viewport: a framed pet room,
+window and curtains, floor, furniture, plant, animated pet, care effects, needs
+meters, quick actions and modal menus. Wide terminals show a status sidebar;
+compact windows keep the scene and care controls readable. Tiny panes retain
+Quit. ASCII uses plain borders and characters, while supported Unicode terminals
+can use indexed or RGB half-block, quadrant and Braille rendering.
+
+Use **O or F1** for the main menu, **I** for Status, **V** for Graphics and **?**
+for Help. Arrows/Tab navigate, Enter/Space chooses, and Escape closes the menu.
+Care, Games, Status, Graphics, Help, Save and Quit are working menu entries.
+The existing care shortcuts remain unchanged. A menu freezes care time without
+adding offline catch-up; ambient animation continues.
+
+Graphics offers separate original **8-bit** and detailed **16-bit-style** sprite
+sets, plus renderer choices. Sprite Studio fills the viewport with a preview:
+Left/Right changes the reaction, Up/Down changes life stage, and Enter/Space
+switches art style. Previewing illness, sadness or death does not alter the pet
+or its save. The studio covers the implemented Egg, Baby, Child, Adult and Dead
+stages and all implemented expression/reaction clips.
+
+Real care and memory outcomes select bounded eating, cleaning, sleep, medicine,
+play and celebration reactions. Hunger, low happiness and illness select their
+corresponding persistent moods. Animation uses elapsed time independently of
+input traffic and the simulation clock. The animation_frame_ms, reaction_frames,
+sprite_style and indexed four- or sixteen-color palette belong to [mons].
+In-menu visual choices last for the current process; they do not replace live
+TOML or change saved pet state.
+
+    mios-mons --sample --sprite-style eight-bit
+    mios-mons --sample --sprite-style sixteen-bit --renderer half-block --color indexed
+
+A nonempty NO_COLOR remains an explicit request for monochrome output. For a
+color trial in a session that inherited it, remove it only for this process:
+
+    env -u NO_COLOR mios-mons --sample --color indexed
+
+The sample includes sixteen original character profiles and eight seeded room
+themes. The draft's larger catalogue, additional locations, social systems and
+multiple mini-games remain separate gameplay work. Real Linux VT/font and Inputd/controller certification
+still require the corresponding device/session checks.
+
+## Try it without changing a live MiOS installation
+
+```sh
+mios-mons --sample
+mios-mons --sample --renderer ascii
+mios-mons --sample --renderer half-block --color indexed
+mios-mons --demo
+```
+
+`--sample` uses settings embedded from the build's vendor SSOT, so an older
+MiOS node does not need new live TOML fields. By default this mode creates no
+save directory and changes no live configuration. To explicitly opt into a
+separate sample save and resume it on the next run:
+
+```sh
+mios-mons --sample --save "$HOME/.local/state/mios/mons-blade-sample/pet.json"
+```
+
+The program creates the private save parent directory. The exact same command
+resumes the same pet. Each node/user should have its own state; do not share
+this save over a network filesystem. The file lock coordinates local processes,
+not distributed nodes. `--demo` runs a deterministic hatch/care/memory round,
+prints the result and never reads or writes saves.
+
+Normal installed use omits `--sample` and resolves MiOS vendor/host/user TOML
+layers over the compiled vendor `[mons]` defaults. Missing or empty user
+profiles and older installed profiles inherit newly added settings; explicit
+valid choices still win, and malformed or invalid values remain errors. The
+Apps and TUIs catalogue exposes the canonical `/usr/bin/mios-mons` as
+**MiOS-Mons** on graphical terminals and Linux consoles.
+`--root PATH` selects a source/vendor root for development. `--ephemeral`
+uses layered configuration but never writes state. Snapshots and redirected
+input/output are read-only in every mode, including when `--save` is supplied.
+A corrupt save produces an error; it is never silently replaced with a new pet.
+
+## Play
+
+Use arrows or Tab/Shift+Tab to select a care action, then Enter/Space to act.
+This works with the existing Inputd terminal key projection; no new global
+controller context, physical evdev reader, or subscription socket is added.
+
+| Action | Keyboard | Effect |
+|---|---|---|
+| Feed | F | Spend one sample coin to restore fullness |
+| Memory | G | Watch three arrow directions; repeat them after they disappear |
+| Clean | C | Restore hygiene; existing illness still needs medicine |
+| Rest | R | Toggle sleep so energy recovers while time runs |
+| Medicine | M | Spend three sample coins to heal and treat illness |
+| Pause | P | Freeze age, needs and memory countdown |
+| Save | S | Save immediately if a save path is active |
+| New pet | N | Ask before replacing the current pet; Enter/Y confirms, Escape cancels |
+| Quit | Q | Save if persistent, then restore the terminal and exit |
+| Back | Escape | Cancel a challenge/reset prompt; otherwise save and exit |
+
+Controller users can reach every action, including pause/save/reset, through
+the menu. Memory guesses use the four arrows. Key release events never act. Explicit repeat events only navigate menus; they
+do not submit memory guesses or toggle care. Legacy terminal protocols may report
+a held key as fresh presses instead of repeat events, so held-button behavior
+still needs the real Inputd/terminal checks on each node.
+A wrong memory answer costs a little happiness; winning earns coins and restores
+happiness. Rest before playing if exhausted. Keep hygiene up and treat illness
+to avoid losing health. A dead pet can only be replaced through confirmed reset.
+
+Default sample time is one game tick per two seconds of running play: hatch at
+three ticks (about six seconds), child at twenty, adult at sixty (about two
+minutes). Needs decay, so reach adulthood by caring and playing rather than
+waiting. A thriving adult has health and happiness at least sixty and no illness.
+The sample uses original egg/pet art rather than branded character assets.
+
+## Saves and time
+
+Default normal-mode saves live at
+`$XDG_STATE_HOME/mios/mons/pet.json`, or
+`$HOME/.local/state/mios/mons/pet.json` when XDG_STATE_HOME is absent.
+The relative directory and autosave interval come from `[mons]`.
+An explicit `--save PATH` can select another per-user/per-node instance.
+
+Earlier configuration section spellings remain accepted at each individual
+vendor, host, user, fragment and database layer. Canonical `[mons]` values win
+within a document; higher layers retain their usual precedence. The editor
+imports older flat sections and emits the canonical schema. Arbitrary custom
+save directories, launch arguments and user executable paths keep their exact
+values.
+
+On Linux, the first interactive opening of a default store can atomically
+promote its complete historical directory to `mons`, retaining a relative alias
+at the previous name. The existing directory, save and writer-lock inodes stay
+the same, including for an older process saving through its existing path.
+Where atomic exchange is unsupported, a canonical alias to the original store
+preserves that same single-writer namespace. Snapshots resolve the existing
+store without creating a directory, migration guard or alias. Explicit save
+paths and custom state directories do not trigger this migration. Conflicting
+stores, unsafe ownership and unknown migration links refuse without choosing a
+winner or copying progress. Preserve such entries for review.
+
+An already running older executable is preserved during installation. Its
+controller approval is not transferred by a filename change: exact executable
+path, ownership and mapped inode checks still apply. Save and quit that instance
+before deliberately reopening the canonical application when new input support
+is required.
+
+One process holds `<save>.lock` for its entire interactive session. A competing
+writer refuses before entering raw mode. The lock file may remain after exit;
+the OS releases its lock when the process exits, including a crash. Never remove
+or rotate a lock file while a process owns it. Snapshots may read an active
+writer's last completed atomic save without taking its writer lock.
+
+Save schema 4 contains bounded, validated pet, habitat and hatch/training state; schemas 1 through 3 remain readable. Writes use a private temporary
+file in the same directory, fsync, atomic replacement, and parent-directory fsync
+on Unix. Existing saves survive invalid-state write attempts. Unsupported schema,
+malformed JSON, invalid needs/coins/memory progress and files over 64 KiB fail.
+Unix saves are mode 0600; new state directories use mode 0700.
+
+Autosave occurs at the configured interval and on Save/Quit. Unflushed progress
+may be lost on abrupt termination. Offline time is frozen: loading never applies
+wall-clock elapsed time or punishes clock reversal. Pause is saved. The running
+clock samples at most one tick per UI iteration, so a suspended process does not
+apply a burst of neglect on resume. Save errors return through Ratatui cleanup
+and leave the previous completed save available. SIGKILL cannot run terminal
+cleanup; use the terminal's normal reset procedure if needed.
+
+## Configuration and rendering
+
+`[mons]` owns renderer, color, scale, UI tick interval, palette/background,
+state_directory, autosave_seconds, sprite_style, animation_frame_ms and reaction_frames. `[mons.game]` owns growth thresholds,
+game tick interval, decay/care amounts, costs/rewards and memory reveal time.
+The bootstrap configurator follow-up is task_3704. Unknown fields or invalid
+values fail before entering raw mode. `--sample` deliberately bypasses live
+layers; it is an explicit standalone mode, not a silent fallback.
+
+Glyphs and colors remain independent. Automatic rendering uses half-blocks for
+Unicode terminals and ASCII for Linux VT/uncertain locales. Explicit renderer
+selection requires a matching font. Linux VT is capped at ANSI colors, VT100/220
+at monochrome; nonempty NO_COLOR disables colors. Half-blocks retain two vertical
+pixel colors; quadrant/Braille cells share one foreground color. Integer scaling
+fits both drawable dimensions after controls are reserved and clips to the buffer.
+An oversized fixed scale shows a no-fit message. Tiny panes still accept Quit.
+
+## Blade-agent installation checklist (task_3708)
+
+Claim task_3708 in the canonical MiOS task list and coordinate through native
+MiOS-MCP relay/tmux tools. Record a separate result for every real Blade and
+user-facing MiOS guest/session tested. No host or delivery endpoint is assumed.
+A queued task is not an installation receipt.
+
+1. Pull latest main. Record `git rev-parse HEAD`, node identity, `uname -m` and
+   the live MiOS version. Preserve local changes and other agents' lanes.
+2. Build inside **MiOS-DEV**, not on the Windows provisioning host. Resolve the
+   platform with `miosd native-build-settings --root . --arch x86_64 --json`
+   (or `aarch64`). From `tools/native`, build the matching SSOT target:
+
+   ```sh
+   cargo build --locked -p mios-mons --release --target x86_64-unknown-linux-musl
+   ```
+
+   For an ARM64 node substitute `aarch64-unknown-linux-musl`. Follow the existing
+   native toolchain/linker policy. Validate with `miosd native-artifact-check`
+   for the selected architecture, and record SHA-256 of the exact executable.
+3. Transfer through the node's already authorized channel and compare checksums.
+   On that node, first install the verified executable as a separate user tool:
+
+   ```sh
+   install -d -m 0755 "$HOME/.local/bin"
+   install -m 0755 /path/to/verified/mios-mons "$HOME/.local/bin/mios-mons-sample"
+   "$HOME/.local/bin/mios-mons-sample" --demo
+   "$HOME/.local/bin/mios-mons-sample" --sample
+   ```
+
+   `/path/to/verified/mios-mons` means the verified transferred artifact,
+   not an invented remote location. Keep any existing sample executable before
+   replacing it. No sudo, bootc switch, daemon, image replacement or live TOML
+   replacement is needed for this trial.
+4. Hatch the egg, feed/clean/rest/treat, win a memory round and reach a thriving
+   adult. Test with an Inputd-owned terminal/tmux pane, verify capture/release,
+   and repeat the VT/UTF-8/tiny-pane checks from task_3705.
+5. Use the explicit sample save path above. Save, quit and reopen; verify needs,
+   coins, age and pause survive, with offline time frozen. Launch a second
+   interactive process with that path and verify lock refusal. Try a separate
+   corrupt-file fixture and verify it is preserved. Never corrupt the live pet.
+6. Pipe `--sample --snapshot` and a persistent `--snapshot`; verify plain ASCII
+   output and unchanged saves. Record normal and error terminal restoration.
+7. Report per node: source commit, architecture, artifact checksum, install path,
+   configuration mode, save path, controller/terminal tested, commands and real
+   outcomes. Leave unsupported/unexecuted cases explicit. The image installation
+   lane remains task_3703; do not claim the user-local trial updates the OS image.
+
+## Source checks
+
+The crate tests cover core care/growth/death, memory success/failure, controller
+menu/reset semantics, independent rendering, clipping, bounded/atomic saves,
+local lock refusal, sample/demo isolation and actual CLI read-only/error paths.
+Run `cargo test -p mios-mons` and warning-fatal Clippy from `tools/native`.
+Rust 1.89 or newer is required for standard-library file locking. The lockfile
+pins Ratatui 0.30.2 and Crossterm 0.29. Local musl/PTY verification does not certify
+execution on an ARM64 node, real Inputd ownership, or live image installation.
+
+### Focused controller prompts
+
+The game reads the native Inputd map and connected-device ownership in a bounded
+background probe. A controller hint is shown only when a connected controller
+belongs to this session and the compositor's focused terminal client has this
+game's pane selected. Detach, foreign focus, unreadable or stale evidence restores
+keyboard hints. Snapshot and demo commands never start controller probes.
+
+The quick-care dock, menus, sprite studio, memory answers and new-pet prompt use
+the resolved positional buttons and controller-family labels. With a focused
+controller, the mapped Back button opens the main menu from the room; choose
+Quit there. Keyboard Q still saves and quits. A controller's system buttons keep
+their native Inputd behavior: Start is not advertised as Pause, and a desktop
+stick that scrolls is not advertised as directional game input.
+
+Controller hints are presentation only. The app consumes the existing terminal
+key projection, never grabs evdev devices or changes desktop input ownership.
+The polling, timeout, stale-age and output limits are vendor settings under
+[mons]; graphics and menu settings continue to use the embedded sample
+configuration for the user-local trial.
+
+### Autonomous voxel view and compact HUD
+
+The default view is a CPU-rendered 3D voxel MiOS-Mon. Its volumetric body, face,
+limbs and care props rotate with depth occlusion. The classic 8-bit and detailed
+16-bit pixel views remain selectable. Graphics also chooses Auto, Full or Minimal
+HUD; CLI overrides are --view voxel|pixel and --hud auto|full|minimal.
+
+Pet walking and turning are autonomous, using a separate seeded visual RNG and
+active simulation decisions conditioned on life stage, health, energy and sleep.
+Eggs and dead pets do not walk. Pause, menus, memory challenges and care reactions
+stop locomotion. Rendering, controller navigation and repaint frequency never
+consume the saved gameplay RNG or manufacture age, needs, coins or memory wins.
+The controller operates menus and HUD actions only; it never steers the pet.
+
+Minimal HUD keeps the pet, stage/state, fullness (F), happiness (H), energy (E),
+health (+) and selected care action. Other needs are in Status. Auto switches
+below the configured width/height thresholds. At 20x8 or larger every menu choice
+scrolls into view, and new-pet confirmation stays visible. Smaller viewports retain
+safe quit. This cell-based layout works through console and remote-terminal
+transports, including terminal-based smartwatch webviews; it does not add a new
+browser server. Headless snapshots remain plain ASCII and do not require a GPU,
+display server, controller, writable save or animation clock.
+
+### Sixteen animal MiOS-Mons and dialogue
+
+The embedded catalogue contains Mio, Yuzu, Mugi, Tofu, Kumo, Nori, Sora, Raku,
+Suzu, Aki, Hinoki, Haru, Mochi, Puku, Kiri and Iwa. They are original cat, fox,
+tanuki, rabbit, bear, frog, bird and turtle characters with distinct volumetric
+variants, palettes, hobbies and voices. Eight gender-neutral personality
+archetypes each have two individuals. These are Japanese-inspired original
+characters, not Animal Crossing character assets or copied dialogue.
+
+The main menu includes Talk and Roster. T opens Talk; B opens Roster. Roster is a
+read-only preview until adoption is confirmed. Arrows/controller navigation
+select menus and HUD actions; they never steer or rotate the pet. A confirmed
+adoption creates a new egg and resets presentation position and animation state.
+
+Thoughts and dialogue appear in a pane below the pet. In a focused, uniquely
+attached native tmux client, Talk can open a floating popup; right-click opens a
+native tmux context menu. The game enables mouse reporting only for its own
+terminal lifetime and restores it on normal/error exits. Native callbacks return
+only a bounded private choice; the main process retains the single save writer.
+There is no broadcast to another pane or default/headless tmux server.
+
+Use --dialogs inline to keep all conversation inline. Small, restricted,
+unattached, ambiguous/multiple-client and failed native-popup contexts use the
+inline pane. Read-more paging keeps longer conversation accessible in compact
+views. Snapshots print the full current thought and speech as plain ASCII.
+
+New saves use schema 4 to retain identity, habitat and hatch/training progression.
+Schemas 1..3 load without modification and preserve original gameplay fields;
+schema 1 retains the default Mio identity. An explicit interactive save writes
+schema 4 atomically. Older executables cannot read schema 4, so retain the
+pre-upgrade binary and save
+backup for rollback. Unsupported versions, invalid identities and malformed
+catalogues are refused before raw mode. A read-only snapshot never upgrades a
+save.
+
+Research separates Nintendo's animal-role design discussion from community
+documentation of personality pools, hobbies/subtypes and species-first
+selection. See [the research note](research/mios-mons-villager-model.md).
+[Nintendo's developer interview](https://iwataasks.nintendo.com/interviews/3ds/animalcrossing-newleaf/0/2/),
+[Nookipedia's villager model](https://nookipedia.com/wiki/Villager) and
+[mystery-tour selection](https://nookipedia.com/wiki/Mystery_Island) informed the
+original implementation.
+
+
+## Mature bodies, ASCII faces and themed habitats
+
+Child and adult pixel art uses double-height canvases: 8x16 in the eight-bit
+style and 16x32 in the detailed style. Their voxel canvases are 24x48 and 64x128,
+with actual separate heads, torsos, arms and legs. Egg, baby and ghost forms
+remain compact. All sixteen original animal identities retain their shapes,
+palettes, personalities, hobbies and state-aware original dialogue.
+
+ASCII kaomoji faces blink and change with care and mood. A code-native stroke
+atlas is sampled through the actual visible head surface: the expression scales,
+foreshortens and rotates with the model. Species noses, ears and props remain
+solid geometry and occlude the texture through the same depth buffer. Atlas
+gaps preserve the actual species/head material. No second
+set of voxel eyes or mouth competes with the expression. Side/rear views cannot
+paint a floating frontal badge. Underresolved heads use individual terminal
+glyphs anchored to visible head-local UVs; each complete glyph cell must still
+pass the actual material/depth mask. Intermediate sizes draw the same expression
+as multi-cell structural ASCII strokes: each cell takes the line, curve or corner
+glyph matching that part of the glyph's own shape, never the shading ramp. Packed-pixel
+renderers switch to the stroke atlas when each glyph has enough visible cells;
+plain ASCII retains character shading at larger sizes. Expression spacing and
+aspect follow the text box rather than stretching one character into a rectangle.
+
+Face detail changes never pop. The live game remembers which tier each scene
+subject's face showed last:
+
+- Hysteresis: a native face switches to strokes only from 3.5 cells per glyph
+  and 3.5 rows, and strokes return to native characters only below the 3.0
+  minimum they need. Strokes switch to the atlas from 8 cells per glyph and 8
+  rows, and the atlas returns to strokes only below 7. A zoom that settles on a
+  threshold, a turntable or a head bob therefore never makes the face flicker.
+- Blending: a tier change takes one zoom_transition_frames transition per tier
+  (one transition in all after a resize), eased like the camera. It goes glyph
+  by glyph: the middle glyph first, then each mirrored pair outwards (the eyes,
+  then the parentheses). Each glyph is
+  drawn whole by one tier, so the expression stays readable and symmetric on
+  every frame. Between native characters and strokes the face keeps the stroke
+  layout: a glyph not yet on strokes is its own single character inside its
+  glyph box, so the expression grows in place.
+- Direction: a zoom or orbit changes the face's tier only the way the face
+  itself moves. While the face shrinks its detail never rises, and while it
+  grows its detail never falls. An explicit zoom counts from the frame it is
+  pressed, before the eased zoom moves. A zoom that reverses during a blend
+  takes that blend back instead of finishing it and changing tier again; while
+  the face is still past the far threshold, the blend holds. Pressing `+`
+  quickly and then `0` therefore stays on strokes instead of passing through
+  the atlas on the way back.
+- Resizes: a terminal resize (any change of the camera viewport) is not
+  jitter. The face takes the new size's exact tier (3 and 8, no hysteresis)
+  and reaches it within one zoom_transition_frames transition, however many
+  tiers it crosses, so a large head never keeps a small head's native
+  characters. The first frame after a resize still shows the face as it was
+  drawn.
+- Zoom, orbit, view changes and resizes all use this path. A change that
+  interrupts a blend continues from the face actually drawn.
+- A new pet, a Roster preview or a Studio preview starts fresh, without
+  inheriting another subject's blend: its first frame uses the exact thresholds
+  (3 and 8), as does any render without a remembered tier.
+
+Face zoom eases toward the visible face-plane centre, preserving actual zoom.
+It does not shrink the model to fit: high zoom in a small viewport can crop the
+outer parentheses and eyes. The actual material/depth mask still occludes
+species noses, oblique edges and rear faces. Face strokes are face shapes, drawn
+the same way on every head (see "Face shapes" below). The renderer still measures
+the head material as actually rendered, including its lighting, against the
+existing outline contrast setting, to decide whether a half-block face may use the
+pixel atlas. This uses fixed histograms without per-frame heap allocation.
+
+Tiny scenes, legacy pixel sprites and read-only snapshots retain literal facial
+text. Compact HUDs keep a separate mood caption. The same clipped projection is
+used for half-block, quadrant, braille and plain ASCII output. Tiny Roster and
+Sprite Studio previews frame the displayed life stage; egg previews retain
+whole-pet framing even when the live pet has hatched. Hatching and resizing
+transition from the previously displayed stage of the same pet or preview.
+Switching between the live pet, Roster and Studio clears inherited framing and
+voxel-yaw blends; a replacement pet begins with its own framing. Explicit zoom
+and orbit remain global presentation settings and continue easing. Selected menu text
+retains the high-contrast palette pair, with reverse selection on monochrome
+terminals. Unselected care-dock buttons use the inverse pair so four-colour
+palettes keep every label visible. Navigation hints use the bright foreground
+so reduced palettes do not alias the hint ink to a low-contrast shade.
+
+Each new pet receives a cosmetic room seed and initial theme derived from its
+creation seed, independently of the saved memory-game RNG. Eight vendor themes
+provide different wall/floor palettes, patterns and seeded window/furniture
+placement. The room remains stable across redraws, pause and save/reload.
+
+Open **Habitat / items** from the menu or native right-click menu, or press
+lowercase **h**. Items show an explicit coin price, earned threshold or owned
+placement action. Enter/Space buys and places an affordable item, or toggles
+an owned/earned decoration. Arrows/Tab navigate and Escape returns. Controller
+hints use the actual focused mapping. These controls decorate the habitat;
+they never steer the pet.
+
+The vendor catalogue contains sixteen items, including affordable plants and
+seats and rewards unlocked by actual memory wins or age progression. Earned
+eligibility is separate from permanent purchases. Failed/duplicate purchases
+never consume coins, and only owned/earned items can be placed. A room slot
+holds one decoration. Theme changes are explicit and free; there is no passive
+or automatic spending.
+
+Names, prices, reward thresholds, palette indices, item kinds and theme patterns
+come from the layered [mons.habitat] SSOT. Older live settings inherit the
+embedded vendor tier, without replacing the operator's TOML. Custom catalogues
+are validated before raw mode and used by active save/load operations.
+
+Schema 3 stores seed, theme, purchased inventory and placed items. Legacy 1/2
+saves gain a deterministic habitat in memory while retaining their original
+pet fields, currency and gameplay RNG. A redirected snapshot reports the room
+and placed item names in plain ASCII without writing or applying offline time.
+Keep a backup before an interactive migration; current interactive saves use schema 4.
+
+Native focused Talk/thought popups and right-click windows keep the same
+verified-client contract. Tiny, unfocused, restricted or multiply attached
+clients use the paged inline dialogue pane below the pet. Actual phone and
+physical-controller acceptance is recorded per session; compatibility does not
+by itself certify a device.
+
+## Closer cameras and cell-budgeted HUD
+
+The Room, Pet and Face camera views use actual solid sprite bounds. The default
+Pet framing removes transparent padding; Face focuses on the head. Zoom crops
+rather than silently fitting the pet back down. Press + or = to zoom in, - to
+zoom out,0 to reset and lowercase z to cycle views. The mouse wheel and focused
+controller Graphics menu provide the same presentation actions; none steers the
+pet. --camera room|pet|face and --zoom 50..400 select initial framing.
+
+Zoom and camera changes use bounded smooth interpolation. The layered
+[mons] zoom_percent, zoom_step_percent and zoom_transition_frames settings
+control their initial value, step and transition length.
+
+The compact HUD puts identity, stage, expression and needs into the viewport
+frame. Its landscape sidebar and portrait stack derive proportions from the
+existing [mcp.tmux.workspace] golden_ratio, resource_min_columns and
+portrait_ratio_percent SSOT fields. Tiny frames page needs; *=100 exactly.
+At smartwatch-sized 12x6 clients, Pet and Room framing adapt to a frontal
+Face view, with short selected-action and Menu prompts. Unhatched eggs retain
+whole-pet framing because they have no face surface. The selected larger view
+returns when the client grows. Native tmux popups are used
+only when the verified focused client fits; smaller clients use paged inline
+menus/dialogue. Reset requires a readable confirmation and cancels after a
+resize that hides it.
+
+All living moods have pure ASCII expression cycles. Detailed voxel rendering
+re-samples the model at a finer lattice rather than enlarging block pixels.
+Kaomoji is mapped to head-local coordinates on the visible front surface.
+Oblique views reveal the geometrically visible portion through foreshortening
+and depth occlusion; rear views receive no face texture. The HUD can still
+report mood.
+
+Inputd-projected arrows, Enter, Tab and Back follow the same menu/care actions
+in every terminal transport. Pad-specific hints require native focus and device
+ownership proof; absent graphical context cannot certify console or remote
+controller ownership. Physical device acceptance remains separate.
+
+
+## Hatch identity and training
+
+New pets roll an original generated name, five initial stat values and innate
+aptitudes when the egg actually hatches. Species selects the primary palette;
+the current personality archetype selects a distinct secondary palette.
+The sixteen catalogue entries remain original species/voice profiles and
+adoption previews; a generated pet name is separate from its profile name.
+Legacy pets retain their existing names, needs, age, coins, wins and memory RNG.
+Their added stats are initialized deterministically in memory without offline
+progress or an automatic save rewrite.
+
+Press lowercase **l**, choose **Training / stats** in the main menu, or choose
+the focused native context action. Swim, Flight, Run, Power and Stamina have
+separate values, levels, XP and innate grades E..A. A successful session spends
+food and energy and gains XP based on the configured range plus aptitude.
+Earned levels increase actual stat values and grant the configured coin reward.
+XP leftovers are preserved. Exit the menu for active game time before another
+session; menus and pause freeze the cooldown. Egg/dead/paused/sleeping/ill pets,
+active memory games, insufficient needs, level caps and cooldowns refuse
+without changing either RNG or charging resources.
+
+The layered [mons.game.training] table owns name syllables, family and
+personality palette indices, hatch rolls, XP thresholds/range, level cap, care
+costs, cooldown and rewards. The MiOS configurator exposes these controls and
+the camera/HUD options; saving an overlay does not replace live system settings.
+Schema 4 strictly stores progression seeds, name, stats and counters. Supplied
+malformed/future counters are rejected in legacy and current envelopes. A
+redirected snapshot reports all five skills as plain ASCII, remains read-only
+and can run while an interactive writer holds the pet lock.
+
+## Landscape, portrait and smallest views
+
+Landscape viewports use the inherited golden-ratio scene/sidebar split;
+portrait viewports stack information and dialogue below the pet. Resizing keeps
+the chosen zoom and view settings. Automatic Pet/Face changes blend through
+intermediate camera frames using the same transition budget as explicit zoom.
+Frame titles and paged compact status keep needs, age, coins, wins and skill
+levels available. Status and Help wrap before paging so all content remains
+reachable. Full HUD also inherits the workspace proportions.
+
+At 12x6 terminal cells, Roster and Sprite Studio reserve an actual face scene,
+and Training/Habitat keep a selected choice plus explicit accept/back prompts.
+Dialogue clears its own opaque area below the pet and pages long thoughts.
+H- in a compact controller label means Hold; full mapped controls and release
+chords are available in paginated Help. Controllers operate menus, care and
+camera choices, while the pet's locomotion remains autonomous.
+
+Smartwatch and mobile acceptance requires a real attached device. Testing
+terminal cell dimensions establishes layout behavior; it does not certify an
+unattached phone/watch, unavailable font, VT renderer or physical controller.
+
+## Doll anatomy and surface expressions
+
+The animal model uses a broad head, one short torso, small attached paws and
+stub limbs. Child/adult canvases remain double height; the anatomy is not
+stretched to fill them. Species identity comes from ears, muzzle, actual nose
+or beak and relevant tail or shell. Sixteen original variants cover cats, foxes,
+tanuki, rabbits, bears, frogs, birds and turtles. Baby scaling preserves the
+compact proportions. Eggs remain closed neutral shells before hatching.
+
+The doll geometry and face atlas are code-native CPU rendering data. Head UVs
+are recovered from the winning depth-tested surface, rather than a screen-space
+label. Pure ASCII eyes and mouth animate as a single expression; the nose is
+species geometry. Readable portrait information panels use their available
+height for needs, currency and all five training skills before paging thoughts.
+Camera projection corrects standard 1:2 terminal-cell proportions for ASCII
+and quadrant packing; half-block and Braille retain square packed pixels.
+Fonts with other metrics still require actual terminal review. Actual PiP, font,
+console and mobile results remain separately evidenced.
+
+
+## Controller ownership across nested sessions
+
+Controller routing uses the native per-seat Inputd contract. A labelled nested
+session receives only the devices declared by its launcher; another live seat
+cannot claim an exclusively assigned node. Each seat has its own compositor,
+Tmux-OS namespace and room packet. A host-side `mios-inputd bridge --nested SEAT`
+follows that live registry entry and routes its assigned controllers. The parent
+bridge excludes assigned nodes. Multiple seats can therefore use different
+controllers concurrently; controller count is not a global game setting.
+
+A session launched with `--no-devices` has no controller assignment. A physical
+pad detected on the parent desktop does not establish input ownership in that
+session. Existing launcher device namespaces cannot be expanded merely by editing
+a descriptor. Preserve a running operator session and use the documented launch
+and assignment workflow for a future device-enabled session.
+
+ServerBox SSH forwards terminal input. A controller connected to a phone must
+actually produce forwarded terminal events before its controls can be verified;
+server-side device discovery alone cannot identify that phone controller.
+Controller actions remain menu, care and HUD navigation. Pet locomotion is driven
+by the simulation. Per-seat routing, physical devices, remote terminals and
+concurrent player acceptance are recorded separately.
+
+
+## Direct navigation and compact control legends
+
+Letter shortcuts accept the displayed capital or its lowercase equivalent.
+Arrows/Tab choose care actions; Enter/Space activates the selected action.
+F/G/C/R/M address feed, memory, clean, rest and medicine. P pauses or resumes,
+S saves, O opens the menu and ? opens paginated controls. Q remains the explicit
+quit shortcut. Escape backs out of nested menus, cancels memory or opens the
+home menu from ordinary play. It does not quit ordinary play.
+
+Numbered visible menu rows accept 1 through 9; 0 retains camera zoom reset.
+Mouse menu rows are clickable, and wheel events navigate an open menu instead
+of zooming the room beneath it. Small views expose resume/menu/help controls;
+larger compact views show direct care and camera bindings. Inputd diagnostics
+explain missing assignment, unavailable context, stale evidence or focus loss
+separately from verified controller prompts. A diagnostic never grants ownership.
+
+
+## Expressive faces and voxel lighting
+
+The sixteen existing mood and care-reaction states each have eight animation
+poses. Living states have at least four distinct faces; death remains still.
+The catalogue contains 59 distinct five-character ASCII expressions, including
+chewing, glances, closed eyes, tears, pouts and excited faces. W-shaped mouths,
+3-shaped pouts and Q-shaped tears have native-text and voxel-atlas glyph support.
+Compact heads may omit both outer parentheses when only the eye-mouth-eye core
+fits. A lone parenthesis or missing mouth is not a complete compact expression.
+
+Voxel lighting reads the normal and contact occlusion of the winning visible
+surface. Hidden faces cannot replace its lighting, and camera/portrait resampling
+uses the same source pixel for material, face mapping and shading. Species and
+personality palette indices remain unchanged. The renderer shades their actual
+colors, and ASCII views use a tonal character ramp; monochrome retains its
+uncolored output. Facial ink stays separate from body illumination.
+Silhouettes use visible screen edges as well as model edges, retaining contrast
+against the room at larger zooms.
+
+The ASCII renderers overlay the voxels themselves with a bold ASCII layer, in
+every voxel view (ASCII, half-block, quadrant and braille; Room, Pet and Face;
+every size and zoom), and ring every Mon with a black sprite outline, like an
+8-bit or 16-bit sprite's, so each species keeps a distinct silhouette at the
+smallest sizes.
+
+The black outline comes first:
+
+- Silhouette: every packed sample of the Mon whose screen neighbour (left,
+  right, above or below) shows no Mon is black. The ring is exactly one
+  sub-pixel wide and closed around the whole Mon (ears, tail and paws included).
+  Half-block, quadrant and braille draw these samples in their own block
+  geometry, so the ring stays one half-block, quadrant or braille dot thin. In
+  a cell the Mon shares with the scene, the rest of the cell keeps the scene
+  actually behind the pet (the floor or wall when there is one); in a full cell
+  the rest keeps the lit voxel. The ASCII renderer has one sample per cell: an
+  outline cell is black and carries an outline glyph oriented to the silhouette
+  (`-` `_` `|` `/` `\` `^` `v`, and `(` `)` for a tip to the side; never `<` `>`,
+  which read as arrows) in a dim grey, the dimmest grey that keeps a 3:1
+  contrast with the black. Beside a native face character the black ASCII cell
+  carries no glyph.
+- Overlaps: where a nearer part passes in front of a farther one (an ear over
+  the head, the head over the body, a paw or the tail over the body, a muzzle
+  over a cheek), the near part's samples along the boundary are black, one
+  sample wide. A minified Mon keeps only overlaps with a depth jump of at least
+  three voxels. Shallower ones fade in voxel by voxel between 0.35 and 0.65
+  cells per voxel, so zooming never adds or drops them all at once.
+- Sharp creases: where two parts of the model meet in a fold sharper than 60
+  degrees (a valley the surface turns through between two one-sided slopes about
+  two voxels long), the fold is black, thinned to one sample. A voxel staircase
+  over a smooth convex surface can fake at most 2 atan(1/2), about 53 degrees, so
+  gentle curvature is never blackened: it stays the ASCII depth contour.
+- A line is drawn once: an overlap or crease right beside the silhouette ring is
+  the ring's, and no line sits on the face plane around the kaomoji or in the
+  plain ring around a native face.
+- The black is pure black in every colour depth (the darkest colour a terminal
+  shows; a dark room backdrop is only a little lighter). Monochrome keeps its
+  glyph outlines (see below).
+
+Inside the outline every visible Mon cell that is not the face's carries an
+ASCII glyph: in half-block, quadrant and braille the glyph replaces the block,
+quadrant or braille geometry. Each cell takes the first of:
+
+- Monochrome only (no colour planes for a black outline): partial cells (the Mon
+  and the scene share the cell) take an outline stroke shaped like the cell's Mon
+  sub-pixels: a corner tick (`` ` `` `'` `,` `.`) for one sub-pixel, `_` along a
+  bottom half, `"` along a top quarter, `-` along a top half, `|` along a column,
+  `/` or `\` across a diagonal. Full cells beside the scene take the oriented
+  outline glyph, and overlaps a line on the near part.
+- Creases and seams: where the surface turns at a cube edge, the darker face
+  carries a line; where two materials meet, the lighter one does. Both fade in
+  voxel by voxel between 0.8 and 1.6 cells per voxel, so minified Mons are not
+  covered in lines.
+- Depth contours: iso-depth contour lines where the Mon's continuous surface
+  crosses a depth level. The levels are spaced by the voxel pitch and double each
+  time the Mon halves on screen, so neighbouring lines stay about five cells apart
+  on a surface turned 45 degrees from the view at every size; across each
+  doubling the in-between lines fade out voxel by voxel, so a zoom never adds or
+  drops half of them at once. A contour runs along the surface, across its depth
+  gradient: `-` across a vertical gradient, `(` or `)` across a horizontal one
+  (open toward the nearer surface), `/` and `\` across the diagonals. Contours
+  belong to the view: they slide over the surface as the camera orbits and hold
+  still on a still frame. Outlines are black, contours a shade of their voxel,
+  so the two never read as one.
+- Shading texture: the configured ramp minus the line glyphs (`-` `_` `|` `/` `\`
+  `(` `)` `^` `v` `<` `>` `=`; `=` reads as two edges, so a row of it reads as
+  stripes), so the vendor ramp `.:-=+*#%@` shades with `.:+*#%@`. A ramp left with
+  fewer than two glyphs is used unchanged. The glyph's band spans the configured
+  light range, from fully occluded ambient light to ambient plus full diffuse
+  light, not the frame's own range, over the whole ramp: in colour denser is
+  darker, in monochrome denser is brighter. On alternate voxels of a 3D checker
+  (keyed with the material) the glyph moves one step toward the middle of the
+  ramp, so lattice neighbours along any axis shade differently, the brightest and
+  darkest bands keep a texture, and the texture belongs to the voxels. Nearer
+  surfaces read heavier: the Mon's near third of depth (by coarse contour level)
+  shades one glyph denser, its far third one lighter.
+
+Every glyph but the outline's is a coloured shade of its voxel's own hue (keeping
+at least 55% saturation) over the voxel's lit colour, at a WCAG contrast of about
+3.6:1 for texture and 4.6:1 for lines: darker glyphs on lit faces, lighter glyphs
+on shadowed ones. The contrast eases toward 3:1, never below it while any shade
+reaches it, only where a shade near black or white would lose its hue. The
+256-colour and 16-colour palettes take the nearest palette shade that keeps 3:1
+(a chromatic one for a voxel with a hue); monochrome draws glyphs only. In plain
+ASCII colour a Mon cell's background is the voxel's lit colour, or black on the
+outline.
+
+Every glyph decision depends only on the voxel a sample shows (its model-lattice
+identity, face orientation, material and depth) and on the voxels its
+neighbouring samples show. Texture, creases, seams and outlines therefore stay
+on their voxels through orbit, zoom, occlusion and resampling, and never follow a
+fixed screen pattern; depth contours and depth tiers follow the view's depth, and
+the black outline follows the silhouette and overlaps the view shows.
+
+The overlay never obscures the expression. Within a halo around the kaomoji, as
+fitted to the view, the face plane carries no overlay mark: colour ASCII shows the
+plain lit voxel, and the packed renderers keep their block packing for the
+expression strokes. Quadrant and braille draw that packing over the voxel's own lit
+colour, so the room never shows between braille dots on the face. A native face
+(one character per cell) keeps a one-cell ring of plain body colour around its
+characters, and the head cells between them: no shading or outline glyph sits
+beside a native eye, mouth or parenthesis. Facial flat ink is never overpainted,
+and outline glyphs never use the kaomoji eye glyphs `o`, `O`, `+` or `*`.
+
+Open eyes have eye whites, so an expression stays noticeable at small sizes and
+matches at large ones:
+
+- Which eyes: the two eye glyphs either side of the mouth, when they are open
+  (`o` `O` `@` `Q` `*` `+` `.`). Closed, squinting, crying and tick eyes (`-`
+  `=` `^` `u` `~` `>` `<` `T` `;` `x`, the backtick and `'`) never get a plate,
+  so a blink stays readable and a wink whitens only its open eye. Mouths and
+  parentheses are never whitened.
+- Shape: the plate comes from the eye glyph itself, with its enclosed counters
+  filled and grown by one glyph unit. It never reaches the mouth or a parenthesis.
+- Every face tier: a native character is its own one-cell plate, including the
+  smallest faces. A shaded face whitens the cells on the eye's plate and draws
+  that eye's strokes on them. The pixel atlas whitens the plate's own pixels
+  around the pupil.
+- Visibility: the plate is sampled through the same depth-tested face map as the
+  strokes. It turns, foreshortens and hides with the face: noses and occluders
+  keep their cells, an oblique view shows only the visible eye, and profiles and
+  rear views show none.
+- Colours: the plate is the palette's "eyes" entry (index 2) and the pupil is the
+  outline ink (index 0). If a custom palette's entry 2 does not clear the outline
+  ink by the configured outline separation, the brightest palette entry is the
+  plate; if the outline ink does not clear the plate, the first palette entry
+  that does is the pupil. The head-based face ink is never used on a plate.
+- Monochrome eye cells use reverse video: a dark stroke on a light block.
+- Plates draw whether lighting is enabled or not.
+- Unchanged: the classic pixel view, and the separate caption shown when no face fits.
+
+Face shapes are every facial mark except an eye white: pupils, mouths, brows,
+tears, cheeks, the parentheses and closed or squinting eyes. At the native,
+shaded and atlas tiers, and in every renderer, each one is a black cell with a
+grey ASCII glyph:
+
+- The black is the sprite outline's black. The face reads on any head colour and
+  never merges with the body's coloured overlay.
+- The glyph is grey, never black. It brightens with the light on the face surface
+  under it: mid grey (128) in the deepest shadow the lighting configures, up to
+  white in full light. The light is the voxel model's own directional light and
+  contact shadow, so the side of the face turned toward the light reads light grey
+  to white. With lighting disabled every face shape takes one flat grey. Face
+  shapes are always brighter than the outline's dim grey, so they never read as
+  outline.
+- A pupil inside an eye white is a black cell inside the white. A shaded open eye
+  whose plate would have no cell besides its own strokes (a small or dot eye) keeps
+  those strokes on the white instead, so every open eye keeps an eye white.
+- A native open eye is one cell, so it is its own plate: the eye white with the
+  pupil glyph on it, as before.
+- Closed and squinting eyes (`- -`, `^ ^`) have no plate. Their strokes are face
+  shapes like the mouth.
+- Packed-pixel atlas strokes are black cells too: their grey glyph is `#` where
+  the stroke fills the cell, else the line glyph of the stroke's sub-cell shape. A
+  half-block cell with a pixel off the face plane (a nose, an ear, an occluder)
+  keeps that pixel beside the grey stroke pixel. Face strokes are never holes
+  through to the room.
+- Monochrome has no colours: a face shape is the terminal's default glyph, bold, on
+  a plain cell, never reverse video, which marks eye whites.
+- The face pass blackens nothing else. Eye whites stay white, and the body around
+  the face keeps its overlay and outline.
+
+Room cells that hold only world surfaces keep their own rendering, and a cell the
+pet shares with the world keeps the world surface as its background. The world
+itself has no voxel identity yet and carries no overlay. With lighting disabled
+the overlay still marks every voxel over its flat palette colour: the black
+outline, creases, contours and the voxel texture, in one light band. Without a lighting
+model, and for classic pixel sprites, the renderers keep their exact legacy
+packing.
+
+The layered [mons.voxel_lighting] table and MiOS configurator control the
+ambient and directional light, contact shade, silhouette edge shade, view-space
+light direction and ASCII ramp. These are local application rendering settings;
+changing a preview does not replace the running host's configuration or mutate
+pet needs, age, coins, progression or RNG.
+
+
+## Global detail when fonts or viewports change
+
+Automatic detail uses one shared 8-bit/16-bit decision for the room, pet, face
+and character previews. It responds to the actual terminal cell grid, renderer
+packing and camera zoom. Enlarging the terminal font reduces the available
+cells and selects coarse detail; restoring space selects finer detail. The HUD
+and menus reflow within that same viewport and show the effective mode.
+Frame headers use A8/A16 for automatic detail and M8/M16 for manual detail,
+reserving space for the pet name, stage, pause/death and illness indicators.
+At 12 cells wide, the stage is abbreviated and the detail badge appears once.
+
+The layered [mons.presentation] table owns automatic selection, the
+minimum packed-pixel dimensions and resize hysteresis. Graphics offers manual
+8-bit/16-bit choices and a return to Automatic. An explicit --sprite-style
+choice selects manual detail. Terminal font size is a client-wide setting, so
+changing it scales every ASCII label and facial character together.
+
+When a restricted scene cannot fit a complete expression on visible head cells,
+it reserves a plain expression row below the cropped sprite. This inline fallback
+never grants permission to draw over a beak or occluder, and eggs remain faceless.
+
+
+## Browser viewport and user-local page trials
+
+The generated page keeps the hidden xterm IME textarea keyboard-focusable while
+excluding it from pointer hit-testing. Chromium touch adjustment otherwise snaps
+some footer taps onto that invisible textarea beside the terminal cursor and
+emits a different SGR row. The narrow textarea rule leaves the visible terminal
+interactive; no game or tmux coordinate offset compensates for this browser issue.
+Browser receipts distinguish an injected diagnostic rule from the regenerated,
+served production page, and physical phone acceptance remains separate.
+
+The native ttyd page is generated from the pinned [ttyd] upstream source and
+validated against its projection golden. It declares a device-width viewport so
+phone-sized browsers resize terminal cells instead of shrinking a desktop layout.
+Browser zoom remains available. This page is shared by native terminal variants;
+its launcher does not imply that a terminal variant runs in a container.
+
+For a separate user-local trial, MIOS_TTYD_PAGE_PATH selects a readable generated
+page without replacing the host page or live TOML. An explicitly selected missing
+page fails before launching ttyd. The default continues to resolve [ttyd].page_path.
+Retain the source pin, projected page checksum, listener identity and actual
+authenticated terminal interaction as distinct receipts. Loopback URLs on a
+phone refer to that phone; remote play uses an existing authenticated access
+route to the MiOS host. A local browser simulation does not certify a phone,
+physical controller, PowerShell runtime or another Blade.
+
+
+## Make a live user-local trial available in the native menu
+
+A binary installed under ~/.local/bin is not automatically the executable of
+the existing MiOS-Mons menu row. Inspect the normal user's mios-gen tui-spec
+mios-mons --root / --console 0 output and the actual native launcher before
+claiming that a live deployment is available from tmux-os.
+
+A temporary user fragment under ~/.config/mios/mios.d may redirect the existing
+terminal.tuis row to the verified user-local executable with --sample and a
+separate explicit menu-play save. Array layers replace the whole TUI list:
+preserve every other resolved row and its options, and retain the prior list
+for comparison. Do not replace the host monolith to install one application.
+Remove only that owned temporary fragment after normal image integration.
+
+The native launcher reads this catalogue at open time. Open Ctrl+B then Space,
+find MiOS-Mon under MiOS, and select the actual row. Verify the resulting process
+checksum, save path and visible game in the caller's own runtime. End a disposable
+menu verification run normally so it does not hold the operator's menu-play
+save lock; preserve existing live pets and nested launchers. An already running
+pet is resumed through its running window; do not remove its writer lock.
+
+## Portable development identities and voxel rooms
+
+Development play is save-free with `mios-mons --sample`. A fresh nonzero
+64-bit seed generates species, name, personality, species-bound main colour,
+personality accent, trait, trope, likes/dislikes, habitat and hatch statistics.
+Press **I** (or Home / Birth code) for its compact 17-character `M1` code.
+The panel keeps the complete code visible at 20x8. Copy it as ordinary ASCII
+over SSH, web terminals or text messages, then replay with `--sample --seed CODE`.
+Decimal seeds also work: `--sample --seed 123456789 --snapshot`.
+
+The version-one code losslessly encodes the seed with a copying-error checksum;
+it is not a digest of a save, a secret or a container for trained progress.
+Reproduction requires matching generation settings (embedded `--sample` provides
+the pinned vendor rules). **S** opens the code panel during save-free play.
+Optional `--save-dir DIR --seed CODE` stores mutable progress as
+`DIR/COMPACT_CODE.json`; explicit `--save PATH` is still supported. A supplied
+seed must match an existing save. Legacy pets with unknown original seeds are
+preserved and do not receive an invented reproduction code.
+
+Hatch preview values are labelled previews. They become actual statistics only
+when the simulation hatches the egg. One seed-selected skill receives the
+configured hatch bonus; normal training still consumes care resources and XP.
+Reading or sharing an identity never advances age or either gameplay RNG.
+
+The default Room camera uses a depth-rendered tiled voxel floor, cutaway walls
+and solid placed furnishings. Its elevation stays at 30 degrees; **[** and **]**
+orbit the world with a smooth shortest-path transition. Graphics offers orbit
+and reset controls. The camera follows the Mon's autonomous movement. Pet and
+Face close-ups remain available, along with ASCII/8-bit/tiny-terminal fallbacks.
+World size, follow, orbit, identity vocabulary and hatch bonus are configured
+in vendor TOML and the configurator; no live TOML replacement is required.
+
+### Verified live seeded-world trial
+
+The user-local x86_64 trial from source f54b6b57ac5c5f40d030bf34cb2e28733a03efe9 passed482 scoped
+MiOS-DEV checks,warning-fatal Clippy and native static PIE validation. Actual
+nested/browser tests covered the rotating isometric room,short code replay,
+portrait/landscape and a 20x8 code/menu. Automated live care and visible memory
+answers reached a thriving adult without editing its age,needs,coins or stats.
+The normal user's MiOS-Mon menu row launches --sample without a save.
+
+Receipt: /home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json.
+This remains a development trial; physical controller/phone/VT/ARM64/fleet and
+OS-image acceptance are separate. Existing pet files are preserved.
+
+## Replay a shared birth code inside the game
+
+Use **K** or **Home / Import birth code** during save-free development play.
+Type a decimal seed or paste a compact/grouped M1 birth code. The editor accepts
+at most 21 ASCII characters; invalid checksums and control-bearing clipboard data
+are refused without changing the current pet. **Q/F/P/N** and other code letters
+are text while this field is focused. **Ctrl+C** still quits; **Escape** returns.
+
+**Enter** checks the code and opens a separate confirmation showing the complete
+compact code and generated name. **Enter** again creates that exact birth as a
+paused egg; **Escape** keeps the current pet. **P** resumes after confirmation.
+Menus freeze the simulation clock, so typing and previewing do not advance age
+or needs. This reproduces birth identity and hatch stats, not trained progress.
+
+For controller menu operation, Left/Right selects a payload character and
+Up/Down cycles its Base32 value. Accept checks/starts; Back keeps the pet. The
+onscreen hints use the current focused controller mappings. Mouse clicks or web
+terminal taps position the caret and activate Check/Keep. The visible [<]/[>]
+buttons move the caret, [-]/[+] cycle a character, and [Clear] (or [Clr] on a
+watch grid) clears the draft. Ctrl+U also clears the focused field. These controls
+fit 20x8, edit only the draft, and disappear behind confirmation or when the
+viewport cannot paint them. Software routing is tested separately from physical
+controller ownership.
+
+The complete compact code and both confirmation actions fit a 20x8 terminal.
+Smaller views refuse confirmation; the tiny editor shows Escape/Back and Ctrl+C,
+rather than claiming that Q quits while it is an editable code character.
+Clipboard paste outside the focused editor is ignored. Bracketed paste and
+mouse capture are restored on normal exit.
+
+This development import is disabled for any session with a save path. Existing
+saved pets and seed-named progress files remain separate and cannot be replaced
+through this menu. Use --sample without --save or --save-dir to import a code.
+
+After an authorized main push, install the verified user-local sample live and
+verify its running preview against the published source. PR-branch pushes do
+not trigger this installation. Preserve adopted pet sessions; use an owned
+fresh preview rather than replacing their process. Retain a post-push receipt
+with the main revision, artifact source/checksum, installed path and live target.
+
+Earlier trials used status-off and smallest-client sizing as workarounds.
+The verified development game now uses per-window latest sizing so the focused
+client can fill its own portrait, landscape or watch viewport. The native status
+bar remains available; production touch checks cover top, bottom and absent
+status without a diagnostic page injection.
+Investigation of the earlier top-status click miss found a client-fixture
+coordinate error: a pane capture omits status rows and split-pane offsets,
+while a terminal client's SGR coordinates include them. The native tmux
+transport subtracts those offsets exactly once. The application consumes the
+resulting pane-local coordinates without another subtraction.
+
+The task3747 MiOS-DEV probe measures independently painted client cells and
+raw input at both ends across top/bottom/off status, one/two/five status rows,
+and single/split panes. Its planted omitted-status control reproduces the
+one-row miss. Browser automation must locate the actual client-buffer cell
+or add the real pane/status offsets before converting it to screen pixels.
+Historical trial receipts are retained. Automated terminal/browser evidence
+does not certify a physical phone or controller.
+
+A separate application race occurs when multiple clients use tmux's latest
+window size: a click can arrive before the corresponding resize event. Before
+hit-testing a left click, the game compares the current terminal size with its
+last painted frame and redraws if needed. This rebuilds targets for the tapping
+client's size without changing mouse coordinates or applying a second offset.
+Browser checks also retain actual emitted SGR bytes and reject a client refit
+that invalidates a previously measured touch position.
+
+## Complete menu touch and cursor navigation
+
+At 20x8 and larger, [<] and [>] select the previous and next menu option or
+scroll an information page. The painted accept control activates only the
+selected option; Back returns without buying, training or replacing a pet.
+The sprite studio also paints [^] and [v] for life-stage previews. These inputs
+remain menu operations; pet movement stays autonomous.
+
+Page Up/Down pages list selections or information text. Home/End selects the
+first/last list option or information page. Seed entry keeps its own caret
+Home/End behavior. Cursor keys and SGR mouse input use the same handlers in
+local terminals, SSH/tmux, browser terminals and headless PTYs; a redirected
+noninteractive invocation remains a read-only snapshot.
+
+When multiple verified controllers share the focused owned session, prompts
+retain each eligible family's actual resolved binding, such as Sony: Tap Cross /
+Xbox: Tap A. Identical actions are deduplicated. Tiny captions compact known
+family prefixes and button names while preserving Hold semantics. Unknown
+devices keep generic cardinal labels. Foreign/unassigned controllers do not
+contribute prompts. This does not certify physical phone-controller forwarding.
+
+
+## Console HUD and full-frame menus
+
+Every menu uses a viewport-wide text shell with its title, navigation history,
+visible selection or information-line range, and a fixed two-row control area.
+Care, Games, Talk, Roster, Status, Graphics, Help, Sprite studio, Habitat,
+Training, Birth code and the code editor remain reachable from Home. Moving
+through a list or resizing it keeps the selected row on the visible numbered
+page. Page Up/Down, Home/End, arrows and Tab navigate; Enter/Space accepts and
+Escape returns through the menu history. The editor retains its own text and
+caret controls. Quit and reset remain explicit actions.
+
+The same painted Previous/Next/Accept/Back controls accept terminal mouse
+events and browser taps. Hitboxes are rebuilt from visible cells, discarded
+when a different menu or native modal owns input, and cleared after activation
+until the next repaint. Closing a menu cannot activate the care button behind
+it. Native floating dialogs keep the underlying pet view; inline text is the
+fallback on consoles, SSH, remote terminals and headless PTYs.
+
+Ordinary play retains Auto/Minimal/Full HUD modes, golden-ratio scene/status
+splits, pet identity and life stage, needs, health, illness/pause state and
+currency within the current cell budget. Compact views page complete metrics
+rather than inventing clipped values. Essential menu controls remain static.
+Verified focused controller bindings use their actual family and remaps;
+keyboard controls and Help remain available when no eligible controller is
+focused. Controller navigation does not move the Mon.
+
+The supported compact menu floor is 20x8 cells. Portrait and landscape resize
+through the same geometry. Below the full interactive floor, the emergency
+display preserves quit/back and protects unfinished confirmations. For an
+ASCII-only monochrome terminal, run:
+
+~~~sh
+mios-mons --sample --renderer ascii --color mono --dialogs inline
+~~~
+
+Use the already attached authorized VT/console, SSH terminal, tmux pane or
+web terminal; basic menus need no desktop compositor or graphics service.
+A pipe or terminal without interactive input produces a read-only snapshot.
+Physical VT fonts, touch devices and remote controller forwarding still need
+their own actual device/session acceptance.
+
+### Three camera perspectives
+
+**Z** cycles Room, Mon and Face close-up. Graphics exposes the same choices.
+**+/-** zoom, **0** resets zoom, and **[ / ]** orbit. Room starts at the configured
+30-degree isometric elevation and follows autonomous Mon movement. Camera tilt
+is an optional offset; resetting the camera restores its resting angle. Mon frames
+the body. Face close-up fits the actual visible mapped head, keeping ears
+without letting a wide tail or long torso shrink the face.
+
+Entering Face turns the camera toward the Mon's front; subsequent orbit input
+rotates relative to that entry direction. Side/rear views preserve real
+surface occlusion. Returning to Mon or Room blends back to the world-oriented
+perspective. Camera, HUD and menu operations remain separate from simulation,
+birth identity, trained statistics and progress saves.
+
+The current simulation follows one local Mon. Large-room and multiplayer
+transport work must preserve this separation and the existing per-seat Inputd
+ownership contract; the camera controls do not establish network play.
+
+
+## Menu descriptions and constrained terminals
+
+Home, Care, Games and Graphics show a description when the frame has spare
+rows. Descriptions occupy only unused space above the controls, so adding one
+does not move a menu choice or create another touch target. Saved pets describe
+Quit as saving progress and keep birth-code import protected. Monochrome menus
+use reverse-video selection; colored menus select contrasting foreground and
+background colors from the active terminal palette.
+
+## Scaled expressions on voxel faces
+
+Face expressions use three rendering levels. At small sizes the mapped face
+prints readable native characters. Intermediate sizes enlarge those characters
+with ASCII shading on the face surface. The packed glyph atlas begins only when
+there is room for eight terminal cells across each glyph and eight rows in its
+mapped height. Zooming therefore retains the shaded character shapes longer.
+
+The face renderer reports success only after it paints expression strokes.
+Restoring the underlying face colors does not count as drawing an expression.
+A projection with no usable strokes falls back to native face characters when
+they fit, then to the expression caption. This fallback preserves readable
+emotion without drawing a forward-facing label over the back of the head.
+
+Oblique views retain the visible part of the expression. Exact side profiles
+hide the face surface symmetrically at both 90 and 270 degrees; small floating
+point differences must not make one profile show a stray eye. Ears, muzzle,
+species nose, tail and body remain voxel geometry. Face and camera rendering
+does not alter the Mon's seed, life stage, needs or statistics.
+
+## Shared camera controls and automatic scene budget
+
+The camera operates independently of the pet. In the live scene, 4/6/8/2 or
+Shift+arrows pan, 7/9 orbit in fine steps, 1/3 or braces tilt, and 5 resets the
+pose and zoom. The existing Z, +/-, 0 and square brackets keep their view, zoom
+and coarse-orbit roles. Numbered menu choices retain their own navigation.
+Graphics also exposes pan, tilt and camera reset as ordinary paged menu
+choices, including on a 20x8 terminal. Wheel input over a painted scene zooms;
+Shift+wheel tilts and horizontal wheel input orbits. Other menu scrolling keeps
+its existing behavior.
+
+Inputd's isolated Alt camera aliases work only in an eligible live scene,
+Roster or Sprite studio. One exception applies in ordinary menus: a pressed
+Alt+8 or Alt+2 (the controller's vertical stick) moves the menu selection up or
+down, and the other Alt digits are ignored there. All Alt aliases are ignored in
+code editors, confirmations and memory challenges. Releases and explicit repeat
+events do not leak into care or menu selection. Compatible Inputd application profiles
+require their own verified deployment; implementing these client aliases does
+not certify physical controller routing.
+
+Pan is bounded by the layered camera rules and clears when the displayed
+subject changes. Tilt, orbit and zoom are shared across views. Manual preview
+inspection can hold the automatic turntable. Interrupted changes start from
+the actual drawn yaw, pitch and framing mix, rather than an earlier target.
+Camera state is presentation-only and is never written into pet progress.
+
+Auto HUD measures the full layout's available scene rows against the configured
+MiOS golden ratio. A short, wide terminal uses the informative compact layout
+when the boxes would starve the scene. Explicit Full remains available. This
+keeps needs, identity, controls and menus while giving the voxel face more
+space; it does not change the pet, renderer capability or terminal font.
+
+Enlarged shaded expressions use structural ASCII curves and strokes, rather
+than density marks as eyes and mouths. Cropped close-ups fit the expression
+within the visible part of its actual face plane. Species noses and other
+occluders retain depth ownership. Exact side and rear views retain normal
+occlusion; a readable caption remains available when facial strokes cannot fit.
+
+
+### Focused controller policy
+
+The vendor policy declares the system executable under
+[keybindings.global.controller.nav.apps.mon] and supplies mon_tmux, mon_plain,
+mon_console_tmux and mon_console_plain profiles. The configurator exposes the
+foreground-query timing, registered executable paths, context prefixes, camera
+bindings and held-direction repeat timing. Empty controls inherit the vendor tier.
+
+A user-local sample registers its exact absolute executable path in that app's
+user_exe array in the user TOML tier. Only an eligible, verified foreground
+process selects the Mon profile; titles and unrelated terminal sessions do not
+select it. Sticks pan/orbit/tilt the camera, triggers zoom, left stick press changes
+view and right stick press resets the camera. The d-pad and action buttons retain
+their inherited menu bindings. These operations never steer the simulated pet.
+
+Before applying these tables to an existing installation, upgrade both the
+Inputd daemon and every game's PATH-resolved Inputd command to a compatible,
+verified artifact. Deliver the game prompt consumer before activating the policy.
+Rollback removes the app policy before restoring an older daemon or command.
+The source policy and replay tests do not certify a physical controller, VT or
+remote-phone route; each needs its own focus, capture and release check.

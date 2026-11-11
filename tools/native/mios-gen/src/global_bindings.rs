@@ -890,7 +890,24 @@ pub fn keymap_overlay(data: &Value) -> Result<Vec<(String, String)>, String> {
         if !toggle.is_empty() {
             rows.push((
                 format!("Pad {toggle}"),
-                format!("Hypr3D room (tap) · release capture (hold {hold} ms)"),
+                if gcv("global_capture_toggle").and_then(Value::as_bool) == Some(true) {
+                    "Attach/detach focused window controls · release returns cursor".into()
+                } else {
+                    format!("Hypr3D room (tap) · release capture (hold {hold} ms)")
+                },
+            ));
+        }
+        let zoom = gcv("window_zoom_chord")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(name)
+            .collect::<Vec<_>>();
+        if !zoom.is_empty() {
+            rows.push((
+                format!("Pad {}", zoom.join(" + ")),
+                "Zoom focused window/pane · release both once".into(),
             ));
         }
         rows.push((
@@ -900,17 +917,23 @@ pub fn keymap_overlay(data: &Value) -> Result<Vec<(String, String)>, String> {
             ),
             format!("Capture the aimed window (tap) · fullscreen + capture (hold {hold} ms)"),
         ));
-        rows.push((
-            format!(
-                "Pad {}",
-                name(
-                    gcv("cursor_mode_button")
-                        .and_then(Value::as_str)
-                        .unwrap_or("BTN_START")
-                )
-            ),
-            "Cursor mode".into(),
-        ));
+        if !gcv("nav")
+            .and_then(|nav| nav.get("start_options"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            rows.push((
+                format!(
+                    "Pad {}",
+                    name(
+                        gcv("cursor_mode_button")
+                            .and_then(Value::as_str)
+                            .unwrap_or("BTN_START")
+                    )
+                ),
+                "Cursor mode".into(),
+            ));
+        }
         let over = gcv("mode_override_chord")
             .and_then(Value::as_array)
             .into_iter()

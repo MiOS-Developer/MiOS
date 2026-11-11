@@ -1,0 +1,423 @@
+diff --git a/greetd/src/config/mod.rs b/greetd/src/config/mod.rs
+index 2d1d645..454e687 100644
+--- a/greetd/src/config/mod.rs
++++ b/greetd/src/config/mod.rs
+@@ -57,6 +57,7 @@ pub struct ConfigGeneral {
+     pub source_profile: bool,
+     pub runfile: String,
+     pub service: String,
++    pub remote_host: Option<String>,
+ }
+ 
+ impl Default for ConfigGeneral {
+@@ -65,6 +66,7 @@ impl Default for ConfigGeneral {
+             source_profile: true,
+             runfile: RUNFILE.to_string(),
+             service: GENERAL_SERVICE.to_string(),
++            remote_host: None,
+         }
+     }
+ }
+@@ -116,6 +118,11 @@ fn parse_config(config_str: &str) -> Result<ConfigFile, Error> {
+                     .map_err(|e| format!("could not parse source_profile: {}", e))?,
+                 runfile,
+                 service,
++                remote_host: section
++                    .get("remote_host")
++                    .map(|host| maybe_unquote(host))
++                    .transpose()
++                    .map_err(|e| format!("unable to read general.remote_host: {}", e))?,
+             }
+         }
+ 
+@@ -198,11 +205,57 @@ fn parse_config(config_str: &str) -> Result<ConfigFile, Error> {
+     })
+ }
+ 
++fn validate_mios_remote(file: &ConfigFile) -> Result<(), Error> {
++    let host = file.general.remote_host.as_deref().unwrap_or("");
++    if file.terminal.vt != VtSelection::None
++        || file.terminal.switch
++        || file.default_session.user != "root"
++        || file.general.source_profile
++        || host.is_empty()
++        || host.len() > 255
++        || host.chars().any(char::is_control)
++        || matches!(
++            host.trim_end_matches('.').to_ascii_lowercase().as_str(),
++            "localhost" | "localhost.localdomain"
++        )
++        || host
++            .parse::<std::net::IpAddr>()
++            .map(|ip| ip.is_loopback() || ip.is_unspecified())
++            .unwrap_or(false)
++    {
++        return Err("private remote mode requires vt=none, switch=false, source_profile=false, a root default-session and a non-local remote_host".into());
++    }
++    Ok(())
++}
++
++fn mios_remote_capabilities() -> serde_json::Value {
++    serde_json::json!({
++        "protocol": "mios-greetd-remote-v1",
++        "source_revision": "08efe60feceea8c81f9571c666880ff1e1c2e3ff",
++        "pam_rhost_before_auth": true,
++        "pam_rhost_before_account": true,
++        "pam_rhost_before_session": true,
++        "remote_required_option": true,
++        "default_session_service": true,
++        "debug_logging": cfg!(feature = "debug")
++    })
++}
++
+ pub fn read_config() -> Result<Config, Error> {
+     let args: Vec<String> = env::args().collect();
+     let program = args[0].clone();
+     let mut opts = Options::new();
+     opts.optflag("h", "help", "print this help menu");
++    opts.optflag(
++        "",
++        "mios-remote-capabilities",
++        "print private remote backend capabilities",
++    );
++    opts.optflag(
++        "",
++        "mios-remote-required",
++        "require seatless remote configuration before any PAM worker",
++    );
+     opts.optopt("s", "socket-path", "socket path to use", "SOCKET_PATH");
+     opts.optopt("c", "config", "config file to use", "CONFIG_FILE");
+     opts.optopt("", "vt", "use the specified vt", "VT");
+@@ -216,6 +269,13 @@ pub fn read_config() -> Result<Config, Error> {
+         Ok(m) => m,
+         Err(f) => return Err(format!("could not parse arguments: {}", f).into()),
+     };
++    if matches.opt_present("mios-remote-capabilities") {
++        if args.len() != 2 {
++            return Err("capability query accepts no other arguments".into());
++        }
++        println!("{}", mios_remote_capabilities());
++        std::process::exit(0);
++    }
+     if matches.opt_present("h") {
+         print_usage(&program, opts);
+         std::process::exit(0);
+@@ -246,6 +306,9 @@ pub fn read_config() -> Result<Config, Error> {
+         file.terminal.vt = vt.parse()?
+     };
+ 
++    if matches.opt_present("mios-remote-required") {
++        validate_mios_remote(&file)?;
++    }
+     if file.default_session.command.is_empty() {
+         return Err(Error::ConfigError(
+             "no default session user specified".to_string(),
+@@ -364,6 +427,7 @@ runfile = \"/path/to/greetd.state\"
+                 general: ConfigGeneral {
+                     source_profile: false,
+                     runfile: "/path/to/greetd.state".to_string(),
++                    remote_host: None,
+                     service: "greetd".to_string(),
+                 },
+                 initial_session: None,
+@@ -504,4 +568,49 @@ user = \"john\"
+         )
+         .is_err());
+     }
++    #[test]
++    fn remote_host_is_required_only_by_explicit_private_mode() {
++        let mut file = ConfigFile::default();
++        file.general.source_profile = false;
++        file.default_session.user = "root".into();
++        assert!(validate_mios_remote(&file).is_err());
++        file.general.remote_host = Some("mios-remote-proof.invalid".into());
++        assert!(validate_mios_remote(&file).is_ok());
++        for host in [
++            "",
++            "localhost",
++            "localhost.",
++            "127.0.0.1",
++            "::1",
++            "0.0.0.0",
++            "bad\u{0000}host",
++            "bad\nhost",
++        ] {
++            file.general.remote_host = Some(host.into());
++            assert!(
++                validate_mios_remote(&file).is_err(),
++                "invalid remote host accepted"
++            );
++        }
++        file.general.remote_host = Some("mios-remote-proof.invalid".into());
++        file.default_session.user = "unprivileged".into();
++        assert!(validate_mios_remote(&file).is_err());
++        file.default_session.user = "root".into();
++        file.terminal.vt = VtSelection::Specific(1);
++        assert!(validate_mios_remote(&file).is_err());
++    }
++
++    #[test]
++    fn remote_host_reaches_configuration_without_environment_lookup() {
++        let file = parse_config("[terminal]\nvt=none\nswitch=false\n[general]\nremote_host=\"mios-remote-proof.invalid\"\nsource_profile=false\n[default_session]\nuser=root\ncommand=/usr/bin/false\n").unwrap();
++        assert_eq!(
++            file.general.remote_host.as_deref(),
++            Some("mios-remote-proof.invalid")
++        );
++        assert!(validate_mios_remote(&file).is_ok());
++        assert_eq!(
++            mios_remote_capabilities()["protocol"],
++            "mios-greetd-remote-v1"
++        );
++    }
+ }
+diff --git a/greetd/src/context.rs b/greetd/src/context.rs
+index 6bd4d82..2aed3e2 100644
+--- a/greetd/src/context.rs
++++ b/greetd/src/context.rs
+@@ -48,6 +48,7 @@ pub struct Context {
+     source_profile: bool,
+     runfile: String,
+     listener_path: String,
++    remote_host: Option<String>,
+ }
+ 
+ impl Context {
+@@ -60,6 +61,7 @@ impl Context {
+         source_profile: bool,
+         runfile: String,
+         listener_path: String,
++        remote_host: Option<String>,
+     ) -> Context {
+         Context {
+             inner: RwLock::new(ContextInner {
+@@ -75,6 +77,7 @@ impl Context {
+             source_profile,
+             runfile,
+             listener_path,
++            remote_host,
+         }
+     }
+ 
+@@ -98,6 +101,7 @@ impl Context {
+                 &self.term_mode,
+                 self.source_profile,
+                 &self.listener_path,
++                self.remote_host.as_deref(),
+             )
+             .await?;
+         loop {
+@@ -204,6 +208,7 @@ impl Context {
+                 &self.term_mode,
+                 self.source_profile,
+                 &self.listener_path,
++                self.remote_host.as_deref(),
+             )
+             .await?;
+ 
+diff --git a/greetd/src/server.rs b/greetd/src/server.rs
+index b215c4a..3b7837b 100644
+--- a/greetd/src/server.rs
++++ b/greetd/src/server.rs
+@@ -246,6 +246,7 @@ pub async fn main(config: Config) -> Result<(), Error> {
+         config.file.general.source_profile,
+         config.file.general.runfile,
+         listener_path,
++        config.file.general.remote_host,
+     ));
+ 
+     if let (Some(s), true) = (config.file.initial_session, ctx.is_first_run()) {
+diff --git a/greetd/src/session/interface.rs b/greetd/src/session/interface.rs
+index 7e6c502..5919a13 100644
+--- a/greetd/src/session/interface.rs
++++ b/greetd/src/session/interface.rs
+@@ -141,6 +141,7 @@ impl Session {
+         term_mode: &TerminalMode,
+         source_profile: bool,
+         listener_path: &str,
++        remote_host: Option<&str>,
+     ) -> Result<(), Error> {
+         let msg = ParentToSessionChild::InitiateLogin {
+             service: service,
+@@ -150,6 +151,7 @@ impl Session {
+             tty: term_mode.clone(),
+             source_profile,
+             listener_path: listener_path,
++            remote_host,
+         };
+         msg.send(&mut self.sock).await?;
+         Ok(())
+diff --git a/greetd/src/session/worker.rs b/greetd/src/session/worker.rs
+index 71c9d10..3aafb1d 100644
+--- a/greetd/src/session/worker.rs
++++ b/greetd/src/session/worker.rs
+@@ -1,8 +1,14 @@
+-use std::{env, ffi::CString, os::unix::net::UnixDatagram};
++use std::{
++    env,
++    ffi::CString,
++    fs::OpenOptions,
++    io::{Read, Write},
++    os::unix::{fs::OpenOptionsExt, net::UnixDatagram},
++};
+ 
+ use nix::{
+     sys::wait::waitpid,
+-    unistd::{execve, fork, initgroups, setgid, setsid, setuid, ForkResult},
++    unistd::{execve, fork, initgroups, setgid, setsid, setuid, ForkResult, Uid},
+ };
+ use pam_sys::{PamFlag, PamItemType};
+ use serde::{Deserialize, Serialize};
+@@ -46,6 +52,56 @@ impl SessionClass {
+     }
+ }
+ 
++fn needs_fresh_remote_audit(class: &SessionClass, authenticate: bool, remote: bool) -> bool {
++    authenticate && remote && matches!(class, SessionClass::User)
++}
++
++fn valid_remote_audit_uid(uid: Uid) -> bool {
++    !uid.is_root() && uid.as_raw() != u32::MAX
++}
++
++fn read_audit_identity(path: &str) -> Result<u32, Error> {
++    let file = OpenOptions::new()
++        .read(true)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
++        .open(path)?;
++    let mut value = String::new();
++    file.take(32).read_to_string(&mut value)?;
++    if value.len() >= 32 {
++        return Err("remote kernel audit identity exceeded bounds".into());
++    }
++    value
++        .trim()
++        .parse()
++        .map_err(|_| "remote kernel audit identity is invalid".into())
++}
++
++/// A nested remote login must not reuse its transport's audit session. Linux-PAM
++/// skips an equal-UID loginuid write, but the kernel allocates a fresh session ID
++/// for each permitted valid-UID write. Change only this authenticated PAM worker;
++/// never clear its identity, change another process or relax kernel audit policy.
++fn establish_fresh_remote_audit(uid: Uid) -> Result<(), Error> {
++    if !nix::unistd::geteuid().is_root() || !valid_remote_audit_uid(uid) {
++        return Err(
++            "fresh remote audit identity requires a root worker and valid non-root account".into(),
++        );
++    }
++    let previous = read_audit_identity("/proc/self/sessionid")?;
++    let mut loginuid = OpenOptions::new()
++        .write(true)
++        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
++        .open("/proc/self/loginuid")?;
++    loginuid.write_all(uid.as_raw().to_string().as_bytes())?;
++    let current = read_audit_identity("/proc/self/sessionid")?;
++    if read_audit_identity("/proc/self/loginuid")? != uid.as_raw()
++        || current == u32::MAX
++        || current == previous
++    {
++        return Err("kernel did not establish a fresh selected-account audit session".into());
++    }
++    Ok(())
++}
++
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ pub enum ParentToSessionChild<'a> {
+     InitiateLogin {
+@@ -56,6 +112,7 @@ pub enum ParentToSessionChild<'a> {
+         tty: TerminalMode,
+         source_profile: bool,
+         listener_path: &'a str,
++        remote_host: Option<&'a str>,
+     },
+     PamResponse {
+         resp: Option<String>,
+@@ -100,7 +157,7 @@ impl SessionChildToParent {
+ /// started by Session::start.
+ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+     let mut data = [0; 10240];
+-    let (service, class, user, authenticate, tty, source_profile, listener_path) =
++    let (service, class, user, authenticate, tty, source_profile, listener_path, remote_host) =
+         match ParentToSessionChild::recv(sock, &mut data)? {
+             ParentToSessionChild::InitiateLogin {
+                 service,
+@@ -110,6 +167,7 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+                 tty,
+                 source_profile,
+                 listener_path,
++                remote_host,
+             } => (
+                 service,
+                 class,
+@@ -118,13 +176,20 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+                 tty,
+                 source_profile,
+                 listener_path,
++                remote_host,
+             ),
+             ParentToSessionChild::Cancel => return Err("cancelled".into()),
+             msg => return Err(format!("expected InitiateLogin or Cancel, got: {:?}", msg).into()),
+         };
+ 
+     let conv = Box::pin(SessionConv::new(sock));
++    let fresh_remote_audit = needs_fresh_remote_audit(&class, authenticate, remote_host.is_some());
+     let mut pam = PamSession::start(service, user, conv)?;
++    // Root-owned private configuration supplies the verified SSH origin.
++    // This is a PAM item, not an environment hint, and precedes every policy.
++    if let Some(host) = remote_host {
++        pam.set_item(PamItemType::RHOST, host)?;
++    }
+ 
+     if authenticate {
+         pam.authenticate(PamFlag::NONE)?;
+@@ -134,6 +199,13 @@ fn worker(sock: &UnixDatagram) -> Result<(), Error> {
+     // Not the credentials you think.
+     pam.setcred(PamFlag::ESTABLISH_CRED)?;
+ 
++    if fresh_remote_audit {
++        let name = pam.get_user()?;
++        let selected = nix::unistd::User::from_name(&name)?
++            .ok_or("authenticated remote account is unavailable")?;
++        establish_fresh_remote_audit(selected.uid)?;
++    }
++
+     // Mark authentication as a success.
+     SessionChildToParent::Success.send(sock)?;
+ 
+@@ -320,3 +392,36 @@ pub fn main(sock: &UnixDatagram) -> Result<(), Error> {
+         Ok(())
+     }
+ }
++
++#[cfg(test)]
++mod remote_audit_tests {
++    use super::{needs_fresh_remote_audit, valid_remote_audit_uid, SessionClass};
++    use nix::unistd::Uid;
++
++    #[test]
++    fn root_and_the_audit_clear_sentinel_are_never_selected_target_uids() {
++        assert!(!valid_remote_audit_uid(Uid::from_raw(0)));
++        assert!(!valid_remote_audit_uid(Uid::from_raw(u32::MAX)));
++        assert!(valid_remote_audit_uid(Uid::from_raw(1000)));
++    }
++
++    #[test]
++    fn only_a_genuinely_authenticated_remote_user_gets_a_fresh_audit_session() {
++        assert!(needs_fresh_remote_audit(&SessionClass::User, true, true));
++        assert!(!needs_fresh_remote_audit(&SessionClass::User, false, true));
++        assert!(!needs_fresh_remote_audit(&SessionClass::User, true, false));
++    }
++
++    #[test]
++    fn the_root_default_greeter_never_changes_audit_identity() {
++        for authenticate in [false, true] {
++            for remote in [false, true] {
++                assert!(!needs_fresh_remote_audit(
++                    &SessionClass::Greeter,
++                    authenticate,
++                    remote,
++                ));
++            }
++        }
++    }
++}

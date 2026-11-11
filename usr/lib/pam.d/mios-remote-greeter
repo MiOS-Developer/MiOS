@@ -1,0 +1,12 @@
+#%PAM-1.0
+# AI-hint: Root-only private greetd launcher, which immediately drops to the witnessed caller via fixed runuser argv.
+# AI-related: src/mios-rs/miosd/src/remote_login.rs, usr/lib/pam.d/mios-remote-login, usr/share/mios/pam/remote-login.conf
+# This service never authorizes the selected login account. greetd uses it
+# only for its fixed default-session; the general service authenticates users.
+# pam_rootok also permits greetd's unconditional pam_setcred without granting
+# unprivileged clients a password-free root authentication service.
+auth       requisite    pam_rootok.so
+account    requisite    pam_succeed_if.so uid = 0 quiet
+password   requisite    pam_deny.so
+# Keep the private root launcher out of logind: no seat/session modules.
+session    required     pam_env.so conffile=/usr/share/mios/pam/remote-login.conf readenv=0 user_readenv=0

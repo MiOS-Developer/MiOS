@@ -214,10 +214,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Human executor the generated helpers run (`mios-terminal --menu/--app/--float/--session-cycle`).
 const TERMINAL: &str = "/usr/libexec/mios/mios-terminal";
-/// Format for "this pane belongs to a managed AI workspace" (relay/MCP-owned layout): the window's head, an
-/// MCP-owned pane, or a parked worker. Option names are the relay's storage contract, not tunables.
-const MANAGED_PANE: &str =
+/// Agent layout roles retain their float-shell creation behavior.
+const AGENT_PANE: &str =
     "#{||:#{@mios-workspace-head},#{||:#{@mios-mcp-owner},#{@mios-workspace-worker}}}";
+/// Layout-owned panes cannot be closed, tiled, moved, or floated as applications.
+/// Desktop helpers are real roles; they are never labelled as agent workers.
+const MANAGED_PANE: &str = "#{||:#{@mios-desktop-canvas},#{||:#{@mios-desktop-panel},#{||:#{@mios-desktop-chat},#{||:#{@mios-desktop-metrics},#{||:#{@mios-workspace-head},#{||:#{@mios-mcp-owner},#{@mios-workspace-worker}}}}}}}";
 /// tmux 3.7c stock condition: the application owns the click, or the pane is in a mode other than copy/view.
 const MOUSE_PASSTHROUGH: &str =
     "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}";
@@ -1033,7 +1035,7 @@ pub(crate) fn render_tmux_keys(
             key: new_key,
             command: if linux {
                 format!(
-                    "if-shell -F '{MANAGED_PANE}' {} {}",
+                    "if-shell -F '{AGENT_PANE}' {} {}",
                     quote(&shell),
                     quote(&native)
                 )
@@ -2062,7 +2064,7 @@ mod tests {
             "shared runtime geometry"
         );
         for key in ["'!'", "'{'", "'}'", "F"] {
-            let needle = format!(" {key} if-shell -F '#{{||:#{{@mios-workspace-head}}");
+            let needle = format!(" {key} if-shell -F '{MANAGED_PANE}'");
             let line = conf
                 .lines()
                 .find(|l| l.starts_with("bind-key -N") && l.contains(&needle))
@@ -2080,6 +2082,35 @@ mod tests {
                 && !off.contains("--float")
                 && off.contains("set-hook -gu session-closed[91]")
         );
+    }
+
+    #[test]
+    fn desktop_helpers_are_protected_without_becoming_agent_float_shells() {
+        let conf = render(&ssot()).unwrap();
+        assert!(MANAGED_PANE.contains("#{@mios-desktop-panel}"));
+        assert!(MANAGED_PANE.contains("#{@mios-desktop-canvas}"));
+        assert!(MANAGED_PANE.contains("#{@mios-desktop-chat}"));
+        assert!(MANAGED_PANE.contains("#{@mios-desktop-metrics}"));
+        assert!(MANAGED_PANE.contains(AGENT_PANE));
+        for role in [
+            "mios-workspace-head",
+            "mios-mcp-owner",
+            "mios-workspace-worker",
+        ] {
+            assert!(
+                AGENT_PANE.contains(role),
+                "existing agent role {role} must remain protected"
+            );
+        }
+        let new = conf
+            .lines()
+            .find(|line| {
+                line.starts_with("bind-key -N")
+                    && line.contains("New floating pane (keeps the directory)")
+            })
+            .unwrap();
+        assert!(new.contains(AGENT_PANE));
+        assert!(!new.contains("mios-desktop-panel") && !new.contains("mios-desktop-canvas"));
     }
 
     #[test]

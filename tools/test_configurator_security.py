@@ -35,7 +35,7 @@ const input = JSON.parse(fs.readFileSync(0, 'utf8'));
 const html = fs.readFileSync(input.path, 'utf8');
 const ctx = {sections: input.sections};
 vm.createContext(ctx);
-for (const name of ['parseToml', 'parseTomlValue', 'emitToml', 'emitTomlValue']) {
+for (const name of ['normalizeMonsSections', 'parseToml', 'parseTomlValue', 'emitToml', 'emitTomlValue']) {
   const match = html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
   if (!match) throw new Error('Missing function '+name);
   vm.runInContext(match[0], ctx);
@@ -47,6 +47,25 @@ process.stdout.write(JSON.stringify({toml, reparsed}));
 '''
 
 
+MONS_IMPORT_NODE = r'''
+const fs = require('fs'), vm = require('vm');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const html = fs.readFileSync(input.path, 'utf8');
+const ctx = {text: input.text};
+vm.createContext(ctx);
+for (const name of ['normalizeMonsSections','parseToml','parseTomlValue','emitToml','emitTomlValue']) {
+ const match=html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
+ if(!match)throw new Error('Missing function '+name);
+ vm.runInContext(match[0],ctx);
+}
+const parsed=vm.runInContext('parseToml(text)',ctx);
+ctx.parsed=parsed;
+const toml=vm.runInContext('emitToml(parsed)',ctx);
+ctx.toml=toml;
+process.stdout.write(JSON.stringify({parsed,toml,reparsed:vm.runInContext('parseToml(toml)',ctx)}));
+'''
+
+
 MON_FORM_NODE = r'''
 const fs = require('fs'), vm = require('vm');
 const input = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -54,7 +73,7 @@ const html = fs.readFileSync(input.path, 'utf8');
 const ctx = {DATA: input.initial, controls: input.controls, storeGpuResourceTables:()=>{},
  document:{getElementById:()=>({value:'[]'}),querySelectorAll:()=>input.controls}};
 vm.createContext(ctx);
-for (const name of ['splitDataKey','gatherFromForm','emitToml','emitTomlValue']) {
+for (const name of ['normalizeMonsSections','splitDataKey','gatherFromForm','emitToml','emitTomlValue']) {
  const match=html.match(new RegExp('^function '+name+'\\([^\\n]*\\n[\\s\\S]*?^}', 'm'));
  if(!match)throw new Error('Missing function '+name);
  vm.runInContext(match[0],ctx);
@@ -104,6 +123,81 @@ vm.runInContext(match[0], ctx);
 '''
 
 class TestConfiguratorSecurity(unittest.TestCase):
+
+    def test_mons_import_normalizes_flat_subtables_and_array_tables_before_form_hydration(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        text = """[tamagotchi]
+zoom_percent=125
+unknown='kept'
+[tamagotchi.camera]
+pan_step_permille=50
+follow_half_life_ms=500
+[[tamagotchi.characters]]
+id=17
+name='Previous'
+[mons]
+zoom_percent=150
+[mons.camera]
+pan_step_permille=75
+[[mons.characters]]
+id=18
+name='Canonical'
+[operator]
+filename='my-tamagotchi-save.json'
+"""
+        run = subprocess.run(["node", "-e", MONS_IMPORT_NODE],
+            input=json.dumps({"path": str(html), "text": text}), capture_output=True, text=True, check=True, timeout=15)
+        output = json.loads(run.stdout)
+        self.assertEqual(output["parsed"], output["reparsed"])
+        self.assertFalse(any(key == "tamagotchi" or key.startswith("tamagotchi.") for key in output["parsed"]))
+        self.assertEqual(output["parsed"]["mons"]["zoom_percent"], 150)
+        self.assertEqual(output["parsed"]["mons"]["unknown"], "kept")
+        self.assertEqual(output["parsed"]["mons"]["characters"], [{"id": 18, "name": "Canonical"}])
+        self.assertEqual(output["parsed"]["mons.camera"], {"pan_step_permille": 75, "follow_half_life_ms": 500})
+        self.assertEqual(tomllib.loads(output["toml"])["operator"]["filename"], "my-tamagotchi-save.json")
+
+    def test_mons_import_preserves_empty_inheritance_and_only_converts_typed_references(self):
+        html = ROOT / "usr/share/mios/configurator/mios.html"
+        text = """[tamagotchi]
+zoom_percent=125
+palette=['one','two']
+[mons]
+zoom_percent=''
+palette=[]
+[terminal.popups]
+menu_width_source='tamagotchi.popup_min_width'
+operator_source='tamagotchi.keep_this_text'
+[rust.categories.tamagotchi]
+binary='mios-tamagotchi'
+replaces=['/custom/mios-tamagotchi']
+[rust.categories.roles]
+apps=['apps','tamagotchi']
+[generation.walk]
+excluded_sections=['theme','tamagotchi']
+[build.native.categories.apps]
+binaries=['mios-launch','mios-tamagotchi']
+[operator.launcher]
+argv=['/custom/mios-tamagotchi']
+[keybindings.global.controller.nav.apps.mon]
+exe=['/usr/bin/mios-tamagotchi','/custom/mios-tamagotchi']
+user_exe=['/home/operator/.local/bin/mios-tamagotchi']
+"""
+        run = subprocess.run(["node", "-e", MONS_IMPORT_NODE],
+            input=json.dumps({"path": str(html), "text": text}), capture_output=True, text=True, check=True, timeout=15)
+        output = json.loads(run.stdout)
+        parsed = output["parsed"]
+        self.assertEqual(parsed["mons"], {"zoom_percent":125, "palette":[]})
+        self.assertEqual(parsed["terminal.popups"]["menu_width_source"], "mons.popup_min_width")
+        self.assertEqual(parsed["terminal.popups"]["operator_source"], "tamagotchi.keep_this_text")
+        self.assertEqual(parsed["rust.categories.mons"]["binary"], "mios-mons")
+        self.assertEqual(parsed["rust.categories.mons"]["replaces"], ["/custom/mios-tamagotchi"])
+        self.assertEqual(parsed["rust.categories.roles"]["apps"], ["apps","mons"])
+        self.assertEqual(parsed["generation.walk"]["excluded_sections"], ["theme","mons"])
+        self.assertEqual(parsed["build.native.categories.apps"]["binaries"], ["mios-launch","mios-mons"])
+        self.assertEqual(parsed["operator.launcher"]["argv"], ["/custom/mios-tamagotchi"])
+        self.assertEqual(parsed["keybindings.global.controller.nav.apps.mon"]["exe"], ["/usr/bin/mios-mons", "/custom/mios-tamagotchi"])
+        self.assertEqual(parsed["keybindings.global.controller.nav.apps.mon"]["user_exe"], ["/home/operator/.local/bin/mios-tamagotchi"])
+        self.assertEqual(output["parsed"], output["reparsed"])
 
     def test_focus_gesture_controls_roundtrip_and_reject_invalid_settings(self):
         html = ROOT / "usr/share/mios/configurator/mios.html"
@@ -192,11 +286,11 @@ class TestConfiguratorSecurity(unittest.TestCase):
         parser.feed(html.read_text())
         by_key = {control["dataset"]["key"]: control for control in parser.controls}
         self.assertEqual(len(by_key), len(parser.controls), "no duplicate inheritance controls")
-        for key in ["tamagotchi.camera_view", "tamagotchi.zoom_percent",
-                    "tamagotchi.game.training.name_starts", "tamagotchi.game.training.species_colors",
-                    "tamagotchi.game.training.personality_colors.cozy",
-                    "tamagotchi.camera.pan_step_permille",
-                    "tamagotchi.camera.preview_orbit_pauses_turntable"]:
+        for key in ["mons.camera_view", "mons.zoom_percent",
+                    "mons.game.training.name_starts", "mons.game.training.species_colors",
+                    "mons.game.training.personality_colors.cozy",
+                    "mons.camera.pan_step_permille",
+                    "mons.camera.preview_orbit_pauses_turntable"]:
             self.assertIn(key, by_key)
         def gather(initial):
             result = subprocess.run(["node", "-e", MON_FORM_NODE],
@@ -207,16 +301,16 @@ class TestConfiguratorSecurity(unittest.TestCase):
         # of vendor numeric values or an invalid empty-string override.
         output = gather({"identity": {"hostname": "mios-test"}})
         self.assertEqual(output["data"], {"identity": {"hostname": "mios-test"}})
-        self.assertNotIn("tamagotchi", tomllib.loads(output["toml"]))
-        changes = {"tamagotchi.camera_view": "face", "tamagotchi.zoom_percent": "175",
-            "tamagotchi.game.training.name_starts": "Yu, Ko",
-            "tamagotchi.game.training.species_colors": "4,8,14,15,14,11,7,1",
-            "tamagotchi.game.training.personality_colors.cozy": "3",
-            "tamagotchi.camera.pan_step_permille": "50"}
+        self.assertNotIn("mons", tomllib.loads(output["toml"]))
+        changes = {"mons.camera_view": "face", "mons.zoom_percent": "175",
+            "mons.game.training.name_starts": "Yu, Ko",
+            "mons.game.training.species_colors": "4,8,14,15,14,11,7,1",
+            "mons.game.training.personality_colors.cozy": "3",
+            "mons.camera.pan_step_permille": "50"}
         for key, value in changes.items():
             by_key[key]["value"] = value
         output = gather({})
-        parsed = tomllib.loads(output["toml"])["tamagotchi"]
+        parsed = tomllib.loads(output["toml"])["mons"]
         self.assertEqual(parsed["camera_view"], "face")
         self.assertEqual(parsed["zoom_percent"], 175)
         self.assertEqual(parsed["game"]["training"]["name_starts"], ["Yu", "Ko"])
@@ -226,11 +320,11 @@ class TestConfiguratorSecurity(unittest.TestCase):
         self.assertNotIn("preview_orbit_pauses_turntable", parsed["camera"])
         # The camera flag is a typed, inheritable bool select. (Bool emission
         # is the client's job; gatherFromForm owns that coercion.)
-        flag = by_key["tamagotchi.camera.preview_orbit_pauses_turntable"]
+        flag = by_key["mons.camera.preview_orbit_pauses_turntable"]
         self.assertEqual((flag["tagName"], flag["dataset"].get("type")), ("SELECT", "bool"))
         for value, expected in [("true", True), ("false", False)]:
             flag["value"] = value
-            typed = tomllib.loads(gather({})["toml"])["tamagotchi"]["camera"]
+            typed = tomllib.loads(gather({})["toml"])["mons"]["camera"]
             self.assertIs(typed["preview_orbit_pauses_turntable"], expected)
         flag["value"] = "not-a-bool"
         with self.assertRaises(subprocess.CalledProcessError) as invalid:
@@ -240,12 +334,12 @@ class TestConfiguratorSecurity(unittest.TestCase):
         for key in ["pan_step_permille", "pan_max_permille", "pan_margin_permille",
                     "tilt_step_degrees", "tilt_min_degrees", "tilt_max_degrees",
                     "orbit_fine_step_degrees", "max_lead_steps"]:
-            self.assertEqual(by_key["tamagotchi.camera." + key]["dataset"].get("type"), "int", key)
+            self.assertEqual(by_key["mons.camera." + key]["dataset"].get("type"), "int", key)
         # Choosing Inherit for an existing key removes that override only.
         for control in parser.controls:
             control["value"] = ""
-        output = gather({"tamagotchi": {"camera_view": "room", "unrelated": "kept"}})
-        self.assertEqual(output["data"]["tamagotchi"], {"unrelated": "kept"})
+        output = gather({"mons": {"camera_view": "room", "unrelated": "kept"}})
+        self.assertEqual(output["data"]["mons"], {"unrelated": "kept"})
 
     def test_focused_mon_policy_controls_roundtrip_real_form(self):
         html = ROOT / "usr/share/mios/configurator/mios.html"
@@ -278,8 +372,8 @@ class TestConfiguratorSecurity(unittest.TestCase):
         unchanged = {"identity": {"hostname": "kept"}}
         self.assertEqual(gather(unchanged)["data"], unchanged)
         changes = {"app_poll_ms": "300", "app_query_timeout_ms": "100",
-            "apps.mon.exe": "/usr/bin/mios-tamagotchi",
-            "apps.mon.user_exe": "/home/fixture/.local/bin/mios-tamagotchi-sample",
+            "apps.mon.exe": "/usr/bin/mios-mons",
+            "apps.mon.user_exe": "/home/fixture/.local/bin/mios-mons-sample",
             "apps.mon.contexts.terminal": "mon", "apps.mon.contexts.console": "mon_console",
             "mon_tmux.LS_UP": "key:ALT+8", "mon_console_plain.RS_LEFT": "none",
             "apps.mon.repeat.LS_UP": "220, 80"}
@@ -288,9 +382,9 @@ class TestConfiguratorSecurity(unittest.TestCase):
         emitted = tomllib.loads(gather({})["toml"])["keybindings"]["global"]["controller"]["nav"]
         self.assertEqual(emitted["app_poll_ms"], 300)
         self.assertEqual(emitted["app_query_timeout_ms"], 100)
-        self.assertEqual(emitted["apps"]["mon"]["exe"], ["/usr/bin/mios-tamagotchi"])
+        self.assertEqual(emitted["apps"]["mon"]["exe"], ["/usr/bin/mios-mons"])
         self.assertEqual(emitted["apps"]["mon"]["user_exe"],
-                         ["/home/fixture/.local/bin/mios-tamagotchi-sample"])
+                         ["/home/fixture/.local/bin/mios-mons-sample"])
         self.assertEqual(emitted["apps"]["mon"]["repeat"]["LS_UP"], [220, 80])
         self.assertEqual(emitted["apps"]["mon"]["contexts"], {"terminal": "mon", "console": "mon_console"})
         self.assertEqual(emitted["mon_tmux"]["LS_UP"], "key:ALT+8")
@@ -437,7 +531,7 @@ class TestConfiguratorSecurity(unittest.TestCase):
 
     def test_smooth_camera_settings_use_real_inheritable_typed_controls(self):
         html = ROOT / "usr/share/mios/configurator/mios.html"
-        prefix = "tamagotchi.camera."
+        prefix = "mons.camera."
         limits = {
             "follow_half_life_ms": (90, 20, 1000), "motion_frame_ms": (33, 16, 140),
             "orbit_rate_deg_s": (180, 10, 720), "tilt_rate_deg_s": (90, 5, 360),
@@ -452,7 +546,7 @@ class TestConfiguratorSecurity(unittest.TestCase):
             def handle_starttag(self, tag, attrs):
                 a = dict(attrs)
                 key = a.get("data-key", "")
-                if tag == "input" and (key in {prefix + k for k in limits} or key == "tamagotchi.animation_frame_ms"):
+                if tag == "input" and (key in {prefix + k for k in limits} or key == "mons.animation_frame_ms"):
                     self.by_key[key] = {"tagName": "INPUT", "type": a.get("type", ""),
                         "value": "", "dataset": {"key": key, "inherit": a.get("data-inherit"),
                         "type": a.get("data-type")}}
@@ -474,7 +568,7 @@ class TestConfiguratorSecurity(unittest.TestCase):
         result = gather({"identity": {"hostname": "kept"}})
         self.assertEqual(result.returncode, 0, result.stderr)
         parsed = tomllib.loads(json.loads(result.stdout)["toml"])
-        self.assertEqual(parsed["tamagotchi"]["camera"], {k: v[0] for k, v in limits.items()})
+        self.assertEqual(parsed["mons"]["camera"], {k: v[0] for k, v in limits.items()})
         self.assertEqual(parsed["identity"]["hostname"], "kept")
         for key, (_, lo, hi) in limits.items():
             control = parser.by_key[prefix + key]
@@ -490,13 +584,13 @@ class TestConfiguratorSecurity(unittest.TestCase):
                         control["value"] = saved
         try:
             parser.by_key[prefix + "motion_frame_ms"]["value"] = "100"
-            parser.by_key["tamagotchi.animation_frame_ms"]["value"] = "40"
+            parser.by_key["mons.animation_frame_ms"]["value"] = "40"
             result = gather()
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("motion interval must not exceed", result.stderr)
         finally:
             parser.by_key[prefix + "motion_frame_ms"]["value"] = "33"
-            parser.by_key["tamagotchi.animation_frame_ms"]["value"] = ""
+            parser.by_key["mons.animation_frame_ms"]["value"] = ""
         try:
             parser.by_key[prefix + "follow_half_life_ms"]["value"] = "200"
             parser.by_key[prefix + "reset_glide_ms"]["value"] = "100"
@@ -509,9 +603,9 @@ class TestConfiguratorSecurity(unittest.TestCase):
         finally:
             for control in parser.by_key.values():
                 control["value"] = ""
-        result = gather({"tamagotchi.camera": {"follow_half_life_ms": 90, "unrelated": "kept"}})
+        result = gather({"mons.camera": {"follow_half_life_ms": 90, "unrelated": "kept"}})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["data"]["tamagotchi.camera"], {"unrelated": "kept"})
+        self.assertEqual(json.loads(result.stdout)["data"]["mons.camera"], {"unrelated": "kept"})
 
     def test_nvidia_runtime_and_signed_repo_roundtrip(self):
         sections = {

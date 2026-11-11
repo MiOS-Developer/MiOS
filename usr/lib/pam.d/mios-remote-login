@@ -1,0 +1,20 @@
+#%PAM-1.0
+# AI-hint: Genuine remote greetd PAM service; no physical seat or VT is claimed.
+# AI-related: usr/share/mios/pam/remote-login.conf, src/mios-rs/miosd/src/remote_login.rs
+# SSH authenticates transport. This independent PAM session authorizes the
+# selected MiOS account; the root IPC broker also refuses system/root UIDs.
+auth       requisite    pam_succeed_if.so uid >= 1000 quiet
+auth       include      password-auth
+account    requisite    pam_succeed_if.so uid >= 1000 quiet
+account    include      password-auth
+password   include      password-auth
+# Give the selected login its own kernel audit session before pam_systemd.
+# A scope alone preserves the SSH audit ID and can reuse the transport session.
+session    required     pam_loginuid.so
+# greetd prepares seat0 even in vt=none mode. Remove it before pam_systemd,
+# for both the unprivileged greeter and the selected authenticated session.
+session    required     pam_env.so conffile=/usr/share/mios/pam/remote-login.conf readenv=0 user_readenv=0
+session    include      password-auth
+# The common password stack can omit logind or mark it optional.
+# A genuine remote user session and runtime directory are mandatory.
+session    required     pam_systemd.so type=tty

@@ -2349,6 +2349,7 @@ version = "0.3.0"
 dependencies = [
  "clap",
  "figment",
+ "libc",
  "miette",
  "mios-ssot-walk",
  "proptest",
@@ -2410,13 +2411,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "mios-tamagotchi"
+name = "mios-mons"
 version = "0.3.0"
 dependencies = [
  "clap",
  "crossterm 0.29.0",
  "mios-resolver",
  "ratatui 0.30.2",
+ "rustix 1.1.4",
  "serde",
  "serde_json",
  "supports-color 3.0.2",

@@ -375,5 +375,198 @@ class Law13DropinParity(unittest.TestCase):
             self.assertEqual(walk_list_homes(tmp), ["usr/lib/mios/mios_toml.py"])
 
 
+class MonsLayerCompatibility(unittest.TestCase):
+    """Raw-file/DB compatibility checks also runnable without a native build."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("mios_mons_layer_fixture", LIB / "mios_toml.py")
+        self.config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.config)
+        self.temp = tempfile.TemporaryDirectory(prefix="mios-mons-layer-")
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+
+    def layer(self, name, text):
+        path = self.directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
+    def test_higher_tier_legacy_choices_outrank_new_vendor_defaults(self):
+        paths = [self.layer("v.toml", "[mons]\nzoom_percent=100\nrenderer='ascii'\n"),
+                 self.layer("h.toml", "[tamagotchi]\nzoom_percent=125\n"),
+                 self.layer("u.toml", "[mons]\nzoom_percent=150\n"),
+                 self.layer("u.d/10-old.toml", "[tamagotchi]\nzoom_percent=''\nrenderer='braille'\n")]
+        before = [path.read_bytes() for path in paths]
+        self.assertEqual(self.config.load_merged(paths[:2])["mons"]["zoom_percent"], 125)
+        self.assertEqual(self.config.load_merged(paths), {"mons": {"zoom_percent": 150, "renderer": "braille"}})
+        self.assertEqual([path.read_bytes() for path in paths], before)
+
+    def test_same_layer_canonical_values_win_but_empty_strings_inherit(self):
+        layer = {"tamagotchi": {"zoom_percent": 125, "keep": 7, "list": ["old"]},
+                 "mons": {"zoom_percent": 150, "keep": "", "list": ["new"]}}
+        normalized = self.config.normalize_mons_layer(layer)
+        self.assertEqual(normalized, {"mons": {"zoom_percent": 150, "keep": 7, "list": ["new"]}})
+        self.assertEqual(self.config.normalize_mons_layer(normalized), normalized)
+        for old, current, expected in [(False, "", False), ({}, False, False), (False, {}, {})]:
+            self.assertEqual(self.config.normalize_mons_layer({"tamagotchi": old, "mons": current}),
+                             {"mons": expected})
+
+    def test_malformed_ancestors_and_values_are_not_coerced(self):
+        for value in [False, [], "bad", 7]:
+            self.assertEqual(self.config.normalize_mons_layer(value), value)
+        layer = {"rust": False, "terminal": [], "build": "bad", "tamagotchi": False}
+        self.assertEqual(self.config.normalize_mons_layer(layer),
+                         {"rust": False, "terminal": [], "build": "bad", "mons": False})
+
+    def test_only_typed_tokens_and_popup_references_change(self):
+        layer = {"tamagotchi": {"state_directory": "mios/tamagotchi"}, "label": "tamagotchi",
+                 "rust": {"categories": {"tamagotchi": {"binary": "mios-tamagotchi", "scope": ["tools/native/mios-tamagotchi"], "description": "tamagotchi"},
+                                           "owners": {"lane": ["tamagotchi", 7, "other"]},
+                                           "roles": {"apps": ["tamagotchi"]},
+                                           "binaries": ["mios-tamagotchi", "mios-tamagotchi-extra"]}},
+                 "build": {"native": {"windows_shared": ["mios-tamagotchi"],
+                                        "categories": {"apps": {"binaries": ["mios-tamagotchi"]}},
+                                        "aliases": {"old": {"binary": "mios-tamagotchi", "command": "mios-tamagotchi"}}}},
+                 "generation": {"walk": {"excluded_sections": ["units", "tamagotchi"]}},
+                 "keybindings": {"global": {"controller": {"nav": {"apps": {"mon": {
+                     "exe": ["/usr/bin/mios-tamagotchi", "/custom/mios-tamagotchi", "usr/bin/mios-tamagotchi"],
+                     "user_exe": ["/usr/bin/mios-tamagotchi"]}}}}}},
+                 "terminal": {"popups": {"menu_width_source": "tamagotchi.popup_min_width", "description": "tamagotchi.popup_min_width"},
+                              "custom": {"menu_width_source": "tamagotchi.popup_min_width"}},
+                 "env": {"MIOS_TAMAGOTCHI": "untouched"}}
+        normalized = self.config.normalize_mons_layer(layer)
+        self.assertEqual(normalized["mons"]["state_directory"], "mios/tamagotchi")
+        self.assertEqual(normalized["label"], "tamagotchi")
+        categories = normalized["rust"]["categories"]
+        self.assertEqual(categories["mons"], {"binary": "mios-mons", "scope": ["tools/native/mios-tamagotchi"], "description": "tamagotchi"})
+        self.assertEqual(categories["owners"]["lane"], ["mons", 7, "other"])
+        self.assertEqual(categories["roles"]["apps"], ["mons"])
+        self.assertEqual(categories["binaries"], ["mios-mons", "mios-tamagotchi-extra"])
+        self.assertEqual(normalized["generation"]["walk"]["excluded_sections"], ["units", "mons"])
+        self.assertEqual(normalized["keybindings"]["global"]["controller"]["nav"]["apps"]["mon"],
+                         {"exe": ["/usr/bin/mios-mons", "/custom/mios-tamagotchi", "usr/bin/mios-tamagotchi"],
+                          "user_exe": ["/usr/bin/mios-tamagotchi"]})
+        self.assertEqual(normalized["build"]["native"]["categories"]["apps"]["binaries"], ["mios-mons"])
+        self.assertEqual(normalized["build"]["native"]["aliases"]["old"], {"binary": "mios-mons", "command": "mios-tamagotchi"})
+        self.assertEqual(normalized["terminal"]["popups"], {"menu_width_source": "mons.popup_min_width", "description": "tamagotchi.popup_min_width"})
+        self.assertEqual(normalized["terminal"]["custom"]["menu_width_source"], "tamagotchi.popup_min_width")
+        self.assertEqual(normalized["env"], {"MIOS_TAMAGOTCHI": "untouched"})
+
+    def test_actual_sorted_fragments_fold_each_normalized_document(self):
+        self.layer("v.d/20-new.toml", "[mons]\nzoom_percent=175\n")
+        self.layer("v.d/10-old.toml", "[tamagotchi]\nzoom_percent=125\n")
+        self.layer("v.d/.99-hidden.toml", "[tamagotchi]\nzoom_percent=999\n")
+        paths = self.config._frags(str(self.directory / "v.d"))
+        self.assertEqual([Path(path).name for path in paths], ["10-old.toml", "20-new.toml"])
+        self.assertEqual(self.config.load_merged(paths), {"mons": {"zoom_percent": 175}})
+
+    def test_raw_db_layer_wins_and_direct_db_lookup_uses_canonical_root(self):
+        from unittest.mock import patch
+        import types
+        vendor = self.layer("v.toml", "[mons]\nzoom_percent=100\nrenderer='ascii'\n")
+        database = types.ModuleType("mios_db_config")
+        database.is_db_authoritative = lambda: True
+        database.load_db_config = lambda: {"tamagotchi": {"zoom_percent": 125, "renderer": ""},
+                                           "mons": {"zoom_percent": 150}}
+        with patch.dict(sys.modules, {"mios_db_config": database}), \
+                patch.object(self.config, "_native_resolver_json", return_value=None), \
+                patch.object(self.config, "layer_paths", return_value=[vendor]):
+            self.assertEqual(self.config.load_merged(), {"mons": {"zoom_percent": 150, "renderer": "ascii"}})
+            self.assertEqual(self.config.get("mons", "zoom_percent"), 150)
+
+    def test_stale_native_fold_is_discarded_and_raw_tiers_are_reread(self):
+        from unittest.mock import patch
+        vendor = self.layer("v.toml", "[mons]\nzoom_percent=100\n")
+        user = self.layer("u.toml", "[tamagotchi]\nzoom_percent=125\n")
+        stale = {"merged": {"mons": {"zoom_percent": 100}, "tamagotchi": {"zoom_percent": 125}}}
+        with patch.object(self.config, "_native_resolver_json", return_value=stale), \
+                patch.object(self.config, "layer_paths", return_value=[vendor, user]):
+            self.assertEqual(self.config.load_merged(), {"mons": {"zoom_percent": 125}})
+        self.assertIn("tamagotchi", stale["merged"], "detection must not mutate or adopt the old fold")
+
+    def test_canonical_native_baseline_does_not_force_an_extra_file_fold(self):
+        from unittest.mock import patch
+        with patch.object(self.config, "_native_resolver_json", return_value={"merged": {"mons": {"zoom_percent": 175}}}), \
+                patch.object(self.config, "_load_one", side_effect=AssertionError("unexpected fallback")):
+            self.assertEqual(self.config.load_merged(), {"mons": {"zoom_percent": 175}})
+
+    def executable_resolver(self, name, payload, supports_normalization):
+        path = self.directory / name
+        observed = self.directory / (name + ".argv.json")
+        path.write_text(
+            "#!" + sys.executable + "\nimport json,sys\nfrom pathlib import Path\n"
+            + "Path(" + repr(str(observed)) + ").write_text(json.dumps(sys.argv[1:]))\n"
+            + "required='--require-mons-layer-normalization' in sys.argv\n"
+            + ("if required:sys.exit(2)\n" if not supports_normalization else "if not required:sys.exit(3)\n")
+            + "print(" + repr(json.dumps(payload)) + ")\n")
+        path.chmod(0o700)
+        return path, observed
+
+    def test_actual_old_resolver_rejects_capability_and_raw_tier_precedence_survives(self):
+        from unittest.mock import patch
+        vendor = self.layer("v.toml", "[mons]\nzoom_percent=100\n")
+        user = self.layer("u.toml", "[tamagotchi]\nzoom_percent=125\n")
+        old, observed = self.executable_resolver("old-resolver", {"merged": {
+            "mons": {"zoom_percent": 100}, "tamagotchi": {"zoom_percent": 125}}}, False)
+        native_run, statuses = subprocess.run, []
+        def execute(*args, **kwargs):
+            result = native_run(*args, **kwargs)
+            statuses.append(result.returncode)
+            return result
+        with patch.dict(os.environ, {"MIOS_RESOLVER_NATIVE": "1"}), \
+                patch.object(self.config.shutil, "which", return_value=str(old)), \
+                patch.object(self.config.subprocess, "run", side_effect=execute), \
+                patch.object(self.config, "layer_paths", return_value=[vendor, user]):
+            self.assertEqual(self.config.load_merged(), {"mons": {"zoom_percent": 125}})
+        self.assertEqual(statuses, [2])
+        self.assertEqual(json.loads(observed.read_text()), ["--require-mons-layer-normalization", "--emit=json"])
+
+    def test_actual_new_resolver_accepts_required_capability_before_its_canonical_result(self):
+        from unittest.mock import patch
+        new, observed = self.executable_resolver("new-resolver", {"merged": {"mons": {"zoom_percent": 175}}}, True)
+        native_run, statuses = subprocess.run, []
+        def execute(*args, **kwargs):
+            result = native_run(*args, **kwargs)
+            statuses.append(result.returncode)
+            return result
+        with patch.dict(os.environ, {"MIOS_RESOLVER_NATIVE": "1"}), \
+                patch.object(self.config.shutil, "which", return_value=str(new)), \
+                patch.object(self.config.subprocess, "run", side_effect=execute), \
+                patch.object(self.config, "_load_one", side_effect=AssertionError("unexpected fallback")):
+            self.assertEqual(self.config.load_merged(), {"mons": {"zoom_percent": 175}})
+        self.assertEqual(statuses, [0])
+        self.assertEqual(json.loads(observed.read_text()), ["--require-mons-layer-normalization", "--emit=json"])
+
+    def test_vendor_projection_normalizes_the_vendor_and_fragment_separately(self):
+        from unittest.mock import patch
+        vendor = self.layer("vendor.toml", "[mons]\nzoom_percent=100\n")
+        self.layer("v.d/10-old.toml", "[tamagotchi]\nzoom_percent=125\n")
+        dirs = (str(vendor), str(self.directory / "v.d"), "", "", "", "")
+        with patch.object(self.config, "_tier_dirs", return_value=dirs):
+            self.assertEqual(self.config.load_vendor(), {"mons": {"zoom_percent": 125}})
+
+    def test_existing_category_environment_alias_is_input_only(self):
+        data = {"rust": {"categories": {"mons": {"binary": "mios-mons", "description": "game"}}}}
+        self.config.overlay_inputs(data, {"MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY": "custom-bin"}.get)
+        exports = self.config.emit_exports(data)
+        self.assertEqual(exports["MIOS_RUST_CATEGORIES_MONS_BINARY"], "custom-bin")
+        self.assertNotIn("MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY", exports)
+        self.assertNotIn("MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY", data["env"])
+
+    def test_canonical_environment_input_wins_and_game_exports_stay_excluded(self):
+        data = {"rust": {"categories": {"mons": {"binary": "mios-mons"}}},
+                "generation": {"walk": {"excluded_sections": ["mons", "generation"]}},
+                "mons": {"zoom_percent": 100}}
+        self.config.overlay_inputs(data, {"MIOS_RUST_CATEGORIES_MONS_BINARY": "canonical-bin",
+                                          "MIOS_RUST_CATEGORIES_TAMAGOTCHI_BINARY": "legacy-bin"}.get)
+        exports = self.config.emit_exports(data)
+        self.assertEqual(exports["MIOS_RUST_CATEGORIES_MONS_BINARY"], "canonical-bin")
+        self.assertNotIn("MIOS_MONS_ZOOM_PERCENT", exports)
+        self.assertEqual(self.config.get_aliases("mons.zoom_percent"), [])
+        self.assertEqual(self.config._input_only_aliases("mons.zoom_percent"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

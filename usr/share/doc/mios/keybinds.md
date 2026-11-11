@@ -29,6 +29,26 @@ shipped behavior.
 One rule decides who receives input. **The focused window is either captured, so the
 app owns the input, or uncaptured, so MiOS owns it.**
 
+The current global controller policy reserves two chords on each physical controller:
+
+- **L3+R3** attaches or detaches controls from the focused window. Detach returns the
+  visible cursor. The action commits once after both buttons are physically released;
+  holding, repeats and partial releases cannot retrigger it.
+- **Select+Start** toggles zoom on the focused window or tmux pane once after both
+  release. This changes geometry without changing controller ownership.
+- **Select** alone opens the selected view/navigation menu; **Start** alone opens the
+  verified app's pause/options action. MiOS-Mons uses its menu and pause actions via
+  a private per-process endpoint. Unsupported apps consume Start; no pause key is
+  typed into a shell. Existing long-Select binding help stays in its profile.
+
+These chords suppress their singles and are cancelled by focus, app, ownership or
+login changes, reset and dropped input. Two controllers cannot combine a chord.
+Guide combinations retain their system/half-capture priority. The SSOT switches are
+`controller.global_capture_toggle`, `controller.window_zoom_chord` and
+`controller.nav.start_options`; absent switches preserve the legacy policy described
+below. Native focused zoom requires the witnessed per-client tmux capability; an old
+server or missing client/pane witness consumes it without selecting another client.
+
 - **Capture.** Any of these captures a window:
   - native fullscreen (`capture_fullscreen = true`, fullscreen mode 2);
   - the window tag `capture_tag = "mios-input-captured"`;

@@ -168,7 +168,7 @@ pub fn route_for_device(
     resolve_routes(routes, path, canonical)
 }
 
-fn tmux_key(text: &str) -> Result<String, String> {
+pub(crate) fn tmux_key(text: &str) -> Result<String, String> {
     let chord = crate::nav::parse_key_chord(text)?;
     let (symbol, _) = crate::nav::keysym(&chord);
     let shifted_tab = symbol == "Tab" && chord.mods.contains(&42);

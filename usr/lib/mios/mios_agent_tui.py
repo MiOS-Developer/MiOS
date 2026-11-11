@@ -1,6 +1,6 @@
 # AI-hint: Shared fixed-table widgets for the unified MiOS Monitor; presentation never consumes or acknowledges relay messages.
 # AI-related: /usr/libexec/mios/mios-mon.py, /usr/libexec/mios/mios-mcp-server, /usr/lib/mios/agent-pipe/test_mios_agent_tui.py
-# AI-functions: clean, peer_name, sync_rows, ClientView, AgentView, SystemSummary
+# AI-functions: clean, peer_name, sync_rows, set_table_header, ClientView, AgentView, SystemSummary
 
 import asyncio
 import re
@@ -11,6 +11,7 @@ from rich.text import Text
 from textual import on
 from textual.binding import Binding
 from textual.coordinate import Coordinate
+from textual.geometry import Size
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.message import Message
@@ -110,6 +111,21 @@ def sync_rows(table, rows, *, ordered=False):
             table.scroll_to(x=x, y=y, animate=False, force=True, immediate=True)
 
     table.call_after_refresh(restore_after_layout)
+
+
+def set_table_header(table, show):
+    """Change responsive chrome without Textual scrolling to an offscreen cursor."""
+    if table.show_header == show:
+        return
+    width, height = table.virtual_size
+    delta = table.header_height if show else -table.header_height
+    # DataTable.watch_show_header also scrolls the cursor into view. Keep its
+    # geometry/cache updates, while presentation-only changes leave the reader's
+    # independent viewport intact. No deferred restore can overwrite wheel input.
+    table.set_reactive(DataTable.show_header, show)
+    table.virtual_size = Size(width, max(0, height + delta))
+    table._clear_caches()
+    table.refresh(layout=True)
 
 
 class ClientView(Vertical):
@@ -265,7 +281,8 @@ class AgentView(Vertical):
     AgentView #relay-count, AgentView #worker-count, AgentView #receipt,
     AgentView #agent-error { height: 1; }
     AgentView #inventory-scopes { height: 1; }
-    AgentView Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent; }
+    AgentView Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent;
+        text-wrap: nowrap; text-overflow: clip; }
     AgentView Button.scope-selected { background: @MIOS:accent@; color: @MIOS:fg@; }
     AgentView #agent-search { height: 1; border: none; padding: 0; background: transparent; }
     AgentView #peer-table { height: 1fr; min-height: 1; overflow-y: auto; overflow-x: hidden;
@@ -392,7 +409,10 @@ class AgentView(Vertical):
         self.set_scope(scopes[(scopes.index(self.scope) + 1) % len(scopes)])
 
     def action_search(self):
-        self.query_one("#agent-search", Input).focus()
+        search = self.query_one("#agent-search", Input)
+        if getattr(self.app, "desktop_panel", False):
+            search.display = True
+        search.focus()
 
     @on(Input.Changed, "#agent-search")
     def search_changed(self, event):
@@ -401,6 +421,7 @@ class AgentView(Vertical):
     @on(Input.Submitted, "#agent-search")
     def search_submitted(self, event):
         self.query_one("#peer-table", DataTable).focus()
+        self.adapt_columns(self.size.width)
 
     @on(DataTable.RowHighlighted, "#peer-table")
     def highlighted(self, event):
@@ -424,8 +445,23 @@ class AgentView(Vertical):
     def adapt_columns(self, width):
         table = self.query_one("#peer-table", DataTable)
         if table.columns:
-            list(table.columns.values())[0].width = max(8, width - 25)
-            table.refresh(layout=True)
+            column = list(table.columns.values())[0]
+            wanted = max(8, width - 25)
+            if column.width != wanted:
+                column.width = wanted
+                table.refresh(layout=True)
+        if getattr(self.app, "desktop_panel", False):
+            height = self.size.height
+            self.query_one("#relay-count").display = height >= 8
+            self.query_one("#worker-count").display = height >= 10
+            self.query_one("#inventory-scopes").display = height >= 3
+            search = self.query_one("#agent-search", Input)
+            search.display = height >= 4 or search.has_focus
+            self.query_one("#agent-detail").display = height >= 14
+            self.query_one("#receipt").display = height >= 16
+            self.query_one("#agent-error").display = height >= 6
+            set_table_header(table, height >= 5)
+            return
         compact = self.size.height < 12
         self.query_one("#receipt").display = not compact
         self.query_one("#agent-detail").display = self.size.height >= 8
@@ -487,10 +523,11 @@ class SystemSummary(Vertical):
     #system-status { height: 1; color: @MIOS:warning@; }
     """)
 
-    def __init__(self, telemetry, services, **kwargs):
+    def __init__(self, telemetry, services, managed=False, **kwargs):
         super().__init__(**kwargs)
         self.telemetry, self.services = telemetry, services
         self.refreshing = False
+        self.managed = managed
 
     def compose(self):
         yield DataTable(id="metric-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
@@ -500,8 +537,26 @@ class SystemSummary(Vertical):
     def on_mount(self):
         self.query_one("#metric-table", DataTable).add_columns("Resource", "Use")
         self.query_one("#summary-services", DataTable).add_columns("Service", "State")
-        self.set_interval(3, self.schedule_refresh)
-        self.call_after_refresh(self.schedule_refresh)
+        if not self.managed:
+            self.set_interval(3, self.schedule_refresh)
+            self.call_after_refresh(self.schedule_refresh)
+
+    def render_snapshot(self, telemetry, services):
+        cpu, ram, disk, _, load = telemetry
+        sync_rows(self.query_one("#metric-table", DataTable), [
+            ("cpu", ("CPU", f"{cpu:.0f}%")), ("ram", ("Memory", f"{ram:.0f}%")),
+            ("disk", ("Disk", f"{disk:.0f}%")), ("load", ("Load", load))])
+        sync_rows(self.query_one("#summary-services", DataTable), [
+            (name, (name, "Up" if up else "Down")) for name, _, up in services])
+        for table in self.query(DataTable):
+            # Textual 4 rejects CSS max-height:none; its inherited 100% cap
+            # also clips rows inside this outer scroll view. A public numeric
+            # content cap keeps every row available without viewport coupling.
+            content_height = sum(row.height for row in table.ordered_rows)
+            if table.show_header:
+                content_height += table.header_height
+            table.styles.max_height = max(2, content_height)
+        self.query_one("#system-status", Static).update("")
 
     def schedule_refresh(self):
         if not self.refreshing:
@@ -512,14 +567,9 @@ class SystemSummary(Vertical):
             return
         self.refreshing = True
         try:
-            cpu, ram, disk, _, load = await asyncio.to_thread(self.telemetry)
-            sync_rows(self.query_one("#metric-table", DataTable), [
-                ("cpu", ("CPU", f"{cpu:.0f}%")), ("ram", ("Memory", f"{ram:.0f}%")),
-                ("disk", ("Disk", f"{disk:.0f}%")), ("load", ("Load", load))])
+            telemetry = await asyncio.to_thread(self.telemetry)
             services = await asyncio.to_thread(self.services)
-            sync_rows(self.query_one("#summary-services", DataTable), [(name, (name, "Up" if up else "Down"))
-                       for name, _, up in services])
-            self.query_one("#system-status", Static).update("")
+            self.render_snapshot(telemetry, services)
         except Exception as exc:
             self.query_one("#system-status", Static).update(f"Collector: {clean(exc, 60)}")
         finally:

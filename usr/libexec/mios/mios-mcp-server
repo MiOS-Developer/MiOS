@@ -903,22 +903,62 @@ class _TmuxBridge:
             shell_env = " ".join(shlex.quote(f"{k}={v}") for k, v in self.env.items()
                                  if k != "TMUX_TMPDIR")
             command = 'exec env -i ' + shell_env + ' MIOS_TMUX_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
-            reserved = _workspace_call("claim", ui, slot=slot, owner=self.owner_id, command=command)
+            desktop = tmux("display-message", "-p", "-t", ui["pane"],
+                           "#{@mios-desktop-enabled}|#{@mios-desktop-workarea-pane}").split("|")
+            desktop = len(desktop) == 2 and desktop[0] == "1"
+            # A desktop worker is a real on-demand shell. The desktop canvas,
+            # top TUI and chat/metrics roles are never split for reservations.
+            reserved = {} if desktop else _workspace_call("claim", ui, slot=slot, owner=self.owner_id, command=command)
             created = reserved.get("pane")
             if not created:
                 directory = tmux("display-message", "-p", "-t", ui["pane"], "#{pane_current_path}")
                 if not os.path.isabs(directory) or not os.path.isdir(directory):
                     raise RuntimeError("desktop head working directory is unavailable")
-                created = tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", ui["pane"],
-                               "-c", directory.replace("#", "##"), command)
+                if desktop:
+                    policy = mios_toml.load_merged()["keybindings"]["tmux"]["desktop"]
+                    sizes = [policy.get("min_columns"), policy.get("min_rows")]
+                    if any(type(size) is not int or not 2 <= size <= 4096 for size in sizes):
+                        raise RuntimeError("desktop worker launch policy is invalid")
+                    created = tmux("new-pane", "-d", "-x", str(sizes[0]), "-y", str(sizes[1]),
+                                   "-P", "-F", "#{pane_id}", "-t", ui["pane"],
+                                   "-c", directory.replace("#", "##"), command)
+                else:
+                    created = tmux("split-window", "-d", "-v", "-P", "-F", "#{pane_id}", "-t", ui["pane"],
+                                   "-c", directory.replace("#", "##"), command)
+            # Failure cleanup is allowed only while the newly allocated pane
+            # still has this exact process, PTY, owner and desktop window.
+            cleanup_format = "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pane_tty}|#{@mios-mcp-owner}|#{@mcp_slot}|#{@mcp_owner}|#{@mcp_pane}"
+            cleanup_witness = None
+            cleanup_start = None
+            def process_start(process):
+                path = Path(f"/proc/{int(process)}")
+                if path.stat().st_uid != os.getuid():
+                    raise RuntimeError("desktop helper process ownership changed")
+                fields = (path / "stat").read_text().rsplit(") ", 1)[1].split()
+                if fields[0] == "Z":
+                    raise RuntimeError("desktop helper process exited")
+                return int(fields[19])
             try:
                 for key, value in (("@mcp_pane", created), ("@mcp_owner", "agent"),
                                    ("@mcp_slot", str(physical)), ("@mios-mcp-owner", self.owner_id)):
                     tmux("set-option", "-p", "-t", created, key, value)
+                witness = tmux("display-message", "-p", "-t", created, cleanup_format)
+                fields = witness.split("|")
+                if (len(fields) != 9 or not re.fullmatch(r"\$\d+", fields[0])
+                        or fields[1] != ui["window"] or fields[2] != created
+                        or not fields[3].isdigit() or not re.fullmatch(r"/dev/pts/\d+", fields[4])
+                        or fields[5:] != [self.owner_id, str(physical), "agent", created]):
+                    raise RuntimeError("new desktop helper identity changed")
+                cleanup_start = process_start(fields[3])
+                cleanup_witness = witness
+                pid = fields[3]
                 tmux("select-pane", "-t", created, "-T", f"MiOS worker {slot}")
-                workspace_head = tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-head}")
+                workspace_head = "" if desktop else tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-head}")
+                if desktop:
+                    _workspace_call("desktop-place", ui, pane=created, owner=self.owner_id, slot=physical,
+                                    expected_pid=int(pid), expected_start=cleanup_start)
                 if not re.fullmatch(r"%\d+", workspace_head):
-                    workspace_head = tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-worker}")
+                    workspace_head = "" if desktop else tmux("display-message", "-p", "-t", ui["pane"], "#{@mios-workspace-worker}")
                 if re.fullmatch(r"%\d+", workspace_head):
                     tmux("set-option", "-p", "-t", created, "@mios-workspace-worker", workspace_head)
                     if not reserved.get("pane"):
@@ -930,7 +970,17 @@ class _TmuxBridge:
                     tmux("select-layout", "-t", ui["window"], "tiled")
                 pid = tmux("display-message", "-p", "-t", created, "#{pane_pid}")
             except BaseException:
-                tmux("kill-pane", "-t", created)
+                try:
+                    if (cleanup_witness is not None
+                            and tmux("display-message", "-p", "-t", created, cleanup_format) == cleanup_witness
+                            and process_start(pid) == cleanup_start):
+                        # if-shell evaluates the final pane witness in the same
+                        # server command queue as kill-pane. A changed owner,
+                        # window or PTY leaves even an orphaned pane intact.
+                        guard = "#{==:" + cleanup_format + "," + cleanup_witness + "}"
+                        tmux("if-shell", "-F", "-t", created, guard, "kill-pane -t " + created)
+                except Exception:
+                    pass
                 raise
             self.visible_slots[slot] = {"pane": created, "pid": pid, "upstream": physical, "dynamic": not bool(reserved.get("pane"))}
             return physical
@@ -2309,13 +2359,16 @@ def _monitor_ui_request():
                 for row in data["agent_cli"]["tools"]]}
 
 
-def _run_monitor_ui(mode):
+def _run_monitor_ui(mode, *, chooser_only=False):
     request = _monitor_ui_request()
     python = request["workspace"]["tui_python"]
     if not shutil.which(python):
         raise RuntimeError("[mcp.tmux.workspace].tui_python is unavailable")
     # Textual uses the packaged system interpreter, not the minimal MCP venv.
-    return subprocess.run([python, "/usr/libexec/mios/mios-mon.py", "--ui-mode", mode, "--ui-request-stdin"],
+    command = [python, "/usr/libexec/mios/mios-mon.py", "--ui-mode", mode, "--ui-request-stdin"]
+    if chooser_only:
+        command.append("--client-chooser")
+    return subprocess.run(command,
                           input=json.dumps(request), text=True).returncode
 
 
@@ -2642,8 +2695,8 @@ def main() -> int:
     if sys.argv[1:] == ["--monitor-request"]:
         print(json.dumps(_monitor_ui_request()))
         return 0
-    if len(sys.argv) > 1 and sys.argv[1] == "--workspace-menu":
-        result = _run_monitor_ui("clients")
+    if sys.argv[1:] in (["--workspace-menu"], ["--desktop-chat"]):
+        result = _run_monitor_ui("clients", chooser_only=sys.argv[1] == "--desktop-chat")
         if result == 0:
             os.execl("/bin/bash", "/bin/bash", "--rcfile", "/usr/share/mios/tmux/mios-bashrc")
         return result
