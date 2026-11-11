@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
+import configparser
 import subprocess
 import sys
 import tempfile
@@ -70,8 +72,115 @@ class FirstbootLatest(unittest.TestCase):
         env = {**os.environ, "PATH": f"{self.t / 'bin'}:{os.environ['PATH']}", "MOCK_HTTP": str(self.http),
                "MOCK_LOG": str(self.log), "MIOS_TOML": str(self.toml), "MIOS_MODELS_DIR": str(self.models),
                "MIOS_MODELS_STATE_DIR": str(self.state), "MIOS_TOML_GET": str(self.t / "absent"),
-               "MIOS_HF_ENDPOINT": "https://huggingface.co"}
+               "MIOS_HF_ENDPOINT": "https://huggingface.co",
+               "MIOS_HOST_TOML": str(self.t / "host.toml"), "MIOS_USER_TOML": str(self.t / "user.toml"),
+               "MIOS_VENDOR_TOML_D": str(self.t / "absent"), "MIOS_HOST_TOML_D": str(self.t / "absent"),
+               "MIOS_USER_TOML_D": str(self.t / "absent")}
         return subprocess.run([sys.executable, str(FETCHER)], env=env, capture_output=True, text=True, timeout=120)
+
+    def test_host_layer_disables_pulls_without_retiring_retries(self):
+        (self.t / "host.toml").write_text("[ai]\nfirstboot_pulls=false\n")
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.log.exists())
+        self.assertFalse((self.state / ".models-firstboot-done").exists())
+
+    def test_required_light_fleet_is_verified_before_ready(self):
+        with self.toml.open("a") as stream:
+            stream.write(f'\n[llamacpp]\nbake_models="lfm2-700m.gguf={REPO}:{FILE}"\n')
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((self.models / ".ready").exists())
+        self.assertEqual((self.models / "lfm2-700m.gguf").read_bytes(), self.weights)
+        self.assertEqual(len(self.log.read_text().splitlines()), 2)  # metadata + blob, no duplicate fetch
+
+    def test_existing_corrupt_model_is_replaced_only_with_verified_bytes(self):
+        self.models.mkdir()
+        (self.models / "lfm2-700m.gguf").write_bytes(b"broken")
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.models / "lfm2-700m.gguf").read_bytes(), self.weights)
+
+    def test_invalid_entry_does_not_write_sentinel_or_escape_model_directory(self):
+        self.toml.write_text('[ai]\n[[ai.firstboot_models]]\nname="../escaped"\nsource="https://example.invalid/weight"\n')
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.state / ".models-firstboot-done").exists())
+        self.assertFalse((self.t / "escaped").exists())
+        self.assertFalse(self.log.exists())
+
+    def test_required_fleet_failure_keeps_retry_eligible_and_clears_stale_readiness(self):
+        with self.toml.open("a") as stream:
+            stream.write('[llamacpp]\nbake_models="missing.gguf=example/missing:missing.gguf"\n')
+        self.models.mkdir()
+        (self.models / ".ready").touch()
+        result = self._run()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.models / ".ready").exists())
+        self.assertFalse((self.state / ".models-firstboot-done").exists())
+        service = configparser.ConfigParser()
+        service.read(ROOT / "usr/lib/systemd/system/mios-models-firstboot.service")
+        self.assertFalse(service.getboolean("Service", "RemainAfterExit", fallback=False))
+        timer = configparser.ConfigParser()
+        timer.read(ROOT / "usr/lib/systemd/system/mios-models-firstboot.timer")
+        self.assertEqual(timer["Timer"]["Unit"], "mios-models-firstboot.service")
+        self.assertIn("OnUnitInactiveSec", timer["Timer"])
+
+    def test_finalizer_applies_system_and_user_presets_offline(self):
+        script = (ROOT / "automation/88-finalize.sh").read_text()
+        commands = [shlex.split(line) for line in script.splitlines()
+                    if line.startswith("systemctl ") and "preset-all" in line]
+        self.assertEqual(len(commands), 2)
+        image = self.t / "image"
+        paths = [
+            "usr/lib/systemd/system/mios-models-firstboot.service",
+            "usr/lib/systemd/system/mios-models-firstboot.timer",
+            "usr/lib/systemd/system-preset/90-mios.preset",
+            "usr/lib/systemd/user/mios-launcher.service",
+            "usr/lib/systemd/user-preset/90-mios.preset",
+        ]
+        for path in paths:
+            dest = image / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((ROOT / path).read_bytes())
+        for command in commands:
+            # Run the exact finalizer commands against a disposable image root.
+            result = subprocess.run([command[0], "--root", str(image), *command[1:]],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((image / "etc/systemd/system/timers.target.wants/mios-models-firstboot.timer").is_symlink())
+        self.assertTrue((image / "etc/systemd/user/default.target.wants/mios-launcher.service").is_symlink())
+        # Plant the original defect: system-only presets cannot enable a broker.
+        broker = image / "etc/systemd/user/default.target.wants/mios-launcher.service"
+        broker.unlink()
+        system_only = next(command for command in commands if "--global" not in command)
+        result = subprocess.run([system_only[0], "--root", str(image), *system_only[1:]],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(broker.exists())
+
+    def test_heavy_weights_are_opt_in_and_use_a_repository_from_ssot(self):
+        script = (ROOT / "usr/libexec/mios/mios-ai-firstboot").read_text()
+        selection = script[script.index('VLLM_MODEL="${MIOS_VLLM_BAKE_MODEL:-}"'):script.index('VLLM_DIR=')]
+        getter = self.t / "toml-get"
+        getter.write_text("""#!/bin/sh
+case "$1.$2" in
+ai.heavy_engine) printf vllm ;;
+ai.vllm.enable) printf '%s' "$MIOS_TEST_HEAVY_ENABLED" ;;
+ai.sglang.bake_model) printf synthetic/weights ;;
+*) exit 1 ;;
+esac
+""")
+        getter.chmod(0o755)
+        for enabled, explicit, expected in [
+                ("false", "", ""), ("true", "", "synthetic/weights"),
+                ("false", "operator/selected", "operator/selected")]:
+            result = subprocess.run(["bash", "-c", selection + '\nprintf "%s" "$VLLM_MODEL"'],
+                env={**os.environ, "MIOS_TOML_GET": str(getter),
+                     "MIOS_VLLM_BAKE_MODEL": explicit, "MIOS_TEST_HEAVY_ENABLED": enabled},
+                capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, expected)
 
     def test_floating_source_resolves_commit_and_upstream_digest(self):
         r = self._run()

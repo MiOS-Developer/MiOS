@@ -1,7 +1,7 @@
-# AI-hint: FBM first-boot large-model provisioner unit (oneshot, sentinel-guarded, degrade-open). Runs mios-models-firstboot once at first boot to fetch [ai].firstboot_models GGUFs; enabled via 90-mios.preset.
-# AI-doc: usr/share/doc/mios/manual/system.md
+# AI-hint: Provision and verify the layered Day-0 light-lane fleet and optional models; retry incomplete downloads through the timer.
+# AI-related: /usr/libexec/mios/mios-models-firstboot, mios-models-firstboot.timer
 [Unit]
-Description=First-boot Large-model Provisioner
+Description=First-boot model provisioner
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=!/var/lib/mios/.models-firstboot-done
@@ -9,10 +9,7 @@ ConditionPathExists=!/var/lib/mios/.models-firstboot-done
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/mios/mios-models-firstboot
-RemainAfterExit=yes
 TimeoutStartSec=10800
-# Degrade-open: never block boot on a failed pull
-SuccessExitStatus=0 1 2 3
 
 [Install]
 WantedBy=multi-user.target

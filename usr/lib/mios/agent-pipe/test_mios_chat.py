@@ -11,6 +11,15 @@ import sys
 import types
 from unittest import mock
 
+# The suite remains usable on a bare checkout; the provisioned test venv also
+# validates the actual wire events against the installed strict SDK models.
+try:
+    from pydantic import TypeAdapter
+    from openai.types.responses import ResponseStreamEvent
+    _SDK_EVENT_ADAPTER = TypeAdapter(ResponseStreamEvent)
+except ImportError:
+    _SDK_EVENT_ADAPTER = None
+
 _fails = 0
 
 def check(name, cond, detail=""):
@@ -230,6 +239,8 @@ def main():
 
     _test_responses_api()
 
+    _test_store_policy()
+
     _test_budget()
 
     _test_microreply()
@@ -261,6 +272,7 @@ class _RespHttpxClient:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
     last_post_url = None
     last_post_json = None
+    last_post_headers = None
 
     def __init__(self, *a, **k):
         pass
@@ -274,6 +286,7 @@ class _RespHttpxClient:
     async def post(self, url, *a, **k):
         _RespHttpxClient.last_post_url = url
         _RespHttpxClient.last_post_json = k.get("json")
+        _RespHttpxClient.last_post_headers = k.get("headers")
         return _RespHttpxResp(_RespHttpxClient._payload)
 
 class _RespHttpx:
@@ -302,7 +315,7 @@ def _test_responses_api():
         check("responses_api -> bytes decoding & Responses items shape (proxied answer)",
               body.get("object") == "response" and out_text == "PROXIED ANSWER"
               and part.get("type") == "output_text" and part.get("text") == "PROXIED ANSWER"
-              and body.get("usage", {}).get("prompt_tokens") == 1,
+              and body.get("usage", {}).get("input_tokens") == 1,
               f"body={body}")
 
         # 2. Negative control: malformed JSON returns 400
@@ -341,9 +354,23 @@ def _test_responses_api():
               and posted_msgs[4] == {"role": "tool", "tool_call_id": "call_cust_1", "content": json.dumps({"status": "ok"})},
               f"posted_msgs={posted_msgs}")
 
+        parallel_items = [
+            {"role": "user", "content": "inspect in parallel"},
+            {"type": "function_call", "call_id": "call_a", "name": "inspect", "arguments": "{}"},
+            {"type": "function_call", "call_id": "call_b", "name": "inspect", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_a", "output": "result a"},
+            {"type": "function_call_output", "call_id": "call_b", "output": "result b"},
+        ]
+        asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": parallel_items})))
+        parallel_messages = _RespHttpxClient.last_post_json["messages"]
+        check("responses_api -> parallel calls share one assistant turn before both outputs",
+              len(parallel_messages) == 4
+              and [call["id"] for call in parallel_messages[1]["tool_calls"]] == ["call_a", "call_b"]
+              and [message["tool_call_id"] for message in parallel_messages[2:]] == ["call_a", "call_b"])
+
         # 5. Tools conversion (Responses flat schema -> Chat Completions nested schema)
         tools_in = [
-            {"type": "function", "name": "weather", "description": "get weather", "parameters": {"type": "object"}},
+            {"type": "function", "name": "weather", "description": "get weather", "strict": True, "parameters": {"type": "object"}},
             {"type": "function", "function": {"name": "calc", "description": "calculate", "parameters": {}}}
         ]
         r_tools = asyncio.run(mios_chat.responses_api_logic(
@@ -353,9 +380,16 @@ def _test_responses_api():
         check("responses_api -> tools schema translation and tool_choice",
               len(posted_tools) == 2
               and posted_tools[0].get("function", {}).get("name") == "weather"
+              and posted_tools[0]["function"].get("strict") is True
               and posted_tools[1].get("function", {}).get("name") == "calc"
               and posted_tc == "auto",
               f"posted_tools={posted_tools} posted_tc={posted_tc}")
+
+        for store in (False, True):
+            asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "store": store})))
+            check(f"responses_api -> store={store} is preserved in relay",
+                  _RespHttpxClient.last_post_json.get("store") is store)
 
         # 6. Tool calls returned in non-streaming output
         _RespHttpxClient._payload = {
@@ -399,8 +433,125 @@ def _test_responses_api():
               and "event: response.output_text.done" in stream_text
               and "event: response.output_item.done" in stream_text
               and "event: response.completed" in stream_text
-              and "data: [DONE]" in stream_text,
+              and "event: response.content_part.done" in stream_text,
               f"stream_text={stream_text[:200]}...")
+
+        events = [json.loads(line[6:]) for line in stream_text.splitlines() if line.startswith("data: ")]
+        check("responses_api -> event bodies have types and contiguous sequence numbers",
+              all(e.get("type") and e.get("sequence_number") == i for i, e in enumerate(events)))
+        deltas = [e for e in events if e["type"] == "response.output_text.delta"]
+        check("responses_api -> text events address the output item and content",
+              bool(deltas) and all(e.get("item_id") and e.get("content_index") == 0 for e in deltas))
+        check("responses_api -> response usage uses Responses token names",
+              events[-1]["response"]["usage"]["input_tokens"] == 4
+              and events[-1]["response"]["usage"]["output_tokens"] == 2
+              and "prompt_tokens" not in events[-1]["response"]["usage"])
+        _RespHttpxClient._payload = {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "call_control", "function": {"name": "inspect", "arguments": {"path": "/"}}}]}}]}
+        chunks.clear()
+        tools_stream = asyncio.run(mios_chat.responses_api_logic(
+            FakeRequest({"model": "m", "input": "inspect", "stream": True}, {"Authorization": "Bearer synthetic"})))
+        asyncio.run(_consume_stream(tools_stream.body_iterator))
+        check("responses_api -> loopback relay preserves caller authorization",
+              (_RespHttpxClient.last_post_headers or {}).get("Authorization") == "Bearer synthetic")
+        tool_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+        argument_events = [e for e in tool_events if e["type"].startswith("response.function_call_arguments.")]
+        check("responses_api -> function events address the item and preserve JSON arguments",
+              len(argument_events) == 2 and all(e.get("item_id") for e in argument_events)
+              and tool_events[-1]["response"]["output"][0]["call_id"] == "call_control"
+              and json.loads(argument_events[-1]["arguments"]) == {"path": "/"}
+              and argument_events[-1].get("name") == "inspect")
+        if _SDK_EVENT_ADAPTER is not None:
+            for label, wire_events in (("text", events), ("tool", tool_events)):
+                try:
+                    for wire_event in wire_events:
+                        _SDK_EVENT_ADAPTER.validate_python(wire_event)
+                    sdk_valid = True
+                except Exception as error:
+                    sdk_valid = False
+                check(f"responses_api -> {label} events validate against SDK wire models", sdk_valid)
+            missing_item = dict(argument_events[-1])
+            missing_item.pop("item_id")
+            try:
+                _SDK_EVENT_ADAPTER.validate_python(missing_item)
+                missing_item_rejected = False
+            except Exception:
+                missing_item_rejected = True
+            check("responses_api -> SDK rejects planted missing tool item identity", missing_item_rejected)
+
+        for finish, reason in (("length", "max_output_tokens"), ("content_filter", "content_filter")):
+            _RespHttpxClient._payload = {"choices": [{"message": {"content": "partial"}, "finish_reason": finish}]}
+            result = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "probe"})))
+            check(f"responses_api -> {finish} JSON output is incomplete",
+                  result.content["status"] == "incomplete"
+                  and result.content["incomplete_details"] == {"reason": reason})
+            chunks.clear()
+            partial = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "stream": True})))
+            asyncio.run(_consume_stream(partial.body_iterator))
+            partial_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+            check(f"responses_api -> {finish} stream has only an incomplete terminal",
+                  partial_events[-1]["type"] == "response.incomplete"
+                  and partial_events[-1]["response"]["incomplete_details"] == {"reason": reason}
+                  and not any(event["type"] == "response.completed" for event in partial_events))
+            if _SDK_EVENT_ADAPTER is not None:
+                for event in partial_events:
+                    _SDK_EVENT_ADAPTER.validate_python(event)
+
+        for finish in ("length", "content_filter"):
+            _RespHttpxClient._payload = {"choices": [{"message": {"content": None}, "finish_reason": finish}]}
+            result = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "probe"})))
+            check(f"responses_api -> empty {finish} completion remains incomplete",
+                  result.status_code == 200 and result.content["status"] == "incomplete"
+                  and result.content["output"] == [])
+            chunks.clear()
+            empty_partial = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "stream": True})))
+            asyncio.run(_consume_stream(empty_partial.body_iterator))
+            partial_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+            check(f"responses_api -> empty {finish} stream terminates incomplete",
+                  partial_events[-1]["type"] == "response.incomplete")
+            if _SDK_EVENT_ADAPTER is not None:
+                for event in partial_events:
+                    _SDK_EVENT_ADAPTER.validate_python(event)
+
+        for invalid in ({}, {"choices": []}, {"choices": [{"message": {"content": ""}}]}):
+            _RespHttpxClient._payload = invalid
+            empty = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "probe"})))
+            check("responses_api -> empty backend output is unavailable, never success",
+                  empty.status_code == 503 and empty.content["error"]["code"] == "inference_unavailable")
+            chunks.clear()
+            empty_stream = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "stream": True})))
+            asyncio.run(_consume_stream(empty_stream.body_iterator))
+            empty_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+            check("responses_api -> empty stream has a typed terminal failure",
+                  empty_events[-1]["type"] == "response.failed"
+                  and empty_events[-1]["response"]["status"] == "failed"
+                  and not any(e["type"] == "response.completed" for e in empty_events))
+
+        for malformed in (
+            {"choices": [{"message": {"content": ["invalid"], "tool_calls": [
+                {"id": "call_invalid", "function": {"name": "inspect", "arguments": "{}"}}]}}]},
+            {"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": [], "function": {"name": "inspect", "arguments": "{}"}}]}}]},
+            {"choices": [{"message": {"content": "OK"}}], "usage": []},
+            {"choices": [{"message": {"content": "OK"}}], "usage": {"prompt_tokens_details": []}},
+        ):
+            _RespHttpxClient._payload = malformed
+            rejected = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "probe"})))
+            check("responses_api -> malformed backend data is rejected before wire serialization",
+                  rejected.status_code == 502 and rejected.content["error"]["code"] == "invalid_backend_response")
+            chunks.clear()
+            rejected_stream = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "stream": True})))
+            asyncio.run(_consume_stream(rejected_stream.body_iterator))
+            failed_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+            check("responses_api -> malformed backend data emits a terminal failure",
+                  failed_events[-1]["type"] == "response.failed")
+            if _SDK_EVENT_ADAPTER is not None:
+                for event in failed_events:
+                    _SDK_EVENT_ADAPTER.validate_python(event)
 
         # 8. Negative control: upstream HTTP 400 error propagation in non-streaming mode
         orig_post = _RespHttpxClient.post
@@ -421,8 +572,8 @@ def _test_responses_api():
                 err_chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
         asyncio.run(_consume_err_stream(r_stream_err.body_iterator))
         err_stream_text = "".join(err_chunks)
-        check("responses_api -> streaming upstream error yields event: error",
-              "event: error" in err_stream_text
+        check("responses_api -> streaming upstream error terminates with response.failed",
+              "event: response.failed" in err_stream_text
               and "upstream bad request" in err_stream_text
               and "response.completed" not in err_stream_text,
               f"err_stream_text={err_stream_text}")
@@ -433,6 +584,34 @@ def _test_responses_api():
         _RespHttpxClient._payload = {"choices": [{"message": {"content": "PROXIED ANSWER"}}],
                                     "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
         mios_chat.httpx = orig_httpx
+
+def _test_store_policy():
+    for supplied, persist in ((None, True), (True, True), (False, False)):
+        writes = []
+        _wire_common(refine_intent=_ahandler("refine", {"intent": "chat", "reply": "hello"}),
+                     _store_knowledge=lambda **kwargs: writes.append("knowledge"),
+                     _write_skill_md_fire=lambda **kwargs: writes.append("skill"))
+        _apply(_get_gateway_session=_ahandler("history_load", []))
+        request = {"model": "m", "messages": [{"role": "user", "content": "hello"}],
+                   "metadata": {"session_id": "synthetic", "session_replay": True}}
+        if supplied is not None:
+            request["store"] = supplied
+        result = _run(request)
+        check(f"store policy -> supplied {supplied!r} preserves expected passive storage",
+              writes == (["knowledge", "skill"] if persist else []),
+              f"writes={writes}")
+        check(f"store policy -> supplied {supplied!r} gates configured history replay",
+              ("history_load" in CALLS) is persist)
+
+    seen = []
+    async def native(**kwargs):
+        seen.append(kwargs)
+        return S_NATIVE
+    _wire_common(_respond_native_loop_direct=lambda *args, **kwargs: native(**kwargs),
+                 _pick_agent=lambda _: None)
+    _run({"model": "m", "messages": [{"role": "user", "content": "explain the project"}], "store": False})
+    check("store policy -> native handler receives explicit non-persistence",
+          bool(seen) and seen[0].get("persist_response") is False)
 
 def _test_budget():
     """The aggregate-budget admission cluster, now owned by mios_chat. Drives the
