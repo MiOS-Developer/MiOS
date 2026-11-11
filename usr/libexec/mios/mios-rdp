@@ -557,6 +557,11 @@ print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) els
         log "a client is attached (stats.json); not switching (try again when it detaches)"; exit 1
     fi
     if [[ "$to" == native && -z "$(native_binary)" ]]; then log "native server not installed"; exit 1; fi
+    # Acquire the privileged TLS/auth channel before replacing a working listener.
+    # A disabled socket otherwise makes native startup fail after xrdp has stopped.
+    if [[ "$to" == native ]]; then
+        systemctl start mios-rdp-priv.socket || { log "native TLS/auth socket could not start; current server preserved"; exit 1; }
+    fi
     install -d -m 0755 "$(dirname "$OVERRIDE")"
     chmod 0755 "$(dirname "$OVERRIDE")"
     rm -f "$FALLBACK_MARKER"
@@ -566,7 +571,25 @@ print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) els
     if [[ "$to" == native ]]; then
         "${um[@]}" stop mios-rdp-vnc.service || true
         systemctl stop xrdp.service xrdp-sesman.service || true
-        "${um[@]}" start mios-rdp-native.service
+        local native_ready=false native_pid attempt
+        if "${um[@]}" start mios-rdp-native.service; then
+            for attempt in {1..30}; do
+                native_pid="$("${um[@]}" show mios-rdp-native.service -p MainPID --value 2>/dev/null || true)"
+                if [[ "$native_pid" =~ ^[1-9][0-9]*$ ]] && ss -H -ltnp "sport = :${RDP_PORT}" | grep -Fq "pid=${native_pid},"; then
+                    native_ready=true
+                    break
+                fi
+                sleep 0.1
+            done
+        fi
+        if [[ "$native_ready" != true ]]; then
+            "${um[@]}" stop mios-rdp-native.service || true
+            printf '%s\n' xrdp > "${OVERRIDE}.new" && chmod 0644 "${OVERRIDE}.new" && mv -f "${OVERRIDE}.new" "$OVERRIDE"
+            systemctl start xrdp-sesman.service xrdp.service || true
+            "${um[@]}" start mios-rdp-vnc.service || true
+            log "native listener failed to start after ${attempt:-0} probe(s); restored the xrdp listener"
+            exit 1
+        fi
     else
         "${um[@]}" stop mios-rdp-native.service || true
         systemctl start xrdp-sesman.service xrdp.service
@@ -579,8 +602,14 @@ print("yes" if fresh and (d.get("attached") or float(d.get("fps") or 0) > 0) els
 
 cmd_status() {
     load_cfg
-    local st="/run/user/${RDP_OPERATOR_UID}/mios-rdp/stats.json"
-    echo "configured: ${RDP_SERVER}   active backend: $(backend)   native binary: $(native_binary || echo none)"
+    local st="/run/user/${RDP_OPERATOR_UID}/mios-rdp/stats.json" listener sockets
+    sockets="$(ss -H -ltnp "sport = :${RDP_PORT}" 2>/dev/null || true)"
+    listener=stopped
+    if [[ "$sockets" == *mios-rdp-server* ]]; then listener=native
+    elif [[ "$sockets" == *xrdp* ]]; then listener=xrdp
+    elif [[ -n "$sockets" ]]; then listener=unknown
+    fi
+    echo "configured: ${RDP_SERVER}   selected backend: $(backend)   listener: ${listener}   native binary: $(native_binary || echo none)"
     [[ -e "$FALLBACK_MARKER" ]] && echo "fallback marker: $(cat "$FALLBACK_MARKER" 2>/dev/null)"
     [[ -r "$OVERRIDE" ]] && echo "runtime override: $(cat "$OVERRIDE")"
     python3 -I -c 'import json,sys
