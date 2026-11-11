@@ -30,6 +30,43 @@ pub enum Expression {
     Dead,
 }
 
+impl Expression {
+    /// Printable ASCII, with a pure four-pose blink/chew cycle.
+    pub fn kaomoji(self, frame: usize) -> &'static str {
+        use Expression::*;
+        match self {
+            Idle if frame % 4 == 2 => "(-_-)",
+            Idle => "(o_o)",
+            Happy => "(^_^)",
+            Sad => "(T_T)",
+            Angry => "(>_<)",
+            Surprised => "(O_O)",
+            Sleeping => "(-_-)",
+            Sick => "(+_+)",
+            Hungry => "(u_u)",
+            Playful if frame % 4 == 2 => "(>_o)",
+            Playful => "(o_<)",
+            Shy => "(._.)",
+            Excited => "(*_*)",
+            Eating if frame % 2 == 0 => "(o_O)",
+            Eating => "(o_o)",
+            Cleaning => "(o.o)",
+            Healing => "(u_u)",
+            Celebrate => "(^o^)",
+            Dead => "(x_x)",
+        }
+    }
+}
+
+/// Face center and row in unscaled sprite pixels. Consumers apply the same
+/// scale and terminal packing as the image. Absence means no visible face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FaceOverlay {
+    pub center_x: u16,
+    pub y: u16,
+    pub text: &'static str,
+}
+
 /// Original animal geometry and indexed colors supplied by the character roster.
 /// Untrusted indices are reduced to the sixteen supported shapes/colors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +101,7 @@ pub struct Sprite {
     width: u16,
     height: u16,
     pixels: Vec<Option<u8>>,
+    face_overlay: Option<FaceOverlay>,
 }
 
 impl Sprite {
@@ -105,6 +143,15 @@ impl Sprite {
         let expression = if dead { Expression::Dead } else { expression };
         let mut model = VoxelModel::pet(stage, expression, style, frame % 4, walking);
         model.animal(stage, style, appearance.bounded());
+        model.grow_body(
+            stage,
+            expression,
+            style,
+            frame % 4,
+            walking,
+            appearance.bounded(),
+        );
+        model.attach_face(stage, expression, style, frame);
         model.rasterize(style, yaw_degrees, expression == Expression::Sleeping)
     }
 
@@ -133,6 +180,7 @@ impl Sprite {
                 width: 1,
                 height: 1,
                 pixels: vec![None],
+                face_overlay: None,
             };
         }
         if self.width <= max_width && self.height <= max_height {
@@ -155,10 +203,17 @@ impl Sprite {
                 pixels.push(self.pixel(sx, sy, 1));
             }
         }
+        let face_overlay = self.face_overlay.map(|face| FaceOverlay {
+            center_x: (u32::from(face.center_x) * u32::from(width) / sw).min(u32::from(width) - 1)
+                as u16,
+            y: (u32::from(face.y) * u32::from(height) / sh).min(u32::from(height) - 1) as u16,
+            text: face.text,
+        });
         Self {
             width,
             height,
             pixels,
+            face_overlay,
         }
     }
 
@@ -296,10 +351,12 @@ impl Sprite {
                 "................",
             ],
         };
-        let size = rows.len() as u16;
+        let size = rows[0].len() as u16;
+        let grown = matches!(stage, Stage::Child | Stage::Adult);
         let mut sprite = Self {
             width: size,
-            height: size,
+            height: if grown { size * 2 } else { size },
+            face_overlay: None,
             pixels: rows
                 .iter()
                 .flat_map(|row| row.bytes())
@@ -310,12 +367,97 @@ impl Sprite {
                 })
                 .collect(),
         };
+        sprite
+            .pixels
+            .resize(usize::from(sprite.width) * usize::from(sprite.height), None);
         let phase = frame % 4;
         match style {
             SpriteStyle::EightBit => sprite.animate_small(stage, expression, phase),
             SpriteStyle::SixteenBit => sprite.animate_detailed(stage, expression, phase),
         }
+        if grown {
+            sprite.pixel_body(stage, expression, style, phase);
+        }
+        if stage != Stage::Egg {
+            let y = match (style, stage) {
+                (SpriteStyle::EightBit, Stage::Baby | Stage::Child) => 4,
+                (SpriteStyle::EightBit, _) => 3,
+                (SpriteStyle::SixteenBit, Stage::Baby) => 8,
+                (SpriteStyle::SixteenBit, Stage::Child) => 7,
+                (SpriteStyle::SixteenBit, _) => 6,
+            };
+            sprite.face_overlay = Some(FaceOverlay {
+                center_x: size / 2,
+                y,
+                text: expression.kaomoji(frame),
+            });
+        }
         sprite
+    }
+
+    /// Independent neck, torso, arms and legs beneath the original pixel head.
+    fn pixel_body(
+        &mut self,
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        phase: usize,
+    ) {
+        use Expression::*;
+        let fine = style == SpriteStyle::SixteenBit;
+        let top = if fine { 14 } else { 7 };
+        for y in top..i32::from(self.height) {
+            for x in 0..i32::from(self.width) {
+                self.pixels[y as usize * usize::from(self.width) + x as usize] = None;
+            }
+        }
+        let adult = stage == crate::game::Stage::Adult;
+        let gait: i32 = if matches!(expression, Sleeping | Sick) {
+            0
+        } else {
+            [0, 1, 0, -1][phase]
+        };
+        let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
+        if fine {
+            self.stamp(6, 14, &["0110", "0330"]);
+            for y in 16..if adult { 25 } else { 23 } {
+                self.stamp(4, y, &[if y == 16 { "00333300" } else { "01344310" }]);
+            }
+            let arm_y = if raised { 13 + (phase % 2) as i32 } else { 18 };
+            self.stamp(1, arm_y, &["030", "010", "0a0", ".0."]);
+            self.stamp(12, arm_y, &["030", "010", "0a0", ".0."]);
+            if matches!(expression, Eating | Shy) {
+                self.stamp(5, 12, &["03300330", ".aa..aa."]);
+            }
+            let hips = if adult { 25 } else { 23 };
+            self.stamp(4, hips, &["0aaaaaa0", ".00..00."]);
+            let foot_drop = if adult { 4 } else { 5 };
+            for (x, lift) in [(4, gait.max(0)), (10, (-gait).max(0))] {
+                for y in hips + 2..hips + foot_drop + 1 - lift {
+                    self.stamp(x, y, &["010"]);
+                }
+                self.stamp(x - 1, hips + foot_drop - lift, &["0ee0", "0000"]);
+            }
+            self.paint(5, 19, 15);
+            self.paint(10, 21, 10);
+        } else {
+            self.stamp(3, 7, &["00", "33"]);
+            for y in 9..if adult { 13 } else { 12 } {
+                self.stamp(2, y, &["0140"]);
+            }
+            let arm_y = if raised { 7 + (phase % 2) as i32 } else { 10 };
+            self.stamp(0, arm_y, &["01", "0a"]);
+            self.stamp(6, arm_y, &["10", "a0"]);
+            if matches!(expression, Eating | Shy) {
+                self.stamp(2, 6, &["1aa1"]);
+            }
+            let hips = if adult { 13 } else { 12 };
+            self.stamp(2, hips, &["0aa0"]);
+            self.paint(2, hips + 1 - gait.max(0), 1);
+            self.paint(5, hips + 1 - (-gait).max(0), 1);
+            self.stamp(1, hips + 2 - gait.max(0), &["0e"]);
+            self.stamp(5, hips + 2 - (-gait).max(0), &["e0"]);
+        }
     }
 
     // All drawing is clipped in signed coordinates before the row-major lookup.
@@ -620,6 +762,10 @@ impl Sprite {
         }
     }
 
+    pub fn face_overlay(&self) -> Option<FaceOverlay> {
+        self.face_overlay
+    }
+
     pub fn width(&self) -> u16 {
         self.width
     }
@@ -640,6 +786,7 @@ impl Sprite {
             width,
             height,
             pixels,
+            face_overlay: None,
         })
     }
 
@@ -681,6 +828,15 @@ impl Sprite {
             width: 8,
             height: 8,
             pixels,
+            face_overlay: Some(FaceOverlay {
+                center_x: 4,
+                y: 3,
+                text: if stage == Stage::Dead {
+                    Expression::Dead.kaomoji(frame)
+                } else {
+                    Expression::Idle.kaomoji(frame)
+                },
+            }),
         }
     }
 
@@ -698,6 +854,7 @@ impl Sprite {
             width: 8,
             height: 8,
             pixels,
+            face_overlay: None,
         }
     }
 
@@ -720,6 +877,11 @@ impl Sprite {
             width: 8,
             height: 8,
             pixels,
+            face_overlay: Some(FaceOverlay {
+                center_x: 4,
+                y: 3,
+                text: Expression::Idle.kaomoji(frame),
+            }),
         }
     }
 }
@@ -730,6 +892,8 @@ impl Sprite {
 #[derive(Default)]
 struct VoxelModel {
     appearance: Option<Appearance>,
+    tall: bool,
+    face: Option<([f32; 3], &'static str)>,
     cells: std::collections::BTreeMap<(i32, i32, i32), u8>,
 }
 
@@ -1031,6 +1195,193 @@ impl VoxelModel {
 }
 
 impl VoxelModel {
+    /// Keep the animal's sculpted head at its original proportions, lift it,
+    /// and grow an independently solid torso and articulated limbs below it.
+    fn grow_body(
+        &mut self,
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        phase: usize,
+        walking: bool,
+        appearance: Appearance,
+    ) {
+        use crate::game::Stage;
+        use Expression::*;
+        if !matches!(stage, Stage::Child | Stage::Adult) {
+            return;
+        }
+        self.tall = true;
+        let fine = style == SpriteStyle::SixteenBit;
+        let adult = stage == Stage::Adult;
+        let lift = match (fine, adult) {
+            (false, false) => 6,
+            (false, true) => 7,
+            (true, false) => 9,
+            (true, true) => 11,
+        };
+        let (rx, ry, rz): (f32, f32, f32) = match (fine, adult) {
+            (false, false) => (4.0, 3.8, 3.0),
+            (false, true) => (4.4, 4.5, 3.5),
+            (true, false) => (5.5, 5.5, 4.0),
+            (true, true) => (6.2, 6.5, 4.8),
+        };
+        self.cells = self
+            .cells
+            .iter()
+            .filter_map(|(&(x, y, z), &color)| {
+                // Remove the old head's stub feet and lower hem, then relocate its
+                // tail to the new hips instead of leaving a tail behind the neck.
+                if color == 14 || (y as f32) < -ry * 0.82 {
+                    return None;
+                }
+                let tail = (z as f32) < -rz && y < 0;
+                Some(((x, y + if tail { 0 } else { lift }, z), color))
+            })
+            .collect();
+        let family = appearance.shape % 8;
+        let variant = appearance.shape >= 8;
+        let waist = rx
+            * match family {
+                1 => 0.56,
+                2 | 4 => 0.78,
+                5 => 0.86,
+                7 => 0.72,
+                _ => 0.65,
+            };
+        let torso_y = if fine { -2.0 } else { -1.0 };
+        let torso_h = match (fine, adult) {
+            (false, false) => 4.8,
+            (false, true) => 6.0,
+            (true, false) => 7.0,
+            (true, true) => 9.0,
+        };
+        let torso_z = rz * 0.80;
+        self.ellipsoid(
+            [0.0, torso_y + torso_h * 0.7, 0.0],
+            [waist * 0.62, torso_h * 0.55, torso_z * 0.65],
+            16,
+        );
+        self.ellipsoid([0.0, torso_y, 0.0], [waist, torso_h, torso_z], 16);
+        self.ellipsoid(
+            [0.0, torso_y - 0.6, torso_z * 0.8],
+            [waist * 0.72, torso_h * 0.65, torso_z * 0.4],
+            4,
+        );
+        if family == 7 {
+            self.ellipsoid(
+                [0.0, torso_y, -torso_z * 0.7],
+                [waist + 0.5, torso_h * 0.9, torso_z],
+                17,
+            );
+            for x in [-1.0, 1.0] {
+                self.ellipsoid(
+                    [x * waist * 0.5, torso_y, -torso_z * 1.55],
+                    [0.7, torso_h * 0.65, 0.8],
+                    16,
+                );
+            }
+        }
+        let gait = if walking && !matches!(expression, Sleeping | Sick | Dead) {
+            [0.0, 1.0, 0.0, -1.0][phase]
+        } else {
+            0.0
+        };
+        let raised = matches!(expression, Happy | Playful | Excited | Celebrate);
+        let arm_h = if fine { 3.0 } else { 2.1 };
+        for sign in [-1.0_f32, 1.0] {
+            let forward = if matches!(expression, Eating | Shy) {
+                torso_z + 1.0
+            } else {
+                -gait * sign * 1.4
+            };
+            let hand_y = if raised {
+                torso_y + torso_h * 0.85 + (phase % 2) as f32
+            } else {
+                torso_y - torso_h * 0.2
+            };
+            let side = if expression == Shy {
+                waist * 0.6
+            } else {
+                waist + 0.8
+            };
+            self.ellipsoid(
+                [sign * side, hand_y + arm_h * 0.45, forward * 0.5],
+                [if family == 6 { 1.6 } else { 1.1 }, arm_h, 1.3],
+                if family == 6 { 17 } else { 16 },
+            );
+            self.ellipsoid(
+                [sign * side, hand_y - arm_h * 0.45, forward],
+                [1.2, 1.2, 1.4],
+                16,
+            );
+            let hips = torso_y - torso_h * 0.7;
+            let leg_h = if fine { 3.8 } else { 2.6 };
+            let knee_y = hips - leg_h + (gait * sign).max(0.0);
+            let leg_z = gait * sign * if fine { 2.2 } else { 1.6 };
+            self.ellipsoid(
+                [sign * waist * 0.55, hips - leg_h * 0.3, leg_z * 0.4],
+                [if fine { 1.5 } else { 1.0 }, leg_h, 1.2],
+                if variant { 17 } else { 16 },
+            );
+            self.ellipsoid(
+                [sign * waist * 0.55, knee_y - leg_h * 0.55, 0.7 + leg_z],
+                [
+                    if family == 5 { 2.0 } else { 1.5 },
+                    1.0,
+                    if fine { 2.2 } else { 1.6 },
+                ],
+                14,
+            );
+        }
+        if variant {
+            self.ellipsoid(
+                [0.0, torso_y + torso_h * 0.6, torso_z],
+                [waist * 0.8, 0.8, 0.8],
+                17,
+            );
+        }
+    }
+
+    fn attach_face(
+        &mut self,
+        stage: crate::game::Stage,
+        expression: Expression,
+        style: SpriteStyle,
+        frame: usize,
+    ) {
+        use crate::game::Stage;
+        if stage == Stage::Egg {
+            return;
+        }
+        let fine = style == SpriteStyle::SixteenBit;
+        let ry: f32 = match (fine, stage) {
+            (false, Stage::Baby) => 2.8,
+            (false, Stage::Child) => 3.8,
+            (false, _) => 4.5,
+            (true, Stage::Baby) => 4.0,
+            (true, Stage::Child) => 5.5,
+            (true, _) => 6.5,
+        };
+        let lift = match (fine, stage) {
+            (false, Stage::Child) => 6,
+            (false, Stage::Adult) => 7,
+            (true, Stage::Child) => 9,
+            (true, Stage::Adult) => 11,
+            _ => 0,
+        };
+        let y = (ry * 0.24) as i32 + lift;
+        if let Some(z) = self
+            .cells
+            .keys()
+            .filter(|&&(x, cy, _)| x == 0 && cy == y)
+            .map(|&(_, _, z)| z)
+            .max()
+        {
+            self.face = Some(([0.0, y as f32, z as f32 + 0.5], expression.kaomoji(frame)));
+        }
+    }
+
     fn rasterize(&self, style: SpriteStyle, yaw: u16, sleeping: bool) -> Sprite {
         let size: u16 = if style == SpriteStyle::EightBit {
             24
@@ -1039,8 +1390,12 @@ impl VoxelModel {
         };
         let mut sprite = Sprite {
             width: size,
-            height: size,
-            pixels: vec![None; usize::from(size) * usize::from(size)],
+            height: if self.tall { size * 2 } else { size },
+            pixels: vec![
+                None;
+                usize::from(size) * usize::from(size) * if self.tall { 2 } else { 1 }
+            ],
+            face_overlay: None,
         };
         let mut depth = vec![f32::NEG_INFINITY; sprite.pixels.len()];
         let angle = f32::from(yaw % 360).to_radians();
@@ -1054,13 +1409,43 @@ impl VoxelModel {
             let (x, z) = (c * x + s * z, -s * x + c * z);
             [x, cp * y - sp * z, sp * y + cp * z]
         };
+        // Uniform projection fitting includes all cube corners and care props.
+        // This retains volume, pitch and aspect while leaving a clear border.
+        let mut bounds = [
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for &(x, y, z) in self.cells.keys() {
+            for dx in [-0.5, 0.5] {
+                for dy in [-0.5, 0.5] {
+                    for dz in [-0.5, 0.5] {
+                        let [px, py, _] = transform([x as f32 + dx, y as f32 + dy, z as f32 + dz]);
+                        bounds[0] = bounds[0].min(px);
+                        bounds[1] = bounds[1].max(px);
+                        bounds[2] = bounds[2].min(py);
+                        bounds[3] = bounds[3].max(py);
+                    }
+                }
+            }
+        }
+        if self.cells.is_empty() {
+            return sprite;
+        }
+        let height = sprite.height;
+        let origin_y = f32::from(height) * if self.tall { 0.52 } else { 0.57 };
+        // Keep the origin fixed while limbs animate. Only a pose extending
+        // beyond the usable canvas needs uniform reduction around that origin.
+        let fit = ((f32::from(size) * 0.5 - 2.0) / bounds[0].abs().max(bounds[1].abs()).max(1.0))
+            .min((origin_y - 2.0) / bounds[3].max(1.0))
+            .min((f32::from(height) - origin_y - 2.0) / (-bounds[2]).max(1.0))
+            .min(1.0);
         let project = |v: [f32; 3]| {
             let [x, y, z] = transform(v);
-            [
-                f32::from(size) * 0.5 + x,
-                f32::from(size) * 0.57 - y + if sleeping { 1.0 } else { 0.0 },
-                z,
-            ]
+            // Align lattice centers with pixel centers at zero yaw. Otherwise
+            // an adjacent raised eye can win depth at the head-center anchor.
+            [f32::from(size) * 0.5 + 0.5 + x * fit, origin_y - y * fit, z]
         };
         // Unit cube quads. Neighbor culling eliminates interior surfaces; depth
         // interpolation below resolves occlusion between all remaining faces.
@@ -1148,6 +1533,22 @@ impl VoxelModel {
                     .map(|[dx, dy, dz]| project([x as f32 + dx, y as f32 + dy, z as f32 + dz]));
                 for indices in [[0, 1, 2], [0, 2, 3]] {
                     raster_triangle(&mut sprite, &mut depth, indices.map(|i| vertices[i]), color);
+                }
+            }
+        }
+        if c * cp > 0.72 {
+            if let Some((anchor, text)) = self.face {
+                let [x, y, z] = project(anchor);
+                let (x, y) = (x.floor() as i32, y.floor() as i32);
+                if x >= 0 && y >= 0 && x < i32::from(size) && y < i32::from(height) {
+                    let i = y as usize * usize::from(size) + x as usize;
+                    if sprite.pixels[i].is_some() && (depth[i] - z).abs() <= 1.25 {
+                        sprite.face_overlay = Some(FaceOverlay {
+                            center_x: x as u16,
+                            y: y as u16,
+                            text,
+                        });
+                    }
                 }
             }
         }
@@ -1506,6 +1907,264 @@ pub fn fit_scale(
 }
 
 #[cfg(test)]
+mod body_face_tests {
+    use super::*;
+    use crate::game::Stage;
+    const STYLES: [SpriteStyle; 2] = [SpriteStyle::EightBit, SpriteStyle::SixteenBit];
+    const MOODS: [Expression; 16] = [
+        Expression::Idle,
+        Expression::Happy,
+        Expression::Sad,
+        Expression::Angry,
+        Expression::Surprised,
+        Expression::Sleeping,
+        Expression::Sick,
+        Expression::Hungry,
+        Expression::Playful,
+        Expression::Shy,
+        Expression::Excited,
+        Expression::Eating,
+        Expression::Cleaning,
+        Expression::Healing,
+        Expression::Celebrate,
+        Expression::Dead,
+    ];
+
+    #[test]
+    fn ascii_faces_are_bounded_printable_periodic_and_state_specific() {
+        for mood in MOODS {
+            for frame in [0, 1, 2, 3, 4, usize::MAX] {
+                let text = mood.kaomoji(frame);
+                assert_eq!(text.len(), 5);
+                assert!(text.bytes().all(|b| (32..=126).contains(&b)));
+                assert_eq!(text, mood.kaomoji(frame % 4));
+                for style in STYLES {
+                    let pixel = Sprite::animated(Stage::Adult, mood, style, frame);
+                    assert_eq!(pixel.face_overlay().unwrap().text, text);
+                }
+            }
+        }
+        assert_eq!(Expression::Dead.kaomoji(0), "(x_x)");
+        assert_eq!(Expression::Sleeping.kaomoji(usize::MAX), "(-_-)");
+        assert_ne!(Expression::Idle.kaomoji(0), Expression::Idle.kaomoji(2));
+        for style in STYLES {
+            for mood in MOODS {
+                assert_eq!(
+                    Sprite::animated(Stage::Dead, mood, style, 1)
+                        .face_overlay()
+                        .unwrap()
+                        .text,
+                    "(x_x)"
+                );
+            }
+            assert!(Sprite::animated(Stage::Egg, Expression::Idle, style, 0)
+                .face_overlay()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn older_stages_have_double_height_and_separate_lower_anatomy() {
+        for style in STYLES {
+            let size = if style == SpriteStyle::EightBit {
+                8
+            } else {
+                16
+            };
+            let baby = Sprite::animated(Stage::Baby, Expression::Idle, style, 0);
+            assert_eq!((baby.width, baby.height), (size, size));
+            for stage in [Stage::Child, Stage::Adult] {
+                let pixel = Sprite::animated(stage, Expression::Idle, style, 0);
+                assert_eq!((pixel.width, pixel.height), (size, size * 2));
+                for y in [
+                    size + 1,
+                    size * 3 / 2,
+                    size * 2 - if stage == Stage::Child { 3 } else { 2 },
+                ] {
+                    assert!(
+                        (0..u32::from(size)).any(|x| pixel.pixel(x, u32::from(y), 1).is_some()),
+                        "{style:?} {stage:?} lower row {y}"
+                    );
+                }
+                // Clear air between two feet proves that the lower half is not
+                // a stretched, continuously filled head silhouette.
+                let feet_y = if style == SpriteStyle::EightBit {
+                    if stage == Stage::Adult {
+                        15
+                    } else {
+                        14
+                    }
+                } else if stage == Stage::Adult {
+                    30
+                } else {
+                    28
+                };
+                assert!(pixel.pixel(u32::from(size / 2), feet_y, 1).is_none());
+                let voxel = Sprite::voxel(stage, Expression::Idle, style, 0, 0, false);
+                assert_eq!(
+                    (voxel.width, voxel.height),
+                    if style == SpriteStyle::EightBit {
+                        (24, 48)
+                    } else {
+                        (32, 64)
+                    }
+                );
+                assert!(
+                    (voxel.height / 2..voxel.height - 2)
+                        .filter(|&y| (0..voxel.width)
+                            .any(|x| voxel.pixel(u32::from(x), u32::from(y), 1).is_some()))
+                        .count()
+                        > usize::from(size / 2)
+                );
+                assert!(voxel.face_overlay().unwrap().y < voxel.height / 2);
+            }
+        }
+    }
+
+    #[test]
+    fn all_sixteen_bodies_have_solid_torso_and_two_lower_limbs() {
+        for style in STYLES {
+            for stage in [Stage::Child, Stage::Adult] {
+                for shape in 0..16 {
+                    let appearance = Appearance {
+                        shape,
+                        ..Appearance::default()
+                    };
+                    let mut model = VoxelModel::pet(stage, Expression::Idle, style, 0, false);
+                    model.animal(stage, style, appearance);
+                    model.grow_body(stage, Expression::Idle, style, 0, false, appearance);
+                    for z in -1..=1 {
+                        assert!(model.cells.contains_key(&(0, -2, z)));
+                    }
+                    let low = if style == SpriteStyle::EightBit {
+                        -6
+                    } else {
+                        -10
+                    };
+                    for side in [-1, 1] {
+                        assert!(
+                            model
+                                .cells
+                                .keys()
+                                .filter(|&&(x, y, _)| x * side > 0 && y < low)
+                                .count()
+                                > 8,
+                            "{style:?} {stage:?} shape={shape} leg={side}"
+                        );
+                    }
+                    assert!(model.tall);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn projected_head_faces_follow_growth_and_hide_at_side_rear_and_occluders() {
+        for style in STYLES {
+            for stage in [Stage::Baby, Stage::Child, Stage::Adult] {
+                for shape in 0..16 {
+                    let appearance = Appearance {
+                        shape,
+                        ..Appearance::default()
+                    };
+                    let front = Sprite::voxel_with_appearance(
+                        stage,
+                        Expression::Happy,
+                        style,
+                        usize::MAX,
+                        0,
+                        false,
+                        appearance,
+                    );
+                    let anchor = front.face_overlay().expect("front-facing head");
+                    assert_eq!(anchor.text, "(^_^)");
+                    assert!(anchor.center_x < front.width && anchor.y < front.height);
+                    for yaw in [90, 135, 180, 225, 270] {
+                        assert!(Sprite::voxel_with_appearance(
+                            stage,
+                            Expression::Happy,
+                            style,
+                            usize::MAX,
+                            yaw,
+                            false,
+                            appearance
+                        )
+                        .face_overlay()
+                        .is_none());
+                    }
+                }
+            }
+        }
+        let mut model = VoxelModel::default();
+        model.ellipsoid([0.0; 3], [3.0; 3], 1);
+        model.face = Some(([0.0, 0.0, 3.5], "(o_o)"));
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false)
+            .face_overlay()
+            .is_some());
+        model.ellipsoid([0.0, 0.0, 8.0], [3.0; 3], 8);
+        assert!(model
+            .rasterize(SpriteStyle::SixteenBit, 0, false)
+            .face_overlay()
+            .is_none());
+    }
+
+    #[test]
+    fn recolor_and_rational_downsample_preserve_safe_face_metadata() {
+        for style in STYLES {
+            for pixel in [true, false] {
+                let s = if pixel {
+                    Sprite::animated(Stage::Adult, Expression::Sad, style, 0)
+                } else {
+                    Sprite::voxel(Stage::Adult, Expression::Sad, style, 0, 0, false)
+                };
+                let face = s.face_overlay().unwrap();
+                assert_eq!(s.recolored(255, 254).face_overlay(), Some(face));
+                for (w, h) in [(1, 1), (2, 3), (7, 5), (11, 30), (u16::MAX, u16::MAX)] {
+                    let fit = s.downsample_to_fit(w, h);
+                    let anchor = fit.face_overlay().unwrap();
+                    assert!(anchor.center_x < fit.width && anchor.y < fit.height);
+                    assert_eq!(
+                        anchor.center_x,
+                        (u32::from(face.center_x) * u32::from(fit.width) / u32::from(s.width))
+                            as u16
+                    );
+                    assert_eq!(
+                        anchor.y,
+                        (u32::from(face.y) * u32::from(fit.height) / u32::from(s.height)) as u16
+                    );
+                    assert_eq!(anchor.text, "(T_T)");
+                }
+                assert!(s.downsample_to_fit(0, 5).face_overlay().is_none());
+            }
+        }
+        assert!(Sprite::new(1, 1, vec![Some(1)])
+            .unwrap()
+            .face_overlay()
+            .is_none());
+    }
+
+    #[test]
+    fn extreme_phases_and_yaws_keep_both_geometry_and_metadata_periodic() {
+        for style in STYLES {
+            for mood in MOODS {
+                for yaw in [0, 359, u16::MAX] {
+                    let a = Sprite::voxel(Stage::Adult, mood, style, usize::MAX, yaw, true);
+                    let b =
+                        Sprite::voxel(Stage::Adult, mood, style, usize::MAX % 4, yaw % 360, true);
+                    assert_eq!(a.pixels, b.pixels);
+                    assert_eq!(a.face_overlay(), b.face_overlay());
+                    assert!(a.pixels.iter().flatten().all(|&c| c < 16));
+                    if let Some(face) = a.face_overlay() {
+                        assert!(face.center_x < a.width && face.y < a.height);
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 mod animation_tests {
     use super::*;
     use crate::game::Stage;
@@ -1570,21 +2229,28 @@ mod animation_tests {
                 for expression in EXPRESSIONS {
                     for frame in [0, 1, 2, 3, 4, 7, usize::MAX] {
                         let sprite = Sprite::animated(stage, expression, style, frame);
-                        assert_eq!((sprite.width(), sprite.height()), (size, size));
-                        assert_eq!(sprite.pixels.len(), usize::from(size * size));
+                        let height = if matches!(stage, Stage::Child | Stage::Adult)
+                            && expression != Expression::Dead
+                        {
+                            size * 2
+                        } else {
+                            size
+                        };
+                        assert_eq!((sprite.width(), sprite.height()), (size, height));
+                        assert_eq!(sprite.pixels.len(), usize::from(size * height));
                         assert!(sprite.pixels.iter().flatten().count() >= 16);
                         assert!(sprite.pixels.contains(&None), "transparent surroundings");
                         assert!(sprite.pixels.iter().flatten().all(|&color| color < 16));
                         assert_eq!(sprite.pixel(u32::MAX, u32::MAX, u16::MAX), None);
                         assert_eq!(sprite.pixel(0, 0, 0), None);
                         assert_eq!(sprite.pixel(u32::from(size), 0, 1), None);
-                        assert_eq!(sprite.pixel(0, u32::from(size), 1), None);
+                        assert_eq!(sprite.pixel(0, u32::from(height), 1), None);
                         assert_eq!(
                             sprite.pixels,
                             Sprite::animated(stage, expression, style, frame % 4).pixels
                         );
                         // Revalidate every generated image through the public constructor.
-                        assert!(Sprite::new(size, size, sprite.pixels).is_ok());
+                        assert!(Sprite::new(size, height, sprite.pixels).is_ok());
                     }
                 }
             }
@@ -1647,15 +2313,15 @@ mod animation_tests {
         for stage in STAGES {
             let small = Sprite::animated(stage, Expression::Idle, SpriteStyle::EightBit, 0);
             let detailed = Sprite::animated(stage, Expression::Idle, SpriteStyle::SixteenBit, 0);
-            let enlarged: Vec<_> = (0..16)
+            let enlarged: Vec<_> = (0..u32::from(detailed.height))
                 .flat_map(|y| {
                     let small = &small;
-                    (0..16).map(move |x| small.pixel(x / 2, y / 2, 1))
+                    (0..u32::from(detailed.width)).map(move |x| small.pixel(x / 2, y / 2, 1))
                 })
                 .collect();
             assert_ne!(enlarged, detailed.pixels, "{stage:?}");
             assert!(
-                (0..8).any(|y| (0..8).any(|x| {
+                (0..u32::from(small.height)).any(|y| (0..8).any(|x| {
                     let top = detailed.pixel(x * 2, y * 2, 1);
                     top != detailed.pixel(x * 2 + 1, y * 2, 1)
                         || top != detailed.pixel(x * 2, y * 2 + 1, 1)
@@ -1756,7 +2422,7 @@ mod voxel_tests {
                 for mood in MOODS {
                     for yaw in [0, 45, 90, 135, 180, 225, 270, 315] {
                         let s = Sprite::voxel(stage, mood, style, usize::MAX, yaw, true);
-                        assert!(s.width <= 32 && s.height <= 32);
+                        assert!(s.width <= 32 && s.height <= 64);
                         assert!(
                             s.pixels.iter().flatten().count() > 10,
                             "{stage:?} {mood:?} {yaw}"
@@ -2062,7 +2728,7 @@ mod appearance_tests {
                             true,
                             appearance,
                         );
-                        assert!(s.width <= 32 && s.height <= 32);
+                        assert!(s.width <= 32 && s.height <= 64);
                         assert!(s.pixels.iter().flatten().count() > 10);
                         assert!(s.pixels.contains(&None));
                         assert!(s.pixels.iter().flatten().all(|&c| c < 16));
