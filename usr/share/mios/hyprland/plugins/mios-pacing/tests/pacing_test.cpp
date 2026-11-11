@@ -50,6 +50,51 @@ static double simulate(int cap, int requestUs, int jitterUs, double seconds) {
 }
 
 int main() {
+    // Only the armed synthetic pointer owns the reticle. A physical mouse
+    // yields back to the client's normal shape without consuming motion.
+    {
+        SCursorLease cursor;
+        const Clock::time_point now{};
+        CHECK(cursor.motion("mios-vctl-pointer", now) == ECursorEffect::None, "disabled controller cursor leaves shapes alone");
+        auto update = cursor.refresh("crosshair", "mios-vctl-pointer", 2500, now);
+        CHECK(update.valid && update.effect == ECursorEffect::None && !cursor.overridden, "arming does not steal a physical mouse cursor");
+        CHECK(cursor.motion("mios-vctl-pointer", now + milliseconds(1)) == ECursorEffect::Apply, "controller motion applies reticle");
+        CHECK(cursor.motion("mios-vctl-pointer", now + milliseconds(2)) == ECursorEffect::None, "held ownership does not rewrite shape on every frame");
+        update = cursor.refresh("crosshair", "mios-vctl-pointer", 2500, now + milliseconds(10));
+        CHECK(update.valid && update.effect == ECursorEffect::None && cursor.overridden, "context heartbeat preserves a stationary reticle");
+        CHECK(cursor.motion("physical-mouse", now + milliseconds(11)) == ECursorEffect::Clear, "physical motion restores client cursor before compositor input");
+        CHECK(cursor.armed && !cursor.overridden, "physical mouse yields shape but preserves controller lease");
+        CHECK(cursor.motion("mios-vctl-pointer-extra", now + milliseconds(12)) == ECursorEffect::None, "similar device name cannot claim the cursor");
+        CHECK(cursor.motion("mios-vctl-pointer", now + milliseconds(13)) == ECursorEffect::Apply, "returning controller motion reapplies reticle");
+        CHECK(cursor.motion({}, now + milliseconds(14)) == ECursorEffect::Clear, "absolute or unidentified motion restores normal cursor");
+        CHECK(cursor.motion("mios-vctl-pointer", now + milliseconds(15)) == ECursorEffect::Apply, "relative controller motion resumes after absolute input");
+        CHECK(cursor.disable() == ECursorEffect::Clear && !cursor.armed, "mode-off or 3D entry immediately releases override");
+        CHECK(cursor.motion("mios-vctl-pointer", now + milliseconds(16)) == ECursorEffect::None, "3D camera pointer remains untouched after disarm");
+    }
+    // Owner loss expires even with no motion; a timer is responsible for this
+    // call in the plugin. Reconfiguration and malformed updates also fail closed.
+    {
+        SCursorLease cursor;
+        const Clock::time_point now{};
+        CHECK(cursor.refresh("crosshair", "mios-vctl-pointer", 100, now).valid, "valid short lease");
+        CHECK(cursor.motion("mios-vctl-pointer", now) == ECursorEffect::Apply, "reticle starts");
+        CHECK(cursor.expire(now + milliseconds(99)) == ECursorEffect::None && cursor.armed, "lease remains until deadline");
+        CHECK(cursor.expire(now + milliseconds(100)) == ECursorEffect::Clear && !cursor.armed, "owner disappearance releases stationary cursor at deadline");
+        CHECK(cursor.refresh("crosshair", "mios-vctl-pointer", 100, now).valid, "lease can resume");
+        cursor.motion("mios-vctl-pointer", now);
+        auto update = cursor.refresh("left_ptr", "mios-vctl-pointer", 100, now);
+        CHECK(update.valid && update.effect == ECursorEffect::Clear && !cursor.overridden, "shape changes release old override until new movement");
+        for (const std::string& bad : {std::string{}, std::string("crosshair;exec"), std::string("crosshair\n"), std::string(65, 'a')}) {
+            cursor.refresh("crosshair", "mios-vctl-pointer", 100, now);
+            cursor.motion("mios-vctl-pointer", now);
+            update = cursor.refresh(bad, "mios-vctl-pointer", 100, now);
+            CHECK(!update.valid && update.effect == ECursorEffect::Clear && !cursor.armed, "invalid shape disarms and restores cursor");
+        }
+        CHECK(!cursor.refresh("crosshair", "pointer\nname", 100, now).valid, "device controls rejected");
+        CHECK(!cursor.refresh("crosshair", std::string(129, 'a'), 100, now).valid, "oversized device rejected");
+        CHECK(!cursor.refresh("crosshair", "mios-vctl-pointer", 0, now).valid, "zero lease rejected");
+        CHECK(!cursor.refresh("crosshair", "mios-vctl-pointer", 10001, now).valid, "unbounded lease rejected");
+    }
     for (int cap : {60, 90, 120}) {
         for (int req : {1000, 4000, 6944}) {
             const double FPS = simulate(cap, req, 300, 10.0);

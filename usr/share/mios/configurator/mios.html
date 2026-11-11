@@ -3373,6 +3373,8 @@
         <label>Controller input ownership <input data-key="keybindings.global.controller.exclusive_grab" type="checkbox"></label>
         <label>Enable MiOS Guide combinations while an app captures controls <input data-key="keybindings.global.controller.captured_system_layer" type="checkbox"></label>
         <label>Fullscreen application owns controller input <input data-key="keybindings.global.controller.capture_fullscreen" type="checkbox"></label>
+        <label>Captured windows that keep navigation instead of raw gamepad delivery <textarea data-key="keybindings.global.controller.capture_navigation_contexts" data-type="json-array" placeholder='["terminal"]'></textarea></label>
+        <p class="hint">Choose unique configured window navigation contexts: terminal, desktop-2d, game or vm-passthrough. An empty array keeps raw gamepad delivery for captured windows. Console and app-capture are not window navigation contexts.</p>
         <label>Capture hold time (ms) <input data-key="keybindings.global.controller.capture_hold_ms" data-type="int" type="number" min="100" max="3000" value="500"></label>
         <label>Captured-window tag (North capture) <input data-key="keybindings.global.controller.capture_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
         <label>Released-window tag (held L3+R3 release) <input data-key="keybindings.global.controller.release_tag" type="text" pattern="[A-Za-z0-9_-]{1,64}"></label>
@@ -3381,7 +3383,12 @@
         <label>Controller deadzone <input data-key="keybindings.global.controller.stick_deadzone" data-type="float" type="number" min="0" max="0.99" step="0.01"></label>
         <label>Capture notice (Controller -> app; hold L3+R3 to release) <input data-key="keybindings.global.controller.capture_osd" type="checkbox"></label>
         <label>Capture notice command (argv; {message} is replaced) <textarea data-key="keybindings.global.controller.capture_osd_argv" data-type="json-array"></textarea></label>
+        <label>Controller terminal session assignments <textarea data-key="keybindings.global.controller.sessions" data-type="json-array" rows="7" placeholder='[{"name":"player-one","controllers":["/dev/input/by-id/controller-one-event-joystick"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%1"},{"name":"player-two","controllers":["/dev/input/event2"],"socket":"/run/user/1000/tmux-1000/mios-human","session":"work","pane":"%2","ssh_host":"operator@blade-two"}]'></textarea></label>
+        <p class="hint">Each named assignment owns explicit controller paths and one terminal pane. Names must be unique and at most 64 bytes. Use absolute /dev/input paths (stable by-id paths survive reconnection), an absolute socket path, the exact session name, and a stable pane ID such as %1. A controller may belong to only one assignment. Optional ssh_host is a host alias or user@host; it cannot contain options, whitespace or shell syntax. Actions requiring an attached terminal client are rejected rather than sent to another session.</p>
         <label>Controller navigation in uncaptured windows <input data-key="keybindings.global.controller.nav.enabled" type="checkbox"></label>
+        <label>2D controller cursor shape <input data-key="keybindings.global.controller.cursor_shape" type="text" pattern="[A-Za-z0-9_-]{0,64}" placeholder="crosshair"></label>
+        <label>Controller virtual pointer device <input data-key="keybindings.global.controller.virtual_pointer" type="text" maxlength="79" placeholder="mios-vctl-pointer"></label>
+        <p class="hint">The named shape applies after controller pointer movement in 2D cursor mode. Physical mouse movement restores the application's normal cursor; 3D aim is unchanged. Leave the shape empty to keep normal cursors. The pointer name must match the synthetic controller device.</p>
         <label>Right-stick flick threshold <input data-key="keybindings.global.controller.nav.flick_on" data-type="float" type="number" min="0.05" max="1" step="0.05"></label>
         <label>Right-stick re-arm threshold <input data-key="keybindings.global.controller.nav.flick_off" data-type="float" type="number" min="0" max="0.95" step="0.05"></label>
         <label>tmux servers driven by the controller (-L names) <textarea data-key="keybindings.global.controller.nav.tmux_sockets" data-type="json-array"></textarea></label>
@@ -5113,6 +5120,11 @@ function parseTomlValue(v) {
 
 function emitToml(sections) {
   // Emit a deterministic TOML block in MiOS section order.
+  const isTableArray = v => Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && !Array.isArray(v[0]);
+  // An array-of-tables header changes TOML scope: emit parent fields first.
+  // Stable sorting retains insertion order within each group.
+  const orderedEntries = section => Object.entries(section).sort(
+    ([, a], [, b]) => Number(isTableArray(a)) - Number(isTableArray(b)));
   const order = ["meta", "identity", "locale", "auth", "network", "ai",
                  "desktop", "colors", "image", "bootstrap",
                  "bootstrap.host_storage", "bootstrap.dev_vm",
@@ -5132,8 +5144,8 @@ function emitToml(sections) {
   for (const sec of order) {
     if (!sections[sec]) continue;
     lines.push(`[${sec}]`);
-    for (const [k, v] of Object.entries(sections[sec])) {
-      if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && !Array.isArray(v[0])) {
+    for (const [k, v] of orderedEntries(sections[sec])) {
+      if (isTableArray(v)) {
         // Array of tables: [[section.key]]
         for (const obj of v) {
           lines.push(`[[${sec}.${k}]]`);
@@ -5152,8 +5164,8 @@ function emitToml(sections) {
   for (const sec of Object.keys(sections)) {
     if (known.has(sec)) continue;
     lines.push(`[${sec}]`);
-    for (const [k, v] of Object.entries(sections[sec])) {
-      if (Array.isArray(v) && v.length > 0 && typeof v[0] === "object" && !Array.isArray(v[0])) {
+    for (const [k, v] of orderedEntries(sections[sec])) {
+      if (isTableArray(v)) {
         for (const obj of v) {
           lines.push(`[[${sec}.${k}]]`);
           for (const [subK, subV] of Object.entries(obj)) {
