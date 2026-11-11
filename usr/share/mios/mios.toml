@@ -4767,9 +4767,16 @@ x11_rdp_escape_key = "Control_R"
 # controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
 enabled = true
+# Each route owns only its listed controller nodes and sends navigation to an explicit tmux pane.
+# Use stable /dev/input/by-id/*-event-joystick paths for reconnects. Empty = follow the local seat.
+# Example element: { name = "player-two", controllers = ["/dev/input/by-id/pad-event-joystick"],
+#                    socket = "/tmp/tmux-1000/default", session = "work", pane = "%4", ssh_host = "workstation" }
+# Omit ssh_host for a local target. SSH uses the operator's existing authenticated SSH configuration.
+# No broadcast, implicit remote target, desktop key fallback or remote raw-gamepad transport.
+sessions = []
 exclusive_grab = true                # one physical evdev owner; false (or enabled = false) = serve exits 0
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
-capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
+capture_fullscreen = false             # fullscreen preserves navigation; North explicitly captures any application
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
 release_tag = "mios-input-released"            # set by a held L3+R3 release; cancels fullscreen==2, capture_tag and
                                                # input_owner capture for that window (any kind) until North captures again

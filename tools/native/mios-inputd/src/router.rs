@@ -164,6 +164,10 @@ struct NavState {
     wheel: f64,
     hwheel: f64,
 }
+enum CaptureConfirmation {
+    Pending,
+    Selected(String),
+}
 pub struct Router {
     /// Room-table presses waiting for their release or hold (spec P1, C-14b).
     room_pending: BTreeMap<u16, RoomPending>,
@@ -184,6 +188,8 @@ pub struct Router {
     pub pad: PadState,
     dropping: bool,
     capture_target: Option<(String,u64)>,
+    capture_confirmation: Option<CaptureConfirmation>,
+    capture_navigation_context: Option<String>,
     room_capture: bool,
     /// A capture/release this bridge requested that the compositor has not confirmed yet (C-03). It expires after
     /// context_stale_ms, or at once when the ownership transaction fails, and the snapshot decides again.
@@ -236,6 +242,8 @@ impl Router {
             pad: PadState::default(),
             dropping: false,
             capture_target: None,
+            capture_confirmation: None,
+            capture_navigation_context: None,
             room_capture: false,
             capture_override: None,
             override_ms: 0.0,
@@ -283,12 +291,58 @@ impl Router {
     pub fn half_capture(&self) -> bool { self.app_owned() && self.cursor }
     /// The pending (unconfirmed) ownership this router requested, if any.
     pub fn ownership(&self) -> Option<bool> { self.capture_override }
+    /// Select navigation delivery for a captured client's unowned context. The runtime supplies the configured
+    /// base classification and targets its output to the captured client; ownership and release remain unchanged.
+    pub fn set_capture_navigation_context(&mut self, context: Option<&str>) -> Output {
+        let context=context.filter(|c|self.global.controller.nav.profile_name(c,self.tmux).is_some()).map(str::to_owned);
+        if context==self.capture_navigation_context {return Output::default();}
+        let mut out=if self.app_owned() {self.release_outputs()} else {Output::default()};
+        self.capture_navigation_context=context;
+        if self.app_owned() {
+            self.suppressed.extend(&self.pressed);
+            self.blocked.extend(&self.pressed);
+        }
+        out.extend(self.nav_sync());
+        out
+    }
+    pub fn captured_navigation(&self) -> bool {
+        self.app_owned() && self.capture_navigation_context.as_ref()
+            .is_some_and(|c|self.global.controller.nav.profile_name(c,self.tmux).is_some())
+    }
+    /// Bind a successful capture to the window the compositor selected, rather than the pre-press cached focus.
+    /// The caller supplies only the latest successful capture receipt; failures use ownership_failed instead.
+    pub fn confirm_capture_target(&mut self, address: &str) {
+        if self.capture_override==Some(true) && self.capture_confirmation.is_some() && !address.is_empty() {
+            self.capture_confirmation=Some(CaptureConfirmation::Selected(address.into()));
+        }
+    }
     pub fn set_focus(&mut self, context: &str, target: Option<(String,u64)>, from_room: bool) -> Output {
         let target_changed=self.capture_target!=target;
+        if self.capture_override==Some(true) {
+            let pending=matches!(self.capture_confirmation,Some(CaptureConfirmation::Pending));
+            let selected=matches!(&self.capture_confirmation,Some(CaptureConfirmation::Selected(address))
+                if target.as_ref().is_some_and(|(actual,_)| actual==address));
+            if pending || selected {
+                let (owned,room)=(self.app_owned(),self.room());
+                self.capture_target=target;
+                // Only a receipt followed by its matching owned snapshot confirms the transaction. Until then
+                // context_stale_ms still bounds deferral, even when a snapshot already carries a capture tag.
+                if selected && Self::app_context(context) {
+                    self.capture_confirmation=None;
+                    self.capture_override=None;
+                }
+                let mut out=self.transition_context(context,false,owned,room);
+                if target_changed { out.extend(self.nav_flush()); }
+                return out;
+            }
+        }
         let (owned,room)=(self.app_owned(),self.room());
-        let force=target_changed && (owned || Self::app_context(context));
-        if target_changed || self.capture_override==Some(Self::app_context(context)) {
+        let receipt_mismatch=matches!(&self.capture_confirmation,Some(CaptureConfirmation::Selected(address))
+            if !target.as_ref().is_some_and(|(actual,_)| actual==address));
+        let force=receipt_mismatch || (target_changed && (owned || Self::app_context(context)));
+        if receipt_mismatch || target_changed || self.capture_override==Some(Self::app_context(context)) {
             self.capture_override=None;
+            self.capture_confirmation=None;
         }
         self.capture_target=target; self.room_capture=from_room || context=="desktop-3d";
         let mut o=self.transition_context(context,force,owned,room);
@@ -322,6 +376,7 @@ impl Router {
         self.cursor = false;
         self.pending_guide = false;
         self.north_pending = false;
+        self.capture_confirmation=None;
         self.last_jump = None;
         self.pad.neutralize();
         // A held axis must be released before the next context owns it.
@@ -349,6 +404,7 @@ impl Router {
         self.last_jump = None;
         self.pending_guide = false;
         self.north_pending=false;
+        self.capture_confirmation=None;
         self.escape_elapsed=0.0;
         self.escape_fired=false;
         self.room_pending.clear();
@@ -434,10 +490,10 @@ impl Router {
             return Sink::Room;
         }
         if self.half_capture() {
-            return if self.pointer_axis(code) { Sink::Pointer } else { Sink::App };
+            return if self.pointer_axis(code) { Sink::Pointer } else if self.captured_navigation() {Sink::Nav} else {Sink::App};
         }
         if self.app_owned() {
-            return Sink::App;
+            return if self.captured_navigation() {Sink::Nav} else {Sink::App};
         }
         if self.pointer_mode() && self.pointer_axis(code) {
             return Sink::Pointer;
@@ -462,8 +518,9 @@ impl Router {
         let out=self.release_outputs();
         self.room_pending.clear();
         self.guide_tap = None;
-        if owned { self.room_capture=room; }
+        if owned && !self.app_owned() { self.room_capture=room; }
         self.capture_override=Some(owned);
+        self.capture_confirmation=if owned {Some(CaptureConfirmation::Pending)} else {None};
         self.override_ms=0.0;
         self.cursor=!owned && !self.room_capture;
         self.north_pending=false;
@@ -477,6 +534,13 @@ impl Router {
     fn capture_window(&mut self, fullscreen: bool) -> Output {
         let mut out=self.set_ownership(true);
         out.actions.push(format!("input:window {}",if fullscreen {"fullscreen"} else {"on"}));
+        out
+    }
+    fn north_capture(&mut self) -> Output {
+        let out=self.capture_window(false);
+        self.north_pending=true;
+        self.north_elapsed=0.0;
+        self.north_fired=false;
         out
     }
     fn release_window(&mut self) -> Output {
@@ -499,6 +563,8 @@ impl Router {
         }
         let (owned,room)=(self.app_owned(),self.room());
         self.capture_override=None;
+        self.capture_confirmation=None;
+        self.north_pending=false;
         self.override_ms=0.0;
         let context=self.context.clone();
         self.transition_context(&context,false,owned,room)
@@ -597,9 +663,7 @@ impl Router {
             return true;
         }
         if code == button_code(&self.legacy.fullscreen_button).unwrap() {
-            self.north_pending=true;
-            self.north_elapsed=0.0;
-            self.north_fired=false;
+            o.extend(self.north_capture());
             return true;
         }
         if room {
@@ -677,7 +741,6 @@ impl Router {
             if e.code==button_code(&self.legacy.fullscreen_button).unwrap() && e.value==0 && self.north_pending {
                 self.north_pending=false;
                 self.suppressed.remove(&e.code);
-                if !self.north_fired { o.extend(self.capture_window(false)); }
                 return o;
             }
             // Room table: a pending tap resolves on its own release (before any suppression swallows it).
@@ -705,7 +768,12 @@ impl Router {
             let half = self.half_capture();
             // The captured app owns Guide and every button (full and half capture alike). Only the
             // mode_override_chord (half-capture toggle), Start in half-capture and the held toggle_chord are host input.
-            let app_guide = owned && !self.global.controller.captured_system_layer;
+            let app_guide = owned && (!self.global.controller.captured_system_layer || self.captured_navigation());
+            if self.captured_navigation() && !guide_held && e.value==1 && !already
+                && e.code==button_code(&self.legacy.fullscreen_button).unwrap() {
+                o.extend(self.north_capture());
+                return o;
+            }
             if half && e.value == 1 && !already && e.code == button_code(&self.global.controller.cursor_mode_button).unwrap() {
                 o.extend(self.release_outputs());
                 self.suppressed.insert(e.code);
@@ -722,13 +790,29 @@ impl Router {
                     o.actions.push(format!("input:cursor {}",if self.cursor {"on"} else {"off"}));
                     return o;
                 }
-                if e.code==guide && e.value==1 { self.pending_guide=true; return o; }
+                if e.code==guide && e.value==1 {
+                    self.pending_guide=true;
+                    if self.captured_navigation() {
+                        o.extend(self.nav_flush());
+                        self.guide_tap=(self.pressed.len()==1).then_some((now,0.0));
+                    }
+                    return o;
+                }
                 if self.pending_guide && e.code!=guide && e.value==1 {
-                    self.pending_guide=false; self.app_held.insert(guide); o.app.push(Event::new(EV_KEY,guide,1));
+                    self.pending_guide=false;
+                    if self.captured_navigation() {self.guide_tap=None;} else {
+                        self.app_held.insert(guide);o.app.push(Event::new(EV_KEY,guide,1));
+                    }
                 }
                 if e.code==guide && e.value==0 && self.pending_guide {
                     self.pending_guide=false;
-                    o.app.extend([Event::new(EV_KEY,guide,1),Event::new(EV_KEY,guide,0)]); return o;
+                    if self.captured_navigation() {
+                        if self.guide_tap.take().is_some_and(|(at,_)|now.saturating_sub(at)<self.global.controller.capture_hold_ms)
+                            && !self.repairing {
+                            if let Some(Value::Press(action))=self.nav_value(Input::Button(guide)) {self.fire(&action,&mut o);}
+                        }
+                    } else {o.app.extend([Event::new(EV_KEY,guide,1),Event::new(EV_KEY,guide,0)]);}
+                    return o;
                 }
             }
             if !app_guide && e.code == guide {
@@ -1073,7 +1157,8 @@ impl Router {
             self.north_elapsed+=dt;
             if self.north_elapsed*1000.0>=self.global.controller.capture_hold_ms as f64 {
                 self.north_fired=true;
-                o.extend(self.capture_window(true));
+                // Ownership already changed on press. Do not reset held app controls or the room return path.
+                o.actions.push("input:window fullscreen".into());
             }
         }
         if self.room() {
@@ -1174,13 +1259,12 @@ impl Router {
     }
     /// The nav profile that owns the controller now, or None (captured, the room, an unlisted context or "vpad").
     pub fn nav_profile(&self) -> Option<String> {
-        if self.app_owned() || self.room() {
-            return None;
-        }
-        self.global.controller.nav.profile_name(&self.context, self.tmux)
+        if self.room() {return None;}
+        let context=if self.app_owned() {self.capture_navigation_context.as_deref()?} else {&self.context};
+        self.global.controller.nav.profile_name(context,self.tmux)
     }
     pub fn nav_active(&self) -> bool {
-        self.nav.profile.is_some() && !self.app_owned() && !self.room()
+        self.nav.profile.is_some() && (!self.app_owned() || self.captured_navigation()) && !self.room()
     }
     fn nav_value(&self, input: Input) -> Option<Value> {
         let p = self.nav.profile.as_ref()?;
@@ -1197,7 +1281,7 @@ impl Router {
     /// The Guide system layer is live: Guide held, a compositor runs, and no captured app owns Guide (unless the SSOT
     /// sets captured_system_layer). Its actions come from [controller.system_layer], keyed by button or LS_*/RS_*.
     pub fn system_layer_held(&self) -> bool {
-        self.guide_layer() && !(self.app_owned() && !self.global.controller.captured_system_layer)
+        self.guide_layer() && !self.captured_navigation() && !(self.app_owned() && !self.global.controller.captured_system_layer)
     }
     /// C-15b (I4): one system-layer action per stick flick (LS_*/RS_* pseudo-keys), re-armed below flick_off. A stick
     /// already deflected when Guide went down is not armed (the Guide press flushed nav with the current deflection).
@@ -1258,7 +1342,7 @@ impl Router {
         }
         let crossing = want.is_some() != self.nav.profile.is_some();
         let mut o = self.nav_flush();
-        if crossing && !self.app_owned() {
+        if crossing && (!self.app_owned() || self.captured_navigation()) {
             let mut app: Vec<_> = self.app_held.iter().map(|c| Event::new(EV_KEY, *c, 0)).collect();
             self.app_held.clear();
             for (code, axis) in &self.axes {
@@ -1581,9 +1665,9 @@ mod tests {
         let mut r=router();r.global.controller.captured_system_layer=false;
         r.set_focus("desktop-3d",Some(("0xabc".into(),42)),false);
         let north=button_code(&r.legacy.fullscreen_button).unwrap();
-        assert!(key(&mut r,north,1,1).actions.is_empty());
+        assert_eq!(key(&mut r,north,1,1).actions,vec!["input:window on"]);
         assert!(r.tick(0.1).actions.is_empty());
-        assert_eq!(key(&mut r,north,0,2).actions,vec!["input:window on"]);
+        assert!(key(&mut r,north,0,2).actions.is_empty());
         // A stale compositor snapshot must not reactivate host controls while the transaction runs.
         r.set_focus("desktop-3d",Some(("0xabc".into(),42)),false);
         let seq=r.pad.sequences;
@@ -1614,6 +1698,130 @@ mod tests {
         let mut missed=router();missed.set_context("desktop-3d");key(&mut missed,north,1,1);
         assert!(missed.reconcile(&BTreeSet::new(),2).actions.is_empty());
         for _ in 0..8 {assert!(missed.tick(0.1).actions.is_empty());}
+    }
+    #[test]
+    fn north_press_captures_cursor_focused_windows_and_suppresses_its_entire_press() {
+        for context in ["desktop-2d", "terminal", "game", "vm-passthrough"] {
+            let mut r=router();r.global.controller.captured_system_layer=false;
+            r.set_focus("terminal",Some(("0xabc".into(),42)),false);
+            // Cursor focus crosses ordinary window boundaries without leaving cursor mode.
+            key(&mut r,0x13b,1,1);key(&mut r,0x13b,0,2);
+            r.set_focus(context,Some(("0xdef".into(),43)),false);
+            assert!(r.cursor,"{context}");
+            let north=button_code(&r.legacy.fullscreen_button).unwrap();
+            let out=key(&mut r,north,1,3);
+            assert_eq!(out.actions,vec!["input:window on"],"{context}");
+            assert!(!out.app.iter().any(|e| e.kind==EV_KEY) && out.pointer.is_empty(),"{context}");
+            assert!(r.app_owned() && !r.cursor,"capture must start on press: {context}");
+            assert!(key(&mut r,north,2,4).app.is_empty(),"repeat cannot leak: {context}");
+            let released=key(&mut r,north,0,5);
+            assert!(released.actions.is_empty() && released.app.is_empty(),"{context}");
+            for _ in 0..6 {assert!(r.tick(0.1).actions.is_empty());}
+        }
+    }
+    #[test]
+    fn north_hold_survives_capture_confirmation_without_releasing_other_app_controls() {
+        let mut r=router();r.global.controller.captured_system_layer=false;
+        r.set_focus("desktop-3d",Some(("0xabc".into(),42)),false);
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        assert_eq!(key(&mut r,north,1,1).actions,vec!["input:window on"]);
+        r.tick(0.1);
+        r.confirm_capture_target("0xabc");
+        r.set_focus("app-capture",Some(("0xabc".into(),42)),true);
+        assert!(r.north_pending,"same-window confirmation must preserve the hold");
+        assert!(key(&mut r,0x130,1,2).app.contains(&Event::new(EV_KEY,0x130,1)));
+        for _ in 0..3 {assert!(r.tick(0.1).actions.is_empty());}
+        let out=r.tick(0.1);
+        assert_eq!(out.actions,vec!["input:window fullscreen"]);
+        assert!(out.app.is_empty(),"fullscreen upgrade cannot release an app's held controls");
+        assert!(r.room_capture,"fullscreen upgrade preserves the room return path");
+        assert!(r.tick(0.1).actions.is_empty());
+        assert!(key(&mut r,north,0,3).actions.is_empty());
+        assert!(key(&mut r,0x130,0,4).app.contains(&Event::new(EV_KEY,0x130,0)));
+    }
+    #[test]
+    fn north_pending_hold_cannot_move_to_a_different_focus_target_or_survive_failed_capture() {
+        for failed in [false,true] {
+            let mut r=router();
+            r.set_focus("desktop-2d",Some(("0xabc".into(),42)),false);
+            let north=button_code(&r.legacy.fullscreen_button).unwrap();
+            assert_eq!(key(&mut r,north,1,1).actions,vec!["input:window on"]);
+            if failed {r.ownership_failed();} else {
+                r.confirm_capture_target("0xabc");
+                r.set_focus("desktop-2d",Some(("0xdef".into(),43)),false);
+            }
+            for _ in 0..6 {assert!(r.tick(0.1).actions.is_empty());}
+            let out=key(&mut r,north,0,2);
+            assert!(out.actions.is_empty() && out.app.is_empty());
+        }
+    }
+    #[test]
+    fn delayed_capture_receipt_rebinds_cached_focus_without_cancelling_north_hold() {
+        let mut r=router();
+        r.set_focus("terminal",Some(("0xaaa".into(),1)),false);
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        assert_eq!(key(&mut r,north,1,1).actions,vec!["input:window on"]);
+        // Cursor focus reached B before the old cached snapshot caught up or the transaction replied.
+        r.set_focus("terminal",Some(("0xbbb".into(),2)),false);
+        assert!(r.app_owned() && r.north_pending);
+        r.tick(0.1);
+        r.confirm_capture_target("0xbbb");
+        r.set_focus("app-capture",Some(("0xbbb".into(),2)),false);
+        assert!(r.north_pending && r.app_owned());
+        assert_eq!(r.capture_target,Some(("0xbbb".into(),2)));
+        assert!(r.capture_override.is_none() && r.capture_confirmation.is_none());
+        for _ in 0..3 {assert!(r.tick(0.1).actions.is_empty());}
+        assert_eq!(r.tick(0.1).actions,vec!["input:window fullscreen"]);
+        assert!(key(&mut r,north,0,2).actions.is_empty());
+    }
+    #[test]
+    fn confirmed_capture_receipt_does_not_allow_north_hold_to_follow_a_third_window() {
+        let mut r=router();
+        r.set_focus("terminal",Some(("0xaaa".into(),1)),false);
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        key(&mut r,north,1,1);
+        r.set_focus("terminal",Some(("0xbbb".into(),2)),false);
+        r.confirm_capture_target("0xbbb");
+        r.set_focus("app-capture",Some(("0xbbb".into(),2)),false);
+        key(&mut r,0x130,1,2);
+        let out=r.set_focus("app-capture",Some(("0xccc".into(),3)),false);
+        assert!(out.app.contains(&Event::new(EV_KEY,0x130,0)));
+        assert!(!r.north_pending);
+        for _ in 0..6 {assert!(r.tick(0.1).actions.is_empty());}
+        assert!(key(&mut r,north,0,3).actions.is_empty());
+        assert!(key(&mut r,0x130,2,4).app.is_empty(),"held controls cannot move into C");
+    }
+    #[test]
+    fn capture_receipt_rejects_a_different_focus_even_when_the_cached_identity_is_unchanged() {
+        let mut r=router();
+        r.set_focus("terminal",Some(("0xaaa".into(),1)),false);
+        let north=button_code(&r.legacy.fullscreen_button).unwrap();
+        key(&mut r,north,1,1);
+        r.set_focus("terminal",Some(("0xccc".into(),3)),false);
+        r.confirm_capture_target("0xbbb");
+        r.set_focus("terminal",Some(("0xccc".into(),3)),false);
+        assert!(!r.north_pending && !r.app_owned());
+        for _ in 0..6 {assert!(r.tick(0.1).actions.is_empty());}
+        assert!(key(&mut r,north,0,2).actions.is_empty());
+    }
+    #[test]
+    fn unconfirmed_capture_snapshot_cannot_extend_the_receipt_deadline_or_survive_failure() {
+        for fail in [false,true] {
+            let mut r=router();r.global.controller.capture_hold_ms=2000;
+            r.set_focus("terminal",Some(("0xaaa".into(),1)),false);
+            let north=button_code(&r.legacy.fullscreen_button).unwrap();
+            key(&mut r,north,1,1);
+            r.set_focus("app-capture",Some(("0xbbb".into(),2)),false);
+            assert!(r.capture_override==Some(true));
+            if fail {r.ownership_failed();} else {
+                for _ in 0..11 {assert!(r.tick(0.1).actions.is_empty());}
+            }
+            assert!(!r.north_pending && r.capture_confirmation.is_none() && r.capture_override.is_none());
+            r.confirm_capture_target("0xaaa");
+            assert!(r.capture_confirmation.is_none(),"a late receipt cannot restore expired ownership");
+            for _ in 0..20 {assert!(r.tick(0.1).actions.is_empty());}
+            assert!(key(&mut r,north,0,2).actions.is_empty());
+        }
     }
     #[test]
     fn captured_guide_does_not_swallow_application_sticks() {
@@ -1970,12 +2178,13 @@ mod ownership_contract {
     }
     #[test]
     fn unconfirmed_capture_reverts_after_context_stale_ms() {
-        // tests.md C-03 positive: a snapshot without the tag keeps the override pending; one with it commits.
+        // C-03: the receipt identifies the selected window, then its owned snapshot commits the capture.
         let mut r = router(); r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
         tap(&mut r, NORTH, 1);
         r.set_focus("desktop-2d", Some(("0xa".into(), 1)), false);
         r.tick(0.5);
         assert!(r.app_owned(), "pending inside context_stale_ms");
+        r.confirm_capture_target("0xa");
         r.set_focus("app-capture", Some(("0xa".into(), 1)), false);
         assert_eq!(r.ownership(), None, "the snapshot confirmed the capture");
         r.tick(0.1); r.tick(0.1); for _ in 0..20 { r.tick(0.1); }
@@ -2235,6 +2444,116 @@ mod nav_contract {
     fn wait(r: &mut Router, ms: u64) -> Output { let mut o = Output::default(); for _ in 0..ms / 10 { o.extend(r.tick(0.01)); } o }
     fn tap(r: &mut Router, c: u16, ms: u64) -> Output { let mut o = key(r, c, 1); o.extend(wait(r, ms)); o.extend(key(r, c, 0)); o }
 
+    fn captured_terminal(tmux: bool) -> Router {
+        let mut r=nav("terminal");
+        r.set_tmux(tmux);
+        r.set_capture_navigation_context(Some("terminal"));
+        r.set_focus("terminal",Some(("0xterminal".into(),42)),false);
+        assert_eq!(key(&mut r,NORTH,1).actions,vec!["input:window on"]);
+        assert!(key(&mut r,NORTH,0).actions.is_empty());
+        r.confirm_capture_target("0xterminal");
+        r.set_focus("app-capture",Some(("0xterminal".into(),42)),false);
+        r
+    }
+    #[test]
+    fn captured_terminal_delivers_navigation_and_keeps_ownership_without_raw_pad_frames() {
+        for tmux in [false,true] {
+            let mut r=captured_terminal(tmux);
+            assert!(r.app_owned() && r.captured_navigation() && r.nav_active());
+            assert_eq!(r.nav_profile().as_deref(),Some(if tmux {"terminal_tmux"} else {"terminal_plain"}));
+            let o=tap(&mut r,SOUTH,50);
+            assert_eq!(o.actions,vec!["key:ENTER"]);
+            assert!(o.app.is_empty() && o.pointer.is_empty());
+            assert_eq!(tap(&mut r,SOUTH,600).actions,vec!["key:SHIFT+ENTER"]);
+            assert_eq!(tap(&mut r,TR2,50).actions,vec![if tmux {"tmux:key n"} else {"key:SHIFT+PAGEDOWN"}]);
+            let o=abs(&mut r,3,32767);
+            assert_eq!(o.actions,vec![if tmux {"tmux:focus right"} else {"hypr:movefocus right"}]);
+            assert!(o.app.is_empty());
+            assert_eq!(r.axis_sink(3),Sink::Nav);
+            assert!(r.event(Event::new(EV_SYN,SYN_REPORT,0),0).app.is_empty());
+            assert!(r.app_owned(),"navigation delivery never releases ownership");
+        }
+        let mut r=captured_terminal(true);
+        assert_eq!(tap(&mut r,GUIDE,50).actions,vec!["tmux:menu"]);
+        let mut out=key(&mut r,GUIDE,1);
+        out.extend(key(&mut r,LB,1));out.extend(key(&mut r,LB,0));out.extend(key(&mut r,GUIDE,0));
+        assert!(out.app.is_empty() && out.actions.is_empty(),"Guide must not leak raw input or invoke the host layer");
+        assert_eq!(key(&mut r,NORTH,1).actions,vec!["input:window on"]);
+        assert_eq!(wait(&mut r,500).actions,vec!["input:window fullscreen"]);
+        assert!(key(&mut r,NORTH,0).actions.is_empty());
+    }
+    #[test]
+    fn captured_terminal_half_capture_keeps_nav_buttons_and_explicit_pointer_escape() {
+        let mut r=captured_terminal(true);
+        key(&mut r,GUIDE,1);
+        assert_eq!(key(&mut r,SELECT,1).actions,vec!["input:cursor on"]);
+        key(&mut r,SELECT,0);key(&mut r,GUIDE,0);
+        assert!(r.half_capture() && r.captured_navigation());
+        let o=tap(&mut r,SOUTH,50);
+        assert_eq!(o.actions,vec!["key:ENTER"]);
+        assert!(o.app.is_empty(),"terminal buttons never become raw gamepad input");
+        assert_eq!(r.axis_sink(3),Sink::Pointer);
+        assert!(abs(&mut r,3,32767).app.is_empty());
+        assert!(wait(&mut r,20).pointer.iter().any(|e|e.kind==EV_REL && e.code==0 && e.value>0));
+        assert_eq!(key(&mut r,START,1).actions,vec!["input:cursor off"]);
+        key(&mut r,START,0);
+        assert!(r.app_owned() && !r.half_capture() && r.nav_active());
+        assert_eq!(tap(&mut r,TR2,50).actions,vec!["tmux:key n"]);
+    }
+    #[test]
+    fn captured_terminal_recapture_preserves_room_return_and_guide_never_uses_the_host_layer() {
+        let mut r=nav("desktop-3d");r.set_tmux(true);
+        r.set_capture_navigation_context(Some("terminal"));
+        r.set_focus("desktop-3d",Some(("0xroom-terminal".into(),42)),true);
+        tap(&mut r,NORTH,50);
+        r.confirm_capture_target("0xroom-terminal");
+        r.set_focus("app-capture",Some(("0xroom-terminal".into(),42)),true);
+        assert!(r.captured_navigation() && r.room_capture);
+        tap(&mut r,NORTH,50);
+        assert!(r.room_capture,"recapture must preserve the room release path");
+        r.global.controller.captured_system_layer=true;
+        key(&mut r,GUIDE,1);
+        assert!(!r.system_layer_held(),"captured terminal navigation cannot use the global Guide layer");
+        let out=tap(&mut r,LB,50);
+        assert!(out.actions.is_empty() && out.app.is_empty());
+        key(&mut r,GUIDE,0);
+        key(&mut r,L3,1);key(&mut r,R3,1);
+        assert_eq!(wait(&mut r,500).actions,vec!["input:window off"]);
+        assert!(r.room(),"held release returns to the room");
+    }
+    #[test]
+    fn captured_navigation_is_explicit_and_game_vm_raw_capture_remains_unchanged() {
+        for context in ["terminal","game","vm-passthrough"] {
+            let mut r=nav(context);
+            r.set_focus(context,Some(("0xraw".into(),7)),false);
+            tap(&mut r,NORTH,50);
+            assert!(r.app_owned() && !r.captured_navigation() && !r.nav_active());
+            let out=tap(&mut r,SOUTH,50);
+            assert!(out.actions.is_empty());
+            assert!(out.app.contains(&Event::new(EV_KEY,SOUTH,1)) && out.app.contains(&Event::new(EV_KEY,SOUTH,0)));
+            assert_eq!(r.axis_sink(3),Sink::App);
+        }
+        let mut r=captured_terminal(true);
+        key(&mut r,SOUTH,1);
+        r.set_capture_navigation_context(None);
+        assert!(!r.captured_navigation() && r.app_owned());
+        assert!(key(&mut r,SOUTH,0).actions.is_empty(),"old nav tap cannot resolve after delivery changes");
+    }
+    #[test]
+    fn captured_terminal_focus_and_profile_changes_cancel_pending_navigation_and_release_still_works() {
+        let mut r=captured_terminal(true);
+        key(&mut r,SOUTH,1);
+        r.set_focus("app-capture",Some(("0xother".into(),43)),false);
+        assert!(wait(&mut r,600).actions.is_empty());
+        assert!(key(&mut r,SOUTH,0).actions.is_empty());
+        key(&mut r,SOUTH,1);
+        r.set_tmux(false);
+        assert!(wait(&mut r,600).actions.is_empty());
+        assert!(key(&mut r,SOUTH,0).actions.is_empty());
+        key(&mut r,L3,1);key(&mut r,R3,1);
+        assert_eq!(wait(&mut r,500).actions,vec!["input:window off"]);
+        assert!(!r.app_owned() && !r.captured_navigation());
+    }
     #[test]
     fn south_tap_is_enter_and_hold_is_shift_enter_once() {
         let mut r = nav("desktop-2d");
