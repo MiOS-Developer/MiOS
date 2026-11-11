@@ -466,7 +466,15 @@ impl Ui {
         if (dimensions.0 < 28 || dimensions.1 < 10)
             && matches!(view, CameraView::Room | CameraView::Pet)
         {
-            CameraView::Face
+            if self
+                .genetic_config
+                .as_ref()
+                .is_some_and(|config| self.game.stage(&config.game) == crate::game::Stage::Egg)
+            {
+                CameraView::Pet
+            } else {
+                CameraView::Face
+            }
         } else {
             view
         }
@@ -944,6 +952,12 @@ impl Ui {
             Menu::Home if index == 8 && self.seed_import_allowed => {
                 Some("This development pet has no save path. Share its birth code.")
             }
+            Menu::Home if index == 9 && !self.seed_import_allowed => {
+                Some("Save current progress and leave the game.")
+            }
+            Menu::Home if index == 13 && !self.seed_import_allowed => {
+                Some("Birth-code import is disabled while a saved pet is open.")
+            }
             Menu::Home => [
                 "Feed, clean, rest or treat the Mon.",
                 "Play a memory round to earn coins and happiness.",
@@ -1118,10 +1132,7 @@ impl Ui {
             let target = Rect::new(list.x, list.y + row as u16, list.width, 1);
             let selected = index == self.menu_selected;
             let style = if selected {
-                Style::default()
-                    .fg(colors.ink(0))
-                    .bg(colors.ink(7))
-                    .add_modifier(Modifier::BOLD)
+                selected_style(colors)
             } else {
                 Style::default().fg(colors.ink(2)).bg(colors.background)
             };
@@ -2455,10 +2466,7 @@ impl Ui {
                     LABELS[i]
                 };
                 let style = if self.selected == i {
-                    Style::default()
-                        .fg(colors.ink(0))
-                        .bg(colors.ink(7))
-                        .add_modifier(Modifier::BOLD)
+                    selected_style(colors)
                 } else {
                     Style::default().fg(colors.ink(2)).bg(colors.ink(6))
                 };
@@ -3308,10 +3316,7 @@ impl Ui {
                     index - start + 1
                 );
                 Line::from(text).style(if index == selected {
-                    Style::default()
-                        .fg(colors.ink(0))
-                        .bg(colors.ink(7))
-                        .add_modifier(Modifier::BOLD)
+                    selected_style(colors)
                 } else {
                     Style::default().fg(colors.ink(2))
                 })
@@ -3504,10 +3509,7 @@ impl Ui {
                     index - start + 1
                 ))
                 .style(if selected {
-                    Style::default()
-                        .fg(colors.ink(0))
-                        .bg(colors.ink(7))
-                        .add_modifier(Modifier::BOLD)
+                    selected_style(colors)
                 } else {
                     Style::default().fg(colors.ink(2))
                 })
@@ -4579,10 +4581,7 @@ impl Ui {
                             .collect::<String>(),
                     )
                     .style(if selected {
-                        Style::default()
-                            .fg(colors.ink(0))
-                            .bg(colors.ink(7))
-                            .add_modifier(Modifier::BOLD)
+                        selected_style(colors)
                     } else {
                         Style::default().fg(colors.ink(2))
                     }),
@@ -4717,6 +4716,19 @@ fn selected_birth_seed(seed: u64, id: u8) -> u64 {
         selected
     }
 }
+fn selected_style(colors: &Colors) -> Style {
+    if colors.ink(0) == ratatui::style::Color::Reset
+        && colors.ink(13) == ratatui::style::Color::Reset
+    {
+        Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default()
+            .fg(colors.background)
+            .bg(colors.ink(13))
+            .add_modifier(Modifier::BOLD)
+    }
+}
+
 fn menu_binding(menu: Menu, index: usize) -> Option<&'static str> {
     match menu {
         Menu::Home => [
@@ -8131,5 +8143,91 @@ mod console_shell_regressions {
         assert_eq!(ui.camera_view, CameraView::Room);
         assert_eq!(ui.game, game);
         assert_eq!(ui.visual_rng, rng);
+    }
+    #[test]
+    fn saved_pet_menu_descriptions_match_save_on_quit_and_protected_import() {
+        let (config, mut ui) = fixture();
+        ui.seed_import_allowed = false;
+        let game = ui.game.clone();
+        let rng = ui.visual_rng;
+        ui.open(Menu::Home);
+        ui.menu_selected = 9;
+        let quit = draw(&ui, &config, 80, 24, Renderer::Ascii).join("\n");
+        assert!(quit.contains("Save current progress"), "{quit}");
+        assert!(
+            !quit.contains("Progress needs an explicit save path"),
+            "{quit}"
+        );
+        ui.menu_selected = 13;
+        let import = draw(&ui, &config, 80, 24, Renderer::Ascii).join("\n");
+        assert!(import.contains("import is disabled"), "{import}");
+        ui.handle(key(KeyCode::Enter), &config.game);
+        let protected = draw(&ui, &config, 80, 24, Renderer::Ascii).join("\n");
+        assert!(protected.contains("Saved pet protected"), "{protected}");
+        ui.handle(key(KeyCode::Char('M')), &config.game);
+        assert!(ui.seed_entry.text().is_empty());
+        assert_eq!(ui.game, game);
+        assert_eq!(ui.visual_rng, rng);
+    }
+
+    #[test]
+    fn compact_headers_keep_stage_clock_illness_and_one_detail_badge() {
+        let (config, mut ui) = fixture();
+        ui.game.paused = true;
+        ui.game.ill = true;
+        let game = ui.game.clone();
+        for hud in [HudMode::Auto, HudMode::Minimal, HudMode::Full] {
+            ui.hud_mode = hud;
+            for (w, h) in [(12, 6), (16, 8)] {
+                let lines = draw(&ui, &config, w, h, Renderer::Ascii);
+                let title = &lines[0];
+                assert!(title.contains("B PI"), "{w}x{h} {hud:?}: {title}");
+                assert_eq!(title.matches(&ui.detail_tag()).count(), 1, "{title}");
+                assert!(!title.contains("AUTO"), "{title}");
+            }
+        }
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn tiny_room_keeps_the_whole_unhatched_egg_in_pet_framing() {
+        let config = Config::sample().unwrap();
+        let game = Game::new(&config.game, 513);
+        let mut ui = Ui::configured(game.clone(), &config);
+        ui.camera_view = CameraView::Room;
+        ui.camera_from_view = CameraView::Room;
+        draw(&ui, &config, 20, 10, Renderer::Ascii);
+        assert_eq!(ui.camera().view, CameraView::Pet);
+        assert_eq!(ui.camera_view, CameraView::Room);
+        assert_eq!(ui.game, game);
+    }
+
+    #[test]
+    fn monochrome_menu_highlight_moves_with_selection_without_an_action() {
+        let (config, mut ui) = fixture();
+        ui.open(Menu::Home);
+        let game = ui.game.clone();
+        let colors = Colors::from_config(&config, Depth::Mono).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 0, false))
+            .unwrap();
+        assert!(terminal.backend().buffer()[(1, 1)]
+            .modifier
+            .contains(Modifier::REVERSED));
+        assert!(!terminal.backend().buffer()[(1, 2)]
+            .modifier
+            .contains(Modifier::REVERSED));
+        ui.handle(key(KeyCode::Down), &config.game);
+        terminal
+            .draw(|f| ui.draw(f, &config, Renderer::Ascii, &colors, 1, false))
+            .unwrap();
+        assert!(!terminal.backend().buffer()[(1, 1)]
+            .modifier
+            .contains(Modifier::REVERSED));
+        assert!(terminal.backend().buffer()[(1, 2)]
+            .modifier
+            .contains(Modifier::REVERSED));
+        assert_eq!(ui.game, game);
     }
 }
