@@ -9,6 +9,7 @@ pub mod nav;
 #[cfg(target_os = "linux")]
 pub mod nested;
 pub mod router;
+pub mod sessions;
 #[cfg(target_os = "linux")]
 pub mod runtime;
 pub use config::{normalize_chord, Binding, GlobalConfig};
