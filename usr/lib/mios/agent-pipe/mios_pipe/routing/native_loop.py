@@ -586,6 +586,15 @@ async def _respond_native_loop_direct(
                                           detail=_s.get("detail"))
             await _wtask
             _resp = _holder.get("resp")
+            if _holder.get("err") or getattr(_resp, "status_code", 200) >= 400:
+                try:
+                    _error = json.loads(bytes(_resp.body).decode("utf-8"))["error"]
+                except Exception:
+                    _error = {"message": "The configured inference backend is unavailable",
+                              "type": "server_error", "code": "inference_unavailable"}
+                yield f"data: {json.dumps({'error': _error})}\n\n".encode("utf-8")
+                yield _sse_done()
+                return
             _content = ""
             try:
                 _b = _loads_lenient(bytes(_resp.body).decode("utf-8"))
@@ -774,7 +783,8 @@ async def _respond_native_loop_direct(
             try:
                 _fb = {"model": REFINE_MODEL, "messages": _m2, "stream": False,
                        "chat_template_kwargs": {"enable_thinking": False}}
-                _fr = await _c.post(f"{REFINE_ENDPOINT}/v1/chat/completions",
+                _fallback_base = REFINE_ENDPOINT.rstrip("/").removesuffix("/v1")
+                _fr = await _c.post(f"{_fallback_base}/v1/chat/completions",
                                     content=json.dumps(_fb).encode("utf-8"),
                                     timeout=NATIVE_LOOP_TIMEOUT_S)
                 _fch = (_fr.json().get("choices") or [])
@@ -882,6 +892,11 @@ async def _respond_native_loop_direct(
             if _live_streamed and emit is not None:
                 emit({"content": _append})
             log.info("native-loop: appended %d real source(s)", len(_refs))
+    if not _ans or not _ans.strip():
+        return JSONResponse(status_code=503, content={"error": {
+            "message": "The configured inference backends returned no output",
+            "type": "server_error", "code": "inference_unavailable",
+        }})
     try:
         _store_knowledge(query=last_user_text, answer=_ans,
                          session_id=session_id, tool_history=[])

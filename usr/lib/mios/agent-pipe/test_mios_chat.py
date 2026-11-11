@@ -261,6 +261,7 @@ class _RespHttpxClient:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
     last_post_url = None
     last_post_json = None
+    last_post_headers = None
 
     def __init__(self, *a, **k):
         pass
@@ -274,6 +275,7 @@ class _RespHttpxClient:
     async def post(self, url, *a, **k):
         _RespHttpxClient.last_post_url = url
         _RespHttpxClient.last_post_json = k.get("json")
+        _RespHttpxClient.last_post_headers = k.get("headers")
         return _RespHttpxResp(_RespHttpxClient._payload)
 
 class _RespHttpx:
@@ -302,7 +304,7 @@ def _test_responses_api():
         check("responses_api -> bytes decoding & Responses items shape (proxied answer)",
               body.get("object") == "response" and out_text == "PROXIED ANSWER"
               and part.get("type") == "output_text" and part.get("text") == "PROXIED ANSWER"
-              and body.get("usage", {}).get("prompt_tokens") == 1,
+              and body.get("usage", {}).get("input_tokens") == 1,
               f"body={body}")
 
         # 2. Negative control: malformed JSON returns 400
@@ -399,8 +401,47 @@ def _test_responses_api():
               and "event: response.output_text.done" in stream_text
               and "event: response.output_item.done" in stream_text
               and "event: response.completed" in stream_text
-              and "data: [DONE]" in stream_text,
+              and "event: response.content_part.done" in stream_text,
               f"stream_text={stream_text[:200]}...")
+
+        events = [json.loads(line[6:]) for line in stream_text.splitlines() if line.startswith("data: ")]
+        check("responses_api -> event bodies have types and contiguous sequence numbers",
+              all(e.get("type") and e.get("sequence_number") == i for i, e in enumerate(events)))
+        deltas = [e for e in events if e["type"] == "response.output_text.delta"]
+        check("responses_api -> text events address the output item and content",
+              bool(deltas) and all(e.get("item_id") and e.get("content_index") == 0 for e in deltas))
+        check("responses_api -> response usage uses Responses token names",
+              events[-1]["response"]["usage"]["input_tokens"] == 4
+              and events[-1]["response"]["usage"]["output_tokens"] == 2
+              and "prompt_tokens" not in events[-1]["response"]["usage"])
+        _RespHttpxClient._payload = {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "call_control", "function": {"name": "inspect", "arguments": {"path": "/"}}}]}}]}
+        chunks.clear()
+        tools_stream = asyncio.run(mios_chat.responses_api_logic(
+            FakeRequest({"model": "m", "input": "inspect", "stream": True}, {"Authorization": "Bearer synthetic"})))
+        asyncio.run(_consume_stream(tools_stream.body_iterator))
+        check("responses_api -> loopback relay preserves caller authorization",
+              (_RespHttpxClient.last_post_headers or {}).get("Authorization") == "Bearer synthetic")
+        tool_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+        argument_events = [e for e in tool_events if e["type"].startswith("response.function_call_arguments.")]
+        check("responses_api -> function events address the item and preserve JSON arguments",
+              len(argument_events) == 2 and all(e.get("item_id") for e in argument_events)
+              and tool_events[-1]["response"]["output"][0]["call_id"] == "call_control"
+              and json.loads(argument_events[-1]["arguments"]) == {"path": "/"})
+        for invalid in ({}, {"choices": []}, {"choices": [{"message": {"content": ""}}]}):
+            _RespHttpxClient._payload = invalid
+            empty = asyncio.run(mios_chat.responses_api_logic(FakeRequest({"model": "m", "input": "probe"})))
+            check("responses_api -> empty backend output is unavailable, never success",
+                  empty.status_code == 503 and empty.content["error"]["code"] == "inference_unavailable")
+            chunks.clear()
+            empty_stream = asyncio.run(mios_chat.responses_api_logic(
+                FakeRequest({"model": "m", "input": "probe", "stream": True})))
+            asyncio.run(_consume_stream(empty_stream.body_iterator))
+            empty_events = [json.loads(line[6:]) for line in "".join(chunks).splitlines() if line.startswith("data: ")]
+            check("responses_api -> empty stream has a typed terminal failure",
+                  empty_events[-1]["type"] == "response.failed"
+                  and empty_events[-1]["response"]["status"] == "failed"
+                  and not any(e["type"] == "response.completed" for e in empty_events))
 
         # 8. Negative control: upstream HTTP 400 error propagation in non-streaming mode
         orig_post = _RespHttpxClient.post
@@ -421,8 +462,8 @@ def _test_responses_api():
                 err_chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
         asyncio.run(_consume_err_stream(r_stream_err.body_iterator))
         err_stream_text = "".join(err_chunks)
-        check("responses_api -> streaming upstream error yields event: error",
-              "event: error" in err_stream_text
+        check("responses_api -> streaming upstream error terminates with response.failed",
+              "event: response.failed" in err_stream_text
               and "upstream bad request" in err_stream_text
               and "response.completed" not in err_stream_text,
               f"err_stream_text={err_stream_text}")

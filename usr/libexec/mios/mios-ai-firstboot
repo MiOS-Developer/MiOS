@@ -12,40 +12,32 @@ if [ -f /etc/mios/install.env ]; then
 fi
 
 VENV=/usr/lib/mios/agents/.venv
-MODELS=/usr/share/mios/llamacpp/models
+MODELS="${MIOS_LLAMACPP_MODELS_DIR:-/usr/share/mios/llamacpp/models}"
 
 # [ai].firstboot_pulls from the LAYERED SSOT (default true). A cloud or container
 # deployment's [deployment.cloud] host drop-in sets it false: no GGUF or vLLM weight
 # and no firstboot-tier inference image is downloaded. That leaves the done-sentinel
 # unwritten, so removing the drop-in resumes the pulls at the next timer run.
 MIOS_TOML_GET="${MIOS_TOML_GET:-/usr/libexec/mios/mios-toml-get}"
+if [ -x "$MIOS_TOML_GET" ]; then
+    _resolved_models="$("$MIOS_TOML_GET" llamacpp models_dir "$MODELS" 2>/dev/null)"
+    [ -n "$_resolved_models" ] && MODELS="$_resolved_models"
+fi
 PULLS=true
 [ -x "$MIOS_TOML_GET" ] && PULLS="$("$MIOS_TOML_GET" ai firstboot_pulls true 2>/dev/null)"
 if [ "$PULLS" = false ]; then
     log "[ai].firstboot_pulls is false (cloud/container deployment): skipping model and inference-image pulls"
 fi
 
-if [ "$(systemd-detect-virt 2>/dev/null)" = "wsl" ]; then
-    install -d -m 0755 /var/lib/mios/llamacpp/models /var/lib/mios/vllm/model 2>/dev/null
-    if [ -d "$MODELS" ] && [ ! -L "$MODELS" ]; then
-        if [ -n "$(ls -A "$MODELS" 2>/dev/null)" ]; then
-            mv -f "$MODELS"/* /var/lib/mios/llamacpp/models/ 2>/dev/null || true
-        fi
-        rmdir "$MODELS" 2>/dev/null || rm -rf "$MODELS" 2>/dev/null || true
-    fi
-    if [ ! -e "$MODELS" ]; then
-        ln -sf /var/lib/mios/llamacpp/models "$MODELS"
-    fi
-    _vdir="/usr/share/mios/vllm/model"
-    if [ -d "$_vdir" ] && [ ! -L "$_vdir" ]; then
-        if [ -n "$(ls -A "$_vdir" 2>/dev/null)" ]; then
-            mv -f "$_vdir"/* /var/lib/mios/vllm/model/ 2>/dev/null || true
-        fi
-        rmdir "$_vdir" 2>/dev/null || rm -rf "$_vdir" 2>/dev/null || true
-    fi
-    if [ ! -e "$_vdir" ]; then
-        ln -sf /var/lib/mios/vllm/model "$_vdir"
-    fi
+# The image owns real baked weight directories. Preserve them, including on
+# WSL; only supply a missing runtime link on mutable overlay installations.
+if [ ! -e "$MODELS" ] && [ ! -L "$MODELS" ] && [ -w "$(dirname "$MODELS")" ]; then
+    ln -s /var/lib/mios/llamacpp/models "$MODELS" 2>/dev/null || \
+        log "WARN: unable to connect configured model directory to persistent storage"
+fi
+_vdir="/usr/share/mios/vllm/model"
+if [ ! -e "$_vdir" ] && [ ! -L "$_vdir" ] && [ -w "$(dirname "$_vdir")" ]; then
+    ln -s /var/lib/mios/vllm/model "$_vdir" 2>/dev/null || true
 fi
 
 if [ ! -x "${VENV}/bin/hermes" ]; then
@@ -57,20 +49,14 @@ if [ ! -x "${VENV}/bin/hermes" ]; then
     for p in /mnt/m/automation/72-hermes-agent.sh /mnt/c/MiOS/automation/72-hermes-agent.sh /usr/libexec/mios/72-hermes-agent.sh /automation/72-hermes-agent.sh; do
         [ -f "$p" ] && [ -f "$(dirname "$p")/lib/common.sh" ] && HSCRIPT="$p" && break
     done
-    if [ -z "$HSCRIPT" ] && [ -d /.git ]; then
-        git -C / checkout -- automation 2>/dev/null
-        [ -f /automation/72-hermes-agent.sh ] && [ -f /automation/lib/common.sh ] && HSCRIPT=/automation/72-hermes-agent.sh
-    fi
     if [ -n "$HSCRIPT" ]; then
         log "Building shared agent venv via $HSCRIPT"
         bash "$HSCRIPT" 2>&1 | tail -12
     else
         log "WARN: 72-hermes-agent.sh not found"
     fi
-    if [ ! -x "${VENV}/bin/hermes" ] && [ -d "${VENV}" ]; then
-        log "Agent venv build incomplete/broken"
-        rm -rf "${VENV}" 2>/dev/null || true
-    fi
+    # Preserve an incomplete environment for repair/retry. First boot must not
+    # erase deployed files or restore the root checkout over operator edits.
     if [ ! -x "${VENV}/bin/hermes" ] && command -v podman >/dev/null 2>&1; then
         for _img in localhost/mios:latest localhost/mios:day0 "${MIOS_IMAGE_REF:-ghcr.io/mios-dev/mios:latest}"; do
             podman image exists "$_img" 2>/dev/null || continue
@@ -87,84 +73,28 @@ if [ ! -x "${VENV}/bin/hermes" ]; then
 fi
 
 if [ "$PULLS" != false ] && [ ! -f "${MODELS}/.ready" ]; then
-    install -d -m 0755 "${MODELS}" /var/lib/mios/llamacpp/slots 2>/dev/null
-    SPEC="${MIOS_LLAMACPP_BAKE_MODELS:-}"
-    if [ -z "$SPEC" ]; then
-        log "GGUFs not baked + [llamacpp].bake_models empty"
-        SPEC="lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
-    fi
-
-    if [ -z "$SPEC" ]; then
-        log "GGUFs not baked + [llamacpp].bake_models empty"
+    # One verified fetcher consumes the layered fleet; never substitute a
+    # micro-only hardcoded fallback for the configured brain and embedding model.
+    if [ -x /usr/libexec/mios/mios-models-firstboot ]; then
+        /usr/libexec/mios/mios-models-firstboot || log "WARN: verified model provisioning incomplete"
     else
-        fetched=0; total=0
-        IFS=',' read -ra _ents <<< "$SPEC"
-        for entry in "${_ents[@]}"; do
-            entry="$(printf '%s' "$entry" | tr -d '[:space:]')"; [ -z "$entry" ] && continue
-            total=$((total + 1))
-            dest="${entry%%=*}"; rest="${entry#*=}"; repo="${rest%%:*}"; file="${rest#*:}"
-            if [ -z "$dest" ] || [ -z "$repo" ] || [ -z "$file" ] || [ "$dest" = "$entry" ]; then
-                log "Malformed GGUF entry '${entry}'"; continue
-            fi
-            if [ -s "${MODELS}/${dest}" ]; then fetched=$((fetched + 1)); continue; fi
-            _url="https://huggingface.co/${repo}/resolve/main/${file}"
-            success=0
-            for attempt in 1 2 3; do
-                if curl -fL -C - --retry 3 --max-time 1800 \
-                        -o "${MODELS}/${dest}.part" "$_url" 2>/dev/null \
-                   && [ -s "${MODELS}/${dest}.part" ]; then
-                    mv -f "${MODELS}/${dest}.part" "${MODELS}/${dest}"
-                    success=1
-                    break
-                else
-                    log "Attempt ${attempt}/3 to fetch GGUF ${dest} failed"
-                    rm -f "${MODELS}/${dest}.part" 2>/dev/null
-                    if [ "$attempt" -lt 3 ]; then
-                        sleep $(( 2 ** attempt ))
-                    fi
-                fi
-            done
-            if [ "$success" -eq 1 ]; then
-                fetched=$((fetched + 1)); log "GGUF ${dest} fetched from HF"
-            else
-                log "GGUF ${dest} fetch failed after 3 attempts"
-            fi
-        done
-        if [ "$total" -gt 0 ] && [ "$fetched" -ge "$total" ]; then
-            touch "${MODELS}/.ready"; log "GGUFs provisioned"
-        else
-            log "WARN: GGUFs incomplete"
-        fi
+        log "WARN: mios-models-firstboot missing; model readiness remains false"
     fi
 fi
 
 VLLM_MODEL="${MIOS_VLLM_BAKE_MODEL:-}"
-if [ -z "$VLLM_MODEL" ] && [ -x /usr/libexec/mios/mios-toml-get ]; then
-    _vram_gb=0
-    _nvsmi=""
-    for _c in nvidia-smi /usr/lib/wsl/lib/nvidia-smi /usr/bin/nvidia-smi /opt/cuda/bin/nvidia-smi; do
-        if command -v "$_c" >/dev/null 2>&1; then _nvsmi="$_c"; break; fi
-    done
-    _rocmsmi=""
-    for _c in rocm-smi /opt/rocm/bin/rocm-smi /usr/bin/rocm-smi; do
-        if command -v "$_c" >/dev/null 2>&1; then _rocmsmi="$_c"; break; fi
-    done
-    if [ -n "$_nvsmi" ]; then
-        _vram_mib="$("$_nvsmi" --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk 'BEGIN{m=0} {if ($1+0 > m) m=$1+0} END{print m}')"
-        _vram_gb=$(( ${_vram_mib:-0} / 1024 ))
-    elif [ -n "$_rocmsmi" ]; then
-        _vram_mib="$("$_rocmsmi" --showmeminfo vram --csv 2>/dev/null | awk -F, 'NR>1 {gsub(/[^0-9]/,"",$2); if ($2+0 > m) m=$2+0} END{print m+0}')"
-        _vram_gb=$(( ${_vram_mib:-0} / 1024 / 1024 / 1024 ))
-    fi
-
-    _big_vram="$(/usr/libexec/mios/mios-toml-get ai.host_thresholds big_vram_gb '16')"
-    _mid_vram="$(/usr/libexec/mios/mios-toml-get ai.host_thresholds mid_vram_gb '8')"
-    if [ "$_vram_gb" -ge "$_big_vram" ]; then
-        VLLM_MODEL="$(/usr/libexec/mios/mios-toml-get ai.host_thresholds big_ram_model 'mistral-magistral-small-2509')"
-    elif [ "$_vram_gb" -ge "$_mid_vram" ]; then
-        VLLM_MODEL="$(/usr/libexec/mios/mios-toml-get ai.host_thresholds mid_ram_model 'qwen3.5:9b')"
-    else
-        VLLM_MODEL="$(/usr/libexec/mios/mios-toml-get ai.host_thresholds small_ram_model 'granite4.1:8b')"
+if [ -z "$VLLM_MODEL" ] && [ -x "$MIOS_TOML_GET" ]; then
+    # Heavy inference is opt-in. A host-size alias is not a weights repository,
+    # and must never trigger a multi-GB download while the heavy lane is off.
+    _heavy_engine="$("$MIOS_TOML_GET" ai heavy_engine "" 2>/dev/null)"
+    _heavy_enabled=false
+    case "$_heavy_engine" in
+        vllm|sglang)
+            _heavy_enabled="$("$MIOS_TOML_GET" "ai.${_heavy_engine}" enable false 2>/dev/null)"
+            ;;
+    esac
+    if [ "$_heavy_enabled" = true ]; then
+        VLLM_MODEL="$("$MIOS_TOML_GET" ai.sglang bake_model "" 2>/dev/null)"
     fi
 fi
 VLLM_DIR="/usr/share/mios/vllm/model"
@@ -600,7 +530,7 @@ systemctl restart mios-llm-light 2>/dev/null || true
 install -d -m 0755 /var/lib/mios 2>/dev/null
 _ggufs_ok=0; [ -f "${MODELS}/.ready" ] && _ggufs_ok=1
 _vllm_ok=1
-if [ -n "${MIOS_VLLM_BAKE_MODEL:-}" ] && [ ! -f "/var/lib/mios/.vllm-firstboot-done" ]; then
+if [ -n "$VLLM_MODEL" ] && [ ! -f "/var/lib/mios/.vllm-firstboot-done" ]; then
     _vllm_ok=0
 fi
 

@@ -1,12 +1,12 @@
 # AI-hint: Systemd unit that executes the mios-ai-firstboot script to provision the AI agent virtual environment and download llama.cpp GGUF models if the .ai-firstboot-done sentinel is missing.
-# AI-doc: usr/share/doc/mios/manual/system.md
+# AI-related: 72-hermes-agent.sh, /usr/libexec/mios/mios-ai-firstboot, mios-ai-firstboot, mios-dev, mios-llm-light.service, network-online.target
+# Completes the build-time AI setup on deployments that didn't bake it (the
+# overlay-provisioned dev VM, WSL imports, etc.). 72-hermes-agent.sh's header
+# explicitly anticipates this: "a firstboot retry can complete it later".
+# Needs network (pip + model pull); GGUF blobs come from Hugging Face.
 [Unit]
 Description='MiOS' AI first-boot provisioning (agent venv + llama.cpp GGUFs)
 Documentation=https://github.com/mios-dev/mios
-# Completes the build-time AI setup on deployments that didn't bake it (the
-# overlay-provisioned dev VM, WSL imports, etc.). 38-hermes-agent.sh's header
-# explicitly anticipates this: "a firstboot retry can complete it later".
-# Needs network (pip + model pull); GGUF blobs come from Hugging Face.
 After=network-online.target mios-pgvector.service
 Wants=network-online.target mios-pgvector.service
 # The script writes the sentinel ONLY when both the venv and the GGUFs are
@@ -17,18 +17,12 @@ ConditionPathExists=!/var/lib/mios/.ai-firstboot-done
 # (exit 0) on a partial provision, so the unit shows success and the timer simply
 # re-fires it on its cadence until the sentinel above is written.
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
 # Cap a hung fetch (multi-GB model download) at 10min so it can't wedge the unit
 # forever; the timer re-fires the run afterwards. (Was 2400s.)
+[Service]
+Type=oneshot
+RemainAfterExit=no
 TimeoutStartSec=1800
-# The script reads MIOS_LLAMACPP_BAKE_MODELS (the GGUF download spec) +
-# MIOS_AI_* from the env bridge. Without this, a fresh systemd boot has an
-# EMPTY environment -> bake_models reads empty -> "GGUFs not baked" -> the
-# llm-light lane stays inert forever. The leading '-' makes it optional so
-# the unit still starts (and retries) if the bridge isn't generated yet.
-# install-robustness 2026-06-21.
 EnvironmentFile=-/etc/mios/install.env
 ExecStart=/usr/libexec/mios/mios-ai-firstboot
 

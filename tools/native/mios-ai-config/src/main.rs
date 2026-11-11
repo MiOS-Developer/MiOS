@@ -140,6 +140,15 @@ mod runtime {
     }
 
     pub fn probe(endpoint: &str, model: &str) -> Result<usize, String> {
+        validate_models(&request(endpoint, "models", None, 5)?, model)
+    }
+
+    fn request(
+        endpoint: &str,
+        route: &str,
+        payload: Option<&str>,
+        timeout: u64,
+    ) -> Result<Vec<u8>, String> {
         validate_endpoint(endpoint)?;
         let executable = if cfg!(windows) { "curl.exe" } else { "curl" };
         let mut command = Command::new(executable);
@@ -155,7 +164,7 @@ mod runtime {
             "--connect-timeout",
             "2",
             "--max-time",
-            "5",
+            &timeout.to_string(),
             "--max-filesize",
             "1048576",
             "--noproxy",
@@ -163,8 +172,11 @@ mod runtime {
             "--proto",
             "=http,https",
             "--url",
-            &format!("{endpoint}/models"),
+            &format!("{endpoint}/{route}"),
         ]);
+        if let Some(body) = payload {
+            command.args(["--header", "Content-Type: application/json", "--data", body]);
+        }
         // No redirect following: bearer material cannot leave the selected surface.
         // Supply credentials through curl's stdin config, never argv or diagnostics.
         use std::io::Write;
@@ -198,9 +210,66 @@ mod runtime {
             .wait_with_output()
             .map_err(|e| format!("local AI readiness probe failed: {e}"))?;
         if !output.status.success() {
-            return Err(format!("MIOS_AI_ENDPOINT {endpoint} is unavailable or rejected /models (curl exit {:?}); check agent-pipe and its configured inference backend", output.status.code()));
+            return Err(format!("MIOS_AI_ENDPOINT {endpoint} is unavailable or rejected /{route} (curl exit {:?}); check agent-pipe and its configured inference backend", output.status.code()));
         }
-        validate_models(&output.stdout, model)
+        Ok(output.stdout)
+    }
+
+    pub fn probe_inference(endpoint: &str, model: &str, timeout: u64) -> Result<(), String> {
+        let payload = json!({"model": model, "input": "Reply with OK.", "stream": true,
+                             "store": false, "max_output_tokens": 8, "tool_choice": "none"});
+        let body = request(endpoint, "responses", Some(&payload.to_string()), timeout)?;
+        validate_inference(&body)
+    }
+
+    fn validate_inference(body: &[u8]) -> Result<(), String> {
+        let stream =
+            std::str::from_utf8(body).map_err(|_| "inference probe returned invalid UTF-8")?;
+        let mut expected = 0_u64;
+        let mut completed = false;
+        for line in stream.lines().filter_map(|line| line.strip_prefix("data:")) {
+            let value: Value = serde_json::from_str(line.trim())
+                .map_err(|_| "inference probe returned invalid Responses event JSON")?;
+            if completed || value.get("sequence_number").and_then(Value::as_u64) != Some(expected) {
+                return Err("inference probe returned an invalid Responses event sequence".into());
+            }
+            expected += 1;
+            match value.get("type").and_then(Value::as_str) {
+                Some("response.failed" | "error" | "response.incomplete") => {
+                    return Err("configured inference backend failed; check first-boot model provisioning and inference service logs".into());
+                }
+                Some("response.completed") => {
+                    let response = &value["response"];
+                    completed = response["status"] == "completed"
+                        && response["output"].as_array().is_some_and(|items| {
+                            items.iter().any(|item| {
+                                item["type"] == "message"
+                                    && item["content"].as_array().is_some_and(|parts| {
+                                        parts.iter().any(|part| {
+                                            part["type"] == "output_text"
+                                                && part["text"]
+                                                    .as_str()
+                                                    .is_some_and(|text| !text.trim().is_empty())
+                                        })
+                                    })
+                            })
+                        });
+                    if !completed {
+                        return Err(
+                            "configured inference backend completed without text output".into()
+                        );
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    return Err("inference probe returned a Responses event without a type".into())
+                }
+            }
+        }
+        if !completed {
+            return Err("inference stream ended before response.completed; model catalog alone is not readiness".into());
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -324,7 +393,7 @@ const MANIFEST_X_MIOS: &str = "\"x-mios\":{\"ssot\":\"[ai] in /usr/share/mios/mi
 \"note\":\"Minimal connection config for OpenAI-API-compatible clients. The agent surface refines the prompt, \
 routes to a sub-agent, then polishes the reply -- clients see a single /v1 surface.\"}";
 
-const USAGE: &str = "usage: mios-ai-config [--root DIR] [--check]\n";
+const USAGE: &str = "usage: mios-ai-config [--root DIR] [--check | --probe | --probe-inference | --opencode-stdin]\n";
 
 fn die(msg: &str) -> ExitCode {
     eprintln!("mios-ai-config: {msg}");
@@ -454,7 +523,7 @@ fn main() -> ExitCode {
                 None => return die("--root needs a directory"),
             },
             "--check" => check = true,
-            "--probe" | "--opencode-stdin" => runtime_mode = Some(a),
+            "--probe" | "--probe-inference" | "--opencode-stdin" => runtime_mode = Some(a),
             "-h" | "--help" => {
                 print!("{USAGE}");
                 return ExitCode::SUCCESS;
@@ -468,14 +537,32 @@ fn main() -> ExitCode {
             Ok(v) => v,
             Err(e) => return die(&e),
         };
-        if mode == "--probe" {
-            return match runtime::probe(&endpoint, &model) {
-                Ok(count) => {
-                    println!("mios-ai-config: route ready: {endpoint}; selected model {model}; {count} advertised model(s); inference not tested");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => die(&e),
+        if mode == "--probe" || mode == "--probe-inference" {
+            let count = match runtime::probe(&endpoint, &model) {
+                Ok(count) => count,
+                Err(e) => return die(&e),
             };
+            if mode == "--probe-inference" {
+                let doc = match mios_resolver::resolve_merged(Some(&root), false) {
+                    Ok(doc) => doc,
+                    Err(e) => return die(&e.to_string()),
+                };
+                let timeout = doc
+                    .get("mcp")
+                    .and_then(|v| v.get("tmux"))
+                    .and_then(|v| v.get("timeout_s"))
+                    .and_then(toml::Value::as_integer);
+                let Some(timeout) = timeout.filter(|v| *v > 0) else {
+                    return die("[mcp.tmux].timeout_s must be positive for an inference probe");
+                };
+                if let Err(e) = runtime::probe_inference(&endpoint, &model, timeout as u64) {
+                    return die(&e);
+                }
+                println!("mios-ai-config: inference ready: {endpoint}; selected model {model}; completed Responses stream verified");
+            } else {
+                println!("mios-ai-config: catalog available: {endpoint}; selected model {model}; {count} advertised model(s); inference not tested");
+            }
+            return ExitCode::SUCCESS;
         }
         let input = match serde_json::from_reader(std::io::stdin()) {
             Ok(v) => v,

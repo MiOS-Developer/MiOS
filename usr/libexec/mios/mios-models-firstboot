@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel so it never re-runs. Degrades open: every failure path exits 0 so a pull can never block boot.
+# AI-hint: FBM first-boot large-model provisioner. Reads [ai].firstboot_models from the layered mios.toml; a Hugging Face `resolve/<rev>` source floats: the revision is resolved to its current commit and the upstream-published LFS sha256, the file is fetched from that immutable commit, VERIFIED (streamed, chunked) and recorded in <models>/models.tsv; a part file that mismatches is discarded and an entry with no provable digest is refused, never installed unverified. Writes a sentinel only when the entire configured fleet is verified; the timer retries incomplete runs. Degrades open: every failure path exits 0 so a pull can never block boot.
 # AI-related: mios-models, mios-models-firstboot.service, /usr/share/mios/mios.toml
 import sys
 import hashlib
@@ -9,14 +9,7 @@ import pathlib
 import json
 import re
 import time
-try:
-    import tomllib
-except ImportError:
-    try:
-        import tomli as tomllib
-    except ImportError:
-        print("ERROR: tomllib or tomli not found")
-        sys.exit(1)
+import tempfile
 
 MODELS_DIR = pathlib.Path("/var/lib/mios/llamacpp/models")
 SENTINEL = pathlib.Path("/var/lib/mios/.models-firstboot-done")
@@ -34,21 +27,6 @@ if os.environ.get("MIOS_MODELS_STATE_DIR"):
     PROGRESS = _state / ".models-firstboot-progress"
 HF_ENDPOINT = os.environ.get("MIOS_HF_ENDPOINT", "https://huggingface.co").rstrip("/")
 LEDGER_NAME = "models.tsv"
-
-if SENTINEL.exists():
-    print(f"Sentinel {SENTINEL} exists. FBM provisioner already completed.")
-    sys.exit(0)
-
-
-# [ai].firstboot_pulls from the LAYERED SSOT (default true): a cloud or container
-# deployment's [deployment.cloud] host drop-in sets it false. No sentinel is written,
-# so removing the drop-in resumes the pulls on the next boot.
-_TOML_GET = os.environ.get("MIOS_TOML_GET", "/usr/libexec/mios/mios-toml-get")
-if os.access(_TOML_GET, os.X_OK) and subprocess.run(
-        [_TOML_GET, "ai", "firstboot_pulls", "true"], capture_output=True, text=True).stdout.strip() == "false":
-    print("[ai].firstboot_pulls is false (cloud/container deployment): no first-boot model is downloaded")
-    sys.exit(0)
-
 
 def _sha256_file(path, chunk=1024 * 1024):
     """Stream a file through sha256. Returns the hex digest, or None if the
@@ -83,119 +61,293 @@ def _resolve_hf(source):
         meta = json.loads(res.stdout)
     except ValueError:
         raise RuntimeError("revision API returned no JSON")
+    if not isinstance(meta, dict):
+        raise RuntimeError("revision API returned an invalid object")
     commit = meta.get("sha", "")
     if not re.fullmatch(r"[0-9a-f]{40}", str(commit)):
         raise RuntimeError("revision API returned no commit id")
-    for sib in meta.get("siblings") or []:
+    siblings = meta.get("siblings") or []
+    if not isinstance(siblings, list):
+        raise RuntimeError("revision API returned invalid file metadata")
+    for sib in siblings:
+        if not isinstance(sib, dict):
+            continue
         if sib.get("rfilename") == path:
-            digest = ((sib.get("lfs") or {}).get("sha256") or "").lower()
+            lfs = sib.get("lfs") or {}
+            digest = lfs.get("sha256", "") if isinstance(lfs, dict) else ""
+            digest = digest.lower() if isinstance(digest, str) else ""
             if re.fullmatch(r"[0-9a-f]{64}", digest):
                 return f"{HF_ENDPOINT}/{repo}/resolve/{commit}/{path}", commit, digest
             raise RuntimeError(f"{path} has no LFS sha256 at {commit}")
     raise RuntimeError(f"{path} is not in {repo}@{commit}")
 
 
-def _record(name, source, commit, digest):
-    """Provisioning output: what was actually installed, never written to the SSOT."""
-    ledger = MODELS_DIR / LEDGER_NAME
-    new = not ledger.exists()
-    with open(ledger, "a") as fh:
-        if new:
-            fh.write("name\tsource\tcommit\tsha256\trecorded_at\n")
-        fh.write(f"{name}\t{source}\t{commit}\t{digest}\t{time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
+def _record(name, source, commit, digest, directory=None):
+    """Publish an idempotent provenance record under the single-writer lock."""
+    ledger = (directory or MODELS_DIR) / LEDGER_NAME
+    if ledger.is_symlink():
+        raise OSError("refusing symbolic-link provenance ledger")
+    prior = ledger.read_text() if ledger.exists() else "name\tsource\tcommit\tsha256\trecorded_at\n"
+    prefix = f"{name}\t{source}\t{commit}\t{digest}\t"
+    if any(line.startswith(prefix) for line in prior.splitlines()):
+        return
+    entry = prefix + time.strftime("%Y-%m-%dT%H:%M:%S%z") + "\n"
+    with tempfile.NamedTemporaryFile(mode="w", dir=ledger.parent, prefix=".models-ledger-", delete=False) as output:
+        temporary = pathlib.Path(output.name)
+        try:
+            output.write(prior + entry)
+            output.flush()
+            os.fsync(output.fileno())
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+    temporary.replace(ledger)
 
 
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-PROGRESS.parent.mkdir(parents=True, exist_ok=True)
-PROGRESS.write_text("Parsing config...\n")
+def _acquire_lock():
+    """One writer across both startup units; a busy run remains retry eligible."""
+    PROGRESS.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = PROGRESS.parent / ".models-firstboot.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    handle = os.fdopen(os.open(lock_path, flags, 0o600), "r+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
-TOML_PATH = os.environ.get("MIOS_TOML", "C:/MiOS/usr/share/mios/mios.toml" if os.name == 'nt' else "/usr/share/mios/mios.toml")
 
-try:
-    with open(TOML_PATH, "rb") as f:
-        cfg = tomllib.load(f)
-except Exception as e:
-    print(f"Failed to load {TOML_PATH}: {e}")
-    sys.exit(0)
+def _valid_name(name):
+    return (isinstance(name, str) and bool(name) and name == name.strip()
+            and pathlib.Path(name).name == name and not name.startswith(".")
+            and name != LEDGER_NAME and not name.endswith(".part"))
 
-ai_cfg = cfg.get("ai", {})
-models = [m for m in (ai_cfg.get("firstboot_models") or []) if isinstance(m, dict)]
 
-if not models:
-    print("No firstboot_models found in config.")
-else:
-    print(f"Found {len(models)} firstboot models.")
-    PROGRESS.write_text(f"0/{len(models)}\n")
-    for i, m in enumerate(models):
-        name = m.get("name")
-        source = m.get("source")
-        sha256 = m.get("sha256", "")
-        
-        if not name or not source:
-            print(f"Skipping invalid model entry: {m}")
+def _seed_digest(directory, name, source):
+    """A baked manifest is covered by image integrity; never rewrite the seed."""
+    for ledger in (directory / LEDGER_NAME,
+                   directory.parent.parent / "artifacts/sbom/models.tsv"):
+        try:
+            rows = ledger.read_text().splitlines()
+        except OSError:
             continue
-            
-        PROGRESS.write_text(f"{i}/{len(models)}\n{name}\n")
-        dest = MODELS_DIR / name
-        if dest.exists():
-            print(f"Model {name} already exists. Skipping.")
+        for row in rows:
+            fields = row.split("\t")
+            if len(fields) >= 4 and fields[0] == name:
+                # Runtime ledger: name/source/commit/sha256/time.
+                # Bake SBOM: name/format/repository/file/sha256.
+                if len(fields) >= 5 and fields[1] == "gguf":
+                    expected = _HF_RESOLVE.match(source)
+                    same_source = bool(expected and expected.group("repo") == fields[2]
+                                       and expected.group("path") == fields[3])
+                    candidate = fields[4]
+                else:
+                    recorded = _HF_RESOLVE.match(fields[1])
+                    expected = _HF_RESOLVE.match(source)
+                    same_source = (fields[1] == source or bool(recorded and expected
+                        and recorded.group("repo") == expected.group("repo")
+                        and recorded.group("path") == expected.group("path")))
+                    candidate = fields[3]
+                if same_source and re.fullmatch(r"[0-9a-f]{64}", candidate):
+                    return candidate
+    return ""
+
+
+def _provision():
+    global _ready_marker
+    # Use one shared layered resolver for pull policy, optional models and the
+    # required fleet. Config failures never retire the next first-boot retry.
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "lib/mios"))
+    import mios_toml
+    cfg = mios_toml.load_merged()
+    if not isinstance(cfg, dict):
+        raise ValueError("layered model configuration must be a table")
+    ai_cfg = cfg.get("ai")
+    if not isinstance(ai_cfg, dict):
+        raise ValueError("[ai] must be a table")
+    pulls = ai_cfg.get("firstboot_pulls", True)
+    if not isinstance(pulls, bool):
+        raise ValueError("[ai].firstboot_pulls must be a boolean")
+    if pulls is False:
+        print("[ai].firstboot_pulls is false: no first-boot model is downloaded")
+        return
+
+    # A failed re-verification must not leave an earlier completion marker
+    # closing the unit's ConditionPathExists retry gate.
+    SENTINEL.unlink(missing_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    PROGRESS.write_text("Parsing config...\n")
+    entries = ai_cfg.get("firstboot_models", [])
+    failures = []
+    if not isinstance(entries, list):
+        raise ValueError("[ai].firstboot_models must be an array")
+    models = {}
+    for entry in entries:
+        if (not isinstance(entry, dict) or not _valid_name(entry.get("name"))
+                or not isinstance(entry.get("source"), str) or not entry["source"].strip()
+                or ("sha256" in entry and not isinstance(entry["sha256"], str))):
+            failures.append("invalid firstboot_models entry")
             continue
-            
+        models[entry["name"]] = dict(entry)
+
+    lane = cfg.get("llamacpp", {})
+    if not isinstance(lane, dict):
+        raise ValueError("[llamacpp] must be a table")
+    spec_list = lane.get("bake_models", "")
+    if not isinstance(spec_list, str):
+        raise ValueError("[llamacpp].bake_models must be a string")
+    required = set()
+    invalid_required = False
+    for spec in spec_list.split(","):
+        spec = spec.strip()
+        if not spec:
+            continue
+        try:
+            name, rest = spec.split("=", 1)
+            repo, filename = rest.split(":", 1)
+            name, repo, filename = name.strip(), repo.strip(), filename.strip()
+            if not _valid_name(name) or not repo or not filename:
+                raise ValueError("invalid fleet entry")
+        except ValueError:
+            failures.append("invalid [llamacpp].bake_models entry")
+            invalid_required = True
+            continue
+        required.add(name)
+        models.setdefault(name, {"name": name, "source": f"https://huggingface.co/{repo}/resolve/main/{filename}"})
+
+    configured = lane.get("models_dir")
+    if configured is not None and (not isinstance(configured, str) or not configured.strip()):
+        raise ValueError("[llamacpp].models_dir must be a nonempty path")
+    serving = pathlib.Path(configured) if configured else MODELS_DIR
+    baked = (serving.is_dir() and not serving.is_symlink()
+             and serving.resolve() != MODELS_DIR.resolve()
+             and (serving / ".ready").is_file())
+    if required and serving != MODELS_DIR and not serving.exists() and not serving.is_symlink():
+        # Mutable overlay installs may be missing the image's no-bake link.
+        # Immutable /usr is never rewritten or replaced; a failed link leaves
+        # this run incomplete, rather than publishing readiness in another path.
+        if not serving.parent.is_dir() or not os.access(serving.parent, os.W_OK):
+            raise OSError("configured serving directory is unavailable")
+        try:
+            serving.symlink_to(MODELS_DIR, target_is_directory=True)
+        except FileExistsError:
+            if not serving.is_dir() or serving.resolve() != MODELS_DIR.resolve():
+                raise
+    if required and not serving.is_dir():
+        raise OSError("configured serving directory is unavailable")
+    _ready_marker = None if baked else serving / ".ready"
+
+    verified = set()
+    for i, (name, model) in enumerate(models.items()):
+        source = model["source"]
+        digest = model.get("sha256", "").strip().lower()
         commit = ""
-        if not sha256:
+        PROGRESS.write_text(f"{i}/{len(models)}\n{name}\n")
+        directory = serving if name in required else MODELS_DIR
+        dest = directory / name
+        if baked and name in required:
+            digest = digest or _seed_digest(serving, name, source)
+        if dest.is_symlink():
+            print(f"ERROR: refusing symbolic-link model destination {name}")
+            failures.append(name)
+            continue
+        if not digest:
             try:
                 resolved = _resolve_hf(source)
-            except RuntimeError as e:
-                print(f"WARN: {name}: upstream digest unavailable ({e}); not downloading an unverifiable weight")
+                if resolved is None:
+                    raise RuntimeError("refusing an unverified weight: source publishes no digest")
+                source, commit, digest = resolved
+            except RuntimeError as error:
+                print(f"WARN: {name}: upstream digest unavailable ({error}); not downloading an unverifiable weight")
+                failures.append(name)
                 continue
-            if resolved is None:
-                print(f"ERROR: {name}: no sha256 and {source} publishes none; refusing an unverified weight")
-                continue
-            source, commit, sha256 = resolved
-            print(f"Resolved {name} -> {commit[:12]} (upstream sha256 {sha256[:16]}...)")
-
-        print(f"Downloading {name} from {source}...")
-        part_dest = MODELS_DIR / f"{name}.part"
-        cmd = ["curl", "-fL", "-C", "-", "--retry", "3", "--max-time", "1800", "-o", str(part_dest), source]
-
-        res = subprocess.run(cmd)
-        if res.returncode != 0:
-            print(f"WARN: Failed to download {name} (curl exit {res.returncode})")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            print(f"ERROR: {name}: invalid sha256")
+            failures.append(name)
             continue
-        print(f"Verifying sha256 for {name}...")
+        if dest.is_file() and _sha256_file(dest) == digest:
+            if not baked or name not in required:
+                _record(name, source, commit, digest, directory)
+            verified.add(name)
+            continue
+        if baked and name in required:
+            print(f"WARN: baked model {name} is unavailable or fails verification; refusing immutable seed writes")
+            failures.append(name)
+            continue
+        part_dest = directory / f"{name}.part"
+        if part_dest.is_symlink():
+            print(f"ERROR: refusing symbolic-link partial destination {name}")
+            failures.append(name)
+            continue
+        result = subprocess.run(["curl", "-fL", "-C", "-", "--retry", "3", "--max-time", "1800",
+                                 "-o", str(part_dest), source])
+        if result.returncode != 0:
+            print(f"WARN: Failed to download {name} (curl exit {result.returncode})")
+            failures.append(name)
+            continue
         actual = _sha256_file(part_dest)
-        if actual is None:
-            print(f"WARN: could not read {part_dest} to verify; discarding")
-            part_dest.unlink(missing_ok=True)
-            continue
-        if actual.lower() != str(sha256).strip().lower():
-            # An unverified weight file must never be installed under a
-            # name the lanes will load. Drop the part file so the next run
-            # re-downloads instead of resuming a poisoned partial.
+        if actual != digest:
             print(f"ERROR: sha256 MISMATCH for {name}")
-            print(f"       expected {str(sha256).strip().lower()}")
-            print(f"       actual   {actual.lower()}")
             part_dest.unlink(missing_ok=True)
+            failures.append(name)
             continue
-        print(f"  sha256 OK ({actual[:16]}...)")
-        _record(name, source, commit, actual.lower())
-        part_dest.rename(dest)
+        part_dest.replace(dest)
+        _record(name, source, commit, actual, directory)
+        verified.add(name)
         print(f"Successfully provisioned {name}")
-            
-# The sentinel is the unit's ConditionPathExists gate, so writing it
-# unconditionally retired the provisioner after ONE pass -- a failed download or
-# a rejected digest meant that model was never fetched again. Write it only when
-# every declared model is actually on disk; otherwise leave it and let
-# mios-models-firstboot.timer come back. Still exit 0 either way: degrade-open,
-# a pull must never block boot (Architectural Law 12).
-_missing = [str(m.get("name")) for m in models
-            if m.get("name") and not (MODELS_DIR / str(m.get("name"))).exists()]
-if _missing:
-    PROGRESS.write_text("Incomplete: " + ", ".join(_missing) + "\n")
-    print(f"WARN: {len(_missing)} declared model(s) still missing: {', '.join(_missing)}")
-    print("Sentinel NOT written -- the timer will retry.")
-else:
-    SENTINEL.touch()
-    PROGRESS.write_text("Complete\n")
-    print("First-boot model provisioning complete (sentinel written).")
+
+    if required and required.issubset(verified) and not invalid_required:
+        if not baked:
+            _ready_marker.touch()
+    elif required or invalid_required or failures:
+        _clear_marker(_ready_marker)
+    missing = sorted(set(models) - verified)
+    if missing or failures:
+        PROGRESS.write_text("Incomplete: " + ", ".join(missing + failures) + "\n")
+        print("Sentinel NOT written -- the timer will retry.")
+    else:
+        SENTINEL.touch()
+        PROGRESS.write_text("Complete\n")
+        print("First-boot model provisioning complete (sentinel written).")
+
+
+def _clear_marker(path):
+    if path is not None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"WARN: could not invalidate provisioning marker: {error}")
+
+
+def main():
+    writer = _acquire_lock()
+    if writer is None:
+        print("Model provisioning is already running; leaving its state untouched.")
+        return
+    with writer:
+        try:
+            _provision()
+        except (OSError, ValueError, TypeError, ImportError) as error:
+            # Keep invalidation inside the lock, before another writer can
+            # finish a successful retry and publish its own completion marker.
+            _clear_marker(SENTINEL)
+            _clear_marker(_ready_marker)
+            print(f"WARN: model provisioning incomplete: {error}")
+
+
+_ready_marker = MODELS_DIR / ".ready"
+try:
+    main()
+except OSError as error:
+    print(f"WARN: model provisioning could not acquire its state directory: {error}")
 sys.exit(0)

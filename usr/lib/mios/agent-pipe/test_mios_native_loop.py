@@ -143,6 +143,51 @@ def _run():
     assert txt == FINAL_ANSWER, txt
     print("branch-2 tool loop runs then final answer terminates: OK ->", repr(txt))
 
+    class EmptyClient(_FakeClient):
+        async def post(self, url, **kwargs):
+            return _FakeResp("")
+
+    for streaming in (False, True):
+        _base_configure({}, [], [])
+        M._v1_secondary_tool_loop = _async_const([])
+        M.httpx = types.SimpleNamespace(AsyncClient=EmptyClient, Timeout=lambda *a, **k: None)
+        resp = asyncio.run(M._respond_native_loop_direct(
+            {"news": False, "web": False, "local_state": False},
+            streaming=streaming, chat_id="unavailable", model="m", session_id="s",
+            last_user_text="give an overview", persona_system="",
+            messages=[{"role": "user", "content": "give an overview"}],
+            request=None, emit=None, tool_choice=None))
+        if streaming:
+            async def collect():
+                return b"".join([chunk async for chunk in resp.body_iterator])
+            wire = asyncio.run(collect()).decode("utf-8")
+            assert '"code": "inference_unavailable"' in wire, wire
+            assert '"finish_reason": "stop"' not in wire, wire
+        else:
+            assert resp.status_code == 503
+            assert json.loads(resp.body)["error"]["code"] == "inference_unavailable"
+    print("empty backend is 503 for JSON and streaming clients: OK")
+
+    for endpoint in ("http://fallback", "http://fallback/v1", "http://fallback/v1/"):
+        urls = []
+        class FallbackClient(_FakeClient):
+            async def post(self, url, **kwargs):
+                urls.append(url)
+                return _FakeResp(FINAL_ANSWER if url.startswith("http://fallback/") else "")
+        _base_configure({}, [], [])
+        M.REFINE_ENDPOINT = endpoint
+        M._v1_secondary_tool_loop = _async_const([])
+        M.httpx = types.SimpleNamespace(AsyncClient=FallbackClient, Timeout=lambda *a, **k: None)
+        resp = asyncio.run(M._respond_native_loop_direct(
+            {"news": False, "web": False, "local_state": False},
+            streaming=False, chat_id="fallback", model="m", session_id="s",
+            last_user_text="give an overview", persona_system="",
+            messages=[{"role": "user", "content": "give an overview"}],
+            request=None, emit=None, tool_choice=None))
+        assert _body_text(resp) == FINAL_ANSWER
+        assert urls[-1] == "http://fallback/v1/chat/completions", urls
+    print("light fallback normalizes /v1 exactly once: OK")
+
     print("ALL OK")
 
 class _FakeResp2:

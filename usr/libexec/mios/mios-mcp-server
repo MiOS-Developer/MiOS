@@ -2555,12 +2555,18 @@ def main() -> int:
             raise ValueError("SSOT AI endpoint is required")
         os.environ.setdefault("MIOS_AI_ENDPOINT", endpoint)
         os.environ.setdefault("MIOS_AI_GATEWAY_MODEL", exports["MIOS_AI_AGENT_MODEL"])
-        # Do not launch a worker against an absent route or a different model.
-        # This GET-only native gate never performs inference or starts services.
-        readiness = subprocess.run(["/usr/bin/mios-ai-config", "--root", "/", "--probe"],
-                                   capture_output=True, text=True, timeout=10)
-        if readiness.returncode:
-            raise RuntimeError(readiness.stderr.strip() or "Local AI route is not ready")
+        inspection = len(sys.argv[3:]) == 1 and sys.argv[3] in {"--version", "-v", "--help", "-h"}
+        if not inspection:
+            # Do not launch a worker against an absent route or a different model.
+            # A model catalog is not proof that the Day-0 backend can answer.
+            # Use the existing bounded worker budget; never start services here.
+            readiness_timeout = mios_toml.load_merged()["mcp"]["tmux"]["timeout_s"]
+            if type(readiness_timeout) is not int or readiness_timeout <= 0:
+                raise ValueError("[mcp.tmux].timeout_s must be a positive integer")
+            readiness = subprocess.run(["/usr/bin/mios-ai-config", "--root", "/", "--probe-inference"],
+                                       capture_output=True, text=True, timeout=readiness_timeout + 10)
+            if readiness.returncode:
+                raise RuntimeError(readiness.stderr.strip() or "Local AI route is not ready")
         os.environ.setdefault("OPENAI_BASE_URL", endpoint)
         os.environ.setdefault("OPENAI_API_BASE", endpoint)
         ui = None
@@ -2570,7 +2576,8 @@ def main() -> int:
             os.environ["MIOS_TMUX_UI_PANE"] = ui["pane"]
             subprocess.run(["tmux", "-S", ui["socket"], "set-option", "-p", "-t", ui["pane"],
                             "@mios-agent-kind", name], check=True, timeout=3)
-        _project_agent_clients()
+        if not inspection:
+            _project_agent_clients()
         if row.get("kind") == "cloud":
             cmd_name = row.get("launch_template", "").split()[0] if row.get("launch_template") else ""
             base = row["name"].replace("-cloud", "")
