@@ -11887,6 +11887,9 @@ rows                = 40      # taller for install output + readme
 [terminal.monitor]
 # Native agent observation runs independently of UI rendering cadence.
 agent_poll_s = 5
+# Root-tree git status for the dashboard footer. Every open dashboard shares one
+# probe per interval (private runtime cache), so extra panes add no extra scans.
+git_poll_s = 30
 windows_backend     = "windows-terminal" # native renderer preserves head/monitor and fullscreen 1+4 layouts
 window_name         = "MiOS-Monitor"
 title               = "MiOS Build Monitor"
@@ -18286,6 +18289,7 @@ lint = [
 unit = [
     "tests/test-keybind-collisions.py",
     "tests/test-mios-inputd.py",
+    "tests/test-mios-mon-shared-probe.py",
     "tests/test-mios-vm-bindings.py",
     "tests/powershell/run-pester.sh",
     "tests/test-baresafe-emit.py",

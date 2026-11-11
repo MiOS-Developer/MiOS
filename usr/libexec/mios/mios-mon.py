@@ -352,12 +352,72 @@ def _resolve_git_dir():
         if c and os.path.isdir(os.path.join(c, ".git")): return c
     return None
 
-def _resolve_git_status():
-    global _GIT_STATUS_CACHE
-    d = _resolve_git_dir()
-    if not d:
-        _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
-        return _GIT_STATUS_CACHE
+def _monitor_interval(key, default):
+    value = float(monitor_config().get("terminal", {}).get("monitor", {}).get(key, default))
+    if value <= 0:
+        raise ValueError(f"terminal.monitor.{key} must be positive")
+    return value
+
+def _shared_probe(name, interval, produce):
+    """Run one probe per interval for ALL of this user's dashboards.
+
+    Every open dashboard used to spawn its own probe (a whole-root git status,
+    a cold-started observer); a dozen panes multiplied that into sustained CPU
+    and battery drain. The winner of a non-blocking lock publishes the result in
+    the private runtime directory; every other dashboard reuses it.
+    """
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    if IS_WINDOWS or not base or not os.path.isdir(base):
+        return produce()
+    import fcntl
+    directory = os.path.join(base, "mios-mon")
+    path = os.path.join(directory, f"{name}.json")
+
+    def fresh():
+        try:
+            if time.time() - os.stat(path).st_mtime < interval:
+                with open(path, encoding="utf-8") as handle:
+                    return True, json.load(handle)["value"]
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return False, None
+
+    def published():
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return json.load(handle)["value"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    ok, value = fresh()
+    if ok:
+        return value
+    try:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        lock = open(path + ".lock", "a", encoding="utf-8")
+    except OSError:
+        return produce()
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Another dashboard is probing right now: show its last result.
+            return published()
+        ok, value = fresh()
+        if ok:
+            return value
+        value = produce()
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump({"value": value}, handle)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+        except OSError:
+            pass
+        return value
+
+def _git_status_text(d):
     try:
         out = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
         lines = out.splitlines()
@@ -365,15 +425,30 @@ def _resolve_git_status():
         staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
         mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
         untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
-        _GIT_STATUS_CACHE = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
+        return f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
     except Exception:
-        _GIT_STATUS_CACHE = "[dim]Git state unavailable[/]"
+        return "[dim]Git state unavailable[/]"
+
+def _resolve_git_status():
+    global _GIT_STATUS_CACHE
+    d = _resolve_git_dir()
+    if not d:
+        _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
+        return _GIT_STATUS_CACHE
+    import hashlib
+    key = "git-status-" + hashlib.sha256(os.path.realpath(d).encode()).hexdigest()[:16]
+    text = _shared_probe(key, _monitor_interval("git_poll_s", 30), lambda: _git_status_text(d))
+    _GIT_STATUS_CACHE = text if isinstance(text, str) else _GIT_STATUS_CACHE
     return _GIT_STATUS_CACHE
 
 def _bg_update_git():
     while True:
-        _resolve_git_status()
-        time.sleep(5)
+        try:
+            _resolve_git_status()
+            interval = _monitor_interval("git_poll_s", 30)
+        except Exception:
+            interval = 30
+        time.sleep(interval)
 
 threading.Thread(target=_bg_update_usb, daemon=True).start()
 threading.Thread(target=_bg_update_git, daemon=True).start()
@@ -451,12 +526,13 @@ def get_sys_info_table():
 def get_agent_and_mcp_data():
     """Bound native observation startup cost independently of UI frame rate."""
     global _AGENT_SNAPSHOT_CACHE
-    interval = float(monitor_config().get("terminal", {}).get("monitor", {}).get("agent_poll_s", 5))
-    if interval <= 0:
-        raise ValueError("terminal.monitor.agent_poll_s must be positive")
+    interval = _monitor_interval("agent_poll_s", 5)
     now = time.monotonic()
     if _AGENT_SNAPSHOT_CACHE is None or now - _AGENT_SNAPSHOT_CACHE[0] >= interval:
-        _AGENT_SNAPSHOT_CACHE = (now, _collect_agent_and_mcp_data())
+        shared = _shared_probe("agents-observe", interval, lambda: list(_collect_agent_and_mcp_data()))
+        if not (isinstance(shared, list) and len(shared) == 3):
+            shared = [[], [], []]
+        _AGENT_SNAPSHOT_CACHE = (now, tuple(shared))
     return _AGENT_SNAPSHOT_CACHE[1]
 
 def _collect_agent_and_mcp_data():
