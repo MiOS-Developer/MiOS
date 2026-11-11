@@ -16,12 +16,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1747 |
-| in_progress | 84 |
+| pending | 1748 |
+| in_progress | 86 |
 | completed | 1889 |
 | incomplete | 19 |
 | cancelled | 21 |
-| total | 3760 |
+| total | 3763 |
 
 0 record(s) carry at least one override.
 
@@ -2650,6 +2650,14 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3608` M7 F5: L2 VM count from hardware pressure -- an SSOT policy in [blade.mediator] sizes how many MiOS VMs L1 runs from CPU, RAM and GPU headroom (WS-MINI | P2 | M) -- pending · P2 · size M · depends_on task_3607
 - `task_3618` M7 F9: per-blade egress exit gateways from [blade.uplink] with a translocation controller that changes exit region without changing workload addresses (WS-MINI | P2 | M) -- pending · P2 · size M · depends_on task_931
 - `task_3621` M7 F5: nested MiOS containers inside L2 MiOS VMs -- full images under podman --systemd=always, Quadlets embedded, counted by hardware pressure (WS-MINI | P1 | L) -- pending · P1 · size L · depends_on task_3607, task_3608
+
+## WS-MIOS-MON
+
+### No epic
+
+- `task_3761` Bound MiOS-Mon per-instance idle cost and controller context polling -- in_progress · owner mios-claude-continuation · P1 · size L
+- `task_3762` Design and implement authoritative local and remote MiOS-Mon multiplayer hosting -- in_progress · owner mios-claude-continuation · P1 · size L
+- `task_3763` Keep essential pet needs visible in compact portrait HUDs -- pending · owner mios-claude-continuation · P1 · size M
 
 ## WS-MIOSSYS
 

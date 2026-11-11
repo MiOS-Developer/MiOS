@@ -1,7 +1,7 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T07:30:15.081109+00:00",
-  "total_artifacts": 141,
+  "last_updated": "2026-11-06T18:53:57.022749+00:00",
+  "total_artifacts": 143,
   "artifacts": [
     {
       "path": ".gitignore",
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "4b64a20a6c2f3ea2d7a55b07cc1debaba5cc13b0dc9474b6e829118c6ae923d0",
-      "size_bytes": 716241,
+      "sha256": "a200d92a95ea9f79f3b774ffe943f110deb908121cde7c4cb2b0ff39d62854dd",
+      "size_bytes": 725642,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -142,6 +142,26 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       }
     },
@@ -174,8 +194,8 @@
     {
       "path": "usr/share/mios/mios.toml",
       "artifact_type": "config",
-      "sha256": "d1a1223f4d26517e551f55ad86d9275ac6e78ee19d81ba2fabf8b507c113fe7e",
-      "size_bytes": 1146376,
+      "sha256": "86c7efb107dd05dbce08399fafb9f7b8a3b585a2fa072a8391c041ec56c47f1c",
+      "size_bytes": 1150317,
       "created_at": "2026-10-28T00:10:52.139406+00:00",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -202,6 +222,26 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       }
     },
@@ -251,8 +291,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "56e42a7f5268eef0361019e64629a7805a74360ab77d7fa6b43b242dd595402f",
-      "size_bytes": 553476,
+      "sha256": "67082ebde61c9460a73b27c002175a2e175c4a9e4260ed8c439f8e59ceb4d1d3",
+      "size_bytes": 554545,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -334,14 +374,34 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "f1d4d2c14d70662be62518770941bb6f948163f0589d2a6928bd7df4022cd2b3",
-      "size_bytes": 14647117,
+      "sha256": "5593fb153b10ecb350f63d2bcd1ddd7e47b10528ade0b39b5c54465d62e7405b",
+      "size_bytes": 14662254,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -422,6 +482,26 @@
           "followups": [
             3755,
             3756
+          ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
           ]
         }
       }
@@ -871,8 +951,8 @@
       "path": "usr/share/mios/configurator/mios.html",
       "artifact_type": "config",
       "created_at": "2026-10-29T13:23:44.121085+00:00",
-      "sha256": "178a536012c62804ffa55826cd8ba5cd2820076f89475fe6aec49c91fe0f0310",
-      "size_bytes": 523926,
+      "sha256": "15bbccca020badc93cdfc31f643f180677ca65e7f61e2060595e666f0dc3a017",
+      "size_bytes": 527477,
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
         "physical_capture_enabled": true,
@@ -896,6 +976,26 @@
           "source": "f54b6b57ac5c5f40d030bf34cb2e28733a03efe9",
           "checks": 482,
           "receipt": "/home/mios/.local/state/mios/mios-mons-world-live/mios-world-handoff.json"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       }
     },
@@ -1621,10 +1721,30 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "025a537541095db5ad764b76eeb8b62c88a96a210fac286a0f0c2c576cb58d22",
-      "size_bytes": 12849
+      "sha256": "3094874af0f61ba9c10d7f5d8c34b3190887532cc35a602641c5495d88950c04",
+      "size_bytes": 17417
     },
     {
       "path": "tools/native/mios-tamagotchi/src/dialogs.rs",
@@ -1760,10 +1880,30 @@
           "exact_touch_presses": 1314,
           "receipt": "/home/mios/.local/state/mios/mios-mons-input-completion/mios-console-acceptance-summary.json",
           "scope": "automated x86_64 user-local console acceptance; remaining HUD/rendering and physical devices explicitly open"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "b51697be36357db085ba7167b91aac052215f24c20a53a42140b1c34b81e76e6",
-      "size_bytes": 15142
+      "sha256": "f8d15113435205c6800be8b55b8de138ef90b4a34276c206d9c6aec1c3f046eb",
+      "size_bytes": 15903
     },
     {
       "path": "tools/native/mios-tamagotchi/src/input.rs",
@@ -1782,10 +1922,30 @@
           "checks": 295,
           "receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-menu-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-menu-input-live/mios-post-main-live.json"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "a8badcd8e761ae8fe0b6061398d97d6d4669b835024b52d5da3fb241ff499f8c",
-      "size_bytes": 66878
+      "sha256": "45129ff5e7a732f95f45ee44a593e84ea43096cd91cde192c3eacc2a647827cd",
+      "size_bytes": 68594
     },
     {
       "path": "tools/native/mios-tamagotchi/src/lib.rs",
@@ -1943,10 +2103,30 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "80a5bc771f8ca3d8bb8c595706d6dc0fc75c2f2f8f3b931fed22e5331d27d404",
-      "size_bytes": 278660
+      "sha256": "ba418a47fbe8bbaac8b87a8e5c137ffacf19f6947aa67fc78cddd22c35d9b20f",
+      "size_bytes": 321192
     },
     {
       "path": "tools/native/mios-tamagotchi/src/save.rs",
@@ -2016,10 +2196,30 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "27a7cb7f7519b4367dddd697318bbe351d9cee03246af578252d2796be7e079c",
-      "size_bytes": 150422
+      "sha256": "4bb9f0c5b00058d9131cd5e8a710c3407213faadcc3c27a9468033b94303ca22",
+      "size_bytes": 153444
     },
     {
       "path": "tools/native/mios-tamagotchi/src/tests.rs",
@@ -2123,10 +2323,30 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "ccd0957a32517ee8a1857b38c3ca3b4ee5b64c34bebc8682e3c5c7e5f123cf6a",
-      "size_bytes": 336681
+      "sha256": "bb9553b9b2dd0092afc10ff6fc9d384946af0fd8abb77c933c8e56817c4cddc3",
+      "size_bytes": 368550
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -2172,10 +2392,30 @@
           "receipt": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-proof-browser-responsive-final/mios-artifact-receipt.json",
           "handoff": "/home/mios/.local/state/mios/mios-mons-clarity-live/mios-responsive-live-handoff.json",
           "scope": "user-local x86_64; remaining physical/fleet acceptance explicit"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "d26dd45fd24ab13fdafdf227363c57d04fe2625c6372c5209c9faabcbbeda4f5",
-      "size_bytes": 10975
+      "sha256": "f911e9e89a61cb15a2a61b2ad12642ce983960442f951bc9e4f261e2f0fc3316",
+      "size_bytes": 12458
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py",
@@ -2365,10 +2605,30 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "17158c8c001823a2ce55d0298ee3fdeef680b412bcec6fbcfd008aced39d72ff",
-      "size_bytes": 50349
+      "sha256": "82ef9a88f74e8851fb84387338c52bdf6c19acd7541a20ecfd3c85497390816c",
+      "size_bytes": 53813
     },
     {
       "path": "usr/share/mios/theme/fixtures/edge/ttyd-page.json",
@@ -2450,10 +2710,30 @@
           "live_acceptance": "/home/mios/.local/state/mios/mios-mons-face-live/mios-console-acceptance-summary.json",
           "post_main_live_receipt": "/home/mios/.local/state/mios/mios-mons-hud-live/mios-post-main-live.json",
           "scope": "x86_64 user-local verified HUD/outline batch; face3754 and physical/fleet/image acceptance remain separate"
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "c100fed9b522a7d62bb5394df582a84881d0511d6662a51a794bc2438f15ae40",
-      "size_bytes": 35570
+      "sha256": "5dade4654a508c1ad01c78446b2027b790d3efe2b96fb1cd7c14671490e3b2c2",
+      "size_bytes": 37915
     },
     {
       "path": ".agents/COORDINATION.md",
@@ -2553,9 +2833,29 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "6749f96d1c4764c9f2c1ebbacce69e25bea70928fb3f8eccf942f0c3bd8a7060",
+      "sha256": "41cb67ce93768df7e47b0be1afdd7773e420dc2846af453cd8e2c6035b666e56",
       "size_bytes": 163128
     },
     {
@@ -2608,10 +2908,30 @@
             3755,
             3756
           ]
+        },
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
         }
       },
-      "sha256": "a9d379783f7b16ddf7f81cb42386d8e81ba383c9f1b6218a2914b686afe1ba3c",
-      "size_bytes": 3367621
+      "sha256": "521698975d5aed4917ab2239e673087487071a12fe3e8a648a1ab0873f63cdc6",
+      "size_bytes": 3370108
     },
     {
       "path": "usr/share/mios/referenced_names.txt",
@@ -2735,6 +3055,64 @@
       },
       "sha256": "5f5154632863fd6ead477568a0855191f8403a5d316592899f0f2ee5f1807239",
       "size_bytes": 46669
+    },
+    {
+      "path": "tools/manifest.json",
+      "artifact_type": "code",
+      "created_at": "2026-11-06T18:53:57.022749+00:00",
+      "metadata": {
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
+        }
+      },
+      "sha256": "1d12f8ddb2370216d544b98a9d469621d39e821f9696233cd6bb4b281fa532ab",
+      "size_bytes": 1304907
+    },
+    {
+      "path": "usr/share/mios/names.generated.txt",
+      "artifact_type": "code",
+      "created_at": "2026-11-06T18:53:57.022749+00:00",
+      "metadata": {
+        "mios_mon_camera_render_release": {
+          "source": "ae4e4c3f85f50ce2558ad19ef0f57fbf554caff5",
+          "artifact_sha256": "7d119ff0fc601f75f4b1766ed86341680330881a9dcba38ef75a524ab6e63323",
+          "MiOS_DEV_checks": 359,
+          "actual_production_browser_touches": 449,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-final-render-acceptance.json",
+          "post_main_install_receipt": "/home/mios/.local/state/mios/mios-mons-render-live/mios-post-main-live.json",
+          "scope": "Selected automated x86_64 user-local render/camera/menu cases; physical/mobile/controller/ARM64 and complete HUD/performance/multiplayer/CI not certified",
+          "open_followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3759,
+            3760,
+            3761,
+            3762,
+            3763
+          ]
+        }
+      },
+      "sha256": "98ce9470be550796bb68b124e66a5c90131fe5818dc50df1dafb2056c089c9ee",
+      "size_bytes": 964142
     }
   ]
 }
