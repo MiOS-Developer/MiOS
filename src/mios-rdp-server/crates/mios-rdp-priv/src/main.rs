@@ -272,27 +272,11 @@ fn serve(fd: RawFd) -> i32 {
         }
         b"TLS-KEY" => {
             let pid = cred.pid;
-            let exe_link = std::fs::read_link(format!("/proc/{pid}/exe"));
-            let authorized = match exe_link.as_ref() {
-                Ok(path) if path == std::path::Path::new("/usr/libexec/mios/rdp-native/mios-rdp-server") => true,
-                _ => {
-                    #[cfg(feature = "test-auth")]
-                    {
-                        if let Ok(meta) = std::fs::metadata("/run/mios/rdp/test-auth-allow") {
-                            use std::os::unix::fs::MetadataExt as _;
-                            meta.uid() == 0
-                        } else {
-                            false
-                        }
-                    }
-                    #[cfg(not(feature = "test-auth"))]
-                    {
-                        false
-                    }
-                }
-            };
-            if !authorized {
-                log(&format!("TLS-KEY: unauthorized caller pid {pid} exe {:?}; DENIED", exe_link.ok()));
+            let expected = std::env::var_os("MIOS_RDP_PRIV_ALLOW_EXE")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from("/usr/libexec/mios/rdp-native/mios-rdp-server"));
+            if let Err(why) = verify_tls_key_caller(pid, &expected) {
+                log(&format!("TLS-KEY: unauthorized caller pid {pid} ({why}); DENIED"));
                 send(fd, b"DENY unauthorized caller exe", &[]);
                 return 1;
             }
@@ -412,11 +396,76 @@ mod tests {
 
     #[test]
     fn caller_binary_check_rejects_unauthorized() {
-        let current_exe = std::fs::read_link(format!("/proc/{}/exe", std::process::id())).unwrap();
-        assert_ne!(
-            current_exe,
-            std::path::Path::new("/usr/libexec/mios/rdp-native/mios-rdp-server"),
-            "test binary must not masquerade as genuine production server binary"
+        let pid = std::process::id() as i32;
+        let expected = std::path::Path::new("/usr/libexec/mios/rdp-native/mios-rdp-server");
+        assert!(
+            verify_tls_key_caller(pid, expected).is_err(),
+            "test binary must be rejected by verify_tls_key_caller"
         );
     }
+
+    #[test]
+    fn status_and_environ_checks_reject_ptrace_and_ld_preload() {
+        assert!(check_status_and_environ("Name:\tmios-rdp-server\nTracerPid:\t0\n", b"PATH=/usr/bin\0USER=mios\0").is_ok());
+        assert!(check_status_and_environ("Name:\tmios-rdp-server\nTracerPid:\t1234\n", b"PATH=/usr/bin\0").is_err());
+        assert!(check_status_and_environ("Name:\tmios-rdp-server\nTracerPid:\t0\n", b"LD_PRELOAD=/tmp/evil.so\0").is_err());
+        assert!(check_status_and_environ("Name:\tmios-rdp-server\nTracerPid:\t0\n", b"LD_AUDIT=/tmp/evil.so\0").is_err());
+        assert!(check_status_and_environ("Name:\tmios-rdp-server\nTracerPid:\t0\n", b"LD_LIBRARY_PATH=/tmp\0").is_err());
+    }
+}
+
+pub fn check_status_and_environ(status: &str, environ: &[u8]) -> Result<(), String> {
+    let tracer = status
+        .lines()
+        .find_map(|l| l.strip_prefix("TracerPid:"))
+        .map(str::trim)
+        .ok_or_else(|| "missing TracerPid in /proc/pid/status".to_owned())?;
+    if tracer != "0" {
+        return Err(format!("caller is ptrace-attached (TracerPid={tracer})"));
+    }
+    for entry in environ.split(|b| *b == 0) {
+        if entry.starts_with(b"LD_PRELOAD=")
+            || entry.starts_with(b"LD_AUDIT=")
+            || entry.starts_with(b"LD_LIBRARY_PATH=")
+        {
+            return Err("caller has dangerous LD_* environment variable".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn verify_tls_key_caller(pid: i32, expected_exe: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    if pid <= 1 {
+        return Err("invalid pid".into());
+    }
+    let exe_path = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map_err(|e| format!("readlink /proc/{pid}/exe: {e}"))?;
+    let exe_matches = if exe_path == expected_exe {
+        true
+    } else {
+        #[cfg(feature = "test-auth")]
+        {
+            std::fs::metadata("/run/mios/rdp/test-auth-allow").is_ok_and(|m| m.uid() == 0)
+        }
+        #[cfg(not(feature = "test-auth"))]
+        {
+            false
+        }
+    };
+    if !exe_matches {
+        return Err(format!("exe {:?} != {:?}", exe_path, expected_exe));
+    }
+    let meta = std::fs::metadata(&exe_path).map_err(|e| format!("stat {:?}: {e}", exe_path))?;
+    if meta.uid() != 0 || meta.gid() != 0 {
+        return Err(format!("exe {:?} not owned by root:root ({}:{})", exe_path, meta.uid(), meta.gid()));
+    }
+    if (meta.mode() & 0o022) != 0 {
+        return Err(format!("exe {:?} is group/world writable ({:#o})", exe_path, meta.mode()));
+    }
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .map_err(|e| format!("read /proc/{pid}/status: {e}"))?;
+    let environ = std::fs::read(format!("/proc/{pid}/environ"))
+        .map_err(|e| format!("read /proc/{pid}/environ: {e}"))?;
+    check_status_and_environ(&status, &environ)
 }

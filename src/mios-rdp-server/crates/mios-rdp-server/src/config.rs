@@ -43,6 +43,8 @@ pub struct Native {
     pub udp_transport: bool,
     pub log_negotiation: bool,
     pub bitmap_hz: u32,
+    pub bitmap_slow_queue_ms: f64,
+    pub bitmap_min_hz: u32,
     pub slow_ack_ms: f64,
     pub egfx_wait_ms: u64,
     pub max_width: u16,
@@ -79,6 +81,8 @@ impl Default for Native {
             udp_transport: false,
             log_negotiation: true,
             bitmap_hz: 15,
+            bitmap_slow_queue_ms: 250.0,
+            bitmap_min_hz: 2,
             slow_ack_ms: 250.0,
             egfx_wait_ms: 3000,
             max_width: 4096,
@@ -91,7 +95,6 @@ impl Default for Native {
 #[serde(default)]
 pub struct Redirect {
     pub clipboard: String,
-    pub clipboard_files: bool,
     pub clipboard_max_mb: u64,
     pub touch: bool,
     pub pen: bool,
@@ -102,29 +105,22 @@ pub struct Redirect {
     pub location: bool,
     pub timezone: String,
     pub smartcard: bool,
-    pub printers: bool,
-    pub usb: bool,
-    pub serial: bool,
 }
 
 impl Default for Redirect {
     fn default() -> Self {
         Self {
             clipboard: "both".into(),
-            clipboard_files: true,
             clipboard_max_mb: 64,
             touch: true,
             pen: true,
-            audio_output: true,
-            microphone: true,
-            camera: true,
-            drives: true,
-            location: true,
+            audio_output: false,
+            microphone: false,
+            camera: false,
+            drives: false,
+            location: false,
             timezone: "report".into(),
             smartcard: false,
-            printers: false,
-            usb: false,
-            serial: false,
         }
     }
 }
@@ -134,7 +130,6 @@ impl Default for Redirect {
 pub struct Naming {
     pub touch_device: String,
     pub pen_device: String,
-    pub keyboard_device: String,
 }
 
 impl Default for Naming {
@@ -142,7 +137,6 @@ impl Default for Naming {
         Self {
             touch_device: "MiOS Remote Touch".into(),
             pen_device: "MiOS Remote Pen".into(),
-            keyboard_device: "MiOS Remote Keyboard".into(),
         }
     }
 }
@@ -269,6 +263,7 @@ impl Config {
         n.qp_min = n.qp_min.clamp(0, 51);
         n.qp_max = n.qp_max.clamp(n.qp_min, 51);
         n.frames_in_flight = n.frames_in_flight.clamp(1, 16);
+        n.bitmap_min_hz = n.bitmap_min_hz.clamp(1, n.bitmap_hz.max(1));
         n.encoder_threads = n.encoder_threads.clamp(1, 8);
         n.convert_threads = n.convert_threads.clamp(1, 8);
         if !matches!(n.gpu_priority.as_str(), "low" | "normal") {

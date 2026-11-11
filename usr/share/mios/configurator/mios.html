@@ -2291,6 +2291,15 @@
             <label for="f-rdp-align">size_align (0 = exact client size)</label>
             <input type="text" id="f-rdp-align" data-key="remote.rdp.size_align" data-type="int" placeholder="0">
           </fieldset>
+
+          <fieldset>
+            <legend>Native server &middot; bitmap-path pacing (clients without EGFX/AVC420)</legend>
+            <label for="f-rdp-bsq">native.bitmap_slow_queue_ms (delivered-frame queue age that steps the bitmap rate down)</label>
+            <input type="text" id="f-rdp-bsq" data-key="remote.rdp.native.bitmap_slow_queue_ms" data-type="float" placeholder="250.0">
+
+            <label for="f-rdp-bmh">native.bitmap_min_hz (floor of the adaptive bitmap capture rate)</label>
+            <input type="text" id="f-rdp-bmh" data-key="remote.rdp.native.bitmap_min_hz" data-type="int" placeholder="2">
+          </fieldset>
         </div>
       </div>
     </details>

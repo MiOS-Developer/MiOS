@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, Result};
 use ironrdp_displaycontrol::pdu::DisplayControlMonitorLayout;
 use ironrdp_server::{
-    BitmapUpdate, ConnectionHandler, ConnectionInfo, DesktopSize, DisplayUpdate, PixelFormat, RdpServerDisplay,
-    RdpServerDisplayUpdates, ServerResult,
+    BitmapUpdate, ConnectionHandler, ConnectionInfo, DesktopSize, DisplayContext, DisplayUpdate, PixelFormat,
+    RdpServerDisplay, RdpServerDisplayUpdates, ServerResult,
 };
 use serde_json::json;
 use tracing::{error, info, warn};
@@ -29,7 +29,9 @@ pub struct Session {
     pub gfx: Arc<Gfx>,
     pub stats: Arc<PipeStats>,
     pub authenticated: Arc<AtomicBool>,
+    pub conn_suppressed: Mutex<Option<Arc<AtomicBool>>>,
     pub suppressed: Arc<AtomicBool>,
+    pub operator_paused: Arc<AtomicBool>,
     pub desktop: Arc<AtomicU64>,
     pub layout: Arc<AtomicU32>,
     pub capture_hz: Arc<AtomicU32>,
@@ -41,8 +43,7 @@ pub struct Session {
     pub capture_info: Mutex<Option<Arc<Mutex<capture::CaptureInfo>>>>,
     pub capture_stats: Mutex<Option<Arc<capture::CaptureStats>>>,
     pub pipe: Mutex<Option<(Arc<AtomicBool>, std::thread::JoinHandle<()>)>>,
-    pub bitmap_tx: tokio::sync::mpsc::Sender<Frame>,
-    pub bitmap_rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Frame>>>,
+    pub bitmap: Arc<pipeline::BitmapSlot>,
     pub mailbox: Mutex<Option<Arc<capture::Mailbox>>>,
     pub applied: Mutex<Option<Applied>>,
     pub attached: AtomicBool,
@@ -51,6 +52,10 @@ pub struct Session {
     pub connected_at: Mutex<Option<Instant>>,
     pub out_hz: AtomicU32,
     pub user: Arc<Mutex<Option<String>>>,
+    pub cookie_handle: Mutex<Option<ironrdp_server::AutoReconnectCookieHandle>>,
+    pub disconnect_handle: Mutex<Option<ironrdp_server::ErrorInfoDisconnectHandle>>,
+    pub next_cookie: Mutex<Option<ironrdp_server::ServerAutoReconnect>>,
+    pub arc_rejected: AtomicBool,
 }
 
 impl Session {
@@ -67,9 +72,15 @@ impl Session {
     pub fn begin_connection(&self, peer: SocketAddr) {
         self.gfx.reset();
         self.authenticated.store(false, Ordering::SeqCst);
+        self.arc_rejected.store(false, Ordering::SeqCst);
+        *self.next_cookie.lock().expect("cookie") = None;
+        *self.conn_suppressed.lock().expect("sup") = None;
+        self.suppressed.store(false, Ordering::SeqCst);
+        self.operator_paused.store(false, Ordering::SeqCst);
         *self.peer.lock().expect("peer") = Some(peer.ip());
         *self.connected_at.lock().expect("t") = Some(Instant::now());
         *self.client.lock().expect("client") = json!({"peer": peer.to_string()});
+        drop(self.bitmap.take_pending()); // never hand a previous connection's pending frame to a new one
     }
 
     /// Post-authentication: remote output, capture and encode pipeline.
@@ -104,7 +115,7 @@ impl Session {
             PipeParams {
                 native: self.cfg.native.clone(),
                 target_hz: self.cfg.target_hz,
-                bitmap_tx: self.bitmap_tx.clone(),
+                bitmap: Arc::clone(&self.bitmap),
                 layout: Arc::clone(&self.layout),
                 capture_hz: Arc::clone(&self.capture_hz),
                 authenticated: Arc::clone(&self.authenticated),
@@ -169,6 +180,9 @@ impl RdpServerDisplay for Display {
 
     async fn request_initial_size(&mut self, client: DesktopSize) -> DesktopSize {
         // Called after the credential validator accepted (or a valid auto-reconnect cookie).
+        if self.s.arc_rejected.load(Ordering::SeqCst) {
+            return self.size().await;
+        }
         if self.s.attached.load(Ordering::SeqCst) {
             return self.size().await; // deactivation-reactivation: keep the attached output
         }
@@ -194,9 +208,11 @@ impl RdpServerDisplay for Display {
         }
     }
 
-    async fn updates(&mut self) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
+    async fn updates(&mut self, ctx: DisplayContext) -> ServerResult<Box<dyn RdpServerDisplayUpdates>> {
+        self.s.suppressed.store(self.s.operator_paused.load(Ordering::Relaxed) || ctx.display_suppressed.load(Ordering::Relaxed), Ordering::Relaxed);
+        *self.s.conn_suppressed.lock().expect("sup") = Some(ctx.display_suppressed);
         Ok(Box::new(Updates {
-            rx: Arc::clone(&self.s.bitmap_rx),
+            bitmap: Arc::clone(&self.s.bitmap),
             hide_pointer: self.s.cfg.native.cursor != "client",
             size: self.s.desktop_size(),
             pending: None,
@@ -240,7 +256,7 @@ impl RdpServerDisplay for Display {
 }
 
 struct Updates {
-    rx: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Frame>>>,
+    bitmap: Arc<pipeline::BitmapSlot>,
     hide_pointer: bool,
     size: (u32, u32),
     pending: Option<Frame>,
@@ -250,6 +266,9 @@ struct Updates {
 #[async_trait::async_trait]
 impl RdpServerDisplayUpdates for Updates {
     async fn next_update(&mut self) -> ServerResult<Option<DisplayUpdate>> {
+        if self.s.arc_rejected.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
         if self.hide_pointer {
             // the pointer is composited into the frames (scaled Hyprland outputs cannot export it)
             self.hide_pointer = false;
@@ -258,11 +277,15 @@ impl RdpServerDisplayUpdates for Updates {
         let f = match self.pending.take() {
             Some(f) => f,
             None => {
-                let mut rx = self.rx.lock().await;
-                match rx.recv().await {
-                    Some(f) => f,
-                    None => return Ok(None),
-                }
+                let f = self.bitmap.take().await;
+                let taken = Instant::now();
+                let st = &self.s.stats;
+                st.bitmap_delivered.fetch_add(1, Ordering::Relaxed);
+                let mut smp = st.samples.lock().expect("samples");
+                smp.convert_us.push(f.convert_us);
+                smp.capture_to_send_us.push(taken.duration_since(f.ready_at).as_micros() as u64);
+                drop(smp);
+                f
             }
         };
         if (f.width, f.height) != self.size {
@@ -291,8 +314,33 @@ pub struct Hooks {
 
 impl ConnectionHandler for Hooks {
     fn on_connection_info(&mut self, info: &ConnectionInfo) {
-        self.s.authenticated.store(true, Ordering::SeqCst);
         let user = self.s.user.lock().expect("user").clone();
+        if info.auto_reconnect && self.s.cfg.auth == "priv" {
+            let authorized = user.as_deref().is_some_and(|u| crate::auth::check_user_authorized(u, "mios-rdp"));
+            if !authorized {
+                warn!(user = ?user, "Auto-reconnect user authorization rejected");
+                self.s.arc_rejected.store(true, Ordering::SeqCst);
+                self.s.authenticated.store(false, Ordering::SeqCst);
+                let inv = crate::random_cookie();
+                *self.s.next_cookie.lock().expect("cookie") = Some(inv.clone());
+                if let Some(ref ch) = *self.s.cookie_handle.lock().expect("ch") {
+                    let _ = ch.set(Some(inv));
+                }
+                if let Some(ref dh) = *self.s.disconnect_handle.lock().expect("dh") {
+                    use ironrdp_pdu::rdp::server_error_info::{ErrorInfo, ProtocolIndependentCode};
+                    let _ = dh.disconnect(ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::ServerDeniedConnection));
+                }
+                return;
+            }
+        }
+        if self.s.cfg.native.auto_reconnect {
+            let fresh = crate::random_cookie();
+            *self.s.next_cookie.lock().expect("cookie") = Some(fresh.clone());
+            if let Some(ref ch) = *self.s.cookie_handle.lock().expect("ch") {
+                let _ = ch.set(Some(fresh));
+            }
+        }
+        self.s.authenticated.store(true, Ordering::SeqCst);
         info!(
             keyboard_layout = format!("{:#x}", info.keyboard_layout),
             keyboard_type = ?info.keyboard_type,

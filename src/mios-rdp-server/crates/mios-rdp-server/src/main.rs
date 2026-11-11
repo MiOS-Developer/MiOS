@@ -52,6 +52,9 @@ fn main() -> Result<()> {
     setup_logging();
     let args: Vec<String> = std::env::args().collect();
     let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    if let Some(action) = get("--control") {
+        return control_request(&action, get("--socket").map(PathBuf::from));
+    }
     if args.iter().any(|a| a == "--version") {
         println!("mios-rdp-server {} (IronRDP server, EGFX AVC420, Cisco OpenH264 via dlopen{})", env!("CARGO_PKG_VERSION"),
                  if cfg!(feature = "test-auth") { ", TEST-AUTH BUILD" } else { "" });
@@ -216,23 +219,106 @@ fn create_listener(cfg: &Config) -> Result<tokio::net::TcpListener> {
     Ok(listener)
 }
 
+fn control_request(action: &str, socket: Option<PathBuf>) -> Result<()> {
+    use std::io::{Read, Write};
+    if !["pause", "resume", "disconnect"].contains(&action) { bail!("unknown remote-session action"); }
+    let path = match socket {
+        Some(path) => path,
+        None => PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR is required for session controls")?).join("mios-rdp/control.sock"),
+    };
+    let mut stream = std::os::unix::net::UnixStream::connect(path).context("remote-session controls are unavailable")?;
+    stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(3)))?;
+    writeln!(stream, "{}", json!({"action": action}))?;
+    let mut response = String::new();
+    stream.take(4096).read_to_string(&mut response)?;
+    let reply: serde_json::Value = serde_json::from_str(&response)?;
+    if reply["ok"] != true { bail!("{}", reply["error"].as_str().unwrap_or("remote-session action failed")); }
+    println!("{reply}");
+    Ok(())
+}
+
+fn session_control(s: &Session, action: &str) -> serde_json::Value {
+    if !s.attached.load(Ordering::SeqCst) { return json!({"ok":false,"error":"No remote session is connected"}); }
+    match action {
+        "pause" | "resume" => {
+            let paused = action == "pause";
+            s.operator_paused.store(paused, Ordering::SeqCst);
+            let client_paused = s.conn_suppressed.lock().expect("sup").as_ref().is_some_and(|p| p.load(Ordering::Relaxed));
+            s.suppressed.store(paused || client_paused, Ordering::SeqCst);
+            let _ = s.input_tx.lock().expect("input").send(input::Cmd::Release);
+            s.refresh.store(true, Ordering::SeqCst);
+            s.gfx.notify();
+            json!({"ok":true,"paused":paused})
+        }
+        "disconnect" => {
+            use ironrdp_pdu::rdp::server_error_info::{ErrorInfo, ProtocolIndependentCode};
+            let guard = s.disconnect_handle.lock().expect("disconnect");
+            let Some(handle) = guard.as_ref() else { return json!({"ok":false,"error":"The connection is not ready"}) };
+            if let Err(e) = handle.disconnect(ErrorInfo::ProtocolIndependentCode(ProtocolIndependentCode::RpcInitiatedDisconnectByuser)) {
+                return json!({"ok":false,"error":e.to_string()});
+            }
+            if let Some(cookie) = s.cookie_handle.lock().expect("cookie").as_ref() { let _ = cookie.set(None); }
+            *s.next_cookie.lock().expect("cookie") = None;
+            s.operator_paused.store(true, Ordering::SeqCst);
+            s.suppressed.store(true, Ordering::SeqCst);
+            let _ = s.input_tx.lock().expect("input").send(input::Cmd::Release);
+            json!({"ok":true,"disconnected":true})
+        }
+        _ => json!({"ok":false,"error":"Unknown remote-session action"}),
+    }
+}
+
+async fn session_controls(s: Arc<Session>) -> Result<()> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+    let path = s.cfg.stats_path.with_file_name("control.sock");
+    let parent = path.parent().context("control socket has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    let meta = std::fs::metadata(parent)?;
+    if meta.uid() != s.cfg.operator_uid || meta.permissions().mode() & 0o077 != 0 { bail!("remote control directory must be private to the operator"); }
+    if let Ok(meta) = std::fs::symlink_metadata(&path) {
+        if !meta.file_type().is_socket() || meta.uid() != s.cfg.operator_uid { bail!("unexpected remote control socket owner or type"); }
+        if std::os::unix::net::UnixStream::connect(&path).is_ok() { bail!("remote control socket is already active"); }
+        std::fs::remove_file(&path)?;
+    }
+    let listener = tokio::net::UnixListener::bind(&path)?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    loop {
+        let (mut stream, _) = listener.accept().await?;
+        if stream.peer_cred()?.uid() != s.cfg.operator_uid { continue; }
+        let mut line = String::new();
+        let read = tokio::time::timeout(Duration::from_secs(2), tokio::io::BufReader::new((&mut stream).take(1024)).read_line(&mut line)).await;
+        let reply = match read {
+            Ok(Ok(_)) if line.ends_with('\n') => match serde_json::from_str::<serde_json::Value>(&line) {
+                Ok(value) => session_control(&s, value["action"].as_str().unwrap_or("")),
+                Err(_) => json!({"ok":false,"error":"Invalid request"}),
+            },
+            _ => json!({"ok":false,"error":"Incomplete request"}),
+        };
+        let _ = stream.write_all(format!("{reply}\n").as_bytes()).await;
+    }
+}
+
 async fn serve(cfg: Config) -> Result<()> {
     if cfg.auth == "test" && !cfg!(feature = "test-auth") {
         bail!("auth = \"test\" exists only in test-auth builds");
     }
     // TLS: the existing certificate; the key comes from mios-rdp-priv as a descriptor
-    let (cert, key) = if cfg.tls_source == "priv" {
+    let (cert, mut key) = if cfg.tls_source == "priv" {
         let sock = cfg.priv_socket.clone();
         tokio::task::spawn_blocking(move || auth::priv_tls(&sock)).await??
     } else {
         (std::fs::read(&cfg.cert_file).context("cert_file")?, std::fs::read(&cfg.key_file).context("key_file")?)
     };
     let (acceptor, fingerprint) = tls::acceptor(&cert, &key, &cfg.tls_protocols)?;
+    key.iter_mut().for_each(|b| *b = 0);
+    std::hint::black_box(&key);
     drop(key);
     info!(sha256 = %fingerprint, protocols = %cfg.tls_protocols, "TLS certificate loaded");
 
     let display = display::DisplayClient::spawn(&cfg.display_service, &cfg.display_config)?;
-    let (bitmap_tx, bitmap_rx) = tokio::sync::mpsc::channel(2);
+    let bitmap = Arc::new(pipeline::BitmapSlot::default());
     let (input_tx, input_rx) = std::sync::mpsc::channel();
     let authenticated = Arc::new(AtomicBool::new(false));
     let desktop = Arc::new(AtomicU64::new((1280u64 << 32) | 720));
@@ -252,7 +338,9 @@ async fn serve(cfg: Config) -> Result<()> {
         gfx: Arc::new(pipeline::Gfx::default()),
         stats: Arc::new(pipeline::PipeStats::default()),
         authenticated: Arc::clone(&authenticated),
+        conn_suppressed: Mutex::new(None),
         suppressed: Arc::new(AtomicBool::new(false)),
+        operator_paused: Arc::new(AtomicBool::new(false)),
         desktop: Arc::clone(&desktop),
         layout: Arc::new(AtomicU32::new(0)),
         capture_hz: Arc::new(AtomicU32::new(cfg.target_hz)),
@@ -264,8 +352,7 @@ async fn serve(cfg: Config) -> Result<()> {
         capture_info: Mutex::new(None),
         capture_stats: Mutex::new(None),
         pipe: Mutex::new(None),
-        bitmap_tx,
-        bitmap_rx: Arc::new(tokio::sync::Mutex::new(bitmap_rx)),
+        bitmap: Arc::clone(&bitmap),
         mailbox: Mutex::new(None),
         applied: Mutex::new(None),
         attached: AtomicBool::new(false),
@@ -274,6 +361,15 @@ async fn serve(cfg: Config) -> Result<()> {
         connected_at: Mutex::new(None),
         out_hz: AtomicU32::new(cfg.target_hz),
         user: Arc::clone(&validator.last_user),
+        cookie_handle: Mutex::new(None),
+        disconnect_handle: Mutex::new(None),
+        next_cookie: Mutex::new(None),
+        arc_rejected: AtomicBool::new(false),
+    });
+
+    let controls = Arc::clone(&s);
+    tokio::task::spawn_local(async move {
+        if let Err(e) = session_controls(controls).await { warn!("remote-session controls unavailable: {e:#}"); }
     });
 
     if cfg.input {
@@ -288,6 +384,7 @@ async fn serve(cfg: Config) -> Result<()> {
                 desktop: Arc::clone(&desktop),
                 display: Arc::clone(&display),
                 counters: Arc::clone(&input_counters),
+                operator_paused: Arc::clone(&s.operator_paused),
             },
             input_rx,
         );
@@ -313,8 +410,25 @@ async fn serve(cfg: Config) -> Result<()> {
         .with_credential_validator(Some(validator.clone() as Arc<dyn ironrdp_server::CredentialValidator>))
         .with_connection_handler(Some(Box::new(session::Hooks { s: Arc::clone(&s) })))
         .with_connection_policy(ConnectionPolicy::Reject)
-        .with_honor_client_desktop_size(Some(DesktopSize { width: cfg.native.max_width, height: cfg.native.max_height }))
-        .with_display_suppressed_handle(Arc::clone(&s.suppressed));
+        .with_honor_client_desktop_size(Some(DesktopSize { width: cfg.native.max_width, height: cfg.native.max_height }));
+    // Legacy bitmap codecs for clients that negotiate EGFX without AVC420. Microsoft's Windows App on
+    // iOS/macOS sets AVC_DISABLED in every EGFX capability set and lists only NSCodec in its bitmap-codec
+    // capability, so with IronRDP's default list (RemoteFX, QOI, QOIZ) it got raw/RLE bitmap updates:
+    // several MB per 1100x2080 frame and TCP back-pressure on the phone link (mios, 2026-10-23).
+    // IronRDP ranks NSCodec below RemoteFX/QOI, so clients that offer those keep them.
+    {
+        use ironrdp_pdu::rdp::capability_sets::{Codec, CodecProperty, NsCodec, server_codecs_capabilities};
+        let mut codecs = server_codecs_capabilities(&[]).map_err(|e| anyhow!("server bitmap codecs: {e}"))?;
+        codecs.0.push(Codec {
+            id: 0,
+            property: CodecProperty::NsCodec(NsCodec {
+                is_dynamic_fidelity_allowed: true,
+                is_subsampling_allowed: true,
+                color_loss_level: 3,
+            }),
+        });
+        builder = builder.with_bitmap_codecs(codecs);
+    }
     if cfg.input && (cfg.redirect.touch || cfg.redirect.pen) {
         builder = builder.with_rdpei_factory(Some(Box::new(input::RdpeiFactory {
             tx: Mutex::new(input_tx.clone()),
@@ -334,7 +448,7 @@ async fn serve(cfg: Config) -> Result<()> {
     if cfg.redirect.audio_output {
         builder = builder.with_sound_factory(Some(Box::new(redirect::SoundFactory::new())));
     }
-    if cfg.redirect.microphone {
+    if should_enable_microphone(&cfg) {
         builder = builder.with_rdpeai_factory(Some(Box::new(redirect::RdpeaiFactory::new())));
     }
     if cfg.redirect.drives {
@@ -347,6 +461,11 @@ async fn serve(cfg: Config) -> Result<()> {
         builder = builder.with_auto_reconnect_cookie(Some(random_cookie()));
     }
     let mut server: RdpServer = builder.build();
+    if cfg.native.auto_reconnect {
+        server.set_auto_reconnect_on_request(true);
+    }
+    *s.cookie_handle.lock().expect("ch") = Some(server.auto_reconnect_cookie_handle());
+    *s.disconnect_handle.lock().expect("dh") = Some(server.error_info_disconnect_handle());
     server.enable_autodetect();
     info!(
         listen = %cfg.listen,
@@ -405,10 +524,14 @@ async fn serve(cfg: Config) -> Result<()> {
             let rr = r.as_ref().map(|_| ()).map_err(|e| ironrdp_server::ServerError::reason("connection", format!("{e:#}")));
             tokio::task::spawn_blocking(move || s2.end_connection(&rr)).await?;
             if cfg.native.auto_reconnect {
-                if r.is_ok() {
-                    server.set_auto_reconnect_cookie(Some(random_cookie())); // clean logoff: cookie invalidated
+                if r.is_ok() || s.arc_rejected.load(Ordering::SeqCst) {
+                    server.set_auto_reconnect_cookie(Some(random_cookie())); // clean logoff or rejected ARC: cookie invalidated
                     last_drop = None;
                 } else {
+                    if let Some(c) = s.next_cookie.lock().expect("cookie").take() {
+                        // Single-use ARC enforcement: install only the rotated cookie and clear previous_auto_reconnect_cookie
+                        server.set_auto_reconnect_cookie(Some(c));
+                    }
                     last_drop = Some(Instant::now());
                 }
             }
@@ -486,7 +609,7 @@ fn now_epoch() -> f64 {
 
 async fn stats_loop(s: Arc<Session>) {
     let mut iv = tokio::time::interval(Duration::from_secs_f64(stats::WINDOW_SECS));
-    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut prev = (0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64, 0u64);
     let mut prev_cpu = stats::process_cpu_seconds();
     let mut prev_t = Instant::now();
     let mut busy_windows = 0u32;
@@ -506,10 +629,13 @@ async fn stats_loop(s: Arc<Session>) {
             st.skipped_static.load(Ordering::Relaxed),
             st.bitmap_frames.load(Ordering::Relaxed),
             st.skipped_rc.load(Ordering::Relaxed),
+            st.bitmap_delivered.load(Ordering::Relaxed),
         );
         let rate = |a: u64, b: u64| (a.saturating_sub(b)) as f64 / dt;
-        let fps = rate(cur.2, prev.2) + rate(cur.5, prev.5);
-        let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6));
+        // delivered fps only: EGFX acks/s + bitmap frames actually handed to the connection/s.
+        // Bitmap frames queued but not drained are reported separately (bitmap_queued_fps).
+        let fps = rate(cur.2, prev.2) + rate(cur.7, prev.7);
+        let doc_core = (rate(cur.0, prev.0), rate(cur.1, prev.1), fps, rate(cur.3, prev.3) * 8.0 / 1000.0, rate(cur.4, prev.4), rate(cur.6, prev.6), rate(cur.5, prev.5), rate(cur.7, prev.7));
         prev = cur;
         let cpu = stats::process_cpu_seconds();
         let cpu_pct = 100.0 * (cpu - prev_cpu) / dt;
@@ -520,6 +646,9 @@ async fn stats_loop(s: Arc<Session>) {
             (std::mem::take(&mut a.ack_ms), std::mem::take(&mut a.glass_ms))
         };
         let attached = s.attached.load(Ordering::SeqCst);
+        if let Some(cs) = s.conn_suppressed.lock().expect("sup").as_ref() {
+            s.suppressed.store(s.operator_paused.load(Ordering::SeqCst) || cs.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
         let applied = s.applied.lock().expect("applied").clone();
         let mut out_hz = s.out_hz.load(Ordering::Relaxed);
         if attached && s.cfg.refresh_pacing == "adaptive" {
@@ -563,6 +692,18 @@ async fn stats_loop(s: Arc<Session>) {
                 s.capture_hz.store(s.cfg.target_hz, Ordering::SeqCst);
             }
         }
+        // bitmap path: no frame acks exist, so the delivered-frame queue age is the congestion
+        // signal. Step the capture rate down while frames age in the slot; creep back up when it drains.
+        if attached && st.bitmap_mode.load(Ordering::Relaxed) {
+            let p50_us = stats::percentile_u64(&samples.capture_to_send_us, 50.0) as u64;
+            let slow_us = (s.cfg.native.bitmap_slow_queue_ms * 1000.0) as u64;
+            let cur_hz = s.capture_hz.load(Ordering::Relaxed);
+            let next = pipeline::bitmap_pace(cur_hz, p50_us, slow_us, s.cfg.native.bitmap_min_hz, s.cfg.native.bitmap_hz);
+            if next != cur_hz {
+                s.capture_hz.store(next, Ordering::SeqCst);
+                info!(from_hz = cur_hz, to_hz = next, queue_ms_p50 = p50_us as f64 / 1000.0, "bitmap pacing stepped the capture rate");
+            }
+        }
         let ci = s.capture_info.lock().expect("ci").as_ref().map(|c| c.lock().expect("ci").clone());
         let advertised = s.gfx.advertised.lock().expect("gfx").clone();
         let negotiated = s.gfx.negotiated.lock().expect("gfx").clone();
@@ -573,6 +714,8 @@ async fn stats_loop(s: Arc<Session>) {
         let doc = json!({
             "server": "native",
             "attached": attached,
+            "control_supported": s.cfg.stats_path.with_file_name("control.sock").exists(),
+            "paused": s.operator_paused.load(Ordering::SeqCst),
             "output": applied.as_ref().map(|a| a.output.clone()).unwrap_or_else(|| s.cfg.virtual_output.clone()),
             "width": applied.as_ref().map(|a| a.width),
             "height": applied.as_ref().map(|a| a.height),
@@ -586,13 +729,18 @@ async fn stats_loop(s: Arc<Session>) {
             "encoded_fps": (doc_core.1 * 10.0).round() / 10.0,
             "static_skipped_fps": (doc_core.4 * 10.0).round() / 10.0,
             "rc_skipped_fps": (doc_core.5 * 10.0).round() / 10.0,
+            "bitmap_queued_fps": (doc_core.6 * 10.0).round() / 10.0,
+            "bitmap_delivered_fps": (doc_core.7 * 10.0).round() / 10.0,
+            "bitmap_stale_dropped": st.bitmap_stale_dropped.load(Ordering::Relaxed),
+            "bitmap_hz": s.cfg.native.bitmap_hz,
+            "bitmap_capture_hz": s.capture_hz.load(Ordering::Relaxed),
             "bitrate_kbps": doc_core.3.round(),
             "target_bitrate_kbps": st.bitrate_bps.load(Ordering::Relaxed) / 1000,
             "frames_in_flight": st.frames_in_flight.load(Ordering::Relaxed),
             "backpressured": st.backpressured.load(Ordering::Relaxed),
             "idr": st.idr.load(Ordering::Relaxed),
             "refined": st.refined.load(Ordering::Relaxed),
-            "codec": if s.gfx.avc420.load(Ordering::Relaxed) { "avc420" } else if st.bitmap_frames.load(Ordering::Relaxed) > 0 { "bitmap" } else { "none" },
+            "codec": active_codec(s.gfx.avc420.load(Ordering::Relaxed), cur.1, cur.5, st.bitmap_mode.load(Ordering::Relaxed)),
             "h264_profile_level": level.map(|(p, l)| json!({"profile_idc": p, "level_idc": l})),
             "slices": st.last_slices.load(Ordering::Relaxed),
             "surface": [surface.0, surface.1],
@@ -700,11 +848,70 @@ fn self_test(output: Option<String>, lib: String) -> Result<()> {
     rep.insert("wayland".into(), r.unwrap_or_else(|e| json!({"ok": false, "error": format!("{e:#}")})));
     rep.insert("uinput".into(), json!(std::fs::OpenOptions::new().write(true).open("/dev/uinput").is_ok()));
     rep.insert("test_auth_build".into(), json!(cfg!(feature = "test-auth")));
+    let mut probe_cfg = Config::default();
+    probe_cfg.redirect.microphone = false;
+    let mic_gate_ok = !should_enable_microphone(&probe_cfg);
+    let gfx_probe = pipeline::Gfx::default();
+    gfx_probe.ready.store(true, Ordering::SeqCst);
+    gfx_probe.avc420.store(true, Ordering::SeqCst);
+    let avc_gate_ok = pipeline::check_avc420_ready(&gfx_probe);
+    rep.insert(
+        "invariants".into(),
+        json!({
+            "ok": mic_gate_ok && avc_gate_ok,
+            "avc420_ready_gate": avc_gate_ok,
+            "microphone_redirect_gate": mic_gate_ok,
+        }),
+    );
     if let Some(o) = output {
         rep.insert("output".into(), json!(o));
     }
     println!("{}", serde_json::to_string_pretty(&serde_json::Value::Object(rep))?);
     Ok(())
+}
+
+pub(crate) fn should_enable_microphone(cfg: &Config) -> bool {
+    if cfg.redirect.microphone {
+        return true;
+    }
+    false
+}
+
+pub(crate) fn active_codec(avc420: bool, encoded: u64, bitmap_frames: u64, bitmap_mode: bool) -> &'static str {
+    if bitmap_mode || (bitmap_frames > 0 && encoded == 0) {
+        "bitmap"
+    } else if avc420 && encoded > 0 {
+        "avc420"
+    } else if bitmap_frames > 0 {
+        "bitmap"
+    } else {
+        "none"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn microphone_redirect_gate_respects_config() {
+        let mut cfg = Config::default();
+        cfg.redirect.microphone = false;
+        assert!(!should_enable_microphone(&cfg), "microphone=false must not enable RDPEAI factory");
+        cfg.redirect.microphone = true;
+        assert!(should_enable_microphone(&cfg), "microphone=true must enable RDPEAI factory");
+    }
+
+    #[test]
+    fn active_codec_reports_bitmap_when_forced_to_bitmap_mode() {
+        // When EGFX negotiates AVC420 (avc420=true) but the pipeline is in bitmap_mode (encoded=0, bitmap_frames>0),
+        // stats.json must report "bitmap", never "avc420".
+        assert_eq!(active_codec(true, 0, 25, true), "bitmap");
+        assert_eq!(active_codec(true, 0, 25, false), "bitmap");
+        assert_eq!(active_codec(true, 100, 0, false), "avc420");
+        assert_eq!(active_codec(false, 0, 10, false), "bitmap");
+        assert_eq!(active_codec(true, 0, 0, false), "none");
+    }
 }
 
 struct SelfTestState;

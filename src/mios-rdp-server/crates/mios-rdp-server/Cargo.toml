@@ -12,7 +12,7 @@ default = []
 test-auth = []
 
 [dependencies]
-ironrdp-server = { path = "../../../ironrdp/crates/ironrdp-server", features = ["egfx", "helper"] }
+ironrdp-server = { path = "../../../ironrdp/crates/ironrdp-server", features = ["egfx", "helper", "nscodec"] }
 ironrdp-egfx = { path = "../../../ironrdp/crates/ironrdp-egfx" }
 ironrdp-cliprdr = { path = "../../../ironrdp/crates/ironrdp-cliprdr" }
 ironrdp-displaycontrol = { path = "../../../ironrdp/crates/ironrdp-displaycontrol" }
