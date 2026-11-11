@@ -99,6 +99,8 @@ pub struct Challenge {
 pub struct Game {
     #[serde(default)]
     pub character: u8,
+    #[serde(default)]
+    pub habitat: crate::habitat::Habitat,
     pub age_ticks: u64,
     pub fullness: u8,
     pub happiness: u8,
@@ -134,6 +136,7 @@ impl Game {
             // Select an animal family, then one of its two original individuals.
             // This does not consume the memory game's saved RNG stream.
             character: ((seed % 8) + ((seed >> 8) % 2) * 8) as u8,
+            habitat: crate::habitat::Habitat::new(seed),
             age_ticks: 0,
             fullness: rules.initial_need,
             happiness: rules.initial_need,
@@ -150,6 +153,10 @@ impl Game {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_habitat(crate::habitat::vendor_rules()?)
+    }
+    pub fn validate_habitat(&self, habitat: &crate::habitat::HabitatRules) -> Result<(), String> {
+        self.habitat.validate(self.wins, self.age_ticks, habitat)?;
         if [
             self.fullness,
             self.happiness,

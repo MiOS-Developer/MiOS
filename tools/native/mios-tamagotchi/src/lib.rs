@@ -7,6 +7,7 @@ pub mod characters;
 pub mod config;
 pub mod dialogs;
 pub mod game;
+pub mod habitat;
 pub mod input;
 pub mod render;
 pub mod save;

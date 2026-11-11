@@ -20365,3 +20365,192 @@ ill = "My brush feels heavy; could I have a little care?"
 hatch = "Small shell, first hello! Let us paint a welcome."
 adult = "My paws grew; I can paint a welcome for the whole lane."
 dead = "Keep our welcome stone where new friends can find it."
+
+# AI-hint: Original procedural room themes and explicit purchase/earned decoration catalogue.
+# AI-related: tools/native/mios-tamagotchi/src/habitat.rs
+# IDs are stable contiguous numeric save identities; append, do not reorder.
+# Pattern: plain, stripes, checks, dots, waves, leaves, stars, brick (0..7).
+# Kind: plant, seat, table, lamp, rug, shelf, ornament, trophy (0..7).
+# Slot 0..15 selects one seeded anchor; placing another item there stores the old one.
+# Reward thresholds use actual memory wins/active age ticks; both must hold when set.
+[tamagotchi.habitat]
+
+[[tamagotchi.habitat.themes]]
+id = 0
+name = "Mosslight Nook"
+wall = 15
+floor = 11
+accent = 3
+pattern = 5
+
+[[tamagotchi.habitat.themes]]
+id = 1
+name = "Tideglass Bay"
+wall = 13
+floor = 9
+accent = 2
+pattern = 4
+
+[[tamagotchi.habitat.themes]]
+id = 2
+name = "Emberleaf Loft"
+wall = 4
+floor = 14
+accent = 8
+pattern = 7
+
+[[tamagotchi.habitat.themes]]
+id = 3
+name = "Moonbell Attic"
+wall = 10
+floor = 6
+accent = 7
+pattern = 6
+
+[[tamagotchi.habitat.themes]]
+id = 4
+name = "Peachcloud Porch"
+wall = 5
+floor = 4
+accent = 12
+pattern = 3
+
+[[tamagotchi.habitat.themes]]
+id = 5
+name = "Fernpost Library"
+wall = 11
+floor = 14
+accent = 15
+pattern = 1
+
+[[tamagotchi.habitat.themes]]
+id = 6
+name = "Honeytile Kitchen"
+wall = 7
+floor = 4
+accent = 8
+pattern = 2
+
+[[tamagotchi.habitat.themes]]
+id = 7
+name = "Snowreed Studio"
+wall = 2
+floor = 13
+accent = 9
+pattern = 0
+
+[[tamagotchi.habitat.items]]
+id = 0
+name = "Dewpot Sprout"
+price = 3
+kind = 0
+slot = 0
+
+[[tamagotchi.habitat.items]]
+id = 1
+name = "Pebble Stool"
+price = 5
+kind = 1
+slot = 4
+
+[[tamagotchi.habitat.items]]
+id = 2
+name = "Pocket Table"
+price = 7
+kind = 2
+slot = 5
+
+[[tamagotchi.habitat.items]]
+id = 3
+name = "Firefly Lamp"
+price = 8
+kind = 3
+slot = 1
+
+[[tamagotchi.habitat.items]]
+id = 4
+name = "Ripple Mat"
+price = 6
+kind = 4
+slot = 8
+
+[[tamagotchi.habitat.items]]
+id = 5
+name = "Seedbook Shelf"
+price = 9
+kind = 5
+slot = 2
+
+[[tamagotchi.habitat.items]]
+id = 6
+name = "Comet Mobile"
+price = 12
+kind = 6
+slot = 3
+
+[[tamagotchi.habitat.items]]
+id = 7
+name = "Cloud Cushion"
+price = 4
+kind = 1
+slot = 6
+
+[[tamagotchi.habitat.items]]
+id = 8
+name = "Teacup Stand"
+price = 10
+kind = 2
+slot = 7
+
+[[tamagotchi.habitat.items]]
+id = 9
+name = "Moon Vase"
+price = 15
+kind = 6
+slot = 9
+
+[[tamagotchi.habitat.items]]
+id = 10
+name = "First Note Trophy"
+price = 0
+kind = 7
+slot = 10
+reward_wins = 1
+
+[[tamagotchi.habitat.items]]
+id = 11
+name = "Trail Badge Trophy"
+price = 0
+kind = 7
+slot = 10
+reward_wins = 3
+
+[[tamagotchi.habitat.items]]
+id = 12
+name = "Sapling Bench"
+price = 0
+kind = 1
+slot = 4
+reward_age = 20
+
+[[tamagotchi.habitat.items]]
+id = 13
+name = "Grown Tree Planter"
+price = 0
+kind = 0
+slot = 0
+reward_age = 60
+
+[[tamagotchi.habitat.items]]
+id = 14
+name = "Shell Clock"
+price = 18
+kind = 6
+slot = 11
+
+[[tamagotchi.habitat.items]]
+id = 15
+name = "Starfold Screen"
+price = 20
+kind = 5
+slot = 12

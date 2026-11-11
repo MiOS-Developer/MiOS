@@ -9,14 +9,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const SCHEMA: u32 = 2;
+const SCHEMA: u32 = 3;
 const MAX_SAVE_BYTES: u64 = 65_536;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Envelope {
+struct Envelope<T> {
     schema: u32,
-    game: Game,
+    game: T,
 }
 
 pub fn default_path(directory: &str) -> Result<PathBuf, String> {
@@ -37,6 +37,14 @@ pub fn default_path(directory: &str) -> Result<PathBuf, String> {
 }
 
 pub fn load(path: &Path) -> Result<Option<Game>, String> {
+    load_with_rules(path, crate::habitat::vendor_rules()?)
+}
+
+pub fn load_with_rules(
+    path: &Path,
+    rules: &crate::habitat::HabitatRules,
+) -> Result<Option<Game>, String> {
+    rules.validate()?;
     let file = match File::open(path) {
         Ok(f) => f,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -49,14 +57,26 @@ pub fn load(path: &Path) -> Result<Option<Game>, String> {
     if bytes.len() as u64 > MAX_SAVE_BYTES {
         return Err("save exceeds 64 KiB limit".into());
     }
-    let envelope: Envelope = serde_json::from_slice(&bytes)
+    let envelope: Envelope<serde_json::Value> = serde_json::from_slice(&bytes)
         .map_err(|e| format!("invalid save {}: {e}", path.display()))?;
-    if envelope.schema != SCHEMA && envelope.schema != 1 {
+    if !matches!(envelope.schema, 1..=SCHEMA) {
         return Err(format!("unsupported save schema {}", envelope.schema));
     }
-    envelope.game.validate()?;
-    // No elapsed wall-clock time is applied. Offline time, including clock reversal, is frozen.
-    Ok(Some(envelope.game))
+    let has_habitat = envelope.game.get("habitat").is_some();
+    if !has_habitat && envelope.schema == SCHEMA {
+        return Err("schema-3 save is missing habitat".into());
+    }
+    // Deserialize the original bytes again into strict structs. Going through
+    // Value here would silently collapse duplicate game/habitat field names.
+    let mut game: Game = serde_json::from_slice::<Envelope<Game>>(&bytes)
+        .map_err(|e| format!("invalid save {}: {e}", path.display()))?
+        .game;
+    if !has_habitat {
+        game.habitat = crate::habitat::Habitat::new(game.visual_seed());
+    }
+    game.validate_habitat(rules)?;
+    // Migration is in memory only. Offline time, including clock reversal, is frozen.
+    Ok(Some(game))
 }
 
 pub struct Store {
@@ -96,8 +116,21 @@ impl Store {
     pub fn load(&self) -> Result<Option<Game>, String> {
         load(&self.path)
     }
+    pub fn load_with_rules(
+        &self,
+        rules: &crate::habitat::HabitatRules,
+    ) -> Result<Option<Game>, String> {
+        load_with_rules(&self.path, rules)
+    }
     pub fn save(&self, game: &Game) -> Result<(), String> {
-        game.validate()?;
+        self.save_with_rules(game, crate::habitat::vendor_rules()?)
+    }
+    pub fn save_with_rules(
+        &self,
+        game: &Game,
+        rules: &crate::habitat::HabitatRules,
+    ) -> Result<(), String> {
+        game.validate_habitat(rules)?;
         let parent = self
             .path
             .parent()
@@ -120,5 +153,165 @@ impl Store {
             .and_then(|f| f.sync_all())
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod habitat_tests {
+    use super::*;
+    use crate::{
+        config::Config,
+        game::{Care, Challenge, Direction},
+    };
+
+    #[test]
+    fn legacy_schemas_migrate_only_in_memory_and_preserve_every_original_field() {
+        let c = Config::sample().unwrap();
+        for schema in [1, 2] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("pet.json");
+            let mut game = Game::new(&c.game, 515);
+            game.age_ticks = 37;
+            game.fullness = 31;
+            game.happiness = 49;
+            game.hygiene = 52;
+            game.energy = 63;
+            game.health = 88;
+            game.coins = 42;
+            game.wins = 3;
+            game.paused = true;
+            game.ill = true;
+            game.challenge = Some(Challenge {
+                pattern: [Direction::Left, Direction::Down, Direction::Right],
+                entered: 1,
+                reveal: 0,
+            });
+            let mut legacy = serde_json::to_value(&game).unwrap();
+            legacy.as_object_mut().unwrap().remove("habitat");
+            if schema == 1 {
+                legacy.as_object_mut().unwrap().remove("character");
+            }
+            let bytes =
+                serde_json::to_vec(&serde_json::json!({"schema":schema,"game":legacy})).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let migrated = load(&path).unwrap().unwrap();
+            assert_eq!(load(&path).unwrap().unwrap(), migrated);
+            let mut original_fields = serde_json::to_value(&migrated).unwrap();
+            original_fields.as_object_mut().unwrap().remove("habitat");
+            if schema == 1 {
+                assert_eq!(migrated.character, 0);
+                original_fields.as_object_mut().unwrap().remove("character");
+            }
+            assert_eq!(original_fields, legacy);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+            let room = migrated.habitat;
+            let store = Store::open(&path).unwrap();
+            store.save(&migrated).unwrap();
+            let encoded: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(encoded["schema"], 3);
+            assert_eq!(store.load().unwrap().unwrap(), migrated);
+            let mut advanced = migrated;
+            advanced.challenge = None;
+            advanced.paused = false;
+            advanced.care(Care::Play, &c.game);
+            assert_eq!(advanced.habitat, room);
+            store.save(&advanced).unwrap();
+            assert_eq!(store.load().unwrap().unwrap().habitat, room);
+        }
+    }
+
+    #[test]
+    fn purchases_placements_and_layered_catalogues_round_trip_with_writer_lock_intact() {
+        let c = Config::sample().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pet.json");
+        let store = Store::open(&path).unwrap();
+        let mut game = Game::new(&c.game, 99);
+        game.buy_item(0, &c.habitat).unwrap();
+        game.toggle_item(0, &c.habitat).unwrap();
+        game.buy_item(1, &c.habitat).unwrap();
+        game.toggle_item(1, &c.habitat).unwrap();
+        store.save(&game).unwrap();
+        assert_eq!(store.load().unwrap().unwrap(), game);
+        assert!(Store::open(&path).is_err());
+        let previous = fs::read(&path).unwrap();
+        game.habitat.placed |= 1 << 63;
+        assert!(store.save(&game).is_err());
+        assert_eq!(fs::read(&path).unwrap(), previous);
+        let mut rules = c.habitat;
+        let mut item = rules.items[0].clone();
+        item.id = rules.items.len() as u8;
+        let id = item.id;
+        rules.items.push(item);
+        game = Game::new(&c.game, 99);
+        game.buy_item(id, &rules).unwrap();
+        game.toggle_item(id, &rules).unwrap();
+        store.save_with_rules(&game, &rules).unwrap();
+        assert_eq!(store.load_with_rules(&rules).unwrap().unwrap(), game);
+        assert!(store.load().is_err());
+        assert!(Store::open(&path).is_err());
+    }
+
+    #[test]
+    fn malformed_habitat_and_unknown_schemas_are_refused_without_writes() {
+        let c = Config::sample().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pet.json");
+        let game = Game::new(&c.game, 7);
+        let original = serde_json::json!({"schema":3,"game":game});
+        for case in 0..16 {
+            let mut value = original.clone();
+            match case {
+                0 => {
+                    value["schema"] = 99.into();
+                    value["game"] = serde_json::json!({});
+                }
+                1 => value["schema"] = 0.into(),
+                2 => {
+                    value["game"].as_object_mut().unwrap().remove("habitat");
+                }
+                3 => value["game"]["habitat"] = serde_json::Value::Null,
+                4 => value["game"]["habitat"]["seed"] = 0.into(),
+                5 => value["game"]["habitat"]["seed"] = (-1).into(),
+                6 => value["game"]["habitat"]["seed"] = "seed".into(),
+                7 => value["game"]["habitat"]["theme"] = 255.into(),
+                8 => value["game"]["habitat"]["owned"] = (1u64 << 63).into(),
+                9 => value["game"]["habitat"]["owned"] = (1u64 << 10).into(),
+                10 => value["game"]["habitat"]["placed"] = 1.into(),
+                11 => value["game"]["habitat"]["placed"] = (1u64 << 10).into(),
+                12 => value["game"]["habitat"]["unknown"] = true.into(),
+                13 => {
+                    value["schema"] = 1.into();
+                    value["game"].as_object_mut().unwrap().remove("habitat");
+                    value["game"]["rng"] = (-1).into();
+                }
+                14 => value["game"]["habitat"]["owned"] = (-1).into(),
+                _ => {
+                    value["game"]["habitat"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("placed");
+                }
+            }
+            let bytes = serde_json::to_vec(&value).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let error = load(&path).unwrap_err();
+            if case < 2 {
+                assert!(error.contains("unsupported save schema"));
+            }
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
+        let encoded = serde_json::to_string(&original).unwrap();
+        for duplicate in [
+            encoded.replace("\"seed\":", "\"seed\":0,\"seed\":"),
+            encoded.replace("\"coins\":", "\"coins\":0,\"coins\":"),
+        ] {
+            fs::write(&path, duplicate.as_bytes()).unwrap();
+            assert!(load(&path).unwrap_err().contains("duplicate field"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), duplicate);
+        }
     }
 }
