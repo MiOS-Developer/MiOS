@@ -3,7 +3,7 @@
   "total_files_scanned": 4303,
   "total_metadata_entries": 3451,
   "total_hints": 3445,
-  "total_functions_indexed": 2157,
+  "total_functions_indexed": 2163,
   "total_related_links": 6908,
   "entries": [
     {
@@ -29596,7 +29596,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-tailscale-sync",
-      "hint": "Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.",
+      "hint": "Enrolls a logged-out node from a pre-auth key file and synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.",
       "related": [
         "/usr/share/mios/mios.toml",
         "/etc/mios/mios.toml",
@@ -29608,10 +29608,15 @@
       "functions": [
         "_load_config",
         "_health_config",
+        "_ts",
         "find_tailscale",
         "get_status",
         "select_exit_node",
+        "_node_flags",
         "build_set_cmd",
+        "_auth_key_source",
+        "build_up_cmd",
+        "enroll",
         "probe",
         "direct_interface",
         "exit_is_worse",
@@ -31533,6 +31538,7 @@
       "functions": [
         "load_sync",
         "run_sync",
+        "check_enrolls",
         "TestTailscaleSync"
       ],
       "doc": null,

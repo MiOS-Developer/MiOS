@@ -8295,6 +8295,19 @@ runtime_installs = false
 # The role engine then targets the headless archetype: no desktop session starts.
 [deployment.cloud.overlay.blade]
 type = "headless"
+# The cloud machine's tailnet node (Claude Code cloud, Codex cloud, Cloud Shell):
+# no TUN and an HTTPS-only egress proxy, so tailscaled runs in userspace mode
+# behind a loopback SOCKS5 listener and reaches the tailnet over DERP. It offers
+# itself as an exit node; shields stay up because in userspace mode inbound
+# tailnet connections land on the container's loopback services (the egress
+# proxy among them). No DNS takeover: the proxy needs the host resolver.
+[deployment.cloud.overlay.tailscale]
+mode                = "userspace"
+hostname            = "mios-cloud"
+accept_dns          = false
+advertise_exit_node = true
+shields_up          = true
+socks5_server       = "127.0.0.1:1055"
 
 # `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
 # podman container booting its own systemd. The boot disk holds the image and a
@@ -11515,6 +11528,18 @@ advertise_routes = ""
 # Set per host in /etc/mios/mios.toml -- peer names are not a vendor default.
 exit_nodes = []
 exit_node_allow_lan_access = true
+# Enrollment launch parameters. mios-tailscale-sync enrolls a logged-out node with
+# `tailscale up --auth-key=file:<key>` when a pre-auth key is available (the file
+# below, else the MIOS_TAILSCALE_AUTHKEY / TS_AUTHKEY environment), never with the
+# key on a command line. Empty hostname = the OS hostname (the tailnet suffixes
+# duplicates). advertise_exit_node and shields_up are only ever asserted, never
+# cleared: false leaves a hand-set value alone. socks5_server is the loopback
+# listener tailscaled opens in userspace mode ("" = none).
+hostname = ""
+advertise_exit_node = false
+shields_up = false
+auth_key_file = ""
+socks5_server = ""
 
 # Exit nodes as a standby failover. Each mios-tailscale-sync run pings `probe`
 # directly through the lowest-metric default route; while that loses at most
