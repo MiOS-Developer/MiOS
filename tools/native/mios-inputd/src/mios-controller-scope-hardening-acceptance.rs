@@ -118,7 +118,7 @@ fn actual_login_worker_obeys_authoritative_generation_while_manifest_stays_old()
     }
     let worker = SessionWorker::login(
         target.clone(),
-        Path::new("/owned-inert-pad"),
+        Path::new("/dev/input/by-id/mios-test-inert-pad"),
         cfg,
         selection.clone(),
     )
@@ -503,7 +503,7 @@ fn actual_login_worker_rechecks_generation_after_inspect_before_key_send() {
     }
     let worker = SessionWorker::login(
         target.clone(),
-        Path::new("/owned-inert-pad"),
+        Path::new("/dev/input/by-id/mios-test-inert-pad"),
         cfg,
         selection.clone(),
     )
