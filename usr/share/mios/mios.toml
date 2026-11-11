@@ -19146,6 +19146,7 @@ tier = "unit"
 "tests/fixtures/mios-rdp/cap-meter.sh" = "tests/test-mios-rdp-native.py"
 "tests/fixtures/mios-rdp/e2e.sh" = "tests/test-mios-rdp-native.py"
 "tests/fixtures/mios-rdp/meter.sh" = "tests/test-mios-rdp-native.py"
+"tests/fixtures/tmux/client-focus.py" = "tests/test-tmux-os.py"
 
 [ci.tool_skips]
 "tests/test-composefs-seal.sh" = "mkcomposefs + composefs-info: no Ubuntu 24.04 package (noble, noble-updates, noble-backports universe)"

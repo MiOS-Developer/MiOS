@@ -7,6 +7,7 @@ killed (and the directory removed) in cleanup. The SSOT is the worktree vendor f
 the user layer is pointed at a file that does not exist, so no personal configuration is read. Every tmux CLI call
 has a timeout (display-popup from a CLI blocks until the popup closes)."""
 
+import hashlib
 import importlib.machinery
 import importlib.util
 import os
@@ -30,6 +31,7 @@ GEN, UNITGEN, RELAY = BIN / "mios-gen", BIN / "mios-unit-gen", BIN / "mios-agent
 # miosd (the tmux-os launcher, `miosd launcher`) lives in the src/mios-rs workspace, so it has its own build dir.
 MIOSD = Path(os.environ.get("MIOS_TMUX_OS_MIOSD", str(BIN / "miosd")))
 DESKTOP_TMUX = Path(os.environ["MIOS_TMUX_OS_TMUX"]) if os.environ.get("MIOS_TMUX_OS_TMUX") else None
+DESKTOP_TMUX_SHA256 = os.environ.get("MIOS_TMUX_OS_TMUX_SHA256", "")
 SSOT = tomllib.loads(VENDOR.read_text())
 OPERATOR_SOCKET = SSOT["keybindings"]["socket_name"]
 PREFIX = "mios-tmuxos-test-"
@@ -1119,6 +1121,27 @@ argv = [{stub!r}, "desktop-panel"]
         self.assertEqual(lines.count("desktop-panel"), 1)
         self.assertEqual(lines.count("desktop-metrics"), 1)
         self.assertEqual(sum(line.endswith("--desktop-chat") for line in lines), 1)
+
+    @unittest.skipUnless(DESKTOP_TMUX is not None, "the explicitly selected native desktop backend is required")
+    def test_t18_native_client_focus_fixture_runs_all_seven_with_the_pinned_backend(self):
+        self.assertRegex(DESKTOP_TMUX_SHA256, r"\A[a-f0-9]{64}\Z",
+                         "MIOS_TMUX_OS_TMUX_SHA256 must pin the explicitly selected native backend")
+        backend = DESKTOP_TMUX.resolve(strict=True)
+        self.assertTrue(backend.is_file(), "the selected native backend must be a file")
+        self.assertEqual(hashlib.sha256(backend.read_bytes()).hexdigest(), DESKTOP_TMUX_SHA256,
+                         "the selected native backend differs from its explicit SHA-256")
+        completed = subprocess.run(
+            [sys.executable, str(ROOT / "tests/fixtures/tmux/client-focus.py"),
+             "--binary", str(backend), "--sha256", DESKTOP_TMUX_SHA256],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        self.client_focus_output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, self.client_focus_output)
+        self.assertRegex(self.client_focus_output, r"(?m)^Ran 7 tests in [0-9.]+s$",
+                         "all seven native focus fixture tests must run")
+        self.assertRegex(self.client_focus_output, r"(?m)^OK$",
+                         "the native focus fixture must pass without skips")
+        self.assertNotRegex(self.client_focus_output, r"(?i)\b(skipped|expected failures|unexpected successes)\b")
+        self.client_focus_tests_run = 7
 
 
 if __name__ == "__main__":

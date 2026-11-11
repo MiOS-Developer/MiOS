@@ -91,9 +91,15 @@ Build through the normal locked MiOS-DEV workflow from the complete patch.
 Pin the newly built backend's SHA-256 and run, in a native worker slot:
 
 ```sh
-python3 tests/test-tmux-client-focus.py \
+python3 tests/fixtures/tmux/client-focus.py \
   --binary /absolute/path/to/new/mios-tmux --sha256 NEW_BACKEND_SHA256
 ```
+
+The registered native owner `tests/test-tmux-os.py` invokes these same seven
+tests as T18 when `MIOS_TMUX_OS_TMUX` explicitly selects the backend and
+`MIOS_TMUX_OS_TMUX_SHA256` pins its digest. Selecting a backend without a
+matching digest fails T18; the private desktop acceptance runs T18 after
+T15–T17 and requires all four owner tests to pass without skips.
 
 The fixture uses one private short-path server, two real PTY clients with
 independent active-pane overrides, a third disposable readonly client, owned
