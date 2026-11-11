@@ -378,12 +378,33 @@ def test_native_runtime_check_rejects_dynamic_or_missing():
             for binary in category["binaries"]:
                 (directory / binary).symlink_to(miosd)
                 paths.append(directory / binary)
+                # The production catalog also requires compatibility paths to
+                # target the canonical FHS path, not the external fixture ELF.
+                for alias in category.get("compat_dirs", []):
+                    if alias == category["install_dir"]:
+                        continue
+                    alias_directory = root / alias.lstrip("/")
+                    alias_directory.mkdir(parents=True, exist_ok=True)
+                    (alias_directory / binary).symlink_to(
+                        pathlib.PurePosixPath(category["install_dir"]) / binary)
 
         def check():
             return subprocess.run([miosd, "native-runtime-check", "--root", str(root)],
                                   env=env, capture_output=True, text=True, timeout=60)
         result = check()
         assert result.returncode == 0 and "native artifacts verified" in result.stdout, result
+        alias = root / "usr/libexec/mios/mios-gen"
+        expected = pathlib.PurePosixPath("/usr/bin/mios-gen")
+        assert alias.readlink() == expected
+        alias.unlink()
+        alias.symlink_to("/usr/bin/not-the-canonical-generator")
+        result = check()
+        assert result.returncode == 1 and "native compatibility" in result.stderr, result
+        alias.unlink()
+        result = check()
+        assert result.returncode == 1 and "native compatibility" in result.stderr, result
+        alias.symlink_to(expected)
+        assert check().returncode == 0
         victim = root / "usr/bin/mios-gen"
         assert victim in paths
         victim.unlink()
@@ -393,7 +414,7 @@ def test_native_runtime_check_rejects_dynamic_or_missing():
         victim.unlink()
         result = check()
         assert result.returncode == 1 and "mios-gen" in result.stderr, result
-    print(f"PASS native runtime check: {len(paths)} catalog paths verified; dynamic and missing artifacts fail")
+    print(f"PASS native runtime check: {len(paths)} catalog paths verified; dynamic, missing and divergent compatibility artifacts fail")
 
 
 def test_target_prerequisite_failures_stop_the_target():
