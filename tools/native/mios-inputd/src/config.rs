@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const CONTEXTS: [&str; 8] = [
+pub const CONTEXTS: [&str; 9] = [
     "desktop-2d",
     "desktop-3d",
     "terminal",
@@ -15,8 +15,11 @@ pub const CONTEXTS: [&str; 8] = [
     "app-capture",
     // I3 (C-16): no compositor, or this user's active seat session is a tty. Not a window class.
     "console",
+    "shell",
 ];
 pub const VIRTUAL_PREFIX: &str = "mios-vctl";
+
+pub use crate::sessions::SessionRoute;
 
 pub use mios_resolver::keybindings::{axis_code, button_code, normalize_chord, system_layer_code};
 
@@ -53,6 +56,10 @@ pub struct ControllerConfig {
     pub enabled: bool,
     pub exclusive_grab: bool,
     pub guide_button: String,
+    #[serde(default)]
+    pub guide_double_press_ms: u64,
+    #[serde(default)]
+    pub guide_double_press_action: String,
     pub mode_override_chord: Vec<String>,
     pub pointer_hz: u32,
     pub stick_deadzone: f64,
@@ -62,11 +69,23 @@ pub struct ControllerConfig {
     pub system_layer: BTreeMap<String, String>,
     pub cursor_mode_button: String,
     pub cursor_mode_contexts: Vec<String>,
+    /// Optional named compositor cursor for 2D controller pointer motion.
+    /// Empty preserves the application's normal cursor.
+    #[serde(default)]
+    pub cursor_shape: String,
+    /// Exact evdev name of the controller's uinput pointer, shared with the
+    /// compositor's device-aware cursor lease. Empty retains legacy policy.
+    #[serde(default)]
+    pub virtual_pointer: String,
     pub legacy_pad_state_path: std::path::PathBuf,
     pub debounce_ms: u64,
     pub scan_ms: u64,
     pub captured_system_layer: bool,
     pub capture_fullscreen: bool,
+    /// Captured window contexts that retain their configured navigation profile
+    /// instead of forwarding an uninterpreted virtual gamepad to the window.
+    #[serde(default)]
+    pub capture_navigation_contexts: Vec<String>,
     pub capture_tag: String,
     /// Set by a held toggle_chord release; cancels fullscreen==2, capture_tag and the room input_owner for that
     /// window (every window kind alike) until the next North capture removes it.
@@ -109,6 +128,9 @@ pub struct ControllerConfig {
     /// I4: the agent virtual controller (`mios-inputd vpad`): a per-session uinput pad driven with eased analog curves.
     #[serde(default)]
     pub agent_pad: AgentPadConfig,
+    /// Controllers assigned to explicit local or remote terminal panes.
+    #[serde(default)]
+    pub sessions: Vec<SessionRoute>,
 }
 /// One per-driver quirk (O-7). `drivers` are kernel driver names (`/sys/class/input/eventN/device/device/driver`),
 /// `ids` are `vvvv:pppp` USB ids (hex); either matches. `remap` maps a reported code to the positional code: keys are
@@ -394,6 +416,10 @@ pub struct GlobalConfig {
     /// I4: [desktop.nested.devices].virtual_pad_name: a seat's agent pad (`{seat}`); the host bridge never owns one.
     #[serde(default)]
     pub seat_pad_name: String,
+    #[serde(default)]
+    pub shell_input_state_file: String,
+    #[serde(default)]
+    pub shell_input_state_interval_ms: u64,
 }
 impl GlobalConfig {
     pub fn load(root: Option<&Path>) -> Result<(Self, LegacyConfig), String> {
@@ -414,6 +440,9 @@ impl GlobalConfig {
         cfg.nested_registry = nested.and_then(|n| n.get("registry_dir")).and_then(toml::Value::as_str).unwrap_or("mios/nested-sessions").to_owned();
         cfg.seat_pad_name = nested.and_then(|n| n.get("devices")).and_then(|d| d.get("virtual_pad_name")).and_then(toml::Value::as_str)
             .unwrap_or("MiOS Nested Pad {seat}").to_owned();
+        let dock=v.get("desktop").and_then(|d|d.get("dock"));
+        cfg.shell_input_state_file=dock.and_then(|d|d.get("input_state_file")).and_then(toml::Value::as_str).unwrap_or("").to_owned();
+        cfg.shell_input_state_interval_ms=dock.and_then(|d|d.get("input_state_interval_ms")).and_then(toml::Value::as_integer).and_then(|n|u64::try_from(n).ok()).unwrap_or(0);
         cfg.validate()?;
         cfg.controller.nav = crate::nav::NavConfig::from_value(cfg.controller.nav_table.as_ref(), &crate::nav::Ctx {
             namespaces: &cfg.action_namespaces,
@@ -571,6 +600,22 @@ impl GlobalConfig {
         })
     }
     pub fn validate(&self) -> Result<(), String> {
+        let guide=&self.controller;
+        if guide.guide_double_press_ms!=0 && !(80..=1000).contains(&guide.guide_double_press_ms) {
+            return Err("controller.guide_double_press_ms must be zero or 80..1000".into());
+        }
+        if guide.guide_double_press_ms!=0 && !self.resolved_actions.contains_key(&guide.guide_double_press_action) {
+            return Err("controller.guide_double_press_action must name a resolved desktop action".into());
+        }
+        if !self.shell_input_state_file.is_empty() {
+            let name=&self.shell_input_state_file;
+            if name.len()>79 || name.starts_with('.') || !name.bytes().all(|b|b.is_ascii_alphanumeric() || b"-_.".contains(&b)) {
+                return Err("desktop.dock.input_state_file must be a private runtime basename".into());
+            }
+            if !(1..=250).contains(&self.shell_input_state_interval_ms) {
+                return Err("desktop.dock.input_state_interval_ms must be 1..250".into());
+            }
+        }
         if !(100..=3000).contains(&self.controller.capture_hold_ms) {
             return Err("capture_hold_ms must be 100..=3000".into());
         }
@@ -607,6 +652,7 @@ impl GlobalConfig {
             || c.capture_osd_argv.iter().any(|a| a.contains('\0')) || !c.capture_osd_argv.iter().any(|a| a.contains("{message}"))) {
             return Err("capture_osd_argv: an absolute program and one argument carrying {message}".into());
         }
+        crate::sessions::validate(&c.sessions)?;
         c.console.validate()?;
         c.agent_pad.validate()?;
         for (name, q) in &c.quirks {
@@ -656,6 +702,29 @@ impl GlobalConfig {
         }
         if c.mode_override_chord.is_empty() {
             return Err("empty mode override chord".into());
+        }
+        let mut capture_contexts = BTreeSet::new();
+        for context in &c.capture_navigation_contexts {
+            // Structural validation runs before NavConfig is projected. Check
+            // the source mapping here; its profile is validated by NavConfig.
+            let configured = c.nav_table.as_ref()
+                .and_then(|nav| nav.get("contexts"))
+                .and_then(|contexts| contexts.get(context))
+                .and_then(toml::Value::as_str).is_some();
+            if !["desktop-2d", "terminal", "game", "vm-passthrough"].contains(&context.as_str()) || !configured || !capture_contexts.insert(context) {
+                return Err(format!("controller.capture_navigation_contexts: {context:?} must name a unique configured window navigation context"));
+            }
+        }
+        if !c.cursor_shape.is_empty() && (c.cursor_shape.len() > 64 ||
+            !c.cursor_shape.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')) {
+            return Err("controller.cursor_shape: empty or a cursor name [A-Za-z0-9_-]{1,64}".into());
+        }
+        if !c.virtual_pointer.is_empty() && (c.virtual_pointer.len() >= 80 ||
+            !c.virtual_pointer.bytes().all(|b| (32..127).contains(&b))) {
+            return Err("controller.virtual_pointer: a printable ASCII evdev name under 80 bytes".into());
+        }
+        if !c.cursor_shape.is_empty() && c.virtual_pointer.is_empty() {
+            return Err("controller.cursor_shape requires controller.virtual_pointer to identify its synthetic pointer".into());
         }
         for b in &c.mode_override_chord {
             real(b)?;
@@ -1130,6 +1199,58 @@ BTN_TR="hypr:workspace e+1"
         assert_eq!(c.classify("looking-glass-client", true), "desktop-3d");
         assert_eq!(c.classify("Alacritty", false), "terminal");
         assert_eq!(c.classify("not-Alacritty", false), "desktop-2d");
+    }
+    #[test]
+    fn captured_navigation_contexts_require_configured_window_profiles() {
+        for contexts in [vec![], vec!["terminal"], vec!["desktop-2d", "terminal", "game", "vm-passthrough"]] {
+            let (cfg, _) = fixture_nav_with(|value| {
+                value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] = toml::Value::try_from(&contexts).unwrap();
+            });
+            assert_eq!(cfg.controller.capture_navigation_contexts, contexts);
+        }
+        let (missing, _) = fixture_nav_with(|value| {
+            value["keybindings"]["global"]["controller"].as_table_mut().unwrap().remove("capture_navigation_contexts");
+        });
+        assert!(missing.controller.capture_navigation_contexts.is_empty());
+        for contexts in [vec!["app-capture"], vec!["console"], vec!["desktop-3d"], vec!["controller"], vec!["invented"], vec!["terminal", "terminal"]] {
+            let error = try_fixture_nav_with(|value| {
+                value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] = toml::Value::try_from(&contexts).unwrap();
+            }).err().expect("invalid captured navigation contexts accepted");
+            assert!(error.contains("capture_navigation_contexts"), "{error}");
+        }
+        assert!(try_fixture_nav_with(|value| {
+            value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] = toml::Value::Array(vec![toml::Value::Integer(7)]);
+        }).is_err());
+        assert!(try_fixture_nav_with(|value| {
+            value["keybindings"]["global"]["controller"]["capture_navigation_contexts"] = toml::Value::try_from(vec!["terminal"]).unwrap();
+            value["keybindings"]["global"]["controller"]["nav"]["contexts"].as_table_mut().unwrap().remove("terminal");
+        }).is_err());
+    }
+    #[test]
+    fn controller_cursor_shape_requires_an_explicit_virtual_pointer() {
+        let (defaults, _) = fixture_nav_with(|value| {
+            let table = value["keybindings"]["global"]["controller"].as_table_mut().unwrap();
+            table.remove("cursor_shape"); table.remove("virtual_pointer");
+        });
+        assert!(defaults.controller.cursor_shape.is_empty() && defaults.controller.virtual_pointer.is_empty());
+        for shape in ["", "crosshair", "left_ptr", "reticle-large"] {
+            let (cfg, _) = fixture_nav_with(|value| {
+                let table = value["keybindings"]["global"]["controller"].as_table_mut().unwrap();
+                table.insert("cursor_shape".into(), shape.into());
+                table.insert("virtual_pointer".into(), "mios-vctl-pointer".into());
+            });
+            assert_eq!(cfg.controller.cursor_shape, shape);
+            assert_eq!(cfg.controller.virtual_pointer, "mios-vctl-pointer");
+        }
+        for (shape, device) in [("crosshair", ""), ("../crosshair", "mios-vctl-pointer"),
+            ("crosshair;exec", "mios-vctl-pointer"), ("crosshair\n", "mios-vctl-pointer"),
+            ("crosshair", "mios-vctl-pointer\n")] {
+            assert!(try_fixture_nav_with(|value| {
+                let table = value["keybindings"]["global"]["controller"].as_table_mut().unwrap();
+                table.insert("cursor_shape".into(), shape.into());
+                table.insert("virtual_pointer".into(), device.into());
+            }).is_err(), "{shape:?} / {device:?}");
+        }
     }
     fn binding(id: &str, chord: &str) -> Binding {
         Binding {

@@ -51,8 +51,202 @@ struct RunningDevice {
     output: Option<VirtualDevice>,
     router: Router,
     dropped: bool,
+    /// An explicit controller-to-session route never shares the host's keyboard, mouse or raw pad.
+    session: Option<crate::sessions::SessionRoute>,
+    session_error: Option<String>,
+    session_worker: Option<SessionWorker>,
+    capture: Option<CaptureBinding>,
+    capture_recovery_at: Instant,
     /// INV-8: another session owns the seat; the grab is released and nothing is routed until it returns.
     suspended: bool,
+}
+#[derive(Clone)]
+struct CapturedTmux {
+    client: TmuxClient, start: u64, session: String, pane: String, identity: (u32,String),
+}
+#[derive(Clone)]
+struct CaptureReceipt {
+    address: String, class: String, pid: u32, tmux: Option<CapturedTmux>, error: Option<String>,
+}
+struct CaptureBinding {
+    address: String, pid: u32, worker: Option<CaptureDispatcher>, error: Option<String>,
+}
+enum CaptureDispatcher { Tmux(SessionWorker), Plain(PlainCaptureWorker) }
+impl CaptureDispatcher {
+    fn submit(&self, action:String)->bool {
+        match self {Self::Tmux(worker)=>worker.submit(action),Self::Plain(worker)=>worker.submit(action)}
+    }
+}
+struct PlainCaptureWorker {
+    jobs:Option<std::sync::mpsc::SyncSender<SessionJob>>,
+    stop:std::sync::Arc<AtomicBool>,
+    worker:Option<std::thread::JoinHandle<()>>,
+}
+impl PlainCaptureWorker {
+    fn spawn(address:String,pid:u32,cfg:GlobalConfig)->Result<Self,String> {
+        let (jobs,inbox)=std::sync::mpsc::sync_channel::<SessionJob>(16);
+        let stop=std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled=stop.clone();
+        let worker=std::thread::Builder::new().name("mios-terminal-input".into()).spawn(move || {
+            while let Ok(job)=inbox.recv() {
+                if cancelled.load(Ordering::Relaxed) {break;}
+                if job.queued.elapsed()>=Duration::from_millis(cfg.controller.context_stale_ms) {continue;}
+                let Some(chord)=job.action.strip_prefix("key:") else {continue};
+                let result=crate::nav::parse_key_chord(chord).and_then(|c|ipc(&format!("/eval {}",captured_key_lua(&c,&address,pid,&cfg))));
+                eprintln!("{}",serde_json::json!({"captured_window":address,"action":job.action,"ok":result.as_ref().is_ok_and(|v|v.trim()=="ok"),"error":result.err()}));
+            }
+        }).map_err(|e|e.to_string())?;
+        Ok(Self {jobs:Some(jobs),stop,worker:Some(worker)})
+    }
+    fn submit(&self,action:String)->bool {
+        action.starts_with("key:") && self.jobs.as_ref().is_some_and(|tx|tx.try_send(SessionJob {queued:Instant::now(),action}).is_ok())
+    }
+}
+impl Drop for PlainCaptureWorker {
+    fn drop(&mut self) {self.stop.store(true,Ordering::Relaxed);self.jobs=None;self.worker.take();}
+}
+fn capture_navigation_context(cfg:&GlobalConfig, class:Option<&str>) -> Option<String> {
+    let base=cfg.classify_window(class,false,false);
+    cfg.controller.capture_navigation_contexts.contains(&base).then_some(base)
+}
+fn captured_client_argv(client:&TmuxClient) -> Vec<String> {
+    vec!["/usr/bin/tmux".into(),"-S".into(),client.socket.to_string_lossy().into_owned(),
+        "display-message".into(),"-p".into(),"-c".into(),client.tty.clone(),"-t".into(),client.tty.clone(),
+        "#{pid}\t#{session_name}\t#{window_id}\t#{pane_id}".into()]
+}
+fn captured_tmux(cfg:&GlobalConfig,pid:u32)->Result<Option<CapturedTmux>,String> {
+    let uid=unsafe {libc::getuid()};
+    let Some(client)=tmux_client_under(Path::new("/proc"),pid,&cfg.controller.nav.tmux_sockets,uid) else {return Ok(None)};
+    let start=proc_start(Path::new("/proc"),client.pid).ok_or("captured terminal client vanished")?.1;
+    let reply=run_bounded(&captured_client_argv(&client),Duration::from_millis(cfg.controller.context_stale_ms))?;
+    let parts:Vec<_>=reply.trim_end_matches(['\r','\n']).split('\t').collect();
+    if parts.len()!=4 || parts[1].is_empty() || parts[1].chars().any(char::is_control) {
+        return Err("captured terminal did not report an exact session/pane".into());
+    }
+    let server=parts[0].parse::<u32>().ok().filter(|p|*p>0).ok_or("invalid captured server identity")?;
+    if !parts[2].starts_with('@') || !parts[3].strip_prefix('%').is_some_and(|p|!p.is_empty() && p.bytes().all(|b|b.is_ascii_digit())) {
+        return Err("invalid captured terminal pane identity".into());
+    }
+    if proc_start(Path::new("/proc"),client.pid).map(|v|v.1)!=Some(start) {return Err("captured client was replaced".into())}
+    Ok(Some(CapturedTmux {client,start,session:parts[1].into(),pane:parts[3].into(),identity:(server,parts[2].into())}))
+}
+fn capture_binding(receipt:&CaptureReceipt, device:&Path, cfg:&GlobalConfig)->Result<CaptureBinding,String> {
+    let worker=if let Some(target)=&receipt.tmux {
+        let route=crate::sessions::SessionRoute { name:"captured-terminal".into(),controllers:vec![device.to_owned()],
+            socket:target.client.socket.clone(),session:target.session.clone(),pane:target.pane.clone(),ssh_host:None };
+        Some(CaptureDispatcher::Tmux(SessionWorker::spawn_client(route,cfg.clone(),Some((target.client.clone(),target.start)),Some(target.identity.clone()))?))
+    } else if receipt.error.is_none() && receipt.pid>0 {
+        Some(CaptureDispatcher::Plain(PlainCaptureWorker::spawn(receipt.address.clone(),receipt.pid,cfg.clone())?))
+    } else {None};
+    Ok(CaptureBinding {address:receipt.address.clone(),pid:receipt.pid,worker,error:receipt.error.clone()})
+}
+/// Each controller has its own bounded dispatcher. A stalled SSH target cannot block another player's input.
+/// Queue age is checked before execution, so reconnect never replays stale button presses.
+struct SessionJob { queued: Instant, action: String }
+struct SessionWorker {
+    jobs: Option<std::sync::mpsc::SyncSender<SessionJob>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    stop: std::sync::Arc<AtomicBool>,
+}
+impl SessionWorker {
+    fn spawn(route: crate::sessions::SessionRoute, cfg: GlobalConfig) -> Result<Self,String> {
+        Self::spawn_client(route,cfg,None,None)
+    }
+    fn spawn_client(route:crate::sessions::SessionRoute,cfg:GlobalConfig,client:Option<(TmuxClient,u64)>,pin:Option<(u32,String)>)->Result<Self,String> {
+        let (jobs,inbox)=std::sync::mpsc::sync_channel::<SessionJob>(16);
+        let stop=std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled=stop.clone();
+        let worker=std::thread::Builder::new().name(format!("mios-pad-{}",route.name)).spawn(move || {
+            let timeout=Duration::from_millis(cfg.controller.context_stale_ms);
+            let mut route=route;
+            let mut identity:Option<(u32,String)>=pin;
+            while let Ok(job)=inbox.recv() {
+                if cancelled.load(Ordering::Relaxed) { break; }
+                if job.queued.elapsed()>=timeout {
+                    eprintln!("{}",serde_json::json!({"session":route.name,"action":job.action,"dropped":"expired"}));
+                    continue;
+                }
+                let run=|argv:Vec<String>|run_bounded_cancel(&argv,timeout.saturating_sub(job.queued.elapsed()),Some(&cancelled));
+                let result=(|| -> Result<(),String> {
+                    if let Some((client,start))=&client {
+                        if proc_start(Path::new("/proc"),client.pid).map(|v|v.1)!=Some(*start) {return Err("captured client was replaced or detached".into())}
+                    }
+                    let inspected=run(crate::sessions::inspect_argv(&route)?)?;
+                    let current=session_identity(&route,&inspected)?;
+                    if identity.as_ref().is_some_and(|p|*p!=current) {
+                        return Err("tmux server or window identity changed; rebind this controller".into());
+                    }
+                    identity=Some(current.clone());
+                    let plan=crate::sessions::plan(&route,&job.action,&cfg);
+                    let reply=if let (Err(_),Some((client,_)),Some(verb))=(&plan,&client,job.action.strip_prefix("tmux:")) {
+                        // These UI verbs require the captured client, which must still select our controller's pane.
+                        let switching=verb=="session-prev" || verb=="session-next";
+                        if !(verb=="menu" || verb=="keymap" || verb.starts_with("key ") || switching) {
+                            return Err("unsupported captured-client action".into());
+                        }
+                        let selected=run(captured_client_argv(client))?;
+                        session_identity(&route,&selected)?;
+                        if verb=="keymap" {write_private(&keymap_path(),&cfg.controller.nav.text(cfg.controller.capture_hold_ms))?;}
+                        let reply=run(tmux_argv(&cfg,client,verb)?)?;
+                        if switching {
+                            let selected=run(captured_client_argv(client))?;
+                            let parts:Vec<_>=selected.trim_end_matches(['\r','\n']).split('\t').collect();
+                            if parts.len()!=4 {return Err("captured client did not report its selected session".into());}
+                            let mut next=route.clone();next.session=parts[1].into();next.pane=parts[3].into();
+                            let next_identity=session_identity(&next,&selected)?;
+                            if next_identity.0!=current.0 {return Err("captured client server changed during session switch".into());}
+                            identity=Some(next_identity);route=next;
+                        }
+                        reply
+                    } else {run(plan?)?};
+                    if job.action.starts_with("tmux:focus ") {
+                        let next=crate::sessions::focus_target(&route,&job.action,&reply)?;
+                        let next_identity=session_identity(&next,&run(crate::sessions::inspect_argv(&next)?)?)?;
+                        if next_identity!=current { return Err("focus target left the assigned session/window".into()); }
+                        run(crate::sessions::select_argv(&next)?)?;
+                        route=next;
+                    }
+                    Ok(())
+                })();
+                eprintln!("{}",serde_json::json!({"session":route.name,"pane":route.pane,"action":job.action,
+                    "ok":result.is_ok(),"error":result.err()}));
+            }
+        }).map_err(|e|e.to_string())?;
+        Ok(Self { jobs:Some(jobs), worker:Some(worker), stop })
+    }
+    fn submit(&self, action: String) -> bool {
+        self.jobs.as_ref().is_some_and(|tx|tx.try_send(SessionJob { queued:Instant::now(),action }).is_ok())
+    }
+}
+impl Drop for SessionWorker {
+    fn drop(&mut self) {
+        // Disconnect and discard the queue; any already executing command has a hard deadline.
+        self.stop.store(true,Ordering::Relaxed);
+        self.jobs=None;
+        // Cancellation kills the dedicated command process group. The forwarding thread never joins a remote job.
+        self.worker.take();
+    }
+}
+/// The exact target identity is checked before dispatch; no "current session" or ambient TMUX context participates.
+fn session_identity(route:&crate::sessions::SessionRoute, reply:&str) -> Result<(u32,String),String> {
+    let parts:Vec<_>=reply.trim_end_matches(['\r','\n']).split('\t').collect();
+    if parts.len()!=4 || parts[1]!=route.session || parts[3]!=route.pane {
+        return Err("tmux target does not match assigned session/pane".into());
+    }
+    let pid=parts[0].parse::<u32>().ok().filter(|p|*p>0).ok_or("invalid tmux server identity")?;
+    if !parts[2].strip_prefix('@').is_some_and(|n|!n.is_empty() && n.bytes().all(|c|c.is_ascii_digit())) {
+        return Err("invalid tmux window identity".into());
+    }
+    Ok((pid,parts[2].to_owned()))
+}
+/// Explicit headless assignments may run without a seated login, but never override a foreign active seat.
+fn session_focus(focus: &ContextSnapshot, assigned: bool, error: Option<&str>) -> ContextSnapshot {
+    if !assigned && error.is_none() { return focus.clone(); }
+    let mut out=ContextSnapshot::new("console");
+    // Ambiguous ownership reserves the physical node while output is dropped by emit; it is not a foreign seat.
+    out.suspended=focus.suspended.clone().filter(|reason|
+        !reason.starts_with("no seated session") && !reason.starts_with("no logind record"));
+    out
 }
 /// The compositor this process follows. Starts as HYPRLAND_INSTANCE_SIGNATURE; rediscovery (C-16) replaces a stale one
 /// after a compositor restart, so the user unit never needs a restart.
@@ -309,7 +503,11 @@ fn tmux_client_at(proc_root: &Path, pid: u32, sockets: &[String], uid: u32) -> O
         return None;
     }
     let tty = std::fs::read_link(dir.join("fd/0")).ok()?.to_str()?.to_owned();
-    if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
+    let alias = tty == "/dev/tty" || tty == "/dev/console";
+    if alias {
+        // Aliases name this process's tty, never whichever VT is currently active.
+        crate::console::vt_from_proc_stat(&std::fs::read_to_string(dir.join("stat")).ok()?)?;
+    } else if !(tty.starts_with("/dev/pts/") || tty.starts_with("/dev/tty")) {
         return None;
     }
     Some(TmuxClient { pid, tty, socket })
@@ -332,7 +530,13 @@ pub fn tmux_client_on_tty(proc_root: &Path, tty: &Path, sockets: &[String], uid:
     let mut on_tty: Vec<u32> = vec![];
     for entry in std::fs::read_dir(proc_root).ok()?.filter_map(Result::ok) {
         let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-        if std::fs::read_link(entry.path().join("fd/0")).ok().as_deref() == Some(tty) {
+        let stdin = std::fs::read_link(entry.path().join("fd/0")).ok();
+        let on_alias = stdin.as_deref().is_some_and(|p| p == Path::new("/dev/tty") || p == Path::new("/dev/console"))
+            && tty.to_str().and_then(|p| p.strip_prefix("/dev/tty")).and_then(|n| n.parse::<u32>().ok())
+                .filter(|n| (1..=63).contains(n))
+                .is_some_and(|vt| std::fs::read_to_string(entry.path().join("stat")).ok()
+                    .and_then(|s| crate::console::vt_from_proc_stat(&s)) == Some(vt));
+        if stdin.as_deref() == Some(tty) || on_alias {
             on_tty.push(pid);
         }
         if on_tty.len() > 256 {
@@ -409,8 +613,14 @@ if p and p.active then ok,room=pcall(p.active) end
 if ok and room then
  assert(p.input_capture and p.input_owner,'room input ownership unavailable')
  local id=p.input_owner()
+ if EXPECT~='' and mode=='fullscreen' and tostring(id)~=EXPECT then error('MIOS_INPUT_WINDOW_FAIL: room ownership changed',0) end
  assert(p.input_capture(mode),'no selected room window')
- if mode~='off' then id=p.input_owner() end
+ if mode~='off' then
+  id=p.input_owner()
+  if EXPECT~='' and mode=='fullscreen' and tostring(id)~=EXPECT then
+   p.input_capture('off');error('MIOS_INPUT_WINDOW_FAIL: room target changed; capture cancelled',0)
+  end
+ end
  for _,w in ipairs(hl.get_windows()) do if tonumber(w.address)==id then target=w;break end end
  if not target and mode=='off' then target=hl.get_active_window() end
  if target then own(target,true) end
@@ -422,20 +632,34 @@ else
 end
 local okp,policy=pcall(function() return MIOS_INPUT_POLICY end)
 if okp and type(policy)=='table' and type(policy.refresh)=='function' then pcall(policy.refresh) end
-error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or '')..' '..tostring(target and target.class or ''),0)"#,
+error('MIOS_INPUT_WINDOW_OK:'..tostring(target and target.address or '')..' '..tostring(target and target.class or '')..'\nMIOS_INPUT_WINDOW_PID:'..tostring(target and target.pid or 0),0)"#,
         mode=s(mode),cap=s(&c.capture_tag),rel=s(&c.release_tag),fs=s(&c.capture_fullscreen_tag),expect=s(expect.unwrap_or(""))))
 }
 /// Run one ownership transaction against the selected compositor; Ok((address, class)) only on the success marker.
 pub fn window_transaction(mode: &str, cfg: &GlobalConfig, expect: Option<&str>) -> Result<(String,String),String> {
+    capture_transaction(mode,cfg,expect).map(|r|(r.address,r.class))
+}
+fn capture_transaction(mode:&str,cfg:&GlobalConfig,expect:Option<&str>)->Result<CaptureReceipt,String> {
     let reply=ipc(&format!("/eval {}",window_lua(mode,cfg,expect)?))?;
-    match reply.split_once("MIOS_INPUT_WINDOW_OK:") {
-        Some((_,rest)) => {
-            let line=rest.lines().next().unwrap_or("").trim();
-            let (addr,class)=line.split_once(' ').unwrap_or((line,""));
-            Ok((addr.to_owned(),class.trim().to_owned()))
-        }
-        None => Err(reply.trim().chars().take(400).collect()),
+    let rest=reply.split_once("MIOS_INPUT_WINDOW_OK:").map(|(_,r)|r).ok_or_else(||reply.trim().chars().take(400).collect::<String>())?;
+    let line=rest.lines().next().unwrap_or("").trim();
+    let (address,class)=line.split_once(' ').unwrap_or((line,""));
+    let pid=reply.split_once("MIOS_INPUT_WINDOW_PID:").and_then(|(_,r)|r.lines().next()?.trim().parse::<u32>().ok()).unwrap_or(0);
+    let mut receipt=CaptureReceipt {address:address.into(),class:class.trim().into(),pid,tmux:None,error:None};
+    if mode!="off" && capture_navigation_context(cfg,Some(&receipt.class)).is_some() {
+        if pid==0 {receipt.error=Some("captured terminal process identity missing".into());}
+        else {match captured_tmux(cfg,pid) {Ok(target)=>receipt.tmux=target,Err(error)=>receipt.error=Some(error)}}
     }
+    Ok(receipt)
+}
+fn inspect_capture(cfg:&GlobalConfig,expect:Option<&str>)->Result<CaptureReceipt,String> {
+    let snapshot=context(cfg)?;
+    if snapshot.name!="app-capture" || snapshot.address.as_deref()!=expect {return Err("capture recovery focus changed".into())}
+    let address=snapshot.address.ok_or("captured window missing")?;
+    let pid=snapshot.pid.and_then(|p|u32::try_from(p).ok()).ok_or("captured process missing")?;
+    let class=snapshot.class.unwrap_or_default();
+    let target=captured_tmux(cfg,pid);
+    Ok(CaptureReceipt {address,class,pid,tmux:target.as_ref().ok().cloned().flatten(),error:target.err()})
 }
 /// C-32: the capture OSD text. The release chord is named from toggle_chord, so a remap never shows a stale label.
 pub fn osd_message(mode: &str, class: &str, toggle_chord: &[String]) -> String {
@@ -446,17 +670,68 @@ pub fn osd_message(mode: &str, class: &str, toggle_chord: &[String]) -> String {
 }
 /// Run a short-lived helper with a hard deadline; its stdout (bounded) is the result.
 fn run_bounded(argv: &[String], timeout: Duration) -> Result<String,String> {
+    run_bounded_cancel(argv,timeout,None)
+}
+/// Nonblocking bounded output, with a private process group for cancellation. A descendant retaining stdout cannot
+/// extend the deadline or stall the input loop. Killing this group never signals the caller's group or tmux server.
+fn run_bounded_cancel(argv: &[String], timeout: Duration, cancelled: Option<&AtomicBool>) -> Result<String,String> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::process::CommandExt;
     let (program,rest)=argv.split_first().ok_or("empty argv")?;
-    // TMUX/TMUX_PANE would make the tmux CLI resolve "current" against the caller's own pane, never the target client.
-    let mut child=Command::new(program).args(rest).env_remove("TMUX").env_remove("TMUX_PANE").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;
+    if timeout.is_zero() || cancelled.is_some_and(|c|c.load(Ordering::Relaxed)) { return Err("input action expired or cancelled".into()); }
+    let mut child=Command::new(program).args(rest).env_remove("TMUX").env_remove("TMUX_PANE")
+        .process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|e.to_string())?;
+    let group=child.id() as i32;
+    let finish=|child:&mut Child| {
+        // SAFETY: group is the positive PID of our child, created with process_group(0), never our own group.
+        unsafe { libc::kill(-group,libc::SIGKILL); }
+        let _=child.wait();
+    };
+    let mut stdout=child.stdout.take().ok_or("command stdout missing")?;
+    // SAFETY: stdout owns this valid descriptor; fcntl only changes its nonblocking flag.
+    let flags=unsafe {libc::fcntl(stdout.as_raw_fd(),libc::F_GETFL)};
+    if flags<0 || unsafe {libc::fcntl(stdout.as_raw_fd(),libc::F_SETFL,flags|libc::O_NONBLOCK)}<0 {
+        let err=std::io::Error::last_os_error().to_string();finish(&mut child);return Err(err);
+    }
     let deadline=Instant::now()+timeout;
+    let mut bytes=Vec::new();
     loop {
-        if let Some(status)=child.try_wait().map_err(|e|e.to_string())? {
-            let mut out=String::new();
-            if let Some(s)=child.stdout.take() { let _=s.take(1<<16).read_to_string(&mut out); }
-            return if status.success() {Ok(out)} else {Err(format!("{program} exited {status}"))};
+        if cancelled.is_some_and(|c|c.load(Ordering::Relaxed)) || Instant::now()>=deadline {
+            finish(&mut child);return Err(format!("{program} timed out or cancelled"));
         }
-        if Instant::now()>=deadline { let _=child.kill(); let _=child.wait(); return Err(format!("{program} timed out")); }
+        let mut chunk=[0u8;4096];
+        loop {
+            match stdout.read(&mut chunk) {
+                Ok(0)=>break,
+                Ok(n)=> {
+                    if bytes.len()+n>1<<16 {finish(&mut child);return Err("command output limit exceeded".into());}
+                    bytes.extend_from_slice(&chunk[..n]);
+                }
+                Err(e) if e.kind()==std::io::ErrorKind::WouldBlock=>break,
+                Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,
+                Err(e)=>{finish(&mut child);return Err(e.to_string());}
+            }
+            if Instant::now()>=deadline {break;}
+        }
+        match child.try_wait() {
+            Ok(Some(status))=>{
+                // Drain only immediately available bytes, never wait on descendants' copies of stdout.
+                loop {
+                    match stdout.read(&mut chunk) {
+                        Ok(0)=>break,
+                        Ok(n) if bytes.len()+n<=1<<16=>bytes.extend_from_slice(&chunk[..n]),
+                        Ok(_)=>{finish(&mut child);return Err("command output limit exceeded".into());}
+                        Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>continue,
+                        Err(_)=>break,
+                    }
+                }
+                finish(&mut child);
+                return if status.success(){String::from_utf8(bytes).map_err(|e|e.to_string())}
+                    else{Err(format!("{program} exited {status}"))};
+            }
+            Ok(None)=>{}
+            Err(e)=>{finish(&mut child);return Err(e.to_string());}
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -593,6 +868,11 @@ fn key_lua(chord: &crate::nav::KeyChord, window: &str) -> String {
     let w=q(&format!("address:{window}"));
     format!("hl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='down',window={w}}}))\nhl.dispatch(hl.dsp.send_key_state({{mods={m},key={k},state='up',window={w}}}))",
         m=q(&mods),k=q(&sym))
+}
+fn captured_key_lua(chord:&crate::nav::KeyChord,address:&str,pid:u32,cfg:&GlobalConfig)->String {
+    let q=|v:&str|serde_json::to_string(v).unwrap();
+    format!("local w=hl.get_active_window();assert(w and tostring(w.address)=={address} and tonumber(w.pid)=={pid},'captured terminal focus changed');local cap=false;local released=false;for _,tag in pairs(w.tags or {{}}) do local t=tostring(tag):gsub('%*$','');if t=={cap} then cap=true end;if t=={rel} then released=true end end;assert(cap and not released,'terminal capture released');\n{stroke}",
+        address=q(address),pid=pid,cap=q(&cfg.controller.capture_tag),rel=q(&cfg.controller.release_tag),stroke=key_lua(chord,address))
 }
 fn event_socket() -> Option<UnixStream> {
     let rt=std::env::var_os("XDG_RUNTIME_DIR")?;
@@ -732,48 +1012,75 @@ pub fn command_for(action: &str) -> Result<Vec<String>, String> {
 }
 /// Ownership transactions run off the forwarding loop; their result reverts a pending capture/release at once when the
 /// compositor refused it (C-03), instead of leaving the app or the room holding the pad.
-type OwnershipRequest = (u64, String, Option<String>, Vec<String>);
+type OwnershipRequest = (u64, String, Option<String>, Vec<String>, Instant);
 struct OwnershipWorker {
-    requests: Option<std::sync::mpsc::Sender<OwnershipRequest>>,
-    results: std::sync::mpsc::Receiver<(u64, String, Result<String, String>)>,
+    requests: Option<std::sync::mpsc::SyncSender<OwnershipRequest>>,
+    results: std::sync::mpsc::Receiver<(u64, String, Result<CaptureReceipt, String>)>,
     last: u64,
     worker: Option<std::thread::JoinHandle<()>>,
+    stop: std::sync::Arc<AtomicBool>,
 }
 impl OwnershipWorker {
     fn spawn(policy: std::sync::Arc<std::sync::Mutex<GlobalConfig>>) -> Result<Self, String> {
-        let (requests, inbox) = std::sync::mpsc::channel::<OwnershipRequest>();
+        let (requests, inbox) = std::sync::mpsc::sync_channel::<OwnershipRequest>(16);
         let (outbox, results) = std::sync::mpsc::channel();
+        let stop=std::sync::Arc::new(AtomicBool::new(false));
+        let cancelled=stop.clone();
+        let (notices, notice_inbox)=std::sync::mpsc::sync_channel::<Vec<String>>(16);
+        let notice_stop=stop.clone();
+        std::thread::Builder::new().name("mios-capture-notice".into()).spawn(move || {
+            while let Ok(argv)=notice_inbox.recv() {
+                if notice_stop.load(Ordering::Relaxed) { break; }
+                let _=run_bounded_cancel(&argv,Duration::from_millis(2000),Some(&notice_stop));
+            }
+        }).map_err(|e|e.to_string())?;
         let worker = std::thread::Builder::new().name("mios-ownership".into()).spawn(move || {
-            while let Ok((seq, mode, expect, toggle)) = inbox.recv() {
+            let mut captured:Option<CaptureReceipt>=None;
+            while let Ok((seq, mode, expect, toggle, queued)) = inbox.recv() {
+                if cancelled.load(Ordering::Relaxed) { break; }
                 let cfg = policy.lock().map(|c| c.clone());
-                let result = match &cfg {
-                    Ok(cfg) => window_transaction(&mode, cfg, expect.as_deref()),
+                // North down resolves focus atomically in Lua, rather than rejecting a just-clicked window against
+                // the context poll's old address. Its hold upgrade stays pinned to the confirmed capture.
+                let target=if mode=="on" {None} else if mode=="fullscreen" {captured.as_ref().map(|r|r.address.as_str()).or(expect.as_deref())} else {expect.as_deref()};
+                let mut result = match &cfg {
+                    Ok(cfg) if queued.elapsed()<Duration::from_millis(cfg.controller.context_stale_ms) =>
+                        if mode=="inspect" {inspect_capture(cfg,target)} else {capture_transaction(&mode, cfg, target)},
+                    Ok(_) => Err("ownership request expired".into()),
                     Err(_) => Err("ownership policy lock failed".into()),
                 };
-                // C-32: one notice per confirmed capture or release, never for a refused transaction or a focus change.
-                if let (Ok(cfg), Ok((_, class))) = (&cfg, &result) {
-                    if cfg.controller.capture_osd {
-                        let message = osd_message(&mode, class, &toggle);
-                        let argv: Vec<String> = cfg.controller.capture_osd_argv.iter().map(|a| a.replace("{message}", &message)).collect();
-                        let r = run_bounded(&argv, Duration::from_millis(2000));
-                        eprintln!("{}", serde_json::json!({"osd": message, "mode": mode, "ok": r.is_ok(), "error": r.err()}));
+                if mode=="fullscreen" {
+                    if let (Ok(receipt),Some(prior))=(&mut result,&captured) {
+                        if receipt.address==prior.address && receipt.pid==prior.pid {
+                            receipt.tmux=prior.tmux.clone();receipt.error=prior.error.clone();
+                        }
                     }
                 }
-                if outbox.send((seq, mode, result.map(|(a, _)| a))).is_err() { break; }
+                if let Ok(receipt)=&result { captured=if mode=="off" {None} else {Some(receipt.clone())}; }
+                if outbox.send((seq, mode.clone(), result.clone())).is_err() { break; }
+                // C-32: one notice per confirmed capture or release, never for a refused transaction or a focus change.
+                if let (Ok(cfg), Ok(receipt)) = (&cfg, &result) {
+                    if cfg.controller.capture_osd && mode!="inspect" {
+                        let message = osd_message(&mode, &receipt.class, &toggle);
+                        let argv: Vec<String> = cfg.controller.capture_osd_argv.iter().map(|a| a.replace("{message}", &message)).collect();
+                        let submitted=notices.try_send(argv).is_ok();
+                        eprintln!("{}", serde_json::json!({"osd": message, "mode": mode, "submitted":submitted}));
+                    }
+                }
             }
         }).map_err(|e| e.to_string())?;
-        Ok(Self { requests: Some(requests), results, last: 0, worker: Some(worker) })
+        Ok(Self { requests: Some(requests), results, last: 0, worker: Some(worker), stop })
     }
     fn submit(&mut self, mode: &str, expect: Option<String>, toggle: Vec<String>) -> Result<(), String> {
         self.last += 1;
         self.requests.as_ref().ok_or("ownership worker stopped")?
-            .send((self.last, mode.into(), expect, toggle)).map_err(|_| "ownership worker stopped".to_string())
+            .try_send((self.last, mode.into(), expect, toggle, Instant::now())).map_err(|_| "ownership queue unavailable".to_string())
     }
 }
 impl Drop for OwnershipWorker {
     fn drop(&mut self) {
+        self.stop.store(true,Ordering::Relaxed);
         self.requests = None;
-        if let Some(w) = self.worker.take() { let _ = w.join(); }
+        self.worker.take();
     }
 }
 struct Sinks {
@@ -813,12 +1120,29 @@ pub fn graphical_vt_chord(vt: Option<u32>) -> Option<String> {
 /// Returns the ownership change this output requested (`input:window on|fullscreen` = true, `off` = false), which the
 /// caller applies to every other controller of the session.
 fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &ContextSnapshot) -> Result<Option<bool>, String> {
+    // An explicit route is a complete output boundary: never run a host command or emit uinput for its pad.
+    if device.session.is_some() || device.session_error.is_some() {
+        for action in output.actions {
+            let planned=device.session.as_ref().ok_or("ambiguous controller assignment".to_owned())
+                .and_then(|route| crate::sessions::plan(route,&action,device.router.policy()));
+            let submitted=planned.is_ok() && sinks.execute_actions
+                && device.session_worker.as_ref().is_some_and(|worker|worker.submit(action.clone()));
+            println!("{}",serde_json::json!({"device":device.device.path,"session":device.session.as_ref().map(|r|&r.name),
+                "context":device.router.context,"action":action,"submitted":submitted,"executed":false,
+                "error":planned.as_ref().err(),"argv":if sinks.execute_actions {None}else{planned.as_ref().ok()}}));
+        }
+        return Ok(None);
+    }
     if sinks.bridge {
+        if sinks.execute_actions && !sinks.nested && device.output.is_none() && !device.suspended {
+            device.output=Some(VirtualDevice::clone_gamepad(&device.device).map_err(|e|e.to_string())?);
+        }
         if let Some(virtual_pad) = &mut device.output {
             // O-7: the clone reports the driver's own codes (a quirk remapped them for routing only).
             virtual_pad.write(&device.device.physical_events(&output.app)).map_err(|e| e.to_string())?;
         }
-        if sinks.execute_actions && !sinks.nested && !output.pointer.is_empty() {
+        if sinks.execute_actions && !sinks.nested && !output.pointer.is_empty()
+            && !(device.router.captured_navigation() && !device.router.half_capture()) {
             if sinks.pointer.is_none() {
                 sinks.pointer = Some(VirtualDevice::pointer().map_err(|e| e.to_string())?);
             }
@@ -832,7 +1156,18 @@ fn emit(output: Output, device: &mut RunningDevice, sinks: &mut Sinks, focus: &C
     let mut ownership = None;
     for action in output.actions {
         let mut submitted = false;
-        if let Some(mode) = action.strip_prefix("input:window ") {
+        if device.router.captured_navigation() && (action.starts_with("key:") || action.starts_with("tmux:")) {
+            if let Some(binding)=&device.capture {
+                let matches=focus.address.as_deref()==Some(binding.address.as_str()) && focus.pid==Some(u64::from(binding.pid));
+                if matches && binding.error.is_none() {
+                    if let Some(worker)=&binding.worker {submitted=sinks.execute_actions && worker.submit(action.clone());}
+
+                }
+            }
+        } else if device.router.captured_navigation() && !action.starts_with("input:") {
+            // Captured terminal navigation never executes host-global commands.
+        } else if let Some(mode) = action.strip_prefix("input:window ") {
+            if mode=="on" || mode=="off" {device.capture=None;}
             ownership = Some(mode != "off");
             if let Some(worker) = &mut sinks.ownership {
                 worker.submit(mode, focus.address.clone(), device.router.legacy_toggle_chord())?;
@@ -958,6 +1293,8 @@ fn discovery_worker(
             let current=known.lock().unwrap().clone();
             for path in previous.difference(&current) {sent.remove(path);}
             previous=current.clone();
+            // Candidates declined by the forwarding loop (new nested claim, missing local sink) retry next scan.
+            sent.retain(|path,_| current.contains(path));
             let paths=if !explicit.is_empty() {Ok(explicit.clone())}else{linux::discover().map_err(|e|e.to_string())};
             let held=assigned.lock().map(|a|a.clone()).unwrap_or_default();
             skipped.retain(|p|held.contains_key(p));
@@ -996,7 +1333,10 @@ fn discovery_worker(
                         eprintln!("{}",serde_json::json!({"nested":"gone","device":path}));
                     }
                     Err(e)=> {if !explicit.is_empty() {let _=sender.try_send(Err(format!("{}: {e}",path.display())));return;}
-                        if let Some(id)=identity {rejected.insert(path,id);}}
+                        // logind may grant this same node an ACL after the service starts; retry permission failures.
+                        if e.kind()!=std::io::ErrorKind::PermissionDenied {
+                            if let Some(id)=identity {rejected.insert(path,id);}
+                        }}
                 }
             }
             let delay=Duration::from_millis(policy.lock().unwrap().controller.scan_ms);
@@ -1021,11 +1361,13 @@ fn install_stop_handlers() {
 }
 /// Why the physical bridge cannot own pads in this session, or None when it can.
 /// A user manager without a seat (SSH-only, a container) or without /dev/uinput access must idle, not crash-loop.
-pub fn seat_unavailable() -> Option<String> {
+fn uinput_unavailable() -> Option<String> {
     use std::os::unix::fs::OpenOptionsExt;
-    if let Err(e) = std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open("/dev/uinput") {
-        return Some(format!("no /dev/uinput access: {e}"));
-    }
+    std::fs::OpenOptions::new().write(true).custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC).open("/dev/uinput")
+        .err().map(|e|format!("no /dev/uinput access: {e}"))
+}
+pub fn seat_unavailable() -> Option<String> {
+    if let Some(reason)=uinput_unavailable() {return Some(reason);}
     if let Err(e) = std::fs::read_dir("/dev/input") {
         return Some(format!("no /dev/input access: {e}"));
     }
@@ -1080,7 +1422,9 @@ pub fn serve(mut global: GlobalConfig, mut legacy: LegacyConfig, root: Option<Pa
                 return Ok(());
             }
         }
-        match seat_unavailable() {
+        let unavailable=if global.controller.sessions.is_empty() { seat_unavailable() }
+            else { std::fs::read_dir("/dev/input").err().map(|e|format!("no /dev/input access: {e}")) };
+        match unavailable {
             None => break,
             Some(reason) => {
                 if reported.as_deref() != Some(reason.as_str()) {
@@ -1266,7 +1610,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                 if let Ok(mut snapshot)=result {
                     snapshot.graphical_vt=graphical_vt;
                     // C-09: /proc only, at most once a second per focused terminal (tmux may start inside it later).
-                    if let (Some(pid),true)=(snapshot.pid,wants_tmux(&cfg,&snapshot.name)) {
+                    let nav_context=capture_navigation_context(&cfg,snapshot.class.as_deref()).unwrap_or_else(||snapshot.name.clone());
+                    if let (Some(pid),true)=(snapshot.pid,wants_tmux(&cfg,&nav_context)) {
                         let fresh=tmux_cache.as_ref().is_some_and(|(p,t,_)| *p==pid && t.elapsed()<Duration::from_millis(1000));
                         if !fresh {
                             let found=u32::try_from(pid).ok().and_then(|p| tmux_client_under(Path::new("/proc"),p,&cfg.controller.nav.tmux_sockets,uid));
@@ -1288,10 +1633,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
     let (new_devices,discovery)=discovery_worker(explicit,opt.fixture_only,shared_policy.clone(),known_devices.clone(),context_stop.clone(),assigned.clone(),nested)?;
     let mut ctx=focus.name.clone();
     let mut config_stamp = config_fingerprint(opt.root.as_deref());
+    let mut local_sink_error=if opt.bridge && !opt.fixture_only && !nested {uinput_unavailable()}else{None};
     let result = (|| -> Result<(), String> {
         while !STOP.load(Ordering::Relaxed) && opt.duration.is_none_or(|d| start.elapsed() < d) {
             if scan.elapsed() >= Duration::from_millis(global.controller.scan_ms) {
                 scan = Instant::now();
+                if opt.bridge && !opt.fixture_only && !nested { local_sink_error=uinput_unavailable(); }
                 if let Some(n)=&opt.nested {
                     if !n.alive(Path::new("/proc")) {
                         eprintln!("{}", serde_json::json!({"nested":"ended","seat":n.seat}));
@@ -1313,6 +1660,26 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         }
                     }
                     if let Ok(mut a)=assigned.lock() { *a=now; }
+                }
+                // Resolve stable aliases on each discovery scan; ambiguity reserves the device and routes nothing.
+                for dev in devices.values_mut() {
+                    if nested { continue; }
+                    let selection=crate::sessions::route_for_device(&global.controller.sessions,&dev.device.path);
+                    let next_session=selection.as_ref().ok().cloned().flatten();
+                    let next_error=selection.err();
+                    if next_session!=dev.session || next_error!=dev.session_error {
+                        let out=dev.router.reset();
+                        emit(out,dev,&mut sinks,&focus)?;
+                        // Neutralize any previous raw clone before changing the output boundary.
+                        if let Some(pad)=&mut dev.output { pad.write(&dev.device.physical_events(&dev.router.reset().app)).map_err(|e|e.to_string())?; }
+                        dev.session_worker=None;
+                        dev.capture=None;
+                        dev.session=next_session;
+                        dev.session_error=next_error;
+                        if dev.session.is_some() || dev.session_error.is_some() { dev.router.cursor=false; }
+                        dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None };
+                        eprintln!("{}",serde_json::json!({"device":dev.device.path,"session":dev.session.as_ref().map(|r|&r.name),"error":dev.session_error}));
+                    }
                 }
                 let stamp = config_fingerprint(opt.root.as_deref());
                 if stamp != config_stamp {
@@ -1341,12 +1708,19 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 dev.router.pad.sequences = seq;
                                 if let Err(e) = dev.device.apply_quirks(&next.controller.quirks) { eprintln!("{}", serde_json::json!({"quirks_refused":e})); }
                                 dev.router.analog_triggers = dev.device.analog_triggers();
-                                dev.router.tmux = focus.tmux_client.is_some();
-                                dev.router.set_context(&ctx);
+                                let selection=if nested { Ok(None) } else { crate::sessions::route_for_device(&next.controller.sessions,&dev.device.path) };
+                                dev.session=selection.as_ref().ok().cloned().flatten();
+                                dev.session_error=selection.err();
+                                dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,next.clone())).transpose()? } else { None };
+                                let target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
+                                dev.router.tmux = dev.session.is_some() || target_focus.tmux_client.is_some();
+                                dev.router.set_context(&target_focus.name);
                                 let (keys, axes) =
                                     dev.device.snapshot().map_err(|e| e.to_string())?;
                                 dev.router.resync(keys, axes);
-                                dev.router.cursor=cursor;
+                                dev.router.set_capture_navigation_context(capture_navigation_context(&next,target_focus.class.as_deref()).as_deref());
+                                dev.capture=None;
+                                dev.router.cursor=cursor && dev.session.is_none() && dev.session_error.is_none();
                             }
                             *shared_policy.lock().map_err(|_| "context policy lock failed")?=next.clone();
                             global = next;
@@ -1365,6 +1739,12 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             while let Ok(candidate)=new_devices.try_recv() {
                     let mut device=candidate?;
                     let path=device.path.clone();
+                    if devices.contains_key(&path) { continue; }
+                    // A nested claim can arrive while discovery has a validated handle queued.
+                    if !nested && assigned.lock().map(|a|a.contains_key(&path)).unwrap_or(true) {
+                        eprintln!("{}",serde_json::json!({"nested":"queued-candidate-released","device":path}));
+                        continue;
+                    }
                     let quirks=device.apply_quirks(&global.controller.quirks).unwrap_or_else(|e| { eprintln!("{}", serde_json::json!({"quirks_refused":e})); vec![] });
                     if !quirks.is_empty() {
                         eprintln!("{}", serde_json::json!({"quirks":quirks,"device":path,"driver":device.driver(),"usb_id":format!("{:04x}:{:04x}",device.usb_id().0,device.usb_id().1)}));
@@ -1373,16 +1753,29 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         Router::new(global.clone(), legacy.clone(), device.axes.clone());
                     router.pad.sequences = seed.sequences;
                     router.analog_triggers = device.analog_triggers();
-                    router.tmux = focus.tmux_client.is_some();
-                    router.set_context(&ctx);
+                    let selection=if nested { Ok(None) } else { crate::sessions::route_for_device(&global.controller.sessions,&path) };
+                    let session=selection.as_ref().ok().cloned().flatten();
+                    let session_error=selection.err();
+                    let target_focus=session_focus(&focus,session.is_some(),session_error.as_deref());
+                    router.set_capture_navigation_context(capture_navigation_context(&global,target_focus.class.as_deref()).as_deref());
+                    router.tmux = session.is_some() || target_focus.tmux_client.is_some();
+                    router.set_context(&target_focus.name);
                     if let Ok((keys, axes)) = device.snapshot() {
                         router.resync(keys, axes);
                     }
                     // A pad that joins while a capture is pending follows the session's ownership at once.
-                    if let Some(owned) = devices.values().find_map(|d| d.router.ownership()) {
-                        router.adopt_ownership(owned);
+                    if session.is_none() && session_error.is_none() {
+                        if let Some(owned) = devices.values().filter(|d|d.session.is_none() && d.session_error.is_none()).find_map(|d| d.router.ownership()) {
+                            router.adopt_ownership(owned);
+                        }
                     }
-                    let suspended = focus.suspended.is_some();
+                    let suspended = target_focus.suspended.is_some();
+                    if opt.bridge && !opt.fixture_only && !nested && !suspended && session.is_none() && session_error.is_none() {
+                        if let Some(reason)=&local_sink_error {
+                            eprintln!("{}",serde_json::json!({"device":path,"local_sink":"unavailable","reason":reason}));
+                            continue;
+                        }
+                    }
                     let output = if opt.bridge {
                         if !suspended {
                             device
@@ -1390,7 +1783,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                                 .map_err(|e| format!("{}: cannot own input: {e}", path.display()))?;
                         }
                         // A nested session sees only its own /dev/input: no clone (it would appear on the host).
-                        if nested { None } else { Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?) }
+                        if nested || session.is_some() || session_error.is_some() || suspended { None }
+                        else { Some(VirtualDevice::clone_gamepad(&device).map_err(|e| e.to_string())?) }
                     } else {
                         None
                     };
@@ -1406,6 +1800,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                             output,
                             router,
                             dropped: false,
+                            session_worker: if sinks.execute_actions && !suspended { session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None },
+                            session,
+                            session_error,
+                            capture:None,
+                            capture_recovery_at:Instant::now()-Duration::from_secs(10),
                             suspended,
                         },
                     );
@@ -1420,12 +1819,21 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             let paths: Vec<_> = devices.keys().cloned().collect();
             for path in paths {
                 let dev = devices.get_mut(&path).unwrap();
+                let mut target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
+                if dev.session.is_none() && dev.session_error.is_none() && dev.output.is_none() {
+                    if let Some(reason)=&local_sink_error { target_focus.suspended=Some(reason.clone()); }
+                }
+                let focus=&target_focus;
                 // INV-8: another session (or the greeter) owns the seat: release the grab so its session gets the pad,
                 // neutralize every output, and route nothing until this user's session is active again.
                 match (&focus.suspended, dev.suspended) {
                     (Some(reason), false) => {
+                        // Suppress lazy local clone creation while resetting a pad whose sink is unavailable.
+                        dev.suspended = true;
                         let out = dev.router.reset();
                         emit(out, dev, &mut sinks, &focus)?;
+                        dev.session_worker=None;
+                        dev.capture=None;
                         dev.device.release();
                         dev.suspended = true;
                         eprintln!("{}", serde_json::json!({"seat":"released","device":path,"reason":reason}));
@@ -1438,6 +1846,7 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                         let out = dev.router.resync(keys, axes);
                         emit(out, dev, &mut sinks, &focus)?;
                         dev.suspended = false;
+                        dev.session_worker=if sinks.execute_actions && !dev.suspended { dev.session.clone().map(|r|SessionWorker::spawn(r,global.clone())).transpose()? } else { None };
                         eprintln!("{}", serde_json::json!({"seat":"owned","device":path}));
                     }
                     _ => {}
@@ -1452,15 +1861,25 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
                     continue;
                 }
                 let target=focus.address.clone().zip(focus.pid);
-                let mut transition = dev.router.set_tmux(focus.tmux_client.is_some());
-                transition.extend(dev.router.set_focus(&ctx,target,focus.room_capture));
+                let mut transition=dev.router.set_capture_navigation_context(capture_navigation_context(&global,focus.class.as_deref()).as_deref());
+                transition.extend(dev.router.set_tmux(dev.session.is_some() || focus.tmux_client.is_some()));
+                transition.extend(dev.router.set_focus(&focus.name,target,focus.room_capture));
                 emit(transition, dev, &mut sinks, &focus)?;
+                let mismatch=dev.capture.as_ref().is_some_and(|b|focus.address.as_deref()!=Some(b.address.as_str()) || focus.pid!=Some(u64::from(b.pid)));
+                if !dev.router.app_owned() || (mismatch && dev.router.ownership().is_none()) {dev.capture=None;}
+                if dev.router.captured_navigation() && dev.router.ownership().is_none() && dev.capture.is_none()
+                    && dev.capture_recovery_at.elapsed()>=Duration::from_millis(global.controller.scan_ms) {
+                    if let Some(worker)=&mut sinks.ownership {
+                        let _=worker.submit("inspect",focus.address.clone(),vec![]);
+                        dev.capture_recovery_at=Instant::now();
+                    }
+                }
                 match dev.device.read_events() {
                     Ok(events) => {
                         if events.iter().any(|e| {
                             e.kind == crate::router::EV_KEY || e.kind == crate::router::EV_ABS
                         }) {
-                            selected = Some(path.clone());
+                            if dev.session.is_none() && dev.session_error.is_none() { selected = Some(path.clone()); }
                         }
                         for event in events {
                             if event.kind == EV_SYN && event.code == SYN_DROPPED {
@@ -1498,6 +1917,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             let reconcile_due = now.duration_since(last_reconcile) >= Duration::from_millis(global.controller.context_poll_ms);
             if reconcile_due { last_reconcile = now; }
             for (path, dev) in devices.iter_mut().filter(|(_, d)| !d.suspended) {
+                let target_focus=session_focus(&focus,dev.session.is_some(),dev.session_error.as_deref());
+                let focus=&target_focus;
                 if reconcile_due && !dev.dropped {
                     if let Ok(held) = dev.device.held_keys() {
                         let out = dev.router.reconcile(&held, (linux::monotonic_ns()/1_000_000) as u64);
@@ -1523,7 +1944,8 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             }
             for (source, owned) in adopt {
                 for (path, dev) in devices.iter_mut() {
-                    if *path != source {
+                    if *path != source && dev.session.is_none() && dev.session_error.is_none() {
+                        dev.capture=None;
                         let out = dev.router.adopt_ownership(owned);
                         emit(out, dev, &mut sinks, &focus)?;
                     }
@@ -1533,17 +1955,31 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
             if let Some(worker) = &sinks.ownership {
                 while let Ok((seq, mode, result)) = worker.results.try_recv() {
                     match result {
-                        Ok(address) => eprintln!("{}", serde_json::json!({"ownership":mode,"window":address,"ok":true})),
+                        Ok(receipt) => {
+                            if seq==worker.last {
+                                for dev in devices.values_mut().filter(|d|d.session.is_none() && d.session_error.is_none() && !d.suspended) {
+                                    if mode!="off" {dev.router.confirm_capture_target(&receipt.address);}
+                                    if mode=="off" {dev.capture=None;}
+                                    else if capture_navigation_context(&global,Some(&receipt.class)).is_some() {
+                                        let same=dev.capture.as_ref().is_some_and(|b|b.address==receipt.address && b.pid==receipt.pid);
+                                        if mode=="on" || !same {dev.capture=Some(capture_binding(&receipt,&dev.device.path,&global)?);}
+                                    }
+                                }
+                            }
+                            eprintln!("{}", serde_json::json!({"ownership":mode,"window":receipt.address,"pid":receipt.pid,
+                                "pane":receipt.tmux.as_ref().map(|t|&t.pane),"delivery_error":receipt.error,"ok":true}));
+                        },
                         Err(error) => {
                             eprintln!("{}", serde_json::json!({"ownership":mode,"ok":false,"error":error,"reverted":seq==worker.last}));
                             // Only the latest request decides; an older failure must not undo a newer capture.
-                            if seq == worker.last { failed.push(mode); }
+                            if seq == worker.last && mode!="inspect" { failed.push(mode); }
                         }
                     }
                 }
             }
             if !failed.is_empty() {
-                for dev in devices.values_mut() {
+                for dev in devices.values_mut().filter(|d|d.session.is_none() && d.session_error.is_none()) {
+                    dev.capture=None;
                     let out = dev.router.ownership_failed();
                     emit(out, dev, &mut sinks, &focus)?;
                 }
@@ -1591,7 +2027,11 @@ pub fn run(mut global: GlobalConfig, mut legacy: LegacyConfig, opt: Options) -> 
         }
         Ok(())
     })();
+    sinks.ownership=None;
     for dev in devices.values_mut() {
+        dev.session_worker=None;
+        dev.capture=None;
+        dev.suspended=true;
         let out = dev.router.reset();
         let _ = emit(out, dev, &mut sinks, &focus);
         dev.device.release();
@@ -1918,6 +2358,34 @@ mod tests {
         std::fs::remove_dir_all(&t).unwrap();
     }
     #[test]
+    fn vt_aliases_require_the_requested_controlling_tty() {
+        let t = std::env::temp_dir().join(format!("mios-inputd-vt-alias-{}", std::process::id()));
+        assert!(!t.exists(), "private fixture path already exists");
+        let sockdir = t.join("sock/tmux-1000");
+        std::fs::create_dir_all(&sockdir).unwrap();
+        let _human = std::os::unix::net::UnixListener::bind(sockdir.join("mios-human")).unwrap();
+        let env = format!("TMUX_TMPDIR={}\0", t.join("sock").display());
+        let socks = vec!["mios-human".to_owned()];
+        for (index, alias) in ["/dev/console", "/dev/tty"].into_iter().enumerate() {
+            let p = t.join(format!("proc-{index}"));
+            fake_proc(&p, 10, 1, "bash", &["bash"], "", alias);
+            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, "/dev/pts/9");
+            for device in [0, 4 * 256 + 4, 136 * 256 + 3] {
+                std::fs::write(p.join("10/stat"), format!("10 (shell ) name) S 1 10 10 {device} 0")).unwrap();
+                assert!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).is_none(), "{alias}: unrelated controlling tty {device}");
+            }
+            std::fs::write(p.join("10/stat"), "10 (shell ) name) S 1 10 10 1027 0").unwrap();
+            assert_eq!(tmux_client_on_tty(&p, Path::new("/dev/tty3"), &socks, 1000).map(|c| c.pid), Some(11));
+            // A client attached directly through an alias also needs physical VT evidence.
+            std::fs::remove_file(p.join("11/fd/0")).unwrap();
+            fake_proc(&p, 11, 10, "tmux: client", &["tmux", "-L", "mios-human", "attach"], &env, alias);
+            assert!(tmux_client_at(&p, 11, &socks, 1000).is_none());
+            std::fs::write(p.join("11/stat"), "11 (tmux: client) S 10 11 11 1027 0").unwrap();
+            assert_eq!(tmux_client_at(&p, 11, &socks, 1000).map(|c| c.tty).as_deref(), Some(alias));
+        }
+        std::fs::remove_dir_all(&t).unwrap();
+    }
+    #[test]
     fn capture_osd_names_the_app_and_the_release_chord() {
         let chord = vec!["BTN_THUMBL".to_owned(), "BTN_THUMBR".to_owned()];
         assert_eq!(osd_message("on", "org.gnome.Nautilus", &chord), "Controller -> org.gnome.Nautilus. Hold L3+R3 to release.");
@@ -1930,6 +2398,43 @@ mod tests {
         let lua = window_lua("on", &cfg, None).unwrap();
         assert!(lua.contains("..' '..tostring(target and target.class or '')"), "the transaction reports the class it captured");
     }
+    #[test]
+    fn bounded_command_does_not_wait_for_descendants_stdout() {
+        let now=Instant::now();
+        let argv=vec!["/bin/sh".into(),"-c".into(),"sleep 10 & printf ready".into()];
+        assert_eq!(run_bounded(&argv,Duration::from_millis(300)).unwrap(),"ready");
+        assert!(now.elapsed()<Duration::from_secs(1));
+    }
+    #[test]
+    fn command_cancellation_revokes_an_inflight_job_promptly() {
+        let cancelled=std::sync::Arc::new(AtomicBool::new(false));
+        let other=cancelled.clone();
+        let worker=std::thread::spawn(move || {
+            run_bounded_cancel(&["/bin/sh".into(),"-c".into(),"sleep 10".into()],Duration::from_secs(10),Some(&other))
+        });
+        std::thread::sleep(Duration::from_millis(30));
+        let now=Instant::now();
+        cancelled.store(true,Ordering::Relaxed);
+        assert!(worker.join().unwrap().unwrap_err().contains("cancelled"));
+        assert!(now.elapsed()<Duration::from_millis(500));
+    }
+    #[test]
+    fn assigned_session_focus_is_independent_but_respects_foreign_seats() {
+        let mut desktop=ContextSnapshot::new("app-capture");
+        desktop.address=Some("123".into()); desktop.pid=Some(42); desktop.room_capture=true;
+        let assigned=session_focus(&desktop,true,None);
+        assert_eq!(assigned.name,"console");
+        assert!(assigned.address.is_none() && assigned.pid.is_none() && !assigned.room_capture);
+        assert_eq!(session_focus(&desktop,false,None).address,desktop.address);
+        desktop.suspended=Some("no seated session for this user".into());
+        assert!(session_focus(&desktop,true,None).suspended.is_none());
+        assert!(session_focus(&desktop,false,None).suspended.is_some());
+        desktop.suspended=Some("another session is active on seat0".into());
+        assert_eq!(session_focus(&desktop,true,None).suspended,desktop.suspended);
+        desktop.suspended=None;
+        assert!(session_focus(&desktop,true,Some("duplicate owner")).suspended.is_none(),"ambiguous node remains exclusively reserved");
+    }
+
     #[test]
     fn key_projection_into_a_followed_compositor_is_quoted() {
         let lua = key_lua(&crate::nav::parse_key_chord("CTRL+SHIFT+TAB").unwrap(), "0xabc\"x");
@@ -1992,6 +2497,322 @@ mod tests {
             command_for("mios:hyprland-3d-toggle").unwrap(),
             vec!["/usr/bin/mios-gen", "hyprland-3d-toggle"]
         );
+    }
+    mod session_worker_integration {
+        use super::*;
+        struct PrivateServer {
+            dir: tempfile::TempDir,
+            socket: PathBuf,
+            stopped: Option<i32>,
+        }
+        impl PrivateServer {
+            fn new() -> Self {
+                let dir = tempfile::Builder::new().prefix("mios-session-worker-").tempdir().unwrap();
+                let socket = dir.path().join("tmux");
+                Self { dir, socket, stopped: None }
+            }
+            fn tmux(&self, args: &[&str]) -> String {
+                let output = Command::new("/usr/bin/tmux").arg("-S").arg(&self.socket)
+                    .args(["-f", "/dev/null"]).args(args)
+                    .env_remove("TMUX").env_remove("TMUX_PANE").output().unwrap();
+                assert!(output.status.success(), "private tmux: {}", String::from_utf8_lossy(&output.stderr));
+                String::from_utf8(output.stdout).unwrap().trim().to_owned()
+            }
+            fn receiver(&self, session: &str, file: &str, split: Option<&str>) -> String {
+                let path = self.dir.path().join(file);
+                let quoted = format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+                let shell = format!("stty raw -echo; exec cat > {quoted}");
+                let pane = if let Some(target) = split {
+                    self.tmux(&["split-window", "-h", "-t", target, "-P", "-F", "#{pane_id}", "--", "/bin/sh", "-c", &shell])
+                } else {
+                    self.tmux(&["new-session", "-d", "-x", "100", "-y", "30", "-s", session, "-P", "-F", "#{pane_id}", "--", "/bin/sh", "-c", &shell])
+                };
+                Self::wait(|| path.exists());
+                pane
+            }
+            fn route(&self, session: &str, pane: &str) -> crate::sessions::SessionRoute {
+                crate::sessions::SessionRoute {
+                    name: session.into(), controllers: vec!["/dev/input/event0".into()], socket: self.socket.clone(),
+                    session: session.into(), pane: pane.into(), ssh_host: None,
+                }
+            }
+            fn bytes(&self, file: &str) -> Vec<u8> {
+                std::fs::read(self.dir.path().join(file)).unwrap_or_default()
+            }
+            fn wait(mut condition: impl FnMut() -> bool) {
+                let end = Instant::now() + Duration::from_secs(3);
+                while !condition() {
+                    assert!(Instant::now() < end, "private receiver timed out");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+            fn inspection_started(&self) -> bool {
+                std::fs::read_dir("/proc/self/task").unwrap().filter_map(Result::ok).any(|task| {
+                    std::fs::read_to_string(task.path().join("children")).unwrap_or_default()
+                        .split_whitespace().any(|pid| {
+                            let args = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                            let parts = args.split(|b| *b == 0).collect::<Vec<_>>();
+                            parts.contains(&self.socket.as_os_str().as_encoded_bytes()) && parts.contains(&b"display-message".as_slice())
+                        })
+                })
+            }
+            fn stop(&mut self) {
+                let pid = self.tmux(&["display-message", "-p", "#{pid}"]).parse::<i32>().unwrap();
+                // SAFETY: this PID was returned by this fixture's private socket, never an operator server.
+                assert_eq!(unsafe { libc::kill(pid, libc::SIGSTOP) }, 0);
+                self.stopped = Some(pid);
+            }
+            fn resume(&mut self) {
+                if let Some(pid) = self.stopped.take() {
+                    // SAFETY: paired only with stop() on our private server.
+                    assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
+                }
+            }
+        }
+        impl Drop for PrivateServer {
+            fn drop(&mut self) {
+                self.resume();
+                let _ = Command::new("/usr/bin/tmux").arg("-S").arg(&self.socket).arg("kill-server")
+                    .env_remove("TMUX").env_remove("TMUX_PANE").output();
+            }
+        }
+
+        struct PrivateClient {
+            process: Child,
+            stop: std::sync::Arc<AtomicBool>,
+            reader: Option<std::thread::JoinHandle<()>>,
+        }
+        impl PrivateClient {
+            fn attach(server: &PrivateServer, session: &str) -> Self {
+                use std::os::fd::{AsRawFd, FromRawFd};
+                use std::os::unix::process::CommandExt;
+                let (mut master, mut slave) = (-1, -1);
+                let size = libc::winsize { ws_row: 30, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0 };
+                // SAFETY: openpty initializes two owned descriptors and reads a live winsize.
+                assert_eq!(unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null(), &size) }, 0);
+                let (mut master, slave) = unsafe { (std::fs::File::from_raw_fd(master), std::fs::File::from_raw_fd(slave)) };
+                let flags = unsafe { libc::fcntl(master.as_raw_fd(), libc::F_GETFL) };
+                assert_eq!(unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) }, 0);
+                let mut command = Command::new("/bin/sh");
+                command.args(["-c", "/usr/bin/tmux \"$@\"; wait", "mios-private-client", "-S"]).arg(&server.socket)
+                    .args(["attach-session", "-t", session]).env("TERM", "xterm-256color")
+                    .env_remove("TMUX").env_remove("TMUX_PANE")
+                    .stdin(Stdio::from(slave.try_clone().unwrap()))
+                    .stdout(Stdio::from(slave.try_clone().unwrap())).stderr(Stdio::from(slave));
+                // SAFETY: child-only session setup after Command duplicated the private slave onto stdin.
+                unsafe { command.pre_exec(|| {
+                    if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                }); }
+                let process = command.spawn().unwrap();
+                let stop = std::sync::Arc::new(AtomicBool::new(false));
+                let cancelled = stop.clone();
+                let reader = std::thread::spawn(move || {
+                    let mut buffer = [0u8; 4096];
+                    while !cancelled.load(Ordering::Relaxed) {
+                        match master.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(_) => {},
+                            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(2)),
+                            Err(_) => break,
+                        }
+                    }
+                });
+                let client = Self { process, stop, reader: Some(reader) };
+                PrivateServer::wait(|| captured_tmux(&capture_config(), client.process.id()).is_ok_and(|target| target.is_some()));
+                client
+            }
+        }
+        impl Drop for PrivateClient {
+            fn drop(&mut self) {
+                // SAFETY: setsid made this fixture's shell PID its own process-group ID.
+                unsafe { libc::kill(-(self.process.id() as i32), libc::SIGKILL); }
+                let _ = self.process.wait();
+                self.stop.store(true, Ordering::Relaxed);
+                if let Some(reader) = self.reader.take() { let _ = reader.join(); }
+            }
+        }
+        fn capture_config() -> GlobalConfig {
+            let mut cfg = config();
+            cfg.controller.capture_navigation_contexts = vec!["terminal".into()];
+            cfg.controller.nav.tmux_sockets.push("tmux".into());
+            cfg
+        }
+        fn receipt(client: &PrivateClient, address: &str) -> CaptureReceipt {
+            let cfg = capture_config();
+            CaptureReceipt { address: address.into(), class: "Alacritty".into(), pid: client.process.id(),
+                tmux: captured_tmux(&cfg, client.process.id()).unwrap(), error: None }
+        }
+        #[test]
+        fn capture_receipt_uses_selected_window_b_instead_of_stale_window_a() {
+            const CHILD: &str = "MIOS_PRIVATE_CAPTURE_IPC_TEST";
+            if std::env::var_os(CHILD).is_none() {
+                let dir = tempfile::Builder::new().prefix("mios-capture-receipt-").tempdir().unwrap();
+                let qualified = concat!(module_path!(), "::capture_receipt_uses_selected_window_b_instead_of_stale_window_a");
+                let test_name = qualified.split_once("::").unwrap().1;
+                let output = Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", test_name, "--nocapture"])
+                    .env(CHILD, "1").env("XDG_RUNTIME_DIR", dir.path()).env("HYPRLAND_INSTANCE_SIGNATURE", "mios-capture")
+                    .output().unwrap();
+                assert!(output.status.success(), "private capture subprocess: {}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"), "capture subprocess must execute exactly its requested test");
+                return;
+            }
+            let server = PrivateServer::new();
+            let a = server.receiver("alpha", "a", None);
+            let b = server.receiver("beta", "b", None);
+            let a_client = PrivateClient::attach(&server, "alpha");
+            let b_client = PrivateClient::attach(&server, "beta");
+            let cached_a = receipt(&a_client, "0xaaa");
+            let cfg = capture_config();
+            let socket = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap()).join("hypr/mios-capture/.socket.sock");
+            std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+            let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+            let actual_pid = b_client.process.id();
+            let compositor = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 16384];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                write!(stream, "MIOS_INPUT_WINDOW_OK:0xbbb Alacritty\nMIOS_INPUT_WINDOW_PID:{actual_pid}").unwrap();
+            });
+            let selected_b = capture_transaction("on", &cfg, None).unwrap();
+            compositor.join().unwrap();
+            assert_eq!(selected_b.address, "0xbbb");
+            assert_eq!(selected_b.pid, b_client.process.id());
+            assert_eq!(selected_b.tmux.as_ref().unwrap().pane, b);
+            assert_eq!(cached_a.tmux.as_ref().unwrap().pane, a);
+            let mut binding = capture_binding(&selected_b, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            assert!(worker.submit("key:B".into()));
+            drained(worker);
+            PrivateServer::wait(|| server.bytes("b") == b"b");
+            assert!(server.bytes("a").is_empty(), "the stale focused window must receive no captured input");
+        }
+        #[test]
+        fn captured_client_verbs_require_the_original_client_and_its_selected_pane() {
+            let server = PrivateServer::new();
+            let left = server.receiver("alpha", "left", None);
+            let right = server.receiver("alpha", "right", Some(&left));
+            server.tmux(&["select-pane", "-t", &left]);
+            let client = PrivateClient::attach(&server, "alpha");
+            let mut cfg = capture_config();
+            cfg.tmux_prefix_keys.extend(["k".into(), "m".into()]);
+            cfg.tmux_menu_key = Some("m".into());
+            server.tmux(&["set-option", "prefix", &cfg.tmux_prefix]);
+            let key_mark = server.dir.path().join("key-mark");
+            let menu_mark = server.dir.path().join("menu-mark");
+            for (key, mark) in [("k", &key_mark), ("m", &menu_mark)] {
+                let script = format!("touch '{}'", mark.to_str().unwrap());
+                server.tmux(&["bind-key", "-T", "prefix", key, "run-shell", &script]);
+            }
+            let captured = receipt(&client, "0xaaa");
+            let mut binding = capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            assert!(worker.submit("tmux:key k".into()));
+            assert!(worker.submit("tmux:menu".into()));
+            drained(worker);
+            PrivateServer::wait(|| key_mark.exists() && menu_mark.exists());
+            std::fs::remove_file(&key_mark).unwrap();
+            std::fs::remove_file(&menu_mark).unwrap();
+            server.tmux(&["select-pane", "-t", &right]);
+            let mut binding = capture_binding(&captured, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            assert!(worker.submit("tmux:key k".into()));
+            assert!(worker.submit("tmux:menu".into()));
+            assert!(worker.submit("key:A".into()));
+            drained(worker);
+            PrivateServer::wait(|| server.bytes("left") == b"a");
+            assert!(server.bytes("right").is_empty());
+            assert!(!key_mark.exists() && !menu_mark.exists(), "client UI commands must reject a changed selected pane");
+            let mut replaced = captured.clone();
+            replaced.tmux.as_mut().unwrap().start += 1;
+            let mut binding = capture_binding(&replaced, Path::new("/dev/input/event0"), &cfg).unwrap();
+            let worker = match binding.worker.take().unwrap() { CaptureDispatcher::Tmux(worker) => worker, _ => panic!("expected a pinned tmux dispatcher") };
+            assert!(worker.submit("key:X".into()));
+            drained(worker);
+            assert_eq!(server.bytes("left"), b"a", "a replaced client must receive no input");
+        }
+        fn config() -> GlobalConfig { crate::config::tests::fixture_nav().0 }
+        fn drained(mut worker: SessionWorker) {
+            worker.jobs = None;
+            worker.worker.take().unwrap().join().unwrap();
+        }
+        #[test]
+        fn actual_workers_isolate_sessions_and_follow_their_own_pane_cursor() {
+            let server = PrivateServer::new();
+            let left = server.receiver("alpha", "left", None);
+            let right = server.receiver("alpha", "right", Some(&left));
+            let beta = server.receiver("beta", "beta", None);
+            let a = SessionWorker::spawn(server.route("alpha", &left), config()).unwrap();
+            let b = SessionWorker::spawn(server.route("beta", &beta), config()).unwrap();
+            assert!(a.submit("key:A".into()));
+            assert!(a.submit("tmux:focus right".into()));
+            assert!(a.submit("key:C".into()));
+            assert!(b.submit("key:B".into()));
+            drained(a); drained(b);
+            PrivateServer::wait(|| server.bytes("left") == b"a" && server.bytes("right") == b"c" && server.bytes("beta") == b"b");
+            assert_ne!(left, right);
+        }
+        #[test]
+        fn wrong_session_and_replaced_server_never_receive_dispatch() {
+            let server = PrivateServer::new();
+            let pane = server.receiver("alpha", "first", None);
+            let mut wrong = server.route("alpha", &pane);
+            wrong.session = "unrelated".into();
+            let worker = SessionWorker::spawn(wrong, config()).unwrap();
+            assert!(worker.submit("key:X".into()));
+            drained(worker);
+            assert!(server.bytes("first").is_empty());
+            let worker = SessionWorker::spawn(server.route("alpha", &pane), config()).unwrap();
+            assert!(worker.submit("key:A".into()));
+            PrivateServer::wait(|| server.bytes("first") == b"a");
+            let old_pid = server.tmux(&["display-message", "-p", "#{pid}"]);
+            server.tmux(&["kill-server"]);
+            PrivateServer::wait(|| std::fs::read_to_string(format!("/proc/{old_pid}/stat")).ok()
+                .is_none_or(|stat| stat.rsplit_once(')').is_some_and(|(_, tail)| tail.split_whitespace().next() == Some("Z"))));
+            // tmux may leave its dead socket behind; only this fixture ever used this path.
+            if server.socket.exists() { std::fs::remove_file(&server.socket).unwrap(); }
+            let replacement = server.receiver("alpha", "replacement", None);
+            assert_eq!(replacement, pane, "server restart reuses the configured pane ID");
+            assert!(worker.submit("key:X".into()));
+            drained(worker);
+            assert!(server.bytes("replacement").is_empty(), "a new server must require explicit rebinding");
+        }
+        #[test]
+        fn expired_queue_entries_are_dropped_before_valid_input() {
+            let server = PrivateServer::new();
+            let pane = server.receiver("alpha", "output", None);
+            let cfg = config();
+            let age = Duration::from_millis(cfg.controller.context_stale_ms + 1);
+            let worker = SessionWorker::spawn(server.route("alpha", &pane), cfg).unwrap();
+            worker.jobs.as_ref().unwrap().send(SessionJob { queued: Instant::now() - age, action: "key:X".into() }).unwrap();
+            assert!(worker.submit("key:A".into()));
+            drained(worker);
+            PrivateServer::wait(|| server.bytes("output") == b"a");
+        }
+        #[test]
+        fn revocation_cancels_a_stalled_inspection_and_discards_queued_input() {
+            let mut server = PrivateServer::new();
+            let pane = server.receiver("alpha", "output", None);
+            server.stop();
+            let mut worker = SessionWorker::spawn(server.route("alpha", &pane), config()).unwrap();
+            assert!(worker.submit("key:X".into()));
+            assert!(worker.submit("key:Y".into()));
+            PrivateServer::wait(|| server.inspection_started());
+            let thread = worker.worker.take().unwrap();
+            let now = Instant::now();
+            drop(worker);
+            thread.join().unwrap();
+            assert!(now.elapsed() < Duration::from_millis(500), "revocation must not wait for target recovery");
+            server.resume();
+            assert!(server.bytes("output").is_empty());
+            let fresh = SessionWorker::spawn(server.route("alpha", &pane), config()).unwrap();
+            assert!(fresh.submit("key:A".into()));
+            drained(fresh);
+            PrivateServer::wait(|| server.bytes("output") == b"a");
+        }
     }
 }
 

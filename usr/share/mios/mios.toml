@@ -4568,6 +4568,7 @@ native_actions = { "mios:vm-command-modifier" = "hyprland" }
 # game, VM, remote, nested, PiP, Theatre). These classes only scope keyboard bindings (contexts/passthrough).
 # console (I3) is not a class either: no compositor, or this user's active seat session is a tty.
 [keybindings.global.contexts]
+shell = []                         # focused shell layer, never inferred from an application class
 desktop-2d = ["firefox", "zen", "app\\.zen_browser\\.zen", "org\\.gnome\\.Nautilus", "quickshell"]
 terminal = ["mios-terminal", "mios-nested-terminal", "Alacritty", "kitty", "foot"]   # mios-nested-terminal: a nested session's own terminal ([desktop.nested].terminal_argv)
 vm-passthrough = ["looking-glass-client", "xfreerdp", "wlfreerdp", "sdl-freerdp", "winapps", "virt-manager", "remote-viewer", "qemu-system-x86_64"]
@@ -4761,15 +4762,23 @@ x11_rdp_escape_key = "Control_R"
 # Tier 4: the controller. One physical bridge (mios-inputd) owns every pad. Captured: the app gets everything through
 # the virtual pad except a held toggle_chord (release, capture_hold_ms) and mode_override_chord (half-capture: the
 # sticks and triggers drive the host mouse; every button still goes to the app; Start or the chord again returns).
-# Capture is per window, never per class: North tap = capture (in the room the aimed window, staying in 3D), North
+# Capture is per window, never per class: North press = capture (in the room the aimed window, staying in 3D), North
 # hold = fullscreen + capture, held toggle_chord = release to the desktop. Ownership is per session (every pad).
 # Uncaptured: unmodified buttons follow the nav profile of the context (I2) and the room map ([desktop.hyprland.hypr3d.
 # controller], [keybindings.global.controller.room]). With Guide held, system_layer (no leak to the app).
 [keybindings.global.controller]
 enabled = true
+# Each route owns only its listed controller nodes and sends navigation to an explicit tmux pane.
+# Use stable /dev/input/by-id/*-event-joystick paths for reconnects. Empty = follow the local seat.
+# Example element: { name = "player-two", controllers = ["/dev/input/by-id/pad-event-joystick"],
+#                    socket = "/tmp/tmux-1000/default", session = "work", pane = "%4", ssh_host = "workstation" }
+# Omit ssh_host for a local target. SSH uses the operator's existing authenticated SSH configuration.
+# No broadcast, implicit remote target, desktop key fallback or remote raw-gamepad transport.
+sessions = []
 exclusive_grab = true                # one physical evdev owner; false (or enabled = false) = serve exits 0
 captured_system_layer = false         # captured apps own ordinary controller chords, including Guide combinations
-capture_fullscreen = true              # North-button fullscreen selects ANY application, not only known classes
+capture_navigation_contexts = ["terminal"] # captured terminals keep navigation through their selected pane
+capture_fullscreen = false             # fullscreen preserves navigation; North explicitly captures any application
 capture_tag = "mios-input-captured"    # native per-window capture for windowed applications
 release_tag = "mios-input-released"            # set by a held L3+R3 release; cancels fullscreen==2, capture_tag and
                                                # input_owner capture for that window (any kind) until North captures again
@@ -4784,6 +4793,10 @@ context_stale_ms = 1000                # transport failure never invents termina
                                        # reverts after this long (a failed ownership transaction reverts at once)
 capture_hold_ms = 500                 # THE hold threshold: North tap/hold, L3+R3 release, and every nav [tap, hold] pair
 guide_button = "BTN_MODE"
+guide_double_press_ms = 300          # a clean double Guide opens the local dock; single taps resolve after this window
+guide_double_press_action = "quickshell:drawer-toggle"
+cursor_shape = "crosshair"          # controller-driven 2D pointer; the native compositor hook restores physical-mouse cursors
+virtual_pointer = "mios-vctl-pointer"
 mode_override_chord = ["BTN_MODE", "BTN_SELECT"]
 cursor_mode_button = "BTN_START"     # unmodified START toggles cursor mode; never an exit/session action
 cursor_mode_contexts = ["desktop-2d", "desktop-3d", "terminal", "game", "vm-passthrough"]   # every uncaptured window alike
@@ -4853,6 +4866,7 @@ tmux_sockets = ["mios-human", "mios-nested"]
 # "vpad" forwards the pad to the virtual gamepad instead (the behaviour before nav; operator decision O-1).
 # Every uncaptured window navigates alike: a game or VM class decides nothing about the controller (North captures).
 [keybindings.global.controller.nav.contexts]
+shell = "shell"                    # keyboard navigation while the dock/search layer owns input
 desktop-2d = "desktop"
 terminal = "terminal"               # terminal_tmux when a tmux client runs under the focused terminal, else terminal_plain
 game = "desktop"
@@ -4871,6 +4885,34 @@ LS_UP = [500, 250]                  # discrete actions only (VT paging and arrow
 LS_DOWN = [500, 250]
 LS_LEFT = [500, 250]
 LS_RIGHT = [500, 250]
+
+[keybindings.global.controller.nav.shell]
+BTN_SOUTH = "key:ENTER"
+BTN_EAST = "key:ESC"
+BTN_WEST = ["key:TAB", "key:SHIFT+TAB"]
+BTN_NORTH = "key:COMPOSE"
+BTN_START = "key:ENTER"
+BTN_SELECT = "key:COMPOSE"
+BTN_MODE = "key:ESC"
+BTN_DPAD_UP = "key:UP"
+BTN_DPAD_DOWN = "key:DOWN"
+BTN_DPAD_LEFT = "key:LEFT"
+BTN_DPAD_RIGHT = "key:RIGHT"
+BTN_TL = "key:PAGEUP"
+BTN_TR = "key:PAGEDOWN"
+BTN_TL2 = "key:SHIFT+TAB"
+BTN_TR2 = "key:TAB"
+BTN_THUMBL = "none"
+BTN_THUMBR = "none"
+TOGGLE_CHORD = "key:ESC"
+LS_UP = "key:UP"
+LS_DOWN = "key:DOWN"
+LS_LEFT = "key:LEFT"
+LS_RIGHT = "key:RIGHT"
+RS_UP = "key:PAGEUP"
+RS_DOWN = "key:PAGEDOWN"
+RS_LEFT = "key:SHIFT+TAB"
+RS_RIGHT = "key:TAB"
 
 [keybindings.global.controller.nav.desktop]
 BTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]
@@ -19133,7 +19175,7 @@ bevel_alpha = 1.0
 
 [user_units."mios-desktop.target".Unit]
 Description = "MiOS graphical user session"
-Wants = "mios-inputd.service mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-framerate.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
+Wants = "mios-launcher.service mios-inputd.service mios-shell.service mios-wallpaper.service mios-appmenu.service mios-placement.service mios-framerate.service mios-rdp-vnc.service mios-displays-setup.service xdg-desktop-portal-hyprland.service xdg-desktop-portal.service"
 Requires = "graphical-session.target"
 After = "graphical-session.target"
 BindsTo = "graphical-session.target"
@@ -19463,6 +19505,8 @@ match = [
 # the topbar is the other half (inbound, external, notifications, systems). usr/share/doc/mios/guides/hud.md.
 # Read live by usr/share/mios/quickshell/DockConfig.qml (mios-toml-get --section desktop.dock) and tools/native/mios-gen/src/dock.rs.
 [desktop.dock]
+input_state_file = "mios-shell-input.json"
+input_state_interval_ms = 250
 expand_height_fraction = 0.62     # the expanded dock grows UPWARD from its bar to this fraction of the output height...
 expand_min_height_px = 260        # ...never below this...
 expand_max_height_px = 760        # ...nor above this, and never past the top bar: it never takes the whole display
@@ -19471,6 +19515,12 @@ expand_ms = 220                   # expand / collapse animation
 label_lines = 2                   # app names wrap to this many lines...
 label_min_font_px = 9             # ...and shrink down to this size before anything is cut; the tooltip shows the full name
 tooltip_delay_ms = 450            # hover or controller/keyboard focus this long shows the full app name
+
+[desktop.dock.capture.border_glow]
+enabled = true
+color = "#F35C15"                  # palette cursor orange; only the captured local output
+width_px = 4
+period_ms = 2400
 
 [desktop.dock.previews]
 enabled = true                    # previews of the session's windows (open and minimized) in the expanded dock and the hover popup
