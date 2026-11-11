@@ -7922,3 +7922,176 @@ mod live_face_tests {
         assert!(fitted > 0, "the 400% close-up must exercise the fit");
     }
 }
+
+// BASELINE BENCH HARNESS (never committed): render_cost_report only.
+#[cfg(test)]
+mod render_cost_tests {
+    //! Render cost and byte-identity.
+    //!
+    //! `render_cost_report` (ignored: run it explicitly, in release, in
+    //! MiOS-DEV) times fixed frames of the live fox in each camera role, size
+    //! and renderer, and prints one JSON line per frame with its median
+    //! ns/frame and the frame's digest. The golden tests pin the exact buffers
+    //! a fixed matrix of frames renders (every renderer and colour depth, the
+    //! three camera roles, zooms, orbits, sizes, species, stages, styles,
+    //! lighting variants and live face blends), so a change that is meant to
+    //! be invisible, such as an optimisation, is proved byte-identical. A
+    //! change meant to be seen regenerates them with `print_render_goldens`.
+    use super::*;
+    use crate::{
+        game::Stage,
+        sprite::{Appearance, Expression, SpriteStyle},
+    };
+
+    /// Root's live fox (seed 513).
+    const FOX: Appearance = Appearance {
+        shape: 1,
+        body: 8,
+        accent: 3,
+    };
+    const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+
+    fn fnv(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+
+    /// FNV-1a over a frame: its area and every cell (symbol, colours,
+    /// modifiers, diff option).
+    fn digest(hash: &mut u64, buf: &Buffer) {
+        fnv(hash, format!("{:?}", buf.area).as_bytes());
+        for cell in &buf.content {
+            fnv(hash, format!("{cell:?}").as_bytes());
+        }
+    }
+
+    fn camera(view: CameraView, zoom_percent: u16, orbit_degrees: u16) -> Camera {
+        Camera {
+            orbit_degrees,
+            view,
+            from_view: view,
+            zoom_percent,
+            transition_percent: 100,
+            ..Camera::default()
+        }
+    }
+
+    /// One room frame with the world enabled or not, and an optional live face
+    /// memory.
+    fn room(
+        sprite: &Sprite,
+        (config, colors, world): (&Config, &Colors, bool),
+        renderer: Renderer,
+        camera: Camera,
+        (style, expression, pose, position): (SpriteStyle, Expression, usize, (u16, u16)),
+        size: (u16, u16),
+    ) -> Buffer {
+        let area = Rect::new(0, 0, size.0, size.1);
+        let mut buf = Buffer::empty(area);
+        RoomWidget {
+            world: world.then_some(&config.world),
+            sprite,
+            detail: style,
+            renderer,
+            scale: 0,
+            colors,
+            expression,
+            frame: pose,
+            position,
+            camera,
+            habitat: None,
+        }
+        .render(area, &mut buf);
+        buf
+    }
+
+    /// The bench's fixed sprite: the Baby fox, idle, 16-bit, at 45 degrees.
+    fn bench_fox() -> Sprite {
+        Sprite::voxel_with_camera(
+            Stage::Baby,
+            Expression::Idle,
+            SpriteStyle::SixteenBit,
+            0,
+            [45, 0],
+            false,
+            FOX,
+        )
+    }
+
+    /// Render-cost matrix: the three camera roles at 130x29 and 59x49 in
+    /// ASCII and half-block (the required table), then the large close-up and
+    /// the packed renderers (informational).
+    fn bench_cases() -> Vec<(CameraView, u16, (u16, u16), Renderer)> {
+        let mut cases = Vec::new();
+        for size in [(130, 29), (59, 49)] {
+            for renderer in [Renderer::Ascii, Renderer::HalfBlock] {
+                for view in CameraView::ALL {
+                    cases.push((view, 100, size, renderer));
+                }
+            }
+        }
+        for renderer in [
+            Renderer::Ascii,
+            Renderer::HalfBlock,
+            Renderer::Quadrant,
+            Renderer::Braille,
+        ] {
+            cases.push((CameraView::Face, 400, (130, 29), renderer));
+            cases.push((CameraView::Pet, 200, (130, 29), renderer));
+        }
+        for renderer in [Renderer::Quadrant, Renderer::Braille] {
+            for view in CameraView::ALL {
+                cases.push((view, 100, (130, 29), renderer));
+            }
+        }
+        cases
+    }
+
+    #[test]
+    #[ignore = "render-cost bench: run explicitly in release"]
+    fn render_cost_report() {
+        let iterations: usize = 200;
+        let config = Config::sample().unwrap();
+        let colors = Colors::from_config(&config, Depth::Rgb).unwrap();
+        let sprite = bench_fox();
+        for (view, zoom, size, renderer) in bench_cases() {
+            let frame = || {
+                room(
+                    &sprite,
+                    (&config, &colors, true),
+                    renderer,
+                    camera(view, zoom, 45),
+                    (SpriteStyle::SixteenBit, Expression::Idle, 0, (500, 700)),
+                    size,
+                )
+            };
+            let mut hash = FNV_OFFSET;
+            digest(&mut hash, &frame());
+            for _ in 0..20 {
+                std::hint::black_box(frame());
+            }
+            let mut times: Vec<u128> = (0..iterations)
+                .map(|_| {
+                    let start = std::time::Instant::now();
+                    let buf = std::hint::black_box(frame());
+                    let elapsed = start.elapsed().as_nanos();
+                    drop(buf);
+                    elapsed
+                })
+                .collect();
+            times.sort_unstable();
+            println!(
+                "{{\"bench\":\"frame\",\"view\":\"{view:?}\",\"zoom\":{zoom},\"size\":\"{}x{}\",\"renderer\":\"{renderer:?}\",\"iterations\":{iterations},\"median_ns\":{},\"p10_ns\":{},\"p90_ns\":{},\"min_ns\":{},\"digest\":\"{hash:016x}\"}}",
+                size.0,
+                size.1,
+                times[iterations / 2],
+                times[iterations / 10],
+                times[iterations * 9 / 10],
+                times[0],
+            );
+        }
+    }
+
+}
