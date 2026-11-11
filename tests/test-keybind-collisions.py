@@ -129,10 +129,25 @@ class Gate(unittest.TestCase):
         self.bad('[[keybindings.global.bindings]]\nid="ghost"\ntier=1\nchord="SUPER+F7"\naction="exec:x"\nrealized_by="hyprland"\npassthrough=["vm-passthrough"]\n', 'realized_by hyprland but no compositor binding')
 
     def test_removed_real_lua_line_fails_even_with_ssot_declaration(self):
-        lines = [line for line in LUA.read_text().splitlines() if not ('hl.bind(' in line and '"space"' in line.lower())]
+        # Remove the actual normalized drawer chord, including a single literal
+        # (SUPER+Space) or the earlier literal-concatenation representation.
+        drawer=next(b['chord'] for b in tomllib.loads(SSOT.read_text())['keybindings']['global']['bindings'] if b['id']=='app-drawer')
+        compact=lambda text: text.lower().replace(' ', '').replace('".."','')
+        lines=[line for line in LUA.read_text().splitlines() if not ('hl.bind(' in line and compact(drawer) in compact(line))]
+        self.assertLess(len(lines),len(LUA.read_text().splitlines()),'negative control must remove a real drawer binding')
         result = run_gate(self.binary, self.tmp_root(lua='\n'.join(lines)))
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('app-drawer: realized_by hyprland but no compositor binding', result.stdout + result.stderr)
+
+    def test_unknown_native_action_realizer_fails(self):
+        root=self.tmp_root()
+        path=Path(root)/'usr/share/mios/mios.toml'
+        text,n=re.subn(r'("mios:vm-command-modifier"\s*=\s*)"hyprland"',r'\1"shell"',path.read_text(),count=1)
+        self.assertEqual(n,1,'native-realizer negative control must mutate a real declaration')
+        path.write_text(text)
+        result=run_gate(self.binary,root)
+        self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+        self.assertIn('native action realizer',result.stdout+result.stderr)
 
     def test_duplicate_literal_lua_binding_fails(self):
         text = LUA.read_text() + '\nhl.bind("SUPER + F11", hl.dsp.window.fullscreen({mode="fullscreen",action="toggle"}))\n'

@@ -90,7 +90,7 @@ def suite(script, tmp, tag, gen=None):
     assert t3 != text
     km3 = keymap(script, t3, tmp, f'{tag}-chord', gen)
     out.append(('toggle_chord -> [BTN_TL, BTN_TR]: the release label follows it (no hard-coded L3 + R3)', has(km3, 'Pad LB + RB', 'release') and not any('L3 + R3' in k['keys'] for k in km3), [k for k in km3 if 'Pad' in k['keys']][:2]))
-    nav = text + '\n[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\ndesktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]\n'
+    nav = text if '[keybindings.global.controller.nav]' in text else text + '\n[keybindings.global.controller.nav]\nenabled = true\n[keybindings.global.controller.nav.contexts]\ndesktop-2d = "desktop"\n[keybindings.global.controller.nav.desktop]\nBTN_SOUTH = ["key:ENTER", "key:SHIFT+ENTER"]\n'
     km4 = keymap(script, nav, tmp, f'{tag}-nav', gen)
     out.append(('a declared nav profile appears in the overlay (tap and hold)', has(km4, 'Pad South', 'ENTER.*hold'), ''))
     return out
