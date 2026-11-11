@@ -258,12 +258,10 @@ mod tests {
                         continue;
                     }
                     damaged[i] = replacement;
-                    assert!(
-                        String::from_utf8(damaged.clone())
-                            .unwrap()
-                            .parse::<MonCode>()
-                            .is_err()
-                    );
+                    assert!(String::from_utf8(damaged.clone())
+                        .unwrap()
+                        .parse::<MonCode>()
+                        .is_err());
                 }
             }
         }
@@ -284,12 +282,10 @@ mod tests {
         assert_eq!("123".parse::<MonCode>().unwrap().seed(), 123);
         let mut extra_hyphen = MonCode::new(1).unwrap().to_string().into_bytes();
         extra_hyphen[3] = b'-';
-        assert!(
-            String::from_utf8(extra_hyphen)
-                .unwrap()
-                .parse::<MonCode>()
-                .is_err()
-        );
+        assert!(String::from_utf8(extra_hyphen)
+            .unwrap()
+            .parse::<MonCode>()
+            .is_err());
     }
     #[test]
     fn birth_identity_is_pure_diverse_and_independent_of_game_clock() {
@@ -302,12 +298,10 @@ mod tests {
             assert_eq!(game, before);
             assert_eq!(profile.code.len(), 17);
             assert_ne!(profile.likes[0], profile.likes[1]);
-            assert!(
-                profile
-                    .hatch_stats
-                    .iter()
-                    .all(|s| s.value > 0 && s.value <= 100 && s.aptitude <= 4)
-            );
+            assert!(profile
+                .hatch_stats
+                .iter()
+                .all(|s| s.value > 0 && s.value <= 100 && s.aptitude <= 4));
             combinations.insert((game.character, profile.archetype.clone()));
             for _ in 0..config.game.hatch_ticks {
                 game.tick(&config.game);

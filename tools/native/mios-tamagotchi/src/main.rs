@@ -8,7 +8,7 @@ use mios_tamagotchi::{
     dialogs::{self, Choice, DialogMode},
     game::{Care, Game},
     genetics::{MonCode, Profile},
-    render::{CameraView, Colors, snapshot},
+    render::{snapshot, CameraView, Colors},
     save::{self, Store},
     ui::{self, Ui},
 };
