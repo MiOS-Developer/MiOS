@@ -215,12 +215,24 @@ impl ControllerMonitor {
         let now = Instant::now();
         if now >= self.next_poll {
             let _ = self.request.try_send(());
-            self.next_poll = now + self.interval;
+            self.next_poll = now + self.cadence();
         }
         self.cached
             .as_ref()
             .filter(|s| now.saturating_duration_since(s.started) < self.stale)
             .and_then(|s| s.prompts.clone())
+    }
+
+    /// Probe cadence. Every probe spawns native queries, so an idle pet (its
+    /// pane unfocused or no pad assigned) re-checks only once per staleness
+    /// window; an active pad keeps the fast refresh. Both come from SSOT.
+    fn cadence(&self) -> Duration {
+        let idle = self.cached.as_ref().is_none_or(|s| s.prompts.is_none());
+        if idle {
+            self.stale.max(self.interval)
+        } else {
+            self.interval
+        }
     }
 
     /// Diagnostic only: never grants ownership or enables controller prompts.
@@ -1194,6 +1206,56 @@ mod controller_tests {
             .unwrap();
         assert!(monitor.poll().is_none());
         assert!(monitor.status().contains("no controller assigned"));
+    }
+
+    #[test]
+    fn idle_pets_probe_at_the_staleness_cadence_and_active_pads_stay_fast() {
+        let (request, requests) = mpsc::sync_channel(1);
+        let (results, result) = mpsc::sync_channel(1);
+        let mut monitor = ControllerMonitor {
+            request,
+            result,
+            stop: Arc::new(AtomicBool::new(false)),
+            next_poll: Instant::now(),
+            interval: Duration::from_millis(750),
+            stale: Duration::from_secs(2),
+            cached: None,
+            enabled: true,
+        };
+        // Unknown and failed evidence: one probe per staleness window.
+        assert_eq!(monitor.cadence(), Duration::from_secs(2));
+        let before = Instant::now();
+        monitor.poll();
+        assert!(requests.try_recv().is_ok());
+        assert!(monitor.next_poll >= before + Duration::from_millis(1900));
+        monitor.poll();
+        assert!(
+            requests.try_recv().is_err(),
+            "no second probe inside the window"
+        );
+        results
+            .send(Sample {
+                started: Instant::now(),
+                prompts: None,
+                reason: "Inputd: this terminal pane is not verifiably focused.",
+            })
+            .unwrap();
+        monitor.poll();
+        assert_eq!(monitor.cadence(), Duration::from_secs(2));
+        // An active, focused pad keeps the configured fast refresh.
+        results
+            .send(Sample {
+                started: Instant::now(),
+                prompts: resolve_prompts(&map(), &context(), true, "Sony"),
+                reason: "Inputd: assigned pad focused here.",
+            })
+            .unwrap();
+        assert!(monitor.poll().is_some());
+        assert_eq!(monitor.cadence(), Duration::from_millis(750));
+        // A staleness window shorter than the poll interval never speeds idle probes up.
+        monitor.stale = Duration::from_millis(100);
+        monitor.cached = None;
+        assert_eq!(monitor.cadence(), Duration::from_millis(750));
     }
 
     #[test]
