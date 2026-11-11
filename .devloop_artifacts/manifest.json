@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-11-06T20:25:12.175346+00:00",
+  "last_updated": "2026-11-06T22:34:24.366533+00:00",
   "total_artifacts": 148,
   "artifacts": [
     {
@@ -47,8 +47,8 @@
     {
       "path": ".devloop/LEDGER.md",
       "artifact_type": "doc",
-      "sha256": "19bddbeedfb496a85565614ca6386b8103482ec1003de1d35b9b9749a68959a8",
-      "size_bytes": 730605,
+      "sha256": "9b82d488a80ed5f986b4cae2fa7749469745e596cb4a316b4d1dd779604b66e1",
+      "size_bytes": 735547,
       "created_at": "2026-10-22T18:30:16.079532",
       "metadata": {
         "verification": "/var/lib/mios-build/rdp-delivery/mios-camera-activation.json",
@@ -173,6 +173,27 @@
           "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
           "completed_task": 3759,
           "followup_task": 3764
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       }
     },
@@ -302,8 +323,8 @@
     {
       "path": "TASKS.md",
       "artifact_type": "doc",
-      "sha256": "3ad9cc2a510e890c2d35fb9450210123fb8c1bc2f28b0fe5a61465a274f49dfc",
-      "size_bytes": 554760,
+      "sha256": "1d1333cda649bbf2f3167e24503acf9f88677cd11d7c46367be0ff6a31e34f80",
+      "size_bytes": 554945,
       "created_at": "2026-10-22T18:30:16.346142",
       "metadata": {
         "mios_mon_verification": {
@@ -416,14 +437,35 @@
           "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
           "completed_task": 3759,
           "followup_task": 3764
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       }
     },
     {
       "path": "tasks.jsonl",
       "artifact_type": "config",
-      "sha256": "96daf3cc9f8139d9e079bd1845e33c3ddbc626bf38b19d649e025295f1f9ef18",
-      "size_bytes": 14665852,
+      "sha256": "b7e6247fcce459ca2d12422ea6807da0c3c9f91be055f98022a40fa97c80b769",
+      "size_bytes": 14668002,
       "created_at": "2026-10-22T18:30:16.381368",
       "metadata": {
         "mios_mon_verification": {
@@ -536,6 +578,27 @@
           "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
           "completed_task": 3759,
           "followup_task": 3764
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       }
     },
@@ -1988,10 +2051,31 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       },
-      "sha256": "f8d15113435205c6800be8b55b8de138ef90b4a34276c206d9c6aec1c3f046eb",
-      "size_bytes": 15903
+      "sha256": "0adf25258a3496fa3c222d0a59a3353414b3da51166f1c508a6c60c88ea0d503",
+      "size_bytes": 17358
     },
     {
       "path": "tools/native/mios-tamagotchi/src/input.rs",
@@ -2030,10 +2114,31 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       },
-      "sha256": "45129ff5e7a732f95f45ee44a593e84ea43096cd91cde192c3eacc2a647827cd",
-      "size_bytes": 68594
+      "sha256": "720d19ccebf136b6bc78451978a3aedfd0ded90c806fdaef56f9ca846f6199a6",
+      "size_bytes": 86140
     },
     {
       "path": "tools/native/mios-tamagotchi/src/lib.rs",
@@ -2431,10 +2536,31 @@
             3762,
             3763
           ]
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       },
-      "sha256": "bb9553b9b2dd0092afc10ff6fc9d384946af0fd8abb77c933c8e56817c4cddc3",
-      "size_bytes": 368550
+      "sha256": "65032626134858b077298963d9e49efc43265a0e0ec0f4cb5748b8234883dea4",
+      "size_bytes": 382143
     },
     {
       "path": "tools/native/mios-tamagotchi/tests/cli.rs",
@@ -2952,9 +3078,30 @@
           "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
           "completed_task": 3759,
           "followup_task": 3764
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       },
-      "sha256": "da3fce947864675d598c14c6de10ddfc37d76079cd09c9f0c240a2ffd800a8bd",
+      "sha256": "a3b973c7b7bdaf013572babcb9bc5936a664553e69a66378770bd7129ef452e5",
       "size_bytes": 163128
     },
     {
@@ -3038,10 +3185,31 @@
           "scope": "I1 source and combined builds; live G2 activation and focused controller acceptance pending task3764",
           "completed_task": 3759,
           "followup_task": 3764
+        },
+        "mios_mon_controller_ui_release": {
+          "source": "880dcc22fb42716adad4721d87aee951bc5d4044",
+          "worker_input_source": "02f8505cb08ea3c404e618988674323e6c3eea68",
+          "MiOS_DEV_game_checks": 369,
+          "game_sha256": "82e6578160335a23e12767741a02eb2bd47bd66338e97fce6c512b1a444bde97",
+          "negative_controls_caught": 4,
+          "receipt": "/home/mios/.local/state/mios/mios-mons-controller-ui-check/mios-controller-ui-receipt.json",
+          "scope": "HUD/controller UI source and selected automated checks; daemon/G2/physical controller/phone not certified; graphics/CI work remains",
+          "followups": [
+            3755,
+            3756,
+            3757,
+            3758,
+            3760,
+            3761,
+            3762,
+            3763,
+            3764,
+            3765
+          ]
         }
       },
-      "sha256": "4aef336e959a3b63c22679ed2192b4616d5acf4a1109b799fd6f1802886dd425",
-      "size_bytes": 3382665
+      "sha256": "5feff827d5a369e2461571176aecc995340d40bca42d9c1d88ac8b4e8a59fcd2",
+      "size_bytes": 3384397
     },
     {
       "path": "usr/share/mios/referenced_names.txt",
