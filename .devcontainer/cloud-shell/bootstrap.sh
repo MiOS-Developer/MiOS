@@ -332,7 +332,17 @@ lifecycle() {
     user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
     container_account "$(container_name)" "$user"
     log "$1 as $user in $wsf: $cmd"
-    if ! "$RT" exec -u "$user" -w "$wsf" "$(container_name)" bash -lc "$cmd"; then
+    # A Tailscale pre-auth key reaches the lifecycle (mios-tailscale-sync enrolls
+    # with it) by NAME only: `exec -e NAME` copies the value from this process's
+    # environment, so it is in no argv and not in the stored container config.
+    local key_env=() name
+    if [[ -z "${MIOS_TAILSCALE_AUTHKEY:-}" && -n "${TS_AUTHKEY_FILE:-}" && -r "${TS_AUTHKEY_FILE}" ]]; then
+        MIOS_TAILSCALE_AUTHKEY="$(<"$TS_AUTHKEY_FILE")"; export MIOS_TAILSCALE_AUTHKEY
+    fi
+    for name in MIOS_TAILSCALE_AUTHKEY TS_AUTHKEY; do
+        [[ -n "${!name:-}" ]] && key_env+=(-e "$name")
+    done
+    if ! "$RT" exec "${key_env[@]}" -u "$user" -w "$wsf" "$(container_name)" bash -lc "$cmd"; then
         echo "$1 failed; rerun: bash $SELF up" > "$STATE/lifecycle.failed"
         log "$1 failed (the container stays usable; rerun: bash $SELF up)"
         return 1

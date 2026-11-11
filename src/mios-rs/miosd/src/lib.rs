@@ -111,13 +111,15 @@ pub mod native_generator {
         use std::os::unix::fs::PermissionsExt;
 
         fn tool(path: &Path, marker: &str) {
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(path.parent().expect("generator fixture parent"))
+                .expect("create generator fixture directory");
             std::fs::write(
                 path,
                 format!("#!/bin/sh\nprintf '%s\\n' '{marker}'\nprintf '%s\\n' \"$@\"\n"),
             )
-            .unwrap();
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            .expect("write generator fixture");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+                .expect("make generator fixture executable");
         }
 
         #[test]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.
+# AI-hint: Enrolls a logged-out node from a pre-auth key file and synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
-# AI-functions: _load_config, _health_config, find_tailscale, get_status, select_exit_node, build_set_cmd, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh
+# AI-functions: _load_config, _health_config, _ts, find_tailscale, get_status, select_exit_node, _node_flags, build_set_cmd, _auth_key_source, build_up_cmd, enroll, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -14,8 +14,21 @@ Derives Tailscale connection settings from layered mios.toml SSOT:
   advertise_routes = ""
   exit_nodes = []               # ordered peer names/IPs; [] = leave exit node alone
   exit_node_allow_lan_access = true
+  hostname = ""                 # enrollment/node name; "" = the OS hostname
+  advertise_exit_node = false   # asserted when true, never cleared
+  shields_up = false            # asserted when true, never cleared
+  auth_key_file = ""            # pre-auth key file; else MIOS_TAILSCALE_AUTHKEY/TS_AUTHKEY
+  socks5_server = ""            # userspace-mode loopback listener (started by the caller)
   [tailscale.exit_node_health]  # probe, count, interval_s, max_extra_loss_pct,
                                 # max_extra_rtt_ms, cooldown_s, state
+
+A node that is not logged in is enrolled with `tailscale up --reset
+--auth-key=file:<path>` and the same parameters when a pre-auth key is
+available: [tailscale].auth_key_file, else the MIOS_TAILSCALE_AUTHKEY or
+TS_AUTHKEY environment, which is written to a private 0600 file for the call
+and removed after it. The key never reaches a command line or a log. Without a
+key the node is left logged out with the command to run. --socket=PATH
+addresses a tailscaled started on its own socket (the userspace devcontainer).
 
 If [tailscale].enabled is true, applies the mesh parameters with `tailscale
 set` (which only touches the flags it names, unlike `up --reset`). The exit
@@ -97,9 +110,20 @@ def _load_config() -> dict:
         "advertise_routes": str(ts.get("advertise_routes", "")),
         "exit_nodes": _as_list(ts.get("exit_nodes", [])),
         "exit_node_allow_lan_access": bool(ts.get("exit_node_allow_lan_access", True)),
+        "hostname": str(ts.get("hostname", "") or ""),
+        "advertise_exit_node": bool(ts.get("advertise_exit_node", False)),
+        "shields_up": bool(ts.get("shields_up", False)),
+        "auth_key_file": str(ts.get("auth_key_file", "") or ""),
         "health": _health_config(ts),
         "headscale_domain": str(metal_mesh.get("headscale_domain", "mesh.mios.local")),
     }
+
+
+_SOCKET = ""  # --socket=PATH: a tailscaled on its own socket
+
+
+def _ts(ts_bin: str, *args: str) -> list[str]:
+    return [ts_bin] + ([f"--socket={_SOCKET}"] if _SOCKET else []) + list(args)
 
 
 def find_tailscale() -> str:
@@ -112,7 +136,7 @@ def find_tailscale() -> str:
 def get_status() -> dict:
     ts_bin = find_tailscale()
     try:
-        res = subprocess.run([ts_bin, "status", "--json"],
+        res = subprocess.run(_ts(ts_bin, "status", "--json"),
                              capture_output=True, text=True, timeout=10)
         if res.returncode == 0 and res.stdout.strip():
             return json.loads(res.stdout)
@@ -154,12 +178,25 @@ def select_exit_node(status: dict, wanted: list[str],
     return "", ""
 
 
+def _node_flags(cfg: dict) -> list[str]:
+    """The SSOT parameters shared by enrollment (`up`) and sync (`set`).
+    advertise_exit_node and shields_up are asserted only when true."""
+    flags = [f"--accept-routes={str(cfg['accept_routes']).lower()}",
+             f"--accept-dns={str(cfg['accept_dns']).lower()}",
+             f"--advertise-routes={cfg['advertise_routes']}"]
+    if cfg.get("hostname"):
+        flags.append(f"--hostname={cfg['hostname']}")
+    if cfg.get("advertise_exit_node"):
+        flags.append("--advertise-exit-node=true")
+    if cfg.get("shields_up"):
+        flags.append("--shields-up=true")
+    return flags
+
+
 def build_set_cmd(ts_bin: str, cfg: dict, exit_ip: str) -> list[str]:
-    cmd = [ts_bin, "set",
-           f"--accept-routes={str(cfg['accept_routes']).lower()}",
-           f"--accept-dns={str(cfg['accept_dns']).lower()}",
-           f"--advertise-routes={cfg['advertise_routes']}"]
-    if cfg["exit_nodes"]:
+    cmd = _ts(ts_bin, "set", *_node_flags(cfg))
+    # A node that offers itself as an exit node cannot use one.
+    if cfg["exit_nodes"] and not cfg.get("advertise_exit_node"):
         cmd.append(f"--exit-node={exit_ip}")
         cmd.append(f"--exit-node-allow-lan-access={str(cfg['exit_node_allow_lan_access']).lower()}")
     return cmd
@@ -235,6 +272,54 @@ def _active_exit_ip(status: dict) -> str:
     return next((ip.split("/")[0] for ip in ips if ":" not in ip), "")
 
 
+def _auth_key_source(cfg: dict) -> tuple[str, bool]:
+    """(path of a file holding the pre-auth key, whether it is a temporary copy
+    of the environment key to remove after use), or ("", False)."""
+    path = cfg.get("auth_key_file", "")
+    if path:
+        if os.path.isfile(path) and os.access(path, os.R_OK):
+            return path, False
+        _log(f"[tailscale].auth_key_file {path} is not a readable file")
+    key = (os.environ.get("MIOS_TAILSCALE_AUTHKEY") or os.environ.get("TS_AUTHKEY") or "").strip()
+    if not key:
+        return "", False
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="mios-ts-authkey-")  # 0600
+    with os.fdopen(fd, "w") as f:
+        f.write(key)
+    return tmp, True
+
+
+def build_up_cmd(ts_bin: str, cfg: dict, key_path: str) -> list[str]:
+    cmd = _ts(ts_bin, "up", "--reset", f"--auth-key=file:{key_path}", *_node_flags(cfg))
+    if cfg.get("login_server"):
+        cmd.append(f"--login-server={cfg['login_server']}")
+    return cmd
+
+
+def enroll(ts_bin: str, cfg: dict, dry_run: bool = False) -> int:
+    """Enroll a logged-out node from a pre-auth key file; 0 when enrolled,
+    2 when no key is available, else the failing exit code."""
+    key_path, temporary = _auth_key_source(cfg)
+    if not key_path:
+        return 2
+    try:
+        cmd = build_up_cmd(ts_bin, cfg, key_path)
+        if dry_run:
+            print(" ".join(cmd))
+            return 0
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        if res.returncode != 0:
+            # tailscale never echoes the key; trim anyway so a log stays short.
+            _log(f"tailscale up failed ({res.returncode}): {res.stderr.strip()[:400]}")
+        else:
+            _log(f"enrolled as {cfg.get('hostname') or 'the OS hostname'}")
+        return res.returncode
+    finally:
+        if temporary:
+            os.unlink(key_path)
+
+
 def _apply(cmd: list[str]) -> int:
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if res.returncode != 0:
@@ -261,6 +346,9 @@ def sync_mesh(dry_run: bool = False) -> int:
     backend_state = status.get("BackendState", "NoState")
     _log(f"Current Tailscale BackendState: {backend_state}")
     if backend_state != "Running":
+        rc = enroll(ts_bin, cfg, dry_run)
+        if rc != 2:
+            return rc
         server = cfg["login_server"] or "Tailscale SaaS"
         _log(f"not logged in; run: tailscale up --login-server={server}" if cfg["login_server"]
              else f"not logged in to {server}; run: tailscale up")
@@ -303,6 +391,10 @@ def sync_mesh(dry_run: bool = False) -> int:
 
 
 def main() -> int:
+    global _SOCKET
+    for arg in sys.argv[1:]:
+        if arg.startswith("--socket="):
+            _SOCKET = arg.split("=", 1)[1]
     if "--status" in sys.argv:
         print(json.dumps(get_status(), indent=2))
         return 0
