@@ -645,6 +645,37 @@ def pb_referenced_ports(root: str, keys: set) -> set:
                 found.add(key)
     return found
 
+def pb_projected_unit_refs(data: dict, keys: set) -> set:
+    """Port keys a [units.*] / [user_units.*] declaration references.
+
+    Those tables are the SOURCE of usr/lib/systemd/{system,user}: mios-unit-gen
+    resolves a `${MIOS_PORTS_<KEY>:-n}` there into the number systemd needs, so
+    the shipped unit binds the port with no name left in it. The declaration is
+    where the binding is written, so it is a consumer like any program.
+    """
+    wanted = {k.upper(): k for k in keys}
+    pattern = re.compile(r"\bMIOS_(?:PORTS?)_([A-Z0-9_]+)\b")
+    found = set()
+
+    def walk(v):
+        if isinstance(v, str):
+            for m in pattern.finditer(v):
+                key = wanted.get(m.group(1))
+                if key:
+                    found.add(key)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+
+    for table in ("units", "user_units"):
+        for decl in (data.get(table) or {}).values():
+            if isinstance(decl, dict):  # [units] also carries name aliases (strings)
+                walk(decl)
+    return found
+
 def pb_classify(data: dict, referenced: set) -> list:
     """Return the violations; empty means every allocated port is accounted for."""
     viol = []
@@ -685,7 +716,7 @@ def pb_main() -> int:
         return 1
 
     keys = pb_port_keys(data)
-    referenced = pb_referenced_ports(root, keys)
+    referenced = pb_referenced_ports(root, keys) | pb_projected_unit_refs(data, keys)
     viol = pb_classify(data, referenced)
     if viol:
         for v in viol:

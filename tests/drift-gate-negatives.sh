@@ -2760,7 +2760,20 @@ test_unit_projection() {
             bash "${ROOT}/automation/98-drift-checks.sh" check_unit_projection \
             >/dev/null 2>&1
     }
-    _up_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _up_run _up_fail; die "$1"; }
+    _up_fail() { cp "$bak" "$toml"; rm -f "$bak"; unset -f _up_run _up_fail _up_plant_entry; die "$1"; }
+    # Add one entry to [unit_projection].drift, whether the register is drained
+    # (`drift = []`) or not; a plant that matched nothing would prove nothing.
+    _up_plant_entry() {
+        python3 - "$toml" "$1" <<'PYX'
+import io, re, sys
+p, entry = sys.argv[1], sys.argv[2]
+s = io.open(p, encoding="utf-8").read()
+start = s.index("[unit_projection]")
+s2, n = re.subn(r'^drift = \[\]?$', 'drift = [\n  "%s",' % entry + ('\n]' if re.search(r'^drift = \[\]$', s[start:], re.M) else ''), s[start:], count=1, flags=re.M)
+assert n == 1, "no drift register to plant into"
+io.open(p, "w", encoding="utf-8", newline="\n").write(s[:start] + s2)
+PYX
+    }
 
     # (1) Raising the ceiling to absorb new drift must FAIL. The ratchet only
     # comes down; a register that may grow measures nothing.
@@ -2771,7 +2784,7 @@ test_unit_projection() {
     # (2) The register is drained (max_drift = 0): planting an entry for a
     # unit that renders faithfully must FAIL -- an entry that does not drift is
     # padding, and padding is how a register starts hiding the next defect.
-    sed -i '0,/^drift = \[$/s//drift = [\n  "mios-podman-gc.timer",/' "$toml"
+    _up_plant_entry "mios-podman-gc.timer"
     sed -i 's/^max_drift = [0-9]*$/max_drift = 1/' "$toml"
     _up_run && _up_fail "check_unit_projection passed with a faithful unit padded into the register"
     cp "$bak" "$toml"
@@ -2816,7 +2829,7 @@ test_unit_projection() {
     rm -f "$planted" "$ubak"; cp "$bak" "$toml"
 
     # (3) An entry naming a unit [units.*] does not project must FAIL.
-    sed -i '0,/^drift = \[$/s//drift = [\n  "mios-not-a-real-unit.service",/' "$toml"
+    _up_plant_entry "mios-not-a-real-unit.service"
     _up_run && _up_fail "check_unit_projection passed on a register entry naming no projected unit"
     cp "$bak" "$toml"
 
@@ -2825,14 +2838,16 @@ test_unit_projection() {
 import io, re, sys
 p = sys.argv[1]
 s = io.open(p, encoding="utf-8").read()
-s = re.sub(r'\[unit_projection\]\n.*?\n\]\n', '', s, count=1, flags=re.S)
+# The whole table, up to the next header: the register, ceilings and lists.
+s, n = re.subn(r'^\[unit_projection\]\n.*?(?=^\[)', '', s, count=1, flags=re.S | re.M)
+assert n == 1, "no [unit_projection] table to delete"
 io.open(p, "w", encoding="utf-8", newline="\n").write(s)
 PYX
     _up_run && _up_fail "check_unit_projection passed with [unit_projection] absent"
 
     cp "$bak" "$toml"; rm -f "$bak"
-    _up_run || { unset -f _up_run _up_fail; die "check_unit_projection failed after restoration"; }
-    unset -f _up_run _up_fail
+    _up_run || { unset -f _up_run _up_fail _up_plant_entry; die "check_unit_projection failed after restoration"; }
+    unset -f _up_run _up_fail _up_plant_entry
 
     log "Test_unit_projection negative test passed"
 }

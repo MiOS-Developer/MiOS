@@ -17,6 +17,10 @@ RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict
 PrivateTmp=true
+# ProtectSystem=strict leaves /var read-only, but from_pretrained() writes HF_HOME
+# (hub download, .lock files, trust_remote_code modules): grant exactly it.
+# '-' because the cache exists only once a model was fetched (task_3432).
+ReadWritePaths=-/var/home/mios/.cache/huggingface
 # model load + first request can take ~40s on a cold GPU
 TimeoutStartSec=180
 

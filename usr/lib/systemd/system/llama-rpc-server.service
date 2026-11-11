@@ -11,7 +11,7 @@ Type=simple
 EnvironmentFile=-/etc/default/%N
 EnvironmentFile=-/etc/sysconfig/%N
 Environment=MIOS_PORTS_RPC_IGPU=8550
-ExecStart=/usr/bin/rpc-server --host 0.0.0.0 --port ${MIOS_PORTS_RPC_IGPU:-8550}
+ExecStart=/usr/bin/rpc-server --host 0.0.0.0 --port 8550
 Restart=on-failure
 RestartSec=5s
 

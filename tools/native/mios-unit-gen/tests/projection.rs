@@ -111,8 +111,21 @@ fn test_undeclared_unit_inventory_includes_only_top_level_units() {
         "usr/lib/systemd/system/nested/ignored.service",
         "not top level\n",
     );
+    // A drop-in changes what boots as much as its unit: it is inventoried as
+    // `<unit>.d/<name>.conf`; a non-.conf file in the .d directory is not.
+    write_fixture(
+        temp.path(),
+        "usr/lib/systemd/system/authored.service.d/10-authored.conf",
+        "[Service]\nNice=5\n",
+    );
+    write_fixture(
+        temp.path(),
+        "usr/lib/systemd/system/authored.service.d/README",
+        "not a drop-in\n",
+    );
     let projection = project(temp.path()).unwrap();
     let mut expected = names.map(str::to_owned).to_vec();
+    expected.push("authored.service.d/10-authored.conf".to_owned());
     expected.sort();
     assert_eq!(projection.undeclared, expected);
     assert_eq!(projection.faithful, ["declared.service"]);
@@ -850,10 +863,28 @@ fn test_hand_edited_projected_unit_is_drift_and_write_restores_it() {
 #[test]
 fn test_reimport_of_every_faithful_unit_round_trips() {
     let ssot = ssot();
-    let p = project(&root()).unwrap();
-    for name in &p.faithful {
-        let body = fs::read_to_string(root().join("usr/lib/systemd/system").join(name)).unwrap();
-        mios_unit_gen::import_unit(&ssot, "units", name, &body)
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+    for (user, table, dir) in [
+        (false, "units", "usr/lib/systemd/system"),
+        (true, "user_units", "usr/lib/systemd/user"),
+    ] {
+        let p = if user { mios_unit_gen::project_user(&root()) } else { project(&root()) }.unwrap();
+        for name in &p.faithful {
+            let body = fs::read_to_string(root().join(dir).join(name)).unwrap();
+            mios_unit_gen::import_unit(&ssot, table, name, &body)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+}
+
+/// The projection is complete: every shipped unit and drop-in, system and
+/// user, is declared and renders faithfully -- the register is drained.
+#[test]
+fn test_the_whole_unit_tree_is_projected() {
+    let ssot = ssot();
+    assert!(drift_register(&ssot).unwrap().is_empty(), "[unit_projection].drift is drained; keep it so");
+    assert_eq!(mios_unit_gen::projection_ceiling(&ssot, "max_drift").unwrap(), Some(0));
+    for user in [false, true] {
+        let p = if user { mios_unit_gen::project_user(&root()) } else { project(&root()) }.unwrap();
+        assert!(p.drifted.is_empty() && p.undeclared.is_empty() && p.missing.is_empty(), "{p:#?}");
     }
 }

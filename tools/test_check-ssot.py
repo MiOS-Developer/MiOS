@@ -562,13 +562,35 @@ class tpb_TestSkipSurfaces(unittest.TestCase):
                   "usr/lib/mios/agent-pipe/server.py"):
             self.assertFalse(p.startswith(tpb_mod.pb_SKIP_PREFIXES), p)
 
+class tpb_TestProjectedUnitRefs(unittest.TestCase):
+    """[units.*] / [user_units.*] are the projection's SOURCE (task_267): a
+    port the declaration references is bound by the unit it renders, even
+    though the shipped file carries the resolved number, not the name."""
+
+    def test_a_unit_declaration_referencing_a_port_binds_it(self):
+        d = tpb_data({"a": 1, "b": 2})
+        d["units"] = {"x.service": {"Service": {"ExecStart": "/bin/srv --port ${MIOS_PORTS_A:-1}"}}}
+        d["user_units"] = {"y.service": {"Service": {"Environment": ["P=${MIOS_PORT_B:-2}"]}}}
+        self.assertEqual(tpb_mod.pb_projected_unit_refs(d, {"a", "b"}), {"a", "b"})
+
+    def test_other_ssot_tables_still_prove_nothing(self):
+        # Negative control: the same reference anywhere else in the SSOT is
+        # description, and the [units] name aliases are strings, not units.
+        d = tpb_data({"a": 1})
+        d["urls"] = {"a": "http://localhost:${MIOS_PORTS_A}"}
+        d["units"] = {"alias": "MIOS_PORTS_A.service"}
+        self.assertEqual(tpb_mod.pb_projected_unit_refs(d, {"a"}), set())
+        self.assertTrue(tpb_mod.pb_classify(d, tpb_mod.pb_projected_unit_refs(d, {"a"})))
+
 class tpb_TestShippedTree(unittest.TestCase):
     def setUp(self):
         with open(os.path.join(tpb__ROOT, tpb_mod.pb_TOML), "rb") as fh:
             self.real = tomllib.load(fh)
 
     def test_the_real_ssot_accounts_for_every_port(self):
-        ref = tpb_mod.pb_referenced_ports(tpb__ROOT, tpb_mod.pb_port_keys(self.real))
+        keys = tpb_mod.pb_port_keys(self.real)
+        ref = (tpb_mod.pb_referenced_ports(tpb__ROOT, keys)
+               | tpb_mod.pb_projected_unit_refs(self.real, keys))
         self.assertEqual(tpb_mod.pb_classify(self.real, ref), [])
 
     def test_every_register_entry_is_a_real_port(self):

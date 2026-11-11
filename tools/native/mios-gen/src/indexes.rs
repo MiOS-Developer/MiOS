@@ -1185,8 +1185,14 @@ pub mod roadmap_index {
         ),
         &format!("| Drift checks | {} | Falsifiability audited per check, not assumed. |", drift_count),
         &format!(
-            "| Units reproducing from SSOT | {} faithful of {} | {} registered as drifting: the largest hole in part 1 of the thesis. |",
-            faithful_cnt, shipped_cnt, drift_units_cnt
+            "| Units reproducing from SSOT | {} faithful of {} | {} |",
+            faithful_cnt,
+            shipped_cnt,
+            if drift_units_cnt == 0 && faithful_cnt == shipped_cnt {
+                "Every shipped unit and drop-in, system and session, renders from [units.*] / [user_units.*]; `mios-unit-gen --check` fails a hand edit.".to_owned()
+            } else {
+                format!("{drift_units_cnt} registered as drifting, {} not projected at all: the largest hole in part 1 of the thesis.", shipped_cnt - faithful_cnt)
+            }
         ),
     ];
         Ok(format!("{}\n", table_lines.join("\n")))
