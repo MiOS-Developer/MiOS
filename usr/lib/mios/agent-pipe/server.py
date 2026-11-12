@@ -3906,6 +3906,8 @@ sys.modules["mios_portal"].configure(
     agent_registry=_AGENT_REGISTRY, sanitize_tool_text=_sanitize_tool_text,
     websockets=websockets)
 app.include_router(portal_router)
+from mios_pipe.portal_status import status_router  # noqa: E402
+app.include_router(status_router)
 
 from mios_http_caps import (  # noqa: E402
     _skill_to_mcp_resource, _recipe_to_mcp_resource, _verb_to_mcp_resource,
@@ -4326,6 +4328,7 @@ sys.modules["mios_swarm"].configure(
 from mios_pipe.auth import (
     usage_completeness_mw as _usage_completeness_mw,
     inbound_auth_mw as _inbound_auth_mw,
+    peercred_auth_mw as _peercred_auth_mw,
     configure as _configure_auth
 )
 
@@ -4375,48 +4378,10 @@ _configure_auth(
 app.middleware("http")(_usage_completeness_mw)
 app.middleware("http")(_inbound_auth_mw)
 
-_ALLOWED_LOCAL_UIDS = frozenset((0, 815, 1000))
-
-@app.middleware("http")
-async def _peercred_auth_mw(request: Request, call_next):
-    """Linux SO_PEERCRED authentication middleware on /run/mios-agent-pipe.socket.
-    Allows privileged local UIDs (0, 815, 1000) while strictly rejecting unauthorized
-    or unverified callers over the UNIX domain socket.
-    """
-    is_unix = request.scope.get("is_unix_socket", False)
-    peercred = request.scope.get("peercred")
-
-    # Support testing or mocked peercred environments
-    if not is_unix and request.headers.get("x-mock-unix-socket") == "1":
-        is_unix = True
-        mock_uid = request.headers.get("x-mock-peercred-uid")
-        mock_gid = request.headers.get("x-mock-peercred-gid", "1000")
-        mock_pid = request.headers.get("x-mock-peercred-pid", "1234")
-        peercred = (int(mock_pid), int(mock_uid), int(mock_gid)) if mock_uid is not None else None
-
-    if is_unix:
-        if peercred and len(peercred) >= 2 and peercred[1] in _ALLOWED_LOCAL_UIDS:
-            try:
-                request.state.is_unix_socket = True
-                request.state.peercred = peercred
-                request.state.mios_principal = f"peercred:uid={peercred[1]}"
-            except Exception:
-                pass
-            return await call_next(request)
-
-        caller_uid = peercred[1] if peercred and len(peercred) >= 2 else "unknown"
-        return JSONResponse(
-            status_code=401,
-            content={
-                "error": {
-                    "message": f"unauthorized caller: uid {caller_uid} not permitted on unix domain socket",
-                    "type": "peercred_auth_error",
-                    "code": 401,
-                }
-            },
-        )
-
-    return await call_next(request)
+# SO_PEERCRED on the unix socket (mios_pipe.auth.peercred_auth_mw). Registered after
+# inbound_auth_mw, so it runs first and a unix-socket principal skips the bearer check;
+# only the transport's own scope marks a unix-socket request, never a header.
+app.middleware("http")(_peercred_auth_mw)
 
 _PSI_THROTTLE_STATUS = PSIMonitor.throttle_status()
 

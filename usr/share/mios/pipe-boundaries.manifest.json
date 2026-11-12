@@ -407,6 +407,8 @@
         "AmbiguousRedactedArray",
         "TiersUnresolved",
         "has_redacted",
+        "operator_toggles_view",
+        "overlay_operator_toggles",
         "portal_post_toml",
         "quote_key",
         "redact_secrets",
@@ -716,6 +718,22 @@
         "start_span",
         "stats",
         "to_dict"
+      ]
+    },
+    "usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py": {
+      "configure_kwargs": [],
+      "public_symbols": [
+        "main",
+        "slot",
+        "write_spec"
+      ]
+    },
+    "usr/lib/mios/agent-pipe/mios_pipe/portal_status.py": {
+      "configure_kwargs": [],
+      "public_symbols": [
+        "build_status",
+        "run",
+        "status_js"
       ]
     },
     "usr/lib/mios/agent-pipe/mios_pipe/redact.py": {

@@ -917,13 +917,12 @@ gather_user_choices() {
         GH_TOKEN=""
     fi
 
-    # mios-forge admin (Forgejo). Defaults derive from the linux user so
-    # the locally-hosted .git = ./ pattern works out of the box. Empty
-    # password means the firstboot service will generate a 24-byte
-    # URL-safe random password and write it to /etc/mios/forge/admin-
-    # password (root-owned, mode 0600).
-    FORGE_ADMIN_USER="$(prompt_default 'Forge admin username (Forgejo)' "${LINUX_USER}")"
-    FORGE_ADMIN_EMAIL="$(prompt_default 'Forge admin email' "${LINUX_USER}@${HOSTNAME_VAL}.local")"
+    # mios-forge admin (Forgejo): no prompt. forge-firstboot.sh (mios.git) creates
+    # the admin from the SSOT identity ([identity].username / [identity].email) with a
+    # generated password, and `mios-credential apply forge` moves it to the operator
+    # credential: the password typed above, which write_operator_credential records as
+    # [identity].default_password in the operator's own tier (the file mios.html saves).
+    # No forge key is written to install.env.
 
     # AI model selection -> MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL in install.env (runtime).
     # The chosen pair is what mios-ai-firstboot.service confirms on first boot, so it
@@ -968,6 +967,56 @@ EOF
 # ============================================================================
 # Phase-3: apply profile to host
 # ============================================================================
+# Root code (mios-credential apply, mios-tailscale-sync) finds the operator ONLY through
+# the vendor/host [identity].username, so the host tier must name the account created
+# here: a drop-in above the host card, never a value the TOML would misparse.
+write_host_identity() {
+    local user="$1" dir="${PROFILE_DIR}/mios.d"
+    if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+        log_err "Refusing to record '${user}' as [identity].username (not a plain Linux account name)"
+        return 1
+    fi
+    install -d -m 0755 "$dir"
+    printf '%s\n' "# Written by mios-install.sh: the account it created is the operator root code acts for." \
+        "[identity]" "username = \"${user}\"" > "${dir}/10-identity.toml.tmp"
+    chmod 0644 "${dir}/10-identity.toml.tmp"
+    mv -f "${dir}/10-identity.toml.tmp" "${dir}/10-identity.toml"
+    log_ok "Host tier names the operator: ${dir}/10-identity.toml ([identity].username = ${user})"
+}
+
+# D0: the typed password becomes [identity].default_password in the operator's own tier,
+# written as that account (0600) through a pipe, never on argv.
+write_operator_credential() {
+    local user="$1" home esc
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    [[ -n "$home" && -d "$home" ]] || { log_err "No home for '${user}': the operator credential was not recorded"; return 1; }
+    if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
+        log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
+    fi
+    esc="${USER_PASSWORD//\\/\\\\}"
+    esc="${esc//\"/\\\"}"
+    printf '%s\n' "$esc" | sudo -u "$user" bash -c '
+        set -eu; umask 077; f="$1/.config/mios/mios.toml"; IFS= read -r esc
+        mkdir -p "$1/.config/mios"; tmp="$(mktemp "$f.XXXXXX")"; in_id=0; put=0
+        if [[ -f "$f" && ! -L "$f" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ "$line" =~ ^[[:space:]]*\[ ]]; then
+                    in_id=0; [[ "$line" =~ ^[[:space:]]*\[identity\][[:space:]]*(#.*)?$ ]] && in_id=1
+                    printf "%s\n" "$line" >> "$tmp"
+                    if (( in_id && ! put )); then printf "default_password = \"%s\"\n" "$esc" >> "$tmp"; put=1; fi
+                elif ! (( in_id )) || [[ ! "$line" =~ ^[[:space:]]*default_password[[:space:]]*= ]]; then
+                    printf "%s\n" "$line" >> "$tmp"
+                fi
+            done < "$f"
+        fi
+        (( put )) || printf "\n[identity]\ndefault_password = \"%s\"\n" "$esc" >> "$tmp"
+        chmod 0600 "$tmp"; mv -f "$tmp" "$f"' _ "$home" || {
+        log_err "The operator credential was not recorded in ${home}/.config/mios/mios.toml"
+        return 1
+    }
+    log_ok "Operator credential recorded: ${home}/.config/mios/mios.toml ([identity].default_password, 0600)"
+}
+
 apply_user_profile() {
     log_phase "Phase-3 -- Apply profile to host"
     mkdir -p "${PROFILE_DIR}"
@@ -986,6 +1035,7 @@ apply_user_profile() {
     fi
     echo "${LINUX_USER}:${USER_PASSWORD}" | chpasswd
     log_ok "User '${LINUX_USER}' configured"
+    write_host_identity "${LINUX_USER}"
 
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
     if [[ "$SSH_KEY_PATH" == "generate" ]]; then
@@ -1034,14 +1084,6 @@ MIOS_INSTALL_MODE="${INSTALL_MODE}"
 MIOS_IMAGE_TAG="${IMAGE_TAG}"
 MIOS_INSTALLED_AT="$(date -u --iso-8601=seconds)"
 MIOS_BOOTSTRAP_VERSION="0.2.0"
-
-# mios-forge (Forgejo) -- consumed by /usr/libexec/mios/forge-firstboot.sh
-# at first boot to create the admin user. Empty password = generate
-# random 24-byte URL-safe at first boot, write to mode-0600 file at
-# /etc/mios/forge/admin-password.
-MIOS_FORGE_ADMIN_USER="${FORGE_ADMIN_USER:-${LINUX_USER}}"
-MIOS_FORGE_ADMIN_EMAIL="${FORGE_ADMIN_EMAIL:-${LINUX_USER}@${HOSTNAME_VAL}.local}"
-MIOS_FORGE_ADMIN_PASSWORD=""
 
 # AI model selection (Architectural Law 5). MIOS_AI_MODEL / MIOS_AI_EMBED_MODEL are the
 # runtime selection mios-ai-firstboot.service confirms post-deploy. Operators swap them
@@ -1192,6 +1234,9 @@ stage_user_profile_artifacts() {
     # Re-run the multi-user pass so a newly added user picks up the same
     # content as everyone else (idempotent).
     seed_user_skel_for_all_accounts
+
+    # After every skel copy, which rewrites ~/.config/mios/mios.toml.
+    write_operator_credential "${LINUX_USER}" || log_warn "Set the credential in mios.html: until then Forgejo keeps its generated admin password"
 }
 
 # ============================================================================

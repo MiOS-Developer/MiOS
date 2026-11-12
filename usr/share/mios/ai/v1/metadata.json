@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4338,
-  "total_metadata_entries": 3470,
-  "total_hints": 3464,
-  "total_functions_indexed": 2197,
-  "total_related_links": 6957,
+  "total_files_scanned": 4343,
+  "total_metadata_entries": 3474,
+  "total_hints": 3468,
+  "total_functions_indexed": 2226,
+  "total_related_links": 6994,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -832,7 +832,7 @@
         "/usr/libexec/mios/flight-control.sh",
         "/usr/share/mios/build-logs/latest-build.log",
         "/etc/mios/install.env",
-        "/etc/mios/forge/admin-password",
+        "/usr/libexec/mios/mios-credential",
         "/usr/lib/mios/agent-pipe",
         "/usr/lib/mios/agents/.venv/bin/python3",
         "/usr/libexec/mios/user-setup.sh",
@@ -8203,6 +8203,7 @@
       "related": [
         "usr/lib/mios/agent-pipe/server.py",
         "usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py",
+        "usr/lib/mios/agent-pipe/mios_pipe/portal_status.py",
         "usr/lib/mios/gateway-agent/server.py",
         "usr/lib/mios/crawl4ai/mios-crawl4ai-service.py"
       ],
@@ -15618,7 +15619,7 @@
     },
     {
       "path": "tools/test_configurator_security.py",
-      "hint": "Execute the configurator's real JavaScript serializers and path banner against hostile strings; validate emitted TOML with the standard parser.",
+      "hint": "Execute the configurator's real JavaScript serializers, path banner and status card against hostile strings; validate emitted TOML with the standard parser.",
       "related": [
         "usr/share/mios/configurator/mios.html"
       ],
@@ -18217,6 +18218,45 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py",
+      "hint": "Root writer of the Portal status view's spec.json (bootc deployments, work-tree dirt; git runs as the throwaway account) and the [portal.status] validation portal_status imports.",
+      "related": [
+        "/usr/lib/mios/agent-pipe/mios_pipe/portal_status.py",
+        "/usr/lib/systemd/system/mios-podman-ps.service",
+        "/usr/lib/mios/agent-pipe/test_mios_portal.py",
+        "mios.toml [portal.status]"
+      ],
+      "functions": [
+        "write_spec",
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/mios/agent-pipe/mios_pipe/portal_status.py",
+      "hint": "Read-only MiOS status & goals view: GET /portal/status (json_schema mios_portal_status) + /portal/status.js from producer snapshots, the SSOT, /.git, the goal record and the task ledger; never runs a goal criterion.",
+      "related": [
+        "/usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py",
+        "/usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py",
+        "/usr/lib/mios/schemas/portal_status.schema.json",
+        "/usr/lib/mios/agent-pipe/test_mios_portal.py",
+        "/usr/share/mios/configurator/mios.html",
+        "/usr/libexec/mios/mios-mcp-server",
+        "mios.toml [portal.status]"
+      ],
+      "functions": [
+        "build_status",
+        "status_logic",
+        "status_js",
+        "status_js_logic"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/redact.py",
       "hint": "Redaction utilities for secrets and PII.",
       "related": [],
@@ -18503,11 +18543,12 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py",
-      "hint": "Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page and the iOS embed test page, split out of portal.py.",
+      "hint": "Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page, the status & goals view script and the iOS embed test page, split out of portal.py.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py",
         "usr/lib/mios/agent-pipe/test_mios_portal.py",
-        "usr/share/mios/portal"
+        "usr/share/mios/portal",
+        "usr/lib/mios/agent-pipe/mios_pipe/portal_status.py"
       ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/routing.md",
@@ -20373,7 +20414,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_portal.py",
-      "hint": "Standalone unit test for mios_portal (refactor R10) -- proves the moved portal logic works with stubs and no network/DB.",
+      "hint": "Standalone unit test for mios_portal, mios_pipe.portal_status and mios_pipe.portal_spec -- portal logic with stubs and no network/DB, plus the /portal/status aggregate against planted snapshots.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",
@@ -21380,7 +21421,21 @@
         "windows_projection",
         "identity_field",
         "sysrescue",
-        "password_hash"
+        "password_hash",
+        "operator_load",
+        "secrets_env_path",
+        "surface_password",
+        "surface_user",
+        "portal_login",
+        "Ledger",
+        "enabled_surfaces",
+        "scrub_leftovers",
+        "inbox_submit",
+        "ingest_inbox",
+        "apply_lock",
+        "publish_operator_toggles",
+        "apply",
+        "ttyd_argv"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -22134,6 +22189,20 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-agent-share.service",
+      "hint": "Serves the read-only inter-agent share ([paths].srv_agent_share_dir) on loopback as a throwaway non-root uid that refuses every symlink; the tailnet reaches it only through the [tailscale.serve.routes.agent_share] proxy.",
+      "related": [
+        "/usr/libexec/mios/mios-tailscale-sync",
+        "/usr/libexec/mios/test_mios_tailscale_sync.py",
+        "/usr/share/mios/mios.toml",
+        "mios-tailscale-sync.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-agents.service",
       "hint": "Runs the mios-agents A2O super-container (code-server IDE + tmux war room + Claude CLI + agy/Gemini + the mios-a2o muxer) as a systemd-managed container.",
       "related": [],
@@ -22501,6 +22570,36 @@
         "/usr/libexec/mios/cpu-isolate",
         "local-fs.target",
         "multi-user.target"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-credential-apply.service",
+      "hint": "Oneshot that merges the Portal's queued credential saves into the operator tier and re-applies the one mios.html login to the Portal, Forgejo, code-server, Open WebUI and the Linux login (ttyd gets its own), at boot and from its timer.",
+      "related": [
+        "/usr/libexec/mios/mios-credential",
+        "/usr/lib/mios/mios_credentials.py",
+        "mios-credential-apply.timer",
+        "mios-agent-pipe.service",
+        "mios-agents.service",
+        "mios-ttyd-bash.service",
+        "mios-forge.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-credential-apply.timer",
+      "hint": "systemd timer that re-runs mios-credential-apply.service so a credential changed in mios.html reaches every admin surface within one interval.",
+      "related": [
+        "/usr/lib/systemd/system/mios-credential-apply.timer",
+        "/usr/lib/systemd/system/mios-credential-apply.service",
+        "/usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,
@@ -23286,8 +23385,13 @@
     },
     {
       "path": "usr/lib/systemd/system/mios-podman-ps.service",
-      "hint": "Systemd oneshot service that generates a world-readable JSON snapshot of all running podman containers to allow non-root entities (agent-pipe, dashboard, and SSH users) to view container status.",
-      "related": [],
+      "hint": "Root oneshot writing a world-readable JSON snapshot of all podman containers for non-root readers (agent-pipe, dashboard, SSH users), then, whatever podman returned, the Portal status view's deployed-spec snapshot.",
+      "related": [
+        "/usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py",
+        "/usr/lib/mios/agent-pipe/mios_pipe/portal_status.py",
+        "mios-podman-ps.timer",
+        "mios.toml [portal.status]"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
       "comment_style": "hash",
@@ -23552,15 +23656,6 @@
     {
       "path": "usr/lib/systemd/system/mios-ttyd-bash.service",
       "hint": "Systemd unit file that manages the ttyd service to provide a browser-accessible bash shell via WebSockets, mapping a terminal session to the mios user's environment.",
-      "related": [],
-      "functions": [],
-      "doc": "usr/share/doc/mios/manual/system.md",
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/lib/systemd/system/mios-ttyd-expose.service",
-      "hint": "Systemd unit that exposes the ttyd terminal service to the tailnet via tailscaled, controlled by the [ttyd].tailnet_expose configuration gate and requiring mios-ttyd-bash.service to be active.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
@@ -24294,6 +24389,20 @@
       "related": [
         "usr/share/mios/mios.toml",
         "usr/lib/systemd/system/user@.service.d/10-mios-memory.conf"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/user/mios-status-agents.service",
+      "hint": "Publishes the relay owner's MiOS-MCP agent observation frame to /run/mios/status for the Portal status view, which runs unprivileged and cannot read the caller-owned relay.",
+      "related": [
+        "/usr/libexec/mios/mios-mcp-server",
+        "/usr/lib/mios/agent-pipe/mios_pipe/portal_status.py",
+        "mios.toml [portal.status]",
+        "[mcp.agents.observation]"
       ],
       "functions": [],
       "doc": null,
@@ -25610,7 +25719,7 @@
     },
     {
       "path": "usr/libexec/mios/forge-firstboot.sh",
-      "hint": "bash First-boot admin-bootstrap for the mios-forge Quadlet (Forgejo).",
+      "hint": "bash First-boot admin-bootstrap for the mios-forge Quadlet (Forgejo): creates the admin, has mios-credential apply set its SSOT password (never generated or literal), wires / to the repo, mints the runner token.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
@@ -27176,12 +27285,16 @@
     },
     {
       "path": "usr/libexec/mios/mios-credential",
-      "hint": "CLI over usr/lib/mios/mios_credentials.py -- prints the layered-SSOT account name / sha512 hash, or writes the 0600 MIOS_RESOLVED_JSON the Windows (answer file, DISM, UUP, ISO) pipeline overlays. Fails closed (exit 3) naming the missing key.",
+      "hint": "CLI over usr/lib/mios/mios_credentials.py -- account name, sha512 hash, the 0600 Windows MIOS_RESOLVED_JSON, and `apply`, which reconciles every admin surface to the mios.html credential. Fails closed (exit 3) naming the key.",
       "related": [
         "usr/lib/mios/mios_credentials.py",
         "automation/11-user.sh",
         "automation/build-mios.sh",
-        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1"
+        "mios-bootstrap field/autounattend/MiOS-Provision.lib.ps1",
+        "mios-credential-apply.service",
+        "mios-credential-apply.timer",
+        "forge-firstboot.sh",
+        "mios-ttyd-launch"
       ],
       "functions": [],
       "doc": null,
@@ -28853,13 +28966,15 @@
     },
     {
       "path": "usr/libexec/mios/mios-owui-bootstrap-admin",
-      "hint": "Bootstraps the initial Open WebUI admin account by injecting a user into the SQLite database if empty, resolving credentials from mios.toml and secrets.env to ensure operator access during first-boot.",
+      "hint": "Bootstraps the first Open WebUI admin in its SQLite database, resolving the ONE SSOT login (the mios.html value) through mios_credentials.surface_password, so first boot never locks it out.",
       "related": [
         "/etc/mios/secrets.env",
         "/etc/mios/owui-admin-password",
         "/etc/mios/mios.toml",
         "/usr/share/mios/mios.toml",
+        "/usr/lib/mios/mios_credentials.py",
         "mios-hermes-firstboot",
+        "mios-credential-apply",
         "mios-open-webui",
         "port key `open_webui`"
       ],
@@ -29859,7 +29974,7 @@
     },
     {
       "path": "usr/libexec/mios/mios-tailscale-sync",
-      "hint": "Enrolls a logged-out node from a pre-auth key file and synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.",
+      "hint": "Enrolls a logged-out node, syncs Tailscale to SSOT [tailscale]/[headscale], keeps an exit node only while it beats the uplink, applies the [tailscale.serve.routes.*] proxies it owns and serves the read-only agent share (--share-serve).",
       "related": [
         "/usr/share/mios/mios.toml",
         "/etc/mios/mios.toml",
@@ -29869,6 +29984,7 @@
         "test_mios_tailscale_sync.py"
       ],
       "functions": [
+        "_load_data",
         "_load_config",
         "_health_config",
         "_ts",
@@ -29884,7 +30000,17 @@
         "direct_interface",
         "exit_is_worse",
         "_active_exit_ip",
-        "sync_mesh"
+        "sync_mesh",
+        "dns_name",
+        "render_routes",
+        "live_routes",
+        "plan_serve",
+        "serve_cmd",
+        "legacy_ttyd_handler",
+        "dropin_path",
+        "forge_dropin",
+        "sync_serve",
+        "share_serve"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -30019,37 +30145,19 @@
       "has_shebang": true
     },
     {
-      "path": "usr/libexec/mios/mios-ttyd-expose",
-      "hint": "Configures and toggles the Tailscale HTTPS reverse proxy for the ttyd terminal service on port 7681, enabling secure mobile access via the Tailnet based on the [ttyd].tailnet_expose setting in mios.toml.",
-      "related": [
-        "/etc/mios/mios.toml",
-        "/usr/share/mios/mios.toml",
-        "mios-ttyd-launch",
-        "mios-ttyd-bash",
-        "mios-ttyd-expose.service",
-        "mios-ttyd-bash.service"
-      ],
-      "functions": [
-        "_toml_get"
-      ],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": true
-    },
-    {
       "path": "usr/libexec/mios/mios-ttyd-launch",
-      "hint": "Parses MIOS_TTYD_* environment variables and mios.toml configurations to construct and execute the ttyd web terminal process for either bash or powershell shells on specific ports.",
+      "hint": "Builds the ttyd argv for the bash or powershell web terminal from MIOS_TTYD_* and mios.toml, then execs it through mios-credential exec ttyd, which adds ttyd's own login from the credstore root writes.",
       "related": [
         "/usr/libexec/mios/mios-ttyd-launch",
         "/etc/mios/userenv.sh",
         "/usr/libexec/mios/mios-powershell",
+        "/usr/libexec/mios/mios-credential",
+        "/usr/libexec/mios/mios-toml-get",
         "/etc/mios/mios.toml",
         "/usr/share/mios/mios.toml",
         "mios-powershell"
       ],
-      "functions": [
-        "_toml_get"
-      ],
+      "functions": [],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -34932,7 +35040,7 @@
         "/etc/mios/manifest.json",
         "/etc/mios/ai/system-prompt.md",
         "/usr/share/mios/ai/system.md",
-        "/etc/mios/forge/admin-password",
+        "/usr/libexec/mios/mios-credential",
         "mios-bootstrap",
         "mios-dev",
         "mios-ci",

@@ -131,3 +131,30 @@ async def inbound_auth_mw(request, call_next):
     except Exception:
         pass
     return await call_next(request)
+
+
+# Local uids the agent-pipe unix socket admits: root, the service uid and the operator.
+ALLOWED_LOCAL_UIDS = frozenset((0, 815, 1000))
+
+
+async def peercred_auth_mw(request, call_next):
+    """SO_PEERCRED on the unix socket: an allowed uid becomes a principal, others get 401.
+    Only the transport's scope marks a unix-socket request, never a header."""
+    scope = getattr(request, "scope", None) or {}
+    if scope.get("is_unix_socket") is not True:
+        return await call_next(request)
+    peercred = scope.get("peercred")
+    if peercred and len(peercred) >= 2 and peercred[1] in ALLOWED_LOCAL_UIDS:
+        try:
+            request.state.is_unix_socket = True
+            request.state.peercred = peercred
+            request.state.mios_principal = f"peercred:uid={peercred[1]}"
+        except Exception:
+            pass
+        return await call_next(request)
+    caller_uid = peercred[1] if peercred and len(peercred) >= 2 else "unknown"
+    return JSONResponse(
+        status_code=401,
+        content={"error": {
+            "message": f"unauthorized caller: uid {caller_uid} not permitted on unix domain socket",
+            "type": "peercred_auth_error", "code": 401}})

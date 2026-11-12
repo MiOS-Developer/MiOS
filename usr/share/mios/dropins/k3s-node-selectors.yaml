@@ -36,6 +36,13 @@ services:
       - key: "mios.capability/service-plane"
         operator: "Exists"
         effect: "NoSchedule"
+  mios-agent-share:
+    nodeSelector:
+      mios.capability/service-plane: "true"
+    tolerations:
+      - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
   mios-agents:
     nodeSelector:
       mios.capability/service-plane: "true"

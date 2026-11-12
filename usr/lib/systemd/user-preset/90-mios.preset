@@ -48,3 +48,8 @@ enable mios-computer-use-server.service
 # on the fresh MiOS-DEV VM 2026-06-05: WantedBy=default.target but never
 # preset-enabled, so it never autostarted -> every broker verb failed.
 enable mios-launcher.service
+
+# Portal status view: publishes the relay owner's agent observation frame to
+# /run/mios/status. ConditionGroup=mios-ai on the unit keeps it inert for every
+# login that is not in the Portal's reader group.
+enable mios-status-agents.service

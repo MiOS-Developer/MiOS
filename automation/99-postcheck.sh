@@ -608,7 +608,8 @@ if [[ -f "$_sync_env" ]]; then
     fi
     _law11_keys="$(bash "$_sync_env" --secret-keys)"
     _sk_n="$(printf '%s\n' "$_law11_keys" | grep -c . || true)"
-    _sk_min=3
+    _sk_min="$(awk '/^\[/ { _in = ($0 ~ /^\[security\.secret_keys\]/); next } _in && /^[[:space:]]*min_keys[[:space:]]*=/ { gsub(/[^0-9]/, "", $0); print; exit }' "$_nb_toml")"
+    [[ "$_sk_min" =~ ^[0-9]+$ ]] || die "SECRETS-NEVER-IN-ENV: [security.secret_keys].min_keys is unreadable"
     if (( _sk_n < _sk_min )); then
         die "SECRETS-NEVER-IN-ENV: ${_sk_n} keys declared in [security.secret_keys], below floor of ${_sk_min}"
     fi

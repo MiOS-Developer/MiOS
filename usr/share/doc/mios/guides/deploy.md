@@ -1,5 +1,5 @@
 <!-- AI-hint: Documentation for deploying a built MiOS image -- the OCI artifact plus its RAW/ISO/QCOW2/VHDX/WSL2 disk forms -- onto bootc-managed or FHS Fedora hosts, and the Day-2 bootc lifecycle (upgrade/switch/rollback). Covers image signing/verification (cosign keyless), the layered mios.toml configuration surfaces, post-deploy health checks (incl. local AI sanity), and the self-hosted mios-forge Git origin that closes the self-replication loop.
-     AI-related: /etc/mios/install.env, /etc/mios/mios.toml, /etc/mios/manifest.json, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /etc/mios/forge/admin-password, mios-bootstrap, mios-dev, mios-ci, mios-forge, mios-forge-firstboot, mios-llm-light, mios-pgvector -->
+     AI-related: /etc/mios/install.env, /etc/mios/mios.toml, /etc/mios/manifest.json, /etc/mios/ai/system-prompt.md, /usr/share/mios/ai/system.md, /usr/libexec/mios/mios-credential, mios-bootstrap, mios-dev, mios-ci, mios-forge, mios-forge-firstboot, mios-llm-light, mios-pgvector -->
 # Deployment
 
 ## Purpose
@@ -176,16 +176,19 @@ re-deploy itself with no external Git host in the loop. That is why
 
 The `mios-forge.container` Quadlet (Forgejo upstream) starts at first boot. The
 `mios-forge-firstboot.service` oneshot runs after it, reads the admin identity
-from `/etc/mios/install.env` (which `build-mios.{sh,ps1}` populated from
-`mios.toml`), generates a random initial password if none was supplied, and
-creates the admin user via the in-container `forgejo admin user create
---must-change-password=true` CLI. The sentinel at
+from the SSOT (`[identity].username` / `[identity].email`, through
+`mios-credential`), creates the admin user via the in-container `forgejo admin
+user create` CLI with a throwaway password whose output is discarded, and has
+`mios-credential apply forge` set the operator credential -- the
+`[identity].default_password` that `mios.html` saves -- through the admin API.
+No password is generated, logged or written to a file, and
+`mios-credential-apply.timer` re-applies it whenever it changes. The sentinel at
 `/var/lib/mios/forge/.firstboot-done` makes the service idempotent across
 reboots.
 
 ```bash
 just forge                                       # status + URL + admin info
-sudo cat /etc/mios/forge/admin-password          # one-time password read
+sudo /usr/libexec/mios/mios-credential apply --check forge   # the login is the mios.html credential
 git remote add origin http://localhost:3000/<user>/<repo>.git
 git push origin main
 ```

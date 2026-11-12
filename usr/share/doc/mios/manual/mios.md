@@ -95,14 +95,15 @@ can be treated as a divider. Pure divider runs are unaffected.
 
 <!-- mios-src:f3e774fcaabb from usr/lib/mios/mios_comments.py:532-540 -->
 
-### (vendor, vendor_d, host, host_d, user, user_d) resolved...
+### (vendor, vendor_d, host, host_d, user, user_d) resolved from...
 
 (vendor, vendor_d, host, host_d, user, user_d) resolved from the env at
     CALL time. Vendor FRAGMENTS live in /usr/lib/mios/mios.d (Law 1 USR-OVER-ETC
     + systemd's /usr/lib vendor convention), NOT beside the /usr/share monolith;
-    admin/user fragments sit in a mios.d/ beside their monolith.
+    admin/user fragments sit in a mios.d/ beside their monolith. `environ`
+    overlays os.environ (operator_layer_paths passes the MIOS_USER_TOML/_D inputs).
 
-<!-- mios-src:69fb3387c633 from usr/lib/mios/mios_toml.py:52-55 -->
+<!-- mios-src:a5dd716473e6 from usr/lib/mios/mios_toml.py:50-54 -->
 
 ### The overlay layer paths, lowest precedence first, EXPANDED...
 
@@ -5471,19 +5472,20 @@ Explicit terminal capabilities for stateless HTTP; stdio stays implicit.
 
 <!-- mios-src:6ed6f1d6130d from usr/libexec/mios/mios-mcp-server:1231-1236 -->
 
-### mios-owui-bootstrap-admin -- create the first OWUI admin...
+### mios-owui-bootstrap-admin -- create the first OWUI admin user...
 
 mios-owui-bootstrap-admin -- create the first OWUI admin user when
 the `user` table is empty, so a fresh install / reinstall doesn't
 lock the operator out of Open WebUI.
 
-Resolves identity from layered mios.toml ([identity].username,
-[identity].email) and the password from the MiOS password SSOT (see
-_read_password): MIOS_OPERATOR_PASSWORD / MIOS_OWUI_ADMIN_PASSWORD ->
-mios.toml [identity].default_password -> MIOS_IDENTITY_DEFAULT_PASSWORD -> "mios"
--- the SAME source Forge / Portal / Cockpit / RDP use, so one operator
-password works everywhere. A "__random__" override generates + writes a
-24-char password to /etc/mios/owui-admin-password (mode 0600 root-only).
+Resolves identity from the OPERATOR's layered mios.toml ([identity].username,
+[identity].email) and the password through mios_credentials.surface_password
+("owui"): MIOS_OPERATOR_PASSWORD -> MIOS_OWUI_ADMIN_PASSWORD (env/secrets.env)
+-> [identity].default_password -- the SAME chain Forge / Portal / code-server /
+ttyd use, so one operator password works everywhere. There is no literal
+fallback: with no SSOT credential the admin is left as-is (exit 2). A
+"__random__" override generates + writes a 24-char password to
+/etc/mios/owui-admin-password (mode 0600 root-only).
 
 Idempotent: skips if any user row exists. Logs to stderr so
 mios-hermes-firstboot can capture the output via _log.
@@ -5498,7 +5500,7 @@ Returns exit 0 on success, no-op skip, or any expected non-fatal path.
 Returns exit 2 only on hard infrastructure failures (db missing, no
 admin name resolvable). Designed to never block firstboot.
 
-<!-- mios-src:6c99c80a9900 from usr/libexec/mios/mios-owui-bootstrap-admin:4-28 -->
+<!-- mios-src:0c314066a7ad from usr/libexec/mios/mios-owui-bootstrap-admin:4-29 -->
 
 ### The MiOS password SSOT, highest precedence first. ONE...
 
@@ -5947,7 +5949,12 @@ user ~/.config/mios/mios.toml override wins over the vendor file):
   [auth]                     password_hash (sha512-crypt; wins for Linux /etc/shadow)
   [field.sysrescue]          username ("" -> identity.username), password ("" -> default_password)
 
-<!-- mios-src:5e968c26bc47 from usr/lib/mios/mios_credentials.py:4-20 -->
+Runtime admin surfaces (Portal, Forgejo, code-server, ttyd, Open WebUI, optionally the
+Linux login) resolve through operator_load() -- the operator's user tier, which mios.html
+and the Portal write -- and surface_password(); `mios-credential apply` reconciles each
+surface whenever that value changes. No surface ever invents a value.
+
+<!-- mios-src:29ada37a8793 from usr/lib/mios/mios_credentials.py:4-25 -->
 
 ### The console AutoLogon never signs in the service account...
 
@@ -6087,23 +6094,37 @@ Performs mouse interactions via native Wayland virtual pointer protocol.
 
 <!-- mios-src:756511da6dbc from usr/libexec/mios/mios-computer-use:1222-1227 -->
 
-### mios-credential -- fail-closed credential reads from the...
+### mios-credential -- fail-closed credential reads from the layered...
 
 mios-credential -- fail-closed credential reads from the layered mios.toml.
 
   mios-credential username            [identity].username
   mios-credential hash                sha512-crypt for /etc/shadow (env hash > [auth].password_hash > default_password)
   mios-credential sysrescue-user      [field.sysrescue].username -> [identity].username
-  mios-credential identity KEY        a PUBLIC [identity] key (username|fullname|hostname|shell) from
-                                      the merged layers, WITHOUT validating the credential plane
-                                      (empty output when unset or when no layer exists; installers prompt)
+  mios-credential identity KEY [--operator]
+                                      a PUBLIC [identity] key (username|fullname|hostname|shell|email)
+                                      from the merged layers, WITHOUT validating the credential plane
+                                      (empty output when unset or when no layer exists; installers
+                                      prompt). --operator reads the operator's user tier (see below).
   mios-credential check               validate every credential key (no output on success)
   mios-credential win-json --out F    write the Windows projection JSON (mode 0600, atomic)
+  mios-credential apply [--check] [--verify] [--wait] [--bootstrap] (--all | SURFACE...)
+                                      reconcile portal|forge|code_server|ttyd|owui|shadow to the
+                                      operator-tier credential; --all = [security.credential_apply]
+                                      .surfaces; --check reports drift (exit 1) and changes nothing;
+                                      --verify re-proves forge against its live login; --wait waits
+                                      [services.forge].ready_timeout_s; --bootstrap also creates
+                                      [services.forge].initial_repo
+  mios-credential exec ttyd -- ARGS   exec ttyd with -c from the operator tier, then ARGS
 
 Layers follow mios_toml (MIOS_TOML_ROOT, MIOS_VENDOR_TOML(_D), MIOS_HOST_TOML(_D),
-MIOS_USER_TOML(_D)). Passwords are never printed except as a hash.
+MIOS_USER_TOML(_D)). apply, exec and --operator read the OPERATOR's user tier: a system
+caller (root, a service uid) resolves [identity].username from the vendor/host tiers and
+reads that account's ~/.config/mios/mios.toml, the file mios.html writes. Passwords are
+never printed except as a hash, never logged and never put on a command line (ttyd's -c
+is the one documented residual).
 
-<!-- mios-src:4d4cfb111bf2 from usr/libexec/mios/mios-credential:4-17 -->
+<!-- mios-src:542b35bfdc76 from usr/libexec/mios/mios-credential:4-31 -->
 
 ### Universal USB/Bluetooth Controller Daemon for Hypr3D....
 

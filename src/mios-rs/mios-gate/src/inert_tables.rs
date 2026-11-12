@@ -170,9 +170,11 @@ fn build_res() -> Option<Res> {
     // .ok()? not expect(): CI runs clippy -D warnings.
     Some(Res {
         // Seeds for "yields the SSOT"; full path only (task_945). resolve_merged is
-        // the native resolver's twin of load_merged.
+        // the native resolver's twin of load_merged; operator_view / base_view are what
+        // root code reads (vendor + host, plus only the operator tier's credential values
+        // and enable toggles).
         load: Regex::new(
-            r"(?:tomllib|toml|rtoml|tomlkit)\.loads?\(|toml::from_str|(?:load|resolve)_merged|_toml_section|mios_toml\.(?:load|resolve)|load_mios_toml|MIOS_TOML|usr/share/mios/mios\.toml|\b_?ssot(?:_root)?\s*\(|\bload_ssot\s*\(",
+            r"(?:tomllib|toml|rtoml|tomlkit)\.loads?\(|toml::from_str|(?:load|resolve)_merged|_toml_section|mios_toml\.(?:load|resolve|operator_view|base_view)|load_mios_toml|MIOS_TOML|usr/share/mios/mios\.toml|\b_?ssot(?:_root)?\s*\(|\bload_ssot\s*\(",
         )
         .ok()?,
         bind: Regex::new(r"(?m)^[^\S\n]*([A-Za-z_]\w*)[^\S\n]*(?::[^=\n]+)?=[^\S\n]*(.*)$").ok()?,
@@ -536,6 +538,27 @@ mod tests {
             "let doc = other::resolve(Some(root))?;\nlet networks = doc\n    .get(\"networks\");\n";
         assert!(!re.ctx.is_match(unrelated));
         assert!(!keys(unrelated).contains("networks"));
+    }
+
+    /// Root code reads the operator view (vendor + host, plus only the operator tier's
+    /// credential values and toggles) through a helper: that binding credits too.
+    #[test]
+    fn the_operator_view_through_a_helper_is_evidence() {
+        let src = "def _load_data() -> dict:\n    return mios_toml.operator_view()[0]\n\n\ndef _load_config(data=None):\n    data = _load_data() if data is None else data\n    ts = data.get(\"tailscale\", {})\n";
+        assert!(
+            keys(src).contains("tailscale"),
+            "the operator view must credit"
+        );
+        let base = "base = mios_toml.derive_ports(mios_toml.base_view())\nts = base.get(\"tailscale\", {})\n";
+        assert!(
+            keys(base).contains("tailscale"),
+            "the base view must credit"
+        );
+        let other = "def _load_data() -> dict:\n    return mios_toml.other_view()[0]\n\n\ndef _load_config(data=None):\n    data = _load_data() if data is None else data\n    ts = data.get(\"tailscale\", {})\n";
+        assert!(
+            !keys(other).contains("tailscale"),
+            "an unrelated view must not credit"
+        );
     }
 
     /// One indirection through a loader helper must still credit.

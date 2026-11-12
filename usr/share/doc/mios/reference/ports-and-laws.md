@@ -32,6 +32,7 @@ is the obvious case, since it cannot float.
 | agent | arbiter | 8760 |
 | agent | mcp | 8770 |
 | agent | opencode_gateway | 8780 |
+| agent | agent_share | 8790 |
 | audio | whisper | 8178 |
 | audio | piper | 8179 |
 | bridge | oscontrol | 8950 |
@@ -48,6 +49,7 @@ is the obvious case, since it cannot float.
 | edge | adguard_ui | 8050 |
 | edge | adguard_dns (pinned) | 53 |
 | edge | headscale (pinned) | 8085 |
+| edge | tailnet_https (pinned) | 443 |
 | forge | forge_http | 8400 |
 | forge | forge_ssh | 8410 |
 | inference | llm_light | 8500 |

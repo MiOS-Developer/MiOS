@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Executes production HTTP handlers with failing dependencies to verify public redaction and preserved success/error envelopes.
-# AI-related: usr/lib/mios/agent-pipe/server.py, usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py, usr/lib/mios/gateway-agent/server.py, usr/lib/mios/crawl4ai/mios-crawl4ai-service.py
+# AI-related: usr/lib/mios/agent-pipe/server.py, usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py, usr/lib/mios/agent-pipe/mios_pipe/portal_status.py, usr/lib/mios/gateway-agent/server.py, usr/lib/mios/crawl4ai/mios-crawl4ai-service.py
 """No service startup, browser, model, database server or network is invoked."""
 import ast
 import asyncio
@@ -24,6 +24,7 @@ PORTAL = "usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py"
 GATEWAY = "usr/lib/mios/gateway-agent/server.py"
 CRAWL = "usr/lib/mios/crawl4ai/mios-crawl4ai-service.py"
 CONFIG = "usr/lib/mios/agent-pipe/mios_pipe/kernel/config.py"
+STATUS = "usr/lib/mios/agent-pipe/mios_pipe/portal_status.py"
 
 
 def response(content=None, status_code=200, **kwargs):
@@ -104,10 +105,12 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
                                  AmbiguousRedactedArray=type("AmbiguousRedactedArray", (ValueError,), {}),
                                  REDACTED_ARRAY_REFUSAL=constant(CONFIG, "REDACTED_ARRAY_REFUSAL"),
                                  redact_secrets=Mock(side_effect=lambda merged: {"redacted": merged}),
+                                 overlay_operator_toggles=Mock(side_effect=lambda merged: merged),
                                  UNRESOLVED_REFUSAL=constant(CONFIG, "UNRESOLVED_REFUSAL"),
                                  portal_post_toml=handlers(CONFIG, ["portal_post_toml"])["portal_post_toml"])
         toml = SimpleNamespace(load_merged=Mock(return_value={}))
-        scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None)
+        scope = handlers(PORTAL, ["get_portal_config", "post_portal_config"], _portal_authed=lambda request: True, run_db_reseed_bg=lambda: None,
+                         PORTAL_REQUIRE_LOGIN=True, PORTAL_PASSWORD="fixture-portal-login")
         request = SimpleNamespace(body=AsyncMock(return_value=b"[identity]\nusername='mios'\n"), headers={})
         background = SimpleNamespace(add_task=Mock())
         with patch.dict(sys.modules, {"mios_toml": toml, "mios_pipe.kernel.config": config}):
@@ -140,6 +143,12 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
             config.write_user_config.side_effect = None
             self.assertEqual((await scope["post_portal_config"](request, background)).content, {"status": "ok"})
             background.add_task.assert_called_once()
+            # The save proves the Portal's login to the root helper (an operator-tier key is
+            # queued only with it); a Portal without a login hands over no proof at all.
+            self.assertEqual(config.write_user_config.call_args.kwargs["proof"], "fixture-portal-login")
+            scope["PORTAL_REQUIRE_LOGIN"] = False
+            self.assertEqual((await scope["post_portal_config"](request, background)).content, {"status": "ok"})
+            self.assertFalse(config.write_user_config.call_args.kwargs["proof"])
 
     async def test_validator_errors_are_safe(self):
         scope = handlers(CONFIG, ["validate_config"], _validate_max_bytes=Mock(side_effect=RuntimeError(MARKER)), _VALIDATE_CRITICAL_SECTIONS=("identity", "ports"))
@@ -240,21 +249,67 @@ class HttpErrorSafety(unittest.IsolatedAsyncioTestCase):
                             self.assertIs(scope["log"].error.call_args.args[1], failure)
 
 
+    async def test_portal_status_collectors_fail_closed(self):
+        """GET /portal/status never 500s and never echoes a collector's exception text."""
+        import threading
+        names = ["_build", "_payload", "_degraded", "_poll_s", "_empty_agents", "_empty_tasks", "_cached_status",
+                 "status_logic"]
+        consts = {name: constant(STATUS, name) for name in ("SOURCES", "_STATUS_KEYS", "D_CONFIG", "D_FAILED")}
+        cfg = {"refresh_s": 15, "cache_s": 0, "stale_after_s": 120}
+
+        def boom(*_a, **_k):
+            raise RuntimeError(MARKER)
+
+        def scope_for(**overrides):
+            injected = dict(consts, _CACHE={}, _CACHE_LOCK=threading.Lock(), threading=threading, time=time,
+                            asyncio=asyncio, logger=Mock(), _authed=lambda request: True,
+                            _node_name=lambda: "node-a", _ssot=lambda: {}, _cfg=lambda doc: cfg,
+                            **{name: boom for name in ("_agents", "_spec_snapshot", "_goal", "_goals",
+                                                       "_tasks", "_services", "_nodes")})
+            injected.update(overrides)
+            return handlers(STATUS, names, **injected)
+        cases = {"every collector raises": ({}, consts["D_FAILED"], 15, None),
+                 "the SSOT load raises": ({"_ssot": boom}, consts["D_CONFIG"], 0, None),
+                 "the aggregate itself raises": ({"_cfg": lambda doc: {"cache_s": 0}}, consts["D_FAILED"], 0, None),
+                 "the aggregate raises under a valid configuration": ({}, consts["D_FAILED"], 15, boom)}
+        for label, (overrides, detail, refresh, aggregate) in cases.items():
+            with self.subTest(label):
+                scope = scope_for(**overrides)
+                if aggregate:
+                    scope["_cached_status"] = aggregate  # the client keeps polling and recovers
+                result = await scope["status_logic"](SimpleNamespace())
+                self.assertEqual(result.status_code, 200)
+                self.assertNotIn(MARKER, json.dumps(result.content))
+                self.assertEqual([s["name"] for s in result.content["sources"]], list(consts["SOURCES"]))
+                self.assertEqual({(s["state"], s["detail"]) for s in result.content["sources"]},
+                                 {("unavailable", detail)})
+                self.assertEqual(result.content["refresh_s"], refresh)
+        scope = scope_for(_authed=lambda request: False)
+        denied = await scope["status_logic"](SimpleNamespace())
+        self.assertEqual((denied.status_code, denied.content), (401, {"error": "auth required"}))
+
+
 class PortalSessionTests(unittest.TestCase):
     """Execute actual session settings/functions without importing service dependencies."""
 
-    def sessions(self, config=None, environment=None):
+    def sessions(self, config=None, environment=None, login=None):
+        """The Portal's session code over a login: `login` is what the applied credstore
+        holds (mios_credentials.portal_login), else the config's password stands in for it."""
         tree = ast.parse((ROOT / PORTAL).read_text(encoding="utf-8"))
         assignments = {"PORTAL_PASSWORD", "PORTAL_USER", "PORTAL_SESSION_TTL",
                        "_portal_secret_cfg", "_PORTAL_SECRET"}
         functions = {"_pcfg", "_portal_session_key", "_portal_make_token", "_portal_token_ok"}
+
+        def names(target):
+            return [e.id for e in target.elts] if isinstance(target, ast.Tuple) else [getattr(target, "id", None)]
         nodes = [node for node in tree.body if
                  (isinstance(node, ast.FunctionDef) and node.name in functions) or
                  (isinstance(node, ast.Assign) and any(
-                     isinstance(target, ast.Name) and target.id in assignments
-                     for target in node.targets))]
+                     name in assignments for target in node.targets for name in names(target)))]
+        applied = login if login is not None else ((config or {}).get("password") or "test-password", "mios")
         scope = {"os": os, "hashlib": hashlib, "hmac": hmac, "base64": base64,
                  "time": time, "Optional": __import__("typing").Optional,
+                 "_portal_login": lambda: applied,
                  "_PORTAL_TOML": {"portal": config or {}, "identity": {"default_password": "test-password"}}}
         with patch.dict(os.environ, environment or {}, clear=True):
             exec(compile(ast.Module(nodes, type_ignores=[]), PORTAL, "exec"), scope)
@@ -280,6 +335,17 @@ class PortalSessionTests(unittest.TestCase):
         self.assertFalse(second["_portal_token_ok"](token[:-1] + ("0" if token[-1] != "0" else "1")))
         with patch.object(time, "time", return_value=time.time() + 604801):
             self.assertFalse(second["_portal_token_ok"](token))
+
+    def test_no_applied_login_never_keys_sessions_with_an_empty_password(self):
+        # Nothing applied (no credstore): every login is refused, and the session key is a
+        # per-process random one -- never a derivation of "" that anyone could recompute.
+        with patch.object(hashlib, "pbkdf2_hmac", side_effect=AssertionError("derived a key from no password")):
+            first = self.sessions(login=("", ""))
+            second = self.sessions(login=("", ""))
+        self.assertEqual(first["PORTAL_PASSWORD"], "")
+        self.assertEqual(len(first["_PORTAL_SECRET"]), 32)
+        self.assertNotEqual(first["_PORTAL_SECRET"], second["_PORTAL_SECRET"])
+        self.assertFalse(second["_portal_token_ok"](first["_portal_make_token"]("mios")))
 
     def test_explicit_secret_keeps_sessions_across_password_changes(self):
         with patch.object(hashlib, "pbkdf2_hmac", side_effect=AssertionError("explicit secret must bypass derivation")):

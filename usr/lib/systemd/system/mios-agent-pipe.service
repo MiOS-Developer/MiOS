@@ -7,8 +7,8 @@ Documentation=file:///usr/lib/mios/agent-pipe/server.py
 # into the image) + pgvector, NOT the boot-time model fetch; ordering behind
 # firstboot's multi-GB download blocked the router for the whole download. firstboot
 # `systemctl restart --no-block`s this unit once models land, so the edge is redundant.
-After=network-online.target mios-pgvector.service mios-passport-provision.service
-Wants=network-online.target mios-passport-provision.service mios-pgvector.service
+After=network-online.target mios-pgvector.service mios-passport-provision.service mios-credential-apply.service
+Wants=network-online.target mios-passport-provision.service mios-pgvector.service mios-credential-apply.service
 # R6: bound the existing Restart=on-failure so a DB-down window (many quick
 # restarts) can't trip the default 5/10s start limit and land permanently failed.
 StartLimitIntervalSec=300
@@ -32,6 +32,10 @@ Group=mios-ai
 # token. The agent-pipe fronts Hermes, so sharing its key group is intended.
 SupplementaryGroups=mios-hermes
 WorkingDirectory=/var/lib/mios/agent-pipe
+# Portal login: mios-credential-apply.service writes the mios.html credential to
+# /run/credstore (0400 root); ImportCredential hands it to this uid.
+ImportCredential=mios.portal.password
+ImportCredential=mios.portal.user
 
 # SSOT chain: every operator-tunable knob sources from mios.toml via
 # /etc/profile.d/mios-env.sh, which exports MIOS_* into the service
@@ -146,7 +150,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/mios/agent-pipe /var/lib/mios/skills /var/log /var/lib/mios/agent-env /var/lib/mios/ai
+ReadWritePaths=/var/lib/mios/agent-pipe /var/lib/mios/skills /var/log /var/lib/mios/agent-env /var/lib/mios/ai -/run/mios/credential-inbox
 # Read-only mount of the agent-passport tree so this service can
 # load its own private key + every other agent's public key for
 # /passport/verify.

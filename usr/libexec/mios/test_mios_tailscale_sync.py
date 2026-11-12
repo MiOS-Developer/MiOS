@@ -32,6 +32,7 @@ _PRE_FIX = "150b5b461"
 _PRE_ENROLL = "46c4fe9"
 
 _FAKE = """#!/bin/sh
+case " $* " in *" serve status "*) cat "$FAKE_SERVE" 2>/dev/null || echo '{}'; exit "${FAKE_SERVE_RC:-0}";; esac
 case " $* " in *" status "*) cat "$FAKE_STATUS"; exit 0;; esac
 for a in "$@"; do
   case "$a" in --auth-key=file:*) cat "${a#--auth-key=file:}" > "$FAKE_DIR/seen-key";; esac
@@ -47,6 +48,9 @@ cat "$FAKE_DIR/ping-$ip" 2>/dev/null
 """
 _FAKE_IP = """#!/bin/sh
 cat "$FAKE_DIR/routes.json"
+"""
+_FAKE_SYSTEMCTL = """#!/bin/sh
+printf 'systemctl %s\\n' "$*" >> "$FAKE_LOG"
 """
 _ROUTES = [{"dst": "default", "dev": "tether0", "metric": 900},
            {"dst": "default", "dev": "uplink0", "metric": 600}]
@@ -75,18 +79,22 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
              host_dropin: str = "", pings: dict | None = None,
              cooling: dict | None = None, out: dict | None = None,
              active_exit: str = "", args: tuple[str, ...] = (),
-             extra_env: dict | None = None) -> list[str]:
+             extra_env: dict | None = None, operator: str = "",
+             module_patch: dict | None = None, module_code: str = "") -> list[str]:
     """Run `script` under a fake tailscale; return the argv lines `set` recorded.
     `host_dropin` becomes a host-tier mios.d fragment over the vendor layer;
     `pings` maps "direct" or an exit-node IP to (loss %, avg RTT ms or None);
     `cooling` seeds the health state file and `out["state"]` receives it;
     `active_exit` is the exit node the fake reports as already in use;
     `args` are the script's arguments, `extra_env` is added to its environment
-    and `out["seen_key"]` receives what an --auth-key=file: held at call time."""
+    and `out["seen_key"]` receives what an --auth-key=file: held at call time.
+    `operator` is the operator's (user) tier text; `module_patch` sets module
+    constants before main() runs and `module_code` (a PLANT) runs against it as `m`."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = os.path.join(tmp, "bin")
         os.mkdir(bindir)
-        for name, body in (("tailscale", _FAKE), ("ping", _FAKE_PING), ("ip", _FAKE_IP)):
+        for name, body in (("tailscale", _FAKE), ("ping", _FAKE_PING), ("ip", _FAKE_IP),
+                           ("systemctl", _FAKE_SYSTEMCTL)):
             with open(os.path.join(bindir, name), "w") as f:
                 f.write(body)
             os.chmod(os.path.join(bindir, name), 0o755)
@@ -103,7 +111,8 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
         toml = toml.replace("@STATE@", state_path)
         status = os.path.join(tmp, "status.json")
         with open(status, "w") as f:
-            snapshot = {"BackendState": state, "Peer": peers}
+            snapshot = {"BackendState": state, "Peer": peers,
+                        "Self": {"DNSName": "blade.tail0000.ts.net."}}
             if active_exit:
                 snapshot["ExitNodeStatus"] = {"Online": True, "TailscaleIPs": [f"{active_exit}/32"]}
             json.dump(snapshot, f)
@@ -116,6 +125,10 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
             with open(os.path.join(host_d, "60-tailscale.toml"), "w") as f:
                 f.write(host_dropin)
         log = os.path.join(tmp, "set.log")
+        if operator:
+            with open(os.path.join(tmp, "absent-user.toml"), "w") as f:
+                f.write(operator)
+        patches = "".join(f"m.{k} = {v!r}\n" for k, v in (module_patch or {}).items())
         driver = (
             "import sys\n"
             f"sys.argv = [{script!r}, *{list(args)!r}]\n"
@@ -126,6 +139,7 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
             # Only the pre-fix script reads these; the fix resolves the env layers.
             f"m.VENDOR_TOML = {vendor!r}\n"
             f"m.HOST_TOML = {os.path.join(tmp, 'absent.toml')!r}\n"
+            + patches + module_code + "\n"
             "sys.exit(m.main())\n")
         env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
         # The fake shadows any real tailscale; /usr/bin:/bin only serve its cat.
@@ -151,7 +165,10 @@ def run_sync(script: str, toml: str, peers: dict, state: str = "Running",
             return f.read().splitlines()
 
 
-_BASE = """[tailscale]
+_BASE = """[security.operator_tier]
+values = ["identity.default_password", "portal.password", "ttyd.auth_pass"]
+toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled"]
+[tailscale]
 enabled = true
 accept_routes = true
 accept_dns = true
@@ -187,7 +204,7 @@ def check_applies(script: str) -> str | None:
     return None
 
 
-_LOADER = "mios_toml.load_merged(layers=mios_toml.layer_paths())"
+_LOADER = "mios_toml.operator_view()[0]"
 _MONOLITHS_ONLY = 'mios_toml.load_merged(layers=[os.environ["MIOS_VENDOR_TOML"], os.environ["MIOS_HOST_TOML"]])'
 
 
@@ -445,6 +462,668 @@ class TestTailscaleSync(unittest.TestCase):
             os.unlink(f.name)
         self.assertIsNotNone(defect)
         self.assertIn("never applied", defect)
+
+
+# ---------------------------------------------------------------- [tailscale.serve] routes
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+
+class _Upstream(http.server.BaseHTTPRequestHandler):
+    """A loopback upstream that answers anonymous GETs with `code` (`paths` overrides it
+    per path: the Portal's "/" redirects to /login while /v1/* may answer without one)."""
+    code = 401
+    paths: dict = {}
+
+    def do_GET(self):  # noqa: N802
+        code = self.paths.get(self.path, self.code)
+        self.send_response(code)
+        if code in (302, 303):
+            self.send_header("Location", "/login")
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+def _serve_toml(d: str, routes: str, up: int) -> str:
+    return _BASE + f"""[ports]
+agent_pipe = {up}
+agent_share = {up}
+forge_http = 8400
+forge_ssh = 8410
+ttyd_bash = {up}
+tailnet_https = 443
+[paths]
+var_tailscale_sync_dir = "{d}"
+[network]
+loopback = "127.0.0.1"
+[units]
+forge = "mios-forge.service"
+[portal]
+public_host = ""
+[tailscale.serve]
+enabled = true
+""" + routes
+
+
+_R_PORTAL = '[tailscale.serve.routes.portal]\nenabled = true\nproto = "https"\nfront_door = true\npath = "/"\nupstream = "agent_pipe"\nrequire_auth = true\n'
+_R_SHARE = '[tailscale.serve.routes.agent_share]\nenabled = true\nproto = "https"\nfront_door = true\npath = "/share/"\nupstream = "agent_share"\n'
+_R_FORGE = '[tailscale.serve.routes.forge_http]\nenabled = true\nproto = "https"\npath = "/"\nupstream = "forge_http"\n'
+_R_SSH = '[tailscale.serve.routes.forge_ssh]\nenabled = true\nproto = "tcp"\nupstream = "forge_ssh"\n'
+_SELF = "blade.tail0000.ts.net"
+
+
+class TestTailscaleServe(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="mios-ts-serve-")
+        self.quadlet = os.path.join(self.d, "quadlet")
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Upstream)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.up = self.srv.server_address[1]
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        import shutil
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _dropin(self) -> str:
+        return os.path.join(self.quadlet, "mios-forge.container.d", "60-mios-tailnet.conf")
+
+    def _run(self, routes: str, live: dict | None = None, owned: dict | None = None, args=(),
+             operator: str = "", raw: str | None = None, env: dict | None = None, code: str = "",
+             toml: str | None = None):
+        live_path = os.path.join(self.d, "serve.json")
+        with open(live_path, "w") as f:
+            f.write(raw if raw is not None else json.dumps(live or {}))
+        if owned is not None:
+            with open(os.path.join(self.d, "serve-owned.json"), "w") as f:
+                json.dump(owned, f)
+        calls = run_sync(_SCRIPT, toml or _serve_toml(self.d, routes, self.up), {}, args=args,
+                         extra_env={"FAKE_SERVE": live_path, **(env or {})}, operator=operator,
+                         module_patch={"QUADLET_RUNTIME_DIR": self.quadlet}, module_code=code)
+        return [c for c in calls if c.startswith("serve") or c.startswith("systemctl")]
+
+    def _state(self) -> dict:
+        try:
+            with open(os.path.join(self.d, "serve-owned.json")) as f:
+                return json.load(f)
+        except OSError:
+            return {}
+
+    def _owned(self) -> dict:
+        """The owned ROUTES (markers such as the one-time ttyd-expose migration left out)."""
+        return {k: v for k, v in self._state().items() if not k.startswith("migrated:")}
+
+    def test_plan_is_pure_and_owns_only_what_it_added_or_adopted(self):
+        mod = load_sync(_SCRIPT)
+        want = [{"name": "a", "proto": "https", "port": 443, "path": "/", "target": "http://127.0.0.1:1"},
+                {"name": "b", "proto": "tcp", "port": 8410, "path": "", "target": "tcp://127.0.0.1:8410"},
+                {"name": "c", "proto": "https", "port": 8900, "path": "/", "target": "http://127.0.0.1:8900"},
+                {"name": "d", "proto": "tcp", "port": 8800, "path": "", "target": "tcp://127.0.0.1:8800"}]
+        live = {"https:443:/": "http://127.0.0.1:1", "tcp:8410:": "tcp://127.0.0.1:9999",
+                "https:8400:/": "http://127.0.0.1:8400", "https:7000:/": "http://127.0.0.1:7000",
+                "https:8800:/": "http://127.0.0.1:8800"}
+        owned = {"https:8400:/": "http://127.0.0.1:8400", "https:7000:/": "http://127.0.0.1:7001"}
+        plan = {(a, r["name"]) for a, r in mod.plan_serve(want, live, owned)}
+        # d: a tcp route on a port a hand-made https route holds is a conflict, never an add.
+        self.assertEqual(plan, {("adopt", "a"), ("conflict", "b"), ("add", "c"), ("conflict", "d"),
+                                ("remove", "https:8400:/"), ("forget", "https:7000:/")})
+
+    def test_positive_every_route_is_a_loopback_proxy(self):
+        calls = self._run(_R_PORTAL + _R_SHARE)
+        self.assertIn(f"serve --bg --https=443 --set-path=/ http://127.0.0.1:{self.up}", calls)
+        self.assertIn(f"serve --bg --https=443 --set-path=/share/ http://127.0.0.1:{self.up}", calls)
+        self.assertFalse([c for c in calls if "reset" in c or "funnel" in c], calls)
+        for c in calls:
+            self.assertRegex(c, r" (http|tcp)://127\.0\.0\.1:\d+$", f"a route that is not a loopback proxy: {c}")
+        self.assertEqual(sorted(self._owned()), ["https:443:/", "https:443:/share/"])
+
+    def test_negative_unauthenticated_upstream_is_refused(self):
+        _Upstream.code = 200
+        try:
+            calls = self._run(_R_PORTAL)
+        finally:
+            _Upstream.code = 401
+        self.assertEqual(calls, [], "an upstream that answers without a login was exposed")
+
+    def test_negative_directory_handler_is_never_rendered(self):
+        mod = load_sync(_SCRIPT)
+        data = {"tailscale": {"serve": {"enabled": True, "front_door": "h", "routes": {
+            "s": {"enabled": True, "proto": "https", "front_door": True, "path": "/share/",
+                  "dir": "credstore_dir"}}}},
+            "ports": {"h": 443}, "network": {"loopback": "127.0.0.1"}, "paths": {"credstore_dir": "/etc"}}
+        routes, errors = mod.render_routes(data)
+        self.assertEqual(routes, [], "a directory path handler was rendered")
+        self.assertTrue(errors)
+        data["network"]["loopback"] = "10.0.0.5"
+        data["tailscale"]["serve"]["routes"]["s"].update(upstream="h")
+        self.assertEqual(mod.render_routes(data)[0], [], "a non-loopback upstream was rendered")
+
+    def test_negative_operator_tier_cannot_retarget_a_route(self):
+        # Only the enabled toggles follow the operator tier; its upstream, front door,
+        # ledger dir, public_host and loopback are ignored (all vendor/host).
+        hostile = ('[tailscale.serve]\nenabled = true\nfront_door = "forge_http"\n'
+                   '[tailscale.serve.routes.portal]\nenabled = true\nupstream = "forge_ssh"\nproto = "tcp"\n'
+                   f'[paths]\nvar_tailscale_sync_dir = "{self.d}/evil"\n'
+                   '[network]\nloopback = "10.9.9.9"\n[portal]\npublic_host = "x\\n[Service]"\n')
+        calls = self._run(_R_PORTAL.replace("enabled = true", "enabled = false"), operator=hostile)
+        self.assertEqual(calls, [f"serve --bg --https=443 --set-path=/ http://127.0.0.1:{self.up}"],
+                         "the operator tier steered more than the enabled toggle")
+        self.assertFalse(os.path.exists(os.path.join(self.d, "evil")))
+
+    def test_hand_made_route_is_adopted_or_left_never_reset(self):
+        live = {"TCP": {"443": {"HTTPS": True}},
+                "Web": {f"{_SELF}:443": {"Handlers": {"/": {"Proxy": f"http://127.0.0.1:{self.up}"},
+                                                      "/share/": {"Path": "/somewhere/else"}}}}}
+        calls = self._run(_R_PORTAL + _R_SHARE, live=live)
+        self.assertEqual(calls, [], "an identical route was re-added or a different one replaced")
+        self.assertEqual(sorted(self._owned()), ["https:443:/"])
+
+    def test_stale_handler_of_another_node_name_is_not_ours(self):
+        # A renamed node's leftover handler on the same port, in either key order, is
+        # neither a conflict while the route is on nor forgotten when it is turned off.
+        target = f"http://127.0.0.1:{self.up}"
+        for stale in ("aa-old.tail0000.ts.net", "zz-old.tail0000.ts.net"):
+            web = {f"{stale}:443": {"Handlers": {"/": {"Proxy": "https+insecure://127.0.0.1:9090"}}},
+                   f"{_SELF}:443": {"Handlers": {"/": {"Proxy": target}}}}
+            # tailscale's JSON is a Go map: keys come out SORTED, so zz-old follows this node.
+            live = {"TCP": {"443": {"HTTPS": True}}, "Web": dict(sorted(web.items()))}
+            self.assertEqual(self._run(_R_PORTAL, live=live, owned={"https:443:/": target}), [], stale)
+            calls = self._run("", live=live, owned={"https:443:/": target})
+            self.assertEqual(calls, ["serve --https=443 --set-path=/ off"], stale)
+            self.assertEqual(self._owned(), {})
+
+    def test_disabled_owned_route_is_removed(self):
+        owned = {"tcp:8410:": "tcp://127.0.0.1:8410"}
+        live = {"TCP": {"8410": {"TCPForward": "127.0.0.1:8410"}}}
+        calls = self._run('[tailscale.serve.routes.x]\nenabled = false\n', live=live, owned=owned)
+        self.assertEqual(calls, ["serve --tcp=8410 off"])
+        self.assertEqual(self._owned(), {})
+
+    def test_tcp_and_https_cannot_share_a_listener(self):
+        mod = load_sync(_SCRIPT)
+        data = {"tailscale": {"serve": {"enabled": True, "routes": {
+            "a": {"enabled": True, "proto": "https", "upstream": "x"},
+            "b": {"enabled": True, "proto": "tcp", "upstream": "x"}}}},
+            "ports": {"x": 8410}, "network": {"loopback": "127.0.0.1"}}
+        routes, errors = mod.render_routes(data)
+        self.assertEqual(routes[:1], [r for r in routes if r["name"] == "a"])
+        self.assertTrue(any("collides" in e for e in errors), errors)
+
+    def test_forge_route_renders_the_generated_dropin(self):
+        calls = self._run(_R_FORGE + _R_SSH)
+        with open(self._dropin()) as f:
+            dropin = f.read()
+        self.assertTrue(dropin.startswith("# GENERATED by mios-tailscale-sync"))
+        self.assertIn(f"FORGEJO__server__ROOT_URL=https://{_SELF}:8400/", dropin)
+        self.assertIn("FORGEJO__server__HTTP_ADDR=127.0.0.1", dropin)
+        self.assertIn("FORGEJO__server__SSH_LISTEN_HOST=127.0.0.1", dropin)
+        self.assertIn("serve --bg --tcp=8410 tcp://127.0.0.1:8410", calls)
+        self.assertIn("systemctl --no-block try-restart mios-forge.service", calls)
+        self._run("")                 # the route is disabled again: drop-in retired
+        self.assertFalse(os.path.exists(self._dropin()))
+
+    def test_forge_dropin_follows_only_a_route_this_sync_serves(self):
+        # A hand-made handler holds the forge listener: no drop-in, no restart.
+        live = {"TCP": {"8400": {"HTTPS": True}}, "Web": {f"{_SELF}:8400": {"Handlers": {"/": {"Text": "hand-made"}}}}}
+        calls = self._run(_R_FORGE, live=live)
+        self.assertEqual([c for c in calls if c.startswith("serve")], [], "the hand-made handler was replaced")
+        self.assertFalse(os.path.exists(self._dropin()), "a drop-in names a tailnet URL the sync did not serve")
+        self.assertNotIn("systemctl --no-block try-restart mios-forge.service", calls)
+        self._run(_R_FORGE)                                   # control: the same route, served
+        self.assertTrue(os.path.exists(self._dropin()))
+        self._run(_R_FORGE, live=live)                        # a conflict later retires it again
+        self.assertFalse(os.path.exists(self._dropin()))
+
+    def test_negative_public_host_cannot_inject_into_the_dropin(self):
+        mod = load_sync(_SCRIPT)
+        for bad in ("evil.example\n[Service]\nExecStartPre=/bin/sh -c id", "a b", "x" * 254, "-lead.example", ""):
+            self.assertEqual(mod.dns_name(bad), "", repr(bad))
+        with self.assertRaises(ValueError):
+            mod.forge_dropin({"network": {"loopback": "127.0.0.1"}}, "evil\n[Service]", False, 8400)
+        toml = _R_FORGE.replace("[tailscale.serve.routes.forge_http]",
+                                '[tailscale.serve.routes.forge_http]')
+        source = _serve_toml(self.d, toml, self.up).replace('public_host = ""',
+                                                            'public_host = "evil.example\\n[Service]"')
+        calls = run_sync(_SCRIPT, source, {}, module_patch={"QUADLET_RUNTIME_DIR": self.quadlet},
+                         extra_env={"FAKE_SERVE": os.path.join(self.d, "absent.json")})
+        self.assertFalse(os.path.exists(self._dropin()), "an invalid public_host was written into a unit")
+        self.assertNotIn("systemctl daemon-reload", calls)
+
+    def test_failed_serve_status_plans_nothing(self):
+        # A hand-made Text handler holds 443 /, and a route the operator just disabled is owned
+        # and live: a status that fails must neither overwrite the one nor forget the other.
+        target = f"http://127.0.0.1:{self.up}"
+        owned = {"https:443:/share/": target, "migrated:ttyd-expose": "done"}
+        live = {"TCP": {"443": {"HTTPS": True}},
+                "Web": {f"{_SELF}:443": {"Handlers": {"/": {"Text": "hand-made"}, "/share/": {"Proxy": target}}}}}
+        for label, kw in (("rc=1", {"live": live, "env": {"FAKE_SERVE_RC": "1"}}),
+                          ("garbled", {"raw": '{"TCP": {'}), ("not an object", {"raw": "[1, 2]"}),
+                          ("empty output", {"raw": ""})):
+            calls = self._run(_R_PORTAL, owned=owned, **kw)
+            self.assertEqual(calls, [], f"{label}: planned from a failed serve status")
+            self.assertEqual(self._state(), owned, f"{label}: the owned record changed")
+        # control: the same live status, read, is a conflict for / and turns /share/ off
+        calls = self._run(_R_PORTAL, owned=owned, live=live)
+        self.assertEqual(calls, ["serve --https=443 --set-path=/share/ off"])
+        # Negative control: the round-3 reader (a failed status reads as {}) overwrites and forgets.
+        calls = self._run(_R_PORTAL, owned=owned, live=live, env={"FAKE_SERVE_RC": "1"},
+                          code="m._serve_status = lambda ts_bin: {}")
+        self.assertEqual(calls, [f"serve --bg --https=443 --set-path=/ {target}"])
+        self.assertNotIn("https:443:/share/", self._owned(), "this control no longer shows the forget")
+
+    def test_serve_status_reader_refuses_what_it_cannot_trust(self):
+        mod = load_sync(_SCRIPT)
+        import unittest.mock as um
+        for out, rc, want in (('{"TCP": {}}', 0, {"TCP": {}}), ("null\n", 0, {}), ("{}", 0, {}),
+                              ("{}", 1, None), ("", 0, None), ("[]", 0, None), ("{", 0, None)):
+            res = subprocess.CompletedProcess([], rc, stdout=out, stderr="")
+            with um.patch.object(mod.subprocess, "run", return_value=res):
+                self.assertEqual(mod._serve_status("tailscale"), want, (out, rc))
+        with um.patch.object(mod.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 10)):
+            self.assertIsNone(mod._serve_status("tailscale"), "a timeout was read as an empty config")
+
+    def test_plain_http_listener_is_a_conflict_never_adopted(self):
+        target = f"http://127.0.0.1:{self.up}"
+        live = {"TCP": {"443": {"HTTP": True}}, "Web": {f"{_SELF}:443": {"Handlers": {"/": {"Proxy": target}}}}}
+        self.assertEqual(self._run(_R_PORTAL, live=live), [], "an http listener was overwritten")
+        self.assertEqual(self._owned(), {}, "an http listener was adopted as an https route")
+        mod = load_sync(_SCRIPT)
+        live_keys, _foreign = mod.live_routes(live, _SELF)
+        self.assertEqual(live_keys, {"http:443:/": target})
+        want = [{"name": "portal", "proto": "https", "port": 443, "path": "/", "target": target}]
+        self.assertEqual([a for a, _r in mod.plan_serve(want, live_keys, {})], ["conflict"])
+        # Negative control: the round-3 reader keyed every Web handler https -- an adoption.
+        old = {f"https:{hp.rpartition(':')[2]}:{p}": h["Proxy"] for hp, w in live["Web"].items()
+               for p, h in w["Handlers"].items()}
+        self.assertEqual([a for a, _r in mod.plan_serve(want, old, {})], ["adopt"])
+
+    def test_portal_route_needs_every_auth_probe_to_ask_for_a_login(self):
+        probes = 'auth_probe_paths = ["/", "/v1/chat/completions", "/a2a"]\n'
+        route = _R_PORTAL + probes
+        target = f"http://127.0.0.1:{self.up}"
+        _Upstream.paths = {"/": 302, "/v1/chat/completions": 405, "/a2a": 405}   # api_require_auth off
+        try:
+            self.assertEqual(self._run(route), [], "the whole agent-pipe was published with an open /v1")
+            # Negative control: the round-3 single probe of "/" publishes it.
+            self.assertEqual(self._run(_R_PORTAL), [f"serve --bg --https=443 --set-path=/ {target}"])
+            live = {"TCP": {"443": {"HTTPS": True}}, "Web": {f"{_SELF}:443": {"Handlers": {"/": {"Proxy": target}}}}}
+            calls = self._run(route, live=live, owned={"https:443:/": target})
+            self.assertEqual(calls, ["serve --https=443 --set-path=/ off"], "an owned route left open stayed published")
+            _Upstream.paths = {"/": 302, "/v1/chat/completions": 401, "/a2a": 401}  # api_require_auth on
+            self.assertEqual(self._run(route), [f"serve --bg --https=443 --set-path=/ {target}"])
+        finally:
+            _Upstream.paths = {}
+        self.srv.shutdown()                                   # an upstream that is down: not published,
+        self.srv.server_close()                               # and an owned route is kept
+        self.assertEqual(self._run(route, owned={}), [])
+        self.assertEqual(self._run(route, live=live, owned={"https:443:/": target}), [])
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Upstream)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def test_route_guarded_by_the_vendor_default_login_is_refused(self):
+        target = f"http://127.0.0.1:{self.up}"
+        ident = '[identity]\nusername = "fixop"\ndefault_password = "fixture-vendor-pw"\n'
+        for route, operator, want in (
+                (_R_PORTAL + 'credential = "portal"\n', "", []),
+                (_R_PORTAL + 'credential = "portal"\n', '[identity]\ndefault_password = "fixture-op-pw"\n',
+                 [f"serve --bg --https=443 --set-path=/ {target}"]),
+                # ttyd never takes the operator credential: only its own login lifts the refusal
+                (_R_PORTAL + 'credential = "ttyd"\n', '[identity]\ndefault_password = "fixture-op-pw"\n', []),
+                (_R_PORTAL + 'credential = "ttyd"\n', '[ttyd]\nauth_pass = "fixture-ttyd-own"\n',
+                 [f"serve --bg --https=443 --set-path=/ {target}"]),
+                # Negative control: the same route without `credential` publishes the vendor default.
+                (_R_PORTAL, "", [f"serve --bg --https=443 --set-path=/ {target}"])):
+            toml = ident + _serve_toml(self.d, route, self.up)
+            self.assertEqual(self._run("", toml=toml, operator=operator), want, (route[-24:], operator))
+            os.unlink(os.path.join(self.d, "serve-owned.json"))
+
+    def test_retired_ttyd_expose_handler_follows_the_ttyd_route_once(self):
+        target = f"http://127.0.0.1:{self.up}"
+        live = {"TCP": {str(self.up): {"HTTPS": True}},
+                "Web": {f"{_SELF}:{self.up}": {"Handlers": {"/": {"Proxy": target}}}}}
+        off = _serve_toml(self.d, "", self.up).replace("[tailscale.serve]\nenabled = true", "[tailscale.serve]\nenabled = false")
+        calls = self._run("", live=live, toml=off)
+        self.assertEqual(calls, [f"serve --https={self.up} --set-path=/ off"], "the retired handler stayed published")
+        self.assertEqual(self._state(), {"migrated:ttyd-expose": "done"})
+        self.assertEqual(self._run("", live=live, toml=off), [], "the migration ran twice")
+        os.unlink(os.path.join(self.d, "serve-owned.json"))
+        route = '[tailscale.serve.routes.ttyd_bash]\nenabled = true\nproto = "https"\npath = "/"\nupstream = "ttyd_bash"\nrequire_auth = true\n'
+        self.assertEqual(self._run(route, live=live), [], "an enabled ttyd route re-added the handler")
+        self.assertEqual(self._owned(), {f"https:{self.up}:/": target}, "the handler was not adopted")
+        os.unlink(os.path.join(self.d, "serve-owned.json"))
+        # Negative control: without the migration the handler is never touched.
+        calls = self._run("", live=live, toml=off, code='m.legacy_ttyd_handler = lambda data: ("", "")')
+        self.assertEqual(calls, [])
+
+    def test_retired_tailnet_expose_true_keeps_the_handler_unowned(self):
+        target = f"http://127.0.0.1:{self.up}"
+        live = {"TCP": {str(self.up): {"HTTPS": True}},
+                "Web": {f"{_SELF}:{self.up}": {"Handlers": {"/": {"Proxy": target}}}}}
+        off = _serve_toml(self.d, "", self.up).replace("[tailscale.serve]\nenabled = true", "[tailscale.serve]\nenabled = false")
+        kept = off + "[ttyd]\ntailnet_expose = true\n"            # a host tier that still sets the retired key
+        self.assertEqual(self._run("", live=live, toml=kept), [], "the operator's phone terminal was turned off")
+        self.assertEqual(self._state(), {"migrated:ttyd-expose": "done"}, "the kept handler was taken as owned")
+        self.assertEqual(self._run("", live=live, toml=kept), [], "a later run removed it")
+
+    def test_check_reports_without_changing(self):
+        calls = self._run(_R_PORTAL, args=("--check",))
+        self.assertEqual(calls, [])
+        self.assertEqual(self._owned(), {})
+
+    def test_negative_broken_operator_tier_applies_nothing(self):
+        calls = self._run(_R_PORTAL, operator="[tailscale.serve\nenabled = true\n")
+        self.assertEqual(calls, [], "a layer that does not parse still applied routes")
+
+    def test_broken_operator_tier_stops_only_the_routes_never_the_mesh(self):
+        # A typo in mios.html must not stop exit-node failover: the mesh takes nothing from
+        # the operator tier, so it still syncs on vendor + host while no route changes.
+        peers = {"a": _peer("pixel-7-pro", "100.122.33.108", True, True)}
+        toml = _serve_toml(self.d, _R_PORTAL, self.up).replace("[tailscale]\n", '[tailscale]\nexit_nodes = ["pixel-7-pro"]\n', 1)
+        calls = run_sync(_SCRIPT, toml, peers, operator="[tailscale.serve\nenabled = true\n",
+                         extra_env={"FAKE_SERVE": os.path.join(self.d, "absent.json")},
+                         module_patch={"QUADLET_RUNTIME_DIR": self.quadlet})
+        self.assertEqual([c for c in calls if c.startswith("serve")], [], "routes applied from a broken tier")
+        self.assertEqual([c for c in calls if c.startswith("set ")],
+                         ["set --accept-routes=true --accept-dns=true --advertise-routes= "
+                          "--exit-node=100.122.33.108 --exit-node-allow-lan-access=true"],
+                         "a broken operator tier stopped the mesh sync")
+        # A broken VENDOR layer still stops everything.
+        calls = run_sync(_SCRIPT, "[tailscale\n" + toml, peers,
+                         extra_env={"FAKE_SERVE": os.path.join(self.d, "absent.json")})
+        self.assertEqual(calls, [], "a vendor layer that does not parse still applied something")
+
+
+# ---------------------------------------------------------------- the read-only agent share
+import pwd  # noqa: E402
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+
+
+def _free_port() -> int:
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+class TestAgentShare(unittest.TestCase):
+    """--share-serve as an unprivileged uid: world-readable regular files only, no link of
+    any kind followed, sandboxed content types. Each refusal is the live exploit shape:
+    an entry an agent plants in the group-writable share."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = tempfile.mkdtemp(prefix="mios-share-")
+        os.chmod(cls.base, 0o755)
+        root = cls.root = os.path.join(cls.base, "share")
+        os.mkdir(root, 0o755)
+        os.chmod(root, 0o755)
+        outside = os.path.join(cls.base, "outside")
+        os.mkdir(outside, 0o755)
+        os.chmod(outside, 0o755)
+
+        def put(path, text, mode):
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, mode)
+        put(os.path.join(root, "ok.txt"), "fixture-public\n", 0o644)
+        put(os.path.join(root, "secret.txt"), "fixture-root-only\n", 0o600)
+        put(os.path.join(root, "evil.html"), "<script>alert(1)</script>\n", 0o644)
+        put(os.path.join(outside, "public-out.txt"), "fixture-outside\n", 0o644)
+        put(os.path.join(outside, "root-only.txt"), "fixture-outside-secret\n", 0o600)
+        os.symlink(os.path.join(outside, "root-only.txt"), os.path.join(root, "link-secret"))
+        os.symlink(os.path.join(outside, "public-out.txt"), os.path.join(root, "link-public"))
+        os.symlink(outside, os.path.join(root, "linkdir"))
+        os.link(os.path.join(outside, "public-out.txt"), os.path.join(root, "hard.txt"))
+        sub = os.path.join(root, "sub")
+        os.mkdir(sub, 0o755)
+        os.chmod(sub, 0o755)
+        put(os.path.join(sub, "nested.txt"), "fixture-nested\n", 0o644)
+        cls.big = "".join(f"{i:07d}\n" for i in range(40000))          # 320 kB: several chunks
+        put(os.path.join(sub, "big.txt"), cls.big, 0o644)
+        cls.port = _free_port()
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+        user = None
+        if os.geteuid() == 0:
+            user = pwd.getpwnam("nobody").pw_uid
+            can_read = subprocess.run([sys.executable, "-c", "import sys; open(sys.argv[1]).close(); "
+                                       "open(sys.argv[2]).close()", _SCRIPT, os.path.join(root, "ok.txt")],
+                                      user=user, group=user, extra_groups=[], capture_output=True)
+            if can_read.returncode != 0:
+                import shutil
+                shutil.rmtree(cls.base, ignore_errors=True)
+                raise unittest.SkipTest("this tree or TMPDIR is not readable by uid nobody "
+                                        "(the share server never runs as root)")
+        cls.proc = subprocess.Popen(
+            [sys.executable, _SCRIPT, "--share-serve", "--root", root, "--bind", "127.0.0.1",
+             "--port", str(cls.port), "--prefix", "/share/"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            user=user, group=user, extra_groups=[] if user is not None else None)
+        import time
+        for _ in range(100):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{cls.port}/share/ok.txt", timeout=1).read()
+                break
+            except OSError:
+                if cls.proc.poll() is not None:
+                    raise AssertionError(f"the share server exited {cls.proc.returncode}: "
+                                         f"{cls.proc.stdout.read().decode(errors='replace')[-400:]}") from None
+                time.sleep(0.1)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.proc.terminate()
+        cls.proc.wait(timeout=10)
+        import shutil
+        shutil.rmtree(cls.base, ignore_errors=True)
+
+    def _get(self, path):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}{path}", timeout=5) as r:
+                return r.status, r.read().decode(), dict(r.headers)
+        except urllib.error.HTTPError as e:
+            return e.code, "", dict(e.headers)
+
+    def test_positive_world_readable_files_and_listing(self):
+        code, body, headers = self._get("/share/ok.txt")
+        self.assertEqual((code, body), (200, "fixture-public\n"))
+        self.assertIn("sandbox", headers.get("Content-Security-Policy", ""))
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(self._get("/share/sub/nested.txt")[:2], (200, "fixture-nested\n"))
+        self.assertEqual(self._get("/ok.txt")[0], 200)              # prefix stripped or not
+        code, listing, _h = self._get("/share/")
+        self.assertEqual(code, 200)
+        self.assertEqual(sorted(listing.split()), ["evil.html", "ok.txt", "sub/"],
+                         "the listing names a link, a root-only or a hard-linked file")
+        code, body, headers = self._get("/share/sub/big.txt")
+        self.assertEqual((code, headers.get("Content-Length"), body), (200, str(len(self.big)), self.big),
+                         "a file larger than one chunk was not served byte for byte")
+
+    def test_shipped_unit_route_and_tmpfiles_keep_the_share_behind_a_proxy(self):
+        """The share is reached only as: tailnet route -> loopback proxy -> a DynamicUser
+        process. Negative: no route carries a directory, and the unit names no User=/root."""
+        import tomllib
+        with open(os.path.join(_ROOT, "usr/share/mios/mios.toml"), "rb") as f:
+            ssot = tomllib.load(f)
+        with open(os.path.join(_ROOT, "usr/lib/systemd/system/mios-agent-share.service")) as f:
+            unit = f.read()
+        route = ssot["tailscale"]["serve"]["routes"]["agent_share"]
+        self.assertEqual((route["proto"], route["upstream"], route["enabled"]), ("https", "agent_share", False))
+        for name, r in ssot["tailscale"]["serve"]["routes"].items():
+            self.assertNotIn("dir", r, f"route {name} is a directory handler (root tailscaled follows links)")
+        self.assertIn("\nDynamicUser=yes\n", unit)
+        self.assertNotRegex(unit, r"(?m)^User=", "the share server was pinned to an account")
+        self.assertIn(f"Environment=MIOS_PORTS_AGENT_SHARE={ssot['ports']['agent_share']}\n", unit)
+        self.assertRegex(unit, r"(?m)^ExecStart=/usr/libexec/mios/mios-tailscale-sync --share-serve "
+                               r"--bind \$\{MIOS_NETWORK_LOOPBACK\} --port \$\{MIOS_PORTS_AGENT_SHARE\}$")
+        share = ssot["paths"]["srv_agent_share_dir"]
+        # Law 7/8: the unit restates neither the share dir nor the route path; the server
+        # reads both from the vendor + host tiers.
+        for copy in (share, route["path"]):
+            self.assertNotIn(copy, unit.split("\n[Service]", 1)[1], f"the unit restates {copy}")
+        mod = load_sync(_SCRIPT)
+        env = {"MIOS_VENDOR_TOML": os.path.join(_ROOT, "usr/share/mios/mios.toml"),
+               "MIOS_VENDOR_TOML_D": os.path.join(self.base, "none.d"),
+               "MIOS_HOST_TOML": os.path.join(self.base, "none.toml"), "MIOS_HOST_TOML_D": os.path.join(self.base, "none.d")}
+        import unittest.mock as um
+        with um.patch.dict(os.environ, env):
+            self.assertEqual(mod._share_defaults(), (share, route["path"]))
+            host = os.path.join(self.base, "host.toml")
+            with open(host, "w") as f:
+                f.write('[paths]\nsrv_agent_share_dir = "/srv/elsewhere"\n[tailscale.serve.routes.agent_share]\npath = "/s/"\n')
+            with um.patch.dict(os.environ, {"MIOS_HOST_TOML": host}):
+                self.assertEqual(mod._share_defaults(), ("/srv/elsewhere", "/s/"), "a host override is not followed")
+        with open(os.path.join(_ROOT, "usr/lib/tmpfiles.d/50-mios.conf")) as f:
+            tmpfiles = [ln.split() for ln in f if ln.startswith("d ")]
+        self.assertIn(["d", share, "2775", "1000", "mios-ai", "-"], tmpfiles, "Law 2: the share is not declared")
+        self.assertIn(["d", ssot["paths"]["run_credential_inbox_dir"], "1730", "root", "mios-ai", "-"], tmpfiles,
+                      "the Portal's credential inbox is not declared (or is listable by its writers)")
+
+    def test_negative_no_link_or_private_file_is_served(self):
+        for path in ("/share/link-secret", "/share/link-public", "/share/linkdir/public-out.txt",
+                     "/share/secret.txt", "/share/hard.txt", "/share/../outside/public-out.txt",
+                     "/share/%2e%2e/outside/public-out.txt", "/share/sub/../../outside/public-out.txt"):
+            code, body, _h = self._get(path)
+            self.assertEqual(code, 404, f"{path} was served")
+            self.assertNotIn("fixture-outside", body)
+
+    def test_negative_html_is_never_rendered(self):
+        code, body, headers = self._get("/share/evil.html")
+        self.assertEqual(code, 200)
+        self.assertEqual(headers.get("Content-Type"), "application/octet-stream")
+        self.assertIn("sandbox", headers.get("Content-Security-Policy", ""))
+
+    def test_negative_never_serves_as_root(self):
+        if os.geteuid() != 0:
+            self.skipTest("needs root to prove the refusal")
+        r = subprocess.run([sys.executable, _SCRIPT, "--share-serve", "--root", self.root,
+                            "--bind", "127.0.0.1", "--port", str(_free_port())],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("refusing to serve as root", r.stdout + r.stderr)
+        r = subprocess.run([sys.executable, _SCRIPT, "--share-serve", "--root", self.root,
+                            "--bind", "0.0.0.0", "--port", str(_free_port())],
+                           capture_output=True, text=True, timeout=30, user=pwd.getpwnam("nobody").pw_uid)
+        self.assertEqual(r.returncode, 2, "a non-loopback bind was accepted")
+
+
+
+# ------------------------------------------------------------------ the portal's probe list
+import ast  # noqa: E402
+import re  # noqa: E402
+import tomllib  # noqa: E402
+
+_AGENT_PIPE = os.path.join(_ROOT, "usr", "lib", "mios", "agent-pipe")
+_ROUTE_METHODS = {"get", "post", "put", "delete", "patch", "head", "options", "api_route", "websocket"}
+# Published without a login on purpose; every other ungated agent-pipe route is a probe.
+_PUBLIC_ROUTES = {
+    "/login": "the login page", "/portal/login": "the login POST",
+    "/portal/logout": "drops the cookie and redirects to /login",
+    "/sw.js": "the login page's service worker",
+    "/portal/icon.svg": "PWA asset", "/portal/icon-192.png": "PWA asset",
+    "/portal/icon-512.png": "PWA asset", "/portal/manifest.webmanifest": "PWA asset",
+    "/portal/xterm.js": "vendored terminal asset", "/portal/xterm.css": "vendored terminal asset",
+    "/portal/addon-fit.js": "vendored terminal asset",
+    "/.well-known/agntcy-manifest.json": "discovery manifest, the class of the agent cards",
+    "/passport/public-key": "a public key", "/passport/verify": "stateless passport check for any agent",
+}
+
+
+def agent_pipe_routes(root: str = _AGENT_PIPE) -> set:
+    """{(method, path)} of every route decorator/registration in agent-pipe's non-test source."""
+    out = set()
+    for dp, dn, fn in os.walk(root):
+        dn[:] = [d for d in dn if d not in ("tests", "__pycache__", ".venv")]
+        for f in fn:
+            if not f.endswith(".py") or f.startswith("test_"):
+                continue
+            with open(os.path.join(dp, f), encoding="utf-8") as fh:
+                tree = ast.parse(fh.read())
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in _ROUTE_METHODS | {"add_api_route", "add_websocket_route"}
+                        and node.args and isinstance(node.args[0], ast.Constant)
+                        and isinstance(node.args[0].value, str) and node.args[0].value.startswith("/")):
+                    method = "websocket" if "websocket" in node.func.attr else node.func.attr
+                    out.add((method, node.args[0].value))
+    return out
+
+
+def server_auth_scope(server: str = os.path.join(_AGENT_PIPE, "server.py")) -> tuple:
+    """(_AUTH_GATED_PREFIXES, _AUTH_OPEN_PATHS) as server.py hands them to inbound_auth_mw."""
+    with open(server, encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    got = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and node.targets[0].id in ("_AUTH_GATED_PREFIXES", "_AUTH_OPEN_PATHS"):
+            v = node.value
+            if isinstance(v, ast.Call) and v.args:            # frozenset({...})
+                v = v.args[0]
+            got[node.targets[0].id] = set(ast.literal_eval(v))
+    return got["_AUTH_GATED_PREFIXES"], got["_AUTH_OPEN_PATHS"]
+
+
+def uncovered_routes(routes: set, probes: list, gated: set, open_paths: set) -> list:
+    """The agent-pipe routes a front door on that upstream would publish unchecked."""
+    missing = []
+    for method, path in sorted(routes):
+        if path in open_paths or path in _PUBLIC_ROUTES:
+            continue
+        if method == "websocket":   # HTTP middleware never sees a websocket: probe each one
+            if "ws:" + re.sub(r"\{[^}]+\}", "0", path) not in probes:
+                missing.append(f"websocket {path}")
+            continue
+        scope = next((g for g in sorted(gated) if path.startswith(g)), None)
+        if scope:   # inbound_auth_mw gates the prefix: one probe under it proves the gate
+            if not any(q.startswith(scope) and q not in open_paths for q in probes):
+                missing.append(f"{path} (no probe under {scope})")
+        elif re.sub(r"\{[^}]+\}", "0", path) not in probes:
+            missing.append(path)
+    return missing
+
+
+class TestPortalProbeCoverage(unittest.TestCase):
+    def setUp(self):
+        with open(os.path.join(_ROOT, "usr", "share", "mios", "mios.toml"), "rb") as fh:
+            route = tomllib.load(fh)["tailscale"]["serve"]["routes"]["portal"]
+        self.probes = route["auth_probe_paths"]
+        self.routes = agent_pipe_routes()
+        self.gated, self.open = server_auth_scope()
+
+    def test_the_scan_sees_the_real_route_table(self):
+        # Guard against a scanner that finds nothing and passes vacuously.
+        for want in (("post", "/skills/run"), ("post", "/dci/deliberate"), ("get", "/kg/lookup"),
+                     ("get", "/"), ("post", "/v1/chat/completions"), ("websocket", "/portal/term/{port}")):
+            self.assertIn(want, self.routes)
+        self.assertGreater(len(self.routes), 60)
+        self.assertEqual(self.gated, {"/v1/", "/a2a"})
+
+    def test_vendor_portal_probes_cover_every_agent_pipe_route(self):
+        self.assertEqual(uncovered_routes(self.routes, self.probes, self.gated, self.open), [])
+
+    def test_the_round_four_probe_list_misses_the_ungated_routes(self):
+        # Negative control: v2's three probes let /skills/run, /dci/*, /kg/lookup through.
+        missing = uncovered_routes(self.routes, ["/", "/v1/chat/completions", "/a2a"], self.gated, self.open)
+        for path in ("/skills/run", "/dci/deliberate", "/kg/lookup", "/iostest", "/v1"):
+            self.assertIn(path, missing)
+
+    def test_a_new_route_is_never_missed(self):
+        extra = self.routes | {("get", "/newcap/run"), ("websocket", "/newws")}
+        self.assertEqual(uncovered_routes(extra, self.probes, self.gated, self.open),
+                         ["/newcap/run", "websocket /newws"])
+
+    def test_public_exemptions_still_name_real_routes(self):
+        paths = {p for _m, p in self.routes}
+        self.assertEqual(set(_PUBLIC_ROUTES) - paths, set(), "an exemption names a route that no longer exists")
+
+    def test_a_websocket_is_never_covered_by_the_http_gate(self):
+        # HTTP middleware never sees a websocket: only a ws: probe covers /v1/events/ws.
+        no_ws = [p for p in self.probes if not p.startswith("ws:")]
+        self.assertIn("websocket /v1/events/ws", uncovered_routes(self.routes, no_ws, self.gated, self.open))
 
 
 if __name__ == "__main__":

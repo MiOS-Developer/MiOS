@@ -1,0 +1,15 @@
+# AI-hint: Publishes the relay owner's MiOS-MCP agent observation frame to /run/mios/status for the Portal status view, which runs unprivileged and cannot read the caller-owned relay.
+# AI-related: /usr/libexec/mios/mios-mcp-server, /usr/lib/mios/agent-pipe/mios_pipe/portal_status.py, mios.toml [portal.status], [mcp.agents.observation]
+[Unit]
+Description=MiOS agent relay observation for the Portal status view
+ConditionGroup=mios-ai
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --observe-stream --publish
+Restart=on-failure
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=default.target

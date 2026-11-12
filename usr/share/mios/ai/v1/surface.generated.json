@@ -28,6 +28,8 @@
     "GET /portal/manifest.webmanifest -> portal_manifest",
     "GET /portal/service/{port} -> portal_service_detail",
     "GET /portal/stats -> portal_stats",
+    "GET /portal/status -> portal_status",
+    "GET /portal/status.js -> portal_status_js",
     "GET /portal/swarm -> portal_swarm",
     "GET /portal/xterm.css -> portal_xterm_css",
     "GET /portal/xterm.js -> portal_xterm_js",
@@ -473,7 +475,6 @@
     "_AGENT_CONTRACT_PATHS",
     "_AGENT_PIPE_TOML",
     "_AGENT_REGISTRY",
-    "_ALLOWED_LOCAL_UIDS",
     "_ANCHOR_STOPWORDS",
     "_ANCHOR_TOKEN_RE",
     "_ANTH_REJECT_KEYS",
@@ -1438,6 +1439,7 @@
     "skills_openai_tools",
     "skills_run",
     "skills_show",
+    "status_router",
     "synthesize_persona_prompt",
     "sys",
     "time",
@@ -1460,7 +1462,7 @@
     "websockets"
   ],
   "counts": {
-    "routes": 96,
+    "routes": 98,
     "provided": 1360
   }
 }

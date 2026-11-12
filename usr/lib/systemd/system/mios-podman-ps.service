@@ -1,4 +1,5 @@
-# AI-hint: Systemd oneshot service that generates a world-readable JSON snapshot of all running podman containers to allow non-root entities (agent-pipe, dashboard, and SSH users) to view container status.
+# AI-hint: Root oneshot writing a world-readable JSON snapshot of all podman containers for non-root readers (agent-pipe, dashboard, SSH users), then, whatever podman returned, the Portal status view's deployed-spec snapshot.
+# AI-related: /usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py, /usr/lib/mios/agent-pipe/mios_pipe/portal_status.py, mios-podman-ps.timer, mios.toml [portal.status]
 # AI-doc: usr/share/doc/mios/manual/system.md
 [Unit]
 Description='MiOS' rootful podman snapshot for the agent-pipe portal/dashboard
@@ -6,20 +7,15 @@ Documentation=file:///usr/lib/mios/agent-pipe/server.py
 After=podman.socket
 Wants=podman.socket
 
+# The root-only `podman ps` snapshot for non-root readers (manual/system.md), then
+# the Portal status spec.json as ExecStopPost=-, run whatever podman returned; -P keeps
+# / off sys.path. 2 x [portal.status].probe_timeout_s < TimeoutStopSec (portal_spec._cfg).
 [Service]
 Type=oneshot
-# Containers run ROOTFUL; any NON-root context -- the hardened agent-pipe
-# (User=mios-agent-pipe), the launcher broker, AND an operator's interactive
-# SSH/Termius shell -- running `podman ps` sees NOTHING (/run/podman is 0700
-# root:root). This root oneshot writes a READ-ONLY `podman ps` snapshot that
-# every non-root reader (portal, container_status verb, operator shell)
-# consumes instead. Operator 2026-05-23: containers invisible in the dashboard
-# AND in the Termius iPhone app -- same root cause.
-#
-# WORLD-READABLE shared path: /var/lib/mios is root:root 755 (traversable by
-# all), and the file is chmod 0644 -- so the operator's SSH user can read it,
-# not just mios-agent-pipe (whose state dir is 0750 and blocked everyone else).
 ExecStart=/bin/sh -c '/usr/bin/podman ps -a --format json > /var/lib/mios/podman-ps.json.tmp 2>/dev/null && mv -f /var/lib/mios/podman-ps.json.tmp /var/lib/mios/podman-ps.json && chmod 0644 /var/lib/mios/podman-ps.json'
+Environment=PYTHONPATH=/usr/lib/mios/agent-pipe:/usr/lib/mios
+ExecStopPost=-/usr/lib/mios/agents/.venv/bin/python3 -P -m mios_pipe.portal_spec --write-spec
+TimeoutStopSec=60s
 
 [Install]
 WantedBy=multi-user.target

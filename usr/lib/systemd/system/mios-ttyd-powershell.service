@@ -3,8 +3,8 @@
 [Unit]
 Description='MiOS' ttyd -- browser pty bridge (Windows PowerShell session)
 Documentation=file:///usr/libexec/mios/mios-ttyd-launch
-After=network-online.target
-Wants=network-online.target
+After=network-online.target mios-credential-apply.service
+Wants=network-online.target mios-credential-apply.service
 # Fedora's ttyd RPM installs to /usr/sbin/ttyd; either path is OK.
 ConditionPathExistsGlob=/usr/?bin/ttyd
 # Defer to mios-ttyd-bash.service ordering only for log clarity;
@@ -21,6 +21,11 @@ EnvironmentFile=-/etc/mios/install.env
 # The browser session is the operator's anyway -- single tenant.
 User=mios
 Group=mios
+# ttyd's OWN login (never the operator credential: ttyd takes it on argv, which every
+# local uid can read in /proc), written to /run/credstore by mios-credential-apply.service
+# (root); mios-credential exec ttyd reads only $CREDENTIALS_DIRECTORY.
+ImportCredential=mios.ttyd.password
+ImportCredential=mios.ttyd.user
 ExecStart=/usr/libexec/mios/mios-ttyd-launch powershell
 
 Restart=on-failure

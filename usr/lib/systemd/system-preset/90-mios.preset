@@ -284,6 +284,7 @@ disable mios-attest.service
 # --- Core MiOS System Daemons & Units (task_1993 complete preset roster) ---
 enable mios-account-sync.service
 enable mios-agent-pipe.socket
+enable mios-agent-share.service
 enable mios-ai-legacy-forward.service
 enable mios-ai.target
 enable mios-boot-diag.service
@@ -292,6 +293,7 @@ enable mios-chrony-ptp.service
 enable mios-container-gc.service
 enable mios-copy-build-log.service
 enable mios-cpu-isolate.service
+enable mios-credential-apply.service
 enable mios-daemon.service
 enable mios-endpoint.target
 enable mios-finetune-serve.service
@@ -322,7 +324,6 @@ enable mios-self-heal.service
 enable mios-sync-theme.service
 enable mios-thermald.service
 enable mios-ttyd-bash.service
-enable mios-ttyd-expose.service
 enable mios-ttyd-powershell.service
 enable mios-userdb-render.service
 enable mios-verify-root.service
@@ -345,6 +346,7 @@ enable mios-ceph-snap.timer
 disable mios-ceph-snap.service
 enable mios-cephfs-quota.timer
 disable mios-cephfs-quota.service
+enable mios-credential-apply.timer
 enable mios-doc-distill.timer
 disable mios-doc-distill.service
 enable mios-embed-backfill.timer

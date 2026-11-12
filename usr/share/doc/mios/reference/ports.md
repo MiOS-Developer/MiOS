@@ -19,6 +19,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | agent | arbiter | 8760 |
 | agent | mcp | 8770 |
 | agent | opencode_gateway | 8780 |
+| agent | agent_share | 8790 |
 | audio | whisper | 8178 |
 | audio | piper | 8179 |
 | bridge | oscontrol | 8950 |
@@ -35,6 +36,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | edge | adguard_ui | 8050 |
 | edge | adguard_dns (pinned) | 53 |
 | edge | headscale (pinned) | 8085 |
+| edge | tailnet_https (pinned) | 443 |
 | forge | forge_http | 8400 |
 | forge | forge_ssh | 8410 |
 | inference | llm_light | 8500 |

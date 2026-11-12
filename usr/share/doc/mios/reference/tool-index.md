@@ -86,7 +86,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-cpu-gemm` | Hardware-calibrated CPU vectorized GEMM auto-tuner and SIMD kernel dispatcher (task_728). |
 | `usr/libexec/mios/mios-crash-parse` | Crash diagnostic parser and pre-panic timeline reconstruction (task_460). |
 | `usr/libexec/mios/mios-crawl` | Python script providing a thin client to the local crawl4ai service to fetch and convert web pages into LLM-ready markdown, used by agents to ground responses in actual content rather than search... |
-| `usr/libexec/mios/mios-credential` | CLI over usr/lib/mios/mios_credentials.py -- prints the layered-SSOT account name / sha512 hash, or writes the 0600 MIOS_RESOLVED_JSON the Windows (answer file, DISM, UUP, ISO) pipeline overlays.... |
+| `usr/libexec/mios/mios-credential` | CLI over usr/lib/mios/mios_credentials.py -- account name, sha512 hash, the 0600 Windows MIOS_RESOLVED_JSON, and `apply`, which reconciles every admin surface to the mios.html credential. Fails... |
 | `usr/libexec/mios/mios-cron-director` | A cron-task scheduler that parses system and user rules from TOML files, executing commands via bash while optionally gating execution through a local LLM's YES/NO decision based on system state. |
 | `usr/libexec/mios/mios-cron-schedule` | CLI tool for managing cron-director rules by translating human-readable intervals into cron expressions, storing prompt text in /var/lib/mios/cron-director/prompts, and updating... |
 | `usr/libexec/mios/mios-cu-verify` | Visual Definition-of-Done tool for PC-CONTROL. Takes a screenshot and asks the vision model if a specified condition (e.g., "is the terminal open?") is met on screen. Returns {ok: bool, reasoning:... |
@@ -197,7 +197,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-owui-apply-suggestions` | Clears hardcoded prompt_suggestions from the Open WebUI database to ensure the system defaults to dynamic, LLM-generated suggestions based on the current session's context and locale. |
 | `usr/libexec/mios/mios-owui-apply-system-prompt` | Python script that synchronizes the Open WebUI database with the MiOS-managed system prompt for the "MiOS-Agent" model, ensuring the agent's persona and capabilities are correctly injected into the... |
 | `usr/libexec/mios/mios-owui-apply-websearch` | Configures Open WebUI's web-search feature by updating the webui.db SQLite database to enable search augmentation and point the search engine to the local SearXNG instance on the `searxng` port. |
-| `usr/libexec/mios/mios-owui-bootstrap-admin` | Bootstraps the initial Open WebUI admin account by injecting a user into the SQLite database if empty, resolving credentials from mios.toml and secrets.env to ensure operator access during first-boot. |
+| `usr/libexec/mios/mios-owui-bootstrap-admin` | Bootstraps the first Open WebUI admin in its SQLite database, resolving the ONE SSOT login (the mios.html value) through mios_credentials.surface_password, so first boot never locks it out. |
 | `usr/libexec/mios/mios-owui-install-computer-use` | Registers the MiOS Computer Use tool into webui.db to provide the LLM with direct desktop control, vision grounding, and doc-gen capabilities via typed tool_calls instead of generic shell commands. |
 | `usr/libexec/mios/mios-owui-install-pipe` | Registers the MiOS Agent pipe and anti-meta filters into the Open WebUI database, ensuring the "MiOS AI" model is available in the UI dropdown and automatically configured for the agent's interaction... |
 | `usr/libexec/mios/mios-owui-install-tools` | Registers the MiOS Verbs toolset into the webui.db database to provide the LLM with native typed tool_calls for actions like launch_app and mios_find, bypassing terminal-mediated execution. |
@@ -259,7 +259,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-sysmon-line` | Shared status-line emitter for MiOS-Tmux (mios-theme.tmux.conf) and the status island (Sysmon.qml). |
 | `usr/libexec/mios/mios-system-status` | Provides a single JSON blob of hardware (CPU, GPU, RAM, Disk), service status, and model data (via the mios-llm-light API) to the `system_status` verb to prevent the LLM from hallucinating system... |
 | `usr/libexec/mios/mios-sysview` | Provides a unified system inspection tool for agents to query journalctl, process lists, and podman containers by abstracting complex command construction and flag validation into a single interface. |
-| `usr/libexec/mios/mios-tailscale-sync` | Enrolls a logged-out node from a pre-auth key file and synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its... |
+| `usr/libexec/mios/mios-tailscale-sync` | Enrolls a logged-out node, syncs Tailscale to SSOT [tailscale]/[headscale], keeps an exit node only while it beats the uplink, applies the [tailscale.serve.routes.*] proxies it owns and serves the... |
 | `usr/libexec/mios/mios-template-engine` | Thin shim delegating template rendering to the mios-new canonical generator, preserving the legacy <kind> <target_filepath> [description] contract. |
 | `usr/libexec/mios/mios-terminal` | Human tmux entrypoint for local terminals and SSH, using the shared MiOS keybinding profile and a socket separate from automation; inside tmux it hands MiOS-Tmux helpers (menus, apps, floats, session... |
 | `usr/libexec/mios/mios-text-edit` | Provides a robust, filesystem-direct text editing primitive for agents to view, create, and mutate files via atomic str_replace or line-based insertion, bypassing unreliable UI-driven keystroke... |
@@ -271,8 +271,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-tool-clone` | Copies a system-shipped MiOS shim from /usr/libexec/mios/ to /usr/local/bin/ to create a mutable version that overrides the default on PATH, allowing agents to iteratively modify and improve existing... |
 | `usr/libexec/mios/mios-tool-search` | A thin client for the agent-pipe tool-search endpoint that performs RAG-based retrieval of the verb catalog to resolve ambiguous intents via semantic similarity scoring. |
 | `usr/libexec/mios/mios-tpm-seal` | TPM 2.0 PCR 7/11 automated secret sealing and enrollment manager (task_437). |
-| `usr/libexec/mios/mios-ttyd-expose` | Configures and toggles the Tailscale HTTPS reverse proxy for the ttyd terminal service on port 7681, enabling secure mobile access via the Tailnet based on the [ttyd].tailnet_expose setting in... |
-| `usr/libexec/mios/mios-ttyd-launch` | Parses MIOS_TTYD_* environment variables and mios.toml configurations to construct and execute the ttyd web terminal process for either bash or powershell shells on specific ports. |
+| `usr/libexec/mios/mios-ttyd-launch` | Builds the ttyd argv for the bash or powershell web terminal from MIOS_TTYD_* and mios.toml, then execs it through mios-credential exec ttyd, which adds ttyd's own login from the credstore root... |
 | `usr/libexec/mios/mios-ukify-stage` | A/B UKI staging and systemd-ukify compilation pipeline with baked kargs (task_451). |
 | `usr/libexec/mios/mios-usbguard` | Declarative USBGuard device authorization daemon and read-only storage mounter (task_742). |
 | `usr/libexec/mios/mios-user-cephfs` | Global per-user encrypted CephFS subvolume manager with remote snapshot replication (task_472, task_2705). |
@@ -300,7 +299,7 @@ generators and the agent-facing CLIs.
 | `usr/libexec/mios/mios-wslg-env-import` | Injects WSLg display, Wayland, and PulseAudio environment variables into the systemd --user manager and D-Bus activation environment to ensure GUI applications and Flatpaks can reach the WSLg... |
 | `usr/libexec/mios/mios-xdp` | Native eBPF XDP network fastpath and WireGuard packet router manager (task_746). |
 
-<!-- derived from the AI-hint headers of 270 file(s) matching usr/libexec/mios/mios-* -->
+<!-- derived from the AI-hint headers of 269 file(s) matching usr/libexec/mios/mios-* -->
 <!-- /MIOS-GEN:index:usr/libexec/mios/mios-* -->
 
 ## Generators and repo tooling (`tools/`)
@@ -340,7 +339,7 @@ is generated, its generator is here.
 | `tools/test_check-tasks.py` | Sibling unit tests for tools/check-tasks.py -- one suite per subcommand (status-parity, schema, agy), each with its own failure counter. |
 | `tools/test_check-testhygiene.py` | Sibling unit tests for tools/check-testhygiene.py -- one suite per subcommand; the unittest suites run under one discovery pass, the two script-style suites return their own verdict. |
 | `tools/test_ci-suites.py` | Registry rejection and bounded producer controls for the shared CI workflow helpers. |
-| `tools/test_configurator_security.py` | Execute the configurator's real JavaScript serializers and path banner against hostile strings; validate emitted TOML with the standard parser. |
+| `tools/test_configurator_security.py` | Execute the configurator's real JavaScript serializers, path banner and status card against hostile strings; validate emitted TOML with the standard parser. |
 | `tools/test_conformance_golden.py` | Golden CLI fixture and template conformance test runner against committed independent golden.snap without auto-regeneration. |
 | `tools/test_drift-checks.py` | Sibling test for tools/drift-checks.py; asserts each extracted check is importable, dispatchable and agrees with the shell gate. |
 | `tools/test_generate-gate-index.py` | Sibling test for tools/generate-gate-index.py; proves a row never carries a description belonging to another check. |
@@ -513,6 +512,8 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/drift_monitor.py` | Pure Jensen-Shannon divergence monitor over agent-plane verdict/intent/score histograms (CONS-02). |
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/session_events.py` | Session-event emitter + tool-text sanitizer extracted from server.py. |
 | `usr/lib/mios/agent-pipe/mios_pipe/observability/trace.py` | WS-A8 per-request trace/span observability primitive for the agent-pipe. |
+| `usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py` | Root writer of the Portal status view's spec.json (bootc deployments, work-tree dirt; git runs as the throwaway account) and the [portal.status] validation portal_status imports. |
+| `usr/lib/mios/agent-pipe/mios_pipe/portal_status.py` | Read-only MiOS status & goals view: GET /portal/status (json_schema mios_portal_status) + /portal/status.js from producer snapshots, the SSOT, /.git, the goal record and the task ledger; never runs a... |
 | `usr/lib/mios/agent-pipe/mios_pipe/redact.py` | Redaction utilities for secrets and PII. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/__init__.py` | routing manager package |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/aci.py` | Normalizes raw tool/terminal output into a context-safe format by preserving the head and tail while eliding the middle with a specific marker... |
@@ -542,7 +543,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/owui.py` | Adapter for Open WebUI requests that identifies and strips OWUI-specific RAG/task templates to isolate the raw user query from downstream processing in the agent-pipe. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/planner.py` | Planner / DAG-decomposition layer extracted verbatim from server.py. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py` | WEB PORTAL helper logic + PWA asset builders + the swarm-roster probe, extracted VERBATIM from server.py (refactor R10 wave). |
-| `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py` | Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page and the iOS embed test page, split out of portal.py. |
+| `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py` | Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page, the status & goals view script and the iOS embed test page, split out of portal.py. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py` | Portal terminal edge CSS from mios.toml [theme.edge] plus the patched ttyd -I page baked from [ttyd].version; pure, imports only mios_toml |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/provider_translate.py` | Pure cross-provider wire-format adapter extracted from server.py (refactor WS R2 leaf wave). |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/pty.py` | Pure PTY-session protocol for the persistent shell substrate (SHELL-01). |
@@ -724,7 +725,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/test_mios_pg_events.py` | Unit test for mios_pg_events.py |
 | `usr/lib/mios/agent-pipe/test_mios_planner.py` | Stdlib assert-script for mios_planner. No network: the planner LLM call in decompose_intent is exercised only on the early short-prompt-skip / dis... |
 | `usr/lib/mios/agent-pipe/test_mios_policy.py` | Stdlib assert-script for mios_policy (R7 security wave). Proves the |
-| `usr/lib/mios/agent-pipe/test_mios_portal.py` | Standalone unit test for mios_portal (refactor R10) -- proves the moved portal logic works with stubs and no network/DB. |
+| `usr/lib/mios/agent-pipe/test_mios_portal.py` | Standalone unit test for mios_portal, mios_pipe.portal_status and mios_pipe.portal_spec -- portal logic with stubs and no network/DB, plus the /portal/status aggregate against planted snapshots. |
 | `usr/lib/mios/agent-pipe/test_mios_portal_edge.py` | Sibling unit test for portal_edge: term_css, the golden gate both ways, portal.py's --card-pad-* wiring and the patched ttyd page and its golden. |
 | `usr/lib/mios/agent-pipe/test_mios_preempt.py` | Standalone assert-script unit test for mios_preempt (WS-A12 RR-preemption state machine + snapshot contract, PLUS the task_19/... |
 | `usr/lib/mios/agent-pipe/test_mios_priority_sched.py` | Unit test for mios_priority_sched.py |
@@ -818,7 +819,7 @@ is generated, its generator is here.
 | `usr/lib/mios/mios_translate.py` | Pure Python translation engine for loop.v1 events, Responses items, and cross-harness frame normalization. |
 | `usr/lib/mios/test_mios_comments.py` | Unit tests for the comment lexer and classifier -- one fixture per classifier rule so every rule is proven to fire, plus lexer tests f... |
 
-<!-- derived from the AI-hint headers of 450 file(s) matching usr/lib/mios/*.py -->
+<!-- derived from the AI-hint headers of 452 file(s) matching usr/lib/mios/*.py -->
 <!-- /MIOS-GEN:index:usr/lib/mios/*.py -->
 
 ## Cross-refs

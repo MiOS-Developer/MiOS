@@ -65,12 +65,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1749 |
-| in_progress | 95 |
+| pending | 1771 |
+| in_progress | 96 |
 | completed | 1901 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3786 |
+| total | 3809 |
 
 48 record(s) carry at least one override.
 
@@ -1060,6 +1060,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3767` Apply safe array restoration and private errors to the agent Portal -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3769` Review and finish the preserved native Portal guard candidate -- completed · owner mios-tamagotchi-live-coordinator · P1 · size M
 - `task_3770` Update the HTTP privacy fixture for the guarded Portal API -- completed · owner mios-tamagotchi-live-coordinator · P1 · size S
+- `task_3787` Portal: read-only MiOS status & goals view (GET /portal/status) -- in_progress · P1 · size M
+- `task_3789` PortalData.qml resolves its base URL from [ports].agent_pipe instead of a port literal -- pending · P2 · size S
 
 ### Epic task_3523
 
@@ -1095,6 +1097,24 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_98` CONV-05: vLLM multi-LoRA heavy lane so one engine replaces two -- completed · P2 · size M · depends_on task_94
 - `task_99` CONV-06: LoRA load/list endpoints on agent-pipe + retire-safety drift rule -- completed · P2 · size S · depends_on task_94, task_98
 - `task_100` CONV-07: inference-consolidation migration guide + heavy-alt deprecation notice -- completed · P2 · size S · depends_on task_98, task_99
+
+## WS-CRED-SSOT
+
+### No epic
+
+- `task_3797` Port the credential reconciler and the tailnet serve planner to the native tier (Law 14) -- pending · P2 · size L
+- `task_3798` Take the operator credential off the terminal server's command line -- pending · P1 · size M
+- `task_3799` Declare the Forge pull mirrors in SSOT and drive mios-forge-mirror.sh from them -- pending · P2 · size M
+- `task_3800` Mirror the SSOT serve routes in the Windows tailnet serve script (Law 15) -- pending · P3 · size M
+- `task_3801` Finish the GitHub organisation rename to MiOS-Developer across both repositories -- pending · P2 · size L
+- `task_3802` Refresh the distilled manual and the configurator for the one-credential contract -- pending · P3 · size S
+- `task_3803` Keep secret SSOT paths out of the config database, login shells and --show-source -- pending · P2 · size M
+- `task_3804` Drain the legibility ratchet growth of the operator-credential change -- pending · P2 · size M
+- `task_3805` Carry host-tier loopback and path overrides into unit environments, and queue operator-tier saves from the native configurator -- pending · P3 · size M
+- `task_3806` Collapse the duplicate-value groups the tailnet serve routes and forge timeouts added (Law 9) -- pending · P3 · size S
+- `task_3807` Reload only code-server on a credential change, and drop the build driver's literal password fallback -- pending · P3 · size S
+- `task_3808` Harvest the operator-credential change's new comment blocks into the manual (docs ratchet) -- pending · P3 · size M
+- `task_3809` Gate agent-pipe's anonymous routes so the tailnet Portal front door can be published -- pending · P2 · size M
 
 ## WS-D2
 
@@ -1247,6 +1267,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3480` Clear pre-existing shellcheck findings in the audited shell scripts, then remove their dead code -- pending · P3 · size S
 - `task_3585` Fold the two kvfork copies into one module (WS-DEBT | P3 | S) -- pending · P3 · size S
 - `task_3593` Remove [build.ratchet]'s residue: mios-config's BuildRatchet and ADR-0025's max_phase_scripts (WS-DEBT | P3 | S) -- pending · P3 · size S
+- `task_3791` Shrink mios_pipe/routing/portal.py and lower its oversize register entry -- pending · P2 · size M
+- `task_3793` Legibility drain: fold the Portal status view's ratchet growth -- pending · P3 · size S
+- `task_3795` Portal status: the spec writer's work-tree probe refreshes a private index instead of re-hashing a stat-stale tree every run -- pending · P3 · size M
 
 ### Epic task_3624
 
@@ -1979,6 +2002,7 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_1296` mDNS avahi-template <-> SSOT parity drift-gate -- completed · P2 · size S
 - `task_2522` Identity-aware delegation and progressive payload mode negotiation on A2A -- pending · P2 · size M · depends_on task_2521
 - `task_2558` Agent-to-Agent mutual capability exchange protocol and cryptographic attestation -- completed · P1 · size M · depends_on task_2557
+- `task_3788` Portal status: remote Blades publish node spec and presence over authenticated MiOS-MCP federation -- pending · P2 · size L
 
 ## WS-FLOAT
 
@@ -2457,6 +2481,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3505` Amend ADR-0021: five function binaries, install/build/task folded in, miosd a thin exec shim (WS-LANG | P1 | S) -- pending · P1 · size S · depends_on task_3488
 - `task_3528` Q19 / M2: MiOS-MODULES -- one Rust workspace, crates as applet libraries, a few domain binaries dispatching on argv[0] (WS-LANG | P1 | L) -- pending · P1 · size L · depends_on task_951, task_3488
 - `task_3529` M3: every script on a product path is a registered thin shim or AI-plane binding, in a shrink-only SSOT register (WS-LANG | P1 | M) -- pending · P1 · size M
+- `task_3790` Port the Portal spec-snapshot writer (mios_pipe.portal_spec --write-spec) into miosd -- pending · P3 · size M
+- `task_3796` Port the Portal status renderer (/portal/status.js) to the Bun/TS Portal surface -- pending · P3 · size M
 
 ### Epic task_3624
 
@@ -3753,6 +3779,8 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3564` Q18 (brief P1-16): agent code runs in a krun microVM where /dev/kvm exists, else the hardened crun container; the simulated microVM is deleted (WS-SEC | P1 | M) -- pending · P1 · size M
 - `task_3569` Q15 research: the best systemd-creds implementation for MiOS secrets, before building it (WS-SEC | P1 | S) -- pending · P1 · size S
 - `task_3574` P2-2: delete the composefs 'seal' theatre and record the backend decision (WS-SEC | P2 | S) -- pending · P2 · size S
+- `task_3792` Operator decision: the tailnet HTTPS root of the live Blade proxies a one-off /tmp listing -- pending · P1 · size S
+- `task_3794` Portal status: a squatted agents-<uid>.json must not silence that uid's publisher -- pending · P2 · size S
 
 ### Epic task_3522
 

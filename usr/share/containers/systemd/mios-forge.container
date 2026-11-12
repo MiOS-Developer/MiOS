@@ -30,6 +30,8 @@ Environment=FORGEJO__service__REQUIRE_SIGNIN_VIEW=false
 Environment=FORGEJO__security__INSTALL_LOCK=true
 Environment=FORGEJO__log__LEVEL=Info
 Environment=FORGEJO__log__MODE=console
+Environment=FORGEJO__git_0X2E_timeout__MIGRATE=3600
+Environment=FORGEJO__git_0X2E_timeout__MIRROR=3600
 Environment=USER=git
 EnvironmentFile=/etc/mios/install.env
 Exec=forgejo web
