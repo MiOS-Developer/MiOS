@@ -12026,6 +12026,7 @@ message_limit_bytes = 65536
 title = "MiOS remote login"
 greeting = "Select a MiOS user to sign in"
 background = "Enter: sign in | MiOS remote access"
+failure_return = "Desktop did not start. Enter or Esc: return to sign in."
 
 # Global MiOS console surfaces inherit existing per-type launch sizes. Native
 # consumers center and clamp them using physical font cells, without permanent
