@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 use mios_resolver::popup::{PopupPolicy, SurfaceKind};
+use mios_unit_gen::tmux_os::{AGENT_PANE, MANAGED_PANE};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -411,10 +412,14 @@ impl Server {
         if !identifier(id, '%') {
             return Err("invalid pane ID".into());
         }
-        let row = self.cmd(&["display-message", "-p", "-t", id,
-            "#{pane_id}\t#{pane_pid}\t#{pane_tty}\t#{session_id}\t#{window_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{window_width}\t#{window_height}\t#{pane_floating_flag}\t#{window_zoomed_flag}\t#{pane_active}\t#{@mios-workspace-head}\t#{@mios-mcp-owner}\t#{@mios-workspace-worker}\t#{E:@mios-managed-pane}\t#{@mios-desktop-canvas}"])?;
+        let format = format!(
+            "{}\t{}",
+            "#{pane_id}\t#{pane_pid}\t#{pane_tty}\t#{session_id}\t#{window_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{window_width}\t#{window_height}\t#{pane_floating_flag}\t#{window_zoomed_flag}\t#{pane_active}\t#{@mios-workspace-head}\t#{@mios-mcp-owner}\t#{@mios-workspace-worker}\t#{E:@mios-managed-pane}\t#{@mios-desktop-canvas}\t#{@mios-desktop-panel}\t#{@mios-desktop-chat}\t#{@mios-desktop-metrics}\t#{@mios-managed-pane}",
+            AGENT_PANE
+        );
+        let row = self.cmd(&["display-message", "-p", "-t", id, &format])?;
         let c: Vec<&str> = row.split('\t').collect();
-        if c.len() != 19 || c[0] != id || !identifier(c[3], '$') || !identifier(c[4], '@') {
+        if c.len() != 24 || c[0] != id || !identifier(c[3], '$') || !identifier(c[4], '@') {
             return Err("pane target identity mismatch".into());
         }
         let n = |i: usize| {
@@ -444,7 +449,7 @@ impl Server {
             height: n(10)?,
             floating: c[11] == "1",
             zoomed: c[12] == "1",
-            managed: c[14..18].iter().any(|s| !s.is_empty() && *s != "0"),
+            protection: pane_protection(c[23], c[22], c[17], &c[18..22]),
             canvas,
         })
     }
@@ -526,8 +531,81 @@ struct Pane {
     height: u32,
     floating: bool,
     zoomed: bool,
-    managed: bool,
+    protection: PaneProtection,
     canvas: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaneProtection {
+    Application,
+    DesktopRole,
+    Managed,
+}
+
+fn marked(value: &str) -> bool {
+    !value.is_empty() && value != "0"
+}
+
+/// The shared generated predicate protects both desktop roles and agents from
+/// ordinary layout keys. That does not make a desktop role an agent workspace.
+/// Explicit agents and manual/unknown managed predicates always retain priority.
+fn pane_protection(
+    agent: &str,
+    managed_expression: &str,
+    managed_value: &str,
+    desktop_roles: &[&str],
+) -> PaneProtection {
+    if marked(agent)
+        || desktop_roles
+            .iter()
+            .any(|role| marked(role) && *role != "1")
+        || (marked(managed_value) && managed_expression != MANAGED_PANE)
+    {
+        return PaneProtection::Managed;
+    }
+    if desktop_roles.contains(&"1") {
+        if managed_expression == MANAGED_PANE && !marked(managed_value) {
+            return PaneProtection::Managed;
+        }
+        return PaneProtection::DesktopRole;
+    }
+    if marked(managed_value) {
+        PaneProtection::Managed
+    } else {
+        PaneProtection::Application
+    }
+}
+
+fn guard_protection(
+    target: PaneProtection,
+    action: &str,
+    observed: &[PaneProtection],
+    native_count: usize,
+) -> Result<(), String> {
+    let launch = desktop_app(action).is_some();
+    if target == PaneProtection::Managed
+        || (target == PaneProtection::DesktopRole && !launch && action != "focus")
+    {
+        return Err(
+            "managed agents and desktop roles cannot be rearranged by desktop actions".into(),
+        );
+    }
+    if observed.contains(&PaneProtection::Managed) {
+        return Err("managed agent workspace layout is protected".into());
+    }
+    // Some native list-panes views omit floating panes. The explicit target is
+    // added by guard(), but any remaining unobserved pane could be an agent.
+    if observed.len() != native_count {
+        return Err("desktop window contains unobserved panes; nothing changed".into());
+    }
+    Ok(())
+}
+
+/// Apps may dock against the desktop's blank canvas, but never against the
+/// panel/sidebar roles or an agent that also advertises a canvas marker.
+fn app_anchor(protection: PaneProtection, canvas: bool) -> bool {
+    protection == PaneProtection::Application
+        || (protection == PaneProtection::DesktopRole && canvas)
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Record {
@@ -593,13 +671,7 @@ fn guard(
     p: &Pane,
     a: &Args,
     allow_hidden: bool,
-    allow_canvas: bool,
 ) -> Result<(), String> {
-    if p.managed || (p.canvas && !allow_canvas) {
-        return Err(
-            "managed agents and the desktop canvas cannot be rearranged by desktop actions".into(),
-        );
-    }
     if a.expected_pid.is_some_and(|pid| pid != p.process.pid)
         || a.expected_window.as_ref().is_some_and(|w| w != &p.window)
     {
@@ -613,12 +685,59 @@ fn guard(
     if !hidden && (p.session != c.session || (p.window != c.window && a.verb != "focus")) {
         return Err("pane is outside the explicit client's active desktop window".into());
     }
-    if server
+    let mut panes: BTreeMap<String, Pane> = server
         .panes()?
-        .iter()
-        .any(|other| other.window == p.window && other.managed)
+        .into_iter()
+        .map(|pane| (pane.id.clone(), pane))
+        .collect();
+    // The target may be a native float absent from list-panes. Querying it
+    // directly already proved its process, PTY, session and window above.
+    panes.insert(p.id.clone(), p.clone());
+    let focused = server.cmd(&[
+        "display-message", "-p", "-c", &c.name, "-t", &c.window,
+        "#{client_pid}\t#{client_window_id}\t#{client_pane_id}",
+    ])?;
+    let focused: Vec<_> = focused.split('\t').collect();
+    if focused.len() != 3
+        || focused[0].parse::<u32>().ok() != Some(c.process.pid)
+        || focused[1] != c.window
     {
-        return Err("managed agent workspace layout is protected".into());
+        return Err("client focus changed during desktop action".into());
+    }
+    if identifier(focused[2], '%') && !panes.contains_key(focused[2]) {
+        let pane = server.pane(focused[2])?;
+        if pane.window != c.window || pane.session != c.session {
+            return Err("focused pane moved during desktop action".into());
+        }
+        panes.insert(pane.id.clone(), pane);
+    }
+    let mut windows = vec![&p.window];
+    if c.window != p.window {
+        windows.push(&c.window);
+    }
+    for window in windows {
+        let info = server.cmd(&[
+            "display-message", "-p", "-t", window,
+            "#{window_id}\t#{window_panes}\t#{pane_id}",
+        ])?;
+        let info: Vec<_> = info.split('\t').collect();
+        if info.len() != 3 || info[0] != window || !identifier(info[2], '%') {
+            return Err("native desktop window identity changed".into());
+        }
+        if !panes.contains_key(info[2]) {
+            let pane = server.pane(info[2])?;
+            if &pane.window != window {
+                return Err("default pane moved during desktop action".into());
+            }
+            panes.insert(pane.id.clone(), pane);
+        }
+        let count = info[1].parse().map_err(|_| "invalid native pane count")?;
+        let observed: Vec<_> = panes
+            .values()
+            .filter(|pane| &pane.window == window)
+            .map(|pane| pane.protection)
+            .collect();
+        guard_protection(p.protection, &a.verb, &observed, count)?;
     }
     let now = server.client(&c.name)?;
     if now.process != c.process || now.session != c.session || now.window != c.window {
@@ -812,7 +931,10 @@ fn restore(
             .panes()?
             .into_iter()
             .filter(|q| {
-                q.session == c.session && q.window == r.origin_window && !q.floating && !q.managed
+                q.session == c.session
+                    && q.window == r.origin_window
+                    && !q.floating
+                    && app_anchor(q.protection, q.canvas)
             })
             .max_by_key(|q| u64::from(q.rect.w) * u64::from(q.rect.h))
             .ok_or("original desktop window is no longer available")?;
@@ -1379,7 +1501,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
         "restore" | "focus" | "context" | "close" | "close-confirm"
     );
     let app = desktop_app(&a.verb);
-    guard(&server, &client, &pane, &a, hidden, app.is_some())?;
+    guard(&server, &client, &pane, &a, hidden)?;
     if let Some(app) = app {
         launch_app(root, &merged, &server, &client, &pane, app)?;
         return Ok(0);
@@ -1441,7 +1563,10 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
                     .panes()?
                     .into_iter()
                     .filter(|p| {
-                        p.window == pane.window && p.id != pane.id && !p.floating && !p.managed
+                        p.window == pane.window
+                            && p.id != pane.id
+                            && !p.floating
+                            && app_anchor(p.protection, p.canvas)
                     })
                     .max_by_key(|p| u64::from(p.rect.w) * u64::from(p.rect.h))
                     .ok_or("no safe tiled target")?;
@@ -1475,6 +1600,103 @@ pub fn run(root: &Path, args: &[String]) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn desktop_roles() -> Vec<PaneProtection> {
+        (0..4)
+            .map(|index| {
+                let mut flags = [""; 4];
+                flags[index] = "1";
+                pane_protection("0", MANAGED_PANE, "1", &flags)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn desktop_roles_allow_catalog_launches_and_ordinary_app_actions() {
+        let mut window = desktop_roles();
+        assert_eq!(window, vec![PaneProtection::DesktopRole; 4]);
+        for role in &window {
+            for action in ["new", "monitor", "focus"] {
+                assert!(guard_protection(*role, action, &window, 4).is_ok());
+            }
+        }
+        let app = pane_protection("0", MANAGED_PANE, "0", &[""; 4]);
+        assert_eq!(app, PaneProtection::Application);
+        window.push(app);
+        for action in [
+            "new", "monitor", "center", "float", "tile", "focus", "maximize",
+            "minimize", "restore", "snap-left", "close", "close-confirm",
+        ] {
+            assert!(guard_protection(app, action, &window, 5).is_ok());
+        }
+        assert!(app_anchor(app, false));
+        assert!(app_anchor(PaneProtection::DesktopRole, true));
+        assert!(!app_anchor(PaneProtection::DesktopRole, false));
+    }
+
+    #[test]
+    fn protected_roles_reject_layout_and_close_without_misclassifying_agents() {
+        let roles = desktop_roles();
+        for role in &roles {
+            for action in [
+                "center", "float", "tile", "minimize", "maximize", "restore",
+                "snap-left", "title-click", "close", "close-confirm",
+            ] {
+                assert!(guard_protection(*role, action, &roles, 4).is_err());
+            }
+        }
+        // All three real agent flags are evaluated by the same expression
+        // emitted into the generated bindings. A forged desktop flag loses.
+        for flag in [
+            "@mios-workspace-head", "@mios-mcp-owner", "@mios-workspace-worker",
+        ] {
+            assert!(AGENT_PANE.contains(flag));
+            let agent = pane_protection("1", MANAGED_PANE, "1", &["1", "", "", ""]);
+            assert_eq!(agent, PaneProtection::Managed);
+            assert!(!app_anchor(agent, true));
+            let mut window = roles.clone();
+            window.push(agent);
+            for action in ["new", "monitor", "focus", "center", "close"] {
+                assert!(guard_protection(agent, action, &window, 5).is_err());
+                assert!(guard_protection(PaneProtection::Application, action, &window, 5).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn manual_unknown_and_inconsistent_managed_markers_stay_protected() {
+        for expression in ["1", "manual-manager", "#{@operator-managed}"] {
+            assert_eq!(
+                pane_protection("0", expression, "1", &["1", "", "", ""]),
+                PaneProtection::Managed
+            );
+        }
+        assert_eq!(
+            pane_protection("0", MANAGED_PANE, "1", &["", "", "", ""]),
+            PaneProtection::Managed
+        );
+        assert_eq!(
+            pane_protection("0", MANAGED_PANE, "0", &["1", "", "", ""]),
+            PaneProtection::Managed
+        );
+        assert_eq!(
+            pane_protection("0", MANAGED_PANE, "1", &["", "unexpected", "", ""]),
+            PaneProtection::Managed
+        );
+    }
+
+    #[test]
+    fn omitted_floating_panes_cannot_hide_a_managed_workspace() {
+        let roles = desktop_roles();
+        assert!(guard_protection(roles[0], "new", &roles, 5).is_err());
+        // guard() adds the directly witnessed app target even when the native
+        // list omits that float. An additional unobserved float stays a refusal.
+        let mut with_target = roles;
+        with_target.push(PaneProtection::Application);
+        assert!(guard_protection(PaneProtection::Application, "center", &with_target, 5).is_ok());
+        assert!(guard_protection(PaneProtection::Application, "center", &with_target, 6).is_err());
+        assert!(guard_protection(PaneProtection::Application, "center", &with_target, 4).is_err());
+    }
+
     #[test]
     fn native_desktop_app_actions_select_only_existing_catalog_entries() {
         let merged: Value = include_str!("../../../../usr/share/mios/mios.toml")
