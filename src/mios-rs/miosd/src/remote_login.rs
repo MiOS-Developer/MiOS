@@ -119,6 +119,7 @@ struct Policy {
     title: String,
     greeting: String,
     background: String,
+    failure_return: String,
 }
 
 fn at<'a>(doc: &'a Value, key: &str) -> Result<&'a Value, String> {
@@ -331,6 +332,7 @@ fn policy() -> Result<Policy, String> {
         title: text(&doc, "terminal.remote_login.labels.title")?,
         greeting: text(&doc, "terminal.remote_login.labels.greeting")?,
         background: text(&doc, "terminal.remote_login.labels.background")?,
+        failure_return: text(&doc, "terminal.remote_login.labels.failure_return")?,
     };
     for bin in [
         &p.tmux,
@@ -2287,6 +2289,7 @@ async fn greeter(proxy: &Path, geometry: &Path) -> Result<(), String> {
 
 async fn session(geometry: &Path) -> Result<(), String> {
     let p = policy()?;
+    let failure_deadline = tokio::time::Instant::now() + p.auth_timeout;
     let uid = unsafe { libc::getuid() };
     if unsafe { libc::geteuid() } != uid || !(p.min_uid..=p.max_uid).contains(&uid) {
         return Err("remote session bridge must run as its authenticated account".into());
@@ -2295,12 +2298,49 @@ async fn session(geometry: &Path) -> Result<(), String> {
     // Do not admit Desktop or signal the fullscreen transition without genuine
     // selected-account remote logind state and the correct runtime directory.
     authenticated_selected_session(&p, uid)?;
-    let dimensions = geometry_connection(&p, geometry, "session-size.sock").await?;
-    // The environment comes from genuine greetd/PAM, including the selected
-    // account's runtime directory. No caller TMUX or SSH state was forwarded.
-    let mut command = Command::new(&p.session[0]);
-    command.args(&p.session[1..]);
-    owned_pty_bridge(command, dimensions, p.command_timeout).await
+    let mut cancellation = Cancellation::new()?;
+    let mut geometry_lifetime = None;
+    let result = async {
+        let dimensions = tokio::select! {
+            result = geometry_connection(&p, geometry, "session-size.sock") => result?,
+            _ = cancellation.cancelled() => return Ok(()),
+        };
+        // Keep this admitted channel alive until a startup error is acknowledged.
+        // Only after the bridge has joined its relays may the ACK watch read it.
+        geometry_lifetime = Some(duplicate_geometry(&dimensions)?);
+        // The environment comes from genuine greetd/PAM, including the selected
+        // account's runtime directory. No caller TMUX or SSH state was forwarded.
+        let mut command = Command::new(&p.session[0]);
+        command.args(&p.session[1..]);
+        owned_pty_bridge_with_cancellation(
+            command,
+            dimensions,
+            p.command_timeout,
+            &mut cancellation,
+        )
+        .await
+    }
+    .await;
+    if result.is_err() {
+        // This is after genuine selected-session proof, including failures before
+        // a child could start. Never acquire a foreign TTY or replace the original
+        // error when this inherited terminal is no longer safe to acknowledge on.
+        if let Ok(terminal) = SessionFailureTerminal::pin() {
+            let ack = SessionFailureAck {
+                hint: p.failure_return,
+                deadline: failure_deadline,
+            };
+            return hold_session_failure(
+                result,
+                &terminal.input,
+                &terminal.output,
+                &ack,
+                session_failure_cancelled(cancellation.cancelled(), geometry_lifetime),
+            )
+            .await;
+        }
+    }
+    result
 }
 
 /// Secret response strings are never deserialized, formatted or persisted.
@@ -2859,6 +2899,186 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_child_stderr_stays_visible_until_a_new_explicit_ack() {
+        let (mut master, slave) = input_boundary_test_pty();
+        let _terminal = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "printf 'fixture-desktop-failure' >&2; exit 17"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(slave.try_clone().unwrap()))
+            .spawn()
+            .unwrap();
+        let status = child.wait().unwrap();
+        assert_eq!(status.code(), Some(17));
+        master.write_all(b"\r").unwrap();
+        assert!(input_boundary_ready(slave.as_raw_fd(), 1000));
+        let input = BridgeFd::new(slave.try_clone().unwrap(), false).unwrap();
+        let output = BridgeFd::new(slave, false).unwrap();
+        let original = format!("owned PTY child exited with {status}");
+        let expected = original.clone();
+        let task = tokio::spawn(async move {
+            let ack = SessionFailureAck {
+                hint: "fixture-return-hint".into(),
+                deadline: tokio::time::Instant::now() + Duration::from_secs(3),
+            };
+            hold_session_failure(Err(original), &input, &output, &ack, std::future::pending()).await
+        });
+        let master = BridgeFd::new(master, false).unwrap();
+        let visible = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut visible = Vec::new();
+            while !visible.windows(b"fixture-return-hint".len()).any(|v| v == b"fixture-return-hint") {
+                let mut bytes = [0; 256];
+                let count = master.read(&mut bytes).await.unwrap();
+                assert!(count > 0);
+                visible.extend_from_slice(&bytes[..count]);
+            }
+            visible
+        }).await.unwrap();
+        assert!(visible.windows(b"fixture-desktop-failure".len()).any(|v| v == b"fixture-desktop-failure"));
+        assert!(!task.is_finished(), "old desktop input must not acknowledge the failure");
+        master.write_all(b"x").await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished(), "unknown new keys must not acknowledge the failure");
+        master.write_all(b"\r").await.unwrap();
+        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(expected));
+    }
+
+    #[tokio::test]
+    async fn pre_child_geometry_error_waits_for_ack_without_rendering_private_details() {
+        let (p, _) = fixture();
+        let error = geometry_connection(&p, Path::new("/outside/session-size.sock"), "session-size.sock")
+            .await.unwrap_err();
+        let original = format!("{error}: fixture-private-detail");
+        let expected = original.clone();
+        let (master, slave) = input_boundary_test_pty();
+        let _terminal = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+        let input = BridgeFd::new(slave.try_clone().unwrap(), false).unwrap();
+        let output = BridgeFd::new(slave, false).unwrap();
+        let task = tokio::spawn(async move {
+            let ack = SessionFailureAck {
+                hint: "fixture-generic-startup-failure".into(),
+                deadline: tokio::time::Instant::now() + Duration::from_secs(3),
+            };
+            hold_session_failure(Err(original), &input, &output, &ack, std::future::pending()).await
+        });
+        let master = BridgeFd::new(master, false).unwrap();
+        let visible = tokio::time::timeout(Duration::from_secs(1), async {
+            let mut bytes = [0; 256];
+            let count = master.read(&mut bytes).await.unwrap();
+            bytes[..count].to_vec()
+        }).await.unwrap();
+        assert!(visible.windows(b"fixture-generic-startup-failure".len()).any(|v| v == b"fixture-generic-startup-failure"));
+        assert!(!visible.windows(b"fixture-private-detail".len()).any(|v| v == b"fixture-private-detail"));
+        assert!(!task.is_finished());
+        master.write_all(b"\x1b").await.unwrap();
+        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(expected));
+    }
+
+    #[tokio::test]
+    async fn blocked_failure_hint_cancels_with_live_geometry_or_geometry_eof() {
+        for close_geometry in [false, true] {
+            let (master, slave) = input_boundary_test_pty();
+            let _terminal = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+            let input = BridgeFd::new(slave.try_clone().unwrap(), false).unwrap();
+            let output = BridgeFd::new(slave, false).unwrap();
+            let bytes = [b'x'; 4096];
+            let mut total = 0;
+            loop {
+                let count = unsafe { libc::write(output.io.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+                if count < 0 {
+                    assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
+                    break;
+                }
+                total += count as usize;
+                assert!(total <= 1024 * 1024, "fixture output must become backpressured");
+            }
+            let (geometry, peer) = UnixStream::pair().unwrap();
+            let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
+            let task = tokio::spawn(async move {
+                let ack = SessionFailureAck {
+                    hint: "fixture-return-hint".into(),
+                    deadline: tokio::time::Instant::now() + Duration::from_secs(5),
+                };
+                let stopped = session_failure_cancelled(async { let _ = cancelled.await; }, Some(geometry));
+                acknowledge_session_failure(&input, &output, &ack, stopped).await;
+            });
+            tokio::task::yield_now().await;
+            assert!(!task.is_finished());
+            if close_geometry {
+                drop(peer);
+                tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+            } else {
+                cancel.send(()).unwrap();
+                tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+                // Geometry remained alive while cancellation ended the blocked write.
+                assert!(peer.peer_cred().is_ok());
+            }
+            drop(master);
+        }
+    }
+
+    #[tokio::test]
+    async fn failure_geometry_watch_tolerates_a_previously_part_read_size_frame() {
+        let (geometry, mut peer) = UnixStream::pair().unwrap();
+        let mut task = tokio::spawn(session_failure_cancelled(std::future::pending(), Some(geometry)));
+        // The old size relay can be cancelled after consuming a frame header or
+        // part of its payload. The ACK observes EOF, not a fresh size-frame parse.
+        peer.write_all(b"remaining-size-payload").await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut task).await.is_err());
+        peer.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn failure_ack_keeps_one_absolute_deadline_and_success_skips_ack() {
+        let (master, slave) = input_boundary_test_pty();
+        let _terminal = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+        let input = BridgeFd::new(slave.try_clone().unwrap(), false).unwrap();
+        let output = BridgeFd::new(slave, false).unwrap();
+        let expired = SessionFailureAck {
+            hint: "must-not-be-presented".into(),
+            deadline: tokio::time::Instant::now() - Duration::from_secs(1),
+        };
+        assert_eq!(hold_session_failure(Err("original-error".into()), &input, &output, &expired, std::future::pending()).await, Err("original-error".into()));
+        assert!(!input_boundary_ready(master.as_raw_fd(), 0));
+        let live = SessionFailureAck {
+            hint: "must-not-be-presented".into(),
+            deadline: tokio::time::Instant::now() + Duration::from_secs(5),
+        };
+        assert_eq!(tokio::time::timeout(Duration::from_secs(1), hold_session_failure(Ok(()), &input, &output, &live, std::future::pending())).await.unwrap(), Ok(()));
+        assert!(!input_boundary_ready(master.as_raw_fd(), 0));
+        let short = SessionFailureAck {
+            hint: "fixture-deadline".into(),
+            deadline: tokio::time::Instant::now() + Duration::from_millis(30),
+        };
+        tokio::time::timeout(Duration::from_secs(1), acknowledge_session_failure(&input, &output, &short, std::future::pending())).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failure_terminal_pins_one_tty_and_restores_shared_descriptor_flags() {
+        let (_master, slave) = input_boundary_test_pty();
+        let (_other_master, other_slave) = input_boundary_test_pty();
+        let fd = slave.as_raw_fd();
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        let mut original: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::tcgetattr(fd, &mut original) }, 0);
+        {
+            let _terminal = SessionFailureTerminal::pin_fds(fd, fd).unwrap();
+            assert_ne!(unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_NONBLOCK, 0);
+        }
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
+        let mut restored: libc::termios = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::tcgetattr(fd, &mut restored) }, 0);
+        assert_eq!((original.c_iflag, original.c_oflag, original.c_cflag, original.c_lflag),
+                   (restored.c_iflag, restored.c_oflag, restored.c_cflag, restored.c_lflag));
+        let other_flags = unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) };
+        assert!(SessionFailureTerminal::pin_fds(fd, other_slave.as_raw_fd()).is_err());
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
+        assert_eq!(unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) }, other_flags);
+    }
+
+    #[tokio::test]
     async fn exited_child_terminal_tail_is_forwarded_before_teardown() {
         let (child_output, bridge_input) = std::os::unix::net::UnixStream::pair().unwrap();
         let (bridge_output, observed) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -3134,6 +3354,7 @@ esac
             title: "Fixture login".into(),
             greeting: "Fixture greeting".into(),
             background: "Fixture portal".into(),
+            failure_return: "Fixture desktop did not start. Enter or Esc to return.".into(),
         };
         let w = Witness {
             caller: Account {
@@ -4204,10 +4425,149 @@ async fn drain_terminal_tail(
 ) -> bool {
     tokio::time::timeout(timeout, output).await.is_ok()
 }
+
+struct SessionFailureTerminal {
+    input: BridgeFd,
+    output: BridgeFd,
+    _terminal: TerminalRaw,
+}
+impl SessionFailureTerminal {
+    fn pin() -> Result<Self, String> {
+        Self::pin_fds(0, 1)
+    }
+    fn pin_fds(input_fd: i32, output_fd: i32) -> Result<Self, String> {
+        // stdin/stdout may share one open file description. Capture both original
+        // flag sets before either BridgeFd enables nonblocking IO.
+        let output_flags = unsafe { libc::fcntl(output_fd, libc::F_GETFL) };
+        if output_flags < 0 {
+            return Err("selected session output is unavailable".into());
+        }
+        let input = BridgeFd::inherited(input_fd)?;
+        let mut output = BridgeFd::inherited(output_fd)?;
+        output.previous_flags = Some(output_flags);
+        let i = input.io.get_ref().metadata().map_err(|_| "selected session input ended")?;
+        let o = output.io.get_ref().metadata().map_err(|_| "selected session output ended")?;
+        if !i.file_type().is_char_device()
+            || !o.file_type().is_char_device()
+            || (i.dev(), i.ino(), i.rdev()) != (o.dev(), o.ino(), o.rdev())
+        {
+            return Err("failure acknowledgement requires one inherited terminal".into());
+        }
+        // Pin this inherited descriptor; never reopen a TTY by a caller path.
+        // Its owner can be the original SSH account when PAM selected another
+        // user. Genuine selected-session admission was checked before this call.
+        let terminal = TerminalRaw::arm_fd(input.io.as_raw_fd())?;
+        Ok(Self { input, output, _terminal: terminal })
+    }
+}
+
+struct SessionFailureAck {
+    hint: String,
+    deadline: tokio::time::Instant,
+}
+
+fn duplicate_geometry(stream: &UnixStream) -> Result<UnixStream, String> {
+    let fd = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if fd < 0 {
+        return Err("cannot retain selected session geometry lifetime".into());
+    }
+    let stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
+    UnixStream::from_std(stream).map_err(|_| "cannot observe selected session geometry lifetime".into())
+}
+
+async fn session_failure_cancelled(
+    cancelled: impl std::future::Future<Output = ()>,
+    geometry: Option<UnixStream>,
+) {
+    tokio::pin!(cancelled);
+    let Some(mut geometry) = geometry else {
+        cancelled.await;
+        return;
+    };
+    tokio::select! {
+        _ = &mut cancelled => (),
+        _ = async {
+            // The old relay may have stopped halfway through a size frame, so
+            // observe stream lifetime, not a new protocol boundary. No size
+            // bytes are interpreted or forwarded during this acknowledgement.
+            let mut bytes = Frame(vec![0; 1024]);
+            while let Ok(count) = geometry.read(&mut bytes.0).await {
+                if count == 0 { break; }
+            }
+        } => (),
+    }
+}
+
+async fn acknowledge_session_failure(
+    input: &BridgeFd,
+    output: &BridgeFd,
+    ack: &SessionFailureAck,
+    cancelled: impl std::future::Future<Output = ()>,
+) {
+    if tokio::time::Instant::now() >= ack.deadline {
+        return;
+    }
+    // The failed child and its relays are already stopped. Discard only its old
+    // input; unknown new keys cannot acknowledge a different terminal owner.
+    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
+        return;
+    }
+    tokio::pin!(cancelled);
+    // Keep existing child stderr on screen and add only the SSOT generic failure
+    // label. Never format arbitrary startup errors, paths or credentials here.
+    let hint = format!("\r\n{}\r\n", ack.hint);
+    let written = tokio::select! {
+        biased;
+        _ = &mut cancelled => return,
+        _ = tokio::time::sleep_until(ack.deadline) => return,
+        result = output.write_all(hint.as_bytes()) => result,
+    };
+    if written.is_err() {
+        return;
+    }
+    loop {
+        let mut bytes = Frame(vec![0; 64]);
+        tokio::select! {
+            biased;
+            _ = &mut cancelled => return,
+            _ = tokio::time::sleep_until(ack.deadline) => return,
+            received = input.read(&mut bytes.0) => {
+                let Ok(count) = received else { return; };
+                if count == 0 || bytes.0[..count].iter().any(|b| matches!(b, b'\r' | b'\n' | 0x1b)) {
+                    return;
+                }
+            },
+        }
+    }
+}
+
+async fn hold_session_failure(
+    result: Result<(), String>,
+    input: &BridgeFd,
+    output: &BridgeFd,
+    ack: &SessionFailureAck,
+    cancelled: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
+    if result.is_err() {
+        acknowledge_session_failure(input, output, ack, cancelled).await;
+    }
+    result
+}
+
 async fn owned_pty_bridge(
+    command: Command,
+    geometry: UnixStream,
+    shutdown_timeout: Duration,
+) -> Result<(), String> {
+    let mut cancellation = Cancellation::new()?;
+    owned_pty_bridge_with_cancellation(command, geometry, shutdown_timeout, &mut cancellation).await
+}
+
+async fn owned_pty_bridge_with_cancellation(
     mut command: Command,
     geometry: UnixStream,
     shutdown_timeout: Duration,
+    cancellation: &mut Cancellation,
 ) -> Result<(), String> {
     let uid = unsafe { libc::getuid() };
     if uid == 0 || unsafe { libc::geteuid() } != uid {
@@ -4278,7 +4638,6 @@ async fn owned_pty_bridge(
     let input = Arc::new(BridgeFd::inherited(0)?);
     let output = Arc::new(BridgeFd::inherited(1)?);
     let master = Arc::new(BridgeFd::new(master, false)?);
-    let mut cancellation = Cancellation::new()?;
     let mut child = tokio::process::Command::from(command)
         .kill_on_drop(true)
         .spawn()
