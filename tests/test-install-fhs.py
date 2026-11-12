@@ -286,6 +286,16 @@ def test_operator_tier_survives_seeding_and_reports_failure():
         home, skel = root / "home", root / "skel"
         tier = home / ".config/mios/mios.toml"
         tier.parent.mkdir(parents=True)
+        config = home / ".config"
+        config.chmod(0o700)
+        tier.parent.chmod(0o700)
+        fragment = tier.parent / "mios.d/90-operator.toml"
+        fragment.parent.mkdir(mode=0o700)
+        fragment.write_text('[identity]\nfullname="Private operator label"\n')
+        fragment.chmod(0o644)
+        private_before = (fragment.read_bytes(), fragment.stat().st_mode,
+                          config.stat().st_mode, tier.parent.stat().st_mode,
+                          config.stat().st_uid, tier.parent.stat().st_uid)
         skel.mkdir()
         tier.write_text('[identity]\ndefault_password="fixture-existing"\n[theme]\nname="custom"\n')
         (skel / "mios.toml").write_text('[identity]\nfullname="MiOS User"\n')
@@ -320,10 +330,26 @@ write_operator_credential() { return 37; }
         stage = _function(source, "stage_user_profile_artifacts").replace('/etc/skel/.config/mios', str(skel))
         seeded = subprocess.run(["bash", "-c", common + seeder + '\nseed_user_skel_for_all_accounts\n', "_", str(home)], capture_output=True, text=True, timeout=30)
         assert seeded.returncode == 0 and tier.read_bytes() == before, seeded
+        for _ in range(2):
+            seeded = subprocess.run(["bash", "-c", common.replace('return 37;', 'return 0;') + seeder + stage + '\nstage_user_profile_artifacts\n', "_", str(home)], capture_output=True, text=True, timeout=30)
+            assert seeded.returncode == 0 and tier.read_bytes() == before, seeded
+            assert (fragment.read_bytes(), fragment.stat().st_mode,
+                    config.stat().st_mode, tier.parent.stat().st_mode,
+                    config.stat().st_uid, tier.parent.stat().st_uid) == private_before
+        fresh = root / "fresh"
+        fresh.mkdir()
+        seeded = subprocess.run(["bash", "-c", common.replace('return 37;', 'return 0;') + seeder + stage + '\nstage_user_profile_artifacts\n', "_", str(fresh)], capture_output=True, text=True, timeout=30)
+        assert seeded.returncode == 0, seeded
+        assert (fresh / ".config/mios/mios.toml").read_bytes() == (skel / "mios.toml").read_bytes()
+        assert stat.S_IMODE((fresh / ".config").stat().st_mode) == 0o700
+        assert stat.S_IMODE((fresh / ".config/mios").stat().st_mode) == 0o700
         failed = subprocess.run(["bash", "-c", common + seeder + stage + '\nstage_user_profile_artifacts\n', "_", str(home)], capture_output=True, text=True, timeout=30)
         assert failed.returncode != 0 and "NOT recorded" in failed.stderr, failed
         assert "Linux login password was set" in failed.stderr and "mios.html" in failed.stderr
         assert tier.read_bytes() == before and "Operator credential recorded:" not in failed.stdout
+        assert (fragment.read_bytes(), fragment.stat().st_mode,
+                config.stat().st_mode, tier.parent.stat().st_mode,
+                config.stat().st_uid, tier.parent.stat().st_uid) == private_before
         core = _function(source, "do_install_core")
         stub_core = r"""
 initialize_dynamic_branding() { :; }

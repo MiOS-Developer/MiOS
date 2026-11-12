@@ -1020,6 +1020,8 @@ def directory(parent, name, create=False):
             return -1
         os.mkdir(name, 0o700, dir_fd=parent)
         fd = os.open(name, flags, dir_fd=parent)
+    except OSError as exc:
+        raise Refusal(f'Configuration component {name!r} is symlinked, unreadable or not a directory ({exc.strerror})') from None
     opened.append(fd)
     return fd
 
@@ -1337,7 +1339,9 @@ seed_user_skel_for_all_accounts() {
             log_warn "Refusing to seed a symlinked configuration directory for ${u}"
             continue
         fi
-        sudo -u "$u" install -d -m 0755 "${home}/.config" || return 1
+        if [[ ! -d "${home}/.config" ]]; then
+            sudo -u "$u" install -d -m 0700 "${home}/.config" || return 1
+        fi
         for subdir in "${skel_subdirs[@]}"; do
             local skel_root="/etc/skel/.config/${subdir}"
             [[ -d "$skel_root" ]] || continue
@@ -1345,7 +1349,11 @@ seed_user_skel_for_all_accounts() {
                 log_warn "Refusing to seed a symlinked ${subdir} directory for ${u}"
                 continue
             fi
-            sudo -u "$u" install -d -m 0755 "${home}/.config/${subdir}" || return 1
+            if [[ ! -d "${home}/.config/${subdir}" ]]; then
+                local config_mode=0755
+                [[ "$subdir" != mios ]] || config_mode=0700
+                sudo -u "$u" install -d -m "$config_mode" "${home}/.config/${subdir}" || return 1
+            fi
             local f
             for f in "$skel_root"/*; do
                 [[ -f "$f" ]] || continue
@@ -1378,7 +1386,12 @@ stage_user_profile_artifacts() {
         return 1
     fi
 
-    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config" "${home}/.config/mios" || return 1
+    if [[ ! -d "${home}/.config" ]]; then
+        sudo -u "${LINUX_USER}" install -d -m 0700 "${home}/.config" || return 1
+    fi
+    if [[ ! -d "${home}/.config/mios" ]]; then
+        sudo -u "${LINUX_USER}" install -d -m 0700 "${home}/.config/mios" || return 1
+    fi
 
     local skel_root=/etc/skel/.config/mios
     if [[ -d "$skel_root" ]]; then
