@@ -1,6 +1,27 @@
 <!-- AI-hint: Current global pickup is main; historical stage receipts follow. -->
 ## Current main pickup
 
+### Current canonical source and verification commands
+
+The current package is `mios-mons`; camera sources are
+`tools/native/mios-mons/src/ui.rs` and `tools/native/mios-mons/src/config.rs`,
+with settings under `[mons]` in `usr/share/mios/mios.toml`. For a new authorized
+MiOS-DEV verification run, use the current package name:
+
+```sh
+cd tools/native
+cargo test --locked -p mios-mons --target x86_64-unknown-linux-musl camera_plain_fallthrough_tests
+cargo test --locked -p mios-mons --target x86_64-unknown-linux-musl
+cargo clippy --locked -p mios-mons --all-targets --target x86_64-unknown-linux-musl -- -D warnings
+cargo fmt --all -- --check
+```
+
+These commands were not run by this naming update. The commands, revisions and
+verification results in the historical receipt below retain their original
+identities and do not certify a new checkout or live installation.
+
+### Recorded integration summary
+
 Resume from main and `mios-continuation-milestones.json`. Combined native results
 include442 game unit and13 CLI passes (3 ignored),248 controller passes, fatal
 Clippy and format. The keybinding test suite passes31 tests. All29 projection
@@ -16,7 +37,7 @@ Live Codespace, physical input, full image and R4 acceptance remain open.
 <!-- AI-hint: Historical source-stage receipt; current summary above supersedes earlier unrun or branch-pickup notes. -->
 
 <!-- AI-hint: Recoverable camera-continuation milestone with exact source ancestry, known defects and unrun native verification. -->
-<!-- AI-related: handoff.md, tools/native/mios-tamagotchi/src/ui.rs, tools/native/mios-tamagotchi/src/config.rs, task_3774 -->
+<!-- AI-related: handoff.md, tools/native/mios-mons/src/ui.rs, tools/native/mios-mons/src/config.rs, task_3774 -->
 # Camera continuation
 
 Base: `69fa06efe04f6422bbaec8b4ea0b953c24df2dd5`.

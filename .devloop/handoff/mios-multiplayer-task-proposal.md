@@ -1,6 +1,17 @@
 # MiOS-Mons multiplayer: proposed canonical tasks
 
-Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLAYER.md`, revision 3, in the same directory. The baseline is worktree HEAD `fc4ad36ec`.
+Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: [mios-multiplayer-design.md](mios-multiplayer-design.md), revision 3, in the same directory. The baseline is worktree HEAD `fc4ad36ec`.
+
+## Current canonical names
+
+New work targets the `mios-mons` package/executable, `tools/native/mios-mons`,
+`specs/mios-mons` and the layered `[mons]` SSOT table. The vendor default for
+`[mons].state_directory` is `mios/mons` under `XDG_STATE_HOME`; preserve resolved
+operator overrides rather than rewriting their paths. References below use the
+current names, while source-line citations remain tied to the stated baseline.
+The proposed modules, flags, schema fields and services still require their
+listed implementation and acceptance checks. This naming update executes none
+of those checks and changes no saved state.
 
 **How to read this.** IDs `T00`-`T27` are local. Root assigns real task numbers. Each block maps onto the registry fields as follows:
 
@@ -168,10 +179,10 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
 ### T07. CPU and memory measurement harness for MiOS-Mons
 - **Phase:** P1 · **Priority:** P1 · **Size:** M · **Workstream / domain:** mons / performance · **Lane:** game
 - **Scope:**
-  - A render bench for `mios-tamagotchi` on `TestBackend` at 80×24, 120×40 and 200×60, for each renderer and for the voxel and pixel views. It prints JSON: ns per frame, and frames per minute while idle.
+  - A render bench for `mios-mons` on `TestBackend` at 80×24, 120×40 and 200×60, for each renderer and for the voxel and pixel views. It prints JSON: ns per frame, and frames per minute while idle.
   - A cgroup reader (`cpu.stat`, `memory.current`) that the later `mios-monsd bench` reuses.
   - Commit the baseline numbers with the commit hash.
-- **Owned paths:** `tools/native/mios-tamagotchi/benches/` or a `src/bin/mons-bench.rs`; `specs/tamagotchi-tui/mons-perf-baseline.md` (new).
+- **Owned paths:** `tools/native/mios-mons/benches/` or a `src/bin/mons-bench.rs`; `specs/mios-mons/mons-perf-baseline.md` (new).
 - **Depends on:** none.
 - **Acceptance (positive):** The bench runs headless in CI in under 60 s and emits valid JSON. The baseline is committed.
 - **Acceptance (negative):**
@@ -189,9 +200,9 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
     - a resize;
     - a native-dialog event.
   - Otherwise wait until the next deadline the loop actually needs.
-  - Add an SSOT idle cap, `[tamagotchi].idle_fps`, which root applies.
+  - Add an SSOT idle cap, `[mons].idle_fps`, which root applies.
   - Coordinate with pending task #3755, which also edits `ui.rs`.
-- **Owned paths:** `tools/native/mios-tamagotchi/src/ui.rs` (run loop), `src/config.rs`.
+- **Owned paths:** `tools/native/mios-mons/src/ui.rs` (run loop), `src/config.rs`.
 - **Depends on:** T07.
 - **Acceptance (positive):**
   - Budget B5 is met: at least 50 % less idle CPU than the T07 baseline.
@@ -209,11 +220,11 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
 - **Scope:**
   - Create `tools/native/mios-mons-core` with `game`, `genetics`, `habitat`, `progression`, the character data, the save envelope and validation, and a new `motion` module.
   - `motion` uses fixed-point position and speed and a yaw lookup table. The server decides wander, using an injected RNG trait. It replaces `Ui.position`/`destination`/`yaw`/`visual_rng` (`ui.rs:144-148`) and the `f64::atan2` in `simulate_behavior` (`ui.rs:683-717`).
-  - `mios-tamagotchi` depends on the core, and offline behaviour stays unchanged.
-- **Owned paths:** `tools/native/mios-mons-core/**` (new), and in `tools/native/mios-tamagotchi/src/` the files `game.rs`, `genetics.rs`, `habitat.rs`, `progression.rs`, `save.rs`, `characters.rs` and `ui.rs`. The workspace `members` and the `[rust.categories]` entry are root's.
+  - `mios-mons` depends on the core, and offline behaviour stays unchanged.
+- **Owned paths:** `tools/native/mios-mons-core/**` (new), and in `tools/native/mios-mons/src/` the files `game.rs`, `genetics.rs`, `habitat.rs`, `progression.rs`, `save.rs`, `characters.rs` and `ui.rs`. The workspace `members` and the `[rust.categories]` entry are root's.
 - **Depends on:** T08, which must land first to avoid `ui.rs` conflicts.
 - **Acceptance (positive):**
-  - Every existing tamagotchi test passes.
+  - Every existing MiOS-Mons test passes.
   - The same seed and intent stream produce an identical `Game` and `Motion` after 10,000 ticks, across three runs and in both debug and release builds.
   - Schema-4 saves load byte-identically.
 - **Acceptance (negative):**
@@ -262,14 +273,14 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
   - A seat cannot act on another owner's pet outside room policy.
   - The room sources contain no `Command::new` (grep gate).
 
-### T12. Thin-client mode for `mios-tamagotchi`
+### T12. Thin-client mode for `mios-mons`
 - **Phase:** P3 · **Priority:** P1 · **Size:** L · **Workstream / domain:** mons / client · **Lane:** game
 - **Scope:**
   - `--connect` over UDS in P3, and over TLS from T18.
   - All presentation stays per client. The client applies snapshot, delta and keyframe messages and sends intents for every Care and guess action.
   - Process-spawning code (`dialogs.rs:484`, `:573`, `:926`; `input.rs:308`, `:383`) goes behind a cargo feature, `desktop`, that is on by default. A `presenter` feature set excludes it.
   - `visible()` (`dialogs.rs:386-392`) also strips `Cf` and bidi.
-- **Owned paths:** `tools/native/mios-tamagotchi/src/**` (client paths), its `Cargo.toml` features.
+- **Owned paths:** `tools/native/mios-mons/src/**` (client paths), its `Cargo.toml` features.
 - **Depends on:** T10, T11.
 - **Acceptance (positive):**
   - Two clients see identical stats and positions at keyframe ticks.
@@ -286,7 +297,7 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
   - `SO_PEERCRED` seat identity: uid → local seat now, uid → account through the userdb `mios.account_uuid` field after T20.
   - N local seats in one client, each mapped to a pad that `mios-inputd` assigned.
   - Nested-session seats.
-- **Owned paths:** `tools/native/mios-tamagotchi/src/input.rs` (seat mapping); a seat-assignment API in `tools/native/mios-inputd` if one is needed, coordinated with that lane.
+- **Owned paths:** `tools/native/mios-mons/src/input.rs` (seat mapping); a seat-assignment API in `tools/native/mios-inputd` if one is needed, coordinated with that lane.
 - **Depends on:** T12. Q6 decides guest seats.
 - **Acceptance (positive):**
   - Two pads control two seats independently in one terminal.
@@ -358,10 +369,10 @@ Proposed for root to register in `tasks.jsonl` and `TASKS.md`. Design: `MULTIPLA
 ### T16. Registration and grant UX in the MiOS-Mons apps
 - **Phase:** P4 · **Priority:** P1 · **Size:** L · **Workstream / domain:** mons / UX · **Lane:** game (TUI), portal lane (Bun/TS), Windows lane (`mios-launch`)
 - **Scope:**
-  - **TUI:** join a realm by invite; enroll a device key (0600 under `XDG_STATE_HOME/mios/tamagotchi/keys`); log in; request grants; an admin approval and creation view with ed25519-sk step-up.
+  - **TUI:** join a realm by invite; enroll a device key (0600 under the resolved `[mons].state_directory` plus `keys`, default `XDG_STATE_HOME/mios/mons/keys`); log in; request grants; an admin approval and creation view with ed25519-sk step-up.
   - **Portal:** a registration page using WebAuthn.
   - **Windows:** `mios-launch` with keys stored under DPAPI.
-- **Owned paths:** `tools/native/mios-tamagotchi/src/account*.rs` (new), the `src/mios-portal` registration route, `tools/native/mios-launch`.
+- **Owned paths:** `tools/native/mios-mons/src/account*.rs` (new), the `src/mios-portal` registration route, `tools/native/mios-launch`.
 - **Depends on:** T15. Q1 is answered: game-client registration; rename the unrelated monitor.
 - **Acceptance (positive):**
   - Each game client registers the shared identity and standard OS logon eligibility on permitted nodes under root-owned policy, using one cross-OS password.
