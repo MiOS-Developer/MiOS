@@ -1,0 +1,103 @@
+{
+  "artifact": {
+    "bytes": 12363920,
+    "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/artifacts/mios-gen",
+    "sha256": "fa0949afb90b1be05801eb713907d5c5be1ed88f9c602918eac9cf028f516962"
+  },
+  "checks": {
+    "actual_c95_cases": 23,
+    "actual_c95_t20_passed": true,
+    "actual_c95_t21_passed": true,
+    "baseline_gen_passed": 457,
+    "baseline_unitgen_passed": 95,
+    "candidate_gen_passed": 461,
+    "candidate_unitgen_passed": 95,
+    "clippy_both_crates_passed": true,
+    "count_guard_runtime_exercised": false,
+    "count_guard_unit_test_executed": true,
+    "native_omitted_float_observed": false,
+    "runtime_proof": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/candidate-c95-role-app.json",
+      "sha256": "9c8b42b91cfb3a77e9b306503686fa43a68d94853c2bdfd89379b66a4d8f4937"
+    },
+    "static_linkage_clean": true,
+    "unitgen_projection_unchanged": true
+  },
+  "compiled_entire_published_tree_claimed": false,
+  "compiled_source": {
+    "base_commit": "9942fc56d62ea6a21e3f503ad01bd728b297b9cd",
+    "candidate_file_sha256": {
+      "tests/fixtures/tmux/desktop-role-actions.py": "3415f814f694bac007787908e491c16bcc41b3f784156a894ef8dbd01f81995d",
+      "tests/test-tmux-os.py": "86a8b19e199e2700d37768cbfcd7a97b7308a7b9ae1e8d62f1f22363acaddd36",
+      "tools/native/mios-gen/src/tmux_desktop.rs": "8b0e6d138415b795af2c59d60e5e941357d3097d2a0e4d23ed35fe4c8be86128",
+      "tools/native/mios-unit-gen/src/tmux_os.rs": "5211eff11652804e0fd60cc927dc104a0e85ca82d6b87fcaaf9995caaa592a4f"
+    },
+    "source_review_head": "3778c28e16a43b8861c4569de18eb755c561c6f0"
+  },
+  "deployment": {
+    "installation_receipt_path": "/home/mios/.local/state/mios/mios-live-trial-e8af/desktop-role-gen-installation.json",
+    "pending_at_publication": true
+  },
+  "existing_ignored_gen_tests": [
+    "nested_session::controller_return_live::controller_return_owned_kernel",
+    "nested_session::controller_return_live::owned_bridge_helper"
+  ],
+  "existing_integration_debt": [
+    "every_golden_case_in_the_readme_holds",
+    "render_globals::test_render_globals_cli_e2e"
+  ],
+  "full_integration_suite_passed": false,
+  "inputd_public_alias_repair": {
+    "path": "/usr/bin/mios-inputd",
+    "receipt": {
+      "path": "/home/mios/.local/state/mios/mios-live-trial-e8af/inputd-cli-alias-repair.json",
+      "sha256": "0d284221d5b3f2bff58d6d19c973d4765a4f5948925e863170e750502e2132b1"
+    },
+    "target": "/usr/libexec/mios/mios-inputd"
+  },
+  "kind": "mios-desktop-role-gen-native-handoff",
+  "live_authentication_claimed": false,
+  "native_proofs": {
+    "artifact": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/artifact.json",
+      "sha256": "dbdfb46e41049eed9129f6055099be228dab38a73b25e13b18d88ad73d039175"
+    },
+    "formatted_source": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/source-formatted.json",
+      "sha256": "95d7fedd660ee093d08083ce6877200ee5451672f3cc7668c394c786702a486c"
+    },
+    "host": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/host-result.json",
+      "sha256": "fbb2f4be643f04cff458a1d3da50a1a14b1651718308e47821a2b919c6b5a96c"
+    },
+    "inside": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance/result.json",
+      "sha256": "d174ef2d46c74cd401331d75fa9401fec9142e7cdc38447f17f4e1b429f28bf3"
+    },
+    "job": {
+      "path": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-acceptance-input/job.json",
+      "sha256": "d6ec81bd45336f420d3d63a25acf44bdd659e13b7ed5cc298316f5b2b6f1781e"
+    }
+  },
+  "next_action": "Fast-forward Native source while preserving the three existing local diffs; install only the accepted mios-gen artifact with the sealed guarded installer; run a fresh own genuine PAM login, ephemeral MiOS-Mons app, programmatic inputd capture/fullscreen/release and exact-own cleanup. Keep physical controller acceptance separate.",
+  "no_new_full_suite_failures": true,
+  "physical_controller_acceptance_claimed": false,
+  "previous_failed_run_preserved": {
+    "job_sha256": "b4605b5eb07c423389a0040047a5ae5a02523ca5d9e82fc7fc83e30f8179c95a",
+    "native_state": "/home/mios/.local/state/mios/mios-private-desktop-role-gen-validation",
+    "outcome": "failed at unsupported fixture inventory assumption; this fresh full acceptance job does not change its result"
+  },
+  "problem": "Generated desktop core roles were misclassified as managed AI agent panes, blocking ordinary app launch and centering.",
+  "recorded_at": "2026-11-12T12:08:00.476742+00:00",
+  "result": "Canonical application launch, centering and focus work beside protected core roles, including two ordinary native floats; explicit agents and manual managed markers remain protected.",
+  "retained_components": {
+    "inputd_restarted": false,
+    "inputd_sha256": "cc51baaa6c11265919d2f4351ec57cb583872a84be73082c257b4c4044e09dab",
+    "miosd_sha256": "b4ae9a6475f346f846aed46c020cbc0fcbb1e4c9258ccc28548e694b4a75a5f4",
+    "miosd_source_commit": "9942fc56d62ea6a21e3f503ad01bd728b297b9cd"
+  },
+  "runtime_inventory_note": "This C95 provider lists both app and agent floats. The actual runtime exercised managed-agent refusal; count-mismatch refusal is covered by the separate executed Rust unit test. No multiple-ordinary-float limitation is claimed.",
+  "schema": 1,
+  "status": "native-validation-complete",
+  "whole_cohort_claimed": false
+}
