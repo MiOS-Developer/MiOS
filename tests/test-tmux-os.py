@@ -1260,5 +1260,57 @@ argv = [{stub!r}, "desktop-panel"]
         self.assertEqual(sum(line.endswith("--desktop-chat") for line in lines), 1)
 
 
+    @unittest.skipUnless(
+        DESKTOP_TMUX is not None or DESKTOP_TMUX_SHA256 or os.environ.get("MIOS_TMUX_OS_GEN_SHA256"),
+        "the explicitly selected native desktop backend and generator are required")
+    def test_t21_generated_desktop_roles_preserve_apps_and_refuse_managed_agents(self):
+        import json
+        self.assertIsNotNone(DESKTOP_TMUX, "pinned acceptance requires an explicit native backend path")
+        self.assertRegex(DESKTOP_TMUX_SHA256, r"\A[a-f0-9]{64}\Z",
+                         "the selected native backend must have an explicit SHA-256")
+        backend = DESKTOP_TMUX.resolve(strict=True)
+        self.assertTrue(backend.is_file(), "the selected native backend must be a file")
+        self.assertEqual(hashlib.sha256(backend.read_bytes()).hexdigest(), DESKTOP_TMUX_SHA256)
+        generator_sha = os.environ.get("MIOS_TMUX_OS_GEN_SHA256", "")
+        self.assertRegex(generator_sha, r"\A[a-f0-9]{64}\Z",
+                         "the actual candidate generator must have an explicit SHA-256")
+        generator = GEN.resolve(strict=True)
+        self.assertTrue(generator.is_file(), "the selected generator must be a file")
+        self.assertEqual(hashlib.sha256(generator.read_bytes()).hexdigest(), generator_sha)
+        completed = subprocess.run(
+            [sys.executable, "-I", "-B", str(ROOT / "tests/fixtures/tmux/desktop-role-actions.py"),
+             "--source", str(ROOT), "--mode", "candidate"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=180)
+        self.desktop_role_actions_output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, self.desktop_role_actions_output)
+        self.assertNotRegex(self.desktop_role_actions_output,
+                            r"(?i)\b(skipped|expected failures|unexpected successes)\b")
+        evidence = json.loads(completed.stdout)
+        self.assertIs(evidence["ok"], True)
+        self.assertEqual(evidence["mode"], "candidate", "baseline reproduction is not candidate acceptance")
+        self.assertEqual(evidence["generator_sha256"], generator_sha)
+        self.assertEqual(evidence["generator_resolved_path"], str(generator))
+        self.assertEqual(evidence["c95_sha256"], DESKTOP_TMUX_SHA256)
+        self.assertRegex(evidence["generated_managed_expression_sha256"], r"\A[a-f0-9]{64}\Z")
+        self.assertIs(evidence["four_core_roles"], True)
+        self.assertIs(evidence["app_identity_preserved"], True)
+        self.assertIs(evidence["native_omitted_float_observed"], True)
+        expected = {
+            "canonical-new-from-canvas",
+            "center-ordinary-app-with-four-core-roles",
+            "focus-core-chat-from-app-with-four-core-roles",
+            "restore-app-focus-with-four-core-roles",
+            "omitted-native-agent-float-fails-closed",
+            "manual-managed-marker-remains-protected",
+        }
+        expected.update(f"{role}-rejects-{verb}"
+                        for role in ("canvas", "panel", "chat", "metrics")
+                        for verb in ("close-confirm", "center", "snap-left"))
+        expected.update(f"{flag}-wins-over-forged-desktop-role"
+                        for flag in ("@mios-workspace-head", "@mios-mcp-owner", "@mios-workspace-worker"))
+        self.assertEqual(len(evidence["checks"]), 21, "all positive and negative native cases must execute")
+        self.assertEqual(set(evidence["checks"]), expected)
+
+
 if __name__ == "__main__":
     unittest.main()
