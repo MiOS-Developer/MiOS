@@ -133,13 +133,17 @@ def test_portal_assets_reexport():
     server.py and the checks above read them as mios_portal.<name>. Pin that the
     re-export hands over the very same objects."""
     from mios_pipe.routing import portal_assets
-    names = ("_PORTAL_ICON", "_read_portal_asset", "_PORTAL_ICON_192", "_PORTAL_ICON_512",
+    names = ("_PORTAL_STYLE", "_PORTAL_ICON", "_read_portal_asset", "_PORTAL_ICON_192", "_PORTAL_ICON_512",
              "_PORTAL_MANIFEST", "_PORTAL_SW", "_PORTAL_LOGIN_HTML", "_IOSTEST_HTML")
     stale = [n for n in names if getattr(mios_portal, n, None) is not getattr(portal_assets, n)]
     check("assets: mios_portal re-exports portal_assets' own objects", not stale, str(stale))
     check("assets: the PNG icons are bytes (b'' when not baked)",
           isinstance(portal_assets._PORTAL_ICON_192, bytes)
           and isinstance(portal_assets._PORTAL_ICON_512, bytes))
+    check("assets: the complete static style is composed once into the dashboard HTML",
+          portal_assets._PORTAL_STYLE.startswith("<style>") and portal_assets._PORTAL_STYLE.endswith("</style>")
+          and mios_portal._PORTAL_HTML.count(portal_assets._PORTAL_STYLE) == 1
+          and "__MIOS_PORTAL_STYLE__" not in mios_portal._PORTAL_HTML)
 
 def test_host_stats_shape():
     s = mios_portal._host_stats()
@@ -931,8 +935,15 @@ def test_portal_page_status_mount():
           and 'id="mios-ver"' in html)
     check("portal page: the build18 literal is gone", "build18" not in html)
     text = (_ROOT / "usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py").read_text()
-    check("portal.py source milestone stays at 1487 lines", _portal_lines(text) == 1487, str(_portal_lines(text)))
-    check("portal.py length check (negative): one planted line is reported", _portal_lines(text + "# x\n") != 1487)
+    registered = next(row["lines"] for row in _VENDOR["refactor"]["oversize"]
+                      if row["path"] == "mios_pipe/routing/portal.py")
+    check("portal.py source length matches its SSOT shrink-only register",
+          _portal_lines(text) == registered, str(_portal_lines(text)))
+    check("portal.py length check (negative): one planted line exceeds the registered cap",
+          _portal_lines(text + "# x\n") > registered)
+    assets = (_ROOT / "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py").read_text()
+    check("portal assets remain below the SSOT submodule ceiling",
+          _portal_lines(assets) <= _VENDOR["refactor"]["max_lines"], str(_portal_lines(assets)))
 
 def test_portal_status_write_spec():
     git = _shutil.which("git")
