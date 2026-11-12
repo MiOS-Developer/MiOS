@@ -20,6 +20,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-adguard.container` | `usr/share/containers/systemd` | MiOS' AdGuard Home (DNS ad/tracker/malware sinkhole + resolver) |
 | `mios-agent-pipe.service` | `usr/lib/systemd/system` | MiOS' Agent Pipe (router + refine + critic FastAPI; fronts hermes for every gateway) |
 | `mios-agent-pipe.socket` | `usr/lib/systemd/system` | MiOS Agent-Pipe Zero-Downtime Socket Activation |
+| `mios-agent-share.service` | `usr/lib/systemd/system` | MiOS' read-only inter-agent share (loopback static server behind the tailnet /share/ route) |
 | `mios-agents.service` | `usr/lib/systemd/system` | MiOS' A2O agents super-container (Claude + agy/Gemini + tmux war room + code-server) |
 | `mios-ai-firstboot.service` | `usr/lib/systemd/system` | MiOS' AI first-boot provisioning (agent venv + llama.cpp GGUFs) |
 | `mios-ai-firstboot.timer` | `usr/lib/systemd/system` | MiOS' AI first-boot provisioning retry (until the sentinel is written) |
@@ -56,6 +57,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-copy-build-log.service` | `usr/lib/systemd/system` | MiOS' Build Log Copy Service |
 | `mios-cpu-isolate.service` | `usr/lib/systemd/system` | MiOS' CPU Core Isolation Engine |
 | `mios-cpu-node.container` | `usr/share/containers/systemd` | MiOS' CPU inference node (always-on / gaming-immune last-resort lane) |
+| `mios-credential-apply.service` | `usr/lib/systemd/system` | MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login) |
+| `mios-credential-apply.timer` | `usr/lib/systemd/system` | MiOS' operator credential reconcile schedule |
 | `mios-cron-director.service` | `usr/lib/systemd/system` | MiOS' cron-director (LLM-gated recurring-task scheduler) |
 | `mios-daemon.service` | `usr/lib/systemd/system` | MiOS' consolidated micro-LLM daemon (log classify + refusal detect + cron gate) |
 | `mios-dashboard-issue.service` | `usr/lib/systemd/system` | MiOS' dashboard -> /etc/issue.d (pre-login banner) |
@@ -180,6 +183,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-skills-miner.service` | `usr/lib/systemd/system` | MiOS' Phase C.2 Sequential Pattern Mining over tool_call history |
 | `mios-skills-miner.timer` | `usr/lib/systemd/system` | MiOS' Phase C.2 skill-miner cadence (sequential pattern mining) |
 | `mios-sriov-init.service` | `usr/lib/systemd/system` | MiOS' Universal SR-IOV Initialization |
+| `mios-status-agents.service` | `usr/lib/systemd/user` | MiOS agent relay observation for the Portal status view |
 | `mios-steam-bridge.service` | `usr/lib/systemd/user` | MiOS Steam Notification Bridge |
 | `mios-suggestion-refresh.service` | `usr/lib/systemd/system` | MiOS' starter-chip refresh (revolving suggestions) |
 | `mios-suggestion-refresh.timer` | `usr/lib/systemd/system` | MiOS' starter-chip refresh cadence |
@@ -193,7 +197,6 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-tmpfs-spill.service` | `usr/lib/systemd/system` | MiOS Automated tmpfs Spill-to-NVMe Manager |
 | `mios-tmpfs-spill.timer` | `usr/lib/systemd/system` | MiOS Periodic Memory Pressure & tmpfs Spillover Monitor Timer |
 | `mios-ttyd-bash.service` | `usr/lib/systemd/system` | MiOS' ttyd -- browser pty bridge (Linux bash session) |
-| `mios-ttyd-expose.service` | `usr/lib/systemd/system` | MiOS' mobile terminal tailnet exposure (gated by [ttyd].tailnet_expose) |
 | `mios-ttyd-powershell.service` | `usr/lib/systemd/system` | MiOS' ttyd -- browser pty bridge (Windows PowerShell session) |
 | `mios-user-snapshot@.service` | `usr/lib/systemd/system` | Hourly CephFS delta snapshot and mesh replication for user %i |
 | `mios-user-snapshot@.timer` | `usr/lib/systemd/system` | Hourly CephFS delta snapshot schedule for user %i |
@@ -234,5 +237,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (226 unit(s)) -->
+<!-- derived from tracked unit files (229 unit(s)) -->
 <!-- /MIOS-GEN:units -->

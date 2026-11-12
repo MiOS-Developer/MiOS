@@ -957,10 +957,10 @@ AI-related: mios-searxng, mios-owui-apply-system-prompt
 ### !/usr/bin/env python3 AI-hint: Bootstraps the initial Open...
 
 !/usr/bin/env python3
-AI-hint: Bootstraps the initial Open WebUI admin account by injecting a user into the SQLite database if empty, resolving credentials from mios.toml and secrets.env to ensure operator access during first-boot.
-AI-related: /etc/mios/secrets.env, /etc/mios/owui-admin-password, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-hermes-firstboot, mios-open-webui, port key `open_webui`
+AI-hint: Bootstraps the initial Open WebUI admin account by injecting a user into the SQLite database if empty, resolving the ONE operator credential (the operator-tier SSOT value mios.html saves, via mios_credentials.surface_password) to ensure operator access during first-boot.
+AI-related: /etc/mios/secrets.env, /etc/mios/owui-admin-password, /etc/mios/mios.toml, /usr/share/mios/mios.toml, /usr/lib/mios/mios_credentials.py, mios-hermes-firstboot, mios-credential-apply, mios-open-webui, port key `open_webui`
 
-<!-- mios-src:d448f0c1d66f from usr/libexec/mios/mios-owui-bootstrap-admin:1-3 -->
+<!-- mios-src:22910db04cbe from usr/libexec/mios/mios-owui-bootstrap-admin:1-3 -->
 
 ### !/usr/bin/env python3 AI-hint: Registers the MiOS Computer...
 
@@ -1306,23 +1306,13 @@ AI-functions: usage
 
 <!-- mios-src:91ff621945a9 from usr/libexec/mios/mios-tool-clone:1-4 -->
 
-### !/bin/bash AI-hint: Configures and toggles the Tailscale...
-
-!/bin/bash
-AI-hint: Configures and toggles the Tailscale HTTPS reverse proxy for the ttyd terminal service on port 7681, enabling secure mobile access via the Tailnet based on the [ttyd].tailnet_expose setting in mios.toml.
-AI-related: /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-ttyd-launch, mios-ttyd-bash, mios-ttyd-expose.service, mios-ttyd-bash.service
-AI-functions: _toml_get
-
-<!-- mios-src:f9d9873e122a from usr/libexec/mios/mios-ttyd-expose:1-4 -->
-
 ### !/bin/bash AI-hint: Parses MIOS_TTYD_* environment...
 
 !/bin/bash
-AI-hint: Parses MIOS_TTYD_* environment variables and mios.toml configurations to construct and execute the ttyd web terminal process for either bash or powershell shells on specific ports.
-AI-related: /usr/libexec/mios/mios-ttyd-launch, /etc/mios/userenv.sh, /usr/libexec/mios/mios-powershell, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-powershell
-AI-functions: _toml_get
+AI-hint: Parses MIOS_TTYD_* environment variables and mios.toml configurations to construct and execute the ttyd web terminal process for either bash or powershell shells on specific ports; the login comes from the operator-tier SSOT credential through mios-credential exec ttyd.
+AI-related: /usr/libexec/mios/mios-ttyd-launch, /etc/mios/userenv.sh, /usr/libexec/mios/mios-powershell, /usr/libexec/mios/mios-credential, /usr/libexec/mios/mios-toml-get, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-powershell
 
-<!-- mios-src:e169bcce5ca2 from usr/libexec/mios/mios-ttyd-launch:1-4 -->
+<!-- mios-src:bda3a1215d3f from usr/libexec/mios/mios-ttyd-launch:1-3 -->
 
 ### !/usr/bin/env bash AI-hint: One-command offline asset...
 

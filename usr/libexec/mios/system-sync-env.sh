@@ -76,7 +76,8 @@ EOF
     emit MIOS_IDENTITY_HOSTNAME "${MIOS_IDENTITY_HOSTNAME:-mios}"
     [[ -n "${MIOS_USER_FULLNAME:-}" ]] && emit MIOS_USER_FULLNAME "${MIOS_USER_FULLNAME}"
     [[ -n "${MIOS_IDENTITY_GROUPS:-}" ]]   && emit MIOS_IDENTITY_GROUPS "${MIOS_IDENTITY_GROUPS}"
-    emit MIOS_IDENTITY_DEFAULT_PASSWORD "${MIOS_IDENTITY_DEFAULT_PASSWORD:-mios}"
+    # The operator password is never projected here ([security.secret_keys]): it lives in the
+    # operator's user tier (mios.html) and reaches each surface through mios-credential apply.
 
     emit MIOS_AI_ENDPOINT "${MIOS_AI_ENDPOINT:-http://localhost:${MIOS_PORTS_AGENT_PIPE:-8700}/v1}"
     emit MIOS_AI_MODEL "${MIOS_AI_MODEL:-granite4.1:8b}"
@@ -142,7 +143,7 @@ EOF
         if [[ -n "$_pv" ]]; then emit "${_pk}" "${_pv}"; fi
     done
 
-    for _tk in MIOS_TTYD_BASH_SHELL MIOS_TTYD_POWERSHELL_SHELL MIOS_TTYD_BIND MIOS_TTYD_REQUIRE_AUTH MIOS_TTYD_AUTH_USER MIOS_TTYD_AUTH_PASS MIOS_TTYD_SSL_CERT MIOS_TTYD_SSL_KEY MIOS_TTYD_WRITABLE MIOS_TTYD_MAX_CLIENTS MIOS_TTYD_FONT_SIZE; do
+    for _tk in MIOS_TTYD_BASH_SHELL MIOS_TTYD_POWERSHELL_SHELL MIOS_TTYD_BIND MIOS_TTYD_AUTH_USER MIOS_TTYD_SSL_CERT MIOS_TTYD_SSL_KEY MIOS_TTYD_WRITABLE MIOS_TTYD_MAX_CLIENTS MIOS_TTYD_FONT_SIZE; do
         _tv="${!_tk:-}"
         if [[ -n "$_tv" ]]; then emit ${_tk} "${_tv}"; fi
     done
@@ -189,17 +190,22 @@ chmod 0640 "$TMP"
 _st=0
 if grep -qE '="' "$TMP"; then
     echo "Mios-sync-env: SELFTEST double-quoted value present:" >&2
-    grep -nE '="' "$TMP" >&2; _st=1
+    grep -nE '="' "$TMP" | sed -E 's/^([0-9]+):([A-Z0-9_]+)=.*/  line \1: \2/' >&2; _st=1
 fi
 _sk_re="^($(_read_security_array "secret_keys" | paste -sd'|' -))="
 if [[ "$_sk_re" != "^()=" ]] && grep -qE "$_sk_re" "$TMP"; then
-    echo "Mios-sync-env: SELFTEST secret present in install.env:" >&2
-    grep -nE "$_sk_re" "$TMP" >&2; _st=1
+    # Name the key and line only -- printing the line would log the secret itself.
+    echo "Mios-sync-env: SELFTEST secret present in install.env (not written):" >&2
+    grep -nE "$_sk_re" "$TMP" | sed -E 's/^([0-9]+):([A-Z0-9_]+)=.*/  line \1: \2/' >&2
+    exit 1
 fi
 if ! bash -u -c ". '$TMP'" >/dev/null 2>&1; then
     echo "Mios-sync-env: SELFTEST $OUT does not source clean under 'set -u'" >&2; _st=1
 fi
-[[ "$_st" -ne 0 ]] && echo "Mios-sync-env: WARN self-test failed" >&2
+if [[ "$_st" -ne 0 ]]; then
+    echo "Mios-sync-env: ERROR self-test failed; existing install.env was not changed" >&2
+    exit 1
+fi
 
 mv -f "$TMP" "$OUT"
 trap - EXIT

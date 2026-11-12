@@ -105,6 +105,7 @@ The resolved numbers behind those keys come from the `[ports]` SSOT:
 | agent | arbiter | 8760 |
 | agent | mcp | 8770 |
 | agent | opencode_gateway | 8780 |
+| agent | agent_share | 8790 |
 
 <!-- derived from usr/share/mios/mios.toml [ports.categories] -->
 <!-- /MIOS-GEN:ports:agent -->

@@ -177,10 +177,22 @@ class TestPortalEdge(unittest.TestCase):
             with open(page, "w", encoding="utf-8") as fh:
                 fh.write("<html><head></head></html>")
             launcher = os.path.join(ROOT, "usr/libexec/mios/mios-ttyd-launch")
-            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"], MIOS_TTYD_PAGE_PATH=page)
+            # The launcher takes ttyd's own login from the credstore root writes (the unit's
+            # ImportCredential= hands it over as $CREDENTIALS_DIRECTORY), never from a tier.
+            creds = os.path.join(tmp, "creds")
+            os.mkdir(creds)
+            for name, text in (("mios.ttyd.password", "fixture-edge-login"), ("mios.ttyd.user", "fixop")):
+                with open(os.path.join(creds, name), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"], MIOS_TTYD_PAGE_PATH=page,
+                       CREDENTIALS_DIRECTORY=creds)
             good = subprocess.run(["bash", launcher, "bash"], env=env, capture_output=True, text=True)
             self.assertEqual(good.returncode, 0, good.stderr)
             self.assertIn(page, good.stdout)
+            # Negative: with no applied login the terminal is refused, never opened.
+            none = subprocess.run(["bash", launcher, "bash"], env=dict(env, CREDENTIALS_DIRECTORY=os.path.join(tmp, "absent")),
+                                  capture_output=True, text=True)
+            self.assertEqual((none.returncode, none.stdout), (3, ""), none.stderr)
             env["MIOS_TTYD_PAGE_PATH"] = os.path.join(tmp, "missing.html")
             bad = subprocess.run(["bash", launcher, "bash"], env=env, capture_output=True, text=True)
             self.assertEqual(bad.returncode, 2)
@@ -251,7 +263,8 @@ class TestPortalEdge(unittest.TestCase):
         self.assertEqual(len(sha), 64)
         with open(os.path.join(ROOT, "usr", "libexec", "mios", "mios-ttyd-launch"), encoding="utf-8") as fh:
             launch = fh.read()
-        self.assertIn("_toml_get ttyd page_path", launch)
+        self.assertIn('mios-toml-get" ttyd page_path', launch)
+        self.assertIn('mios-credential" exec ttyd --', launch)
         self.assertIn('ARGS+=("-I" "$TTYD_PAGE")', launch)
         with open(os.path.join(ROOT, "automation", "41-services.sh"), encoding="utf-8") as fh:
             step = fh.read()

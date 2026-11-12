@@ -491,8 +491,22 @@ def _redact_matches(value, secret_keys) -> None:
         for item in value:
             _redact_matches(item, secret_keys)
 
+def _redact_path(node, parts) -> None:
+    """REDACT the value at a dotted path when it is present (never created); a segment
+    that names an array of tables ([[autounattend.accounts]]) applies the rest to every row."""
+    if isinstance(node, list):
+        for row in node:
+            _redact_path(row, parts)
+    elif isinstance(node, dict) and parts[0] in node:
+        if len(parts) == 1:
+            node[parts[0]] = REDACTED
+        else:
+            _redact_path(node[parts[0]], parts[1:])
+
 def redact_secrets(merged: dict) -> dict:
-    """A copy of merged with each secret REDACTED exactly as miosd's GET does."""
+    """A copy of merged with each secret REDACTED exactly as miosd's GET does: the fixed
+    table keys, every [security.secret_keys].paths dotted path (a bare name such as
+    default_password is too common to match by key), then the `keys` name matches."""
     import copy
     out = copy.deepcopy(merged)
     for table, key in (("portal", "password"), ("portal", "secret"), ("ai", "api_key")):
@@ -500,6 +514,10 @@ def redact_secrets(merged: dict) -> dict:
             out[table][key] = REDACTED
     security = out.get("security")
     secret_keys = security.get("secret_keys") if isinstance(security, dict) else None
+    paths = secret_keys.get("paths") if isinstance(secret_keys, dict) else None
+    for dotted in paths if isinstance(paths, list) else []:
+        if isinstance(dotted, str) and dotted:
+            _redact_path(out, dotted.split("."))
     keys = secret_keys.get("keys") if isinstance(secret_keys, dict) else None
     _redact_matches(out, [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else [])
     return out
@@ -588,12 +606,75 @@ def _unparsed_layers(paths) -> list:
                 bad.append(p)
     return bad
 
-def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None) -> None:
+def operator_toggles_view(cfg: dict) -> dict:
+    """{dotted: bool}: the [security.operator_tier] toggles as ROOT acts on them, from the
+    file mios_credentials.publish_operator_toggles writes at <[paths].run_operator_toggles>;
+    {} while none is readable. This uid never reads the operator tier itself."""
+    import json
+    path = str((cfg.get("paths") or {}).get("run_operator_toggles") or "")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in doc.items() if isinstance(v, bool)} if isinstance(doc, dict) else {}
+
+def overlay_operator_toggles(merged: dict) -> dict:
+    """A copy of merged showing each published operator toggle where merged declares its
+    table, so GET /portal/config renders what root acts on (mios.html may have set it)."""
+    import copy
+    out = copy.deepcopy(merged)
+    for dotted, value in operator_toggles_view(merged).items():
+        *parents, leaf = dotted.split(".")
+        node = out
+        for part in parents:
+            node = node.get(part) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node[leaf] = value
+    return out
+
+def _take_operator_tier(cfg: dict, base_cfg: dict, live_config, mios_toml) -> dict:
+    """The [security.operator_tier] keys this save changes, as {dotted: value} for the
+    root helper. A credential value the operator typed (a non-empty string, not the
+    REDACTED echo) is REMOVED from cfg -- it never lands in this process's own tier;
+    an enable toggle is taken when it differs from what ROOT acts on (the published
+    operator_toggles_view, else live_config) and stays in cfg, so the Portal's own
+    view shows what was saved. The policy is vendor/host only."""
+    policy = (base_cfg.get("security") or {}).get("operator_tier") or {}
+    acted = operator_toggles_view(base_cfg)
+    updates = {}
+    for dotted in policy.get("values") or []:
+        *parents, leaf = str(dotted).split(".")
+        node = cfg
+        for part in parents:
+            node = node.get(part) if isinstance(node, dict) else None
+        if not isinstance(node, dict) or leaf not in node:
+            continue
+        value = node.pop(leaf)
+        if isinstance(value, str) and value and value != REDACTED:
+            updates[str(dotted)] = value
+    for pattern in policy.get("toggles") or []:
+        for dotted in mios_toml._expand_toggle(base_cfg, str(pattern)):
+            value = mios_toml._dotted_get(cfg, dotted)
+            if live_config is None or not isinstance(value, bool):
+                continue
+            if value is not (acted[dotted] if dotted in acted else mios_toml._dotted_get(live_config, dotted)):
+                updates[dotted] = value
+    return updates
+
+def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None,
+                      proof: str = "") -> None:
     """Atomically write what cfg changes over vendor..host.d to the user tier.
 
     cfg's REDACTED markers restore from vendor..host.d plus that user tier, so a
     secret stays in its own layer. TiersUnresolved, writing nothing: a tier does
-    not parse, or live_config (the handler's merged load) is None."""
+    not parse, or live_config (the handler's merged load) is None.
+
+    The operator credential and the enable toggles ([security.operator_tier]) are
+    not this process's to keep: they are queued for the root helper
+    (mios_credentials.inbox_submit, proved by `proof` -- the credential the Portal
+    session logged in with), which merges them into the OPERATOR's user tier. A
+    queue that fails refuses the whole save."""
     import sys
     if "/usr/lib/mios" not in sys.path:
         sys.path.insert(0, "/usr/lib/mios")
@@ -615,6 +696,9 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
         raise TiersUnresolved("the tiers below the user tier did not resolve; nothing was written") from None
     if dest_path is None:
         dest_path = user
+    import copy
+    cfg = copy.deepcopy(cfg)
+    queued = _take_operator_tier(cfg, base_cfg, live_config, mios_toml)
     if has_redacted(cfg):
         unparsed = _unparsed_layers(paths + [user, dest_path] + mios_toml._frags(user_d))
         if live_config is None or unparsed:
@@ -644,8 +728,19 @@ def write_user_config(cfg: dict, dest_path: str = None, live_config: dict = None
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     temp_path = dest_path + ".tmp"
     toml_str = to_toml(delta_cfg)
-    with open(temp_path, "w", encoding="utf-8", newline="\n") as f:
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
         f.write(toml_str)
+    if queued:
+        try:
+            import mios_credentials
+            name = mios_credentials.inbox_submit(base_cfg, queued, proof)
+        except Exception as exc:  # noqa: BLE001 -- refuse the whole save, keep the tier
+            os.unlink(temp_path)
+            log.error("Refusing the save: the operator-tier keys (%s) could not be queued for the "
+                      "root helper (%s)", ", ".join(sorted(queued)), type(exc).__name__)
+            raise
+        log.info("Queued %s for the operator tier (request %s)", ", ".join(sorted(queued)), name)
     os.replace(temp_path, dest_path)
 
     try:

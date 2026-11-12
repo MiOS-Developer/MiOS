@@ -1,0 +1,41 @@
+# AI-hint: Serves the read-only inter-agent share ([paths].srv_agent_share_dir) on loopback as a throwaway non-root uid that refuses every symlink; the tailnet reaches it only through the [tailscale.serve.routes.agent_share] proxy.
+# AI-related: /usr/libexec/mios/mios-tailscale-sync, /usr/libexec/mios/test_mios_tailscale_sync.py, /usr/share/mios/mios.toml, mios-tailscale-sync.service
+[Unit]
+Description='MiOS' read-only inter-agent share (loopback static server behind the tailnet /share/ route)
+Documentation=file:///usr/libexec/mios/mios-tailscale-sync
+After=local-fs.target systemd-tmpfiles-setup.service
+
+[Service]
+Type=simple
+# A throwaway uid in no group: it reads only what the share makes world-readable, so a
+# link to (or a copy of) a root- or group-only file is never served. tailscaled (root,
+# follows symlinks) never opens the directory: its route proxies to this loopback listener.
+DynamicUser=yes
+Environment=MIOS_NETWORK_LOOPBACK=127.0.0.1
+Environment=MIOS_PORTS_AGENT_SHARE=8790
+EnvironmentFile=-/etc/mios/install.env
+# No --root/--prefix: the server reads [paths].srv_agent_share_dir and
+# [tailscale.serve.routes.agent_share].path from the vendor + host tiers itself,
+# so the unit restates neither value.
+ExecStart=/usr/libexec/mios/mios-tailscale-sync --share-serve --bind ${MIOS_NETWORK_LOOPBACK} --port ${MIOS_PORTS_AGENT_SHARE}
+Restart=on-failure
+RestartSec=30s
+MemoryMax=128M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

@@ -78,13 +78,13 @@ def _portal_port(env: str, key: str, default: int) -> int:
             continue
     return default
 
-PORTAL_PASSWORD = (os.environ.get("MIOS_PORTAL_PASSWORD")
-                   or _pcfg("portal", "password")
-                   or os.environ.get("MIOS_IDENTITY_DEFAULT_PASSWORD")
-                   or _pcfg("identity", "default_password") or "mios")
-PORTAL_USER = (os.environ.get("MIOS_PORTAL_USER")
-               or _pcfg("portal", "user")
-               or _pcfg("identity", "username") or "mios")
+def _portal_login() -> tuple:
+    """(password, user) from mios_credentials.portal_login: the imported credstore, then the
+    process environment unless install.env carries it; never a tier default -- none refuses all."""
+    import mios_credentials
+    return mios_credentials.portal_login(_PORTAL_TOML, log)
+
+PORTAL_PASSWORD, PORTAL_USER = _portal_login()
 _portal_rl = os.environ.get("MIOS_PORTAL_REQUIRE_LOGIN")
 if _portal_rl is None:
     _portal_rl = str(_pcfg("portal", "require_login", True))
@@ -103,8 +103,8 @@ def _portal_session_key() -> bytes:
     without storing another secret. Changing the password or work factor revokes
     derived sessions. Upgrade from the old single-hash key requires a new login.
     """
-    if _portal_secret_cfg:
-        return _portal_secret_cfg.encode("utf-8")
+    if _portal_secret_cfg or not PORTAL_PASSWORD:  # no credential: a "" key would be public
+        return _portal_secret_cfg.encode("utf-8") if _portal_secret_cfg else os.urandom(32)
     raw = os.environ.get("MIOS_PORTAL_SESSION_KDF_ITERATIONS")
     if raw in (None, ""):
         raw = _pcfg("portal", "session_kdf_iterations", 600000)
@@ -507,7 +507,7 @@ transform:translateZ(0)}
    modal .kv rows for the key/value lines. */
 </style></head><body>
 <div class="bar">
-  <a href="/" id="logoLink" style="color:inherit;text-decoration:none;display:flex;align-items:center;"><h1>Mi<b>OS</b> <sup style="font-size:10px;color:var(--warn);font-weight:400">build18</sup></h1></a>
+  <a href="/" id="logoLink" style="color:inherit;text-decoration:none;display:flex;align-items:center;"><h1>Mi<b>OS</b> <sup id="mios-ver" style="font-size:10px;color:var(--warn);font-weight:400"></sup></h1></a>
   <div class="spacer"></div>
   <button class="btn primary" id="installBtn">&#11015; Install</button>
   <button class="btn" id="chatToggle">&#128172; Chat</button>
@@ -549,7 +549,7 @@ transform:translateZ(0)}
       <div class="meta"><a href="/configure" id="cfgedit">Edit in Settings &#8594;</a></div>
     </div>
   </div>
-</section>
+</section><section id="statussec" hidden></section><script src="/portal/status.js" defer></script>
 
 <section>
   <div class="h"><h2 class="ac-warn">Terminals</h2><span class="n" id="termn"></span>
@@ -1089,12 +1089,19 @@ async def portal_login_page_logic(request: Request, e: int = 0):
     return HTMLResponse(html.replace("</head>", _portal_theme_css() + "</head>"),
                         headers={"Cache-Control": "no-store, must-revalidate"})
 
+def _cteq(left: str, right: str) -> bool:
+    """Compare UTF-8 credentials; unencodable text never authenticates."""
+    try:
+        return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+    except UnicodeError:
+        return False
+
 async def portal_login_logic(request: Request):
     from urllib.parse import parse_qs
     body = (await request.body()).decode("utf-8", "replace")
     pw = (parse_qs(body).get("password") or [""])[0]
     wants_json = "application/json" in request.headers.get("accept", "")
-    if PORTAL_REQUIRE_LOGIN and not hmac.compare_digest(pw, PORTAL_PASSWORD):
+    if PORTAL_REQUIRE_LOGIN and (not PORTAL_PASSWORD or not _cteq(pw, PORTAL_PASSWORD)):
         if wants_json:
             return JSONResponse({"error": "incorrect password"}, status_code=401)
         return RedirectResponse("/login?e=1", status_code=303)
@@ -1286,11 +1293,11 @@ async def get_portal_config(request: Request):
     if "/usr/lib/mios" not in sys.path:
         sys.path.insert(0, "/usr/lib/mios")
     import mios_toml
-    from mios_pipe.kernel.config import redact_secrets, to_toml
+    from mios_pipe.kernel.config import overlay_operator_toggles, redact_secrets, to_toml
 
     try:
         merged_config = mios_toml.load_merged()
-        toml_text = to_toml(redact_secrets(merged_config))
+        toml_text = to_toml(redact_secrets(overlay_operator_toggles(merged_config)))
         return Response(content=toml_text, media_type="text/plain")
     except Exception:
         log.error("Failed to load/serialize layered config")
@@ -1338,7 +1345,7 @@ async def post_portal_config(request: Request, background_tasks: BackgroundTasks
                             status_code=422)
 
     try:
-        write_user_config(parsed_config, live_config=live_config)
+        write_user_config(parsed_config, live_config=live_config, proof=PORTAL_REQUIRE_LOGIN and PORTAL_PASSWORD)
 
         background_tasks.add_task(run_db_reseed_bg)
 

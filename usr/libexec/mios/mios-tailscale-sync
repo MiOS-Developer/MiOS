@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Enrolls a logged-out node from a pre-auth key file and synchronizes live Tailscale configuration and state against mios.toml [tailscale] and [headscale] SSOT, and keeps an exit node only while its path is not worse than the host's own uplink.
+# AI-hint: Enrolls a logged-out node, syncs Tailscale to SSOT [tailscale]/[headscale], keeps an exit node only while it beats the uplink, applies the [tailscale.serve.routes.*] proxies it owns and serves the read-only agent share (--share-serve).
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
-# AI-functions: _load_config, _health_config, _ts, find_tailscale, get_status, select_exit_node, _node_flags, build_set_cmd, _auth_key_source, build_up_cmd, enroll, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh
+# AI-functions: _load_data, _load_config, _health_config, _ts, find_tailscale, get_status, select_exit_node, _node_flags, build_set_cmd, _auth_key_source, build_up_cmd, enroll, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh, dns_name, render_routes, live_routes, plan_serve, serve_cmd, legacy_ttyd_handler, dropin_path, forge_dropin, sync_serve, share_serve
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -29,6 +29,42 @@ TS_AUTHKEY environment, which is written to a private 0600 file for the call
 and removed after it. The key never reaches a command line or a log. Without a
 key the node is left logged out with the command to run. --socket=PATH
 addresses a tailscaled started on its own socket (the userspace devcontainer).
+
+The SSOT is the operator view (mios_toml.operator_view): vendor + host in full,
+and from the operator's mios.html tier ONLY the [tailscale.serve] enable toggles
+-- every path, port, host, unit and public_host is vendor/host, so a file a
+lower-privileged uid writes never steers this root process. A vendor/host layer
+that does not parse fails closed (exit 3, nothing applied); an operator tier that
+does not parse or cannot be located leaves every serve route as it is (exit 3)
+while the mesh, which takes nothing from it, still syncs.
+
+[tailscale.serve] (enabled) maps each enabled [tailscale.serve.routes.<name>]
+onto `tailscale serve --bg` -- an https PROXY to [network].loopback or a tcp
+forward, never a directory handler (tailscaled is root and follows symlinks)
+and never funnel. The sync owns only the routes it added or adopted (a live
+route that already matches), recorded in <[paths].var_tailscale_sync_dir>/
+serve-owned.json; a disabled owned route is turned off, a different hand-made
+route or protocol on the same listener is reported and left, a handler kept
+under another node name is reported and never treated as ours, and `serve
+reset` is never run. A `serve status` that fails, times out or does not parse
+plans nothing (no add, remove or forget; the owned record is kept). require_auth
+refuses a route unless every one of its auth_probe_paths (default "/") answers
+401 or a login redirect, and a route naming a `credential` surface is refused
+while that login is the published vendor default (the vendor tier's own value)
+or, for ttyd, while no own login is set. A ws: probe is a websocket handshake.
+The handler the retired mios-ttyd-expose.service published is adopted once and
+then follows the ttyd_bash route (kept when enabled, turned off when not); a
+host that still sets the retired [ttyd].tailnet_expose = true keeps it unowned.
+A forge_http route this sync actually serves renders the Forgejo ROOT_URL/DOMAIN
+drop-in under Quadlet's runtime dir from a validated DNS name (retired otherwise). --check prints the serve plan
+and exits 1 when anything differs.
+
+--share-serve --bind ADDR --port N [--root DIR] [--prefix /share/] is the
+read-only agent share mios-agent-share.service runs as a DynamicUser: loopback
+only, never as root, O_NOFOLLOW on every component, and only world-readable,
+singly linked regular files (sandboxed by CSP, never rendered as HTML). The
+root and prefix default to [paths].srv_agent_share_dir and
+[tailscale.serve.routes.agent_share].path of the vendor + host tiers.
 
 If [tailscale].enabled is true, applies the mesh parameters with `tailscale
 set` (which only touches the flags it names, unlike `up --reset`). The exit
@@ -95,9 +131,15 @@ def _health_config(ts: dict) -> dict | None:
         return None
 
 
-def _load_config() -> dict:
-    # Tier-major layers with their mios.d drop-ins (Law 13); MIOS_*_TOML retarget them.
-    data = mios_toml.load_merged(layers=mios_toml.layer_paths())
+def _load_data() -> dict:
+    # The operator view (Law 13 tiers with their mios.d drop-ins; MIOS_*_TOML retarget them):
+    # vendor + host in full and, as root, only the [tailscale.serve] enable toggles from the
+    # operator's mios.html tier. A layer that does not parse raises mios_toml.LayerError.
+    return mios_toml.operator_view()[0]
+
+
+def _load_config(data: dict | None = None) -> dict:
+    data = _load_data() if data is None else data
     ts = data.get("tailscale", {})
     hs = data.get("headscale", {})
     metal_mesh = data.get("metal", {}).get("mesh", {})
@@ -331,8 +373,8 @@ def _fmt(path: tuple[float, float]) -> str:
     return f"{path[0]:.0f}% loss, {path[1]:.0f} ms"
 
 
-def sync_mesh(dry_run: bool = False) -> int:
-    cfg = _load_config()
+def sync_mesh(dry_run: bool = False, data: dict | None = None) -> int:
+    cfg = _load_config(data)
     if not cfg["enabled"]:
         _log("Tailscale is disabled in SSOT [tailscale].enabled=false")
         return 0
@@ -390,6 +432,661 @@ def sync_mesh(dry_run: bool = False) -> int:
         _save_cooldowns(health, cooling)
 
 
+# ------------------------------------------------------------------ tailnet serve routes
+
+_DNS_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_DNS_NAME = re.compile(rf"^(?=.{{1,253}}$){_DNS_LABEL}(?:\.{_DNS_LABEL})*$")
+_ROUTE_NAME = re.compile(r"^[a-z0-9_]+$")
+_SERVE_PATH = re.compile(r"^/(?:[A-Za-z0-9._~-]+/)*$")
+_UNIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+QUADLET_RUNTIME_DIR = "/run/containers/systemd"   # Quadlet's runtime search dir: generated drop-ins
+OWNED_STATE_NAME = "serve-owned.json"             # in [paths].var_tailscale_sync_dir
+DROPIN_NAME = "60-mios-tailnet.conf"
+LEGACY_TTYD_MARK = "migrated:ttyd-expose"         # owned-state marker, not a route key
+_PROBE_PATH = re.compile(r"^(?:ws:)?/[A-Za-z0-9._~/-]*$")   # ws: = a websocket handshake probe
+
+
+def _loopback(data: dict) -> str:
+    """[network].loopback when it IS a loopback address, else ''."""
+    import ipaddress
+    host = str((data.get("network") or {}).get("loopback") or "")
+    try:
+        return host if ipaddress.ip_address(host).is_loopback else ""
+    except ValueError:
+        return ""
+
+
+def _port(value) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return port if 0 < port < 65536 else 0
+
+
+def _authority(host: str, port: int) -> str:
+    """A loopback URL authority; IPv6 literals need brackets around the address."""
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def dns_name(host) -> str:
+    """host (its trailing dot dropped) when it is a strict DNS name, else ''."""
+    host = str(host or "").strip().rstrip(".")
+    return host if _DNS_NAME.match(host) else ""
+
+
+def render_routes(data: dict) -> tuple[list[dict], list[str]]:
+    """The desired routes from [tailscale.serve.routes.*] as (routes, errors). Every
+    route PROXIES to [network].loopback:<[ports].upstream>; it listens on the tailnet at
+    that port number, or, with front_door = true, on [ports].tailnet_https
+    (MIOS_PORTS_TAILNET_HTTPS) under its path. One listener port is either one tcp route or https routes with
+    distinct paths -- never both. Nothing here may come from the operator tier except
+    the enabled toggles (operator_view enforces that)."""
+    serve = (data.get("tailscale") or {}).get("serve") or {}
+    if not serve.get("enabled"):
+        return [], []
+    ports = data.get("ports") or {}
+    loop = _loopback(data)
+    if not loop:
+        return [], ["*: [network].loopback is not a loopback address -- no route is rendered"]
+    try:  # the one tailnet HTTPS listener, by its canonical name
+        front = _port(mios_toml.expand_refs(data, "${MIOS_PORTS_TAILNET_HTTPS}"))
+    except mios_toml.LayerError:
+        front = 0
+    out, errors = [], []
+    for name, r in sorted((serve.get("routes") or {}).items()):
+        if not isinstance(r, dict) or not r.get("enabled"):
+            continue
+        if not _ROUTE_NAME.match(str(name)):
+            errors.append(f"{name}: a route name is [a-z0-9_]")
+            continue
+        proto = str(r.get("proto", ""))
+        up = _port(ports.get(str(r.get("upstream", ""))))
+        if proto not in ("https", "tcp") or not up:
+            errors.append(f"{name}: proto must be https|tcp and upstream a [ports] key")
+            continue
+        port = up
+        if r.get("front_door"):
+            if proto != "https" or not front:
+                errors.append(f"{name}: a front_door route is https on [ports].tailnet_https")
+                continue
+            port = front
+        path = "" if proto == "tcp" else str(r.get("path") or "/")
+        if proto == "https" and not _SERVE_PATH.match(path):
+            errors.append(f"{name}: path must be / or /segment/.../ (ending in /)")
+            continue
+        probes = r.get("auth_probe_paths", ["/"])
+        if not (isinstance(probes, list) and probes and all(isinstance(p, str) and _PROBE_PATH.match(p)
+                                                             for p in probes)):
+            errors.append(f"{name}: auth_probe_paths must be a non-empty list of /paths")
+            continue
+        cred = str(r.get("credential") or "")
+        if cred and cred not in _credential_surfaces():
+            errors.append(f"{name}: credential must name a mios-credential surface")
+            continue
+        out.append({"name": name, "proto": proto, "port": port, "path": path,
+                    "require_auth": bool(r.get("require_auth")), "credential": cred,
+                    "target": f"tcp://{_authority(loop, up)}" if proto == "tcp" else f"http://{_authority(loop, up)}",
+                    "probes": [] if proto == "tcp" else [
+                        f"ws://{_authority(loop, up)}{p[3:]}" if p.startswith("ws:") else f"http://{_authority(loop, up)}{p}"
+                        for p in probes]})
+    seen: dict = {}
+    for r in out:
+        for o in seen.get(r["port"], []):
+            if "tcp" in (r["proto"], o["proto"]) or r["path"] == o["path"]:
+                errors.append(f"{r['name']}: listener {r['port']}{r['path']} collides with {o['name']}")
+        seen.setdefault(r["port"], []).append(r)
+    bad = {e.split(":", 1)[0] for e in errors}
+    return [r for r in out if r["name"] not in bad], errors
+
+
+def _rkey(proto: str, port, path: str) -> str:
+    return f"{proto}:{port}:{path}"
+
+
+def _is_rkey(key: str) -> bool:
+    """A serve-owned.json route key (proto:port:path), not a marker such as LEGACY_TTYD_MARK."""
+    return key.count(":") >= 2 and key.split(":", 1)[0] in ("https", "http", "tcp")
+
+
+def live_routes(serve_status: dict, self_host: str) -> tuple[dict, list[str]]:
+    """({route key: target}, [foreign HostPort]) of the live `tailscale serve status
+    --json`. Only Web handlers of THIS node's MagicDNS name count; a handler kept under
+    another name (a renamed node) is reported, never folded onto ours. A Web handler is
+    keyed by its listener's protocol from the TCP map (HTTPS -> https, HTTP -> http, else
+    'web', which no route matches), and every handler counts -- a Text or unknown one
+    included -- so a route is never written over a different hand-made listener."""
+    live, foreign, web_proto = {}, [], {}
+    for port, tcp in ((serve_status or {}).get("TCP") or {}).items():
+        if not isinstance(tcp, dict):
+            continue
+        if tcp.get("TCPForward"):
+            live[_rkey("tcp", port, "")] = "tcp://" + str(tcp["TCPForward"])
+        elif tcp.get("HTTPS"):
+            web_proto[str(port)] = "https"
+        elif tcp.get("HTTP"):
+            web_proto[str(port)] = "http"
+    for hostport, web in ((serve_status or {}).get("Web") or {}).items():
+        host, _, port = str(hostport).rpartition(":")
+        if host.rstrip(".").lower() != self_host.lower():
+            foreign.append(str(hostport))
+            continue
+        for path, h in ((web or {}).get("Handlers") or {}).items():
+            h = h if isinstance(h, dict) else {}
+            target = h.get("Proxy") or h.get("Path") or ("text:" if "Text" in h else "unknown:")
+            live[_rkey(web_proto.get(port, "web"), port, path)] = str(target)
+    return live, sorted(foreign)
+
+
+def plan_serve(desired: list[dict], live: dict, owned: dict) -> list[tuple[str, dict]]:
+    """Pure plan: [(action, route)] where action is add | adopt | keep | replace
+    (an owned route whose target moved) | conflict (a different unowned route, or
+    another protocol, holds the listener: left alone) | remove (an owned route now
+    disabled) | forget (an owned route already gone, or changed by hand: not touched)."""
+    plan, want = [], set()
+    protos: dict = {}
+    for k in live:
+        proto, port, _path = k.split(":", 2)
+        protos.setdefault(port, set()).add(proto)
+    for r in desired:
+        k = _rkey(r["proto"], r["port"], r["path"])
+        want.add(k)
+        if k not in live:
+            other = protos.get(str(r["port"]), set()) - {r["proto"]}
+            plan.append(("conflict" if other else "add", r))
+        elif live[k] == r["target"]:
+            plan.append(("keep" if k in owned else "adopt", r))
+        else:
+            plan.append(("replace" if owned.get(k) == live[k] else "conflict", r))
+    for k, target in sorted(owned.items()):
+        if k in want or not _is_rkey(k):
+            continue
+        proto, port, path = k.split(":", 2)
+        r = {"name": k, "proto": proto, "port": int(port), "path": path, "target": target}
+        plan.append(("remove" if live.get(k) == target else "forget", r))
+    return plan
+
+
+def serve_cmd(ts_bin: str, action: str, r: dict) -> list[str]:
+    if r["proto"] == "tcp":
+        return _ts(ts_bin, "serve", f"--tcp={r['port']}", "off") if action == "remove" else \
+            _ts(ts_bin, "serve", "--bg", f"--tcp={r['port']}", r["target"])
+    lst = [f"--https={r['port']}", f"--set-path={r['path']}"]
+    return _ts(ts_bin, "serve", *lst, "off") if action == "remove" else \
+        _ts(ts_bin, "serve", "--bg", *lst, r["target"])
+
+
+def _probe(url: str) -> str:
+    """An anonymous GET of url: 'login' (401, or a redirect to a login page), 'down' (no
+    answer, or a 5xx while it starts) or 'open' (anything else served without a login).
+    A ws:// url is an anonymous websocket handshake (HTTP middleware never sees one): 'open'
+    when the server switches protocols, 'login' when it refuses the upgrade. A malformed
+    probe URL is 'invalid', so its configured route is refused rather than kept as down."""
+    import base64
+    import http.client
+    import urllib.parse
+    conn = None
+    try:
+        u = urllib.parse.urlsplit(url)
+        host, port = u.hostname, u.port
+        if u.scheme not in ("http", "ws") or not host or (port is not None and not _port(port)):
+            return "invalid"
+        ws = u.scheme == "ws"
+        hdrs = {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13",
+                "Sec-WebSocket-Key": base64.b64encode(os.urandom(16)).decode()} if ws else {}
+        conn = http.client.HTTPConnection(host, port, timeout=6)
+        conn.request("GET", u.path or "/", headers=hdrs)
+        resp = conn.getresponse()
+        loc = resp.getheader("Location") or ""
+    except (ValueError, http.client.InvalidURL):
+        return "invalid"
+    except (OSError, http.client.HTTPException):
+        return "down"
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except (OSError, http.client.HTTPException):
+                pass
+    if resp.status >= 500:
+        return "down"
+    if ws:
+        return "open" if resp.status == 101 else "login"
+    if resp.status == 401 or (resp.status in (301, 302, 303, 307, 308) and "login" in loc.lower()):
+        return "login"
+    return "open"
+
+
+def _auth_refusal(r: dict) -> str:
+    """Why a require_auth route must not be published ('' when every auth probe asks for a
+    login): a route publishes its WHOLE upstream, so one open path refuses it. A probe that
+    gets no answer marks the route 'down' -- not published yet, but an owned one is kept."""
+    import urllib.parse
+    down = False
+    for url in r.get("probes") or []:
+        state = _probe(url)
+        if state == "invalid":
+            return "an auth probe URL is invalid"
+        if state == "open":
+            u = urllib.parse.urlsplit(url)
+            kind = "a websocket on " if u.scheme == "ws" else ""
+            return f"the upstream answered {kind}{u.path or '/'} without a login"
+        down = down or state == "down"
+    r["down"] = down
+    return ""
+
+
+def _credential_surfaces() -> tuple:
+    import mios_credentials  # noqa: PLC0415 -- beside mios_toml
+    return mios_credentials.SURFACES
+
+
+def _vendor_default_login(data: dict, surface: str) -> str:
+    """Why the login guarding a route is not one to publish ('' when it is fine): it does
+    not resolve, it equals the VENDOR tier's own [identity].default_password or surface
+    key -- a value anyone can read in the image -- or (ttyd) no own login is set, so the
+    route would serve a generated login nobody was given. Resolved as the reconciler
+    applies it (root)."""
+    import mios_credentials as mc  # noqa: PLC0415
+    vendor, vendor_d, *_rest = mios_toml._tier_dirs()
+    try:
+        shipped = mios_toml.load_strict([vendor] + mios_toml._frags(vendor_d))
+        got = mc.surface_password(surface, data)
+    except (mc.CredentialError, mios_toml.LayerError) as exc:
+        return f"its {surface} login does not resolve ({exc})"
+    if got["tier"] == mc.OWN_GENERATED:
+        return f"its {surface} login is a generated secret -- set [ttyd].auth_pass in mios.html first"
+    value = got["value"]
+    public = {mc._s(mc._sect(shipped, "identity").get("default_password"))}
+    sk = mc._SURFACE_TOML.get(surface)
+    if sk:
+        public.add(mc._s(mc._sect(shipped, sk[0]).get(sk[1])))
+    public.discard("")
+    return f"its {surface} login is the vendor default -- set one in mios.html first" if value in public else ""
+
+
+def legacy_ttyd_handler(data: dict) -> tuple[str, str]:
+    """(route key, target) of the handler the retired mios-ttyd-expose.service published
+    (`serve --https=<ttyd_bash> http://<loopback>:<ttyd_bash>`), or ('', '')."""
+    port, loop = _port((data.get("ports") or {}).get("ttyd_bash")), _loopback(data)
+    return (_rkey("https", port, "/"), f"http://{_authority(loop, port)}") if port and loop else ("", "")
+
+
+def dropin_path(data: dict) -> str:
+    """<Quadlet runtime dir>/<[units].forge container>.container.d/60-mios-tailnet.conf, or ''."""
+    unit = str((data.get("units") or {}).get("forge") or "")
+    ctr = unit[:-len(".service")] if unit.endswith(".service") else unit
+    if not _UNIT_NAME.match(ctr):
+        return ""
+    return os.path.join(QUADLET_RUNTIME_DIR, f"{ctr}.container.d", DROPIN_NAME)
+
+
+def forge_dropin(data: dict, host: str, ssh: bool, port: int) -> str:
+    """The generated mios-forge Quadlet drop-in for a tailnet-served Forgejo. host must be
+    a dns_name() and port the forge_http route's tailnet port: nothing unvalidated is
+    written into a unit."""
+    loop = _loopback(data)
+    if not (dns_name(host) == host and loop and _port(port)):
+        raise ValueError("forge drop-in: host, loopback or port failed validation")
+    lines = ["# GENERATED by mios-tailscale-sync from [tailscale.serve.routes.forge_http] -- DO NOT EDIT;",
+             "# change [portal].public_host or the route in mios.toml / mios.html instead.",
+             "[Container]",
+             f"Environment=FORGEJO__server__HTTP_ADDR={loop}",
+             f"Environment=GITEA__server__HTTP_ADDR={loop}",
+             f"Environment=FORGEJO__server__ROOT_URL=https://{host}:{port}/",
+             f"Environment=FORGEJO__server__DOMAIN={host}",
+             f"Environment=FORGEJO__server__SSH_DOMAIN={host}"]
+    if ssh:
+        lines.append(f"Environment=FORGEJO__server__SSH_LISTEN_HOST={loop}")
+    return "\n".join(lines) + "\n"
+
+
+def _read_json(path: str) -> dict:
+    try:
+        with open(path) as f:
+            v = json.load(f)
+        return v if isinstance(v, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_private(path: str, text: str, mode: int = 0o600) -> None:
+    os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def _owned_state_path(data: dict) -> str:
+    raw = str((data.get("paths") or {}).get("var_tailscale_sync_dir") or "")
+    return os.path.join(mios_toml.expand_refs(data, raw), OWNED_STATE_NAME) if raw else ""
+
+
+def _sync_forge_dropin(data: dict, desired: list[dict], status: dict, check: bool) -> bool:
+    """Render or retire the generated drop-in; True when it differs (check) or changed."""
+    path = dropin_path(data)
+    if not path:
+        _log("serve: [units].forge names no container -- forge drop-in left alone")
+        return False
+    by = {r["name"]: r for r in desired}
+    want = ""
+    if "forge_http" in by:
+        raw = (str((data.get("portal") or {}).get("public_host") or "").strip()
+               or str((status.get("Self") or {}).get("DNSName") or ""))
+        host = dns_name(raw)
+        if not host:
+            _log("serve: refusing the forge drop-in: [portal].public_host / the MagicDNS name is not a DNS name")
+            return False
+        want = forge_dropin(data, host, "forge_ssh" in by, by["forge_http"]["port"])
+    try:
+        with open(path) as f:
+            have = f.read()
+    except OSError:
+        have = ""
+    if have and not have.startswith("# GENERATED by mios-tailscale-sync"):
+        _log(f"serve: {path} is not generated by this sync -- left alone")
+        return False
+    if have == want:
+        return False
+    _log(f"serve: forge tailnet drop-in {'would change' if check else 'updated'}")
+    if check:
+        return True
+    if want:
+        _write_private(path, want, 0o644)
+    else:
+        os.unlink(path)
+    unit = str((data.get("units") or {}).get("forge") or "")
+    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=60)
+    if _UNIT_NAME.match(unit):
+        subprocess.run(["systemctl", "--no-block", "try-restart", unit], capture_output=True, timeout=60)
+    return True
+
+
+def _serve_status(ts_bin: str):
+    """The live `tailscale serve status --json` as a dict ({} for an empty config), or None
+    when the command fails, times out or prints something that is not a JSON object."""
+    try:
+        res = subprocess.run(_ts(ts_bin, "serve", "status", "--json"),
+                             capture_output=True, text=True, timeout=10)
+        doc = json.loads(res.stdout) if res.returncode == 0 else False
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return {} if doc is None else doc if isinstance(doc, dict) else None
+
+
+def sync_serve(dry_run: bool = False, check: bool = False, data: dict | None = None) -> int:
+    data = _load_data() if data is None else data
+    state = _owned_state_path(data)
+    owned = _read_json(state) if state else {}
+    desired, errors = render_routes(data)
+    for r in list(desired):
+        why = _vendor_default_login(data, r["credential"]) if r.get("credential") else ""
+        why = why or (_auth_refusal(r) if r.get("require_auth") else "")
+        if why:
+            errors.append(f"{r['name']}: refused, {why}")
+            desired.remove(r)
+    for e in errors:
+        _log(f"serve: route {e}")
+    migrate = bool(state) and LEGACY_TTYD_MARK not in owned
+    if not desired and not any(_is_rkey(k) for k in owned) and not migrate:
+        return 1 if errors else 0
+    ts_bin = find_tailscale()
+    quiet = not desired and not any(_is_rkey(k) for k in owned)   # only the one-time migration is due
+    if quiet and not shutil.which(ts_bin) and not os.path.isfile(ts_bin):
+        return 1 if errors else 0                                  # no tailscale here: nothing to migrate
+    status = get_status()
+    if status.get("BackendState") != "Running":
+        if not quiet:
+            _log("serve: node not Running -- routes left as they are")
+        return 1 if errors else 0
+    self_host = dns_name((status.get("Self") or {}).get("DNSName"))
+    if not self_host:
+        _log("serve: this node has no valid MagicDNS name -- routes left as they are")
+        return 1 if errors else 0
+    serve_status = _serve_status(ts_bin)
+    if serve_status is None:
+        # Never plan from a blank: an add would overwrite a hand-made handler and a
+        # disabled owned route would be forgotten while still live.
+        _log("serve: `tailscale serve status --json` failed or did not parse -- nothing planned, "
+             "the owned routes are kept")
+        return 1
+    live, foreign = live_routes(serve_status, self_host)
+    if foreign:
+        _log(f"serve: handlers of another node name are not ours and are left alone: {', '.join(foreign)}")
+    if migrate:
+        k, target = legacy_ttyd_handler(data)
+        if k and k not in owned and live.get(k) == target:
+            if (data.get("ttyd") or {}).get("tailnet_expose") is True:
+                _log("serve: [ttyd].tailnet_expose = true (retired): the handler mios-ttyd-expose published is "
+                     "left as it is, not owned -- set [tailscale.serve.routes.ttyd_bash].enabled and "
+                     "[ttyd].auth_pass in mios.html for this sync to manage it")
+            else:
+                _log("serve: the handler the retired mios-ttyd-expose published is adopted once; it now "
+                     "follows [tailscale.serve.routes.ttyd_bash].enabled")
+                owned[k] = target
+    rc = 1 if errors else 0
+    drift = False
+    published = set()          # desired routes that are live and ours once this plan has run
+    for action, r in plan_serve(desired, live, owned):
+        k = _rkey(r["proto"], r["port"], r["path"])
+        label = f"{r['name']} ({r['proto']}:{r['port']}{r['path']})"
+        if action in ("add", "replace", "adopt") and r.get("down"):
+            _log(f"serve: {label}: its upstream is not answering -- not published yet")
+            rc = 1
+            continue
+        if action == "conflict":
+            _log(f"serve: {label}: a different hand-made route or protocol holds this listener -- left alone")
+            rc = 1
+            continue
+        if action == "keep":
+            published.add(r["name"])
+            continue
+        drift = True
+        _log(f"serve: {action} {label}")
+        if check or dry_run:
+            if action in ("add", "replace", "adopt"):
+                published.add(r["name"])          # what the plan would publish
+            if dry_run and action in ("add", "replace", "remove"):
+                print(" ".join(serve_cmd(ts_bin, action, r)))
+            continue
+        if action in ("add", "replace", "remove"):
+            res = subprocess.run(serve_cmd(ts_bin, action, r), capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                _log(f"serve: {action} {label} failed ({res.returncode}): {res.stderr.strip()[:300]}")
+                rc = 1
+                continue
+        if action in ("add", "replace", "adopt"):
+            owned[k] = r["target"]
+            published.add(r["name"])
+        else:
+            owned.pop(k, None)
+    # Forgejo is pointed at the tailnet URL only while its route is actually served by us.
+    drift = _sync_forge_dropin(data, [r for r in desired if r["name"] in published], status,
+                               check or dry_run) or drift
+    if state and not (check or dry_run):
+        if migrate:
+            owned[LEGACY_TTYD_MARK] = "done"
+        _write_private(state, json.dumps(owned, sort_keys=True))
+    return 1 if (check and drift) else rc
+
+
+# ------------------------------------------------------------------ the read-only agent share
+# tailscaled runs as root and follows symlinks, so a directory others can write is never a
+# `serve` path handler. mios-agent-share.service runs THIS as a DynamicUser on loopback:
+# every path component is opened with O_NOFOLLOW from the share's own directory fd, the
+# opened file must resolve inside the share, and only world-readable, singly linked
+# regular files (and world-readable directories, as a plain-text listing) are served.
+
+def _share_open(root_fd: int, root_real: str, rel: str):
+    """(fd, stat) of rel inside the share, or None for anything that must not be served."""
+    import stat as _stat
+    parts = [p for p in rel.split("/") if p]
+    if any(p in (".", "..") or "\0" in p for p in parts):
+        return None
+    fd = os.dup(root_fd)
+    try:
+        for i, part in enumerate(parts):
+            nxt = os.open(part, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+            st = os.fstat(fd)
+            if _stat.S_ISDIR(st.st_mode):
+                if st.st_mode & 0o005 != 0o005:
+                    raise PermissionError
+            elif i != len(parts) - 1:
+                raise NotADirectoryError
+        st = os.fstat(fd)
+        real = os.readlink(f"/proc/self/fd/{fd}")
+        inside = real == root_real or real.startswith(root_real.rstrip("/") + "/")
+        if _stat.S_ISREG(st.st_mode):
+            ok = st.st_mode & 0o004 and st.st_nlink == 1
+        else:
+            ok = _stat.S_ISDIR(st.st_mode) and st.st_mode & 0o005 == 0o005
+        if not (inside and ok):
+            raise PermissionError
+        return fd, st
+    except OSError:
+        os.close(fd)
+        return None
+
+
+def _share_listing(fd: int) -> bytes:
+    """Names a client could fetch: world-readable regular files and directories, no links."""
+    import stat as _stat
+    names = []
+    for name in sorted(os.listdir(fd)):
+        try:
+            st = os.stat(name, dir_fd=fd, follow_symlinks=False)
+        except OSError:
+            continue
+        if _stat.S_ISREG(st.st_mode) and st.st_mode & 0o004 and st.st_nlink == 1:
+            names.append(name)
+        elif _stat.S_ISDIR(st.st_mode) and st.st_mode & 0o005 == 0o005:
+            names.append(name + "/")
+    return ("\n".join(names) + "\n").encode("utf-8", "replace")
+
+
+def share_serve(root: str, bind: str, port: int, prefix: str = "/") -> int:
+    """Serve the share read-only on bind:port (loopback only, never as root)."""
+    import http.server
+    import ipaddress
+    import mimetypes
+    import socket
+    import urllib.parse
+    if os.geteuid() == 0:
+        _log("share: refusing to serve as root (run it as mios-agent-share.service's DynamicUser)")
+        return 2
+    try:
+        address = ipaddress.ip_address(bind)
+        loop = address.is_loopback
+    except ValueError:
+        loop = False
+    if not loop or not _port(port):
+        _log("share: --bind must be a loopback address and --port a port")
+        return 2
+    root_real = os.path.realpath(root)
+    try:
+        root_fd = os.open(root_real, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        _log(f"share: {root_real} is not a readable directory ({exc.strerror})")
+        return 2
+    prefix = "/" + prefix.strip("/") + "/" if prefix.strip("/") else "/"
+    safe = {"text/plain", "application/json", "application/pdf", "image/png", "image/jpeg", "image/gif"}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        server_version = "mios-agent-share"
+        sys_version = ""
+
+        def log_message(self, fmt, *args):  # method and status only, never a query
+            pass
+
+        def _send(self, code, body=b"", ctype="text/plain; charset=utf-8", head=False, stream=None, size=0):
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(size if stream else len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if head:
+                return
+            if stream is None:
+                self.wfile.write(body)
+                return
+            left = size                     # exactly the stat'ed size, in bounded chunks
+            while left > 0:
+                chunk = stream.read(min(65536, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
+
+        def _serve(self, head):
+            path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+            rel = path[len(prefix):] if path.startswith(prefix) else path.lstrip("/")
+            got = _share_open(root_fd, root_real, rel)
+            if got is None:
+                return self._send(404, b"not found\n", head=head)
+            fd, st = got
+            import stat as _stat
+            try:
+                if _stat.S_ISDIR(st.st_mode):
+                    return self._send(200, _share_listing(fd), head=head)
+                ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+                ctype = ctype if ctype in safe else "application/octet-stream"
+                with os.fdopen(os.dup(fd), "rb") as fh:
+                    self._send(200, b"", ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""),
+                               head, stream=fh, size=st.st_size)
+            finally:
+                os.close(fd)
+
+        def do_GET(self):
+            self._serve(False)
+
+        def do_HEAD(self):
+            self._serve(True)
+
+    class ShareServer(http.server.ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+
+    try:
+        srv = ShareServer((bind, port), Handler)
+    except OSError as exc:
+        os.close(root_fd)
+        _log(f"share: cannot bind {bind}:{port} ({exc.strerror or 'bind failed'})")
+        return 2
+    _log(f"share: serving {root_real} read-only on {bind}:{port} (prefix {prefix})")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+        os.close(root_fd)
+    return 0
+
+
+def _share_defaults() -> tuple[str, str]:
+    """([paths].srv_agent_share_dir, [tailscale.serve.routes.agent_share].path) from the
+    vendor + host tiers -- the share server never reads an operator tier, and its unit
+    restates neither value. A layer that does not parse raises mios_toml.LayerError."""
+    base = mios_toml.base_view()
+    root = mios_toml.expand_refs(base, str((base.get("paths") or {}).get("srv_agent_share_dir") or ""))
+    route = (((base.get("tailscale") or {}).get("serve") or {}).get("routes") or {}).get("agent_share") or {}
+    return root, str(route.get("path") or "/")
+
+
+def _arg(name: str, default: str = "") -> str:
+    for i, a in enumerate(sys.argv):
+        if a == name and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return default
+
+
 def main() -> int:
     global _SOCKET
     for arg in sys.argv[1:]:
@@ -398,7 +1095,35 @@ def main() -> int:
     if "--status" in sys.argv:
         print(json.dumps(get_status(), indent=2))
         return 0
-    return sync_mesh(dry_run="--dry-run" in sys.argv)
+    if "--share-serve" in sys.argv:
+        root, prefix = _arg("--root"), _arg("--prefix")
+        if not (root and prefix):
+            try:
+                ssot_root, ssot_prefix = _share_defaults()
+            except mios_toml.LayerError as exc:
+                _log(f"share: SSOT unresolved -- not serving: {exc}")
+                return 3
+            root, prefix = root or ssot_root, prefix or ssot_prefix
+        return share_serve(root, _arg("--bind"), _port(_arg("--port")), prefix)
+    try:
+        data = _load_data()
+    except mios_toml.LayerError as exc:
+        # The mesh takes nothing from the operator tier, so a broken or unlocatable
+        # operator tier stops only the serve routes (left exactly as they are); exit-node
+        # failover keeps running on vendor + host. A broken vendor/host layer stops all.
+        try:
+            base = mios_toml.derive_ports(mios_toml.base_view())
+        except mios_toml.LayerError as exc2:
+            _log(f"SSOT unresolved -- nothing applied: {exc2}")
+            return 3
+        _log(f"operator tier unresolved -- serve routes left as they are: {exc}")
+        if "--check" not in sys.argv:
+            sync_mesh(dry_run="--dry-run" in sys.argv, data=base)
+        return 3
+    if "--check" in sys.argv:
+        return sync_serve(check=True, data=data)
+    rc = sync_mesh(dry_run="--dry-run" in sys.argv, data=data)
+    return sync_serve(dry_run="--dry-run" in sys.argv, data=data) or rc
 
 
 if __name__ == "__main__":

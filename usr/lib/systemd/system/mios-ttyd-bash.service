@@ -3,8 +3,8 @@
 [Unit]
 Description='MiOS' ttyd -- browser pty bridge (Linux bash session)
 Documentation=file:///usr/libexec/mios/mios-ttyd-launch
-After=network-online.target
-Wants=network-online.target
+After=network-online.target mios-credential-apply.service
+Wants=network-online.target mios-credential-apply.service
 # Fedora's ttyd RPM installs to /usr/sbin/ttyd; on other distros
 # (or after a future Fedora reshuffle) it may land in /usr/bin/.
 # Either path satisfies the condition.
@@ -20,6 +20,11 @@ EnvironmentFile=-/etc/mios/install.env
 # WSL terminal.
 User=mios
 Group=mios
+# ttyd's OWN login (never the operator credential: ttyd takes it on argv, which every
+# local uid can read in /proc), written to /run/credstore by mios-credential-apply.service
+# (root); mios-credential exec ttyd reads only $CREDENTIALS_DIRECTORY.
+ImportCredential=mios.ttyd.password
+ImportCredential=mios.ttyd.user
 ExecStart=/usr/libexec/mios/mios-ttyd-launch bash
 
 Restart=on-failure

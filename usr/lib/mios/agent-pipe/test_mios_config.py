@@ -675,6 +675,61 @@ class TestRedactSecrets(unittest.TestCase):
                          {"x": {"github_token": "t"}, "ai": {"endpoint": "e"}},
                          "without [security.secret_keys] only the fixed paths are secrets")
 
+    def test_secret_paths_cover_auth_sysrescue_and_every_account_row(self):
+        from mios_pipe.kernel.config import REDACTED, redact_secrets
+        paths = ["auth.password", "auth.luks_passphrase", "field.sysrescue.password",
+                 "autounattend.accounts.password", "autounattend.service.svc_password"]
+        merged = {"auth": {"password": "fixture-a", "luks_passphrase": "fixture-l", "policy": "plain"},
+                  "field": {"sysrescue": {"username": "kept", "password": "fixture-s"}},
+                  "autounattend": {"accounts": [{"name": "one", "password": "fixture-1"},
+                                                {"name": "two", "password": "fixture-2"}, "scalar-row"],
+                                   "service": {"svc_password": "fixture-svc"}},
+                  "security": {"secret_keys": {"keys": [], "paths": paths}}}
+        out = redact_secrets(merged)
+        self.assertEqual(out["auth"], {"password": REDACTED, "luks_passphrase": REDACTED, "policy": "plain"})
+        self.assertEqual(out["field"]["sysrescue"], {"username": "kept", "password": REDACTED})
+        self.assertEqual(out["autounattend"]["accounts"],
+                         [{"name": "one", "password": REDACTED}, {"name": "two", "password": REDACTED}, "scalar-row"])
+        self.assertNotIn("fixture-", json.dumps(out), "a credential was served")
+        # Negative control: the round-3 walk (tables only) serves every account row.
+        import mios_pipe.kernel.config as cfgmod
+
+        def tables_only(node, parts):  # PLANT
+            for part in parts[:-1]:
+                node = node.get(part) if isinstance(node, dict) else None
+            if isinstance(node, dict) and parts[-1] in node:
+                node[parts[-1]] = REDACTED
+        with patch.object(cfgmod, "_redact_path", tables_only):
+            leaked = cfgmod.redact_secrets(merged)
+        self.assertEqual([r["password"] for r in leaked["autounattend"]["accounts"][:2]], ["fixture-1", "fixture-2"])
+
+
+    def test_vendor_paths_cover_the_keys_a_host_tier_fills(self):
+        """The real vendor paths redact the older credential keys a host tier fills."""
+        import copy
+        import tomllib
+        from mios_pipe.kernel.config import REDACTED, redact_secrets
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "..", "..", "..", "share", "mios", "mios.toml"), "rb") as fh:
+            vendor = tomllib.load(fh)
+        host = {("pgvector", "pass"): "fixture-pg-pass", ("field", "sysrescue", "wipe_passphrase"): "fixture-wipe",
+                ("adguard", "admin_password_bcrypt"): "$2b$fixture-bcrypt"}
+        for keys, value in host.items():
+            node = vendor
+            for k in keys[:-1]:
+                node = node[k]
+            node[keys[-1]] = value
+        served = json.dumps(redact_secrets(copy.deepcopy(vendor)))
+        for value in host.values():
+            self.assertNotIn(value, served, "GET /portal/config serves a host-tier credential")
+        # Negative control: the v2 path list (without the three) serves all of them.
+        vendor["security"]["secret_keys"]["paths"] = [
+            p for p in vendor["security"]["secret_keys"]["paths"]
+            if p not in ("pgvector.pass", "field.sysrescue.wipe_passphrase", "adguard.admin_password_bcrypt")]
+        served = json.dumps(redact_secrets(copy.deepcopy(vendor)))
+        self.assertEqual([v for v in host.values() if v in served], list(host.values()))
+        self.assertTrue(REDACTED)
+
 
 class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
     """POST /portal/config end to end on temp vendor/host/user tiers: the lossless
@@ -1189,9 +1244,161 @@ class TestPortalConfigEnvelopeAndRedaction(unittest.TestCase):
             self.assertEqual(self.tier(), "", content_type)
 
 
+class TestOperatorTierSave(unittest.TestCase):
+    """Operator decision Q7 + redaction by dotted path: GET never serves the operator
+    credential, and a Portal save never keeps it in the Portal's own tier -- it is queued,
+    with proof of the Portal login, for the root helper that owns the operator tier."""
+
+    VENDOR = (TestPortalConfigEnvelopeAndRedaction.VENDOR
+              .replace('[identity]\n', '[identity]\ndefault_password = "vendor-default-pw"\n', 1)
+              .replace('keys = ["MIOS_GITHUB_TOKEN", "Webhook_Secret"]\n',
+                       'keys = ["MIOS_GITHUB_TOKEN", "Webhook_Secret"]\n'
+                       'paths = ["identity.default_password", "ttyd.auth_pass", "absent.table.key", 7]\n')
+              + '\n[ttyd]\nauth_pass = "vendor-ttyd-pw"\nauth_user = "kept"\n'
+                '\n[security.operator_tier]\nvalues = ["identity.default_password", "ttyd.auth_pass"]\n'
+                'toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled"]\n'
+                '\n[tailscale.serve]\nenabled = false\n\n[tailscale.serve.routes.portal]\nenabled = false\n'
+                '\n[paths]\nrun_credential_inbox_dir = "@INBOX@"\n')
+    HOST = TestPortalConfigEnvelopeAndRedaction.HOST
+    LOGIN = "fixture-portal-login"
+    TYPED = "fixture-typed-in-the-portal"
+    tier = TestPortalConfigEnvelopeAndRedaction.tier
+    served = TestPortalConfigEnvelopeAndRedaction.served
+    post = TestPortalConfigEnvelopeAndRedaction.post
+
+    def setUp(self):
+        TestPortalConfigEnvelopeAndRedaction.setUp(self)
+        self.inbox = os.path.join(self.tmp, "inbox")
+        os.mkdir(self.inbox)
+        with open(os.path.join(self.tmp, "vendor.toml"), "w", encoding="utf-8") as fh:
+            fh.write(self.VENDOR.replace("@INBOX@", self.inbox))
+        mios_toml.clear_cache()
+        for name, value in (("PORTAL_PASSWORD", self.LOGIN), ("PORTAL_REQUIRE_LOGIN", True)):
+            p = patch(f"mios_pipe.routing.portal.{name}", value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def proof(self, rows):
+        """The request MAC, computed independently of mios_credentials: HMAC-SHA256 keyed by
+        the Portal login over the sorted `dotted = value` rows."""
+        import hashlib
+        import hmac
+        text = "\n".join(f"{k} = {('true' if v else 'false') if isinstance(v, bool) else json.dumps(v)}"
+                         for k, v in sorted(rows.items()))
+        return hmac.new(self.LOGIN.encode(), text.encode(), hashlib.sha256).hexdigest()
+
+    def queued(self):
+        out = []
+        for name in sorted(os.listdir(self.inbox)):
+            path = os.path.join(self.inbox, name)
+            self.assertTrue(name.endswith(".toml"), f"a half-written request was left: {name}")
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertNotIn(self.LOGIN, text, "the Portal's current credential was written to the inbox")
+            out.append(tl.loads(text))
+        return out
+
+    def test_get_redacts_the_secret_paths(self):
+        from mios_pipe.kernel.config import redact_secrets
+        served = self.served()
+        doc = tl.loads(served)
+        self.assertEqual((doc["identity"]["default_password"], doc["ttyd"]["auth_pass"]),
+                         ("<redacted>", "<redacted>"))
+        self.assertEqual(doc["ttyd"]["auth_user"], "kept")
+        self.assertNotIn("absent", doc, "a secret path created a table that was not there")
+        for secret in ("vendor-default-pw", "vendor-ttyd-pw"):
+            self.assertNotIn(secret, served, "GET /portal/config served a credential")
+        # Negative control: the round-2 matcher (bare key names, no `paths`) serves it.
+        merged = mios_toml.load_merged()
+        del merged["security"]["secret_keys"]["paths"]
+        self.assertEqual(redact_secrets(merged)["identity"]["default_password"], "vendor-default-pw",
+                         "the bare-key matcher redacted it: this control no longer proves the path list")
+
+    def test_a_typed_credential_is_queued_with_proof_and_never_kept(self):
+        echo = self.served()
+        response = self.post(json.dumps({"toml": echo}), "application/json")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.queued(), [], "an untouched <redacted> echo queued a credential change")
+        edited = echo.replace('default_password = "<redacted>"', f'default_password = "{self.TYPED}"')
+        self.assertNotEqual(edited, echo)
+        response = self.post(json.dumps({"toml": edited}), "application/json")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.queued(), [{"identity": {"default_password": self.TYPED},
+                                          "request": {"proof": self.proof({"identity.default_password": self.TYPED})}}])
+        self.assertNotIn(self.TYPED, self.tier(), "the typed credential was kept in the Portal's own tier")
+        self.assertNotIn(self.LOGIN, self.tier())
+
+    def test_negative_without_a_portal_login_nothing_is_queued_or_written(self):
+        edited = self.served().replace('default_password = "<redacted>"', f'default_password = "{self.TYPED}"')
+        for name, value in (("PORTAL_REQUIRE_LOGIN", False), ("PORTAL_PASSWORD", "")):
+            with patch(f"mios_pipe.routing.portal.{name}", value):
+                response = self.post(json.dumps({"toml": edited}), "application/json")
+            self.assertEqual(response.status_code, 500, f"{name}: {response.text}")
+            self.assertEqual(os.listdir(self.inbox), [], f"{name}: a credential was queued without a login")
+            self.assertIsNone(self.tier(), f"{name}: the refused save still wrote the tier")
+            self.assertFalse(os.path.exists(self.user + ".tmp"))
+        os.rmdir(self.inbox)                      # the root helper's inbox is absent
+        response = self.post(json.dumps({"toml": edited}), "application/json")
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertIsNone(self.tier())
+
+    def _publish(self, view):
+        """What root's mios-credential apply publishes for the Portal (the operator tier's toggles)."""
+        path = os.path.join(self.tmp, "operator-toggles.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(view, fh)
+        with open(os.path.join(self.tmp, "vendor.toml"), "a", encoding="utf-8") as fh:
+            fh.write(f'run_operator_toggles = "{path}"\n')        # [paths] is the last table
+        mios_toml.clear_cache()
+
+    def test_a_toggle_root_acts_on_is_queued_when_the_portal_view_disagrees(self):
+        from mios_pipe.kernel.config import write_user_config
+        # mios.html switched the route on in the OPERATOR tier; this uid's own view says off.
+        self._publish({"tailscale.serve.routes.portal.enabled": True, "tailscale.serve.enabled": True})
+        served = tl.loads(self.served())
+        self.assertIs(served["tailscale"]["serve"]["routes"]["portal"]["enabled"], True,
+                      "GET does not show the toggle root acts on")
+        live = mios_toml.load_merged()
+        self.assertIs(live["tailscale"]["serve"]["routes"]["portal"]["enabled"], False)
+        cfg = tl.loads(self.served())
+        write_user_config(cfg, dest_path=self.user, live_config=live, proof=self.LOGIN)
+        self.assertEqual(self.queued(), [], "an unchanged toggle (as root acts on it) was queued")
+        cfg["tailscale"]["serve"]["routes"]["portal"]["enabled"] = False   # the operator switches it off
+        write_user_config(cfg, dest_path=self.user, live_config=live, proof=self.LOGIN)
+        rows = {"tailscale.serve.routes.portal.enabled": False}
+        self.assertEqual(self.queued(), [{"tailscale": {"serve": {"routes": {"portal": {"enabled": False}}}},
+                                          "request": {"proof": self.proof(rows)}}],
+                         "switching off a route the operator tier enabled queued nothing")
+
+    def test_negative_without_root_s_view_the_portal_cannot_switch_it_off(self):
+        from mios_pipe.kernel.config import _take_operator_tier
+        cfg = tl.loads(self.served())                       # no published view: the round-3 diff
+        base = mios_toml.load_merged()
+        cfg["tailscale"]["serve"]["routes"]["portal"]["enabled"] = False
+        self.assertEqual(_take_operator_tier(cfg, base, base, mios_toml), {},
+                         "the round-3 diff queued it: this control no longer shows the defect")
+
+    def test_a_changed_toggle_is_queued_and_shown_and_a_stale_copy_is_dropped(self):
+        from mios_pipe.kernel.config import write_user_config
+        os.makedirs(os.path.dirname(self.user), exist_ok=True)
+        with open(self.user, "w", encoding="utf-8") as fh:      # what a pre-fix Portal save left
+            fh.write('[identity]\ndefault_password = "stale-copy-in-the-portal-tier"\n')
+        mios_toml.clear_cache()
+        cfg = tl.loads(self.served())
+        cfg["tailscale"]["serve"]["enabled"] = True
+        write_user_config(cfg, dest_path=self.user, live_config=mios_toml.load_merged(), proof=self.LOGIN)
+        self.assertEqual(self.queued(), [{"tailscale": {"serve": {"enabled": True}},
+                                          "request": {"proof": self.proof({"tailscale.serve.enabled": True})}}],
+                         "an unchanged toggle or the untouched credential was queued")
+        self.assertEqual(tl.loads(self.tier()), {"tailscale": {"serve": {"enabled": True}}},
+                         "the toggle is not shown by the Portal's own view, or the stale credential stayed")
+
+
 def _run_extra_config_write():
     return _run_cases(TestDeltaConfigWrite, TestConfigWrite, TestRestoreRedacted,
-                      TestRedactSecrets, TestPortalConfigEnvelopeAndRedaction)
+                      TestRedactSecrets, TestPortalConfigEnvelopeAndRedaction,
+                      TestOperatorTierSave)
 
 
 

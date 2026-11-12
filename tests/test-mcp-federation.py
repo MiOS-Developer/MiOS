@@ -705,5 +705,193 @@ class GlobalInventoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["sources"][0]["state"],"unavailable")
 
 
+class PublishTests(Base):
+    """`--agent-cli --observe --publish` through the real server and relay: the Portal status
+    view's agents-<uid>.json snapshot ([portal.status].snapshot_dir)."""
+
+    TOKEN = "f0" * 32
+
+    def setUp(self):
+        super().setUp()
+        relay = tomllib.loads(SSOT.read_text())["mcp"]["agents"]["binary"]
+        if not os.access(relay, os.X_OK):
+            self.skipTest(f"the relay binary {relay} ([mcp.agents].binary) is not installed")
+        self.snap = self.dir / "status"
+        self.snap.mkdir()
+
+    def env(self, snapshot_dir, user_dir=None):
+        """snapshot_dir goes in the host tier (it is pinned to vendor+host); user_dir plants a user-tier one."""
+        toml_table(self.dir / "host.toml", {"portal": {"status": {"snapshot_dir": str(snapshot_dir)}}})
+        user = {"mcp": {"federation": {"enabled": False}, "tmux": {"enabled": False}}}
+        if user_dir is not None:
+            user["portal"] = {"status": {"snapshot_dir": str(user_dir)}}
+        toml_table(self.user, user)
+        env = {k: v for k, v in os.environ.items() if k not in {"MIOS_TOML", "TMUX", "TMUX_PANE"}}
+        env.update(MIOS_VENDOR_TOML=str(SSOT), MIOS_USER_TOML=str(self.user), MIOS_HOST_TOML=str(self.dir / "host.toml"),
+                   MIOS_USER_TOML_D=str(self.dir / "no-user.d"), XDG_STATE_HOME=str(self.dir / "state"))
+        return env
+
+    def register(self, env):
+        code = ("import importlib.machinery, importlib.util, sys\n"
+                "loader = importlib.machinery.SourceFileLoader('mios_mcp_server_test', sys.argv[1])\n"
+                "spec = importlib.util.spec_from_loader(loader.name, loader)\n"
+                "module = importlib.util.module_from_spec(spec); loader.exec_module(module)\n"
+                "module._agent_relay_call('mios_agent_register', {'agent_id': 'probe', 'kind': 'claude',"
+                " 'label': 'Probe', 'token': sys.argv[2]})\n")
+        subprocess.run([sys.executable, "-c", code, str(SERVER), self.TOKEN], env=env, check=True,
+                       capture_output=True, timeout=60)
+
+    def publish(self, env, *extra):
+        return subprocess.run([sys.executable, str(SERVER), "--agent-cli", "--observe", "--publish", *extra],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    def test_publish_writes_an_owner_bound_0640_frame_without_secrets(self):
+        env = self.env(self.snap)
+        self.register(env)
+        result = self.publish(env)
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        target = self.snap / f"agents-{os.getuid()}.json"
+        self.assertEqual(json.loads(result.stdout), {"published": str(target)})
+        self.assertEqual(sorted(p.name for p in self.snap.iterdir()), [target.name], "no temporary file may remain")
+        info = target.stat()
+        self.assertEqual((info.st_mode & 0o777, info.st_uid), (0o640, os.getuid()))
+        frame = json.loads(target.read_text())
+        self.assertEqual(frame["schema"], "mios.agents.observation.v1")
+        self.assertEqual([row["agent_id"] for row in frame["agents"]], ["probe"])
+        text = target.read_text()
+        import hashlib
+        self.assertNotIn(self.TOKEN, text)
+        self.assertNotIn(hashlib.sha256(self.TOKEN.encode()).hexdigest(), text)
+        # Every mios-ai member can read the snapshot: only the fields the Portal reads are published.
+        self.assertEqual(set(frame), {"schema", "ts", "agents", "subagents", "sources"})
+        for key, fields in self.PUBLISHED.items():
+            for row in frame[key]:
+                self.assertLessEqual(set(row), fields, f"{key} row carries more than the Portal reads")
+        self.assertEqual({row["source"] for row in frame["agents"] + frame["sources"]}, {"local"})
+        self.assertEqual(self.leaks(text), [])
+
+    PUBLISHED = {
+        "agents": {"agent_id", "kind", "label", "online", "stale", "pending", "parent_agent_id", "node",
+                   "session_name", "source"},
+        "subagents": {"agent_id", "pane", "parent_pane", "agent_kind", "role", "session_name", "source"},
+        "sources": {"kind", "source", "state"},
+    }
+
+    def leaks(self, text):
+        """Owner-only detail a published snapshot must not carry: the relay state path, pids, expiries."""
+        return [marker for marker in (str(self.dir), '"runtime_pid"', '"expires"') if marker in text]
+
+    def test_negative_the_unpublished_observation_carries_what_publish_drops(self):
+        """The detector sees the owner-only detail in the raw `--observe` frame, so its silence above means
+        the publisher dropped it."""
+        env = self.env(self.snap)
+        self.register(env)
+        result = subprocess.run([sys.executable, str(SERVER), "--agent-cli", "--observe"], env=env,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        self.assertIn(str(self.dir), self.leaks(result.stdout))
+        self.assertIn('"runtime_pid"', self.leaks(result.stdout))
+
+    def test_a_leftover_temporary_file_never_blocks_a_publish(self):
+        """A temp file left by a killed publisher whose pid this process now has: the random name still
+        publishes; the same plant does block a pid-named O_EXCL create (the scheme it replaced)."""
+        code = ("import importlib.machinery, importlib.util, json, os, sys\n"
+                "from pathlib import Path\n"
+                "loader = importlib.machinery.SourceFileLoader('mios_mcp_server_test', sys.argv[1])\n"
+                "spec = importlib.util.spec_from_loader(loader.name, loader)\n"
+                "module = importlib.util.module_from_spec(spec); loader.exec_module(module)\n"
+                "directory = Path(sys.argv[2])\n"
+                "leftover = directory / f'.agents-{os.getuid()}.{os.getpid()}.tmp'\n"
+                "leftover.write_text('partial')\n"
+                "try:\n"
+                "    os.close(os.open(leftover, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o640))\n"
+                "    blocks = False\n"
+                "except FileExistsError:\n"
+                "    blocks = True\n"
+                "frame = {'schema': 'mios.agents.observation.v1', 'ts': 1, 'agents': [], 'subagents': [], 'sources': []}\n"
+                "target = module._publish_frame(frame, directory)\n"
+                "print(json.dumps({'blocks': blocks, 'target': str(target), 'leftover': leftover.name}))\n")
+        result = subprocess.run([sys.executable, "-c", code, str(SERVER), str(self.snap)], env=self.env(self.snap),
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        out = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertTrue(out["blocks"], "negative control: the plant must block a pid-named exclusive create")
+        target = self.snap / f"agents-{os.getuid()}.json"
+        self.assertEqual(out["target"], str(target))
+        self.assertEqual(json.loads(target.read_text())["schema"], "mios.agents.observation.v1")
+        self.assertEqual(sorted(p.name for p in self.snap.iterdir()), sorted([target.name, out["leftover"]]),
+                         "only the planted leftover remains beside the frame")
+
+    def test_a_user_tier_snapshot_dir_is_ignored(self):
+        """The publisher writes where the Portal reads (vendor+host), whatever its own user layer says."""
+        decoy = self.dir / "decoy"
+        decoy.mkdir()
+        env = self.env(self.snap, user_dir=decoy)
+        self.register(env)
+        result = self.publish(env)
+        self.assertEqual(result.returncode, 0, result.stderr[-500:])
+        self.assertEqual(json.loads(result.stdout), {"published": str(self.snap / f"agents-{os.getuid()}.json")})
+        self.assertEqual(list(decoy.iterdir()), [], "the user-tier directory must stay empty")
+
+    def test_negative_unwritable_snapshot_dir_exits_1_and_leaves_no_file(self):
+        missing = self.snap / "absent"
+        cases = [missing]
+        if os.getuid() != 0:  # root ignores a read-only mode; a missing directory fails for everyone
+            os.chmod(self.snap, 0o555)
+            cases.append(self.snap)
+        try:
+            for directory in cases:
+                with self.subTest(directory=directory.name):
+                    result = self.publish(self.env(directory))
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("cannot publish the observation frame", result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+        finally:
+            os.chmod(self.snap, 0o755)
+        self.assertEqual(list(self.snap.iterdir()), [])
+
+    def test_stream_publishes_and_recovers_when_the_directory_appears(self):
+        """mios-status-agents.service's mode: a missing directory is reported once and retried, and
+        frames land as soon as it exists; nothing is printed and SIGTERM ends it cleanly."""
+        import time
+        late = self.snap / "late"
+        env = self.env(late)
+        toml_table(self.user, {"mcp": {"federation": {"enabled": False}, "tmux": {"enabled": False},
+                                       "agents": {"observation": {"refresh_s": 1}}}})
+        self.register(env)
+        errors = self.dir / "stream.err"
+
+        def wait(predicate, seconds):
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline and not predicate():
+                time.sleep(0.2)
+            return predicate()
+        with open(errors, "w") as err:
+            stream = subprocess.Popen([sys.executable, str(SERVER), "--agent-cli", "--observe-stream", "--publish"],
+                                      env=env, stdout=subprocess.PIPE, stderr=err, text=True)
+            try:
+                self.assertTrue(wait(lambda: "cannot publish" in errors.read_text(), 30), errors.read_text()[-500:])
+                time.sleep(2.5)  # further failed frames must not repeat the line
+                self.assertIsNone(stream.poll(), "a missing directory must not end the stream")
+                self.assertEqual(errors.read_text().count("cannot publish the observation frame"), 1)
+                late.mkdir()
+                target = late / f"agents-{os.getuid()}.json"
+                self.assertTrue(wait(target.exists, 30), errors.read_text()[-500:])
+                self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+                self.assertEqual(json.loads(target.read_text())["schema"], "mios.agents.observation.v1")
+            finally:
+                stream.terminate()
+                out, _ = stream.communicate(timeout=30)
+        self.assertEqual(stream.returncode, 0)
+        self.assertEqual(out, "", "publish mode prints no frames")
+        self.assertEqual([p.name for p in late.iterdir()], [target.name])
+
+    def test_negative_publish_is_refused_outside_observe(self):
+        result = self.publish(self.env(self.snap), "--watch")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--publish is valid only with --observe or --observe-stream", result.stderr)
+        self.assertEqual(list(self.snap.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

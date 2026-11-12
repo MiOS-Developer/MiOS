@@ -48,9 +48,10 @@ class QuadletSecretsHardener:
 
     def init_secrets_env(self, secrets_file: str = "/etc/mios/secrets.env") -> Dict[str, str]:
         """Non-destructively initializes secrets.env ensuring existing credentials are preserved."""
+        # Not MIOS_IDENTITY_DEFAULT_PASSWORD: the login is [identity].default_password as mios.html
+        # saves it, applied by mios-credential apply; a generated one locks every surface.
         default_keys = [
             "POSTGRES_PASSWORD",
-            "MIOS_IDENTITY_DEFAULT_PASSWORD",
             "HA_PASSWORD",
             "POSTGRESQL_PASSWORD",
             "K3S_TOKEN",

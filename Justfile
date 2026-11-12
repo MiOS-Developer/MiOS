@@ -1,5 +1,5 @@
 # AI-hint: The Justfile defines the primary build, deployment, and lifecycle automation for MiOS, providing targets for preflight checks, overlay initialization, ISO creation, and OCI image building via podman.
-# AI-related: ./tools/lib/userenv.sh, /usr/libexec/mios/flight-control.sh, /usr/share/mios/build-logs/latest-build.log, /etc/mios/install.env, /etc/mios/forge/admin-password, /usr/lib/mios/agent-pipe, /usr/lib/mios/agents/.venv/bin/python3, /usr/libexec/mios/user-setup.sh, mios-overlay, mios-qcow2-XXXXXX
+# AI-related: ./tools/lib/userenv.sh, /usr/libexec/mios/flight-control.sh, /usr/share/mios/build-logs/latest-build.log, /etc/mios/install.env, /usr/libexec/mios/mios-credential, /usr/lib/mios/agent-pipe, /usr/lib/mios/agents/.venv/bin/python3, /usr/libexec/mios/user-setup.sh, mios-overlay, mios-qcow2-XXXXXX
 
 _load_env := `bash -c 'source ./tools/lib/userenv.sh 2>/dev/null || true'`
 _agreement_banner := `bash -c '
@@ -468,13 +468,9 @@ forge:
     fi
     @echo "  Web UI:         http://localhost:${MIOS_PORTS_FORGE_HTTP:-3000}/"
     @echo "  git+ssh:        ssh://git@localhost:${MIOS_PORTS_FORGE_SSH:-2222}/<user>/<repo>.git"
-    @echo "  Admin user:     $(grep -E '^MIOS_FORGE_ADMIN_USER=' /etc/mios/install.env 2>/dev/null | cut -d= -f2- | tr -d '\"' || echo '(check /etc/mios/install.env)')"
-    @echo "  Admin email:    $(grep -E '^MIOS_FORGE_ADMIN_EMAIL=' /etc/mios/install.env 2>/dev/null | cut -d= -f2- | tr -d '\"' || echo '(check /etc/mios/install.env)')"
-    @if [ -r /etc/mios/forge/admin-password ]; then \
-        echo "  Initial pwd:    sudo cat /etc/mios/forge/admin-password"; \
-    else \
-        echo "  Initial pwd:"; \
-    fi
+    @echo "  Admin user:     $(/usr/libexec/mios/mios-credential identity username 2>/dev/null || echo '([identity].username in mios.toml)')"
+    @echo "  Admin email:    $(/usr/libexec/mios/mios-credential identity email 2>/dev/null || echo '([identity].email in mios.toml)')"
+    @echo "  Password:       the operator credential saved in mios.html (sudo mios-credential apply --check forge)"
     @echo "  Local push:     git remote add origin http://localhost:${MIOS_PORTS_FORGE_HTTP:-3000}/<user>/<repo>.git && git push origin main"
 
 rechunk-conv: build

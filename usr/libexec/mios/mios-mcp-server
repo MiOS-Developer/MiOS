@@ -2464,8 +2464,84 @@ def _project_agent_card(agent_id: str, cfg: dict | None = None) -> dict:
     return card
 
 
+def _snapshot_directory():
+    """[portal.status].snapshot_dir as vendor+host set it, where the Portal status view reads producer
+    snapshots: a user tier never moves it (mios_pipe.portal_spec pins it the same way)."""
+    vendor, vendor_d, host, host_d, _user, _user_d = mios_toml._tier_dirs()
+    layers = [vendor, *mios_toml._frags(vendor_d), host, *mios_toml._frags(host_d)]
+    directory = Path(mios_toml.load_merged(layers=layers)["portal"]["status"]["snapshot_dir"])
+    if not directory.is_absolute():
+        raise ValueError("[portal.status].snapshot_dir must be absolute")
+    return directory
+
+
+# The fields the Portal status view reads (mios_pipe/portal_status.py). Every mios-ai
+# member can read the published snapshot, so nothing else leaves the owner: no state
+# paths, pids, expiries, pane commands, sockets, messages or evidence.
+_PUBLISH_FIELDS = {
+    "agents": ("agent_id", "kind", "label", "online", "stale", "pending", "parent_agent_id", "node",
+               "session_name", "source"),
+    "subagents": ("agent_id", "pane", "parent_pane", "agent_kind", "role", "session_name", "source"),
+    "sources": ("kind", "source", "state"),
+}
+
+
+def _publish_source(value):
+    """A row's source as published: 'local' for this caller's own relay (its state
+    path), and only the federation member id for a remote row (its origin path stays here)."""
+    if not isinstance(value, str) or not value or value.startswith("/"):
+        return "local"
+    return value.split("/", 1)[0]
+
+
+def _publishable(frame):
+    """The observation frame reduced to the fields the Portal status view reads."""
+    out = {"schema": frame.get("schema"), "ts": frame.get("ts")}
+    for key, fields in _PUBLISH_FIELDS.items():
+        rows = []
+        for row in frame.get(key) or []:
+            if isinstance(row, dict):
+                kept = {name: row[name] for name in fields if name in row}
+                if "source" in kept:
+                    kept["source"] = _publish_source(kept["source"])
+                rows.append(kept)
+        out[key] = rows
+    return out
+
+
+def _publish_frame(frame, directory):
+    """Write the publishable part of a frame to <directory>/agents-<uid>.json for the Portal
+    status view: a random same-directory temporary file, fsync, rename, mode 0640 whatever
+    the umask (read through the directory's mios-ai group, bound to this uid). A failed
+    write raises OSError and leaves no partial file."""
+    target = directory / f"agents-{os.getuid()}.json"
+    fd, name = tempfile.mkstemp(dir=directory, prefix=f".agents-{os.getuid()}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o640)
+            json.dump(_publishable(frame), handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return target
+
+
+def _publish_failure(directory, error):
+    return (f"mios agents: cannot publish the observation frame to {directory}: "
+            f"{error.strerror or 'write failed'}\n")
+
+
 def _agent_cli_main(args):
     cfg = _agent_cli_config()
+    publish = "--publish" in args
+    if publish:
+        args = [arg for arg in args if arg != "--publish"]
+        if args not in (["--observe"], ["--observe-stream"]):
+            raise ValueError("--publish is valid only with --observe or --observe-stream")
     if args == ["--observe-stream"]:
         async def stream():
             import mios_mcp_federation
@@ -2475,11 +2551,25 @@ def _agent_cli_main(args):
                 config["observation"]["refresh_s"], config["max_state_bytes"])
             loop = asyncio.get_running_loop()
             loop.add_signal_handler(signal.SIGTERM, asyncio.current_task().cancel)
+            directory = _snapshot_directory() if publish else None
+            reported = None
             try:
                 inventory.start_background()
                 while True:
                     local = await asyncio.to_thread(_agent_relay_call, "mios_agent_observe", {"scope": "local"})
-                    print(json.dumps(inventory.snapshot(local)), flush=True)
+                    if not publish:
+                        print(json.dumps(inventory.snapshot(local)), flush=True)
+                    else:
+                        # A missing or unwritable directory is reported once and retried on every
+                        # frame, so the stream recovers as soon as tmpfiles creates the directory.
+                        try:
+                            await asyncio.to_thread(_publish_frame, inventory.snapshot(local), directory)
+                            reported = None
+                        except OSError as error:
+                            if error.strerror != reported:
+                                sys.stderr.write(_publish_failure(directory, error))
+                                sys.stderr.flush()
+                            reported = error.strerror
                     await asyncio.sleep(config["observation"]["refresh_s"])
             finally:
                 await inventory.close()
@@ -2506,7 +2596,16 @@ def _agent_cli_main(args):
                     return inventory.snapshot(local)
                 finally:
                     await federation.close()
-            print(json.dumps(asyncio.run(global_observation())))
+            frame = asyncio.run(global_observation())
+            if not publish:
+                print(json.dumps(frame))
+                return 0
+            directory = _snapshot_directory()
+            try:
+                print(json.dumps({"published": str(_publish_frame(frame, directory))}))
+            except OSError as error:
+                sys.stderr.write(_publish_failure(directory, error))
+                return 1
             return 0
         return _run_monitor_ui("agents")
     if args == ["--install"]:
@@ -2520,7 +2619,8 @@ def _agent_cli_main(args):
         print(json.dumps(card, indent=2))
         return 0
     if args:
-        raise ValueError("Usage: mios agents [--install | --observe | --watch | --card <id>]")
+        raise ValueError("Usage: mios agents [--install | --observe [--publish] | --observe-stream [--publish] "
+                         "| --watch | --card <id>]")
     rows = []
     for row in cfg["tools"]:
         native = Path("/usr/bin") / row["name"]

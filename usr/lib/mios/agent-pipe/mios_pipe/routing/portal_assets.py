@@ -1,5 +1,5 @@
-# AI-hint: Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page and the iOS embed test page, split out of portal.py.
-# AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py, usr/lib/mios/agent-pipe/test_mios_portal.py, usr/share/mios/portal
+# AI-hint: Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page, the status & goals view script and the iOS embed test page, split out of portal.py.
+# AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py, usr/lib/mios/agent-pipe/test_mios_portal.py, usr/share/mios/portal, usr/lib/mios/agent-pipe/mios_pipe/portal_status.py
 # AI-doc: usr/share/doc/mios/manual/routing.md
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ _PORTAL_MANIFEST = json.dumps({
     ],
 })
 _PORTAL_SW = (
-    "var C='mios-portal-v18';\n"
+    "var C='mios-portal-v19';\n"
     "var SHELL=['/login','/portal/icon.svg','/portal/icon-192.png',"
     "'/portal/icon-512.png','/portal/manifest.webmanifest'];\n"
     "self.addEventListener('install',function(e){self.skipWaiting();"
@@ -53,9 +53,9 @@ _PORTAL_SW = (
     "return self.clients.claim();}));});\n"
     "// Navigations are ALWAYS network (never cached) so the portal HTML can\n"
     "// never go stale in an installed PWA; static assets are cached for\n"
-    "// offline + installability.\n"
+    "// offline + installability; /portal/status* is live data, never cached.\n"
     "self.addEventListener('fetch',function(e){var req=e.request;"
-    "if(req.method!=='GET')return;"
+    "if(req.method!=='GET'||new URL(req.url).pathname.indexOf('/portal/status')===0)return;"
     "if(req.mode==='navigate'){"
     "e.respondWith(fetch(req).catch(function(){return caches.match('/login');}));return;}"
     "e.respondWith(fetch(req).then(function(r){"
@@ -174,3 +174,86 @@ header b{color:#F35C15}
   <div class="frame f-hidden"><object data="data:text/html,<body style='margin:0;height:100%25;display:flex;align-items:center;justify-content:center;background:%23ff6e40;color:%23000;font:800 30px sans-serif'>INSIDE F</body>"></object></div></div>
 <div class="gap">&#8595; end &#8595;</div>
 </body></html>"""
+
+# The one status & goals renderer (GET /portal/status.js), mounted into #statussec by the dashboard
+# and by mios.html via MiosStatus.mount: createElement/textContent only, a relative URL, refresh_s
+# cadence. portal_status.status_js sets RETRY_MAX_S, the first-poll backoff cap.
+_PORTAL_STATUS_JS = r"""(function(){"use strict";
+var RETRY_MAX_S=0;
+var DEFAULT={card:"card",up:"up",down:"down",row:"row",name:"name",dot:"dot",kv:"kv",meta:"meta"};
+function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;
+  if(text!=null)e.textContent=String(text);return e;}
+function tone(s){return s==="ok"?"ok":((s==="refused"||s==="corrupt"||s==="unavailable"||s==="failed")?"bad":"");}
+function ago(s){return s==null?"-":(s<120?s+"s ago":Math.round(s/60)+"m ago");}
+function cut(s,n){s=String(s==null?"":s);return s.length>n?s.slice(0,n-1)+"…":s;}
+function clock(ms){return new Date(ms).toLocaleTimeString();}
+function verdict(p){return p===true?"pass":(p===false?"fail":"not evaluated");}
+function render(j,ui){var c=ui.cls,g=ui.grid;
+  function card(title,state){var t=tone(state),k=el("div",c.card+(t==="ok"&&c.up?" "+c.up:(t==="bad"&&c.down?" "+c.down:"")));
+    k.style.cursor="default";var r=el("div",c.row);r.appendChild(el("span",c.name,title));
+    r.appendChild(el("span",c.dot+" "+t));k.appendChild(r);g.appendChild(k);return k;}
+  function kv(k,v){var d=el("div",c.kv);d.appendChild(el("b",null,k));
+    d.appendChild(el("code",null,(v==null||v==="")?"-":v));return d;}
+  g.textContent="";
+  (j.nodes||[]).forEach(function(n){var k=card(n.name+(n.local?" (this node)":""),n.state==="unknown"?"":n.state);
+    k.appendChild(kv("State",n.state));k.appendChild(kv("MiOS",n.mios_version));
+    k.appendChild(kv("Git",n.git_branch?(n.git_branch+" @ "+cut(n.git_head||"?",13)):cut(n.git_head,13)));
+    k.appendChild(kv("Dirty",n.git_dirty));k.appendChild(kv("bootc",n.bootc_state));
+    if(n.booted_image)k.appendChild(kv("Booted",n.booted_image));
+    if(n.staged_image)k.appendChild(kv("Staged",n.staged_image));
+    k.appendChild(kv("Image",n.image_ref));k.appendChild(kv("Profile",n.profile));
+    k.appendChild(kv("OS",n.os_version));k.appendChild(kv("Spec",ago(n.spec_age_s)));});
+  var a=j.agents||{},ak=card("Agents (MiOS-MCP relay)",a.state);
+  ak.appendChild(kv("Registered",a.total));ak.appendChild(kv("Online",a.online+" (lease-based)"));
+  ak.appendChild(kv("Queued",a.pending));ak.appendChild(kv("Frame",ago(a.age_s)));
+  (a.rows||[]).forEach(function(r){var st=r.online===true?"online":(r.online===false?"offline":"unknown");
+    ak.appendChild(kv(cut(r.label||r.agent_id,24),(r.subagent?"sub · ":"")+r.kind+" · "+st+
+      (r.pending?" · "+r.pending+" queued":"")+(r.source!=="local"?" · "+r.source:"")));});
+  (a.sources||[]).forEach(function(s){if(s.source!=="local")ak.appendChild(kv("Peer "+s.source,s.presence));});
+  var o=j.goal;
+  if(!o)card("Goal","absent").appendChild(el("div",c.kv,"no active goal record"));
+  else{var gk=card("Goal · "+o.status,o.status==="COMPLETED"?"ok":"");
+    gk.appendChild(el("div",c.kv,cut(o.objective,280)));gk.appendChild(kv("Stop when",cut(o.stopping_condition,200)));
+    (o.criteria||[]).forEach(function(k){gk.appendChild(kv(k.id,verdict(k.passed)+" · "+cut(k.description,140)));});
+    gk.appendChild(el("div",c.meta,"criteria as last recorded, not live"));}
+  (j.goals||[]).forEach(function(d){var tk=card(cut(d.title,60),"");
+    (d.conditions||[]).forEach(function(k){tk.appendChild(kv(k.id,cut(k.condition,140)));});
+    tk.appendChild(el("div",c.meta,"declared target · "+d.path));});
+  var t=j.tasks||{},b=t.by_status||{},kk=card("Tasks",t.state);
+  ["in_progress","pending","completed","incomplete","cancelled","other"].forEach(function(k){kk.appendChild(kv(k,b[k]));});
+  kk.appendChild(kv("Overrides",t.overrides));if(t.invalid_lines)kk.appendChild(kv("Invalid lines",t.invalid_lines));
+  (t.in_progress||[]).forEach(function(r){kk.appendChild(kv("doing",cut((r.priority?r.priority+" ":"")+r.title,120)));});
+  (t.ready||[]).forEach(function(r){kk.appendChild(kv("next",cut((r.priority?r.priority+" ":"")+r.title,120)));});
+  var sv=j.services||[],known=sv.filter(function(s){return s.active!=="unknown";});
+  if(sv.length){var sk=card("Critical services",!known.length?"":(known.some(function(s){return s.active!=="active";})?"failed":"ok"));
+    sv.forEach(function(s){sk.appendChild(kv(s.name,s.active));});}
+  var src=card("Sources","");
+  (j.sources||[]).forEach(function(s){src.appendChild(kv(s.name,s.state+" · "+s.detail+(s.age_s!=null?" · "+ago(s.age_s):"")));});
+  if(ui.ver){var local=(j.nodes||[]).filter(function(n){return n.local;})[0];
+    ui.ver.textContent=local&&local.mios_version?local.mios_version:"";}}
+function mount(ui){var c={},k,timer=null,every=0,retry=0,last=null,okAt=0;
+  for(k in DEFAULT)c[k]=ui.cls&&ui.cls[k]!=null?ui.cls[k]:DEFAULT[k];ui.cls=c;
+  function mark(since){ui.grid.style.opacity=since==null?"":"0.5";
+    if(ui.note&&last)ui.note.textContent=last.node+" · "+(since==null?clock(last.ts*1000):"stale since "+clock(since));}
+  function schedule(s){if(timer){clearTimeout(timer);timer=null;}
+    if(s>0&&!document.hidden)timer=setTimeout(tick,s*1000);}
+  function failed(){if(last){mark(okAt);schedule(every);return;}
+    retry=Math.min(retry?retry*2:1,RETRY_MAX_S);schedule(retry);}
+  function tick(){timer=null;fetch("/portal/status",{credentials:"same-origin",cache:"no-store"})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(j){if(!j||j.object!=="mios.portal.status")return failed();
+      last=j;okAt=Date.now();retry=0;every=j.refresh_s>0?j.refresh_s:0;render(j,ui);
+      mark(j.stale_after_s>0&&Date.now()/1000-j.ts>j.stale_after_s?j.ts*1000:null);
+      if(ui.reveal)ui.reveal();schedule(every);})
+    .catch(failed);}
+  document.addEventListener("visibilitychange",function(){
+    if(document.hidden){if(timer){clearTimeout(timer);timer=null;}}else if(!timer)tick();});
+  tick();return {tick:tick};}
+window.MiosStatus={mount:mount};
+var sec=document.getElementById("statussec");
+if(sec){var head=el("div","h"),note=el("span","n"),grid=el("div","grid");
+  head.appendChild(el("h2","ac-ok","Status & Goals"));head.appendChild(note);
+  sec.textContent="";sec.appendChild(head);sec.appendChild(grid);
+  mount({grid:grid,note:note,ver:document.getElementById("mios-ver"),reveal:function(){sec.hidden=false;}});}
+})();
+"""

@@ -5,11 +5,9 @@ Description='MiOS' Forge first-boot admin-bootstrap (Forgejo)
 Documentation=https://github.com/mios-dev/MiOS/blob/main/etc/containers/systemd/mios-forge.container
 After=mios-forge.service network-online.target
 Wants=mios-forge.service network-online.target
-# /etc/mios/install.env is the optional layered-TOML resolver output
-# from mios-sync-env. The firstboot script tolerates its absence:
-# admin user, email, password all resolve from MIOS_DEFAULT_* or
-# fall back to "mios" / mios@hostname.local. Keep the unit gated only
-# by the firstboot sentinel.
+# The admin identity and password come from the SSOT tier mios.html saves,
+# through mios-credential -- never install.env, a literal or a generated value.
+# Keep the unit gated only by the firstboot sentinel.
 ConditionPathExists=!/var/lib/mios/forge/.firstboot-done
 # Forgejo bootstrap MUST run on WSL too (the localhost:3000 git origin
 # is the heart of the MiOS self-replication loop on every shape). A
@@ -53,8 +51,9 @@ RestartSec=30
 # ConditionPathExists guards. Operator-confirmed regression 2026-05-14.
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/etc/mios/forge /var/lib/mios/forge /var/log/mios/forge /var/lib/containers /run
+# read-only, not hidden: mios-credential reads the operator's ~/.config/mios/mios.toml.
+ProtectHome=read-only
+ReadWritePaths=/etc/mios/forge /var/lib/mios/forge /var/log/mios/forge /var/lib/mios/credential-apply /var/lib/containers /run
 PrivateTmp=yes
 LockPersonality=yes
 RestrictRealtime=yes

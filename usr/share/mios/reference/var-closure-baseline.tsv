@@ -40,7 +40,7 @@
 #   FEWER is also a failure: fixing a name must be paid for by tightening this
 #   number in the same commit, which is how a ledger drains instead of settling.
 #
-#!ceiling 417
+#!ceiling 415
 #
 # name	sample location
 MIOS_ADMIT_ENABLE	usr/lib/mios/agent-pipe/server.py:663
@@ -147,11 +147,8 @@ MIOS_FORCE_COLOR	installation/mios-common.sh:43
 MIOS_FORCE_LEGACY_MIGRATE	build-mios.ps1:424
 MIOS_FORCE_LEGACY_PACKAGES_MD	build-mios.ps1:2457
 MIOS_FORCE_VHDX_MIGRATE	build-mios.ps1:2421
-MIOS_FORGE_ADMIN_EMAIL	usr/libexec/mios/forge-firstboot.sh:35
 MIOS_FORGE_ADMIN_PASSWORD	usr/libexec/mios/forge-firstboot.sh:37
 MIOS_FORGE_ADMIN_USER	usr/libexec/mios/forge-firstboot.sh:33
-MIOS_FORGE_FORCE_FIRSTBOOT	usr/libexec/mios/forge-firstboot.sh:91
-MIOS_FORGE_INITIAL_REPO	usr/libexec/mios/forge-firstboot.sh:96
 MIOS_GATE_BIN	automation/98-drift-checks.sh:105
 MIOS_GEN_BIN	tools/sync-generated.sh:6
 MIOS_GETMIOS_FILE_RELAUNCHED	Get-MiOS.ps1:83
@@ -276,6 +273,7 @@ MIOS_OMP_THEME	etc/profile.d/mios-prompt.sh:24
 MIOS_ONLINE_BUILD	automation/05-repos.sh:52
 MIOS_OPENCODE_HOST	usr/lib/mios/agents/opencode-gateway/server.py:30
 MIOS_OPENCODE_TIMEOUT	usr/lib/mios/agents/opencode-gateway/server.py:33
+MIOS_OPERATOR_PASSWORD	usr/lib/mios/mios_credentials.py:309
 MIOS_OSCONTROL_EXECUTOR	usr/lib/mios/mios_oscontrol_client.py:17
 MIOS_OTEL_ENABLE	usr/lib/mios/agent-pipe/server.py:329
 MIOS_OTEL_ENDPOINT	usr/lib/mios/agent-pipe/server.py:341

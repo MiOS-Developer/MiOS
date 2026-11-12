@@ -1,0 +1,725 @@
+{
+ "type": "json_schema",
+ "name": "mios_portal_status",
+ "description": "Read-only MiOS status & goals snapshot served by GET /portal/status (agent-pipe Portal, behind _portal_authed) and rendered by the Portal dashboard and mios.html. Never carries tokens, token digests, message bodies, pane commands, transcripts, peer IPs, account names or identity secrets.",
+ "strict": true,
+ "schema": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+   "object",
+   "schema_version",
+   "ts",
+   "refresh_s",
+   "stale_after_s",
+   "node",
+   "nodes",
+   "agents",
+   "goal",
+   "goals",
+   "tasks",
+   "services",
+   "sources"
+  ],
+  "properties": {
+   "object": {
+    "type": "string",
+    "enum": [
+     "mios.portal.status"
+    ]
+   },
+   "schema_version": {
+    "type": "string",
+    "enum": [
+     "1"
+    ]
+   },
+   "ts": {
+    "type": "integer",
+    "description": "unix seconds when the aggregate was built"
+   },
+   "refresh_s": {
+    "type": "integer",
+    "description": "[portal.status].refresh_s, the poll cadence for every client"
+   },
+   "stale_after_s": {
+    "type": "integer"
+   },
+   "node": {
+    "type": "string",
+    "description": "local Blade name (mios_pipe.scheduler.blades.local_blade_name)"
+   },
+   "nodes": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "name",
+      "local",
+      "state",
+      "mios_version",
+      "image_ref",
+      "image_branch",
+      "profile",
+      "os_version",
+      "git_head",
+      "git_branch",
+      "git_dirty",
+      "bootc_state",
+      "booted_image",
+      "booted_digest",
+      "staged_image",
+      "rollback_image",
+      "spec_age_s"
+     ],
+     "properties": {
+      "name": {
+       "type": "string"
+      },
+      "local": {
+       "type": "boolean"
+      },
+      "state": {
+       "type": "string",
+       "enum": [
+        "ok",
+        "stale",
+        "unknown"
+       ]
+      },
+      "mios_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "image_ref": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "configured [image].ref, shown as configured"
+      },
+      "image_branch": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "profile": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "os_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "git_head": {
+       "type": [
+        "string",
+        "null"
+       ],
+       "description": "40-hex commit of the repo_root work tree"
+      },
+      "git_branch": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "git_dirty": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "bootc_state": {
+       "type": "string",
+       "enum": [
+        "booted",
+        "not-bootc",
+        "unavailable",
+        "unknown"
+       ]
+      },
+      "booted_image": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "booted_digest": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "staged_image": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "rollback_image": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "spec_age_s": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      }
+     }
+    }
+   },
+   "agents": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "state",
+     "age_s",
+     "total",
+     "online",
+     "pending",
+     "rows",
+     "sources"
+    ],
+    "properties": {
+     "state": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "absent",
+       "stale",
+       "corrupt",
+       "refused",
+       "unavailable"
+      ]
+     },
+     "age_s": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "total": {
+      "type": "integer"
+     },
+     "online": {
+      "type": "integer"
+     },
+     "pending": {
+      "type": "integer"
+     },
+     "rows": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "agent_id",
+        "kind",
+        "label",
+        "online",
+        "pending",
+        "parent_agent_id",
+        "node",
+        "session_name",
+        "source",
+        "subagent"
+       ],
+       "properties": {
+        "agent_id": {
+         "type": "string"
+        },
+        "kind": {
+         "type": "string"
+        },
+        "label": {
+         "type": "string",
+         "description": "control/bidi stripped, <=160 chars"
+        },
+        "online": {
+         "type": [
+          "boolean",
+          "null"
+         ],
+         "description": "null = presence unknown (failed peer, or a frame older than stale_after_s)"
+        },
+        "pending": {
+         "type": "integer"
+        },
+        "parent_agent_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "node": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "session_name": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "source": {
+         "type": "string"
+        },
+        "subagent": {
+         "type": "boolean"
+        }
+       }
+      }
+     },
+     "sources": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "source",
+        "presence"
+       ],
+       "properties": {
+        "source": {
+         "type": "string"
+        },
+        "presence": {
+         "type": "string",
+         "enum": [
+          "local",
+          "reachable",
+          "unknown"
+         ]
+        }
+       }
+      }
+     }
+    }
+   },
+   "goal": {
+    "anyOf": [
+     {
+      "type": "null"
+     },
+     {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "path",
+       "objective",
+       "stopping_condition",
+       "status",
+       "created_at",
+       "completed_at",
+       "evaluated",
+       "criteria",
+       "non_goals"
+      ],
+      "properties": {
+       "path": {
+        "type": "string"
+       },
+       "objective": {
+        "type": "string"
+       },
+       "stopping_condition": {
+        "type": "string"
+       },
+       "status": {
+        "type": "string"
+       },
+       "created_at": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "completed_at": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "evaluated": {
+        "type": "string",
+        "enum": [
+         "recorded"
+        ],
+        "description": "criteria are the last goal.py eval record; the Portal never executes them"
+       },
+       "criteria": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "id",
+          "criterion_type",
+          "description",
+          "passed",
+          "details"
+         ],
+         "properties": {
+          "id": {
+           "type": "string"
+          },
+          "criterion_type": {
+           "type": "string"
+          },
+          "description": {
+           "type": "string"
+          },
+          "passed": {
+           "type": [
+            "boolean",
+            "null"
+           ],
+           "description": "null = never evaluated (goal.py recorded no details yet)"
+          },
+          "details": {
+           "type": [
+            "string",
+            "null"
+           ]
+          }
+         }
+        }
+       },
+       "non_goals": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      }
+     }
+    ]
+   },
+   "goals": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "path",
+      "title",
+      "conditions"
+     ],
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "title": {
+       "type": "string"
+      },
+      "conditions": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "id",
+         "condition"
+        ],
+        "properties": {
+         "id": {
+          "type": "string"
+         },
+         "condition": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    },
+    "description": "declared target finished states from GOALS*.md; no machine status"
+   },
+   "tasks": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "state",
+     "total",
+     "by_status",
+     "overrides",
+     "invalid_lines",
+     "in_progress",
+     "ready"
+    ],
+    "properties": {
+     "state": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "absent",
+       "corrupt",
+       "unavailable"
+      ]
+     },
+     "total": {
+      "type": "integer"
+     },
+     "by_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "pending",
+       "in_progress",
+       "completed",
+       "incomplete",
+       "cancelled",
+       "other"
+      ],
+      "properties": {
+       "pending": {
+        "type": "integer"
+       },
+       "in_progress": {
+        "type": "integer"
+       },
+       "completed": {
+        "type": "integer"
+       },
+       "incomplete": {
+        "type": "integer"
+       },
+       "cancelled": {
+        "type": "integer"
+       },
+       "other": {
+        "type": "integer"
+       }
+      }
+     },
+     "overrides": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "description": "TASKS.md override count from `mios-task check --json`; the histogram is the raw ledger"
+     },
+     "invalid_lines": {
+      "type": "integer"
+     },
+     "in_progress": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/task_row"
+      }
+     },
+     "ready": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/task_row"
+      }
+     }
+    }
+   },
+   "services": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "name",
+      "unit",
+      "active"
+     ],
+     "properties": {
+      "name": {
+       "type": "string"
+      },
+      "unit": {
+       "type": "string"
+      },
+      "active": {
+       "type": "string",
+       "enum": [
+        "active",
+        "inactive",
+        "failed",
+        "activating",
+        "deactivating",
+        "unknown"
+       ]
+      }
+     }
+    }
+   },
+   "sources": {
+    "type": "array",
+    "items": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "name",
+      "state",
+      "detail",
+      "age_s"
+     ],
+     "properties": {
+      "name": {
+       "type": "string",
+       "enum": [
+        "agents",
+        "spec",
+        "goal",
+        "goals",
+        "tasks",
+        "services"
+       ]
+      },
+      "state": {
+       "type": "string",
+       "enum": [
+        "ok",
+        "absent",
+        "stale",
+        "corrupt",
+        "refused",
+        "unavailable"
+       ]
+      },
+      "detail": {
+       "type": "string",
+       "description": "fixed reason vocabulary, never an exception string or path outside repo_root"
+      },
+      "age_s": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      }
+     }
+    }
+   }
+  },
+  "$defs": {
+   "task_row": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "number",
+     "title",
+     "priority",
+     "owner"
+    ],
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "number": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "title": {
+      "type": "string"
+     },
+     "priority": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "owner": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    }
+   },
+   "spec_snapshot": {
+    "description": "/run/mios/status/spec.json written by the mios-podman-ps.service ExecStopPost (root, 0640 root:mios-ai)",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "schema",
+     "ts",
+     "git_dirty",
+     "bootc"
+    ],
+    "properties": {
+     "schema": {
+      "type": "string",
+      "enum": [
+       "mios.status.spec.v1"
+      ]
+     },
+     "ts": {
+      "type": "integer"
+     },
+     "git_dirty": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "bootc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "state",
+       "booted_image",
+       "booted_digest",
+       "staged_image",
+       "rollback_image"
+      ],
+      "properties": {
+       "state": {
+        "type": "string",
+        "enum": [
+         "booted",
+         "not-bootc",
+         "unavailable"
+        ]
+       },
+       "booted_image": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "booted_digest": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "staged_image": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "rollback_image": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

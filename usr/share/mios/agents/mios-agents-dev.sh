@@ -6,7 +6,7 @@ REPO_SRC="$(cd ../../../.. && pwd)"               # repo root
 IMG=localhost/mios-agents:dev
 NAME=mios-agents-dev
 PORT="${MIOS_AGENTS_PORT:-8800}"                  # IDE port (takes over the mios-agents endpoint)
-PASS="${MIOS_AGENTS_PASSWORD:-mios}"
+PASS="${MIOS_AGENTS_PASSWORD:?set MIOS_AGENTS_PASSWORD (the dev IDE login -- there is no default)}"
 WORK="${MIOS_FRONTIER_WORKSPACE:-$HOME/MiOS}"     # NATIVE ext4 workspace (container-writable)
 
 echo ">> build $IMG from the repo"

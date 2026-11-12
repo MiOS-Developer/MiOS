@@ -46,23 +46,308 @@ def _frags(dirpath):
     return sorted(glob.glob(os.path.join(dirpath, "*.toml")),
                   key=os.path.basename)
 
-def _tier_dirs():
+def _tier_dirs(environ=None):
     """(vendor, vendor_d, host, host_d, user, user_d) resolved from the env at
     CALL time. Vendor FRAGMENTS live in /usr/lib/mios/mios.d (Law 1 USR-OVER-ETC
     + systemd's /usr/lib vendor convention), NOT beside the /usr/share monolith;
-    admin/user fragments sit in a mios.d/ beside their monolith."""
-    root = os.environ.get("MIOS_TOML_ROOT", "")
-    vendor = os.environ.get("MIOS_VENDOR_TOML") or os.environ.get("MIOS_TOML") or _default_vendor(root)
-    host = os.environ.get("MIOS_HOST_TOML", "/etc/mios/mios.toml")
-    user = os.environ.get("MIOS_USER_TOML") or os.path.join(
-        os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "mios/mios.toml")
-    vendor_d = os.environ.get("MIOS_VENDOR_TOML_D") or (
+    admin/user fragments sit in a mios.d/ beside their monolith. `environ`
+    overlays os.environ for one call (a caller retargeting MIOS_*_TOML inputs)."""
+    env = dict(os.environ)
+    env.update(environ or {})
+    root = env.get("MIOS_TOML_ROOT", "")
+    vendor = env.get("MIOS_VENDOR_TOML") or env.get("MIOS_TOML") or _default_vendor(root)
+    host = env.get("MIOS_HOST_TOML", "/etc/mios/mios.toml")
+    user = env.get("MIOS_USER_TOML") or os.path.join(
+        env.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "mios/mios.toml")
+    vendor_d = env.get("MIOS_VENDOR_TOML_D") or (
         os.path.join(root, "usr/lib/mios/mios.d") if root else "/usr/lib/mios/mios.d")
-    host_d = os.environ.get("MIOS_HOST_TOML_D") or os.path.join(os.path.dirname(host), "mios.d")
-    user_d = os.environ.get("MIOS_USER_TOML_D") or os.path.join(os.path.dirname(user), "mios.d")
+    host_d = env.get("MIOS_HOST_TOML_D") or os.path.join(os.path.dirname(host), "mios.d")
+    user_d = env.get("MIOS_USER_TOML_D") or os.path.join(os.path.dirname(user), "mios.d")
     return vendor, vendor_d, host, host_d, user, user_d
 
-def layer_paths():
+def _uid_min(path="/etc/login.defs"):
+    """login.defs UID_MIN (the first human uid), else the shadow-utils default."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == "UID_MIN" and parts[1].isdigit():
+                    return int(parts[1])
+    except OSError:
+        pass
+    return 1000
+
+class LayerError(ValueError):
+    """A layer the caller depends on exists but cannot be read or parsed, or the
+    operator tier cannot be located: the caller fails closed and writes nothing."""
+
+def load_strict(paths):
+    """deep_merge of every EXISTING path, lowest first. An absent path is skipped;
+    one that exists but is not a readable regular file that parses raises LayerError
+    naming the file (never its content) -- unlike _load_one, which degrades to {}."""
+    if _toml is None:
+        raise LayerError("no TOML parser (tomllib/tomli) is available")
+    merged = {}
+    for p in paths:
+        if not p or not os.path.lexists(p):
+            continue
+        if not os.path.isfile(p):
+            raise LayerError(f"{p}: not a regular file")
+        try:
+            with open(p, "rb") as fh:
+                layer = _toml.load(fh)
+        except OSError as exc:
+            raise LayerError(f"{p}: unreadable ({exc.strerror})") from None
+        except Exception:  # noqa: BLE001 -- any parse failure is a broken layer
+            raise LayerError(f"{p}: does not parse as TOML") from None
+        deep_merge(merged, normalize_mons_layer(layer))
+    return merged
+
+OPERATOR_MAX_BYTES = 1 << 20   # a mios.html tier is a few KiB; root never reads an unbounded file
+
+def _read_owned(dfd, name, path, uids):
+    """The bytes of `name` in dir fd `dfd`, or None when absent: never through a link,
+    never blocking on a FIFO, a regular singly linked file owned by one of `uids`, at
+    most OPERATOR_MAX_BYTES. Anything else raises LayerError naming the file."""
+    import stat as _stat
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise LayerError(f"{path}: a symlink or unreadable ({exc.strerror})") from None
+    try:
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise LayerError(f"{path}: not a regular, singly linked file")
+        if st.st_uid not in uids:
+            raise LayerError(f"{path}: owned by uid {st.st_uid}, not by the operator")
+        chunks, total = [], 0
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                return b"".join(chunks)
+            total += len(chunk)
+            if total > OPERATOR_MAX_BYTES:
+                raise LayerError(f"{path}: larger than {OPERATOR_MAX_BYTES} bytes")
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+def load_operator_strict(op_file, uid):
+    """load_strict for ROOT reading <home>/.config/mios/mios.toml and its mios.d, a tree
+    the operator uid writes: the home is opened as given (root made the path to it),
+    then each component below it with O_NOFOLLOW, and every file through _read_owned
+    (owner: the operator or root). An absent .config/mios is an empty tier."""
+    if _toml is None:
+        raise LayerError("no TOML parser (tomllib/tomli) is available")
+    cfg_dir = os.path.dirname(op_file)
+    home = os.path.dirname(os.path.dirname(cfg_dir))
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    try:
+        dfd = os.open(home, flags)
+    except OSError as exc:
+        raise LayerError(f"{home}: the operator's home is not readable ({exc.strerror})") from None
+    uids, merged = {uid, 0}, {}
+
+    def parse(raw, path):
+        try:
+            return normalize_mons_layer(_toml.loads(raw.decode("utf-8")))
+        except Exception:  # noqa: BLE001 -- any decode/parse failure is a broken layer
+            raise LayerError(f"{path}: does not parse as TOML") from None
+
+    def subdir(fd, name, path):
+        try:
+            return os.open(name, flags | os.O_NOFOLLOW, dir_fd=fd)
+        except FileNotFoundError:
+            return -1
+        except OSError as exc:
+            raise LayerError(f"{path}: a symlink or not a directory ({exc.strerror})") from None
+    try:
+        for part, path in ((".config", os.path.dirname(cfg_dir)), ("mios", cfg_dir)):
+            nxt = subdir(dfd, part, path)
+            if nxt < 0:
+                return merged
+            os.close(dfd)
+            dfd = nxt
+        raw = _read_owned(dfd, os.path.basename(op_file), op_file, uids)
+        if raw is not None:
+            deep_merge(merged, parse(raw, op_file))
+        ddfd = subdir(dfd, "mios.d", os.path.join(cfg_dir, "mios.d"))
+        if ddfd >= 0:
+            try:
+                for name in sorted(n for n in os.listdir(ddfd) if n.endswith(".toml") and not n.startswith(".")):
+                    path = os.path.join(cfg_dir, "mios.d", name)
+                    raw = _read_owned(ddfd, name, path, uids)
+                    if raw is not None:
+                        deep_merge(merged, parse(raw, path))
+            finally:
+                os.close(ddfd)
+    finally:
+        os.close(dfd)
+    return merged
+
+def _dotted_get(data, dotted):
+    cur = data
+    for part in dotted.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+def _dotted_set(data, dotted, value):
+    *parents, leaf = dotted.split(".")
+    cur = data
+    for part in parents:
+        cur = cur.setdefault(part, {})
+    cur[leaf] = value
+
+def _expand_toggle(base, pattern):
+    """The dotted keys `pattern` names where its parent tables exist in base; a '*'
+    matches each sub-table base declares (the operator never creates a table)."""
+    out = [("", base)]
+    *parents, leaf = pattern.split(".")
+    for part in parents:
+        nxt = []
+        for prefix, node in out:
+            names = sorted(k for k, v in node.items() if isinstance(v, dict)) if part == "*" else [part]
+            nxt += [(f"{prefix}{n}.", node[n]) for n in names if isinstance(node.get(n), dict)]
+        out = nxt
+    return [f"{prefix}{leaf}" for prefix, _node in out]
+
+def _leaf_keys(data, prefix=""):
+    for k, v in data.items():
+        if isinstance(v, dict):
+            yield from _leaf_keys(v, f"{prefix}{k}.")
+        else:
+            yield f"{prefix}{k}"
+
+_CTRL = re.compile(r"[\x00-\x1f\x7f]")
+
+def operator_account(base, getpw=None):
+    """(username, home, uid) of the operator vendor/host [identity].username names, or LayerError."""
+    username = str(((base or {}).get("identity") or {}).get("username") or "").strip()
+    if not username:
+        raise LayerError("no [identity].username in the vendor/host tiers names the operator")
+    if getpw is None:
+        import pwd
+        getpw = pwd.getpwnam
+    try:
+        pw = getpw(username)
+    except (KeyError, OSError):
+        raise LayerError(f"operator account {username!r} (vendor/host [identity].username) is absent") from None
+    return username, pw.pw_dir, int(getattr(pw, "pw_uid", -1))
+
+def operator_inputs(getpw=None, euid=None, uid_min=None, base=None):
+    """(operator mios.toml, its mios.d, reason, system): the user tier mios.html writes.
+    MIOS_USER_TOML names it explicitly; a human caller (non-root, >= UID_MIN) keeps its
+    own; a system caller (root or a service uid, whose "~" is not the operator's) takes
+    [identity].username from the vendor + host tiers (base) ONLY and reads that account's
+    ~/.config/mios. No operator named, or the account absent: LayerError."""
+    euid = os.geteuid() if euid is None else euid
+    uid_min = _uid_min() if uid_min is None else uid_min
+    system = euid == 0 or euid < uid_min
+    explicit = os.environ.get("MIOS_USER_TOML")
+    if explicit:
+        user_d = os.environ.get("MIOS_USER_TOML_D") or os.path.join(os.path.dirname(explicit), "mios.d")
+        return explicit, user_d, "explicit MIOS_USER_TOML", system
+    if not system:
+        *_lower, user, user_d = _tier_dirs()
+        return user, user_d, "human caller's own tier", system
+    username, home, _uid = operator_account(base, getpw)
+    if not os.path.isdir(home):
+        # An absent operator file means "nothing saved yet"; an invisible HOME (a unit's
+        # ProtectHome=, an unmounted /var/home) would look the same, so it fails closed.
+        raise LayerError(f"operator {username!r}'s home is not visible to this process "
+                         "(absent, or hidden by the unit's ProtectHome=)")
+    cfg = os.path.join(home, ".config", "mios")
+    return os.path.join(cfg, "mios.toml"), os.path.join(cfg, "mios.d"), f"operator tier of {username!r}", system
+
+def base_view():
+    """The vendor + host tiers (with their mios.d) merged strictly, [ports] NOT yet
+    derived: what root code acts on that takes nothing from any user tier. A layer
+    that exists but does not parse, or no layer at all, raises LayerError."""
+    vendor, vendor_d, host, host_d, _user, _user_d = _tier_dirs()
+    base = load_strict([vendor] + _frags(vendor_d) + [host] + _frags(host_d))
+    if not base:
+        raise LayerError("no vendor/host mios.toml layer could be read")
+    return base
+
+def operator_view(getpw=None, euid=None, uid_min=None):
+    """(data, reason, taken) for code that acts on the operator's mios.html values.
+
+    A system caller (root, a service uid) merges the vendor + host tiers in full and
+    takes from the operator tier -- a file a lower-privileged uid writes -- ONLY what
+    vendor/host [security.operator_tier] allow: `values` (credential strings without
+    control characters) and `toggles` (booleans; '*' matches a table vendor/host
+    declare). Usernames, surface lists, paths, units, hosts, ports and public_host
+    therefore never come from the operator tier. A `values` key the operator set but
+    that is refused raises LayerError: the operator's credential is present but
+    unusable, and the vendor/host default must never replace it (a refused toggle
+    keeps the vendor/host value -- they default off). Root reads the operator's own
+    files through load_operator_strict (no link, owner, size cap). A human caller reads
+    its own tier in full (no privilege is crossed). Every existing layer must parse.
+    [ports] derive from [ports.categories] as load_merged does; no DB overlay.
+    `taken` lists the dotted keys the operator tier supplied."""
+    base = base_view()
+    op_file, op_d, reason, system = operator_inputs(getpw, euid, uid_min, base)
+    if system and not os.environ.get("MIOS_USER_TOML"):
+        op = load_operator_strict(op_file, operator_account(base, getpw)[2])
+    else:
+        op = load_strict([op_file] + _frags(op_d))
+    policy = (base.get("security") or {}).get("operator_tier") or {}
+    values, toggles = policy.get("values"), policy.get("toggles")
+    if not isinstance(values, list) or not isinstance(toggles, list):
+        raise LayerError("[security.operator_tier] values/toggles are missing from the vendor/host tiers")
+    taken = [d for d in values if isinstance(_dotted_get(op, d), str) and _dotted_get(op, d)]
+    if not system:
+        deep_merge(base, op)
+        return derive_ports(base), reason, frozenset(taken)
+    taken, refused = [], []
+    for dotted in values:
+        v = _dotted_get(op, dotted)
+        if v is None or v == "":
+            continue
+        if not isinstance(v, str) or _CTRL.search(v):
+            why = "control characters" if isinstance(v, str) else f"a {type(v).__name__}, not a string"
+            raise LayerError(f"{op_file}: the operator's {dotted} is refused ({why}) -- fix it in "
+                             "mios.html; no surface falls back to the vendor/host default")
+        _dotted_set(base, dotted, v)
+        taken.append(dotted)
+    for pattern in toggles:
+        for dotted in _expand_toggle(base, pattern):
+            v = _dotted_get(op, dotted)
+            if v is None:
+                continue
+            if not isinstance(v, bool):
+                refused.append(dotted)
+                continue
+            _dotted_set(base, dotted, v)
+            taken.append(dotted)
+    if refused:
+        reason += "; refused toggle(s) (not a boolean; the vendor/host value is kept): " + ", ".join(refused)
+    ignored = len(set(_leaf_keys(op)) - set(taken) - set(refused))
+    if ignored:
+        reason += f"; {ignored} other operator-tier key(s) ignored ([security.operator_tier] only)"
+    return derive_ports(base), reason, frozenset(taken)
+
+_EXPAND_CACHE = [None, None]
+
+def expand_refs(data, value):
+    """value with each ${MIOS_*} reference rendered exactly as install.env carries it
+    (emit_exports over `data`, cached for that dict). An unresolved one: LayerError."""
+    text = str(value)
+    if "${" not in text:
+        return text
+    if _EXPAND_CACHE[0] is not data:
+        _EXPAND_CACHE[0], _EXPAND_CACHE[1] = data, emit_exports(data)
+    exports = _EXPAND_CACHE[1]
+    out = re.sub(r"\$\{(MIOS_[A-Za-z0-9_]+)\}", lambda m: exports.get(m.group(1), m.group(0)), text)
+    if "${" in out:
+        raise LayerError(f"unresolved reference in {text!r}")
+    return out
+
+def layer_paths(environ=None):
     """The overlay layer paths, lowest precedence first, EXPANDED to include
     drop-in fragments. Resolved from the environment at CALL time (not import
     time) so a caller / test / CI on a non-FHS host can retarget a layer via
@@ -75,7 +360,7 @@ def layer_paths():
     can NEVER outrank a higher tier (the XDG/git-config scope model, not
     systemd's global flat sort). NO-OP when no mios.d/ exists: every _frags()
     glob is empty and this returns exactly [vendor, host, user] as before."""
-    vendor, vendor_d, host, host_d, user, user_d = _tier_dirs()
+    vendor, vendor_d, host, host_d, user, user_d = _tier_dirs(environ)
     return ([vendor] + _frags(vendor_d)
             + [host] + _frags(host_d)
             + [user] + _frags(user_d))

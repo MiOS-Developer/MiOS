@@ -194,7 +194,6 @@ usr/lib/systemd/system/mios-swarm-pack-firstboot.service
 usr/lib/systemd/system/mios-sync-theme.service
 usr/lib/systemd/system/mios-sys-env-refresh.service
 usr/lib/systemd/system/mios-ttyd-bash.service
-usr/lib/systemd/system/mios-ttyd-expose.service
 usr/lib/systemd/system/mios-ttyd-powershell.service
 usr/lib/systemd/system/mios-verify-root.service
 usr/lib/systemd/system/mios-verify.service
@@ -363,7 +362,6 @@ usr/libexec/mios/mios-theme-render
 usr/libexec/mios/mios-toml-get
 usr/libexec/mios/mios-tool-clone
 usr/libexec/mios/mios-tool-search
-usr/libexec/mios/mios-ttyd-expose
 usr/libexec/mios/mios-ttyd-launch
 usr/libexec/mios/mios-verify-launch
 usr/libexec/mios/mios-viking

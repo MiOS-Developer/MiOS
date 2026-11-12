@@ -1082,19 +1082,60 @@ pub mod server {
         }
 
         let mut secret_keys: Vec<String> = Vec::new();
+        let mut secret_paths: Vec<String> = Vec::new();
         if let Some(sec) = merged.get("security") {
             if let Some(sk) = sec.get("secret_keys") {
-                if let Some(arr) = sk.get("keys").and_then(|v| v.as_array()) {
-                    for item in arr {
-                        if let Some(s) = item.as_str() {
-                            secret_keys.push(s.to_string());
+                for (name, sink) in [("keys", &mut secret_keys), ("paths", &mut secret_paths)] {
+                    if let Some(arr) = sk.get(name).and_then(|v| v.as_array()) {
+                        for item in arr {
+                            if let Some(s) = item.as_str() {
+                                sink.push(s.to_string());
+                            }
                         }
                     }
                 }
             }
         }
 
+        // [security.secret_keys].paths: a bare key name such as default_password
+        // is too common to match, so those secrets are named by dotted path --
+        // the same list, in the same order, as agent-pipe's redact_secrets.
+        for dotted in &secret_paths {
+            redact_path(merged, dotted);
+        }
         redact_table_recursive(merged, &secret_keys);
+    }
+
+    /// Redact the value at a dotted path when it is present; a path that is
+    /// absent, or runs through a scalar, creates and changes nothing. A segment
+    /// naming an array of tables ([[autounattend.accounts]]) applies the rest of
+    /// the path to every row -- the same walk as agent-pipe's _redact_path.
+    fn redact_path(root: &mut toml::Value, dotted: &str) {
+        let parts: Vec<&str> = dotted.split('.').collect();
+        redact_parts(root, &parts);
+    }
+
+    fn redact_parts(node: &mut toml::Value, parts: &[&str]) {
+        let Some((first, rest)) = parts.split_first() else {
+            return;
+        };
+        match node {
+            toml::Value::Array(rows) => {
+                for row in rows.iter_mut() {
+                    redact_parts(row, parts);
+                }
+            }
+            toml::Value::Table(table) => {
+                if let Some(next) = table.get_mut(*first) {
+                    if rest.is_empty() {
+                        *next = toml::Value::String(REDACTED.to_string());
+                    } else {
+                        redact_parts(next, rest);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn redact_table_recursive(val: &mut toml::Value, secret_keys: &[String]) {
@@ -2504,6 +2545,108 @@ list = ["<redacted>", "<redacted>", "kept"]
                 .filter_map(toml::Value::as_str)
                 .collect();
             assert_eq!(list, ["x", "kept"]);
+        }
+
+        #[test]
+        fn redact_secrets_redacts_the_dotted_secret_paths() {
+            const SSOT: &str = r#"
+[identity]
+username = "op"
+default_password = "fixture-operator-credential"
+[ttyd]
+auth_user = "kept"
+auth_pass = "fixture-ttyd-credential"
+[auth]
+password_hash = "$6$fixture$hash"
+password = "fixture-auth-password"
+luks_passphrase = "fixture-luks-passphrase"
+[field.sysrescue]
+username = "kept"
+password = "fixture-sysrescue-password"
+wipe_passphrase = "fixture-wipe-passphrase"
+[pgvector]
+user = "kept"
+pass = "fixture-pgvector-pass"
+[adguard]
+admin_password_bcrypt = "fixture-adguard-bcrypt"
+[scalar]
+leaf = "not-a-table"
+[[autounattend.accounts]]
+name = "kept-a"
+password = "fixture-account-a"
+[[autounattend.accounts]]
+name = "kept-b"
+password = "fixture-account-b"
+[security.secret_keys]
+keys = ["MIOS_GITHUB_TOKEN"]
+paths = ["identity.default_password", "ttyd.auth_pass", "auth.password_hash", "auth.password", "auth.luks_passphrase", "field.sysrescue.password", "autounattend.accounts.password", "pgvector.pass", "field.sysrescue.wipe_passphrase", "adguard.admin_password_bcrypt", "absent.table.key", "scalar.leaf.deeper", ""]
+"#;
+            let mut merged: toml::Value = SSOT.parse().unwrap_or_else(|e| panic!("{e}"));
+            redact_secrets(&mut merged);
+            for row in merged["autounattend"]["accounts"]
+                .as_array()
+                .unwrap_or_else(|| panic!("accounts is an array"))
+            {
+                assert_eq!(
+                    row["password"].as_str(),
+                    Some(REDACTED),
+                    "an account row password was served"
+                );
+                assert!(row["name"].as_str().is_some_and(|n| n.starts_with("kept-")));
+            }
+            assert_eq!(
+                merged["field"]["sysrescue"]["username"].as_str(),
+                Some("kept")
+            );
+            for (table, key) in [
+                ("identity", "default_password"),
+                ("ttyd", "auth_pass"),
+                ("auth", "password_hash"),
+                ("auth", "password"),
+                ("auth", "luks_passphrase"),
+            ] {
+                assert_eq!(
+                    merged[table][key].as_str(),
+                    Some(REDACTED),
+                    "{table}.{key} was served"
+                );
+            }
+            assert_eq!(merged["identity"]["username"].as_str(), Some("op"));
+            assert_eq!(merged["ttyd"]["auth_user"].as_str(), Some("kept"));
+            assert_eq!(merged["scalar"]["leaf"].as_str(), Some("not-a-table"));
+            assert!(
+                merged.get("absent").is_none(),
+                "a secret path created a table"
+            );
+            let served = toml::to_string(&merged).unwrap_or_else(|e| panic!("{e}"));
+            for secret in [
+                "fixture-operator-credential",
+                "fixture-ttyd-credential",
+                "fixture-auth-password",
+                "fixture-luks-passphrase",
+                "fixture-sysrescue-password",
+                "fixture-account-a",
+                "fixture-account-b",
+                "fixture-wipe-passphrase",
+                "fixture-pgvector-pass",
+                "fixture-adguard-bcrypt",
+            ] {
+                assert!(!served.contains(secret), "{secret} was served");
+            }
+            assert_eq!(merged["pgvector"]["user"].as_str(), Some("kept"));
+
+            // Negative control: without `paths` (the bare-key matcher alone) the
+            // operator credential is served, which is the defect the list closes.
+            let mut keyed: toml::Value = SSOT
+                .replace("paths = [", "unused = [")
+                .parse()
+                .unwrap_or_else(|e| panic!("{e}"));
+            redact_secrets(&mut keyed);
+            assert_eq!(
+                keyed["identity"]["default_password"].as_str(),
+                Some("fixture-operator-credential"),
+                "the bare-key matcher redacted it: this control no longer proves the path list"
+            );
         }
 
         #[test]

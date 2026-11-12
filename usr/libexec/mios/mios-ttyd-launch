@@ -1,7 +1,6 @@
 #!/bin/bash
-# AI-hint: Parses MIOS_TTYD_* environment variables and mios.toml configurations to construct and execute the ttyd web terminal process for either bash or powershell shells on specific ports.
-# AI-related: /usr/libexec/mios/mios-ttyd-launch, /etc/mios/userenv.sh, /usr/libexec/mios/mios-powershell, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-powershell
-# AI-functions: _toml_get
+# AI-hint: Builds the ttyd argv for the bash or powershell web terminal from MIOS_TTYD_* and mios.toml, then execs it through mios-credential exec ttyd, which adds ttyd's own login from the credstore root writes.
+# AI-related: /usr/libexec/mios/mios-ttyd-launch, /etc/mios/userenv.sh, /usr/libexec/mios/mios-powershell, /usr/libexec/mios/mios-credential, /usr/libexec/mios/mios-toml-get, /etc/mios/mios.toml, /usr/share/mios/mios.toml, mios-powershell
 set -euo pipefail
 if [[ -r /etc/mios/userenv.sh ]]; then source /etc/mios/userenv.sh; fi
 if [[ -r /etc/mios/install.env ]]; then
@@ -10,22 +9,8 @@ if [[ -r /etc/mios/install.env ]]; then
     [ "$_mios_had_u" = 1 ] && set -u
 fi
 set -eu
-
-_toml_get() {  # <section> <key> -> value (empty + rc1 if absent)
-    local sec="$1" key="$2" f val
-    for f in /etc/mios/mios.toml /usr/share/mios/mios.toml; do
-        [ -r "$f" ] || continue
-        val="$(awk -v sec="$sec" -v key="$key" '
-            $0 ~ ("^\\[" sec "\\]") { ins=1; next }
-            /^\[/ { ins=0 }
-            ins && $1==key {
-                sub(/^[^=]*=[[:space:]]*/,""); sub(/[[:space:]]*#.*$/,"");
-                gsub(/^"|"$/,""); gsub(/[[:space:]]+$/,""); print; exit
-            }' "$f")"
-        [ -n "$val" ] && { printf '%s' "$val"; return 0; }
-    done
-    return 1
-}
+# Sibling tools resolve beside this script (/usr/libexec/mios on a host, the tree in a checkout).
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 VARIANT="${1:-bash}"
 case "$VARIANT" in
@@ -45,38 +30,21 @@ else
 fi
 
 BIND="${MIOS_TTYD_BIND:-127.0.0.1}"
-REQUIRE_AUTH="${MIOS_TTYD_REQUIRE_AUTH:-true}"
-AUTH_USER="${MIOS_TTYD_AUTH_USER:-}"
-AUTH_PASS="${MIOS_TTYD_AUTH_PASS:-}"
-if [[ -z "$AUTH_USER" ]]; then AUTH_USER="$(_toml_get identity username || true)"; fi
-if [[ -z "$AUTH_PASS" ]]; then AUTH_PASS="$(_toml_get identity default_password || true)"; fi
-AUTH_USER="${AUTH_USER:-mios}"
-AUTH_PASS="${AUTH_PASS:-mios}"
 SSL_CERT="${MIOS_TTYD_SSL_CERT:-}"
 SSL_KEY="${MIOS_TTYD_SSL_KEY:-}"
 WRITABLE="${MIOS_TTYD_WRITABLE:-true}"
 MAX_CLIENTS="${MIOS_TTYD_MAX_CLIENTS:-0}"
 
-if [[ "$BIND" != "127.0.0.1" ]] && [[ "$BIND" != "localhost" ]] && [[ "$BIND" != "::1" ]]; then
-    if [[ "${REQUIRE_AUTH,,}" == "true" || "$REQUIRE_AUTH" == "1" ]]; then
-        if [[ -z "$AUTH_USER" || -z "$AUTH_PASS" ]]; then
-            echo "Mios-ttyd-launch: refusing to bind $BIND:$PORT without auth creds" >&2
-            echo "  set [ttyd].auth_user + .auth_pass in mios.toml, OR" >&2
-            echo "  flip [ttyd].require_auth = false" >&2
-            exit 2
-        fi
-    fi
-fi
-
+# The login is always on: mios-credential exec ttyd adds -c from the credstore
+# mios-credential-apply.service writes ($CREDENTIALS_DIRECTORY, the unit's
+# ImportCredential=) and refuses to start (exit 3) without one -- no literal login.
+# It is ttyd's OWN login, never the operator credential (-c is visible in /proc).
 ARGS=("-p" "$PORT" "-i" "$BIND")
 if [[ "${WRITABLE,,}" == "true" || "$WRITABLE" == "1" ]]; then
     ARGS+=("-W")
 fi
 if [[ "$MAX_CLIENTS" -gt 0 ]]; then
     ARGS+=("-m" "$MAX_CLIENTS")
-fi
-if [[ -n "$AUTH_USER" && -n "$AUTH_PASS" ]]; then
-    ARGS+=("-c" "${AUTH_USER}:${AUTH_PASS}")
 fi
 if [[ -n "$SSL_CERT" && -n "$SSL_KEY" ]] \
         && [[ -f "$SSL_CERT" && -f "$SSL_KEY" ]]; then
@@ -86,7 +54,7 @@ fi
 ARGS+=("-T" "xterm-256color")
 ARGS+=("-t" "titleFixed=MiOS ttyd [$VARIANT @ $BIND:$PORT]")
 ARGS+=("-t" "fontSize=${MIOS_TTYD_FONT_SIZE:-14}")
-TTYD_PAGE="${MIOS_TTYD_PAGE_PATH:-$(_toml_get ttyd page_path || true)}"
+TTYD_PAGE="${MIOS_TTYD_PAGE_PATH:-$("$_here/mios-toml-get" ttyd page_path 2>/dev/null || true)}"
 if [[ -n "${MIOS_TTYD_PAGE_PATH:-}" && ! -r "$TTYD_PAGE" ]]; then
     echo "Mios-ttyd-launch: explicit page is not readable" >&2
     exit 2
@@ -95,4 +63,4 @@ if [[ -n "$TTYD_PAGE" && -r "$TTYD_PAGE" ]]; then ARGS+=("-I" "$TTYD_PAGE"); fi 
 
 read -r -a SHELL_ARGV <<< "$SHELL_CMD"
 
-exec ttyd "${ARGS[@]}" "${SHELL_ARGV[@]}"
+exec "$_here/mios-credential" exec ttyd -- "${ARGS[@]}" "${SHELL_ARGV[@]}"

@@ -3,7 +3,7 @@
 [Unit]
 Description='MiOS' A2O agents super-container (Claude + agy/Gemini + tmux war room + code-server)
 Documentation=https://github.com/mios-dev/MiOS/blob/main/usr/share/mios/agents/ACTIVATION.md
-After=network-online.target podman.socket
+After=network-online.target podman.socket mios-credential-apply.service
 Wants=network-online.target
 ConditionPathExists=/usr/share/mios/agents/Containerfile
 
@@ -14,7 +14,7 @@ Type=simple
 # (the mios.toml -> env SSOT bridge) overrides them when present. ExecStart uses
 # plain ${VAR}.
 Environment=MIOS_PORTS_CODE_SERVER=8900
-Environment=MIOS_IDENTITY_DEFAULT_PASSWORD=mios
+Environment=MIOS_NETWORK_LOOPBACK=127.0.0.1
 # install.env is bare KEY=value; these four values carry a space, parentheses
 # or a {} placeholder, so they never reach it. ExecStart references each one
 # bare and the renderer leaves a bare ref for systemd, which expands an unset
@@ -25,15 +25,17 @@ Environment="MIOS_A2O_AGY_EFFORT_FLAG="
 Environment="MIOS_A2O_GEMINI_EFFORT_FLAG="
 EnvironmentFile=-/etc/mios/install.env
 TimeoutStartSec=1200s
-# Build the local super-container image on first deploy (idempotent no-op after).
+# Build the local super-container image on first deploy (idempotent no-op after),
+# then refuse to start without the SSOT code-server login (no password env: code-server
+# would otherwise generate its own random one).
 ExecStartPre=/usr/libexec/mios/mios-agents-firstboot.sh
+ExecStartPre=/usr/libexec/mios/mios-credential apply --no-restart code_server
 # Run it in the foreground under systemd (auto-restart + auto-start every boot).
 # --network=host + MIOS_PORTS_CODE_SERVER mirrors the MiOS host-net service convention;
 # / is bind-mounted as the workspace; /var/lib/mios/agents persists /home/coder
 # (agy/claude credentials + war-room state) across restarts.
 ExecStart=/usr/sbin/podman run --replace --name mios-agents \
   --network=host \
-  --env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD} \
   --env MIOS_A2O_ENGINE=agy \
   --env MIOS_A2O_WORK=/mnt/mios-root \
   --env MIOS_FRONTIER_ORCH_ENGINE=${MIOS_FRONTIER_ORCH_ENGINE} \
@@ -50,7 +52,7 @@ ExecStart=/usr/sbin/podman run --replace --name mios-agents \
   --env MIOS_A2O_GEMINI_EFFORT_FLAG=${MIOS_A2O_GEMINI_EFFORT_FLAG} \
   --volume /var/lib/mios/agents:/home/coder:rw \
   localhost/mios-agents:latest \
-  --bind-addr ${MIOS_NETWORK_LOOPBACK:-127.0.0.1}:${MIOS_PORTS_CODE_SERVER:-8900} /home/coder
+  --bind-addr ${MIOS_NETWORK_LOOPBACK}:${MIOS_PORTS_CODE_SERVER} /home/coder
 ExecStop=/usr/sbin/podman stop -t 10 mios-agents
 Restart=on-failure
 RestartSec=10s
@@ -61,8 +63,9 @@ PrivateTmp=true
 # and podman write is listed here. /var/lib/mios/agents is NOT a StateDirectory=:
 # this unit runs as root, and StateDirectory= would recursively chown the
 # coder home to root on every start. Its owner and mode belong to
-# usr/lib/tmpfiles.d/mios-agents.conf alone (task_3432).
-ReadWritePaths=/var/lib/mios/agents /var/lib/containers /run
+# usr/lib/tmpfiles.d/mios-agents.conf alone (task_3432). /var/lib/mios/credential-apply:
+# the ExecStartPre's `mios-credential apply` takes its lock and writes its HMAC ledger there.
+ReadWritePaths=/var/lib/mios/agents /var/lib/containers /run /var/lib/mios/credential-apply
 
 [Install]
 WantedBy=multi-user.target default.target

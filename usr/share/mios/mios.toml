@@ -108,9 +108,10 @@ unconsumed = [
 [unit_projection]
 doc = "[units.*] is the SOURCE and usr/lib/systemd/system is the DERIVED artifact (Law 8), but the declarations went stale while nothing compared them: mios-unit-gen --check rendered into memory, printed PASSED and returned, and its golden test diffed the unit tree against tests/golden/, a byte copy of that same tree. This register lists every unit [units.*] declares whose rendering no longer matches the file it ships. It only shrinks -- tools/native/mios-unit-gen/tests/projection.rs fails an entry that has stopped drifting as loudly as one that starts, so the count cannot be padded. Draining an entry: `mios-unit-gen --render <unit> | diff - usr/lib/systemd/system/<unit>`, then correct [units.*] (the file on disk is what boots, so it wins). A unit absent from BOTH this register and [units.*] is not covered at all -- 52 of the tree's 120 units are in that state, which is the larger debt behind task_267."
 max_drift = 52
-max_undeclared = 161
+max_undeclared = 159
 max_undeclared_user = 19
 strict_no_write = [
+  "mios-agent-share.service",
   "mios-boot-display-report.service",
   "mios-cockpit-link.service",
   "mios-embed-backfill.service",
@@ -218,6 +219,78 @@ OnUnitActiveSec = "2min"
 [units."mios-tailscale-sync.timer".Install]
 WantedBy = "timers.target"
 
+[units."mios-credential-apply.service".Unit]
+comment = "# AI-hint: Oneshot that merges the Portal's queued credential saves into the operator tier and re-applies the one mios.html login to the Portal, Forgejo, code-server, Open WebUI and the Linux login (ttyd gets its own), at boot and from its timer.\n# AI-related: /usr/libexec/mios/mios-credential, /usr/lib/mios/mios_credentials.py, mios-credential-apply.timer, mios-agent-pipe.service, mios-agents.service, mios-ttyd-bash.service, mios-forge.service"
+Description = "'MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login)"
+Documentation = "file:///usr/libexec/mios/mios-credential"
+After = "local-fs.target"
+Before = "mios-agent-pipe.service mios-agents.service mios-ttyd-bash.service mios-ttyd-powershell.service"
+
+[units."mios-credential-apply.service".Service]
+comment1 = "# No RemainAfterExit: the timer re-runs this unit, and an active unit cannot be re-triggered.\n# --verify re-proves the Forgejo login, so a recreated forge database is repaired too.\n# --no-restart prepares files and reports pending activation without terminating active agents or terminals."
+Type = "oneshot"
+ExecStart = "/usr/libexec/mios/mios-credential apply --all --verify --no-restart"
+TimeoutStartSec = "300s"
+NoNewPrivileges = "yes"
+PrivateTmp = "yes"
+ProtectSystem = "strict"
+comment2 = "# No ProtectHome=: the operator's ~/.config/mios/mios.toml IS the input, and systemd ranks a\n# ProtectHome= mount above a ReadWritePaths= entry for the same path, so the inbox merge (which\n# drops to the operator's uid before it writes) could never write it. ProtectSystem=strict keeps\n# every home read-only except through ReadWritePaths=."
+comment3 = "# /run: the Portal's credstore, the inbox, rootful `podman exec`; /var/lib/mios/credential-apply:\n# the HMAC ledger; /var/lib/mios/agents: code-server config.yaml (written as its owner);\n# /etc: chpasswd (the Linux login) and /etc/mios (secrets.env scrub, the Open WebUI receipt);\n# /.git: stripping userinfo from the deployed root's origin URL."
+ReadWritePaths = "/run /var/lib/mios/credential-apply -/var/lib/mios/agents -/var/lib/mios/open-webui /var/lib/containers /etc -/var/home -/home -/.git"
+
+[units."mios-credential-apply.service".Install]
+WantedBy = "multi-user.target"
+
+[units."mios-credential-apply.timer".Unit]
+comment = "# AI-hint: systemd timer that re-runs mios-credential-apply.service so a credential changed in mios.html reaches every admin surface within one interval.\n# AI-related: /usr/lib/systemd/system/mios-credential-apply.timer, /usr/lib/systemd/system/mios-credential-apply.service, /usr/share/mios/mios.toml"
+Description = "'MiOS' operator credential reconcile schedule"
+
+[units."mios-credential-apply.timer".Timer]
+OnBootSec = "2min"
+OnUnitActiveSec = "60s"
+
+[units."mios-credential-apply.timer".Install]
+WantedBy = "timers.target"
+
+[units."mios-agent-share.service".Unit]
+comment = "# AI-hint: Serves the read-only inter-agent share ([paths].srv_agent_share_dir) on loopback as a throwaway non-root uid that refuses every symlink; the tailnet reaches it only through the [tailscale.serve.routes.agent_share] proxy.\n# AI-related: /usr/libexec/mios/mios-tailscale-sync, /usr/libexec/mios/test_mios_tailscale_sync.py, /usr/share/mios/mios.toml, mios-tailscale-sync.service"
+Description = "'MiOS' read-only inter-agent share (loopback static server behind the tailnet /share/ route)"
+Documentation = "file:///usr/libexec/mios/mios-tailscale-sync"
+After = "local-fs.target systemd-tmpfiles-setup.service"
+
+[units."mios-agent-share.service".Service]
+Type = "simple"
+comment1 = "# A throwaway uid in no group: it reads only what the share makes world-readable, so a\n# link to (or a copy of) a root- or group-only file is never served. tailscaled (root,\n# follows symlinks) never opens the directory: its route proxies to this loopback listener."
+DynamicUser = "yes"
+Environment = [
+  "MIOS_NETWORK_LOOPBACK=${MIOS_NETWORK_LOOPBACK}",
+  "MIOS_PORTS_AGENT_SHARE=${MIOS_PORTS_AGENT_SHARE}",
+]
+EnvironmentFile = "-/etc/mios/install.env"
+comment2 = "# No --root/--prefix: the server reads [paths].srv_agent_share_dir and\n# [tailscale.serve.routes.agent_share].path from the vendor + host tiers itself,\n# so the unit restates neither value."
+ExecStart = "/usr/libexec/mios/mios-tailscale-sync --share-serve --bind ${MIOS_NETWORK_LOOPBACK} --port ${MIOS_PORTS_AGENT_SHARE}"
+Restart = "on-failure"
+RestartSec = "30s"
+MemoryMax = "128M"
+NoNewPrivileges = "yes"
+ProtectSystem = "strict"
+ProtectHome = "yes"
+PrivateTmp = "yes"
+PrivateDevices = "yes"
+ProtectKernelTunables = "yes"
+ProtectKernelModules = "yes"
+ProtectControlGroups = "yes"
+RestrictAddressFamilies = "AF_INET AF_INET6"
+IPAddressDeny = "any"
+IPAddressAllow = "localhost"
+RestrictNamespaces = "yes"
+RestrictRealtime = "yes"
+LockPersonality = "yes"
+CapabilityBoundingSet = ""
+
+[units."mios-agent-share.service".Install]
+WantedBy = "multi-user.target"
+
 [units."mios-ai-firstboot.timer".Unit]
 comment = "# AI-hint: Defines the systemd timer for mios-ai-firstboot.service, controlling post-boot AI provisioning retries until the sentinel file is present.\n# AI-related: /var/lib/mios/.ai-firstboot-done, mios-ai-firstboot.service, timers.target\n# /usr/lib/systemd/system/mios-ai-firstboot.timer\n# Retries the first-boot AI stack deployment if it didn't complete on\n# initial boot (e.g. machine rebooted mid-pull, or GPU drivers were\n# mid-dkms build). The timer is enabled by default so the attempt happens\n# automatically, but is gated on the absence of the sentinel file in\n# place. The .service degrades open (exit 0) on a partial provision and carries\n# ConditionPathExists=!<sentinel>, so once /var/lib/mios/.ai-firstboot-done is\n# written the timer-fired run no-ops. The same condition here stops the timer\n# itself from firing needlessly once provisioning is complete."
 Description = "'MiOS' AI Plane First-Boot Provisioning Retry Schedule"
@@ -285,6 +358,24 @@ AccuracySec = "5m"
 
 [units."mios-pgvector-backup.timer".Install]
 WantedBy = "timers.target"
+
+[units."mios-podman-ps.service".Unit]
+comment = "# AI-hint: Root oneshot writing a world-readable JSON snapshot of all podman containers for non-root readers (agent-pipe, dashboard, SSH users), then, whatever podman returned, the Portal status view's deployed-spec snapshot.\n# AI-related: /usr/lib/mios/agent-pipe/mios_pipe/portal_spec.py, /usr/lib/mios/agent-pipe/mios_pipe/portal_status.py, mios-podman-ps.timer, mios.toml [portal.status]\n# AI-doc: usr/share/doc/mios/manual/system.md"
+Description = "'MiOS' rootful podman snapshot for the agent-pipe portal/dashboard"
+Documentation = "file:///usr/lib/mios/agent-pipe/server.py"
+After = "podman.socket"
+Wants = "podman.socket"
+
+[units."mios-podman-ps.service".Service]
+comment = "# The root-only `podman ps` snapshot for non-root readers (manual/system.md), then\n# the Portal status spec.json as ExecStopPost=-, run whatever podman returned; -P keeps\n# / off sys.path. 2 x [portal.status].probe_timeout_s < TimeoutStopSec (portal_spec._cfg)."
+Type = "oneshot"
+ExecStart = "/bin/sh -c '/usr/bin/podman ps -a --format json > /var/lib/mios/podman-ps.json.tmp 2>/dev/null && mv -f /var/lib/mios/podman-ps.json.tmp /var/lib/mios/podman-ps.json && chmod 0644 /var/lib/mios/podman-ps.json'"
+Environment = "PYTHONPATH=/usr/lib/mios/agent-pipe:/usr/lib/mios"
+ExecStopPost = "-/usr/lib/mios/agents/.venv/bin/python3 -P -m mios_pipe.portal_spec --write-spec"
+TimeoutStopSec = "60s"
+
+[units."mios-podman-ps.service".Install]
+WantedBy = "multi-user.target"
 
 [units."mios-podman-ps.timer".Unit]
 comment = "# AI-hint: Systemd timer that triggers mios-podman-ps.service every 15 seconds to refresh the podman container snapshot data for the MiOS dashboard display.\n# AI-related: mios-podman-ps, mios-podman-ps.service, timers.target"
@@ -963,8 +1054,8 @@ Restart = "on-failure"
 RestartSec = "30"
 NoNewPrivileges = "yes"
 ProtectSystem = "strict"
-ProtectHome = "yes"
-ReadWritePaths = "/etc/mios/forge /var/lib/mios/forge /var/log/mios/forge /var/lib/containers /run"
+ProtectHome = "read-only"
+ReadWritePaths = "/etc/mios/forge /var/lib/mios/forge /var/log/mios/forge /var/lib/mios/credential-apply /var/lib/containers /run"
 PrivateTmp = "yes"
 LockPersonality = "yes"
 RestrictRealtime = "yes"
@@ -1213,8 +1304,8 @@ comment = "# AI-hint: Systemd unit defining the agent-pipe FastAPI service which
 Description = "'MiOS' Agent Pipe (router + refine + critic FastAPI; fronts hermes for every gateway)"
 Documentation = "file:///usr/lib/mios/agent-pipe/server.py"
 comment2 = "# R8: NOT ordered After=mios-ai-firstboot.service. The plane needs the VENV (baked\n# into the image) + pgvector, NOT the boot-time model fetch; ordering behind\n# firstboot's multi-GB download blocked the router for the whole download. firstboot\n# `systemctl restart --no-block`s this unit once models land, so the edge is redundant."
-After = "network-online.target mios-pgvector.service mios-passport-provision.service"
-Wants = "network-online.target mios-passport-provision.service"
+After = "network-online.target mios-pgvector.service mios-passport-provision.service mios-credential-apply.service"
+Wants = "network-online.target mios-passport-provision.service mios-credential-apply.service"
 comment3 = "# R6: the pipe touches pgvector on every route, so upgrade the DB edge from After=\n# (ordering only) to a hard Requires= -- a missing DB should hold/fail the unit."
 Requires = "mios-pgvector.service"
 comment4 = "# R6: bound the existing Restart=on-failure so a DB-down window (many quick\n# restarts) can't trip the default 5/10s start limit and land permanently failed."
@@ -1229,6 +1320,8 @@ User = "mios-ai"
 Group = "mios-ai"
 SupplementaryGroups = "mios-hermes"
 WorkingDirectory = "/var/lib/mios/agent-pipe"
+comment_credential = "# Portal login: mios-credential-apply.service writes the mios.html credential to\n# /run/credstore (0400 root); ImportCredential hands it to this uid."
+ImportCredential = ["mios.portal.password", "mios.portal.user"]
 EnvironmentFile = ["-/etc/mios/agent-pipe.env", "-/etc/mios/install.env"]
 Environment = [
   "MIOS_PORTS_AGENT_PIPE=${MIOS_PORTS_AGENT_PIPE}",
@@ -1255,7 +1348,7 @@ NoNewPrivileges = "yes"
 PrivateTmp = "yes"
 ProtectSystem = "strict"
 ProtectHome = "yes"
-ReadWritePaths = "/var/lib/mios/agent-pipe /var/lib/mios/skills /var/log /var/lib/mios/agent-env /var/lib/mios/ai"
+ReadWritePaths = "/var/lib/mios/agent-pipe /var/lib/mios/skills /var/log /var/lib/mios/agent-env /var/lib/mios/ai -/run/mios/credential-inbox"
 ReadOnlyPaths = "/var/lib/mios/agent-passports"
 
 [units."mios-agent-pipe.service".Install]
@@ -1266,7 +1359,7 @@ WantedBy = "multi-user.target"
 comment = "# AI-hint: Runs the mios-agents A2O super-container (code-server IDE + tmux war room + Claude CLI + agy/Gemini + the mios-a2o muxer) as a systemd-managed container. ExecStartPre builds the local image if absent; ExecStart runs it every boot on the code-server port MIOS_PORTS_CODE_SERVER (mios-agents REPLACES the retired mios-code-server -- one IDE, no duplicate service).\n# AI-related: /usr/share/mios/agents/Containerfile, /usr/share/mios/agents/mios-a2o, /usr/libexec/mios/mios-agents-firstboot.sh, /etc/mios/install.env, /var/lib/mios/agents\n# /usr/lib/systemd/system/mios-agents.service"
 Description = "'MiOS' A2O agents super-container (Claude + agy/Gemini + tmux war room + code-server)"
 Documentation = "https://github.com/mios-dev/MiOS/blob/main/usr/share/mios/agents/ACTIVATION.md"
-After = "network-online.target podman.socket"
+After = "network-online.target podman.socket mios-credential-apply.service"
 Wants = "network-online.target"
 ConditionPathExists = "/usr/share/mios/agents/Containerfile"
 
@@ -1275,7 +1368,7 @@ Type = "simple"
 comment = "# systemd does NOT expand bash ${VAR:-default} in ExecStart -- it resolves to\n# empty (code-server then dies \"Invalid URL\"). Set the defaults here; install.env\n# (the mios.toml -> env SSOT bridge) overrides them when present. ExecStart uses\n# plain ${VAR}."
 Environment = [
   "MIOS_PORTS_CODE_SERVER=${MIOS_PORTS_CODE_SERVER:-8900}",
-  "MIOS_IDENTITY_DEFAULT_PASSWORD=mios",
+  "MIOS_NETWORK_LOOPBACK=${MIOS_NETWORK_LOOPBACK}",
   # Law 10 keeps these four out of install.env -- a space, parentheses or a
   # {} placeholder, or an empty value the resolver drops -- while ExecStart
   # references each BARE, which the renderer leaves for systemd to expand.
@@ -1288,11 +1381,10 @@ Environment = [
 ]
 EnvironmentFile = "-/etc/mios/install.env"
 TimeoutStartSec = "1200s"
-comment2 = "# Build the local super-container image on first deploy (idempotent no-op after)."
-ExecStartPre = "/usr/libexec/mios/mios-agents-firstboot.sh"
+comment2 = "# Build the local super-container image on first deploy (idempotent no-op after),\n# then refuse to start without the SSOT code-server login (no password env: code-server\n# would otherwise generate its own random one)."
+ExecStartPre = ["/usr/libexec/mios/mios-agents-firstboot.sh", "/usr/libexec/mios/mios-credential apply --no-restart code_server"]
 ExecStart = """/usr/sbin/podman run --replace --name mios-agents \
   --network=host \
-  --env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD} \
   --env MIOS_A2O_ENGINE=agy \
   --env MIOS_A2O_WORK=/mnt/mios-root \
   --env MIOS_FRONTIER_ORCH_ENGINE=${MIOS_FRONTIER_ORCH_ENGINE} \
@@ -1317,7 +1409,9 @@ RestartSec = "10s"
 # /var/lib/mios/agents is writable through ReadWritePaths, not StateDirectory=:
 # this unit runs as root, and StateDirectory= would recursively chown the coder
 # home to root on every start. tmpfiles.d/mios-agents.conf owns it (task_3432).
-ReadWritePaths = "/var/lib/mios/agents /var/lib/containers /run"
+# /var/lib/mios/credential-apply: the ExecStartPre's `mios-credential apply` takes
+# its lock and writes its HMAC ledger there.
+ReadWritePaths = "/var/lib/mios/agents /var/lib/containers /run /var/lib/mios/credential-apply"
 
 [units."mios-agents.service".Install]
 WantedBy = "multi-user.target default.target"
@@ -1892,9 +1986,8 @@ provenance_taint = true
 # MIOS_PGVECTOR_PASS in the build environment bakes that value into a 0644 file under
 # /usr and the key-only gate stayed green. Every value below is a placeholder
 # and none is a secret; changing any of them is a NEW finding by design.
-max_literals = 6
+max_literals = 5
 grandfathered = [
-  "usr/lib/systemd/system/mios-agents.service:MIOS_IDENTITY_DEFAULT_PASSWORD=mios",
   "usr/lib/systemd/system/mios-ha-bootstrap.service:HA_PASSWORD=mios",
   "usr/share/containers/systemd/mios-guacamole.container:POSTGRESQL_PASSWORD=mios",
   "usr/share/containers/systemd/mios-open-webui.container:RAG_OPENAI_API_KEY=sk-noop",
@@ -2348,6 +2441,23 @@ discord_guild_default   = ""
 # Largest POST /portal/config body the configurator save accepts. The whole
 # layered config is posted back, so this must exceed its serialized size.
 config_max_body_bytes   = 2097152
+
+# The read-only status & goals view (GET /portal/status, mios_pipe/portal_status.py).
+# snapshot_dir holds the producer snapshots: agents-<uid>.json from
+# mios-status-agents.service and spec.json from mios-podman-ps.service (root).
+# Goal criteria are shown as last recorded and are never executed.
+[portal.status]
+snapshot_dir  = "/run/mios/status"          # vendor/host only (a user tier is ignored), no mios.html input: tmpfiles 50-mios.conf, 3770 root:mios-ai
+repo_root     = "/"                         # vendor/host only: the git work tree whose HEAD is the deployed spec
+goal_state    = ".devloop/goal_state.json"  # repo-relative goal record (last goal eval)
+goal_docs     = ".devloop/GOALS*.md"        # repo-relative glob of declared target finished states
+refresh_s     = 15    # poll cadence every client uses (the payload carries it); also caps a first-poll retry backoff
+cache_s       = 10    # server-side aggregate cache: < refresh_s
+stale_after_s = 120   # a snapshot older than this reads "stale": > mios-podman-ps.timer and [mcp.agents.observation] cadences
+task_rows     = 8     # in-progress and ready task rows shown
+agent_rows    = 12    # agent and subagent rows shown (online first)
+probe_timeout_s = 20  # host constant read by the root spec writer, per probe (bootc, git): 2x < the vendor tier's [units."mios-podman-ps.service"] TimeoutStopSec
+request_timeout_s = 4 # host constant, per request-path probe (mios-task next/check, systemctl is-active): 3x < refresh_s
 
 # ----------------------------------------------------------------------------
 # [locale] -- system-wide defaults applied via systemd-localed at first boot.
@@ -2909,12 +3019,58 @@ keys = [
 # min_keys is a floor -- an explicit register shared between postcheck,
 # system-sync-env.sh, and mios-gate credentials.rs.
 [security.secret_keys]
-min_keys = 3
+# Never in install.env (mios-sync-env refuses to write a file carrying one). The
+# operator credential reaches a service only through mios-credential apply.
+min_keys = 9
 keys = [
   "MIOS_USER_PASSWORD_HASH",
   "MIOS_FORGE_ADMIN_PASSWORD",
   "MIOS_GITHUB_TOKEN",
+  "MIOS_IDENTITY_DEFAULT_PASSWORD",
+  "MIOS_IDENTITY_ADMIN_PASSWORD",
+  "MIOS_OPERATOR_PASSWORD",
+  "MIOS_PORTAL_PASSWORD",
+  "MIOS_TTYD_AUTH_PASS",
+  "MIOS_OWUI_ADMIN_PASSWORD",
 ]
+
+# Dotted SSOT paths whose VALUE is a secret: GET /portal/config and miosd's GET
+# redact them by path (a bare key name such as default_password is too common to match).
+paths = [
+  "identity.default_password",
+  "identity.admin_password",
+  "portal.password",
+  "portal.secret",
+  "ttyd.auth_pass",
+  "auth.password_hash",
+  "auth.password",
+  "auth.luks_passphrase",
+  "field.sysrescue.password",
+  "autounattend.service.svc_password",
+  # a segment naming an array of tables applies the rest to every row
+  "autounattend.accounts.password",
+  "pgvector.pass",
+  "field.sysrescue.wipe_passphrase",
+  "adguard.admin_password_bcrypt",
+]
+
+# [security.credential_apply] -- what `apply --all` reconciles: shadow and forge take only an
+# operator-set value, ttyd its own login, and none returns to a default.
+[security.credential_apply]
+surfaces = ["portal", "forge", "code_server", "ttyd", "owui", "shadow"]
+retry_backoff_s     = 300   # a failed surface backs off, doubling to retry_backoff_max_s
+retry_backoff_max_s = 86400
+
+# [security.operator_tier] -- the ONLY keys root code (mios-credential apply,
+# mios-tailscale-sync) takes from the operator's user tier, a file the operator uid and
+# the Portal's root helper write. Every other key -- usernames, surface lists, paths,
+# units, hosts, ports, public_host -- comes from the vendor + host tiers. `values` must
+# be strings without control characters, and one that is not fails the whole run closed
+# (nothing falls back to the vendor default); `toggles` must be booleans (a refused one
+# keeps the vendor/host value) and '*' matches only a table the vendor/host tiers declare.
+[security.operator_tier]
+values  = ["identity.default_password", "portal.password", "ttyd.auth_pass"]
+toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled"]
 
 [security.nohc_allowlist]
 # SSOT Allowlist for legitimate exceptions to the ports/IPs hardcode check (task_126).
@@ -3025,19 +3181,15 @@ lookup_max_alias_results   = 3
 [ttyd]
 enable             = true
 bind               = "127.0.0.1"
-# Mobile (#82): expose the loopback bash terminal to the TAILNET (phones) over
-# tailnet-only HTTPS via `tailscale serve` (NOT the public internet). When true,
-# the mios-ttyd-expose.service oneshot publishes it on boot; off by default so a
-# fresh install never opens a shell unprompted. Toggle here or in mios.html.
-# The login is the SSOT [identity] credential (mios/mios) -- never unauth'd.
-tailnet_expose     = false
-# Master auth toggle: when bind != "127.0.0.1" + require_auth = true
-# + auth_user/pass empty, the service refuses to start (prevents
-# accidental open-network exposure).
-require_auth       = true
-# auth_user/auth_pass: empty = INHERIT the global [identity] login (username /
-# default_password, default mios/mios) -- same as Portal/Cockpit/Forge. Set per
-# instance only to override the one global credential.
+# Mobile (#82): tailnet exposure of the bash terminal is the
+# [tailscale.serve.routes.ttyd_bash] route (mios-tailscale-sync), off by default.
+# The login is ALWAYS on: mios-ttyd-launch execs ttyd through mios-credential,
+# which refuses to start without an applied login.
+# auth_user/auth_pass: ttyd's OWN login, never the operator credential (ttyd takes it
+# on argv, readable in /proc by every local uid; a value equal to any shared credential
+# is refused). Empty auth_user = [identity].username; empty auth_pass = a secret generated
+# once and kept root-only. mios-credential apply ttyd writes it to /run/credstore for the
+# ttyd units; set auth_pass here or in mios.html to log in to ttyd.
 auth_user          = ""
 auth_pass          = ""
 ssl_cert           = ""
@@ -10686,6 +10838,8 @@ adguard_dns        = 53       # AdGuard Home DNS resolver (ad/tracker/malware si
 adguard_ui         = 8050     # AdGuard Home web UI + REST API (3000 is forge_http; 3053 is mnemonic for :53)
 headscale          = 8085     # Headscale mesh VPN control plane coordinator (HTTP / gRPC)
 opencode_gateway   = 8780     # opencode -> OpenAI /v1 gateway shim (mios-opencode-gateway.service); makes [agents.opencode] a REAL /v1 council peer. LOOPBACK only (127.0.0.1).
+agent_share        = 8790     # mios-agent-share: the read-only inter-agent share (/srv/mios/share), a non-root static server; LOOPBACK only, tailnet via [tailscale.serve.routes.agent_share].
+tailnet_https      = 443      # the tailnet HTTPS front door `tailscale serve` listens on (front_door routes of [tailscale.serve.routes.*]); protocol-pinned.
 llm_heavy          = 8520    # mios-llm-heavy: THE heavy dGPU lane (OpenAI /v1), whichever engine [ai].heavy_engine selects (vLLM or SGLang bind this one port). GATED/disabled by default (VRAM). [nodes.local-heavy].
 llm_igpu           = 8540    # mios-igpu: local iGPU inference lane (llama.cpp + Vulkan on Windows host)
 igpu               = 11436   # Windows host iGPU Vulkan inference listener port
@@ -10726,8 +10880,8 @@ unbound = ["field_live_chat"]
 base    = 8050
 stride  = 1
 members = ["adguard_ui"]
-pinned  = { adguard_dns = 53, headscale = 8085 }
-doc     = "Network edge / resolver. DNS is protocol-pinned at 53 and never floats; Headscale mesh coordinator on 8085."
+pinned  = { adguard_dns = 53, headscale = 8085, tailnet_https = 443 }
+doc     = "Network edge / resolver. DNS is protocol-pinned at 53 and never floats; Headscale mesh coordinator on 8085; the tailnet HTTPS front door is protocol-pinned at 443."
 
 [ports.categories.admin]
 base    = 8100
@@ -10777,8 +10931,8 @@ doc     = "Datastores (the unified agent DB)."
 [ports.categories.agent]
 base    = 8700
 stride  = 10
-members = ["agent_pipe", "prefilter", "hermes", "", "daemon_agent", "model_router", "arbiter", "mcp", "opencode_gateway"]
-doc     = "Agent plane. Ordered along the request path: pipe -> prefilter -> hermes -> workers -> router -> arbiter, then the MCP host and the /v1 gateway shims. All LOOPBACK-only except hermes."
+members = ["agent_pipe", "prefilter", "hermes", "", "daemon_agent", "model_router", "arbiter", "mcp", "opencode_gateway", "agent_share"]
+doc     = "Agent plane. Ordered along the request path: pipe -> prefilter -> hermes -> workers -> router -> arbiter, then the MCP host, the /v1 gateway shims and the read-only agent share. All LOOPBACK-only except hermes."
 
 [ports.categories.webtools]
 base    = 8800
@@ -10834,7 +10988,9 @@ searxng            = "mios-searxng.service"
 hermes             = "mios-hermes.service"
 open_webui         = "mios-open-webui.service"
 hermes_firstboot   = "mios-hermes-firstboot.service"
-code_server        = "mios-code-server.service"
+code_server        = "mios-agents.service"   # the ONE IDE (code-server inside mios-agents); mios-code-server is retired
+ttyd_bash          = "mios-ttyd-bash.service"
+ttyd_powershell    = "mios-ttyd-powershell.service"
 firstboot_target   = "mios-firstboot.target"
 wsl_firstboot      = "mios-wsl-firstboot.service"
 user_session       = "user@${MIOS_UID}.service"
@@ -10853,8 +11009,8 @@ code_server        = "http://localhost:${MIOS_PORTS_CODE_SERVER}/"
 otelcol_ui         = "http://localhost:${MIOS_PORTS_OTELCOL_UI}/"
 chrome_cdp         = "http://localhost:${MIOS_PORTS_CHROME_CDP}/"
 local_forge_repo   = "http://localhost:${MIOS_PORTS_FORGE_HTTP}/mios/mios.git"
-repo               = "https://github.com/mios-dev/MiOS.git"
-bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
+repo               = "https://github.com/mios-developer/MiOS.git"
+bootstrap_repo     = "https://github.com/mios-developer/mios-bootstrap.git"
 
 # Ports with no browser-openable URL: either they serve no page, or their
 # address is already a key their consumers resolve -- agent_pipe is
@@ -10865,9 +11021,11 @@ bootstrap_repo     = "https://github.com/mios-dev/mios-bootstrap.git"
 # devpod_agent is the DevPod agent transport, which miosd rde reads from
 # [ports].devpod_agent and forwards; igpu and win_llm_light are the Windows
 # host's iGPU Vulkan llama.cpp listener and llama-swap proxy. All three serve an
-# API, not a page.
+# API, not a page. agent_share is the loopback upstream of the tailnet /share/
+# route and tailnet_https the listener `tailscale serve` opens on the node's
+# MagicDNS name: both are addressed through [tailscale.serve.routes.*].
 non_addressable = [
-  "adguard_dns", "adguard_ui", "agent_pipe", "ai_legacy", "arbiter", "ceph_dashboard",
+  "adguard_dns", "adguard_ui", "agent_pipe", "agent_share", "ai_legacy", "arbiter", "ceph_dashboard",
   "cockpit_internal", "crawl4ai", "crawl4ai_internal", "field_live_chat", "firecrawl_internal",
   "hermes", "llm_heavy", "llm_light", "node", "pgvector", "pgvector_internal",
   "chrome_cdp_worker", "cockpit_link", "cpu_node", "daemon_agent",
@@ -10876,7 +11034,7 @@ non_addressable = [
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
   "otelcol_otlp", "piper", "prefilter", "pxe_hub_api", "radosgw", "rdp", "redis",
-  "ssh", "ttyd_bash", "ttyd_powershell", "whisper",
+  "ssh", "tailnet_https", "ttyd_bash", "ttyd_powershell", "whisper",
 ]
 
 # ----------------------------------------------------------------------------
@@ -10957,6 +11115,11 @@ packages = [
 user = "mios-forge"
 uid  = 816
 gid  = 816
+ready_timeout_s = 300          # mios-credential apply --wait forge: how long to wait for the API
+initial_repo    = "mios"       # forge-firstboot creates <admin>/<initial_repo> for the deployed root
+home            = "/data/gitea"                # the forgejo CLI's HOME inside the container
+app_ini         = "/data/gitea/conf/app.ini"   # the config the forgejo CLI reads (podman exec)
+git_timeout_s   = 3600         # [git.timeout] MIGRATE and MIRROR: large pull mirrors (FORGEJO__git_0X2E_timeout__*)
 
 [services.open_webui]
 user = "mios-open-webui"
@@ -11189,6 +11352,16 @@ mcp_registry             = "${MIOS_SHARE_AI_DIR}/v1/mcp.json"
 coderun_workspace_root = "/var/home/mios/coderuns"          # podman coderun-sandbox /work bind root (shared by code_mode + coderun-session)
 coderun_snapshots_root = "/var/home/mios/.coderun-snapshots" # coderun-session snapshot root
 codemode_workspace_root = "/var/lib/mios/codemode"          # WS-2 Code Mode generated-snippet root (uid 828, tmpfiles mios-codemode.conf)
+
+# mios-credential apply ([security.credential_apply]): the ledger keeps HMAC fingerprints
+# only; the inbox takes the Portal's credential saves (group mios-ai may create, never list);
+# MIOS_OPERATOR_PASSWORD lives in <etc_dir>/secrets.env (Law 11, 0600 root).
+var_credential_apply_dir = "${MIOS_VAR_DIR}/credential-apply"
+run_credential_inbox_dir = "/run/mios/credential-inbox"
+var_agents_dir           = "${MIOS_VAR_DIR}/agents"            # mios-agents IDE home (/home/coder); code-server config.yaml lives under it
+var_tailscale_sync_dir   = "${MIOS_VAR_DIR}/tailscale-sync"    # [tailscale.serve] owned-route ledger (serve-owned.json)
+run_operator_toggles     = "/run/mios/operator-toggles.json"   # root's view of the [security.operator_tier] toggles, for the Portal (0644, booleans only)
+srv_agent_share_dir      = "/srv/mios/share"                   # inter-agent share, served read-only by mios-agent-share.service
 
 
 # Voidtools Everything CLI -- probed in order; first match wins. WSL
@@ -11631,6 +11804,80 @@ max_extra_loss_pct = 10
 max_extra_rtt_ms   = 150
 cooldown_s         = 300
 state              = "/run/mios-tailscale-sync/exit-health.json"
+
+# Tailnet-only `tailscale serve` routes (never funnel) applied by mios-tailscale-sync, which
+# owns only routes it added or adopted (<[paths].var_tailscale_sync_dir>/serve-owned.json)
+# and never runs `serve reset`. Every route is a PROXY to [network].loopback:<[ports].upstream>
+# -- never a path handler on a directory (tailscaled runs as root and follows symlinks). A
+# route listens on the tailnet at its upstream's port number, or, with front_door = true, on
+# [ports].tailnet_https under its path. Only the enabled toggles follow the operator tier
+# ([security.operator_tier]); everything else is vendor/host. Off by default.
+[tailscale.serve]
+enabled    = false
+
+# A route publishes its WHOLE upstream: each auth_probe_paths entry (ws: = a websocket
+# handshake) must answer 401 or a login redirect anonymously, and a `credential` still on
+# the vendor default refuses it. test_mios_tailscale_sync checks the portal list against
+# agent-pipe's route table; anonymous agent-pipe routes keep it refused (task_3809).
+[tailscale.serve.routes.portal]
+enabled = false
+proto = "https"
+front_door = true
+path = "/"
+upstream = "agent_pipe"
+require_auth = true
+auth_probe_paths = [
+  "/", "/v1/chat/completions", "/a2a", "/configure", "/v1", "/iostest",
+  "/portal/stats", "/portal/status", "/portal/status.js", "/portal/service/0", "/portal/swarm",
+  "/portal/configurator", "/portal/config", "/portal/config/status", "/portal/app/webresearch",
+  "/portal/app/webresearch/render", "/portal/app/webresearch/stream",
+  "/skills/list", "/skills/show", "/skills/openai-tools", "/skills/run",
+  "/dci/schema", "/dci/deliberate", "/kg/lookup",
+  "ws:/v1/events/ws", "ws:/portal/term/0",
+]
+credential = "portal"
+
+# The read-only inter-agent share: mios-agent-share.service (a DynamicUser that serves
+# only world-readable regular files and refuses every symlink) behind this proxy.
+[tailscale.serve.routes.agent_share]
+enabled = false
+proto = "https"
+front_door = true
+path = "/share/"
+upstream = "agent_share"
+require_auth = false
+
+# Browsable without sign-in on the tailnet (operator decision Q8); writes need the login.
+[tailscale.serve.routes.forge_http]
+enabled = false
+proto = "https"
+path = "/"
+upstream = "forge_http"
+require_auth = false
+credential = "forge"
+
+[tailscale.serve.routes.forge_ssh]
+enabled = false
+proto = "tcp"
+upstream = "forge_ssh"
+
+[tailscale.serve.routes.code_server]
+enabled = false
+proto = "https"
+path = "/"
+upstream = "code_server"
+require_auth = true
+credential = "code_server"
+
+# Phone access to the loopback bash terminal (was [ttyd].tailnet_expose and the retired
+# mios-ttyd-expose.service, whose handler the sync adopts once and then follows this toggle).
+[tailscale.serve.routes.ttyd_bash]
+enabled = false
+proto = "https"
+path = "/"
+upstream = "ttyd_bash"
+require_auth = true
+credential = "ttyd"
 
 # Per-vendor enable gate for the [gpu.cdi.<vendor>] wiring above. false here
 # keeps a vendor's CDI spec on disk but stops mios-gpu-passthrough from wiring
@@ -14931,8 +15178,6 @@ Wants = "network-online.target"
 AutoUpdate = "registry"
 ContainerName = "mios-code-server"
 Environment = [
-  "PASSWORD=mios",
-  "SUDO_PASSWORD=mios",
   "DEFAULT_WORKSPACE=/mnt/mios-root",
   "BIND_ADDR=0.0.0.0:${MIOS_PORTS_CODE_SERVER:-8900}",
   "GIT_CONFIG_COUNT=1",
@@ -15085,6 +15330,8 @@ Environment = [
   "FORGEJO__security__INSTALL_LOCK=true",
   "FORGEJO__log__LEVEL=Info",
   "FORGEJO__log__MODE=console",
+  "FORGEJO__git_0X2E_timeout__MIGRATE=${MIOS_SERVICES_FORGE_GIT_TIMEOUT_S}",
+  "FORGEJO__git_0X2E_timeout__MIRROR=${MIOS_SERVICES_FORGE_GIT_TIMEOUT_S}",
   "USER=git"
 ]
 EnvironmentFile = "/etc/mios/install.env"
@@ -16313,6 +16560,7 @@ mios-searxng                   = ["service-plane"]
 mios-hermes-browser-worker     = ["service-plane"]
 k3s                            = ["service-plane"]
 mios-account-sync              = ["service-plane"]
+mios-agent-share               = ["service-plane"]   # the inter-agent share: work-side, a seat offloads it
 mios-agents                    = ["service-plane"]
 mios-cron-director             = ["service-plane"]
 mios-daemon                    = ["service-plane"]
@@ -16498,10 +16746,10 @@ root         = "/workspaces"
 primary      = "MiOS"
 devcontainer = ".devcontainer/devcontainer.json"
 repos = [
-  { name = "MiOS",           url = "https://github.com/mios-dev/MiOS.git",           label = "MiOS (system root)" },
-  { name = "mios-bootstrap", url = "https://github.com/mios-dev/mios-bootstrap.git", label = "mios-bootstrap (installer and user overlay)" },
-  { name = "-dev-loop",      url = "https://github.com/mios-dev/-dev-loop.git",      label = "-dev-loop (engineering loop)" },
-  { name = "mios-micro",     url = "https://github.com/mios-dev/mios-micro.git",     label = "mios-micro" },
+  { name = "MiOS",           url = "https://github.com/mios-developer/MiOS.git",           label = "MiOS (system root)" },
+  { name = "mios-bootstrap", url = "https://github.com/mios-developer/mios-bootstrap.git", label = "mios-bootstrap (installer and user overlay)" },
+  { name = "-dev-loop",      url = "https://github.com/mios-developer/-dev-loop.git",      label = "-dev-loop (engineering loop)" },
+  { name = "mios-micro",     url = "https://github.com/mios-developer/mios-micro.git",     label = "mios-micro" },
 ]
 
 [dotfiles.devcontainer]
@@ -18548,7 +18796,7 @@ max_bootstrap_files = 201
 # (83% of the measurement, and Law 12 forbids shedding it) and re-baseline down
 # the way generated globals are excluded from the shell/PowerShell counts -- is
 # recorded in task_988 with the numbers.
-max_tracked_mb    = 695
+max_tracked_mb    = 697
 # The allowance, and the only operator-tunable half: how far the tree may grow
 # between regenerations before the gate says anything. 0 makes the ceiling exact
 # and every MiB boundary a failure, which is the state task_988 was filed about.
@@ -20011,6 +20259,19 @@ Restart = "on-failure"
 RestartSec = 2
 [user_units."mios-wallpaper.service".Install]
 WantedBy = "mios-desktop.target"
+
+[user_units."mios-status-agents.service".Unit]
+comment = "# AI-hint: Publishes the relay owner's MiOS-MCP agent observation frame to /run/mios/status for the Portal status view, which runs unprivileged and cannot read the caller-owned relay.\n# AI-related: /usr/libexec/mios/mios-mcp-server, /usr/lib/mios/agent-pipe/mios_pipe/portal_status.py, mios.toml [portal.status], [mcp.agents.observation]"
+Description = "MiOS agent relay observation for the Portal status view"
+ConditionGroup = "mios-ai"
+[user_units."mios-status-agents.service".Service]
+Type = "exec"
+ExecStart = "/usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --observe-stream --publish"
+Restart = "on-failure"
+RestartSec = 10
+Nice = 10
+[user_units."mios-status-agents.service".Install]
+WantedBy = "default.target"
 
 [user_units."mios-shell.service".Unit]
 Description = "MiOS Quickshell desktop surfaces"

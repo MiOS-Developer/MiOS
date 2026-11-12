@@ -42,12 +42,11 @@ NOT expand bash `${VAR:-default}` in `ExecStart`). There is no
 [Service]
 Type=simple
 Environment=MIOS_PORTS_CODE_SERVER=8800
-Environment=MIOS_IDENTITY_DEFAULT_PASSWORD=mios
 EnvironmentFile=-/etc/mios/install.env
 ExecStartPre=/usr/libexec/mios/mios-agents-firstboot.sh
+ExecStartPre=/usr/libexec/mios/mios-credential apply --no-restart code_server
 ExecStart=/usr/sbin/podman run --replace --name mios-agents \
   --network=host \
-  --env PASSWORD=${MIOS_IDENTITY_DEFAULT_PASSWORD} \
   --env MIOS_A2O_ENGINE=agy \
   --env MIOS_A2O_WORK=/mnt/mios-root \
   --env MIOS_FRONTIER_ORCH_ENGINE=${MIOS_FRONTIER_ORCH_ENGINE} \
@@ -70,7 +69,11 @@ ExecStart=/usr/sbin/podman run --replace --name mios-agents \
 `EnvironmentFile=-/etc/mios/install.env` (the `mios-sync-env`-written
 mios.toml→env bridge) overrides the in-unit defaults when present and supplies
 every `MIOS_A2O_*` role var, which the `--env` flags forward straight into the
-container.
+container. The IDE login is never an environment variable: the second
+`ExecStartPre` writes the operator credential (`[identity].default_password` as
+`mios.html` saves it) as an argon2 `hashed-password` into
+`/var/lib/mios/agents/.config/code-server/config.yaml`, and the unit refuses to
+start without it.
 
 **3. Image build** — `ExecStartPre=/usr/libexec/mios/mios-agents-firstboot.sh`
 builds `localhost/mios-agents:latest` from

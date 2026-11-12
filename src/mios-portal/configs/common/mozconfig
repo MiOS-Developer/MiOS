@@ -11,7 +11,7 @@ export MOZ_APP_REMOTINGNAME=mios-portal
 
 # Published sources (MPL-2.0).
 export MOZ_INCLUDE_SOURCE_INFO=1
-export MOZ_SOURCE_REPO=https://github.com/mios-dev/MiOS.git
+export MOZ_SOURCE_REPO=https://github.com/mios-developer/MiOS.git
 export MOZ_SOURCE_CHANGESET=${changeset}
 
 # The image is the updater; nothing reports to Mozilla.

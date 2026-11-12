@@ -527,7 +527,15 @@
   .ph-cards > .card { margin: 0; height: 100%; }
 
   /* ── Home groups ──────────────────────────────────────────────────────── */
-  .home-group { margin: 28px 0; }
+  .home-group, .status-group { margin: 28px 0; }
+  .status-card .status-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; margin: 0 0 8px; }
+  .status-card .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .status-card .status-dot.ok { background: var(--ok); }
+  .status-card .status-dot.bad { background: var(--err); }
+  .status-card .status-row { display: flex; gap: 10px; font-size: 12.5px; margin: 4px 0; color: var(--muted); }
+  .status-card .status-row b { color: var(--fg); font-weight: 600; min-width: 92px; flex-shrink: 0; }
+  .status-card .status-row code { font: inherit; color: var(--fg); word-break: break-word; }
+  .status-card .status-meta { color: var(--muted); font-size: 11px; margin-top: 8px; }
   .grp-head { display: flex; align-items: center; gap: 11px; margin: 0 0 14px; }
   .grp-head .grp-ic {
     width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
@@ -830,7 +838,7 @@
   <a href="/" class="pbar-logo" title="Back to MiOS Portal">Mi<b>OS</b></a>
   <span class="pbar-sep">›</span>
   <span class="pbar-page">Settings</span>
-  <span class="pbar-ver" id="v-meta">schema 1.1.0 / mios 0.2.4</span>
+  <span class="pbar-ver" id="v-meta"></span>
   <div class="pbar-space"></div>
   <div class="toolbar">
     <button id="btn-pick" type="button" title="Pick the file to edit (File System Access API — remembers handle, subsequent saves overwrite in place)">Pick file</button>
@@ -875,6 +883,17 @@
       </div>
       <div class="ph-cards" id="ph-cards"><!-- Identity / Human Profile / MiOS Persona cards move here --></div>
     </div>
+
+    <!-- Read-only status & goals (GET /portal/status). Hidden until a Portal answers,
+         so file:// and the miosd config server never show it. No data-key: it is
+         not configuration and never reaches DATA or the emitted TOML. -->
+    <section class="status-group" id="grp-status" style="display:none" aria-live="polite">
+      <div class="grp-head">
+        <span class="grp-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg></span>
+        <span class="grp-title">Status &amp; goals</span><span class="grp-note" id="status-note">live</span>
+      </div>
+      <div class="card-grid" id="status-grid"></div>
+    </section>
 
     <section class="home-group coachable" id="grp-settings">
       <div class="grp-head">
@@ -981,10 +1000,10 @@
       <label for="f-fullname">full name</label>
       <input type="text" id="f-fullname" data-key="identity.fullname" placeholder="MiOS User">
       <label for="f-default-password">default password
-        <span style="opacity:.6">(the ONE login for every service: Portal, ttyd
-        mobile terminal, Cockpit, Forge, Ceph &mdash; vendor default
-        <code>mios</code>)</span></label>
-      <input type="text" id="f-default-password" data-key="identity.default_password" placeholder="mios">
+        <span style="opacity:.6">(the ONE login for every service: Portal, Cockpit,
+        Forge, code-server, Open WebUI, Ceph &mdash; vendor default <code>mios</code>;
+        the ttyd terminal keeps its own login below)</span></label>
+      <input type="text" id="f-default-password" data-key="identity.default_password" data-inherit="true" placeholder="(blank = keep the current one)">
       <label for="f-location">home location
         <span style="opacity:.6">(city, "City, ST", or "lat,long" &mdash; resolves
         "near me" / weather / news when the chat surface sends no GPS; empty falls
@@ -1653,6 +1672,29 @@
             <input type="text" id="f-portal-kdf" data-key="portal.session_kdf_iterations" data-type="int" placeholder="600000">
             <label for="f-portal-secret">secret (empty = derive the cookie-HMAC key from the password)</label>
             <input type="text" id="f-portal-secret" data-key="portal.secret" placeholder="(empty — derive from password)">
+          </fieldset>
+          <fieldset>
+            <legend>[portal.status] — read-only status &amp; goals view (GET /portal/status)</legend>
+            <p style="color: var(--muted); font-size: 11.5px; margin: 0 0 8px;">
+              Nodes and their running spec, MiOS-MCP agents and subagents, the active goal
+              with its last recorded stopping criteria, declared targets, tasks and critical
+              services. Empty = the vendor default. snapshot_dir and repo_root are not here:
+              they are vendor/host constants bound to tmpfiles and the producer units.
+            </p>
+            <label for="f-portal-status-refresh">refresh_s (poll cadence every client uses, seconds)</label>
+            <input type="text" id="f-portal-status-refresh" data-key="portal.status.refresh_s" data-type="int" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-cache">cache_s (server-side aggregate cache, seconds)</label>
+            <input type="text" id="f-portal-status-cache" data-key="portal.status.cache_s" data-type="int" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-stale">stale_after_s (a producer snapshot older than this reads stale)</label>
+            <input type="text" id="f-portal-status-stale" data-key="portal.status.stale_after_s" data-type="int" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-rows">task_rows (in-progress and ready task rows shown)</label>
+            <input type="text" id="f-portal-status-rows" data-key="portal.status.task_rows" data-type="int" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-agents">agent_rows (agent and subagent rows shown, online first)</label>
+            <input type="text" id="f-portal-status-agents" data-key="portal.status.agent_rows" data-type="int" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-goal">goal_state (repo-relative goal record)</label>
+            <input type="text" id="f-portal-status-goal" data-key="portal.status.goal_state" data-inherit="true" placeholder="(vendor default)">
+            <label for="f-portal-status-docs">goal_docs (repo-relative glob of declared targets)</label>
+            <input type="text" id="f-portal-status-docs" data-key="portal.status.goal_docs" data-inherit="true" placeholder="(vendor default)">
           </fieldset>
           <fieldset>
             <legend>[accounts.&lt;name&gt;] — DB-backed multi-tenant accounts (overlay template)</legend>
@@ -3125,15 +3167,13 @@
         <input type="text" id="f-ttyd-enable" data-key="ttyd.enable" data-type="bool" placeholder="true">
         <label for="f-ttyd-bind">bind (127.0.0.1 = local-only)</label>
         <input type="text" id="f-ttyd-bind" data-key="ttyd.bind" placeholder="127.0.0.1">
-        <label for="f-ttyd-expose">tailnet_expose &mdash; phone access over Tailscale HTTPS
-          <span style="opacity:.6">(tailnet-only, not public; login = [identity] mios/mios)</span></label>
-        <input type="text" id="f-ttyd-expose" data-key="ttyd.tailnet_expose" data-type="bool" placeholder="false">
-        <label for="f-ttyd-require">require_auth (when bind != loopback)</label>
-        <input type="text" id="f-ttyd-require" data-key="ttyd.require_auth" data-type="bool" placeholder="true">
+        <label for="f-ttyd-expose">phone access over Tailscale HTTPS
+          <span style="opacity:.6">(tailnet-only, not public; needs tailscale.serve.enabled; login = ttyd's own auth_pass below, never the [identity] credential -- refused until auth_pass is set)</span></label>
+        <input type="text" id="f-ttyd-expose" data-key="tailscale.serve.routes.ttyd_bash.enabled" data-type="bool" placeholder="false">
         <label for="f-ttyd-user">auth_user (empty = inherit [identity].username)</label>
         <input type="text" id="f-ttyd-user" data-key="ttyd.auth_user" placeholder="(inherits mios)">
-        <label for="f-ttyd-pass">auth_pass (empty = inherit [identity].default_password)</label>
-        <input type="text" id="f-ttyd-pass" data-key="ttyd.auth_pass" placeholder="(inherits mios)">
+        <label for="f-ttyd-pass">auth_pass (ttyd's own login, never the one above: it sits on ttyd's command line, so a value equal to any other credential is refused; empty = a generated secret only root can read)</label>
+        <input type="text" id="f-ttyd-pass" data-key="ttyd.auth_pass" data-inherit="true" placeholder="(generated)">
       </fieldset>
       <fieldset>
         <legend>ttyd -- TLS + shells + ports</legend>
@@ -3153,6 +3193,21 @@
         <input type="text" id="f-ttyd-port-bash" data-key="ports.ttyd_bash" data-type="int" placeholder="7681">
         <label for="f-ttyd-port-ps">port_powershell</label>
         <input type="text" id="f-ttyd-port-ps" data-key="ports.ttyd_powershell" data-type="int" placeholder="7682">
+      </fieldset>
+      <fieldset>
+        <legend>Tailscale serve -- tailnet-only routes (never funnel)</legend>
+        <label for="f-ts-serve">enabled (master toggle; mios-tailscale-sync applies the routes)</label>
+        <input type="text" id="f-ts-serve" data-key="tailscale.serve.enabled" data-type="bool" placeholder="false">
+        <label for="f-ts-portal">Portal on the front door (/)</label>
+        <input type="text" id="f-ts-portal" data-key="tailscale.serve.routes.portal.enabled" data-type="bool" placeholder="false">
+        <label for="f-ts-share">read-only agent share (/share/)</label>
+        <input type="text" id="f-ts-share" data-key="tailscale.serve.routes.agent_share.enabled" data-type="bool" placeholder="false">
+        <label for="f-ts-forge">Forgejo web</label>
+        <input type="text" id="f-ts-forge" data-key="tailscale.serve.routes.forge_http.enabled" data-type="bool" placeholder="false">
+        <label for="f-ts-forge-ssh">Forgejo git+ssh</label>
+        <input type="text" id="f-ts-forge-ssh" data-key="tailscale.serve.routes.forge_ssh.enabled" data-type="bool" placeholder="false">
+        <label for="f-ts-code">code-server IDE</label>
+        <input type="text" id="f-ts-code" data-key="tailscale.serve.routes.code_server.enabled" data-type="bool" placeholder="false">
       </fieldset>
     </div>
   </div>
@@ -5862,6 +5917,7 @@ function refreshFromData() {
   document.getElementById("f-gpu-resources").value = JSON.stringify(gpuResourceTables(DATA), null, 2);
   renderGlobalBindings();
   populateEngineSelects();
+  renderVersionBanner();
   document.querySelectorAll("[data-key]").forEach(el => {
     const [sec, key] = splitDataKey(el.dataset.key);
     const v = DATA[sec]?.[key];
@@ -6256,6 +6312,39 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
+// The header banner reads the loaded config's [meta], never a literal: the
+// inline defaults at first paint, then the live layered mios.toml once seeded.
+function renderVersionBanner() {
+  const el = document.getElementById("v-meta");
+  const meta = (DATA && DATA.meta) || {};
+  if (el) el.textContent = `schema ${meta.schema_version || "?"} / mios ${meta.mios_version || "?"}`;
+}
+
+// ── Status & goals (embedded only) ───────────────────────────────────────
+// The Portal's GET /portal/status.js is the ONE status renderer: loaded only when
+// embedded (file:// makes zero fetches), it is mounted into #status-grid with this
+// page's class names. A 404 (the miosd config server), 401, network error or a
+// foreign body leaves the card hidden; status text never reaches DATA or the TOML.
+function mountStatus() {
+  if (!MIOS_EMBEDDED) return false;
+  const group = document.getElementById("grp-status");
+  const grid = document.getElementById("status-grid");
+  if (!group || !grid) return false;
+  const script = document.createElement("script");
+  script.src = "/portal/status.js";
+  script.onload = () => {
+    if (!window.MiosStatus) return;
+    window.MiosStatus.mount({
+      grid, note: document.getElementById("status-note"),
+      reveal: () => { group.style.display = ""; },
+      cls: { card: "card status-card", up: "", down: "", row: "status-title", name: "status-name",
+             dot: "status-dot", kv: "status-row", meta: "status-meta" },
+    });
+  };
+  document.head.appendChild(script);
+  return true;
+}
+
 function renderFlatpaks() {
   const grid = document.getElementById("flatpak-grid");
   if (!grid) return;
@@ -6529,6 +6618,16 @@ function gatherFromForm() {
   if (camera && Number.isInteger(camera.follow_half_life_ms) && Number.isInteger(camera.reset_glide_ms) && camera.reset_glide_ms !== 0 && camera.follow_half_life_ms > camera.reset_glide_ms) throw new Error("Camera smoothing half-time must not exceed reset transition limit");
   const gesture = DATA["keybindings.global.controller.nav.focus_gesture"];
   if (gesture && gesture.neutral_pct !== undefined && gesture.rise_pct !== undefined && gesture.rise_pct <= gesture.neutral_pct) throw new Error("Focus gesture peak must exceed neutral threshold");
+  // [portal.status] cadence relations (portal_spec._cfg fails closed on the same ones at runtime).
+  const status = DATA["portal.status"], observe = DATA["mcp.agents.observation"];
+  const spanS = v => { const m = /^(\d+)\s*(s|sec|min|h)?$/.exec(String(v ?? "").trim()); return m ? Number(m[1]) * ({min: 60, h: 3600}[m[2]] || 1) : null; };
+  const specEvery = spanS((DATA['units."mios-podman-ps.timer".Timer'] || {}).OnUnitActiveSec);
+  const specBudget = spanS((DATA['units."mios-podman-ps.service".Service'] || {}).TimeoutStopSec);
+  if (status && Number.isInteger(status.cache_s) && Number.isInteger(status.refresh_s) && status.cache_s >= status.refresh_s) throw new Error("Portal status cache must be shorter than the poll interval");
+  if (status && Number.isInteger(status.request_timeout_s) && Number.isInteger(status.refresh_s) && 3 * status.request_timeout_s >= status.refresh_s) throw new Error("Portal status request probes (3 x request timeout) must fit inside the poll interval");
+  if (status && Number.isInteger(status.stale_after_s) && observe && Number.isInteger(observe.refresh_s) && status.stale_after_s <= observe.refresh_s) throw new Error("Portal status stale threshold must exceed the agent observation interval");
+  if (status && Number.isInteger(status.stale_after_s) && specEvery !== null && status.stale_after_s <= specEvery) throw new Error("Portal status stale threshold must exceed the spec snapshot interval");
+  if (status && Number.isInteger(status.probe_timeout_s) && specBudget !== null && 2 * status.probe_timeout_s >= specBudget) throw new Error("Portal status writer probes (2 x probe timeout) must fit inside the spec unit's stop timeout");
 }
 
 function renderRaw() {
@@ -7130,6 +7229,10 @@ applyEmbedContext();
 // (GET /portal/config). Inert/degrades-to-defaults until task_1077; never
 // runs under file://.
 seedFromServer();
+
+// STEP 6 -- when embedded, mount the Portal's status renderer (/portal/status.js);
+// hidden on any other answer, never loads or fetches under file://.
+mountStatus();
 
 // ── Profile-card SPA shell (replaces the tab reparenter) ─────────────────
 // initShell() MOVES the original field markup out of the hidden #pool into

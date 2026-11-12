@@ -203,10 +203,45 @@ def t_usage_completeness():
     check("usage: a streamed (SSE) completion comes back untouched", isinstance(sse, types.SimpleNamespace))
 
 
+def t_peercred_never_from_a_header():
+    """TCP requests carrying the old x-mock peercred headers still meet inbound_auth_mw's 401
+    (server.py's order: peercred outer, inbound inner)."""
+    _gate()
+    forged = {"x-mock-unix-socket": "1", "x-mock-peercred-uid": "0"}
+
+    def req(scope, headers):
+        return types.SimpleNamespace(url=types.SimpleNamespace(path="/v1/chat/completions"),
+                                     headers=headers, state=types.SimpleNamespace(), scope=scope)
+
+    def chain(r, up):
+        async def inner(rr):
+            return await _auth.inbound_auth_mw(rr, up)
+        return asyncio.run(_auth.peercred_auth_mw(r, inner))
+
+    for path in ("/v1/chat/completions", "/a2a"):
+        up = _Upstream()
+        r = req({"type": "http"}, dict(forged))
+        r.url.path = path
+        resp = chain(r, up)
+        check(f"forged peercred headers over TCP get 401 on {path}",
+              getattr(resp, "status_code", None) == 401 and up.ran == 0
+              and getattr(r.state, "mios_principal", None) is None,
+              f"status={getattr(resp, 'status_code', None)} ran={up.ran}")
+    up = _Upstream()
+    r = req({"type": "http", "is_unix_socket": True, "peercred": (42, 0, 0)}, {})
+    chain(r, up)
+    check("a real unix-socket peer (uid 0) gets its peercred principal",
+          up.ran == 1 and getattr(r.state, "mios_principal", None) == "peercred:uid=0")
+    up = _Upstream()
+    resp = chain(req({"type": "http", "is_unix_socket": True, "peercred": (42, 4242, 4242)}, {}), up)
+    check("an unlisted unix-socket uid gets 401", getattr(resp, "status_code", None) == 401 and up.ran == 0)
+
+
 def _run_extra_auth():
     before = _fails
     t_auth_gate()
     t_usage_completeness()
+    t_peercred_never_from_a_header()
     return 1 if _fails > before else 0
 
 
