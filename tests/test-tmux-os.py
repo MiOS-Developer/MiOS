@@ -1327,6 +1327,8 @@ argv = [{stub!r}, "desktop-panel"]
             "center-ordinary-app-with-four-core-roles",
             "focus-core-chat-from-app-with-four-core-roles",
             "restore-app-focus-with-four-core-roles",
+            "second-canonical-app-from-existing-float",
+            "center-two-ordinary-floats-and-restore-first",
             "native-agent-float-fails-closed",
             "manual-managed-marker-remains-protected",
         }
@@ -1335,7 +1337,7 @@ argv = [{stub!r}, "desktop-panel"]
                         for verb in ("close-confirm", "center", "snap-left"))
         expected.update(f"{flag}-wins-over-forged-desktop-role"
                         for flag in ("@mios-workspace-head", "@mios-mcp-owner", "@mios-workspace-worker"))
-        self.assertEqual(len(evidence["checks"]), 21, "all positive and negative native cases must execute")
+        self.assertEqual(len(evidence["checks"]), 23, "all positive and negative native cases must execute")
         self.assertEqual(set(evidence["checks"]), expected)
 
 

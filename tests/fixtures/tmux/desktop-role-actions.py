@@ -55,6 +55,16 @@ def main():
   for name,pane in roles.items():
    for verb in['close-confirm','center','snap-left']:
     before=core_snapshot();r=action(verb,pane);need(r.returncode!=0 and'desktop roles cannot be rearranged'in r.stderr and core_snapshot()==before and identity(app)==app_identity,'core role protection failed');checks.append(name+'-rejects-'+verb)
+  # A second ordinary native float must not be confused with a managed pane.
+  launched_second=action('new',app);need(launched_second.returncode==0,'second canonical app from an existing float failed')
+  def second_app_focus():
+   pane=app_focus()
+   return pane if pane and pane!=app else None
+  second=m.wait(second_app_focus);need(second is not None and count()==6,'exactly two ordinary app floats required');second_identity=identity(second)
+  need(h.I('display-message','-p','-t',second,'#{pane_floating_flag}')=='1' and identity(app)==app_identity and core_snapshot()==initial,'second app is not a native float or changed existing roles');checks.append('second-canonical-app-from-existing-float')
+  second_rect=rect(second);centered=action('center',app);need(centered.returncode==0 and identity(app)==app_identity and identity(second)==second_identity and rect(second)==second_rect and core_snapshot()==initial and count()==6,'centering first ordinary float changed another pane')
+  first_rect=rect(app);centered=action('center',second);need(centered.returncode==0 and identity(app)==app_identity and rect(app)==first_rect and identity(second)==second_identity and core_snapshot()==initial and count()==6,'centering second ordinary float changed another pane')
+  h.I('kill-pane','-t',second);restored=action('focus',app);need(restored.returncode==0 and h.I('display-message','-p','-c',client,'#{client_pane_id}')==app and count()==5 and identity(app)==app_identity and rect(app)==first_rect and core_snapshot()==initial,'owned second app cleanup or first app focus failed');checks.append('center-two-ordinary-floats-and-restore-first')
   # Exercise the accepted provider's real floating-agent inventory. A listed
   # or explicitly witnessed agent must hit the managed guard; a truly unseen
   # pane must hit the strict count guard. Never claim omission when C95 lists
