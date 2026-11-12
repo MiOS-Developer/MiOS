@@ -3523,6 +3523,36 @@ mod tests {
         assert!(SessionFailureTerminal::pin_fds(fd, other_slave.as_raw_fd()).is_err());
         assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
         assert_eq!(unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) }, other_flags);
+
+        // Separate open file descriptions of the same TTY can have distinct
+        // original flags; successful pinning must restore each exact flag set.
+        let independent = OpenOptions::new().read(true).write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(format!("/proc/self/fd/{fd}")).unwrap();
+        let independent_flags = unsafe { libc::fcntl(independent.as_raw_fd(), libc::F_GETFL) };
+        {
+            let _terminal = SessionFailureTerminal::pin_fds(fd, independent.as_raw_fd()).unwrap();
+        }
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
+        assert_eq!(unsafe { libc::fcntl(independent.as_raw_fd(), libc::F_GETFL) }, independent_flags);
+
+        let regular = tempfile::tempfile().unwrap();
+        let null = OpenOptions::new().read(true).write(true).open("/dev/null").unwrap();
+        for output in [&regular, &null] {
+            let before = unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) };
+            assert!(SessionFailureTerminal::pin_fds(fd, output.as_raw_fd()).is_err());
+            assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
+            assert_eq!(unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) }, before);
+        }
+        let null_flags = unsafe { libc::fcntl(null.as_raw_fd(), libc::F_GETFL) };
+        assert!(SessionFailureTerminal::pin_fds(null.as_raw_fd(), null.as_raw_fd()).is_err());
+        assert_eq!(unsafe { libc::fcntl(null.as_raw_fd(), libc::F_GETFL) }, null_flags);
+
+        // Registration itself can fail after O_NONBLOCK was set (epoll rejects
+        // regular files). The retained duplicate must restore the original OFD.
+        let regular_flags = unsafe { libc::fcntl(regular.as_raw_fd(), libc::F_GETFL) };
+        assert!(BridgeFd::new(regular.try_clone().unwrap(), true).is_err());
+        assert_eq!(unsafe { libc::fcntl(regular.as_raw_fd(), libc::F_GETFL) }, regular_flags);
     }
 
     #[tokio::test]
@@ -4734,23 +4764,34 @@ struct BridgeFd {
     previous_flags: Option<i32>,
 }
 impl BridgeFd {
-    fn inherited(fd: i32) -> Result<Self, String> {
+    fn duplicate(fd: i32) -> Result<File, String> {
         let duplicated = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
         if duplicated < 0 {
             return Err("remote stream descriptor unavailable".into());
         }
-        let file = unsafe { File::from_raw_fd(duplicated) };
-        Self::new(file, true)
+        Ok(unsafe { File::from_raw_fd(duplicated) })
+    }
+    fn inherited(fd: i32) -> Result<Self, String> {
+        Self::new(Self::duplicate(fd)?, true)
     }
     fn new(file: File, restore: bool) -> Result<Self, String> {
         let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+        // AsyncFd::new consumes its File even on error. Keep a live duplicate
+        // until registration succeeds so failure can restore this same open
+        // file description, never a closed or recycled raw descriptor number.
+        let rollback = file.try_clone().map_err(|_| "cannot pin remote stream flags")?;
         if flags < 0
             || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
         {
             return Err("cannot prepare nonblocking remote stream".into());
         }
-        let io = tokio::io::unix::AsyncFd::new(file)
-            .map_err(|_| "remote stream readiness unavailable")?;
+        let io = match tokio::io::unix::AsyncFd::new(file) {
+            Ok(io) => io,
+            Err(_) => {
+                unsafe { libc::fcntl(rollback.as_raw_fd(), libc::F_SETFL, flags); }
+                return Err("remote stream readiness unavailable".into());
+            }
+        };
         Ok(Self {
             io,
             previous_flags: restore.then_some(flags),
@@ -4883,27 +4924,32 @@ impl SessionFailureTerminal {
         Self::pin_fds(0, 1)
     }
     fn pin_fds(input_fd: i32, output_fd: i32) -> Result<Self, String> {
-        // stdin/stdout may share one open file description. Capture both original
-        // flag sets before either BridgeFd enables nonblocking IO.
-        let output_flags = unsafe { libc::fcntl(output_fd, libc::F_GETFL) };
-        if output_flags < 0 {
-            return Err("selected session output is unavailable".into());
-        }
-        let input = BridgeFd::inherited(input_fd)?;
-        let mut output = BridgeFd::inherited(output_fd)?;
-        output.previous_flags = Some(output_flags);
-        let i = input.io.get_ref().metadata().map_err(|_| "selected session input ended")?;
-        let o = output.io.get_ref().metadata().map_err(|_| "selected session output ended")?;
+        // Pin and validate both inherited descriptors before either descriptor
+        // can acquire nonblocking flags or the terminal can enter raw mode.
+        let input_file = BridgeFd::duplicate(input_fd)?;
+        let output_file = BridgeFd::duplicate(output_fd)?;
+        let i = input_file.metadata().map_err(|_| "selected session input ended")?;
+        let o = output_file.metadata().map_err(|_| "selected session output ended")?;
         if !i.file_type().is_char_device()
             || !o.file_type().is_char_device()
             || (i.dev(), i.ino(), i.rdev()) != (o.dev(), o.ino(), o.rdev())
         {
             return Err("failure acknowledgement requires one inherited terminal".into());
         }
+        // stdin/stdout may share one open file description. Capture both original
+        // flag sets before either BridgeFd enables nonblocking IO.
+        let output_flags = unsafe { libc::fcntl(output_file.as_raw_fd(), libc::F_GETFL) };
+        if output_flags < 0 {
+            return Err("selected session output is unavailable".into());
+        }
         // Pin this inherited descriptor; never reopen a TTY by a caller path.
         // Its owner can be the original SSH account when PAM selected another
         // user. Genuine selected-session admission was checked before this call.
-        let terminal = TerminalRaw::arm_fd(input.io.as_raw_fd())?;
+        // tcgetattr inside arm_fd also rejects character devices such as null.
+        let terminal = TerminalRaw::arm_fd(input_file.as_raw_fd())?;
+        let input = BridgeFd::new(input_file, true)?;
+        let mut output = BridgeFd::new(output_file, true)?;
+        output.previous_flags = Some(output_flags);
         Ok(Self { input, output, _terminal: terminal })
     }
 }
