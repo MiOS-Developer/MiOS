@@ -3,7 +3,7 @@
 # MiOS greeter package
 
 Both the local fallback and remote login use `/usr/bin/tuigreet`. Upstream
-tuigreet 0.9.1 masks the username field with the NSS GECOS display name after
+tuigreet, pinned by `[desktop.greeter.tuigreet_source]`, masks the username field with the NSS GECOS display name after
 account selection. Its edit handlers change the login value without removing
 that old display name, making edits appear ineffective. Its remembered-session
 lookup also uses the display value. The carried patch keeps the editable NSS
