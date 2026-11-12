@@ -1,6 +1,26 @@
 <!-- AI-hint: Current global pickup is main; historical stage receipts follow. -->
 ## Current main pickup
 
+### Current canonical source and verification commands
+
+The current package is `mios-mons`; HUD geometry lives in
+`tools/native/mios-mons/src/hud.rs`, with menu consumers in
+`tools/native/mios-mons/src/ui.rs`. For a new authorized MiOS-DEV verification
+run, use the current package name:
+
+```sh
+cd tools/native
+cargo test --locked -p mios-mons --target x86_64-unknown-linux-musl -- hud::menu_geometry_tests
+cargo fmt --check -p mios-mons
+cargo clippy --locked -p mios-mons --all-targets --target x86_64-unknown-linux-musl -- -D warnings
+```
+
+These commands were not run by this naming update. The commands, revisions and
+source paths in the historical receipt below retain their original identities
+and do not certify a new checkout or live installation.
+
+### Recorded integration summary
+
 Resume from main and `mios-continuation-milestones.json`. Combined native results
 include442 game unit and13 CLI passes (3 ignored),248 controller passes, fatal
 Clippy and format. The keybinding test suite passes31 tests. All29 projection
@@ -16,7 +36,7 @@ Live Codespace, physical input, full image and R4 acceptance remain open.
 <!-- AI-hint: Historical source-stage receipt; current summary above supersedes earlier unrun or branch-pickup notes. -->
 
 <!-- AI-hint: Finite HUD source recovery, tall-tile budget repair and pending native verification. -->
-<!-- AI-related: tools/native/mios-tamagotchi/src/hud.rs, handoff.md, tasks.jsonl task_3778/task_3779 -->
+<!-- AI-related: tools/native/mios-mons/src/hud.rs, handoff.md, tasks.jsonl task_3778/task_3779 -->
 # HUD continuation milestone
 
 Lane: `mios-hud-continuation`. Base: main

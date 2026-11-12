@@ -12,6 +12,15 @@ Nothing in this document was run. Every CPU and memory figure is an estimate. §
 defines the harness that turns each one into a measured number before any budget becomes
 a gate.
 
+## Current canonical names
+
+For work resumed on current main, the game/client package and executable are
+`mios-mons`, its sources are in `tools/native/mios-mons`, its specs are in
+`specs/mios-mons`, and its layered SSOT table is `[mons]`. Future-facing names
+below use these current paths. Source-line citations still describe the stated
+`fc4ad36ec` baseline; renaming a reference does not revalidate that baseline or
+implement the proposed multiplayer crates, services, schema fields or CLI flags.
+
 ---
 
 Q1/Q2/Q5/Q8 are answered: game clients own registration and the unrelated monitor is renamed; one password works for permitted Linux and Windows/MiOS-Xbox logons; v1 includes visits/co-care/duels/trading/leaderboards and hotel-style social rooms of varying sizes; exposure is LAN and mesh only. Other architecture choices, including a separate database service and any Law11 amendment, remain unapproved proposals. No live identity/database/service/network change is authorized. Revision2 is preserved in mios-design-prior/.
@@ -28,7 +37,7 @@ Q1/Q2/Q5/Q8 are answered: game clients own registration and the unrelated monito
 | D6 | **Rooms are minimal containers.** The image is `FROM scratch` plus one static musl binary (`mios-mons-room`). The container is rootless under a dedicated `mios-mons-rooms` account and runs `Network=none`, `ReadOnly`, `DropCapability=ALL`, `NoNewPrivileges`, with a per-instance MCS label and cgroup caps. Its only I/O is one UNIX socket. It holds no credentials, reads no `install.env`, and cannot spawn processes. |
 | D7 | **The network edge is one gateway, `mios-monsd gateway`.** It terminates TLS 1.3 (native and WSS) and SSH (game-only, implemented in the gateway, never `sshd`). It verifies Ed25519 room tickets offline and multiplexes clients to rooms over UNIX sockets. Rooms get **no ports**, so per-room port ranges never exhaust. Persistence goes through a separate broker, `mios-monsd broker`, which is the only holder of the `mons_broker` database role. |
 | D8 | **The room is authoritative and headless; clients are thin and render locally.** Host CPU then scales with rooms × tick rate, which is cheap, instead of viewers × voxel frame rate, which is what costs today. A viewer that cannot render (a phone over SSH, a browser) gets a sandboxed *render seat*. Render seats are damage-driven and capped by SSOT frame policy. |
-| D9 | **The game is split into crates.** `mios-mons-core` holds the deterministic, integer-only rules plus pet motion, which moves out of `Ui`. `mios-tamagotchi` becomes the client and the single-player game. `mios-monsd` provides the room, gateway, broker and supervisor. Single-player play stays offline-capable, with local saves and no account. |
+| D9 | **The game is split into crates.** `mios-mons-core` holds the deterministic, integer-only rules plus pet motion, which moves out of `Ui`. `mios-mons` becomes the client and the single-player game. `mios-monsd` provides the room, gateway, broker and supervisor. Single-player play stays offline-capable, with local saves and no account. |
 | D10 | **Players may have standard OS accounts on permitted Linux and Windows/MiOS-Xbox nodes.** This supersedes revision2 exclusion of OS users. Game-only SSH remains a gateway transport, not an OS login session. Explicit node scope, protected recovery accounts, group allow-lists and measured per-role memory admission are prerequisites; do not multiply the blanket10GiB floor by player count. |
 | D11 | **Revocation is epoch-based.** Tickets carry `{sub, epoch, aud, exp ≤ 15 min}`. Gateways get a pushed epoch feed. Node manifests carry `expires_at`. Target SLA: ≤ 60 s on every online node. Disabling an account locks it, removes its keys, ends its sessions and evicts it from every room. |
 | D12 | **A realm is one fleet, or one standalone host.** The identity primary is a guest-plane singleton per realm. Agents keep working from cached manifests while it is down. Federation uses only pinned Ed25519 realm keys from the host SSOT. A federated principal is `user@realm`, gets no local uid and is capped at `mons.*`. Discovery never creates trust. |
@@ -441,7 +450,7 @@ Quotas, enrollment scope, roles, credential references and admission are SSOT-ow
 - **Discovery.** Invites carry the address, and mDNS may *suggest* a LAN gateway, but trust always comes from the realm CA pinned by the invite.
 
 ### 5.9 How clients connect
-- **Native.** `mios-tamagotchi --connect <invite-or-realm> [--room <id>]` reaches the gateway over TLS. Windows `mios-launch` embeds the same client.
+- **Native.** `mios-mons --connect <invite-or-realm> [--room <id>]` reaches the gateway over TLS. Windows `mios-launch` embeds the same client.
 - **Web.** The gateway serves a static page: a baked xterm.js plus a small Bun/TS shim. The page opens a WSS connection to a render seat. For players this replaces ttyd, which runs as the operator (`mios-ttyd-bash.service:21-22`, security H9).
 - **Phone.** `ssh -p <mons_ssh> <name>@<gateway>` uses a registered key and gets a render seat. It is never an OS login.
 - **Local.** `/run/mios/mons/gateway.sock`, for same-host seats and nested PiP sessions.
@@ -461,7 +470,7 @@ Quotas, enrollment scope, roles, credential references and admission are SSOT-ow
 
 ### 6.2 Crate split
 - **`tools/native/mios-mons-core`** (lib). Holds `game`, `genetics`, `habitat`, `progression`, `characters` (data only), save envelope and validation, and a new **`motion`** module. `motion` uses integer fixed-point position, destination and speed, and integer yaw from a lookup table. It has no ratatui, crossterm, process or filesystem I/O beyond pure parse and serialize.
-- **`tools/native/mios-tamagotchi`**. Becomes the client and the single-player game. It depends on core and keeps rendering, input, dialogs and the local save. Process-spawning features (native dialogs, controller query, tmux) sit behind a cargo feature that stays *on* for the local desktop build and is *off* in presenter mode.
+- **`tools/native/mios-mons`**. Becomes the client and the single-player game. It depends on core and keeps rendering, input, dialogs and the local save. Process-spawning features (native dialogs, controller query, tmux) sit behind a cargo feature that stays *on* for the local desktop build and is *off* in presenter mode.
 - **`tools/native/mios-monsd`** (bin). Subcommands `gateway`, `broker`, `supervisor` and `presenter`. A second bin target, `mios-mons-room`, depends only on core and the protocol crate.
 - **`tools/native/mios-mons-proto`** (lib). Framing, message types, validation, and generation of the protocol JSON Schema.
 - **`tools/native/mios-identityd`** and **`tools/native/mios-account-agent`** (bins). The agent also has a Windows target.
@@ -505,7 +514,7 @@ Camera, zoom (50-400 %), orbit, HUD mode, renderer, color depth, sprite style, d
 - **Never.** A client never uploads state into a room. It sends intents only.
 
 ### 6.9 Render seats
-- **What a seat is.** The presenter allocates a PTY pair. It runs the client (`mios-tamagotchi --connect --presenter`, with process spawning compiled out) on the slave inside a sandbox: a per-seat cgroup with memory, pids and CPU caps, plus seccomp and Landlock. It copies bytes between the master and the SSH or WSS channel. The client code runs unchanged.
+- **What a seat is.** The presenter allocates a PTY pair. It runs the client (`mios-mons --connect --presenter`, with process spawning compiled out) on the slave inside a sandbox: a per-seat cgroup with memory, pids and CPU caps, plus seccomp and Landlock. It copies bytes between the master and the SSH or WSS channel. The client code runs unchanged.
 - **CPU cost.** Seats are damage-driven (§7.3). When the room is idle, a seat runs at `[mons.render].idle_fps`, and the voxel room backdrop is cached per (camera, size, renderer). Animating seats run at `animation_frame_ms`, and idle seats drop to `idle_fps`, in line with the desktop frame-rate policy.
 - **Sharing.** Seats that show the same room with the same (camera, size, renderer) may share one rendered frame. This is an optimisation for P6+, measured before it is adopted.
 
@@ -611,7 +620,7 @@ A client render benchmark drives `ui.draw` on a `TestBackend` at fixed sizes and
 | P11 | Federation and hosted realms | federated play | P5, P8, security-mode enforcement |
 
 Owner boundaries:
-- **Game lane:** `tools/native/mios-tamagotchi`, `mios-mons-core`, `mios-mons-proto`, `mios-monsd`.
+- **Game lane:** `tools/native/mios-mons`, `mios-mons-core`, `mios-mons-proto`, `mios-monsd`.
 - **Identity lane:** `mios-identityd`, `mios-account-agent`, the accountdb schema files.
 - **Root:** `usr/share/mios/mios.toml`, `CLAUDE.md`/`AGENTS.md` law text, `[security.*]`, `[firewall]`, `[ports]`, sysusers, the Headscale policy, the memory-floor drop-ins, the generators, `tasks.jsonl`/`TASKS.md`, the `mios-bootstrap` repo and every push to `main`. Lanes propose SSOT fragments and root applies them in sequence.
 
