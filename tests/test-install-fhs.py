@@ -8,6 +8,7 @@ import os
 import re
 import pathlib
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -771,6 +772,388 @@ dnf() { dnf5 "$@"; }
     print("PASS legacy unsupported-host guard and failed package transaction")
 
 
+# The pre-fix writer, verbatim: the planted defect of the negative controls (line regexes
+# rewrote the TOML, a symlinked file was replaced, mios.d fragments were never read).
+_OLD_CREDENTIAL_WRITER = r'''write_operator_credential() {
+    local user="$1" home esc
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    [[ -n "$home" && -d "$home" ]] || { log_err "No home for '${user}': the operator credential was not recorded"; return 1; }
+    if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
+        log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
+    fi
+    esc="${USER_PASSWORD//\\/\\\\}"
+    esc="${esc//\"/\\\"}"
+    printf '%s\n' "$esc" | sudo -u "$user" bash -c '
+        set -eu; umask 077; f="$1/.config/mios/mios.toml"; IFS= read -r esc
+        mkdir -p "$1/.config/mios"; tmp="$(mktemp "$f.XXXXXX")"; in_id=0; put=0
+        if [[ -f "$f" && ! -L "$f" ]]; then
+            while IFS= read -r line || [[ -n "$line" ]]; do
+                if [[ "$line" =~ ^[[:space:]]*\[ ]]; then
+                    in_id=0; [[ "$line" =~ ^[[:space:]]*\[identity\][[:space:]]*(#.*)?$ ]] && in_id=1
+                    printf "%s\n" "$line" >> "$tmp"
+                    if (( in_id && ! put )); then printf "default_password = \"%s\"\n" "$esc" >> "$tmp"; put=1; fi
+                elif ! (( in_id )) || [[ ! "$line" =~ ^[[:space:]]*default_password[[:space:]]*= ]]; then
+                    printf "%s\n" "$line" >> "$tmp"
+                fi
+            done < "$f"
+        fi
+        (( put )) || printf "\n[identity]\ndefault_password = \"%s\"\n" "$esc" >> "$tmp"
+        chmod 0600 "$tmp"; mv -f "$tmp" "$f"' _ "$home" || {
+        log_err "The operator credential was not recorded in ${home}/.config/mios/mios.toml"
+        return 1
+    }
+    log_ok "Operator credential recorded: ${home}/.config/mios/mios.toml ([identity].default_password, 0600)"
+}'''
+
+# Guard removals planted into the real writer, one per guard a case depends on.
+_CRED_MUTANTS = {
+    "mode-0644": ("os.fchmod(fd, 0o600)", "os.fchmod(fd, 0o644)"),
+    "rstrip": ('yield text + sep + "[identity]" + nl + line + nl',
+               'yield text.rstrip() + nl + nl + "[identity]" + nl + line + nl'),
+    "no-verify": ("if canon(tomllib.loads(candidate)) == canon(want):", "if True:"),
+    "insert-not-replace": ('if isinstance(ident, dict) and "default_password" in ident:', "if False:"),
+    "no-noop": ("if effective(old) != value:", "if True:"),
+    "no-shadow-check": ("if effective(merged) != value:", "if False:"),
+    "empty-overrides": ('elif isinstance(v, str) and v == "" and dst.get(k) not in (None, ""):', "elif False:"),
+    "all-fragments": ('if n.endswith(".toml") and not n.startswith(".")', "if True"),
+    "dir-follow": ("os.O_DIRECTORY | os.O_NOFOLLOW |", "os.O_DIRECTORY |"),
+    "no-ctrl-guard": (r'if not value or re.search(r"[\x00-\x1f\x7f]", value):', "if not value:"),
+    "argv-leak": ('python3 -I -c "$prog" "$home")"', 'python3 -I -c "$prog" "$home" "${USER_PASSWORD:-}")"'),
+    "log-leak": ('return f"recorded in {target} ([identity].default_password, 0600)"',
+                 'return f"recorded {value} in {target}"'),
+}
+
+# A real account is not needed: getent names a temp home, sudo -u records exactly the
+# argv and environment it was handed and runs the command as the current uid.
+_CRED_HARNESS = r'''
+set -euo pipefail
+log_ok() { printf '[ OK ] %s\n' "$*"; }
+log_err() { printf '[ERR ] %s\n' "$*" >&2; }
+log_warn() { printf '[WARN] %s\n' "$*" >&2; }
+getent() {
+    [[ "$1 $2" == "passwd operator" && -n "${MIOS_TEST_HOME:-}" ]] || return 2
+    printf 'operator:x:%s:%s::%s:/bin/bash\n' "$(id -u)" "$(id -g)" "$MIOS_TEST_HOME"
+}
+sudo() {
+    { printf 'ARGV'; printf ' %s' "$@"; printf '\nENV '; env | tr '\n' ' '; printf '\n'; } >> "$MIOS_TEST_TRACE"
+    [[ "$1" == -u && "$2" == operator ]] || return 97
+    shift 2
+    "$@"
+}
+USER_PASSWORD="$(cat "$MIOS_TEST_SECRET")"
+'''
+
+_CRED_SECRET = 'Fixture "pw" \\ \u00e9-7f3a'
+_CRED_TARGET = "home/.config/mios/mios.toml"
+
+
+def _toml_str(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _cred_cases():
+    q = _toml_str(_CRED_SECRET)
+    skel = pathlib.Path(_ROOT, "etc/skel/.config/mios/mios.toml").read_text()
+    frag = "home/.config/mios/mios.d/"
+    return [
+        dict(name="no-file", files={}, expect="written", mutants=["mode-0644", "argv-leak", "log-leak"]),
+        dict(name="no-identity", expect="written", prefix=True, mutants=["rstrip"],
+             files={_CRED_TARGET: 'title = "x" # c\r\n[ai]\r\nmodel = "m"   '}),
+        dict(name="spaced-header", expect="written", mutants=["old-writer"],
+             files={_CRED_TARGET: '# operator\n[ identity ]\nusername = "op"\n\n[ai]\nmodel = "m"\n'}),
+        dict(name="quoted-header", expect="written", mutants=["old-writer"],
+             files={_CRED_TARGET: '[ "identity" ] # quoted\nusername = "op"\n'}),
+        dict(name="replace", expect="written", mutants=["insert-not-replace"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\ndefault_password = "old" # rotated\n\n[ai]\nmodel = "m"\n'}),
+        dict(name="replace-multiline-value", expect="written", mutants=["old-writer"],
+             files={_CRED_TARGET: '[identity]\ndefault_password = """old\n  value"""\nusername = "op"\n'}),
+        dict(name="multiline-data", expect="written", mutants=["old-writer", "no-verify"],
+             files={_CRED_TARGET: "[forge]\nnote = '''\n[identity]\ndefault_password = \"decoy\"\n'''\n\n"
+                                  '[ identity ]\nusername = "op"\nmotd = """\ndefault_password = "decoy2"\n"""\n'
+                                  'default_password = "old"\n'}),
+        dict(name="skel-template", expect="written", mutants=["mode-0644"], files={_CRED_TARGET: skel}),
+        dict(name="already-current", expect="unchanged", mutants=["no-noop"],
+             files={_CRED_TARGET: f"[identity]\ndefault_password = {q}\n"}),
+        dict(name="inline-table", expect="refused", says=["not a plain header table"],
+             mutants=["old-writer", "no-verify"], files={_CRED_TARGET: 'identity = { username = "op" }\n'}),
+        dict(name="inline-table-equal", expect="unchanged", mutants=["no-noop"],
+             files={_CRED_TARGET: f'identity = {{ username = "op", default_password = {q} }}\n'}),
+        dict(name="dotted-key", expect="refused", says=["not a plain header table"], mutants=["old-writer"],
+             files={_CRED_TARGET: 'identity.username = "op"\n'}),
+        dict(name="dotted-key-equal", expect="unchanged", mutants=["no-noop"],
+             files={_CRED_TARGET: f'identity.default_password = {q}\nidentity.username = "op"\n'}),
+        dict(name="symlinked-file", expect="refused", says=["mios.toml is a symlink"], root_refuses=True,
+             mutants=["old-writer"], files={"outside/real.toml": '[identity]\nusername = "op"\n',
+                                            _CRED_TARGET: ("link", "../../../outside/real.toml")}),
+        dict(name="symlinked-dir", expect="refused", says=[".config/mios is a symlink or not a directory"],
+             root_refuses=True, mutants=["old-writer", "dir-follow"],
+             files={"outside/cfg/mios.toml": '[identity]\nusername = "op"\n',
+                    "home/.config/mios": ("link", "../../outside/cfg")}),
+        dict(name="hardlinked", expect="refused", says=["not a regular, singly linked file"], root_refuses=True,
+             mutants=["old-writer"], files={_CRED_TARGET: '[identity]\nusername = "op"\n',
+                                            "outside/alias.toml": ("hardlink", _CRED_TARGET)}),
+        dict(name="unparsable", expect="refused", says=["does not parse as TOML (at line"], root_refuses=True,
+             mutants=["old-writer"], files={_CRED_TARGET: '[identity\nusername = "op"\n'}),
+        dict(name="shadowing-fragment", expect="refused", shadow="other",
+             says=["shadowed by", "mios.d/50-x.toml", "remove its [identity].default_password"],
+             mutants=["old-writer", "no-shadow-check"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\ndefault_password = "older"\n',
+                    frag + "50-x.toml": '[identity]\ndefault_password = "other"\n'}),
+        dict(name="fragments-not-shadowing", expect="written", mutants=["empty-overrides", "all-fragments"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\n',
+                    frag + "10-a.toml": f"[identity]\ndefault_password = {q}\n",
+                    frag + "20-b.toml": '[identity]\ndefault_password = ""\n',
+                    frag + ".hidden.toml": '[identity]\ndefault_password = "hidden"\n',
+                    frag + "x.conf": '[identity]\ndefault_password = "conf"\n'}),
+        dict(name="unparsable-fragment", expect="refused", says=["mios.d/20-bad.toml does not parse as TOML"],
+             root_refuses=True, mutants=["old-writer"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\n', frag + "20-bad.toml": "[identity\n"}),
+        dict(name="symlinked-fragment", expect="refused", says=["mios.d/30-link.toml is a symlink"],
+             root_refuses=True, mutants=["old-writer"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\n', "outside/frag.toml": "[ai]\n",
+                    frag + "30-link.toml": ("link", "../../../../outside/frag.toml")}),
+        dict(name="fifo-fragment", expect="refused", says=["mios.d/40-pipe.toml is not a regular"],
+             root_refuses=True, mutants=["old-writer"],
+             files={_CRED_TARGET: '[identity]\nusername = "op"\n', frag + "40-pipe.toml": ("fifo",)}),
+        dict(name="control-char", expect="refused", secret="tab\there-7f3a", says=["control character"],
+             files={}, mutants=["no-ctrl-guard"]),
+    ]
+
+
+def _cred_snapshot(root):
+    state = {}
+    for base, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = os.path.join(base, name)
+            st = os.lstat(path)
+            if stat.S_ISLNK(st.st_mode):
+                entry = ("link", os.readlink(path))
+            elif stat.S_ISREG(st.st_mode):
+                entry = ("file", pathlib.Path(path).read_bytes(), st.st_mode & 0o777, st.st_ino)
+            else:
+                entry = (stat.S_IFMT(st.st_mode), st.st_mode & 0o777)
+            state[os.path.relpath(path, root)] = entry
+    return state
+
+
+def _cred_build(tree, files):
+    (tree / "home").mkdir(parents=True)
+    for rel, content in sorted(files.items(), key=lambda kv: isinstance(kv[1], tuple)):
+        path = tree / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, str):
+            path.write_bytes(content.encode())
+            path.chmod(0o644)
+        elif content[0] == "link":
+            path.symlink_to(content[1])
+        elif content[0] == "hardlink":
+            os.link(tree / content[1], path)
+        else:
+            os.mkfifo(path)
+
+
+def _cred_run(function, tmp, case):
+    tree = tmp / "tree"
+    _cred_build(tree, case["files"])
+    secret = case.get("secret", _CRED_SECRET)
+    (tmp / "secret").write_bytes(secret.encode())
+    (tmp / "trace").write_text("")
+    before = _cred_snapshot(tree)
+    result = subprocess.run(
+        ["bash", "-c", _CRED_HARNESS + function + "\nwrite_operator_credential operator\n"],
+        env=dict(os.environ, MIOS_TEST_HOME=str(tree / "home"), MIOS_TEST_TRACE=str(tmp / "trace"),
+                 MIOS_TEST_SECRET=str(tmp / "secret")),
+        capture_output=True, text=True, timeout=60)
+    return tree, secret, before, _cred_snapshot(tree), result, (tmp / "trace").read_text()
+
+
+def _cred_problems(case, tree, secret, before, after, result, trace):
+    """Every way the run broke the case's contract, each prefixed with the case name."""
+    import tomllib
+    sys.path.insert(0, os.path.join(_ROOT, "usr/lib/mios"))
+    import mios_toml
+    name, expect, problems = case["name"], case["expect"], []
+    bad = lambda why: problems.append(f"{name}: {why}")  # noqa: E731
+    if secret in trace:
+        bad("password on argv or in the environment of the writer")
+    if secret in result.stdout + result.stderr:
+        bad("password in log output")
+    target = tree / _CRED_TARGET
+    if expect == "refused":
+        if result.returncode == 0:
+            bad("refused case exited 0")
+        if "The operator credential was NOT recorded" not in result.stderr:
+            bad("no NOT recorded error")
+        if "[ OK ]" in result.stdout:
+            bad("a success line was printed")
+        for needle in case.get("says", []):
+            if needle not in result.stderr:
+                bad(f"error does not say {needle!r}")
+        if after != before:
+            bad("the tree changed: " + ", ".join(sorted(k for k in set(before) | set(after)
+                                                          if before.get(k) != after.get(k))))
+        if case.get("root_refuses"):
+            try:
+                mios_toml.load_operator_strict(str(target), os.getuid())
+                bad("root's load_operator_strict accepts what the writer refused")
+            except mios_toml.LayerError:
+                pass
+        if case.get("shadow"):
+            got = mios_toml.load_operator_strict(str(target), os.getuid())["identity"]["default_password"]
+            if got != case["shadow"]:
+                bad("root's loader does not let the fragment win over mios.toml")
+        return problems
+    if result.returncode != 0 or "[ OK ] Operator credential" not in result.stdout:
+        bad(f"not recorded (exit {result.returncode}): {result.stderr.strip()[-300:]}")
+        return problems
+    old_raw = before.get(_CRED_TARGET, ("file", b""))[1]
+    want = tomllib.loads(old_raw.decode())
+    want.setdefault("identity", {})["default_password"] = secret
+    try:
+        got = tomllib.loads(target.read_text())
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        bad(f"result does not parse ({type(exc).__name__})")
+        return problems
+    if got != want:
+        bad("result is not exactly the old data plus [identity].default_password")
+    if expect == "unchanged" and after != before:
+        bad("an already-current credential was rewritten")
+    if expect == "written":
+        if target.is_symlink() or target.stat().st_mode & 0o777 != 0o600:
+            bad("result is not a 0600 regular file")
+        if case.get("prefix") and not target.read_bytes().startswith(old_raw):
+            bad("the old bytes were not kept as an exact prefix")
+        allowed = {_CRED_TARGET, "home/.config", "home/.config/mios"}
+        changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+        if changed - allowed:
+            bad("unrelated paths changed: " + ", ".join(sorted(changed - allowed)))
+    try:
+        seen = mios_toml.load_operator_strict(str(target), os.getuid())
+        if seen.get("identity", {}).get("default_password") != secret:
+            bad("root's load_operator_strict does not see the recorded credential")
+    except mios_toml.LayerError as exc:
+        bad(f"root's load_operator_strict refuses the result ({exc})")
+    return problems
+
+
+def test_operator_credential_writer():
+    """write_operator_credential over temp homes: each case passes on the real function and
+    fails, naming the case, with its planted defect (the old regex writer or a removed guard)."""
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    function = _function(source, "write_operator_credential")
+    bootstrap = _bootstrap_root()
+    if bootstrap is not None:
+        twin = _function((bootstrap / "installation/mios-install.sh").read_text(), "write_operator_credential")
+        assert twin == function, "mios-bootstrap's write_operator_credential diverged from mios.git's"
+    for mutant, (old, _new) in _CRED_MUTANTS.items():
+        assert function.count(old) == 1, f"mutant {mutant} must match the writer exactly once"
+    cases, controls = _cred_cases(), 0
+    for case in cases:
+        with tempfile.TemporaryDirectory(prefix="mios-cred-") as tmp:
+            problems = _cred_problems(case, *_cred_run(function, pathlib.Path(tmp), case))
+        assert not problems, problems
+        for mutant in case["mutants"]:
+            if mutant == "old-writer":
+                planted = _OLD_CREDENTIAL_WRITER
+            else:
+                old, new = _CRED_MUTANTS[mutant]
+                planted = function.replace(old, new)
+            with tempfile.TemporaryDirectory(prefix="mios-cred-neg-") as tmp:
+                problems = _cred_problems(case, *_cred_run(planted, pathlib.Path(tmp), case))
+            assert problems, f"{case['name']}: planted {mutant} was not detected"
+            assert all(p.startswith(case["name"] + ": ") for p in problems), problems
+            controls += 1
+    used = {m for case in cases for m in case["mutants"]} - {"old-writer"}
+    assert used == set(_CRED_MUTANTS), f"unused mutants: {set(_CRED_MUTANTS) - used}"
+    print(f"PASS operator credential writer: {len(cases)} cases; {controls} planted defects "
+          "(old regex writer, removed guards, argv/log leaks) each caught by name")
+
+
+def test_operator_credential_failure_propagates():
+    """A refused or never-run credential write ends the install non-zero with a NOT recorded
+    outcome and a reboot prompt that defaults to no; no success line is printed for it."""
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    names = ("write_operator_credential", "stage_user_profile_artifacts", "print_install_outcome",
+             "reboot_prompt", "do_install_core")
+    functions = "\n".join(_function(source, name) for name in names) + "\n"
+    harness = _CRED_HARNESS + r'''
+log_info() { printf '[INFO] %s\n' "$*"; }
+log_phase() { printf '== %s ==\n' "$*"; }
+for step in initialize_dynamic_branding require_root check_network install_prerequisites \
+    load_profile_defaults launch_configurator gather_user_choices print_summary \
+    trigger_mios_install deploy_system_prompt apply_user_profile seed_user_skel_for_all_accounts; do
+    eval "$step() { :; }"
+done
+detect_host_kind() { echo fhs-fedora; }
+install() { :; }
+prompt_yesno() { printf 'PROMPT default=%s\n' "$2"; [[ "$2" == y ]]; }
+systemctl() { printf 'SYSTEMCTL %s\n' "$*"; }
+sleep() { :; }
+LINUX_USER=operator
+'''
+    old_caller = ('    write_operator_credential "${LINUX_USER}" || log_warn "Set the credential in mios.html: '
+                  'until then Forgejo keeps its generated admin password"\n}\n')
+    caller = re.search(r"    if write_operator_credential .*?\n    fi\n}\n", functions, re.S)
+    tail = re.search(r"    print_install_outcome \|\| outcome=\$\?\n.*?\n}\n", functions, re.S)
+    assert caller and tail, "caller and outcome fixtures must match"
+    planted = {
+        "old-caller": functions.replace(caller.group(0), old_caller).replace(
+            tail.group(0), "    reboot_prompt\n}\n"),
+        "caller-ignores-failure": functions.replace('if write_operator_credential "${LINUX_USER}"; then',
+                                                    'if write_operator_credential "${LINUX_USER}" || true; then'),
+        "outcome-unchecked": functions.replace("print_install_outcome || outcome=$?", "print_install_outcome || true"),
+    }
+    assert all(text != functions for text in planted.values()), "every planted caller must differ"
+
+    def run(text, tmp, scenario):
+        tree = tmp / "tree"
+        files = {} if scenario != "refused" else {
+            "home/.config/mios/mios.d/50-x.toml": '[identity]\ndefault_password = "other"\n'}
+        _cred_build(tree, files)
+        (tmp / "secret").write_bytes(_CRED_SECRET.encode())
+        # no-home: the account resolves but its home is absent, so the writer never runs.
+        env = dict(os.environ, MIOS_TEST_TRACE=str(tmp / "trace"), MIOS_TEST_SECRET=str(tmp / "secret"),
+                   MIOS_TEST_HOME=str(tree / ("absent" if scenario == "no-home" else "home")))
+        return subprocess.run(["bash", "-c", harness + text + "\ndo_install_core fhs\n"], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
+
+    def problems(scenario, result):
+        out, found = result.stdout, []
+        if _CRED_SECRET in out:
+            found.append("password in log output")
+        if scenario == "ok":
+            for needle in ("[ OK ] Operator credential recorded", "PROMPT default=y", "SYSTEMCTL reboot"):
+                if needle not in out:
+                    found.append(f"missing {needle!r}")
+            if result.returncode != 0 or "NOT recorded" in out:
+                found.append("a recorded credential was reported as a failure")
+            return found
+        if result.returncode == 0:
+            found.append("the install exited 0")
+        for needle in ("INSTALLED WITH ERRORS: the operator credential was NOT recorded", "mios.html",
+                       "PROMPT default=n"):
+            if needle not in out:
+                found.append(f"missing {needle!r}")
+        if "[ OK ] Operator credential" in out or "SYSTEMCTL reboot" in out:
+            found.append("a success line or an automatic reboot followed the failure")
+        if "INSTALLED WITH ERRORS" in out and out.index("INSTALLED WITH ERRORS") > out.index("PROMPT"):
+            found.append("the outcome was printed after the reboot prompt")
+        if scenario == "refused" and "Shared-credential setup is INCOMPLETE" not in out:
+            found.append("the caller did not report the refused write")
+        return found
+
+    for scenario in ("ok", "refused", "no-home"):
+        with tempfile.TemporaryDirectory(prefix="mios-cred-flow-") as tmp:
+            result = run(functions, pathlib.Path(tmp), scenario)
+        assert not problems(scenario, result), (scenario, problems(scenario, result), result.stdout[-1500:])
+    for label, text in planted.items():
+        with tempfile.TemporaryDirectory(prefix="mios-cred-flow-neg-") as tmp:
+            result = run(text, pathlib.Path(tmp), "refused")
+        assert problems("refused", result), f"planted {label} was not detected"
+    print("PASS operator credential outcome: refused and never-run writes exit non-zero, say NOT recorded "
+          "before a no-default reboot prompt; 3 planted callers caught")
+
+
 def main() -> int:
     print("[test-install-fhs] Running install-fhs verification...")
     test_empty_dir_failure()
@@ -784,6 +1167,8 @@ def main() -> int:
     test_bootstrap_launchers_reach_the_installer()
     test_offline_upgrade_runtime_producer()
     test_legacy_bootstrap_failures()
+    test_operator_credential_writer()
+    test_operator_credential_failure_propagates()
     print("[test-install-fhs] PASS: overlay refusal, four substrate plans, fail-closed apply, Linux core dispatch, failure propagation and host rejection.")
     return 0
 

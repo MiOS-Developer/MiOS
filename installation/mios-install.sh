@@ -984,37 +984,273 @@ write_host_identity() {
     log_ok "Host tier names the operator: ${dir}/10-identity.toml ([identity].username = ${user})"
 }
 
-# D0: the typed password becomes [identity].default_password in the operator's own tier,
-# written as that account (0600) through a pipe, never on argv.
+# D0: the typed password becomes [identity].default_password in the account's own tier,
+# written by that account in python3 -I with the password on stdin only (never on argv).
+# tomllib judges every edit; links, unparsable layers and mios.d shadowing are refused.
 write_operator_credential() {
-    local user="$1" home esc
-    home="$(getent passwd "$user" | cut -d: -f6)"
-    [[ -n "$home" && -d "$home" ]] || { log_err "No home for '${user}': the operator credential was not recorded"; return 1; }
-    if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
-        log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
-    fi
-    esc="${USER_PASSWORD//\\/\\\\}"
-    esc="${esc//\"/\\\"}"
-    printf '%s\n' "$esc" | sudo -u "$user" bash -c '
-        set -eu; umask 077; f="$1/.config/mios/mios.toml"; IFS= read -r esc
-        mkdir -p "$1/.config/mios"; tmp="$(mktemp "$f.XXXXXX")"; in_id=0; put=0
-        if [[ -f "$f" && ! -L "$f" ]]; then
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                if [[ "$line" =~ ^[[:space:]]*\[ ]]; then
-                    in_id=0; [[ "$line" =~ ^[[:space:]]*\[identity\][[:space:]]*(#.*)?$ ]] && in_id=1
-                    printf "%s\n" "$line" >> "$tmp"
-                    if (( in_id && ! put )); then printf "default_password = \"%s\"\n" "$esc" >> "$tmp"; put=1; fi
-                elif ! (( in_id )) || [[ ! "$line" =~ ^[[:space:]]*default_password[[:space:]]*= ]]; then
-                    printf "%s\n" "$line" >> "$tmp"
-                fi
-            done < "$f"
-        fi
-        (( put )) || printf "\n[identity]\ndefault_password = \"%s\"\n" "$esc" >> "$tmp"
-        chmod 0600 "$tmp"; mv -f "$tmp" "$f"' _ "$home" || {
-        log_err "The operator credential was not recorded in ${home}/.config/mios/mios.toml"
+    local user="$1" home="" prog="" out="" rc=0
+    home="$(getent passwd "$user" | cut -d: -f6)" || home=""
+    if [[ -z "$home" || ! -d "$home" ]]; then
+        log_err "The operator credential was NOT recorded: no home for '${user}'"
         return 1
-    }
-    log_ok "Operator credential recorded: ${home}/.config/mios/mios.toml ([identity].default_password, 0600)"
+    fi
+    IFS= read -r -d '' prog <<'PY' || true
+import copy, errno, math, os, re, secrets, stat, sys, tomllib
+
+MAX = 1 << 20  # mios_toml.OPERATOR_MAX_BYTES: root reads no larger operator layer
+NAME = "mios.toml"
+DIRFLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+HEADER = re.compile(r"""[ \t]*\[[ \t]*(?:identity|"identity"|'identity')[ \t]*\][ \t]*(?:#[^\r\n]*)?\r?\n?""")
+KEY = re.compile(r"""[ \t]*(?:default_password|"default_password"|'default_password')[ \t]*=""")
+
+class Refused(Exception):
+    pass
+
+def subdir(fd, name, path, create=False):
+    if create:
+        try:
+            os.mkdir(name, 0o700, dir_fd=fd)
+        except FileExistsError:
+            pass
+    try:
+        return os.open(name, DIRFLAGS, dir_fd=fd)
+    except FileNotFoundError:
+        if create:
+            raise Refused(f"{path} vanished while it was being created") from None
+        return None
+    except OSError:
+        raise Refused(f"{path} is a symlink or not a directory: the operator tier is never "
+                      "read or written through it") from None
+
+def read_layer(dfd, name, path):
+    """(bytes, stat), or (None, None) when absent: mios_toml.load_operator_strict's checks."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise Refused(f"{path} is a symlink: root code refuses a linked operator layer, and "
+                          "the writer neither replaces the link nor writes through it") from None
+        raise Refused(f"{path} is unreadable ({exc.strerror})") from None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            raise Refused(f"{path} is not a regular, singly linked file")
+        if st.st_uid not in (os.getuid(), 0):
+            raise Refused(f"{path} is owned by uid {st.st_uid}, not by the operator")
+        chunks, total = [], 0
+        while chunk := os.read(fd, 65536):
+            total += len(chunk)
+            if total > MAX:
+                raise Refused(f"{path} is larger than {MAX} bytes")
+            chunks.append(chunk)
+        return b"".join(chunks), st
+    finally:
+        os.close(fd)
+
+def parse(raw, path):
+    try:
+        return tomllib.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        where = re.search(r"\(at (?:line \d+, column \d+|end of document)\)", str(exc))
+        raise Refused(f"{path} does not parse as TOML{' ' + where.group(0) if where else ''}") from None
+
+def canon(value):
+    if isinstance(value, dict):
+        return ("table", tuple(sorted((k, canon(v)) for k, v in value.items())))
+    if isinstance(value, list):
+        return ("array", tuple(canon(v) for v in value))
+    if isinstance(value, float) and math.isnan(value):
+        return ("nan", repr(value))
+    return (type(value).__name__, value)
+
+def value_end(s, i):
+    """Offset past the line where the TOML value at s[i] ends (strings, brackets and
+    comments only), None if it never closes. A wrong answer only proposes an edit the
+    tomllib comparison then rejects."""
+    n, depth = len(s), 0
+    while i < n:
+        c = s[i]
+        if s.startswith(('"""', "'''"), i):
+            i += 3
+            while i < n and not s.startswith(c * 3, i):
+                i += 2 if c == '"' and s[i] == "\\" else 1
+            if i >= n:
+                return None
+            run = 3
+            while run < 5 and i + run < n and s[i + run] == c:
+                run += 1
+            i += run
+        elif c in "\"'":
+            j = i + 1
+            while j < n and s[j] not in (c, "\n"):
+                j += 2 if c == '"' and s[j] == "\\" else 1
+            if j >= n or s[j] != c:
+                return None
+            i = j + 1
+        elif c == "#":
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        elif c == "\n" and depth <= 0:
+            return i + 1
+        else:
+            depth += (c in "[{") - (c in "]}")
+            i += 1
+    return n if depth <= 0 else None
+
+def eol(chunk):
+    return "\r\n" if chunk.endswith("\r\n") else "\n" if chunk.endswith("\n") else ""
+
+def stamp(st):
+    return st and (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+def proposals(text, ident, line):
+    """Edits suggested by line patterns, in file order: unverified by design."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    rows, start = [], 0
+    while start < len(text):  # TOML lines: split on "\n" only, never str.splitlines
+        end = text.find("\n", start)
+        end = len(text) if end < 0 else end + 1
+        rows.append((start, text[start:end]))
+        start = end
+    if isinstance(ident, dict) and "default_password" in ident:
+        for start, row in rows:
+            key = KEY.match(row)
+            end = value_end(text, start + key.end()) if key else None
+            if end is not None:
+                yield text[:start] + line + eol(text[start:end]) + text[end:]
+        return
+    if isinstance(ident, dict):
+        for start, row in rows:
+            if HEADER.fullmatch(row):
+                after = start + len(row)
+                if eol(row):
+                    yield text[:after] + line + eol(row) + text[after:]
+                else:  # the header is the last line and has no newline
+                    yield text + nl + line + nl
+    sep = "" if not text else nl if text.endswith("\n") else nl + nl
+    yield text + sep + "[identity]" + nl + line + nl
+
+def merge(dst, src):
+    """mios_toml.deep_merge: later wins; an empty string never overrides a value below."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            merge(dst[k], v)
+        elif isinstance(v, str) and v == "" and dst.get(k) not in (None, ""):
+            continue
+        else:
+            dst[k] = copy.deepcopy(v)
+    return dst
+
+def effective(data):
+    ident = data.get("identity")
+    return ident.get("default_password") if isinstance(ident, dict) else None
+
+def write(mfd, target, new, st):
+    if st is not None and st.st_uid != os.getuid():
+        raise Refused(f"{target} is owned by uid {st.st_uid}: its ownership cannot be kept")
+    tmp = f".{NAME}.{secrets.token_hex(6)}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                 0o600, dir_fd=mfd)
+    try:
+        try:
+            os.fchmod(fd, 0o600)
+            view = memoryview(new.encode("utf-8"))
+            while view:
+                view = view[os.write(fd, view):]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            now = os.stat(NAME, dir_fd=mfd, follow_symlinks=False)
+        except FileNotFoundError:
+            now = None
+        if stamp(now) != stamp(st):
+            raise Refused(f"{target} changed while it was being edited")
+        os.replace(tmp, NAME, src_dir_fd=mfd, dst_dir_fd=mfd)
+    except BaseException:
+        try:
+            os.unlink(tmp, dir_fd=mfd)
+        except FileNotFoundError:
+            pass
+        raise
+    os.fsync(mfd)
+
+def main(home):
+    try:
+        value = sys.stdin.buffer.read().decode("utf-8")
+    except UnicodeDecodeError:
+        raise Refused("the password is not valid UTF-8") from None
+    if not value or re.search(r"[\x00-\x1f\x7f]", value):
+        raise Refused("the password is empty or holds a control character")
+    cfg = os.path.join(home, ".config", "mios")
+    target = os.path.join(cfg, NAME)
+    hfd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    cfd = subdir(hfd, ".config", os.path.dirname(cfg), create=True)
+    mfd = subdir(cfd, "mios", cfg, create=True)
+    raw, st = read_layer(mfd, NAME, target)
+    old, text = ({}, "") if raw is None else (parse(raw, target), raw.decode("utf-8"))
+    layers = []
+    dfd = subdir(mfd, "mios.d", os.path.join(cfg, "mios.d"))
+    if dfd is not None:
+        for name in sorted(n for n in os.listdir(dfd) if n.endswith(".toml") and not n.startswith(".")):
+            path = os.path.join(cfg, "mios.d", name)
+            frag, _st = read_layer(dfd, name, path)
+            if frag is not None:
+                layers.append((path, parse(frag, path)))
+    ident = old.get("identity")
+    if "identity" in old and not isinstance(ident, dict):
+        raise Refused(f"{target}: identity is not a table (an array of tables or a value)")
+    want = copy.deepcopy(old)
+    want.setdefault("identity", {})["default_password"] = value
+    new = None
+    if effective(old) != value:
+        esc = value.replace("\\", "\\\\").replace('"', '\\"')
+        for candidate in proposals(text, ident, f'default_password = "{esc}"'):
+            try:
+                if canon(tomllib.loads(candidate)) == canon(want):
+                    new = candidate
+                    break
+            except tomllib.TOMLDecodeError:
+                continue
+        if new is None:
+            raise Refused(f"{target}: [identity] is not a plain header table this writer can edit "
+                          "(an inline table, dotted keys or an exotic key spelling)")
+        if len(new.encode("utf-8")) > MAX:
+            raise Refused(f"{target} would grow past {MAX} bytes")
+    merged, culprit = merge({}, want), None
+    for path, layer in layers:
+        before = effective(merged)
+        merge(merged, layer)
+        if effective(merged) != before:
+            culprit = path
+    if effective(merged) != value:
+        raise Refused(f"the operator credential is shadowed by {culprit}: remove its "
+                      "[identity].default_password (a mios.d fragment wins over mios.toml)")
+    if new is None:
+        return f"already current in {target} (left unchanged)"
+    write(mfd, target, new, st)
+    return f"recorded in {target} ([identity].default_password, 0600)"
+
+try:
+    print(main(sys.argv[1]))
+except Refused as exc:
+    print(exc)
+    sys.exit(1)
+except OSError as exc:
+    print(f"{exc.filename or 'the operator tier'}: {exc.strerror}")
+    sys.exit(1)
+except Exception as exc:  # noqa: BLE001 -- never echo an exception that might carry data
+    print(f"the writer failed ({type(exc).__name__})")
+    sys.exit(1)
+PY
+    out="$(printf '%s' "${USER_PASSWORD:-}" | sudo -u "$user" python3 -I -c "$prog" "$home")" || rc=$?
+    if (( rc != 0 )); then
+        log_err "The operator credential was NOT recorded: ${out:-the writer failed (exit ${rc})}"
+        return 1
+    fi
+    log_ok "Operator credential ${out}"
 }
 
 apply_user_profile() {
@@ -1235,8 +1471,29 @@ stage_user_profile_artifacts() {
     # content as everyone else (idempotent).
     seed_user_skel_for_all_accounts
 
-    # After every skel copy, which rewrites ~/.config/mios/mios.toml.
-    write_operator_credential "${LINUX_USER}" || log_warn "Set the credential in mios.html: until then Forgejo keeps its generated admin password"
+    # After every skel copy, which rewrites ~/.config/mios/mios.toml. chpasswd already set the
+    # Linux password: a refused write is the install's outcome (print_install_outcome), not a warning.
+    if write_operator_credential "${LINUX_USER}"; then
+        OPERATOR_CREDENTIAL_RECORDED=1
+    else
+        OPERATOR_CREDENTIAL_RECORDED=0
+        log_err "Shared-credential setup is INCOMPLETE: '${LINUX_USER}' has the typed Linux password, MiOS logins do not (install outcome below)"
+    fi
+}
+
+# Last word of an install, printed before the reboot prompt: a credential the writer refused
+# (or never reached) is a failure with its remedy, never a warning above a success line.
+print_install_outcome() {
+    log_phase "Install outcome"
+    if [[ "${OPERATOR_CREDENTIAL_RECORDED:-0}" == 1 ]]; then
+        log_ok "Operator credential recorded: [identity].default_password in ~${LINUX_USER}/.config/mios/mios.toml"
+        return 0
+    fi
+    log_err "INSTALLED WITH ERRORS: the operator credential was NOT recorded."
+    log_err "  '${LINUX_USER}' has the typed Linux password; MiOS service logins are not moved onto it."
+    log_err "  Fix the cause logged above, then set the password in mios.html ([identity].default_password,"
+    log_err "  saved to ~${LINUX_USER}/.config/mios/mios.toml); 'mios-credential apply --all' moves logins onto it."
+    return 1
 }
 
 # ============================================================================
@@ -1589,8 +1846,9 @@ trigger_mios_install() {
 # Phase-4: reboot prompt
 # ============================================================================
 reboot_prompt() {
+    local default="${1:-y}"
     log_phase "Phase-4 -- Reboot"
-    if prompt_yesno 'Reboot now to activate 'MiOS'?' y; then
+    if prompt_yesno 'Reboot now to activate 'MiOS'?' "$default"; then
         log_info "Rebooting in 3s..."
         sleep 3
         systemctl reboot
@@ -1600,7 +1858,8 @@ reboot_prompt() {
 }
 
 do_install_core() {
-    local mode="${1:-fhs}"
+    local mode="${1:-fhs}" outcome=0
+    OPERATOR_CREDENTIAL_RECORDED=0
 
     initialize_dynamic_branding
     require_root
@@ -1637,8 +1896,13 @@ do_install_core() {
     # newly-created user's home (idempotent on re-run).
     stage_user_profile_artifacts
 
+    # A degraded install finishes (the credential can be set in mios.html later) but exits
+    # non-zero, and its reboot prompt defaults to no so an unattended run stops at the failure.
+    print_install_outcome || outcome=$?
+
     # Phase-4
-    reboot_prompt
+    if (( outcome )); then reboot_prompt n; else reboot_prompt; fi
+    return "$outcome"
 }
 
 
