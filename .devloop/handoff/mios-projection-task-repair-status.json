@@ -1,0 +1,104 @@
+{
+  "kind": "mios-projection-task-repair-handoff",
+  "known_baseline_debt": {
+    "gen_failures": [
+      "every_golden_case_in_the_readme_holds",
+      "render_globals::test_render_globals_cli_e2e"
+    ],
+    "golden_stale_projections": [
+      "ai-manifest",
+      "ai-metadata",
+      "env-snapshot",
+      "render-globals",
+      "roadmap-index"
+    ],
+    "prior_native_inside_sha256": "d174ef2d46c74cd401331d75fa9401fec9142e7cdc38447f17f4e1b429f28bf3",
+    "prior_native_job_sha256": "d6ec81bd45336f420d3d63a25acf44bdd659e13b7ed5cc298316f5b2b6f1781e"
+  },
+  "live_installation_contract": {
+    "default_deployment_receipt_path": "/home/mios/.local/state/mios/mios-live-trial-e8af/projection-task-repair-installation.json",
+    "kind": "source and generated-data update; retain existing verified binaries and sessions",
+    "preserve_local_customizations": true,
+    "preserve_untracked_runtime_files": true
+  },
+  "milestone": "Current MiOS-Mons task/reference naming and generated projection repair",
+  "native_acceptance_contract": {
+    "environment": "Native pinned MiOS-DEV only",
+    "export_manifest_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/exports.json",
+    "host_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/host-result.json",
+    "image_sha256": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "inside_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/result.json",
+    "job_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-input/job.json",
+    "private_state": "/home/mios/.local/state/mios/mios-private-projection-task-repair",
+    "publication_condition": "Publish only after the sealed successful Native receipts and exact exported bytes have been verified. These external receipts are authoritative for the actual Native result; this preauthored contract does not substitute for them.",
+    "required_before_publication": [
+      "Exact declared source and output ownership; immutable original source/cache and live-binary guards",
+      "Task fmt/check/render with unchanged identities, historical evidence and display overrides",
+      "Explicit private-index staging and bounded projection/index fixed point",
+      "Every projection freshness check passes; private tamper negative controls reject drift and restore exact bytes",
+      "Vendor environment snapshots are invariant across two logical checkout-root spellings",
+      "Full Gen suite has zero failures; existing C95 T20/T21 and all 23 desktop checks pass",
+      "Standing gate results are retained with explicit baseline debt and no introduced failures"
+    ]
+  },
+  "recorded_at": "2026-11-12T15:52:03.147449+00:00",
+  "remaining_scope": [
+    "Physical controller buttons, held-state loss, cursor and 3D/application-consumed feedback remain separate operator trials",
+    "Executable/configuration/save compatibility aliases require their own lossless migration; this leaf changes current task/reference naming only",
+    "Historical path/hash/identity evidence retains its original meaning"
+  ],
+  "retained_runtime_provenance": {
+    "compiled_entire_new_published_tree_claimed": false,
+    "generator": {
+      "compiled_source_review_head": "3778c28e16a43b8861c4569de18eb755c561c6f0",
+      "installation_commit": "e4697d3bf73d897543e308bcdc206287bfad41c9",
+      "installation_receipt_sha256": "be3a0b63c7cefa12ec5a711b3137449cbf6df07deec1dcc37b85f16fc4da0347",
+      "path": "/usr/bin/mios-gen",
+      "sha256": "fa0949afb90b1be05801eb713907d5c5be1ed88f9c602918eac9cf028f516962"
+    },
+    "independent_trial_review_sha256": "6b26a4b28b8296d916fcb4d304bef703f9ba5debcb11d158e3ee9f4a0ceb99fb",
+    "inputd_sha256": "cc51baaa6c11265919d2f4351ec57cb583872a84be73082c257b4c4044e09dab",
+    "miosd_sha256": "b4ae9a6475f346f846aed46c020cbc0fcbb1e4c9258ccc28548e694b4a75a5f4",
+    "prior_live_software_trial_sha256": "665af956bc860685e075d73f049767c305c4b61a230d92ce2390b6c5bb505944",
+    "whole_image_or_cohort_validation_claimed": false
+  },
+  "reviewed_generated_output_paths": [
+    "TASKS.md",
+    "automation/lib/globals.sh",
+    "automation/lib/globals.ps1",
+    "automation/manifest.json",
+    "tools/manifest.json",
+    "usr/share/mios/ai/v1/metadata.json",
+    "usr/share/mios/reference/env-baseline.txt",
+    "ROADMAP.md",
+    "usr/share/mios/referenced_names.txt",
+    "usr/share/mios/names.generated.txt"
+  ],
+  "reviewed_source_sha256": {
+    ".devloop/handoff/mios-camera-continuation.md": "598b44e76b3119df5b027b463439cd480ba48de6b64604f5c3955951206e6581",
+    ".devloop/handoff/mios-hud-continuation.md": "57f70516e7d45ea85d3162e469234df72ba4d4c2b69b5a0c7c9155690c6ef94e",
+    ".devloop/handoff/mios-multiplayer-design.md": "2bb99a645de24f516ecdf4b20405aaec5ca6023b5033305d055aecbf51b0b696",
+    ".devloop/handoff/mios-multiplayer-task-proposal.md": "030f36e09a53f3eb51e0242e3753a7865e584007945408a55c0b475da6f2184e",
+    "tasks.jsonl": "e6c00685a40d7e47e7c823b0e9a45a19a201a8f63e0597aebf0954fb52d02769"
+  },
+  "schema": 1,
+  "source_base": "e4697d3bf73d897543e308bcdc206287bfad41c9",
+  "source_inspection": {
+    "existing_tasks_display_override_sha256": "d130b7bf32efef34154f0e3e73cd2418e491aa7441b5debe86ceac8a4f372024",
+    "handoff_current_references_updated": 4,
+    "historical_camera_hud_occurrences_retained": 7,
+    "other_task_fields_preserved": true,
+    "rust_and_verification_assertions_changed": false,
+    "source_order_and_unmodified_lines_preserved": true,
+    "task_ids_owners_dependencies_evidence_preserved": true,
+    "task_records": 3786,
+    "task_source_review_sha256": "8c711141ed1b4152daf0c6f5e7650b90a70452f332b75b62473ec0cf6b1f058e",
+    "task_titles_changed": 8,
+    "task_workstreams_changed": 48
+  },
+  "source_review_head": "042baa9b6f1ca03ec2a0322cc1f8fbfe2ac180ac",
+  "worker_commits": [
+    "79683d4b044dcc58e172d69c9723aa9d2419c82b",
+    "ac0fe4e1b2ad2250d13959b676d0a18456a3d317"
+  ]
+}
