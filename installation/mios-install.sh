@@ -987,33 +987,179 @@ write_host_identity() {
 # D0: the typed password becomes [identity].default_password in the operator's own tier,
 # written as that account (0600) through a pipe, never on argv.
 write_operator_credential() {
-    local user="$1" home esc
+    local user="$1" home code
+    if [[ ! "$user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+        log_err "Refusing to record an operator credential for an invalid Linux account name"
+        return 1
+    fi
     home="$(getent passwd "$user" | cut -d: -f6)"
     [[ -n "$home" && -d "$home" ]] || { log_err "No home for '${user}': the operator credential was not recorded"; return 1; }
     if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
         log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
     fi
-    esc="${USER_PASSWORD//\\/\\\\}"
-    esc="${esc//\"/\\\"}"
-    printf '%s\n' "$esc" | sudo -u "$user" bash -c '
-        set -eu; umask 077; f="$1/.config/mios/mios.toml"; IFS= read -r esc
-        mkdir -p "$1/.config/mios"; tmp="$(mktemp "$f.XXXXXX")"; in_id=0; put=0
-        if [[ -f "$f" && ! -L "$f" ]]; then
-            while IFS= read -r line || [[ -n "$line" ]]; do
-                if [[ "$line" =~ ^[[:space:]]*\[ ]]; then
-                    in_id=0; [[ "$line" =~ ^[[:space:]]*\[identity\][[:space:]]*(#.*)?$ ]] && in_id=1
-                    printf "%s\n" "$line" >> "$tmp"
-                    if (( in_id && ! put )); then printf "default_password = \"%s\"\n" "$esc" >> "$tmp"; put=1; fi
-                elif ! (( in_id )) || [[ ! "$line" =~ ^[[:space:]]*default_password[[:space:]]*= ]]; then
-                    printf "%s\n" "$line" >> "$tmp"
-                fi
-            done < "$f"
-        fi
-        (( put )) || printf "\n[identity]\ndefault_password = \"%s\"\n" "$esc" >> "$tmp"
-        chmod 0600 "$tmp"; mv -f "$tmp" "$f"' _ "$home" || {
+    code="$(cat <<'MIOS_OPERATOR_CREDENTIAL_PY'
+import copy, json, os, re, secrets, stat, sys, tomllib
+
+class Refusal(Exception):
+    pass
+
+home = sys.argv[1]
+target = os.path.join(home, '.config', 'mios', 'mios.toml')
+limit = 1 << 20
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+opened = []
+tmp = None
+temp_created = False
+dfd = -1
+
+def directory(parent, name, create=False):
+    try:
+        fd = os.open(name, flags, dir_fd=parent)
+    except FileNotFoundError:
+        if not create:
+            return -1
+        os.mkdir(name, 0o700, dir_fd=parent)
+        fd = os.open(name, flags, dir_fd=parent)
+    opened.append(fd)
+    return fd
+
+def read_file(parent, name, label):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise Refusal(f'{label!r}: unreadable, a symlink or unsafe ({exc.strerror})') from None
+    with os.fdopen(fd, 'rb') as stream:
+        st = os.fstat(stream.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_uid not in (0, os.geteuid()):
+            raise Refusal(f'{label!r}: not an owned, regular, singly linked file')
+        data = stream.read(limit + 1)
+        if len(data) > limit:
+            raise Refusal(f'{label!r}: operator tier exceeds the size limit')
+        return data, (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_size, st.st_mode, st.st_uid, st.st_gid, st.st_ctime_ns)
+
+def parse(data, label):
+    try:
+        return tomllib.loads(data.decode('utf-8'))
+    except (ValueError, UnicodeError):
+        raise Refusal(f'{label!r}: does not parse as TOML; no credential was recorded') from None
+
+def fragments():
+    fd = directory(dfd, 'mios.d')
+    if fd < 0:
+        return []
+    rows = []
+    for name in sorted(n for n in os.listdir(fd) if n.endswith('.toml') and not n.startswith('.')):
+        path = os.path.join(home, '.config', 'mios', 'mios.d', name)
+        value = read_file(fd, name, path)
+        if value is None:
+            raise Refusal('Operator fragments changed during credential recording; retry after editing')
+        rows.append((path, value, parse(value[0], path)))
+    return rows
+
+def merge(left, right):
+    for key, value in right.items():
+        if isinstance(value, dict) and isinstance(left.get(key), dict):
+            merge(left[key], value)
+        else:
+            left[key] = copy.deepcopy(value)
+
+def password_of(data):
+    table = data.get('identity')
+    return table.get('default_password') if isinstance(table, dict) else None
+
+def edit(text, before, password):
+    identity = before.get('identity')
+    if identity is not None and not isinstance(identity, dict):
+        raise Refusal('The operator identity is not a TOML table; repair it in mios.html')
+    if password_of(before) == password:
+        return text
+    nl = '\r\n' if '\r\n' in text else '\n'
+    row = 'default_password = ' + json.dumps(password, ensure_ascii=False)
+    lines = text.splitlines(keepends=True)
+    if identity is None:
+        return text + ('' if not text or text.endswith('\n') else nl) + nl + '[identity]' + nl + row + nl
+    header = re.compile(r'^[ \t]*\[[ \t]*identity[ \t]*\][ \t]*(?:#.*)?(?:\r?\n)?$')
+    at = next((i for i, line in enumerate(lines) if header.fullmatch(line)), None)
+    if at is None:
+        raise Refusal('The operator identity uses an unsupported inline or dotted layout; edit it in mios.html')
+    end = next((i for i in range(at + 1, len(lines)) if re.match(r'^[ \t]*\[', lines[i])), len(lines))
+    hit = next((i for i in range(at + 1, end) if re.match(r'^[ \t]*default_password[ \t]*=', lines[i])), None)
+    if hit is None:
+        lines.insert(at + 1, row + nl)
+    else:
+        assignment = re.fullmatch(r'''([ \t]*)default_password[ \t]*=[ \t]*(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')[ \t]*(#.*)?(?:\r?\n)?''', lines[hit])
+        if assignment is None:
+            raise Refusal('The operator credential uses an unsupported TOML layout; edit it in mios.html')
+        comment = (' ' + assignment[2]) if assignment[2] else ''
+        lines[hit] = assignment[1] + row + comment + nl
+    return ''.join(lines)
+
+try:
+    os.umask(0o077)
+    password = sys.stdin.buffer.read(limit + 1).decode('utf-8')
+    if not password or len(password.encode('utf-8')) > limit or any(ord(c) < 32 or ord(c) == 127 for c in password):
+        raise Refusal('The operator credential is empty, too large or contains a control character')
+    hfd = os.open(home, flags)
+    opened.append(hfd)
+    cfd = directory(hfd, '.config', create=True)
+    dfd = directory(cfd, 'mios', create=True)
+    original = read_file(dfd, 'mios.toml', target)
+    raw = original[0] if original else b''
+    before = parse(raw, target)
+    candidate = edit(raw.decode('utf-8'), before, password).encode('utf-8')
+    after = parse(candidate, target)
+    expected = copy.deepcopy(before)
+    expected.setdefault('identity', {})['default_password'] = password
+    if after != expected:
+        raise Refusal('The operator TOML layout cannot be edited without changing unrelated values; use mios.html')
+    snapshot = fragments()
+    effective = copy.deepcopy(after)
+    shadow = None
+    for path, _value, data in snapshot:
+        merge(effective, data)
+        if password_of(effective) != password:
+            shadow = path
+    if password_of(effective) != password:
+        raise Refusal(f'{shadow!r}: shadows identity.default_password; update that fragment before recording')
+    if original and candidate == raw and stat.S_IMODE(original[1][4]) == 0o600:
+        raise SystemExit(0)
+    tmp = '.mios-credential.' + secrets.token_hex(16) + '.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+    temp_created = True
+    with os.fdopen(fd, 'wb') as stream:
+        os.fchmod(stream.fileno(), 0o600)
+        stream.write(candidate)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if read_file(dfd, 'mios.toml', target) != original or fragments() != snapshot:
+        raise Refusal('The operator tier changed during credential recording; retry after editing')
+    check_config = directory(hfd, '.config')
+    check_mios = directory(check_config, 'mios') if check_config >= 0 else -1
+    if check_mios < 0 or (os.fstat(check_mios).st_dev, os.fstat(check_mios).st_ino) != (os.fstat(dfd).st_dev, os.fstat(dfd).st_ino):
+        raise Refusal('The operator configuration directory changed; no credential was recorded')
+    os.replace(tmp, 'mios.toml', src_dir_fd=dfd, dst_dir_fd=dfd)
+    tmp = None
+    os.fsync(dfd)
+except (Refusal, OSError, UnicodeError) as exc:
+    detail = str(exc) if isinstance(exc, Refusal) else type(exc).__name__
+    print(f'Operator credential NOT recorded at {target!r}: {detail}', file=sys.stderr)
+    raise SystemExit(1)
+finally:
+    if temp_created and tmp is not None and dfd >= 0:
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except FileNotFoundError:
+            pass
+    for fd in reversed(opened):
+        os.close(fd)
+MIOS_OPERATOR_CREDENTIAL_PY
+)"
+    if ! printf '%s' "$USER_PASSWORD" | sudo -u "$user" python3 -I -c "$code" "$home"; then
         log_err "The operator credential was not recorded in ${home}/.config/mios/mios.toml"
         return 1
-    }
+    fi
     log_ok "Operator credential recorded: ${home}/.config/mios/mios.toml ([identity].default_password, 0600)"
 }
 
@@ -1187,16 +1333,28 @@ seed_user_skel_for_all_accounts() {
     local u home uid
     while IFS=: read -r u _ uid _ _ home _; do
         [[ "$uid" -ge 1000 && "$uid" -lt 65534 && -d "$home" ]] || continue
-        sudo -u "$u" install -d -m 0755 "${home}/.config"
+        if [[ -L "${home}/.config" ]]; then
+            log_warn "Refusing to seed a symlinked configuration directory for ${u}"
+            continue
+        fi
+        sudo -u "$u" install -d -m 0755 "${home}/.config" || return 1
         for subdir in "${skel_subdirs[@]}"; do
             local skel_root="/etc/skel/.config/${subdir}"
             [[ -d "$skel_root" ]] || continue
-            sudo -u "$u" install -d -m 0755 "${home}/.config/${subdir}"
+            if [[ -L "${home}/.config/${subdir}" ]]; then
+                log_warn "Refusing to seed a symlinked ${subdir} directory for ${u}"
+                continue
+            fi
+            sudo -u "$u" install -d -m 0755 "${home}/.config/${subdir}" || return 1
             local f
             for f in "$skel_root"/*; do
                 [[ -f "$f" ]] || continue
+                if [[ "$subdir" == mios && "$f" == *.toml && ( -e "${home}/.config/mios/$(basename "$f")" || -L "${home}/.config/mios/$(basename "$f")" ) ]]; then
+                    log_info "Existing operator tier retained for ${u}: $(basename "$f")"
+                    continue
+                fi
                 install -o "$u" -g "$u" -m 0644 \
-                    "$f" "${home}/.config/${subdir}/$(basename "$f")"
+                    "$f" "${home}/.config/${subdir}/$(basename "$f")" || return 1
             done
             log_ok "Seeded ${home}/.config/${subdir}/ for ${u} (uid ${uid})"
         done
@@ -1212,19 +1370,27 @@ stage_user_profile_artifacts() {
     log_phase "Phase-3 -- Stage per-user 'MiOS' artifacts"
     local home; home="$(getent passwd "${LINUX_USER}" | cut -d: -f6)"
     [[ -n "$home" && -d "$home" ]] || {
-        log_warn "User home not found; skipping per-user staging"
-        return 0
+        log_err "User home not found; operator credential NOT recorded"
+        return 1
     }
+    if [[ -L "${home}/.config" || -L "${home}/.config/mios" ]]; then
+        log_err "Refusing to stage a symlinked MiOS configuration directory; operator credential NOT recorded"
+        return 1
+    fi
 
-    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config" "${home}/.config/mios"
+    sudo -u "${LINUX_USER}" install -d -m 0755 "${home}/.config" "${home}/.config/mios" || return 1
 
     local skel_root=/etc/skel/.config/mios
     if [[ -d "$skel_root" ]]; then
         local f
         for f in "$skel_root"/*; do
             [[ -f "$f" ]] || continue
+            if [[ "$f" == *.toml && ( -e "${home}/.config/mios/$(basename "$f")" || -L "${home}/.config/mios/$(basename "$f")" ) ]]; then
+                log_info "Existing operator tier retained: $(basename "$f")"
+                continue
+            fi
             install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
-                "$f" "${home}/.config/mios/$(basename "$f")"
+                "$f" "${home}/.config/mios/$(basename "$f")" || return 1
             log_ok "User artifact: ${home}/.config/mios/$(basename "$f")"
         done
     else
@@ -1233,10 +1399,14 @@ stage_user_profile_artifacts() {
 
     # Re-run the multi-user pass so a newly added user picks up the same
     # content as everyone else (idempotent).
-    seed_user_skel_for_all_accounts
+    seed_user_skel_for_all_accounts || return 1
 
-    # After every skel copy, which rewrites ~/.config/mios/mios.toml.
-    write_operator_credential "${LINUX_USER}" || log_warn "Set the credential in mios.html: until then Forgejo keeps its generated admin password"
+    # Existing operator tiers survive every skel pass. Record only the selected
+    # credential after all seeding; failure must stop the installation summary.
+    if ! write_operator_credential "${LINUX_USER}"; then
+        log_err "The Linux login password was set, but the operator credential was NOT recorded. In mios.html, save [identity].default_password in the selected user's tier, resolve any reported fragment conflict, then run sudo mios-credential apply --all --verify."
+        return 1
+    fi
 }
 
 # ============================================================================
@@ -1635,7 +1805,10 @@ do_install_core() {
 
     # Phase-3c: stage the per-user profile.toml + system-prompt.md into the
     # newly-created user's home (idempotent on re-run).
-    stage_user_profile_artifacts
+    if ! stage_user_profile_artifacts; then
+        log_err "Installation incomplete: operator credential NOT recorded. Resolve the reported operator-tier error and save the credential with mios.html before applying it to services."
+        return 1
+    fi
 
     # Phase-4
     reboot_prompt

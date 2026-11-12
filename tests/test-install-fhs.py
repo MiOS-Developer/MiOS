@@ -4,13 +4,16 @@
 """Linux installer failure reporting and safe command-routing regression tests."""
 
 from __future__ import annotations
+import json
 import os
 import re
 import pathlib
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -126,6 +129,221 @@ def _function(source, name):
     match = re.search(r"^" + name + r"\(\) \{.*?^}", source, re.M | re.S)
     assert match, name
     return match.group(0)
+
+
+def _operator_write(source, home, password):
+    """Only the production writer runs; NSS/sudo select a private synthetic account."""
+    stub = r"""
+set -euo pipefail
+FIXTURE_HOME="$1"
+log_ok() { printf '[ OK ] %s\n' "$*"; }
+log_err() { printf '[FAIL] %s\n' "$*" >&2; }
+getent() {
+    [[ "$1" == passwd && "$2" == fixop ]] || return 90
+    printf 'fixop:x:1000:1000::%s:/bin/bash\n' "$FIXTURE_HOME"
+}
+sudo() {
+    [[ "$1" == -u && "$2" == fixop ]] || return 91
+    shift 2
+    for arg; do
+        [[ -z "$USER_PASSWORD" || "$arg" != *"$USER_PASSWORD"* ]] || return 92
+    done
+    "$@"
+}
+IFS= read -r -d '' USER_PASSWORD || :
+"""
+    return subprocess.run(
+        ["bash", "-c", stub + _function(source, "write_operator_credential")
+         + '\nwrite_operator_credential fixop\n', "_", str(home)],
+        input=password, capture_output=True, text=True, timeout=30)
+
+
+def test_operator_credential_safe_toml_update():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    password = 'fixture "typed" \\ credential\' café 猫'
+    cards = [
+        "",
+        "[ identity ] # keep header\nfullname = 'MiOS User'\n[theme]\nname = 'keep'\n",
+        "[identity]\ndefault_password = 'old' # keep selected note\nfullname = 'MiOS User'\n[other]\nkeep = 17\n",
+        '[identity]\nfullname="MiOS User"\n[notes]\ntext="""\n[identity]\ndefault_password="decoy"\n"""\n',
+        "identity = { fullname='MiOS User', default_password=" + json.dumps(password) + " }\n",
+        "identity.default_password=" + json.dumps(password) + "\n[other]\nkeep=9\n",
+    ]
+    for card in cards:
+        with tempfile.TemporaryDirectory(prefix="mios-installer-credential-") as tmp:
+            home = pathlib.Path(tmp)
+            tier = home / ".config/mios/mios.toml"
+            tier.parent.mkdir(parents=True)
+            tier.write_text(card)
+            before = tomllib.loads(card)
+            result = _operator_write(source, home, password)
+            assert result.returncode == 0, result.stderr
+            expected = dict(before)
+            expected["identity"] = {**before.get("identity", {}), "default_password": password}
+            assert tomllib.loads(tier.read_text()) == expected
+            assert stat.S_IMODE(tier.stat().st_mode) == 0o600
+            assert password not in result.stdout + result.stderr
+            if "# keep selected note" in card:
+                assert "# keep selected note" in tier.read_text()
+            first = tier.read_bytes()
+            assert _operator_write(source, home, password).returncode == 0
+            assert tier.read_bytes() == first
+    print("PASS installer credential quoting, spaced headers and unrelated TOML preservation")
+
+
+def test_operator_credential_refusal_preserves_tier():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    cases = [
+        '[notes]\ntext="""\n[identity]\ndefault_password="decoy"\n"""\n[identity]\nfullname="MiOS User"\n',
+        'identity = { default_password="old", fullname="MiOS User" }\n',
+        'identity.default_password="old"\n[other]\nkeep=1\n',
+        '[identity]\ndefault_password="""old\nmultiline"""\n',
+        '[identity]\ndefault_password="unterminated\n',
+    ]
+    for card in cases:
+        with tempfile.TemporaryDirectory(prefix="mios-installer-refusal-") as tmp:
+            home = pathlib.Path(tmp)
+            tier = home / ".config/mios/mios.toml"
+            tier.parent.mkdir(parents=True)
+            tier.write_text(card)
+            before, mode = tier.read_bytes(), tier.stat().st_mode
+            result = _operator_write(source, home, "fixture-new-credential")
+            assert result.returncode != 0 and "NOT recorded" in result.stderr, result
+            assert "Operator credential recorded:" not in result.stdout
+            assert tier.read_bytes() == before and tier.stat().st_mode == mode
+            assert sorted(p.name for p in tier.parent.iterdir()) == ["mios.toml"]
+            assert "fixture-new-credential" not in result.stdout + result.stderr
+    for password in ("", "fixture\nnewline", "fixture\x7fcontrol"):
+        with tempfile.TemporaryDirectory(prefix="mios-installer-value-") as tmp:
+            home = pathlib.Path(tmp)
+            result = _operator_write(source, home, password)
+            assert result.returncode != 0
+            assert not (home / ".config/mios/mios.toml").exists()
+    print("PASS installer refuses unsupported or invalid TOML without replacing it")
+
+
+def test_operator_credential_refuses_links_and_shadowing():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    for component in (".config", ".config/mios", ".config/mios/mios.toml", ".config/mios/mios.d"):
+        with tempfile.TemporaryDirectory(prefix="mios-installer-link-") as tmp:
+            base = pathlib.Path(tmp)
+            home, outside = base / "home", base / "outside"
+            home.mkdir()
+            target = home / component
+            target.parent.mkdir(parents=True, exist_ok=True)
+            outside.mkdir()
+            if component.endswith("mios.toml"):
+                victim = outside / "victim.toml"
+                victim.write_text('[identity]\ndefault_password="fixture-existing"\n')
+                target.symlink_to(victim)
+            else:
+                victim = outside / "mios.toml"
+                victim.write_text('[identity]\ndefault_password="fixture-existing"\n')
+                target.symlink_to(outside, target_is_directory=True)
+            before = victim.read_bytes()
+            result = _operator_write(source, home, "fixture-new-credential")
+            assert result.returncode != 0 and "NOT recorded" in result.stderr, result
+            assert target.is_symlink() and victim.read_bytes() == before
+            assert sorted(p.name for p in outside.iterdir()) == [victim.name]
+    for fragment in ('[identity]\ndefault_password="fixture-shadow"\n', 'identity="scalar-shadow"\n', '[identity]\nbroken="unterminated\n'):
+        with tempfile.TemporaryDirectory(prefix="mios-installer-fragment-") as tmp:
+            home = pathlib.Path(tmp)
+            tier = home / ".config/mios/mios.toml"
+            fragments = tier.parent / "mios.d"
+            fragments.mkdir(parents=True)
+            tier.write_text('[identity]\nfullname="MiOS User"\ndefault_password="fixture-existing"\n')
+            path = fragments / "90-operator.toml"
+            path.write_text(fragment)
+            before = tier.read_bytes()
+            result = _operator_write(source, home, "fixture-new-credential")
+            assert result.returncode != 0 and "90-operator.toml" in result.stderr, result
+            assert tier.read_bytes() == before and path.read_text() == fragment
+            assert "fixture-new-credential" not in result.stdout + result.stderr
+    for kind in ("fifo", "hardlink", "directory"):
+        with tempfile.TemporaryDirectory(prefix="mios-installer-file-type-") as tmp:
+            home = pathlib.Path(tmp)
+            tier = home / ".config/mios/mios.toml"
+            tier.parent.mkdir(parents=True)
+            victim = home / "victim.toml"
+            victim.write_text('[identity]\ndefault_password="fixture-existing"\n')
+            if kind == "fifo":
+                os.mkfifo(tier)
+            elif kind == "hardlink":
+                os.link(victim, tier)
+            else:
+                tier.mkdir()
+            before, mode = victim.read_bytes(), tier.lstat().st_mode
+            result = _operator_write(source, home, "fixture-new-credential")
+            assert result.returncode != 0 and "NOT recorded" in result.stderr, result
+            assert victim.read_bytes() == before and tier.lstat().st_mode == mode
+    print("PASS installer rejects symlinks and effective fragment conflicts before replacement")
+
+
+def test_operator_tier_survives_seeding_and_reports_failure():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    with tempfile.TemporaryDirectory(prefix="mios-installer-seed-") as tmp:
+        root = pathlib.Path(tmp)
+        home, skel = root / "home", root / "skel"
+        tier = home / ".config/mios/mios.toml"
+        tier.parent.mkdir(parents=True)
+        skel.mkdir()
+        tier.write_text('[identity]\ndefault_password="fixture-existing"\n[theme]\nname="custom"\n')
+        (skel / "mios.toml").write_text('[identity]\nfullname="MiOS User"\n')
+        passwd = root / "passwd"
+        passwd.write_text(f'fixop:x:1000:1000::{home}:/bin/bash\n')
+        before = tier.read_bytes()
+        common = r"""
+set -euo pipefail
+FIXTURE_HOME="$1"
+LINUX_USER=fixop
+log_phase() { :; }
+log_info() { :; }
+log_warn() { printf '[WARN] %s\n' "$*" >&2; }
+log_ok() { printf '[ OK ] %s\n' "$*"; }
+log_err() { printf '[FAIL] %s\n' "$*" >&2; }
+getent() { printf 'fixop:x:1000:1000::%s:/bin/bash\n' "$FIXTURE_HOME"; }
+sudo() { shift 2; "$@"; }
+install() {
+    local args=()
+    while (( $# )); do
+        case "$1" in -o|-g) shift 2 ;; *) args+=("$1"); shift ;; esac
+    done
+    command install "${args[@]}"
+}
+write_operator_credential() { return 37; }
+"""
+        seeder = _function(source, "seed_user_skel_for_all_accounts")
+        seeder = seeder.replace('/etc/skel/.config/${subdir}', str(root) + '/skel-${subdir}')
+        seeder = seeder.replace('/etc/passwd', str(passwd))
+        (root / "skel-mios").mkdir()
+        (root / "skel-mios/mios.toml").write_text((skel / "mios.toml").read_text())
+        stage = _function(source, "stage_user_profile_artifacts").replace('/etc/skel/.config/mios', str(skel))
+        seeded = subprocess.run(["bash", "-c", common + seeder + '\nseed_user_skel_for_all_accounts\n', "_", str(home)], capture_output=True, text=True, timeout=30)
+        assert seeded.returncode == 0 and tier.read_bytes() == before, seeded
+        failed = subprocess.run(["bash", "-c", common + seeder + stage + '\nstage_user_profile_artifacts\n', "_", str(home)], capture_output=True, text=True, timeout=30)
+        assert failed.returncode != 0 and "NOT recorded" in failed.stderr, failed
+        assert "Linux login password was set" in failed.stderr and "mios.html" in failed.stderr
+        assert tier.read_bytes() == before and "Operator credential recorded:" not in failed.stdout
+        core = _function(source, "do_install_core")
+        stub_core = r"""
+initialize_dynamic_branding() { :; }
+require_root() { :; }
+detect_host_kind() { echo fixture; }
+check_network() { :; }
+install_prerequisites() { :; }
+load_profile_defaults() { :; }
+launch_configurator() { :; }
+gather_user_choices() { :; }
+print_summary() { :; }
+trigger_mios_install() { :; }
+deploy_system_prompt() { :; }
+apply_user_profile() { echo LINUX-PASSWORD-SET; }
+reboot_prompt() { echo INCORRECT-REBOOT; }
+"""
+        failed = subprocess.run(["bash", "-c", common + stub_core + seeder + stage + core + '\ndo_install_core fhs\n', "_", str(home)], capture_output=True, text=True, timeout=30)
+        assert failed.returncode != 0 and "Installation incomplete: operator credential NOT recorded" in failed.stderr
+        assert "LINUX-PASSWORD-SET" in failed.stdout and "INCORRECT-REBOOT" not in failed.stdout
+    print("PASS caller seeding preserves operator tiers and credential failures stop the final install path")
 
 
 def test_linux_install_failure_propagation():
@@ -776,6 +994,10 @@ def main() -> int:
     test_empty_dir_failure()
     test_apply_stage_selection()
     test_linux_core_dispatch()
+    test_operator_credential_safe_toml_update()
+    test_operator_credential_refusal_preserves_tier()
+    test_operator_credential_refuses_links_and_shadowing()
+    test_operator_tier_survives_seeding_and_reports_failure()
     test_linux_install_failure_propagation()
     test_unsupported_host_rejected_before_mutation()
     test_unit_presets_enable_the_roster()
