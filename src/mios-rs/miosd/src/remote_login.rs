@@ -1637,6 +1637,12 @@ async fn canvas() -> Result<(), String> {
                         return Err("cannot clear expired canvas input".into());
                     }
                     let _ = canvas.retry(&p);
+                    // Discard input queued for this anchor during the bounded
+                    // retry checks too, including a quickly failed new entry.
+                    // The new greeter has a different PTY and is not flushed.
+                    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
+                        return Err("cannot clear expired canvas input".into());
+                    }
                 }
             },
         }
