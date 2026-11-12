@@ -1294,13 +1294,40 @@ argv = [{stub!r}, "desktop-panel"]
         self.assertRegex(evidence["generated_managed_expression_sha256"], r"\A[a-f0-9]{64}\Z")
         self.assertIs(evidence["four_core_roles"], True)
         self.assertIs(evidence["app_identity_preserved"], True)
-        self.assertIs(evidence["native_omitted_float_observed"], True)
+        self.assertIs(evidence["native_agent_float_protected"], True)
+        self.assertIsInstance(evidence["native_omitted_float_observed"], bool)
+        self.assertIsInstance(evidence["count_guard_runtime_exercised"], bool)
+        inventory = evidence["native_float_inventory"]
+        self.assertIsInstance(inventory["app_listed"], bool)
+        self.assertIsInstance(inventory["agent_listed"], bool)
+        self.assertEqual(evidence["native_omitted_float_observed"],
+                         not (inventory["app_listed"] and inventory["agent_listed"]))
+        observations = evidence["native_guard_observations"]
+        self.assertEqual(len(observations), 2)
+        self.assertEqual({row["action"] for row in observations}, {"center", "new"})
+        for row in observations:
+            self.assertEqual(row["native_pane_count"], 6)
+            self.assertLessEqual(row["observed_pane_count"], row["native_pane_count"])
+            self.assertIsInstance(row["agent_witnessed"], bool)
+            self.assertIsInstance(row["count_guard_runtime_exercised"], bool)
+            if row["count_guard_runtime_exercised"]:
+                self.assertIs(row["agent_witnessed"], False)
+                self.assertEqual(row["refusal_class"], "unobserved-count")
+                self.assertLess(row["observed_pane_count"], row["native_pane_count"])
+            else:
+                self.assertIs(row["agent_witnessed"], True)
+                self.assertEqual(row["refusal_class"], "managed-agent")
+        # Some accepted providers list every float. Their real managed-agent
+        # refusal is tested here; incomplete inventory remains a distinct Rust
+        # unit gate, never credited as a runtime path that did not execute.
+        self.assertEqual(evidence["count_guard_runtime_exercised"],
+                         any(row["count_guard_runtime_exercised"] for row in observations))
         expected = {
             "canonical-new-from-canvas",
             "center-ordinary-app-with-four-core-roles",
             "focus-core-chat-from-app-with-four-core-roles",
             "restore-app-focus-with-four-core-roles",
-            "omitted-native-agent-float-fails-closed",
+            "native-agent-float-fails-closed",
             "manual-managed-marker-remains-protected",
         }
         expected.update(f"{role}-rejects-{verb}"

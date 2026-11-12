@@ -55,14 +55,29 @@ def main():
   for name,pane in roles.items():
    for verb in['close-confirm','center','snap-left']:
     before=core_snapshot();r=action(verb,pane);need(r.returncode!=0 and'desktop roles cannot be rearranged'in r.stderr and core_snapshot()==before and identity(app)==app_identity,'core role protection failed');checks.append(name+'-rejects-'+verb)
-  # Native ordinary inventory may omit floats. A directly witnessed app target
-  # is safe; an additional unknown float, even one advertising an agent role,
-  # must make action refusal deterministic before any mutation.
+  # Exercise the accepted provider's real floating-agent inventory. A listed
+  # or explicitly witnessed agent must hit the managed guard; a truly unseen
+  # pane must hit the strict count guard. Never claim omission when C95 lists
+  # every float. The incomplete-inventory unit gate remains independent:
+  # tmux_desktop::tests::omitted_floating_panes_cannot_hide_a_managed_workspace.
   unknown=h.I('new-pane','-d','-t',canvas,'-P','-F','#{pane_id}','--','sleep','300');h.I('set-option','-p','-t',unknown,'@mios-workspace-worker','1');need(h.I('display-message','-p','-t',unknown,'#{pane_floating_flag}')=='1','native unknown float required')
-  ordinary=h.I('list-panes','-a','-F','#{pane_id}').splitlines();need(unknown not in ordinary and app not in ordinary,'fixture must exercise actual omitted float inventory');unknown_identity=identity(unknown);before=core_snapshot();app_rect=rect(app)
+  ordinary=h.I('list-panes','-a','-F','#{pane_id}').splitlines();unknown_identity=identity(unknown);before=core_snapshot();app_rect=rect(app);unknown_rect=rect(unknown)
+  window=h.I('display-message','-p','-t',canvas,'#{window_id}')
+  window_ordinary={row.split('|')[0]for row in h.I('list-panes','-a','-F','#{pane_id}|#{window_id}').splitlines()if row.split('|')[1]==window}
+  client_focus=h.I('display-message','-p','-c',client,'#{client_pane_id}')
+  window_default=h.I('display-message','-p','-t',window,'#{pane_id}')
+  need(h.I('show-options','-pqv','-t',unknown,'@mios-workspace-worker')=='1','native floating agent marker required')
+  native_guard_observations=[];native_count=count();need(native_count==6,'exact native six-pane guard fixture required')
   for verb,target in[('center',app),('new',canvas)]:
-   r=action(verb,target);need(r.returncode!=0 and'unobserved panes'in r.stderr and count()==6 and core_snapshot()==before and rect(app)==app_rect and identity(unknown)==unknown_identity,'unknown native float bypassed window guard')
-  checks.append('omitted-native-agent-float-fails-closed');h.I('kill-pane','-t',unknown);need(action('center',app).returncode==0 and identity(app)==app_identity,'known explicit float target not restored after unknown removed')
+   observed=set(window_ordinary)|{target}
+   for hint in[client_focus,window_default]:
+    if re.fullmatch('%[0-9]+',hint)and h.I('display-message','-p','-t',hint,'#{window_id}')==window:observed.add(hint)
+   unobserved=unknown not in observed
+   if unobserved:need(len(observed)<native_count,'unobserved native agent requires a strict inventory count mismatch')
+   expected='unobserved panes'if unobserved else'managed agent workspace layout is protected'
+   r=action(verb,target);need(r.returncode!=0 and expected in r.stderr and count()==native_count and core_snapshot()==before and identity(app)==app_identity and rect(app)==app_rect and identity(unknown)==unknown_identity and rect(unknown)==unknown_rect,'native floating agent bypassed protection or changed desktop')
+   native_guard_observations.append({'action':verb,'native_pane_count':native_count,'observed_pane_count':len(observed),'agent_witnessed':not unobserved,'refusal_class':'unobserved-count'if unobserved else'managed-agent','count_guard_runtime_exercised':unobserved})
+  checks.append('native-agent-float-fails-closed');h.I('kill-pane','-t',unknown);need(action('center',app).returncode==0 and identity(app)==app_identity,'known explicit float target not restored after unknown removed')
   # Drop only the owned app so the following tests isolate explicit real-agent
   # guards from omitted-float count failures. Forged desktop flags never win.
   h.I('kill-pane','-t',app);need(count()==4,'owned app cleanup failed');ordinary_app=h.I('split-window','-d','-t',canvas,'-P','-F','#{pane_id}','--','sleep','300');agent=h.I('split-window','-d','-t',canvas,'-P','-F','#{pane_id}','--','sleep','300')
@@ -75,6 +90,6 @@ def main():
   # override of the generated global aggregate or a weakened positive fixture.
   h.I('set-option','-p','-t',agent,'@mios-managed-pane','1');h.I('set-option','-p','-t',agent,'@mios-desktop-panel','1');before={pane:{'identity':identity(pane),'rect':rect(pane)}for pane in[ordinary_app,agent,*roles.values()]};n=count();need(action('center',agent).returncode!=0 and count()==n and before=={pane:{'identity':identity(pane),'rect':rect(pane)}for pane in before},'manual managed marker lost to forged role or changed desktop');checks.append('manual-managed-marker-remains-protected')
   need(h.I('show-options','-gqv','@mios-managed-pane')==expression,'fixture changed generated global managed policy')
-  print(json.dumps({'ok':True,'mode':a.mode,'generator_sha256':digest(m.GEN),'generator_resolved_path':str(m.GEN.resolve()),'c95_sha256':digest(m.DESKTOP_TMUX),'generated_managed_expression_sha256':hashlib.sha256(expression.encode()).hexdigest(),'four_core_roles':True,'checks':checks,'app_identity_preserved':True,'native_omitted_float_observed':True,'PAM_acceptance_claimed':False,'hardware_acceptance_claimed':False},sort_keys=True))
+  print(json.dumps({'ok':True,'mode':a.mode,'generator_sha256':digest(m.GEN),'generator_resolved_path':str(m.GEN.resolve()),'c95_sha256':digest(m.DESKTOP_TMUX),'generated_managed_expression_sha256':hashlib.sha256(expression.encode()).hexdigest(),'four_core_roles':True,'checks':checks,'app_identity_preserved':True,'native_agent_float_protected':True,'native_omitted_float_observed':app not in ordinary or unknown not in ordinary,'count_guard_runtime_exercised':any(row['count_guard_runtime_exercised']for row in native_guard_observations),'native_guard_observations':native_guard_observations,'native_float_inventory':{'app_listed':app in ordinary,'agent_listed':unknown in ordinary,'ordinary_pane_ids':ordinary,'client_focused_pane':client_focus,'window_default_pane':window_default},'PAM_acceptance_claimed':False,'hardware_acceptance_claimed':False},sort_keys=True))
  finally:h.close()
 if __name__=='__main__':main()
