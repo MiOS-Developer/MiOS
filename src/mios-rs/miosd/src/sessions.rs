@@ -418,9 +418,17 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// Machine records retain UTF-8 and field separators even for a C-locale caller.
+/// Human attach/new-session clients keep their own terminal encoding policy.
+fn tmux_query_command() -> Command {
+    let mut command = Command::new("tmux");
+    command.arg("-u");
+    command
+}
+
 fn local_sessions(c: &Config) -> Result<Vec<Session>, String> {
     let out = run_bounded(
-        Command::new("tmux")
+        tmux_query_command()
             .env("TMUX_TMPDIR", &c.socket_root)
             .args(["-L", &c.socket, "list-sessions", "-F", FORMAT]),
         Instant::now() + LOCAL_DEADLINE,
@@ -451,7 +459,7 @@ fn ssh_args(c: &Config, address: &str) -> Vec<String> {
 
 fn remote_sessions(c: &Config, address: &str, deadline: Instant) -> Result<Vec<Session>, String> {
     let remote = format!(
-        "TMUX_TMPDIR={} tmux -L {} list-sessions -F {} 2>/dev/null; true",
+        "TMUX_TMPDIR={} tmux -u -L {} list-sessions -F {} 2>/dev/null; true",
         shell_quote(&c.socket_root),
         shell_quote(&c.socket),
         shell_quote(FORMAT)
@@ -613,7 +621,7 @@ fn discover_nested(c: &Config) -> Vec<NestedSession> {
             });
 
         let root = tmux_root.as_deref().unwrap_or(&c.socket_root);
-        let mut cmd = Command::new("tmux");
+        let mut cmd = tmux_query_command();
         cmd.env("TMUX_TMPDIR", root)
             .args(["-L", &tmux_socket, "list-sessions", "-F", FORMAT]);
         let sessions = match run_bounded(&mut cmd, Instant::now() + LOCAL_DEADLINE) {
@@ -1939,7 +1947,7 @@ fn current_tmux_client() -> Result<Option<String>, String> {
     let deadline = Instant::now() + LOCAL_DEADLINE;
     let query = |args: &[&str]| -> Result<String, String> {
         let output = run_bounded(
-            Command::new("tmux").args(["-S", socket]).args(args),
+            tmux_query_command().args(["-S", socket]).args(args),
             deadline,
         )?;
         if !output.status.success() {
@@ -2468,6 +2476,62 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn real_tmux_session_records_survive_a_c_locale_query() {
+        struct OwnedServer(std::path::PathBuf);
+        impl Drop for OwnedServer {
+            fn drop(&mut self) {
+                let _ = tmux_query_command()
+                    .arg("-S")
+                    .arg(&self.0)
+                    .arg("kill-server")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let server = OwnedServer(root.path().join("tmux"));
+        let start = tmux_query_command()
+            .arg("-S")
+            .arg(&server.0)
+            .args([
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                "MiOS-\u{03c6}|chat",
+                "sleep 30",
+            ])
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .output()
+            .unwrap();
+        assert!(
+            start.status.success(),
+            "{}",
+            String::from_utf8_lossy(&start.stderr)
+        );
+        let reply = tmux_query_command()
+            .arg("-S")
+            .arg(&server.0)
+            .args(["list-sessions", "-F", FORMAT])
+            .env("LANG", "C")
+            .env("LC_ALL", "C")
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .output()
+            .unwrap();
+        assert!(reply.status.success());
+        let rows = parse_sessions(std::str::from_utf8(&reply.stdout).unwrap());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "MiOS-\u{03c6}|chat");
+        assert_eq!(rows[0].windows, 1);
+        assert!(!rows[0].attached);
+    }
 
     #[test]
     fn parses_tmux_session_lines_and_skips_malformed_ones() {

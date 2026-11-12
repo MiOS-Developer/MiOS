@@ -1100,6 +1100,12 @@ usr/share/mios/virtio/*.iso
 !/usr/share/doc/mios/remote-camera.md
 
 !/tools/native/mios-gen/src/app_preflight.rs
+!/tools/native/mios-gen/src/tuigreet_build.rs
+!/tools/upstream/
+!/tools/upstream/tuigreet/
+!/tools/upstream/tuigreet/Cargo.lock
+!/tools/upstream/tuigreet/README.md
+!/tools/patches/tuigreet-login-account.patch
 
 !/usr/share/mios/quickshell/AppLaunch.qml
 

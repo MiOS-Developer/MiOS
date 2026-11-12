@@ -81,6 +81,9 @@ fn socket_env() -> Result<String, String> {
 
 fn tmux(args: &[&str]) -> Result<String, String> {
     let out = Command::new("tmux")
+        // Preserve machine field separators under C locale without changing
+        // the encoding policy of exec_tmux's human attach/popup clients.
+        .arg("-u")
         .args(args)
         .output()
         .map_err(|e| format!("tmux: {e}"))?;

@@ -377,7 +377,9 @@ impl Server {
         }
         let mut command = Command::new(&self.binary);
         minimal_environment(&mut command);
-        command.arg("-S").arg(&self.socket).args(args);
+        // These short-lived RPC clients exchange tab-delimited UTF-8 records,
+        // independently of the interactive client's locale or terminal modes.
+        command.arg("-u").arg("-S").arg(&self.socket).args(args);
         let out = if args.first() == Some(&"display-menu") {
             // Native menus own a human interaction, rather than a bounded control query.
             command.output().map_err(|e| format!("desktop menu: {e}"))?

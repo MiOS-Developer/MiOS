@@ -25,6 +25,7 @@ mod greeter;
 mod grub;
 mod hypr3d_spawn;
 mod hyprland_build;
+mod tuigreet_build;
 use render::desktop_boot;
 mod device_forwarding;
 mod global_bindings;
@@ -430,6 +431,23 @@ enum Commands {
         /// Only check that every patch applies to the pristine release.
         #[arg(long)]
         check: bool,
+    },
+
+    /// Build the pinned GNU/NSS greeter as an owned RPM and matching source RPM.
+    #[command(name = "build-tuigreet")]
+    BuildTuigreet {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long)]
+        out: PathBuf,
+        /// An already downloaded archive, still checked against its SSOT digest.
+        #[arg(long)]
+        archive: Option<PathBuf>,
+        /// Reviewed extracted crate cache, permitting source preparation without network access.
+        #[arg(long, requires = "vendor_cache_sha256")]
+        vendor_cache: Option<PathBuf>,
+        #[arg(long, requires = "vendor_cache")]
+        vendor_cache_sha256: Option<String>,
     },
 
     /// Build the compositor plugin [desktop.hyprland.<name>] with the same SDK and ABI hold.
@@ -1985,6 +2003,27 @@ fn main() -> ExitCode {
                         }
                     })
                     .map_err(|e| (e, 1)),
+            )
+        }
+        Commands::BuildTuigreet {
+            root,
+            out,
+            archive,
+            vendor_cache,
+            vendor_cache_sha256,
+        } => {
+            let r = resolve_root(root);
+            (
+                "build-tuigreet",
+                "usr/bin/tuigreet",
+                tuigreet_build::run(
+                    &r,
+                    &out,
+                    archive.as_deref(),
+                    vendor_cache.as_deref(),
+                    vendor_cache_sha256.as_deref(),
+                )
+                .map_err(|e| (e, 1)),
             )
         }
         Commands::BuildHyprlandPlugin { name, root, srpm } => {

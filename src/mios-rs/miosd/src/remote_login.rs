@@ -2268,7 +2268,7 @@ async fn greeter(proxy: &Path, geometry: &Path) -> Result<(), String> {
             "--cmd",
             &shell_command(&p.session),
         ]);
-    owned_pty_bridge(command, size).await
+    owned_pty_bridge(command, size, p.command_timeout).await
 }
 
 async fn session(geometry: &Path) -> Result<(), String> {
@@ -2286,7 +2286,7 @@ async fn session(geometry: &Path) -> Result<(), String> {
     // account's runtime directory. No caller TMUX or SSH state was forwarded.
     let mut command = Command::new(&p.session[0]);
     command.args(&p.session[1..]);
-    owned_pty_bridge(command, dimensions).await
+    owned_pty_bridge(command, dimensions, p.command_timeout).await
 }
 
 /// Secret response strings are never deserialized, formatted or persisted.
@@ -2754,6 +2754,51 @@ async fn proxy_request(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn exited_child_terminal_tail_is_forwarded_before_teardown() {
+        let (child_output, bridge_input) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (bridge_output, observed) = std::os::unix::net::UnixStream::pair().unwrap();
+        let child_output = File::from(std::os::fd::OwnedFd::from(child_output));
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "printf 'desktop startup failed\\n' >&2; exit 7"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(child_output))
+            .spawn()
+            .unwrap();
+        assert_eq!(child.wait().unwrap().code(), Some(7));
+        // The child has exited before this relay is polled. Its terminal tail
+        // must still reach the client, rather than disappear during teardown.
+        let input = Arc::new(
+            BridgeFd::new(File::from(std::os::fd::OwnedFd::from(bridge_input)), false).unwrap(),
+        );
+        let output = Arc::new(
+            BridgeFd::new(File::from(std::os::fd::OwnedFd::from(bridge_output)), false).unwrap(),
+        );
+        let mut relay = tokio::spawn(relay_terminal(input, output, true));
+        assert!(drain_terminal_tail(&mut relay, Duration::from_secs(1)).await);
+        observed.set_nonblocking(true).unwrap();
+        let mut observed = UnixStream::from_std(observed).unwrap();
+        let mut tail = Vec::new();
+        tokio::time::timeout(Duration::from_secs(1), observed.read_to_end(&mut tail))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(tail, b"desktop startup failed\n");
+    }
+
+    #[tokio::test]
+    async fn retained_terminal_writer_cannot_extend_output_drain_deadline() {
+        let mut relay = tokio::spawn(async {
+            std::future::pending::<()>().await;
+            Ok::<(), String>(())
+        });
+        assert!(!drain_terminal_tail(&mut relay, Duration::from_millis(10)).await);
+        assert!(!relay.is_finished());
+        relay.abort();
+        assert!(relay.await.unwrap_err().is_cancelled());
+    }
+
     #[test]
     fn floating_entry_selects_keyboard_focus_separately_from_setting_its_title() {
         let temporary = tempfile::tempdir().unwrap();
@@ -3006,6 +3051,61 @@ esac
             tty: "/dev/pts/99".into(),
         };
         (p, w)
+    }
+
+    fn input_boundary_test_pty() -> (File, File) {
+        let (mut master, mut slave) = (-1, -1);
+        assert_eq!(
+            unsafe {
+                libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            },
+            0
+        );
+        for fd in [master, slave] {
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+                0
+            );
+        }
+        unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) }
+    }
+
+    fn input_boundary_ready(fd: i32, timeout_ms: i32) -> bool {
+        let mut poll = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ready = unsafe { libc::poll(&mut poll, 1, timeout_ms) };
+        assert!(ready >= 0);
+        ready == 1 && poll.revents & libc::POLLIN != 0
+    }
+
+    #[test]
+    fn new_terminal_input_owner_discards_only_prearm_typeahead() {
+        let (mut master, slave) = input_boundary_test_pty();
+        master.write_all(b"stale-login\n").unwrap();
+        assert!(input_boundary_ready(slave.as_raw_fd(), 1000));
+        let _owner = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+        assert!(!input_boundary_ready(slave.as_raw_fd(), 0));
+    }
+
+    #[test]
+    fn new_terminal_input_owner_keeps_input_typed_after_ready() {
+        let (mut master, mut slave) = input_boundary_test_pty();
+        let _owner = TerminalRaw::arm_fd(slave.as_raw_fd()).unwrap();
+        master.write_all(b"r").unwrap();
+        assert!(input_boundary_ready(slave.as_raw_fd(), 1000));
+        let mut actual = [0];
+        slave.read_exact(&mut actual).unwrap();
+        assert_eq!(&actual, b"r");
+        assert!(!input_boundary_ready(slave.as_raw_fd(), 0));
     }
 
     #[test]
@@ -3812,28 +3912,47 @@ async fn geometry_connection(p: &Policy, path: &Path, name: &str) -> Result<Unix
 }
 
 struct TerminalRaw {
+    terminal: File,
     saved: libc::termios,
 }
 impl TerminalRaw {
     fn arm() -> Result<Self, String> {
+        Self::arm_fd(0)
+    }
+    fn arm_fd(fd: i32) -> Result<Self, String> {
+        // Pin only this bridge's inherited terminal. Tests use a fresh PTY fd;
+        // neither path replaces global stdin or touches another session's TTY.
+        let held = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+        if held < 0 {
+            return Err("remote terminal descriptor unavailable".into());
+        }
+        let terminal = unsafe { File::from_raw_fd(held) };
         let mut saved: libc::termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(0, &mut saved) } != 0 {
+        if unsafe { libc::tcgetattr(held, &mut saved) } != 0 {
             return Err("remote stream is not a terminal".into());
         }
         let mut raw = saved;
         unsafe {
             libc::cfmakeraw(&mut raw);
         }
-        if unsafe { libc::tcsetattr(0, libc::TCSANOW, &raw) } != 0 {
+        if unsafe { libc::tcsetattr(held, libc::TCSANOW, &raw) } != 0 {
             return Err("cannot prepare remote terminal stream".into());
         }
-        Ok(Self { saved })
+        let armed = Self { terminal, saved };
+        // This is one ownership boundary, before the new greeter or selected
+        // desktop child is spawned. Discard unread typeahead left for the prior
+        // owner, without flushing output or changing any active password field.
+        // TCSANOW + TCIFLUSH avoids waiting for output flow-control to drain.
+        if unsafe { libc::tcflush(held, libc::TCIFLUSH) } != 0 {
+            return Err("cannot clear input from the previous terminal owner".into());
+        }
+        Ok(armed)
     }
 }
 impl Drop for TerminalRaw {
     fn drop(&mut self) {
         unsafe {
-            libc::tcsetattr(0, libc::TCSANOW, &self.saved);
+            libc::tcsetattr(self.terminal.as_raw_fd(), libc::TCSANOW, &self.saved);
         }
     }
 }
@@ -3974,7 +4093,17 @@ fn signal_owned_group(identity: ProcessIdentity, signal: i32) {
         }
     }
 }
-async fn owned_pty_bridge(mut command: Command, geometry: UnixStream) -> Result<(), String> {
+async fn drain_terminal_tail(
+    output: &mut tokio::task::JoinHandle<Result<(), String>>,
+    timeout: Duration,
+) -> bool {
+    tokio::time::timeout(timeout, output).await.is_ok()
+}
+async fn owned_pty_bridge(
+    mut command: Command,
+    geometry: UnixStream,
+    shutdown_timeout: Duration,
+) -> Result<(), String> {
     let uid = unsafe { libc::getuid() };
     if uid == 0 || unsafe { libc::geteuid() } != uid {
         return Err("remote PTY bridge must be unprivileged".into());
@@ -4078,12 +4207,23 @@ async fn owned_pty_bridge(mut command: Command, geometry: UnixStream) -> Result<
     };
     let result = match &end {
         End::Child(Ok(status)) if status.success() => Ok(()),
+        End::Child(Ok(status)) => Err(format!("owned PTY child exited with {status}")),
         End::Output => match tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
             Ok(Ok(status)) if status.success() => Ok(()),
+            Ok(Ok(status)) => Err(format!("owned PTY child exited with {status}")),
             _ => Err("owned PTY session stopped".into()),
         },
         End::Cancel | End::Input => Ok(()),
         _ => Err("owned PTY session or geometry stream failed".into()),
+    };
+    // waitpid can become ready while the child's final terminal output still
+    // sits in the PTY. Forward that tail before aborting the relay, including
+    // the desktop startup error that explains a return to the login screen.
+    // A descendant retaining the PTY cannot extend the SSOT shutdown deadline.
+    let output_joined = if matches!(end, End::Child(_)) {
+        drain_terminal_tail(&mut output_task, shutdown_timeout).await
+    } else {
+        matches!(end, End::Output)
     };
     signal_owned_group(identity, libc::SIGHUP);
     if tokio::time::timeout(Duration::from_secs(2), child.wait())
@@ -4099,7 +4239,7 @@ async fn owned_pty_bridge(mut command: Command, geometry: UnixStream) -> Result<
     if !matches!(end, End::Input) {
         let _ = input_task.await;
     }
-    if !matches!(end, End::Output) {
+    if !output_joined {
         let _ = output_task.await;
     }
     if !matches!(end, End::Geometry) {

@@ -1,0 +1,145 @@
+--- a/src/greeter.rs
++++ b/src/greeter.rs
+@@ -224,12 +224,12 @@
+         // If, on top of that, we should remember their last session.
+         if greeter.remember_user_session {
+           // See if we have the last free-form command from the user.
+-          if let Ok(command) = get_last_user_command(greeter.username.get()) {
++          if let Ok(command) = get_last_user_command(&greeter.username.value) {
+             greeter.session_source = SessionSource::Command(command);
+           }
+ 
+           // If a session was saved, use it and its name.
+-          if let Ok(ref session_path) = get_last_user_session(greeter.username.get()) {
++          if let Ok(ref session_path) = get_last_user_session(&greeter.username.value) {
+             // Set the selected menu option and the session source.
+             if let Some(index) = greeter.sessions.options.iter().position(|Session { path, .. }| path.as_deref() == Some(session_path)) {
+               greeter.sessions.selected = index;
+--- a/src/keyboard.rs
++++ b/src/keyboard.rs
+@@ -308,7 +308,10 @@
+   let mode = greeter.mode;
+ 
+   match mode {
+-    Mode::Username => greeter.username.value = value,
++    Mode::Username => {
++      greeter.username.value = value;
++      greeter.username.mask = None;
++    }
+     Mode::Password => greeter.buffer = value,
+     Mode::Command => greeter.buffer = value,
+     _ => {}
+@@ -339,7 +342,10 @@
+     let value = left.chain(right).collect();
+ 
+     match greeter.mode {
+-      Mode::Username => greeter.username.value = value,
++      Mode::Username => {
++        greeter.username.value = value;
++        greeter.username.mask = None;
++      }
+       Mode::Password => greeter.buffer = value,
+       Mode::Command => greeter.buffer = value,
+       _ => return,
+@@ -388,12 +394,33 @@
+   use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+   use tokio::sync::RwLock;
+ 
+-  use super::handle;
++  use super::{delete_key, handle, insert_key};
+   use crate::{
+     ipc::Ipc,
+     ui::{common::masked::MaskedString, sessions::SessionSource},
+     Greeter, Mode,
+   };
++
++  #[tokio::test]
++  async fn editing_selected_login_removes_only_its_old_pretty_name() {
++    let mut greeter = Greeter::default();
++    greeter.mode = Mode::Username;
++    greeter.username = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
++    insert_key(&mut greeter, 'x').await;
++    assert_eq!(greeter.username.value, "miosx");
++    assert!(greeter.username.mask.is_none());
++
++    greeter.username = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
++    delete_key(&mut greeter, KeyCode::Backspace).await;
++    assert_eq!(greeter.username.value, "mio");
++    assert!(greeter.username.mask.is_none());
++
++    greeter.mode = Mode::Password;
++    greeter.username = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
++    insert_key(&mut greeter, 'x').await;
++    assert_eq!(greeter.username.value, "mios");
++    assert_eq!(greeter.username.mask.as_deref(), Some("MiOS"));
++  }
+ 
+   #[tokio::test]
+   async fn ctrl_u() {
+--- a/src/ui/common/masked.rs
++++ b/src/ui/common/masked.rs
+@@ -1,3 +1,4 @@
++use std::borrow::Cow;
+ use zeroize::Zeroize;
+ 
+ #[derive(Default)]
+@@ -15,6 +16,14 @@
+     match self.mask {
+       Some(ref mask) => mask,
+       None => &self.value,
++    }
++  }
++
++  // Account display metadata must never obscure the actual login identity.
++  pub fn display(&self) -> Cow<'_, str> {
++    match self.mask.as_deref() {
++      Some(name) if !name.is_empty() && name != self.value => Cow::Owned(format!("{} ({})", self.get(), self.value)),
++      _ => Cow::Borrowed(&self.value),
+     }
+   }
+ 
+@@ -46,4 +55,18 @@
+ 
+     assert_eq!(masked.get(), "mask");
+   }
++
++  #[test]
++  fn pretty_name_keeps_the_real_account_visible() {
++    let masked = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
++    assert_eq!(masked.display(), "MiOS (mios)");
++    assert_eq!(masked.value, "mios");
++  }
++
++  #[test]
++  fn account_without_distinct_pretty_name_is_not_duplicated() {
++    for name in [None, Some("".to_string()), Some("mios".to_string())] {
++      assert_eq!(MaskedString::from("mios".to_string(), name).display(), "mios");
++    }
++  }
+ }
+--- a/src/ui/prompt.rs
++++ b/src/ui/prompt.rs
+@@ -79,7 +79,13 @@
+     Paragraph::new(username_text)
+   };
+ 
+-  let username = greeter.username.get();
++  // The editable field is always the NSS login name. The selected account's
++  // pretty name is additional presentation metadata after entering a password.
++  let username = if greeter.mode == Mode::Username {
++    std::borrow::Cow::Borrowed(greeter.username.value.as_str())
++  } else {
++    greeter.username.display()
++  };
+   let username_value_text = Span::from(username);
+   let username_value = Paragraph::new(username_value_text).style(theme.of(&[Themed::Input]));
+ 
+@@ -149,7 +155,7 @@
+ 
+   match greeter.mode {
+     Mode::Username => {
+-      let username_length = greeter.username.get().chars().count();
++      let username_length = greeter.username.value.chars().count();
+       let offset = get_cursor_offset(greeter, username_length);
+ 
+       Ok((2 + cursor.x + fl!("username").chars().count() as u16 + offset as u16, USERNAME_INDEX as u16 + cursor.y))

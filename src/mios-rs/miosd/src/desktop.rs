@@ -1122,9 +1122,9 @@ fn verify(cfg: &StartConfig, receipt: &Receipt) -> Result<(), String> {
         "-p",
         "-t",
         &receipt.canvas,
-        "#{pid}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{@mios-desktop-canvas}",
+        "#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{@mios-desktop-canvas}",
     ])?;
-    let fields: Vec<_> = current.split('\t').collect();
+    let fields: Vec<_> = current.split('|').collect();
     if fields.len() != 6
         || fields[0] != receipt.server_pid.to_string()
         || fields[1] != receipt.session
@@ -1173,8 +1173,8 @@ fn verify_sidebar_role(
         return Err(format!("the owned desktop {name} process identity changed"));
     }
     let current = cfg.tmux(&["display-message", "-p", "-t", &role.pane,
-        "#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_floating_flag}\t#{@mios-desktop-role-origin}\t#{@mios-desktop-role}"])?;
-    let fields: Vec<_> = current.split('\t').collect();
+        "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pane_floating_flag}|#{@mios-desktop-role-origin}|#{@mios-desktop-role}"])?;
+    let fields: Vec<_> = current.split('|').collect();
     if fields.len() != 7
         || fields[0] != receipt.session
         || fields[2] != role.pane
@@ -1202,7 +1202,7 @@ fn create_sidebar_role(
         "-v",
         "-P",
         "-F",
-        "#{pane_id}\t#{pane_pid}",
+        "#{pane_id}|#{pane_pid}",
         "-t",
         target,
         "--",
@@ -1210,7 +1210,7 @@ fn create_sidebar_role(
     args.extend(argv.iter().map(String::as_str));
     let created = cfg.tmux(&args)?;
     let (pane, pid) = created
-        .split_once('\t')
+        .split_once('|')
         .ok_or("desktop role creation returned no identity")?;
     if !id(pane, '%') {
         return Err("invalid desktop role pane identity".into());
@@ -1496,9 +1496,9 @@ fn verify_panel(cfg: &StartConfig, receipt: &Receipt, panel: &PanelReceipt) -> R
         return Err("the owned desktop panel process identity changed".into());
     }
     let current = cfg.tmux(&["display-message", "-p", "-t", &panel.pane,
-        "#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pane_floating_flag}\t#{@mios-desktop-panel-origin}"])?;
+        "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pane_floating_flag}|#{@mios-desktop-panel-origin}"])?;
     let expected = format!(
-        "{}\t{}\t{}\t{}\t0\t{}",
+        "{}|{}|{}|{}|0|{}",
         receipt.session, receipt.window, panel.pane, panel.pid, receipt.origin
     );
     if current != expected {
@@ -1552,10 +1552,10 @@ fn ensure_panel(cfg: &StartConfig, receipt: &mut Receipt, fresh: bool) -> Result
             "-p",
             "-t",
             &receipt.canvas,
-            "#{window_width}\t#{window_height}",
+            "#{window_width}|#{window_height}",
         ])?;
         let (width, height) = size
-            .split_once('\t')
+            .split_once('|')
             .ok_or("desktop panel viewport is unavailable")?;
         let width = width
             .parse::<u16>()
@@ -1575,7 +1575,7 @@ fn ensure_panel(cfg: &StartConfig, receipt: &mut Receipt, fresh: bool) -> Result
             &rows,
             "-P",
             "-F",
-            "#{pane_id}\t#{pane_pid}",
+            "#{pane_id}|#{pane_pid}",
             "-t",
             &receipt.canvas,
         ];
@@ -1586,7 +1586,7 @@ fn ensure_panel(cfg: &StartConfig, receipt: &mut Receipt, fresh: bool) -> Result
         args.extend(policy.argv.iter().map(String::as_str));
         let created = cfg.tmux(&args)?;
         let (pane, pid) = created
-            .split_once('\t')
+            .split_once('|')
             .ok_or("desktop panel creation returned no identity")?;
         if !id(pane, '%') {
             return Err("invalid desktop panel pane identity".into());
@@ -1946,7 +1946,7 @@ fn reserve_config(cfg: &StartConfig) -> Result<Reservation, String> {
             "-d",
             "-P",
             "-F",
-            "#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{pid}",
+            "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pid}",
             "-s",
             &cfg.session_name,
             "-n",
@@ -1967,7 +1967,7 @@ fn reserve_config(cfg: &StartConfig) -> Result<Reservation, String> {
         ));
     }
     let output = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
-    let fields: Vec<&str> = output.trim().split('\t').collect();
+    let fields: Vec<&str> = output.trim().split('|').collect();
     if fields.len() != 5 || !id(fields[0], '$') || !id(fields[1], '@') || !id(fields[2], '%') {
         return Err("desktop start did not return its exact canvas identity".into());
     }

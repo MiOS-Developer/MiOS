@@ -45,6 +45,42 @@ fi
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-pacing --srpm "${_hl_sources[0]}"
 /usr/libexec/mios/mios-gen build-hyprland-plugin --root / --name mios-appmenu --srpm "${_hl_sources[0]}"
 rm -rf -- "$_hl_rpms"
+
+# The fallback and remote greeters share an owned GNU/NSS RPM. A stock distro
+# upgrade must not quietly replace the login-name/display-name correction.
+_tg_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+_tg_get() { MIOS_TOML_ROOT="$_tg_root" "$_tg_root/usr/libexec/mios/mios-toml-get" --vendor desktop.greeter.tuigreet_source "$1"; }
+_tg_package="$(_tg_get package_name)"
+_tg_sources="$(_tg_get source_install_dir)"
+_tg_out="$(mktemp -d)"
+_tg_before="$(mktemp)"
+rpm -qa --qf '%{NAME}\n' | sort -u > "$_tg_before"
+install_packages_strict "tuigreet-build"
+/usr/libexec/mios/mios-gen build-tuigreet --root "$_tg_root" --out "$_tg_out"
+_tg_rpms=("$_tg_out"/*.rpm)
+_tg_srpms=("$_tg_out"/source/*.src.rpm)
+[[ ${#_tg_rpms[@]} -eq 1 && -f "${_tg_rpms[0]}" && ${#_tg_srpms[@]} -eq 1 && -f "${_tg_srpms[0]}" ]] \
+    || { mios_err "The patched greeter must have one binary RPM and its matching source RPM"; exit 1; }
+if ! _tg_provider="$(rpm -q --whatprovides /usr/bin/tuigreet --qf '%{NAME}\n')"; then
+    [[ ! -e /usr/bin/tuigreet && ! -L /usr/bin/tuigreet ]] \
+        || { mios_err "Refusing to replace an unowned greeter executable"; exit 1; }
+    dnf -y install "${_tg_rpms[0]}"
+elif [[ "$_tg_provider" == "$_tg_package" ]]; then
+    dnf -y reinstall "${_tg_rpms[0]}"
+else
+    rpm -qp --qf '[%{CONFLICTNAME}\n]' "${_tg_rpms[0]}" | grep -Fx -- "$_tg_provider" \
+        || { mios_err "Unreviewed installed greeter provider: $_tg_provider"; exit 1; }
+    dnf -y swap "$_tg_provider" "${_tg_rpms[0]}"
+fi
+rpm -q --quiet -- "$_tg_package"
+install -D -m 0644 "${_tg_srpms[0]}" "$_tg_sources/$(basename "${_tg_srpms[0]}")"
+install -D -m 0644 "$_tg_out/build.json" "$_tg_sources/build.json"
+install -D -m 0644 "$_tg_out/source/vendor-inventory.json" "$_tg_sources/vendor-inventory.json"
+mapfile -t _tg_added < <(rpm -qa --qf '%{NAME}\n' | sort -u | comm -13 "$_tg_before" - | grep -vxF -- "$_tg_package")
+if ((${#_tg_added[@]})); then dnf -y remove --noautoremove "${_tg_added[@]}"; fi
+rm -f -- "$_tg_before"
+rm -rf -- "$_tg_out"
+unset -f _tg_get
 /usr/libexec/mios/mios-gen render-hyprland --root /
 # Project the user session from the same SSOT before registering the login entry.
 while IFS= read -r _unit; do

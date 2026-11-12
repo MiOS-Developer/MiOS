@@ -2340,6 +2340,9 @@ pub(crate) fn control_command(program: &str) -> Command {
         Path::new(program).file_name().and_then(|s| s.to_str()),
         Some("tmux" | "mios-tmux")
     ) {
+        // Machine records must keep their field separators and UTF-8 under C
+        // locale. This constructor serves short-lived RPCs, not attached TTYs.
+        command.arg("-u");
         // tmux's control protocol has a bounded identify environment; app children keep their own full environment.
         let minimal: Vec<_> = std::env::vars_os()
             .filter(|(k, _)| {
@@ -8202,6 +8205,39 @@ mod tests {
                 error: None,
             }
         }
+        #[test]
+        fn control_metadata_retains_tabs_and_utf8_under_c_locale() {
+            let server = PrivateServer::new();
+            server.tmux(&["new-session", "-d", "-s", "MiOS-\u{03c6}|input", "sleep 30"]);
+            let output = control_command("/usr/bin/tmux")
+                .arg("-S")
+                .arg(&server.socket)
+                .args([
+                    "list-sessions",
+                    "-F",
+                    "#{session_id}\t#{session_name}\t#{session_windows}",
+                ])
+                .env("LANG", "C")
+                .env("LC_ALL", "C")
+                .env_remove("TMUX")
+                .env_remove("TMUX_PANE")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let output = String::from_utf8(output.stdout).unwrap();
+            let fields: Vec<_> = output.trim_end_matches('\n').split('\t').collect();
+            assert_eq!(fields.len(), 3);
+            assert!(fields[0]
+                .strip_prefix('$')
+                .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())));
+            assert_eq!(fields[1], "MiOS-\u{03c6}|input");
+            assert_eq!(fields[2], "1");
+        }
+
         #[test]
         fn capture_receipt_uses_selected_window_b_instead_of_stale_window_a() {
             const CHILD: &str = "MIOS_PRIVATE_CAPTURE_IPC_TEST";

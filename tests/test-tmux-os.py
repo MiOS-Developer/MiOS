@@ -933,6 +933,57 @@ enabled = false
         h.keys("view", "Escape", "Escape")
         self.assertEqual(identity(), witnessed)
 
+    @unittest.skipUnless(DESKTOP_TMUX is not None, "the explicitly selected native desktop backend is required")
+    def test_t20_machine_rpcs_preserve_c_locale_records_and_text_delimiters(self):
+        import json
+        self.assertRegex(DESKTOP_TMUX_SHA256, r"\A[a-f0-9]{64}\Z")
+        self.assertEqual(hashlib.sha256(DESKTOP_TMUX.resolve(strict=True).read_bytes()).hexdigest(),
+                         DESKTOP_TMUX_SHA256)
+        generator_sha = os.environ.get("MIOS_TMUX_OS_GEN_SHA256", "")
+        self.assertRegex(generator_sha, r"\A[a-f0-9]{64}\Z", "the actual candidate generator must be pinned")
+        self.assertEqual(hashlib.sha256(GEN.read_bytes()).hexdigest(), generator_sha)
+        extra = f'\n[keybindings.tmux.desktop]\nbinary={str(DESKTOP_TMUX)!r}\n'
+        h = Harness("machine-c-locale", extra, global_popups=True)
+        self.addCleanup(h.close)
+        h.start(157, 41)
+        client = h.view(w=157, h=41)
+        canvas = h.I("display-message", "-p", "-t", "main", "#{pane_id}")
+        h.I("set-option", "-w", "-t", canvas, "@mios-desktop-enabled", "1")
+        h.I("set-option", "-p", "-t", canvas, "@mios-desktop-canvas", "1")
+        app = h.I("split-window", "-d", "-P", "-F", "#{pane_id}", "-t", canvas, "sleep 30")
+        title = "MiOS \u03c6 | window"
+        h.I("select-pane", "-t", app, "-T", title)
+        identity = h.I("display-message", "-p", "-t", app, "#{pane_id}|#{pane_pid}|#{pane_tty}")
+        socket = h.I("display-message", "-p", "#{socket_path}")
+        env = dict(h.env, LANG="C", LC_ALL="C", TERM="xterm-256color")
+        dock = subprocess.run([str(GEN), "tmux-os", "--root", str(ROOT), "desktop", "dock-state",
+                               "--socket", socket, "--client", client, "--format", "json"],
+                              env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(dock.returncode, 0, dock.stderr)
+        rows = json.loads(dock.stdout)
+        actual = next(row for row in rows if row["pane"] == app)
+        self.assertEqual(actual["title"], title)
+        self.assertEqual(str(actual["pid"]), identity.split("|")[1])
+        # The second native RPC constructor must parse its real session records
+        # without mistaking a printable delimiter in text for another field.
+        prefix = SSOT["keybindings"]["tmux"]["float"]["session_prefix"]
+        live, orphan = prefix + "live|c", prefix + "orphan|c"
+        parent = h.I("display-message", "-p", "-t", canvas, "#{session_id}")
+        for name, origin in ((live, parent), (orphan, "$999999999")):
+            h.I("new-session", "-d", "-s", name, "sleep 30")
+            h.I("set-option", "-t", "=" + name + ":", "@mios-float-parent", origin)
+        env["TMUX"] = f'{socket},{h.I("display-message", "-p", "#{pid}")},0'
+        env["TMUX_PANE"] = canvas
+        reaped = subprocess.run([str(GEN), "tmux-os", "--root", str(ROOT), "float", "reap"],
+                                env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(reaped.returncode, 0, reaped.stderr)
+        self.assertEqual(h.I("display-message", "-p", "-t", "=" + live + ":", "#{session_name}"), live)
+        missing = subprocess.run(["tmux", "-L", h.inner, "has-session", "-t", "=" + orphan],
+                                 env=h.env, capture_output=True, timeout=5)
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertEqual(h.I("display-message", "-p", "-t", app, "#{pane_id}|#{pane_pid}|#{pane_tty}"),
+                         identity)
+
     @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the native desktop opener is required")
     def test_t15_canonical_bootstrap_uses_vendor_shell_for_an_older_operator_catalogue(self):
         # Exercise the public opener itself: T14's manual pane setup cannot
@@ -1142,6 +1193,71 @@ argv = [{stub!r}, "desktop-panel"]
                          "the native focus fixture must pass without skips")
         self.assertNotRegex(self.client_focus_output, r"(?i)\b(skipped|expected failures|unexpected successes)\b")
         self.client_focus_tests_run = 7
+
+
+    @unittest.skipUnless(DESKTOP_TMUX is not None and MIOSD.is_file(), "the explicitly selected native desktop/backend are required")
+    def test_t19_real_c_locale_desktop_bootstrap_and_reopen_keep_exact_native_role_identities(self):
+        self.assertRegex(DESKTOP_TMUX_SHA256, r"\A[a-f0-9]{64}\Z", "the native backend must have an explicit SHA-256")
+        self.assertEqual(hashlib.sha256(DESKTOP_TMUX.resolve(strict=True).read_bytes()).hexdigest(), DESKTOP_TMUX_SHA256)
+        frontend_sha = os.environ.get("MIOS_TMUX_OS_MIOSD_SHA256", "")
+        self.assertRegex(frontend_sha, r"\A[a-f0-9]{64}\Z", "the candidate native miosd must have an explicit SHA-256")
+        self.assertEqual(hashlib.sha256(MIOSD.resolve(strict=True).read_bytes()).hexdigest(), frontend_sha)
+        h = Harness("c-locale-records", global_popups=True)
+        self.addCleanup(h.close)
+        h.env.update(LANG="C", LC_ALL="C", TERM="xterm-256color")
+        private_root = h.dir / "root"
+        vendor = private_root / "usr/share/mios/mios.toml"
+        vendor.parent.mkdir(parents=True)
+        vendor.write_bytes(VENDOR.read_bytes())
+        stub = str(h.dir / "bin/fake-tui")
+        metrics_command = shlex.join([stub, "desktop-metrics"])
+        h.host.write_text(h.host.read_text().replace("[mcp.tmux.workspace]\n", f"[mcp.tmux.workspace]\nresource_command = {metrics_command!r}\n") + f'''\n[mcp]
+python = {stub!r}
+[terminal]
+socket_root = {str(h.dir)!r}
+cols = 157
+rows = 41
+[keybindings.tmux.desktop]
+binary = {str(DESKTOP_TMUX)!r}
+socket_name = {h.inner!r}
+session_name = "Printable-Identity"
+[keybindings.tmux.desktop.panel]
+enabled = true
+argv = [{stub!r}, "desktop-panel"]
+''')
+        env = dict(h.env, MIOS_VENDOR_TOML=str(vendor), XDG_RUNTIME_DIR=str(h.dir / "run"))
+        command = [str(MIOSD), "desktop", "--root", str(private_root), "--no-attach"]
+        def bootstrap():
+            result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return __import__("json").loads(result.stdout)
+        first = bootstrap()
+        self.assertRegex(first["session"], r"^\$[0-9]+$")
+        self.assertRegex(first["window"], r"^@[0-9]+$")
+        self.assertRegex(first["canvas"], r"^%[0-9]+$")
+        runtime_receipt = h.dir / "mios-desktop-1000" / h.inner / "reservation.json"
+        details = __import__("json").loads(runtime_receipt.read_text())
+        self.assertIsNone(details["login"], "this is maintenance acceptance, not a fabricated login")
+        roles = {"canvas": {"pane": details["canvas"], "pid": details["canvas_pid"], "start": details["canvas_start"]}}
+        roles.update({role: details[role] for role in ("panel", "chat", "metrics")})
+        self.assertEqual(len({role["pane"] for role in roles.values()}), 4)
+        observed = {}
+        for name, role in roles.items():
+            self.assertGreater(role["pid"], 1)
+            row = h.I("display-message", "-p", "-t", role["pane"], "#{pane_id}|#{pane_pid}")
+            self.assertEqual(row, f"{role['pane']}|{role['pid']}")
+            observed[name] = (role["pid"], str(role["start"]))
+        self.assertEqual(h.I("display-message", "-p", "-t", first["window"], "#{window_width}|#{window_height}"), "157|41")
+        self.assertEqual(bootstrap(), first, "C-locale reopen must verify/reuse its owned server and every role")
+        repeated = __import__("json").loads(runtime_receipt.read_text())
+        self.assertEqual((repeated["canvas_pid"], str(repeated["canvas_start"])), observed["canvas"])
+        for role in ("panel", "chat", "metrics"):
+            self.assertEqual((repeated[role]["pid"], str(repeated[role]["start"])), observed[role])
+        self.assertTrue(wait(lambda: h.log.exists() and len(h.log.read_text().splitlines()) == 3))
+        lines = h.log.read_text().splitlines()
+        self.assertEqual(lines.count("desktop-panel"), 1)
+        self.assertEqual(lines.count("desktop-metrics"), 1)
+        self.assertEqual(sum(line.endswith("--desktop-chat") for line in lines), 1)
 
 
 if __name__ == "__main__":
