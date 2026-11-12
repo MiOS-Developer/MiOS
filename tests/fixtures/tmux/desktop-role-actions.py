@@ -50,6 +50,8 @@ def main():
    return pane if re.fullmatch('%[0-9]+',pane)and pane not in roles.values()else None
   app=m.wait(app_focus);need(app is not None and count()==5,'one real canonical new app required');app_identity=identity(app);need(h.I('display-message','-p','-t',app,'#{pane_floating_flag}')=='1','canonical new must be a native float');need(core_snapshot()==initial,'new app changed protected desktop layout')
   centered=action('center',app);need(centered.returncode==0 and identity(app)==app_identity and core_snapshot()==initial and count()==5,'candidate center changed app identity or core layout');checks+=['canonical-new-from-canvas','center-ordinary-app-with-four-core-roles']
+  app_rect=rect(app);focused=action('focus',roles['chat']);need(focused.returncode==0 and h.I('display-message','-p','-c',client,'#{client_pane_id}')==roles['chat'] and core_snapshot()==initial and identity(app)==app_identity and rect(app)==app_rect and count()==5,'core chat focus from app failed or changed desktop');checks.append('focus-core-chat-from-app-with-four-core-roles')
+  restored=action('focus',app);need(restored.returncode==0 and h.I('display-message','-p','-c',client,'#{client_pane_id}')==app and core_snapshot()==initial and identity(app)==app_identity and rect(app)==app_rect and count()==5,'restoring app focus failed or changed desktop');checks.append('restore-app-focus-with-four-core-roles')
   for name,pane in roles.items():
    for verb in['close-confirm','center','snap-left']:
     before=core_snapshot();r=action(verb,pane);need(r.returncode!=0 and'desktop roles cannot be rearranged'in r.stderr and core_snapshot()==before and identity(app)==app_identity,'core role protection failed');checks.append(name+'-rejects-'+verb)
