@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4331,
-  "total_metadata_entries": 3467,
-  "total_hints": 3461,
-  "total_functions_indexed": 2193,
-  "total_related_links": 6949,
+  "total_files_scanned": 4338,
+  "total_metadata_entries": 3470,
+  "total_hints": 3464,
+  "total_functions_indexed": 2197,
+  "total_related_links": 6957,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -296,8 +296,8 @@
       "hint": "Current global pickup is main; historical stage receipts follow.",
       "related": [
         "handoff.md",
-        "tools/native/mios-tamagotchi/src/ui.rs",
-        "tools/native/mios-tamagotchi/src/config.rs",
+        "tools/native/mios-mons/src/ui.rs",
+        "tools/native/mios-mons/src/config.rs",
         "task_3774"
       ],
       "functions": [],
@@ -362,7 +362,7 @@
       "path": ".devloop/handoff/mios-hud-continuation.md",
       "hint": "Current global pickup is main; historical stage receipts follow.",
       "related": [
-        "tools/native/mios-tamagotchi/src/hud.rs",
+        "tools/native/mios-mons/src/hud.rs",
         "handoff.md",
         "tasks.jsonl task_3778/task_3779"
       ],
@@ -6433,6 +6433,17 @@
       "functions": [
         "main"
       ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/fixtures/tmux/desktop-role-actions.py",
+      "hint": "Check real C95 desktop roles, ordinary floating applications and managed-agent guards on disposable servers.",
+      "related": [
+        "tests/test-tmux-os.py; tools/native/mios-gen/src/tmux_desktop.rs; tools/native/mios-unit-gen/src/tmux_os.rs"
+      ],
+      "functions": [],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
@@ -13417,6 +13428,24 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-gen/src/tuigreet_build.rs",
+      "hint": "Build the pinned upstream GNU/NSS greeter and its carried account-display patch as an owned RPM, retaining locked corresponding source.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.greeter.tuigreet_source]",
+        "automation/65-bake-hyprland.sh",
+        "tools/patches/tuigreet-login-account.patch"
+      ],
+      "functions": [
+        "policy",
+        "spec",
+        "run",
+        "vendor_inventory"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-gen/src/wl_device_proxy.rs",
       "hint": "Wayland pass-through between a nested compositor and its parent that changes ONLY linux-dmabuf feedback:",
       "related": [
@@ -15789,6 +15818,20 @@
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
+    },
+    {
+      "path": "tools/upstream/tuigreet/README.md",
+      "hint": "Provenance and rebuild procedure for the owned upstream GNU/NSS greeter RPM; login names remain NSS account names and pretty names remain presentation metadata.",
+      "related": [
+        "usr/share/mios/mios.toml [desktop.greeter.tuigreet_source]",
+        "tools/patches/tuigreet-login-account.patch",
+        "tools/native/mios-gen/src/tuigreet_build.rs",
+        "automation/65-bake-hyprland.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
     },
     {
       "path": "tools/verb-template-check.py",

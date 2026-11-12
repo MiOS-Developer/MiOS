@@ -78,16 +78,16 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 ### No epic
 
-- `task_3702` Implement the researched Rust Tamagotchi terminal foundation -- completed · owner mios-tamagotchi · P1 · size M · workstream [override]
+- `task_3702` Implement the researched Rust MiOS-Mons terminal foundation -- completed · owner mios-tamagotchi · P1 · size M · workstream [override]
 - `task_3703` Integrate and verify the MiOS-Mons native binary in the MiOS image -- pending · P2 · size M · depends_on task_3702 · workstream [override]
 - `task_3704` Expose MiOS-Mons render settings through the bootstrap configurator -- pending · P2 · size M · depends_on task_3702 · workstream [override]
 - `task_3705` Verify MiOS-Mons terminal rendering and controller routing on real sessions -- pending · P2 · size M · depends_on task_3702 · workstream [override]
 - `task_3706` Implement MiOS-Mons gameplay and persistence above the terminal foundation -- pending · P2 · size L · depends_on task_3702 · workstream [override]
-- `task_3707` Deliver a playable Tamagotchi sample with safe local saves -- completed · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702 · workstream [override]
-- `task_3708` Install and play the Tamagotchi sample on live MiOS Blade nodes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M · depends_on task_3707 · workstream [override]
-- `task_3709` Verify visible Tamagotchi user-local trial on mios x86_64 desktop -- completed · owner mios-tamagotchi-live-install · P1 · size M · workstream [override]
-- `task_3710` Independently verify Tamagotchi artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M · workstream [override]
-- `task_3711` Implement full-viewport Tamagotchi graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L · workstream [override]
+- `task_3707` Deliver a playable MiOS-Mons sample with safe local saves -- completed · owner mios-tamagotchi-playable · P1 · size M · depends_on task_3702 · workstream [override]
+- `task_3708` Install and play the MiOS-Mons sample on live MiOS Blade nodes -- in_progress · owner mios-tamagotchi-live-coordinator · P1 · size M · depends_on task_3707 · workstream [override]
+- `task_3709` Verify visible MiOS-Mons user-local trial on mios x86_64 desktop -- completed · owner mios-tamagotchi-live-install · P1 · size M · workstream [override]
+- `task_3710` Independently verify MiOS-Mons artifact and live failure controls on mios -- completed · owner mios-tamagotchi-live-verifier · P1 · size M · workstream [override]
+- `task_3711` Implement full-viewport MiOS-Mons graphics, animated pixel sprites and menus -- completed · owner mios-tamagotchi-graphics · P1 · size L · workstream [override]
 - `task_3712` Implement distinct animated pixel sprites and care reactions -- completed · owner mios-tamagotchi-sprite-worker · P1 · size M · workstream [override]
 - `task_3720` Mature MiOS-Mon bodies and kaomoji sprite faces -- completed · owner mios-mons-body-worker · P1 · workstream [override]
 - `task_3721` Independently verify bodied MiOS-Mons and small terminal dialogue -- completed · owner mios-mons-body-verifier · P1 · workstream [override]
@@ -4901,9 +4901,9 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_3411` Retire MiOS-Cat and /cat/; fold all behavior into canonical MiOS-Field componentry -- completed · owner Codex
 - `task_3507` Converge MiOS-MCP and native tmux across every MiOS image and localhost -- in_progress · owner codex · P1 · size L
 - `task_3508` Global MiOS mobile SSH keybindings across terminal desktop editor and AI -- in_progress · owner codex · P1 · size L
-- `task_3713` Show focused attached-controller prompts in Tamagotchi -- completed · owner mios-tamagotchi-controller-worker
+- `task_3713` Show focused attached-controller prompts in MiOS-Mons -- completed · owner mios-tamagotchi-controller-worker
 - `task_3714` Add walking and rotating voxel MiOS-Mons with headless output -- completed · owner mios-tamagotchi-voxel-worker
-- `task_3715` Provide automatic and selectable minimal Tamagotchi HUDs -- completed · owner mios-tamagotchi-live-coordinator
+- `task_3715` Provide automatic and selectable minimal MiOS-Mons HUDs -- completed · owner mios-tamagotchi-live-coordinator
 - `task_3716` Add sixteen original MiOS-Mons and personality-driven dialogue -- completed · owner mios-tamagotchi-character-worker
 - `task_3717` Integrate native tmux floating dialogue and right-click menus with inline fallback -- completed · owner mios-tamagotchi-dialog-worker
 - `task_3718` Retain a live mobile play/debug session for MiOS-Mons -- in_progress · owner mios-tamagotchi-live-coordinator
