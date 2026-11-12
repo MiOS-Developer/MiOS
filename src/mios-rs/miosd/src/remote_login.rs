@@ -1421,6 +1421,14 @@ fn canvas_retry_requested(bytes: &[u8]) -> bool {
     matches!(bytes, b"\r" | b"\n" | b"\r\n")
 }
 
+fn discard_canvas_typeahead(input: &BridgeFd) -> Result<(), String> {
+    // The descriptor is a held duplicate of only this anchor's inherited PTY.
+    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
+        return Err("cannot clear expired canvas input".into());
+    }
+    Ok(())
+}
+
 struct CanvasIdentity {
     socket: PathBuf,
     anchor: String,
@@ -1633,16 +1641,12 @@ async fn canvas() -> Result<(), String> {
                     // This is only the anchor's own PTY. Clear its buffered
                     // typeahead before changing input owners; no greeter or
                     // selected desktop terminal is read or flushed here.
-                    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
-                        return Err("cannot clear expired canvas input".into());
-                    }
+                    discard_canvas_typeahead(&input)?;
                     let _ = canvas.retry(&p);
                     // Discard input queued for this anchor during the bounded
                     // retry checks too, including a quickly failed new entry.
                     // The new greeter has a different PTY and is not flushed.
-                    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
-                        return Err("cannot clear expired canvas input".into());
-                    }
+                    discard_canvas_typeahead(&input)?;
                 }
             },
         }
@@ -3183,6 +3187,36 @@ mod tests {
         ] {
             assert!(canvas_namespace(Path::new(bad), 1000).is_err());
         }
+    }
+
+    #[tokio::test]
+    async fn canvas_retry_discards_only_anchor_typeahead_before_and_after_attempt() {
+        let (mut canvas_master, canvas_slave) = input_boundary_test_pty();
+        let _canvas_raw = TerminalRaw::arm_fd(canvas_slave.as_raw_fd()).unwrap();
+        let canvas = BridgeFd::new(canvas_slave, false).unwrap();
+        let (mut greeter_master, greeter_slave) = input_boundary_test_pty();
+        let _greeter_raw = TerminalRaw::arm_fd(greeter_slave.as_raw_fd()).unwrap();
+        let greeter = BridgeFd::new(greeter_slave, false).unwrap();
+
+        canvas_master.write_all(b"buffered-before-retry\r").unwrap();
+        assert!(input_boundary_ready(canvas.io.as_raw_fd(), 1000));
+        discard_canvas_typeahead(&canvas).unwrap();
+        assert!(!input_boundary_ready(canvas.io.as_raw_fd(), 0));
+
+        // A second Enter can arrive while bounded retry checks run. It must
+        // not survive a quickly failed entry and create another login later.
+        canvas_master.write_all(b"\r").unwrap();
+        greeter_master.write_all(b"belongs-to-greeter").unwrap();
+        assert!(input_boundary_ready(canvas.io.as_raw_fd(), 1000));
+        assert!(input_boundary_ready(greeter.io.as_raw_fd(), 1000));
+        discard_canvas_typeahead(&canvas).unwrap();
+        assert!(!input_boundary_ready(canvas.io.as_raw_fd(), 0));
+        let mut bytes = [0; 64];
+        let count = tokio::time::timeout(Duration::from_secs(1), greeter.read(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&bytes[..count], b"belongs-to-greeter");
     }
 
     #[test]
