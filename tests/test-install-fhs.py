@@ -158,6 +158,20 @@ IFS= read -r -d '' USER_PASSWORD || :
         input=password, capture_output=True, text=True, timeout=30)
 
 
+def test_password_prompt_preserves_literal_values():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    prompt = _function(source, "prompt_password")
+    common = 'set -euo pipefail\n_BOLD=""; _RESET=""\nlog_warn() { echo "$*" >&2; }\n'
+    for password in ("-n", "-e", "-E", " -n ", "fixture\\literal"):
+        for preselected in (True, False):
+            setup = 'IFS= read -r -d "" MIOS_PASSWORD || :\n' if preselected else 'MIOS_PASSWORD=""\n'
+            data = password if preselected else password + "\n" + password + "\n"
+            result = subprocess.run(["bash", "-c", common + prompt + setup + 'prompt_password Password\n'], input=data, capture_output=True, text=True, timeout=10)
+            assert result.returncode == 0 and result.stdout == password + "\n", result
+            assert password not in result.stderr
+    print("PASS password prompt preserves literal echo options, whitespace and backslashes")
+
+
 def test_operator_credential_safe_toml_update():
     source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
     password = 'fixture "typed" \\ credential\' café 猫'
@@ -276,6 +290,19 @@ def test_operator_credential_refuses_links_and_shadowing():
             result = _operator_write(source, home, "fixture-new-credential")
             assert result.returncode != 0 and "NOT recorded" in result.stderr, result
             assert victim.read_bytes() == before and tier.lstat().st_mode == mode
+    for value in ("", "fixture-new-credential"):
+        with tempfile.TemporaryDirectory(prefix="mios-installer-placeholder-") as tmp:
+            home = pathlib.Path(tmp)
+            tier = home / ".config/mios/mios.toml"
+            fragment = tier.parent / "mios.d/90-operator.toml"
+            fragment.parent.mkdir(parents=True)
+            tier.write_text('[identity]\nfullname="MiOS User"\n')
+            fragment.write_text('[identity]\ndefault_password=' + json.dumps(value) + '\n')
+            original = fragment.read_bytes()
+            result = _operator_write(source, home, "fixture-new-credential")
+            assert result.returncode == 0, result.stderr
+            assert tomllib.loads(tier.read_text())["identity"]["default_password"] == "fixture-new-credential"
+            assert fragment.read_bytes() == original
     print("PASS installer rejects symlinks and effective fragment conflicts before replacement")
 
 
@@ -370,6 +397,86 @@ reboot_prompt() { echo INCORRECT-REBOOT; }
         assert failed.returncode != 0 and "Installation incomplete: operator credential NOT recorded" in failed.stderr
         assert "LINUX-PASSWORD-SET" in failed.stdout and "INCORRECT-REBOOT" not in failed.stdout
     print("PASS caller seeding preserves operator tiers and credential failures stop the final install path")
+
+
+def test_operator_skel_copy_remains_unprivileged_during_parent_swap():
+    """A raced parent can redirect only the account's authority, never root's copy."""
+    if os.geteuid() != 0:
+        print("[SKIP] installer namespace boundary requires the private root fixture lane")
+        return
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    for selected in (False, True):
+        for planted_root_copy in (False, True):
+            # The container's /tmp is private. Its traversable parent allows a
+            # real UID drop without changing the proof coordinator's TMPDIR.
+            with tempfile.TemporaryDirectory(prefix="mios-installer-namespace-", dir="/tmp") as tmp:
+                root = pathlib.Path(tmp)
+                root.chmod(0o755)
+                home, outside, skel = root / "home", root / "outside", root / "skel-mios"
+                tier = home / ".config/mios"
+                tier.mkdir(parents=True)
+                for path in (home, home / ".config", tier):
+                    os.chown(path, 1000, 1000)
+                    path.chmod(0o700)
+                outside.mkdir(mode=0o700)
+                victim = outside / "system-prompt.md"
+                victim.write_text("root-controlled fixture")
+                victim.chmod(0o600)
+                before = (victim.read_bytes(), victim.stat().st_uid, victim.stat().st_gid, victim.stat().st_mode)
+                skel.mkdir(mode=0o755)
+                (skel / victim.name).write_text("public default fixture")
+                passwd = root / "passwd"
+                passwd.write_text(f'fixop:x:1000:1000::{home}:/bin/bash\n')
+                helper = root / "boundary.py"
+                helper.write_text('''import os, sys
+role, command = sys.argv[1], sys.argv[2:]
+assert command[0] == "install"
+if role == "user":
+    os.setgroups([])
+    os.setgid(1000)
+    os.setuid(1000)
+if "-d" not in command:
+    os.rename(os.environ["FIXTURE_TIER"], os.environ["FIXTURE_TIER"] + ".before-swap")
+    os.symlink(os.environ["FIXTURE_OUTSIDE"], os.environ["FIXTURE_TIER"])
+os.execvp(command[0], command)
+''')
+                helper.chmod(0o644)
+                common = r'''
+set -euo pipefail
+LINUX_USER=fixop
+log_phase() { :; }
+log_info() { :; }
+log_warn() { :; }
+log_ok() { :; }
+log_err() { printf '[FAIL] %s\n' "$*" >&2; }
+getent() { printf 'fixop:x:1000:1000::%s:/bin/bash\n' "$FIXTURE_HOME"; }
+sudo() { [[ "$1" == -u && "$2" == fixop ]] || return 91; shift 2; "$FIXTURE_PYTHON" "$FIXTURE_HELPER" user "$@"; }
+install() { "$FIXTURE_PYTHON" "$FIXTURE_HELPER" root install "$@"; }
+write_operator_credential() { :; }
+'''
+                body = _function(source, "stage_user_profile_artifacts" if selected else "seed_user_skel_for_all_accounts")
+                if selected:
+                    body = body.replace('/etc/skel/.config/mios', str(skel))
+                    body = 'seed_user_skel_for_all_accounts() { :; }\n' + body
+                    call = 'stage_user_profile_artifacts'
+                    prefix = 'sudo -u "${LINUX_USER}" install -m 0644'
+                else:
+                    body = body.replace('/etc/skel/.config/${subdir}', str(root) + '/skel-${subdir}').replace('/etc/passwd', str(passwd))
+                    call = 'seed_user_skel_for_all_accounts'
+                    prefix = 'sudo -u "$u" install -m 0644'
+                assert prefix in body
+                if planted_root_copy:
+                    body = body.replace(prefix, 'install -o 1000 -g 1000 -m 0644')
+                env = dict(os.environ, FIXTURE_HOME=str(home), FIXTURE_TIER=str(tier), FIXTURE_OUTSIDE=str(outside), FIXTURE_HELPER=str(helper), FIXTURE_PYTHON=sys.executable)
+                result = subprocess.run(["bash", "-c", common + body + '\n' + call + '\n'], env=env, capture_output=True, text=True, timeout=30)
+                assert tier.is_symlink(), "fixture must swap exactly at the copy boundary"
+                after = (victim.read_bytes(), victim.stat().st_uid, victim.stat().st_gid, victim.stat().st_mode)
+                if planted_root_copy:
+                    assert result.returncode == 0 and after != before, result
+                    assert victim.read_text() == "public default fixture" and victim.stat().st_uid == 1000
+                else:
+                    assert result.returncode != 0 and after == before, result
+    print("PASS raced skel copies cannot replace/chown a root-owned target; planted root-copy control detects it")
 
 
 def test_linux_install_failure_propagation():
@@ -1020,10 +1127,12 @@ def main() -> int:
     test_empty_dir_failure()
     test_apply_stage_selection()
     test_linux_core_dispatch()
+    test_password_prompt_preserves_literal_values()
     test_operator_credential_safe_toml_update()
     test_operator_credential_refusal_preserves_tier()
     test_operator_credential_refuses_links_and_shadowing()
     test_operator_tier_survives_seeding_and_reports_failure()
+    test_operator_skel_copy_remains_unprivileged_during_parent_swap()
     test_linux_install_failure_propagation()
     test_unsupported_host_rejected_before_mutation()
     test_unit_presets_enable_the_roster()

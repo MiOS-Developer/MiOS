@@ -848,20 +848,20 @@ launch_configurator() {
 prompt_password() {
     local prompt="$1" pw1 pw2
     if [[ -n "${MIOS_PASSWORD:-}" ]]; then
-        echo "${MIOS_PASSWORD}"
+        printf '%s\n' "${MIOS_PASSWORD}"
         return 0
     fi
     while :; do
         printf '%s%s%s: ' "${_BOLD}" "${prompt}" "${_RESET}" >&2
-        read -rs pw1; echo >&2
+        IFS= read -rs pw1; echo >&2
         printf '%sConfirm:%s ' "${_BOLD}" "${_RESET}" >&2
-        read -rs pw2; echo >&2
+        IFS= read -rs pw2; echo >&2
         if [[ "$pw1" == "$pw2" ]]; then
             if [[ -z "$pw1" ]]; then
                 log_warn "Empty password not allowed."
                 continue
             fi
-            echo "$pw1"
+            printf '%s\n' "$pw1"
             return 0
         fi
         log_warn "Passwords don't match, please try again."
@@ -1064,6 +1064,8 @@ def merge(left, right):
     for key, value in right.items():
         if isinstance(value, dict) and isinstance(left.get(key), dict):
             merge(left[key], value)
+        elif isinstance(value, str) and value == '' and left.get(key) not in (None, ''):
+            continue  # same empty-string overlay rule as mios_toml.deep_merge
         else:
             left[key] = copy.deepcopy(value)
 
@@ -1361,7 +1363,7 @@ seed_user_skel_for_all_accounts() {
                     log_info "Existing operator tier retained for ${u}: $(basename "$f")"
                     continue
                 fi
-                install -o "$u" -g "$u" -m 0644 \
+                sudo -u "$u" install -m 0644 \
                     "$f" "${home}/.config/${subdir}/$(basename "$f")" || return 1
             done
             log_ok "Seeded ${home}/.config/${subdir}/ for ${u} (uid ${uid})"
@@ -1402,7 +1404,7 @@ stage_user_profile_artifacts() {
                 log_info "Existing operator tier retained: $(basename "$f")"
                 continue
             fi
-            install -o "${LINUX_USER}" -g "${LINUX_USER}" -m 0644 \
+            sudo -u "${LINUX_USER}" install -m 0644 \
                 "$f" "${home}/.config/mios/$(basename "$f")" || return 1
             log_ok "User artifact: ${home}/.config/mios/$(basename "$f")"
         done
