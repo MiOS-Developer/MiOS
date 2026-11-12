@@ -215,11 +215,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Human executor the generated helpers run (`mios-terminal --menu/--app/--float/--session-cycle`).
 const TERMINAL: &str = "/usr/libexec/mios/mios-terminal";
 /// Agent layout roles retain their float-shell creation behavior.
-const AGENT_PANE: &str =
+pub const AGENT_PANE: &str =
     "#{||:#{@mios-workspace-head},#{||:#{@mios-mcp-owner},#{@mios-workspace-worker}}}";
 /// Layout-owned panes cannot be closed, tiled, moved, or floated as applications.
 /// Desktop helpers are real roles; they are never labelled as agent workers.
-const MANAGED_PANE: &str = "#{||:#{@mios-desktop-canvas},#{||:#{@mios-desktop-panel},#{||:#{@mios-desktop-chat},#{||:#{@mios-desktop-metrics},#{||:#{@mios-workspace-head},#{||:#{@mios-mcp-owner},#{@mios-workspace-worker}}}}}}}";
+pub const MANAGED_PANE: &str = "#{||:#{@mios-desktop-canvas},#{||:#{@mios-desktop-panel},#{||:#{@mios-desktop-chat},#{||:#{@mios-desktop-metrics},#{||:#{@mios-workspace-head},#{||:#{@mios-mcp-owner},#{@mios-workspace-worker}}}}}}}";
 /// tmux 3.7c stock condition: the application owns the click, or the pane is in a mode other than copy/view.
 const MOUSE_PASSTHROUGH: &str =
     "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}";
