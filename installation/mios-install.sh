@@ -998,7 +998,7 @@ write_operator_credential() {
         log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
     fi
     code="$(cat <<'MIOS_OPERATOR_CREDENTIAL_PY'
-import copy, json, os, re, secrets, stat, sys, tomllib
+import copy, json, math, os, re, secrets, stat, sys, tomllib
 
 class Refusal(Exception):
     pass
@@ -1044,8 +1044,10 @@ def read_file(parent, name, label):
 def parse(data, label):
     try:
         return tomllib.loads(data.decode('utf-8'))
-    except (ValueError, UnicodeError):
-        raise Refusal(f'{label!r}: does not parse as TOML; no credential was recorded') from None
+    except (ValueError, UnicodeError) as exc:
+        where = re.search(r'\(at (?:line \d+, column \d+|end of document)\)', str(exc))
+        location = (' ' + where[0]) if where else ''
+        raise Refusal(f'{label!r}: does not parse as TOML{location}; no credential was recorded') from None
 
 def fragments():
     fd = directory(dfd, 'mios.d')
@@ -1073,32 +1075,109 @@ def password_of(data):
     table = data.get('identity')
     return table.get('default_password') if isinstance(table, dict) else None
 
+HEADER = re.compile(r"""[ \t]*\[[ \t]*(?:identity|"identity"|'identity')[ \t]*\][ \t]*(?:#[^\r\n]*)?\r?\n?""")
+
+KEY = re.compile(r"""[ \t]*(?:default_password|"default_password"|'default_password')[ \t]*=""")
+
+def canon(value):
+    if isinstance(value, dict):
+        return ("table", tuple(sorted((k, canon(v)) for k, v in value.items())))
+    if isinstance(value, list):
+        return ("array", tuple(canon(v) for v in value))
+    if isinstance(value, float) and math.isnan(value):
+        return ("nan", repr(value))
+    return (type(value).__name__, value)
+
+def value_end(s, i):
+    """Offset past the line where the TOML value at s[i] ends (strings, brackets and
+    comments only), None if it never closes. A wrong answer only proposes an edit the
+    tomllib comparison then rejects."""
+    n, depth = len(s), 0
+    while i < n:
+        c = s[i]
+        if s.startswith(('"""', "'''"), i):
+            i += 3
+            while i < n and not s.startswith(c * 3, i):
+                i += 2 if c == '"' and s[i] == "\\" else 1
+            if i >= n:
+                return None
+            run = 3
+            while run < 5 and i + run < n and s[i + run] == c:
+                run += 1
+            i += run
+        elif c in "\"'":
+            j = i + 1
+            while j < n and s[j] not in (c, "\n"):
+                j += 2 if c == '"' and s[j] == "\\" else 1
+            if j >= n or s[j] != c:
+                return None
+            i = j + 1
+        elif c == "#":
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+        elif c == "\n" and depth <= 0:
+            return i + 1
+        else:
+            depth += (c in "[{") - (c in "]}")
+            i += 1
+    return n if depth <= 0 else None
+
+def eol(chunk):
+    return "\r\n" if chunk.endswith("\r\n") else "\n" if chunk.endswith("\n") else ""
+
+def _credential_comment(value):
+    """Keep a selected single-line key's inline note; other fields stay verbatim."""
+    match = re.fullmatch(r"""[ \t]*(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')[ \t]*(#[^\r\n]*)?(?:\r?\n)?""", value)
+    return (' ' + match[1]) if match is not None and match[1] else ''
+
+
+def proposals(text, ident, line):
+    """Edits suggested by line patterns, in file order: unverified by design."""
+    nl = "\r\n" if "\r\n" in text else "\n"
+    rows, start = [], 0
+    while start < len(text):  # TOML lines: split on "\n" only, never str.splitlines
+        end = text.find("\n", start)
+        end = len(text) if end < 0 else end + 1
+        rows.append((start, text[start:end]))
+        start = end
+    if isinstance(ident, dict) and "default_password" in ident:
+        for start, row in rows:
+            key = KEY.match(row)
+            end = value_end(text, start + key.end()) if key else None
+            if end is not None:
+                chunk = text[start:end]
+                note = _credential_comment(chunk[key.end():])
+                indent = row[:len(row) - len(row.lstrip(' \t'))]
+                yield text[:start] + indent + line + note + eol(chunk) + text[end:]
+        return
+    if isinstance(ident, dict):
+        for start, row in rows:
+            if HEADER.fullmatch(row):
+                after = start + len(row)
+                if eol(row):
+                    yield text[:after] + line + eol(row) + text[after:]
+                else:  # the header is the last line and has no newline
+                    yield text + nl + line + nl
+    sep = "" if not text else nl if text.endswith("\n") else nl + nl
+    yield text + sep + "[identity]" + nl + line + nl
+
 def edit(text, before, password):
     identity = before.get('identity')
     if identity is not None and not isinstance(identity, dict):
         raise Refusal('The operator identity is not a TOML table; repair it in mios.html')
     if password_of(before) == password:
         return text
-    nl = '\r\n' if '\r\n' in text else '\n'
-    row = 'default_password = ' + json.dumps(password, ensure_ascii=False)
-    lines = text.splitlines(keepends=True)
-    if identity is None:
-        return text + ('' if not text or text.endswith('\n') else nl) + nl + '[identity]' + nl + row + nl
-    header = re.compile(r'^[ \t]*\[[ \t]*identity[ \t]*\][ \t]*(?:#.*)?(?:\r?\n)?$')
-    at = next((i for i, line in enumerate(lines) if header.fullmatch(line)), None)
-    if at is None:
-        raise Refusal('The operator identity uses an unsupported inline or dotted layout; edit it in mios.html')
-    end = next((i for i in range(at + 1, len(lines)) if re.match(r'^[ \t]*\[', lines[i])), len(lines))
-    hit = next((i for i in range(at + 1, end) if re.match(r'^[ \t]*default_password[ \t]*=', lines[i])), None)
-    if hit is None:
-        lines.insert(at + 1, row + nl)
-    else:
-        assignment = re.fullmatch(r'''([ \t]*)default_password[ \t]*=[ \t]*(?:"(?:[^"\\\r\n]|\\.)*"|'[^'\r\n]*')[ \t]*(#.*)?(?:\r?\n)?''', lines[hit])
-        if assignment is None:
-            raise Refusal('The operator credential uses an unsupported TOML layout; edit it in mios.html')
-        comment = (' ' + assignment[2]) if assignment[2] else ''
-        lines[hit] = assignment[1] + row + comment + nl
-    return ''.join(lines)
+    expected = copy.deepcopy(before)
+    expected.setdefault('identity', {})['default_password'] = password
+    line = 'default_password = ' + json.dumps(password, ensure_ascii=False)
+    for candidate in proposals(text, identity, line):
+        try:
+            after = tomllib.loads(candidate)
+        except tomllib.TOMLDecodeError:
+            continue
+        if canon(after) == canon(expected):
+            return candidate
+    raise Refusal('The operator identity is not a plain header table this writer can edit safely; use mios.html')
 
 try:
     os.umask(0o077)
@@ -1113,10 +1192,12 @@ try:
     raw = original[0] if original else b''
     before = parse(raw, target)
     candidate = edit(raw.decode('utf-8'), before, password).encode('utf-8')
+    if len(candidate) > limit:
+        raise Refusal(f'{target!r}: would grow past {limit} bytes; no credential was recorded')
     after = parse(candidate, target)
     expected = copy.deepcopy(before)
     expected.setdefault('identity', {})['default_password'] = password
-    if after != expected:
+    if canon(after) != canon(expected):
         raise Refusal('The operator TOML layout cannot be edited without changing unrelated values; use mios.html')
     snapshot = fragments()
     effective = copy.deepcopy(after)
@@ -1127,6 +1208,8 @@ try:
             shadow = path
     if password_of(effective) != password:
         raise Refusal(f'{shadow!r}: shadows identity.default_password; update that fragment before recording')
+    if original and original[1][5] != os.geteuid():
+        raise Refusal(f'{target!r}: ownership cannot be preserved by this account; save the operator tier as its owner')
     if original and candidate == raw and stat.S_IMODE(original[1][4]) == 0o600:
         raise SystemExit(0)
     tmp = '.mios-credential.' + secrets.token_hex(16) + '.tmp'
@@ -1137,7 +1220,7 @@ try:
         stream.write(candidate)
         stream.flush()
         os.fsync(stream.fileno())
-    if read_file(dfd, 'mios.toml', target) != original or fragments() != snapshot:
+    if read_file(dfd, 'mios.toml', target) != original or [(p, v) for p, v, _ in fragments()] != [(p, v) for p, v, _ in snapshot]:
         raise Refusal('The operator tier changed during credential recording; retry after editing')
     check_config = directory(hfd, '.config')
     check_mios = directory(check_config, 'mios') if check_config >= 0 else -1
