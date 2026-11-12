@@ -105,6 +105,7 @@ struct Policy {
     pam_service: String,
     greeter_pam_service: String,
     session: Vec<String>,
+    language: String,
     min_uid: u32,
     max_uid: u32,
     command_timeout: Duration,
@@ -132,6 +133,18 @@ fn text(doc: &Value, key: &str) -> Result<String, String> {
         .map(str::to_owned)
         .ok_or_else(|| format!("{key} must be nonempty plain text"))
 }
+fn session_language(doc: &Value) -> Result<String, String> {
+    let language = text(doc, "locale.language")?;
+    if language.len() > 128
+        || !language
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.@-".contains(&b))
+    {
+        return Err("locale.language must be a bounded POSIX locale name".into());
+    }
+    Ok(language)
+}
+
 fn integer(doc: &Value, key: &str, min: u64, max: u64) -> Result<u64, String> {
     at(doc, key)?
         .as_integer()
@@ -263,6 +276,7 @@ fn policy() -> Result<Policy, String> {
         pam_service,
         greeter_pam_service,
         session,
+        language: session_language(&doc)?,
         min_uid,
         max_uid,
         command_timeout: Duration::from_millis(integer(
@@ -2642,6 +2656,39 @@ async fn serve_frontend(
 async fn reject(stream: &mut UnixStream) -> Result<bool, String> {
     Ok(write_frame(stream, br#"{"type":"error","error_type":"error","description":"Remote login request refused by administrator policy"}"#).await.is_ok())
 }
+// PAM owns identity and the session command; only the trusted SSOT language
+// and a bounded terminal type cross this post-authentication boundary. Never
+// forward the greeter's requested environment, caller locale or loader flags.
+fn fixed_session_environment(language: &str, term: Option<&str>) -> Vec<String> {
+    let mut env = vec![format!("LANG={language}")];
+    if let Some(term) = term.filter(|s| s.len() <= 128 && !s.chars().any(char::is_control)) {
+        env.push(format!("TERM={term}"));
+    }
+    env
+}
+fn fixed_session_request(
+    p: &Policy,
+    geometry: &Path,
+    request: &Envelope<'_>,
+    term: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    if request.kind != "start_session" {
+        return Err("fixed remote session requires start_session".into());
+    }
+    let command = vec![
+        p.executable.to_string_lossy().into_owned(),
+        "remote-login".into(),
+        "session".into(),
+        "--geometry".into(),
+        geometry.to_string_lossy().into_owned(),
+    ];
+    let env = fixed_session_environment(&p.language, term);
+    serde_json::to_vec(
+        &serde_json::json!({"type":"start_session", "cmd":[shell_command(&command)], "env":env}),
+    )
+    .map_err(|_| "cannot serialize fixed remote session".into())
+}
+
 async fn proxy_request(
     p: &Policy,
     w: &Witness,
@@ -2697,20 +2744,8 @@ async fn proxy_request(
         auth_admission(deadline)?;
         // greetd/PAM selects the UID. Its fixed unprivileged wrapper creates a
         // fresh UID-owned controlling PTY before executing administrator argv.
-        let command = vec![
-            p.executable.to_string_lossy().into_owned(),
-            "remote-login".into(),
-            "session".into(),
-            "--geometry".into(),
-            geometry.session_path.to_string_lossy().into_owned(),
-        ];
-        let env = std::env::var("TERM")
-            .ok()
-            .filter(|s| s.len() <= 128 && !s.chars().any(char::is_control))
-            .map(|s| vec![format!("TERM={s}")])
-            .unwrap_or_default();
-        fixed = serde_json::to_vec(&serde_json::json!({"type":"start_session", "cmd":[shell_command(&command)], "env":env}))
-            .map_err(|_| "cannot serialize fixed remote session")?;
+        let term = std::env::var("TERM").ok();
+        fixed = fixed_session_request(p, &geometry.session_path, &request, term.as_deref())?;
         fixed.as_slice()
     } else {
         raw
@@ -2753,6 +2788,75 @@ async fn proxy_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_auth_session_locale_comes_from_trusted_ssot() {
+        for name in ["en_US.UTF-8", "C.UTF-8", "C", "sr_RS.UTF-8@latin"] {
+            let doc: Value = toml::from_str(&format!("[locale]\nlanguage = {name:?}\n")).unwrap();
+            assert_eq!(session_language(&doc).unwrap(), name);
+        }
+        for name in [
+            "".to_owned(),
+            "a".repeat(129),
+            "en_US.UTF-8\nLD_PRELOAD=x".into(),
+            "LANG=en_US.UTF-8".into(),
+            "en US.UTF-8".into(),
+        ] {
+            let mut doc = Value::Table(Default::default());
+            doc.as_table_mut()
+                .unwrap()
+                .insert("locale".into(), Value::Table(Default::default()));
+            doc["locale"]
+                .as_table_mut()
+                .unwrap()
+                .insert("language".into(), Value::String(name));
+            assert!(session_language(&doc).is_err());
+        }
+    }
+
+    #[test]
+    fn post_auth_environment_keeps_ssot_lang_when_term_is_absent_or_unsafe() {
+        assert_eq!(
+            fixed_session_environment("en_US.UTF-8", None),
+            ["LANG=en_US.UTF-8"]
+        );
+        for term in ["xterm\nLD_PRELOAD=x".to_owned(), "a".repeat(129)] {
+            assert_eq!(
+                fixed_session_environment("en_US.UTF-8", Some(&term)),
+                ["LANG=en_US.UTF-8"]
+            );
+        }
+        assert_eq!(
+            fixed_session_environment("en_US.UTF-8", Some("tmux-256color")),
+            ["LANG=en_US.UTF-8", "TERM=tmux-256color"]
+        );
+    }
+
+    #[test]
+    fn post_auth_request_replaces_attacker_command_and_environment_with_fixed_policy() {
+        let (p, _) = fixture();
+        let attacker: Envelope<'_> = serde_json::from_slice(br#"{"type":"start_session","cmd":["/bin/sh","-c","untrusted-command"],"env":["LANG=C","LC_ALL=C","LD_PRELOAD=/untrusted.so","TERM=attacker","FIXTURE_SECRET=must-not-cross"]}"#).unwrap();
+        let ordinary: Envelope<'_> =
+            serde_json::from_slice(br#"{"type":"start_session"}"#).unwrap();
+        let geometry = Path::new("/unused/session-size.sock");
+        let actual = fixed_session_request(&p, geometry, &attacker, Some("tmux-256color")).unwrap();
+        assert_eq!(
+            actual,
+            fixed_session_request(&p, geometry, &ordinary, Some("tmux-256color")).unwrap()
+        );
+        let outgoing: serde_json::Value = serde_json::from_slice(&actual).unwrap();
+        assert_eq!(
+            outgoing,
+            serde_json::json!({
+                "type":"start_session",
+                "cmd":["'/unused/miosd' 'remote-login' 'session' '--geometry' '/unused/session-size.sock'"],
+                "env":["LANG=en_US.UTF-8", "TERM=tmux-256color"]
+            })
+        );
+        let unrelated: Envelope<'_> =
+            serde_json::from_slice(br#"{"type":"cancel_session"}"#).unwrap();
+        assert!(fixed_session_request(&p, geometry, &unrelated, Some("tmux-256color")).is_err());
+    }
 
     #[tokio::test]
     async fn exited_child_terminal_tail_is_forwarded_before_teardown() {
@@ -3016,6 +3120,7 @@ esac
                 "--root".into(),
                 "/".into(),
             ],
+            language: "en_US.UTF-8".into(),
             min_uid: 1000,
             max_uid: 60000,
             command_timeout: Duration::from_millis(500),
