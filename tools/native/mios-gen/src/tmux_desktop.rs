@@ -693,13 +693,45 @@ fn guard(
     // The target may be a native float absent from list-panes. Querying it
     // directly already proved its process, PTY, session and window above.
     panes.insert(p.id.clone(), p.clone());
+    let focused = server.cmd(&[
+        "display-message", "-p", "-c", &c.name, "-t", &c.window,
+        "#{client_pid}\t#{client_window_id}\t#{client_pane_id}",
+    ])?;
+    let focused: Vec<_> = focused.split('\t').collect();
+    if focused.len() != 3
+        || focused[0].parse::<u32>().ok() != Some(c.process.pid)
+        || focused[1] != c.window
+    {
+        return Err("client focus changed during desktop action".into());
+    }
+    if identifier(focused[2], '%') && !panes.contains_key(focused[2]) {
+        let pane = server.pane(focused[2])?;
+        if pane.window != c.window || pane.session != c.session {
+            return Err("focused pane moved during desktop action".into());
+        }
+        panes.insert(pane.id.clone(), pane);
+    }
     let mut windows = vec![&p.window];
     if c.window != p.window {
         windows.push(&c.window);
     }
     for window in windows {
-        let count = server.cmd(&["display-message", "-p", "-t", window, "#{window_panes}"])?;
-        let count = count.parse().map_err(|_| "invalid native pane count")?;
+        let info = server.cmd(&[
+            "display-message", "-p", "-t", window,
+            "#{window_id}\t#{window_panes}\t#{pane_id}",
+        ])?;
+        let info: Vec<_> = info.split('\t').collect();
+        if info.len() != 3 || info[0] != window || !identifier(info[2], '%') {
+            return Err("native desktop window identity changed".into());
+        }
+        if !panes.contains_key(info[2]) {
+            let pane = server.pane(info[2])?;
+            if &pane.window != window {
+                return Err("default pane moved during desktop action".into());
+            }
+            panes.insert(pane.id.clone(), pane);
+        }
+        let count = info[1].parse().map_err(|_| "invalid native pane count")?;
         let observed: Vec<_> = panes
             .values()
             .filter(|pane| &pane.window == window)
