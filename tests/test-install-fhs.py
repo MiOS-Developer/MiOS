@@ -172,6 +172,25 @@ def test_password_prompt_preserves_literal_values():
     print("PASS password prompt preserves literal echo options, whitespace and backslashes")
 
 
+def test_invalid_password_refused_before_account_mutation():
+    source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
+    body = _function(source, "apply_user_profile")
+    stub = r'''
+set -euo pipefail
+log_err() { printf '[FAIL] %s\n' "$*" >&2; }
+log_phase() { echo VALIDATED-BOUNDARY; exit 88; }
+IFS= read -r -d '' USER_PASSWORD || :
+'''
+    for password in ("", "fixture\nroot:fixture", "fixture\rcontrol", "fixture\tcontrol"):
+        result = subprocess.run(["bash", "-c", stub + body + '\napply_user_profile\n'], input=password, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 1 and "before changing the Linux account" in result.stderr, result
+        assert "VALIDATED-BOUNDARY" not in result.stdout
+        assert not password or password not in result.stderr
+    result = subprocess.run(["bash", "-c", stub + body + '\napply_user_profile\n'], input="-n", capture_output=True, text=True, timeout=10)
+    assert result.returncode == 88 and "VALIDATED-BOUNDARY" in result.stdout, result
+    print("PASS malformed credentials are refused before any Linux account/profile mutation")
+
+
 def test_operator_credential_safe_toml_update():
     source = pathlib.Path(_ROOT, "installation/mios-install.sh").read_text()
     password = 'fixture "typed" \\ credential\' café 猫'
@@ -1128,6 +1147,7 @@ def main() -> int:
     test_apply_stage_selection()
     test_linux_core_dispatch()
     test_password_prompt_preserves_literal_values()
+    test_invalid_password_refused_before_account_mutation()
     test_operator_credential_safe_toml_update()
     test_operator_credential_refusal_preserves_tier()
     test_operator_credential_refuses_links_and_shadowing()

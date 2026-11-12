@@ -1168,6 +1168,10 @@ MIOS_OPERATOR_CREDENTIAL_PY
 }
 
 apply_user_profile() {
+    if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
+        log_err "Refusing an empty or control-character password before changing the Linux account or profile"
+        return 1
+    fi
     log_phase "Phase-3 -- Apply profile to host"
     mkdir -p "${PROFILE_DIR}"
     chmod 0750 "${PROFILE_DIR}"
