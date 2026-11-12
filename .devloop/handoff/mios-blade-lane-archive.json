@@ -1,0 +1,1626 @@
+{
+ "scope": "Blade git lanes preserved by the claude-cloud finalization: every Blade branch, detached worktree HEAD and uncommitted worktree snapshot whose exact commit was not on main. Unverified work, not runtime code.",
+ "base_main": "e8af2bfc1a3880a637dd0c586f670e8c94574f63",
+ "bundle_path": ".devloop/handoff/mios-blade-lane-archive.bundle",
+ "bundle_bytes": 506334,
+ "bundle_sha256": "999d3129a9cebad7479116fcd152654d810c9df6a7ea08cb86447e8b6c4ecc9e",
+ "bundle_refs": 55,
+ "refs_total": 179,
+ "restore": "git bundle verify .devloop/handoff/mios-blade-lane-archive.bundle && git fetch .devloop/handoff/mios-blade-lane-archive.bundle 'refs/archive/blade/*:refs/archive/blade/*'  (prerequisite: main at or after base_main)",
+ "negative_controls_note": "Refs with negative_control_subjects > 0 contain commits named as negative controls, mutants or plants. Never merge their code into main as-is.",
+ "snapshot_note": "uncommitted-snapshot refs were captured with a temporary index (explicit paths: tracked modified/deleted + untracked non-ignored); the owner's worktree, index and refs were not changed.",
+ "secret_scan": "Every blob introduced by these refs was pattern-scanned before publication; the only hits were test fixtures already present on public main.",
+ "refs": [
+  {
+   "ref": "goal/chrony-phc",
+   "sha": "3991c446c61c334f333f4b38316c9eb70b3531a3",
+   "kind": "branch",
+   "blade_origin": "refs/heads/goal/chrony-phc",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "goal/ci-nongame",
+   "sha": "c58409c3daaf9cf07189ca4d078934ba99aba837",
+   "kind": "branch",
+   "blade_origin": "refs/heads/goal/ci-nongame",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "goal/rust-native",
+   "sha": "d93c430f796ccd56fee25ff798989cb26957ca51",
+   "kind": "branch",
+   "blade_origin": "refs/heads/goal/rust-native",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "goal/suites",
+   "sha": "739ad3a4ad501402f1a6cdb85474602089b18531",
+   "kind": "branch",
+   "blade_origin": "refs/heads/goal/suites",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "lane/rdp-nscodec",
+   "sha": "c4767f8f2ced4b566f84d10767ed1cc6fc8fcb7d",
+   "kind": "branch",
+   "blade_origin": "refs/heads/lane/rdp-nscodec",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "lane/sync-dotfiles-native",
+   "sha": "4a10f2a8fe4f2453025e027b3c4055cd55b60187",
+   "kind": "branch",
+   "blade_origin": "refs/heads/lane/sync-dotfiles-native",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ascii-overlay-diag-head",
+   "sha": "fd9faf6e2197367d1359dd8a170e86ad6a6cad18",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-ascii-overlay-diag",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 5,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-cam-g10-plant-a-head",
+   "sha": "54478baa6e93b0beba1894fdbc01911d29a6b59a",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-a",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 8,
+   "negative_control_subjects": 2
+  },
+  {
+   "ref": "mios-cam-g10-plant-b1-head",
+   "sha": "591ff66d404dfc35ded55a411d5538d5bd508aed",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-b1",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-b2-head",
+   "sha": "a2baf54370700a4c6c2a95767217b5450bad9f61",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-b2",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-c-head",
+   "sha": "8086f65d5c32a9a9ddfe49a324afffea08c32b75",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-c",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-d-head",
+   "sha": "d7a4f05e4ace629da75f96e242e451cef2b9f86f",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-d",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-e-head",
+   "sha": "5e5a2a85f9a091a927166dd81ae6eaa11c57b5b4",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-e",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-f-head",
+   "sha": "3e72a133673b71634d4b5c9c259bb6669d9d32c8",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-f",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-plant-g-head",
+   "sha": "85b403508edabf3803e3399c4518d5b8e27d4ec5",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-plant-g",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-cam-g10-verify-head",
+   "sha": "24a31949551958b8ff5d75073fb07891a8f2b9bb",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-cam-g10-verify",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 6,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci-account-closure",
+   "sha": "6a4530306477d9e5dbbc7702758ee74ef5ee7aa9",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci-account-closure",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci-consumer-closure",
+   "sha": "0b87a721198189fac4c2af761ada08cc3896e2b0",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci-consumer-closure",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci-fixture-cleanup-wip",
+   "sha": "8a1b85406a794fdb96c532837599b69abd3fa8b1",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-ci-fixture-cleanup",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci-source-review",
+   "sha": "4196e0180c512281fbae7dd36a1396e4b4aca1a7",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci-source-review",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci-source-review-wip",
+   "sha": "7e06a8b143248427f40546b370d4051d8e1415b6",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-ci-source-review",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756",
+   "sha": "139319c99494613d8cdd309b6989e8db4376178a",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 3
+  },
+  {
+   "ref": "mios-ci3756-agy",
+   "sha": "f4785ebd4f402d45386fa5e212ba39b009851e9e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-agy",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 9,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756-browser",
+   "sha": "d8a36e402b682bf71d4ed0d1ddaaa3ac8f20ee10",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-browser",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 6,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-ci3756-checkers",
+   "sha": "5994997a94c73453847d2b3ff9e1f850bbb2a62e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-checkers",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 18,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756-desktop",
+   "sha": "ee78b2a89b6c9b3600ad4cf5061004447d13f71e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-desktop",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 3
+  },
+  {
+   "ref": "mios-ci3756-gates",
+   "sha": "3840be2bd495cf98c294ec306ea1bbb1d465265d",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-gates",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-ci3756-glass",
+   "sha": "222252b29b1e20bc2ec2b351c965d764e9b554f9",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-glass",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756-layout",
+   "sha": "23d7dbea25bc281a7aa101a4aaaa58349da9de5b",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-layout",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 5,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756-portal",
+   "sha": "e068d73c5fa1e5e8443162a916c43eee4629b5b6",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-portal",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 6,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ci3756-services",
+   "sha": "4b7c38bdfaa49ccf812e8539f9c27872a84b30bd",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-services",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-ci3756-system",
+   "sha": "425a4d968207f8eeb4139c3e8991d387d83c268d",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ci3756-system",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-ci95-fixture-repair-wip",
+   "sha": "b32f4bf4193c1e5f3edfa3071a657abafcf53d12",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-ci95-fixture-repair",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-cloud-handoff",
+   "sha": "fc89aae34d836f4902c6ccd40341fa0c3db87e89",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-cloud-handoff",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 62,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-configurator-save",
+   "sha": "ba7f4f24c6a69ebe164541badd81780fee85169b",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-configurator-save",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-configurator-save-control",
+   "sha": "b64bfc608961c9a89a7356a4d8a74d17e73bb1bd",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-configurator-save-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-controller-focus-tests-wip",
+   "sha": "7579ec9eb700b5272b89ca9ea5ba7f72fad8a9c9",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-controller-focus-tests",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-controller-motion-wip",
+   "sha": "3e664f2c044c4b3f0891f43377a71b15160800c5",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-controller-motion",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-controller-north-capture-wip",
+   "sha": "cea33fd863aca41f10139416c2086a83833f88d1",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-controller-north-capture",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-controller-return-runtime-wip",
+   "sha": "314c9658cdda99f042d856d57d348357278188f8",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-controller-return-runtime",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-controller-session-config-wip",
+   "sha": "6239a78a132668be14bbb61013f5ea9df61ba922",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-controller-session-config",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-day0-gateway-safety-wip",
+   "sha": "7376d925b4816e91e8e7b87a389ea5b9ac30be2c",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-day0-gateway-safety",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-day0-model-safety-wip",
+   "sha": "ac4d9f4a16987ac0f25cef07a42962d12b8b2023",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-day0-model-safety",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-day0-probe-safety-wip",
+   "sha": "ffefa33da6b79f74cc6b7a57fe1934195c8d5382",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-day0-probe-safety",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-desktop-profiles",
+   "sha": "f1318d5bf47c844f05ebc8e63acb1a79ade8ea08",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-desktop-profiles",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-development-recovery",
+   "sha": "104920d2b3d9f44995abcde48e878ce1da5f6851",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-development-recovery",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-dock-keyboard-wip",
+   "sha": "40b1804b6a5940727c4a56a2f6fc230c729365c4",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-dock-keyboard",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-gate-schema-control-head",
+   "sha": "251efe767240888e9d08fde72cd40e0304774b4c",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-gate-schema-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 15,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-graphical-sessions",
+   "sha": "6cd8fc4ed83e03b4e448198164ad8034a6c836b8",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-graphical-sessions",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 10,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-gui-shell-unify",
+   "sha": "caf1081f730b224614df8f26e2a06eb11062a187",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-gui-shell-unify",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-guide-dock-wip",
+   "sha": "ad48822f275a0af888cc2f27e5206526c5e390ec",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-guide-dock",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-http-error-fixture",
+   "sha": "14ac92d33e677ae31fdcab88845e74275557e3ab",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-http-error-fixture",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 26,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-hypr3d-input",
+   "sha": "9dcf823b25ae9c9f25d40b097e5b5dfd88aa87a6",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-hypr3d-input",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-app-isolation",
+   "sha": "9ce218b3e5498172d5867359ffc2865dd5c36cd8",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-app-isolation",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 38,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-app-verb-guard",
+   "sha": "26641b342c9ee023a483e6a3a8c37566a3bfedb2",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-app-verb-guard",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 52,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-camera-sticks",
+   "sha": "fc4ad36ec1f69ea7544820055d5a00a10f33fe60",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-camera-sticks",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 8,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-cursor-control-head",
+   "sha": "3fae8528d6e68297cdc735294c8186d617b296e7",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-inputd-cursor-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 15,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-inputd-cursor-flick",
+   "sha": "528973f96a14ed39acd9d28e218f52c5c219adea",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-cursor-flick",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 39,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-focus-gesture",
+   "sha": "3f3dac3beab2f2a6bb7efe009753c2a23daa49ee",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-focus-gesture",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 48,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-focus-verification",
+   "sha": "04596bcbddba293dac7dd4cdcd2753bb73ab1b67",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-focus-verification",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 13,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-frozen-verification-head",
+   "sha": "e85c751422bfde339d7e4b155e640de11d0e166a",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-inputd-frozen-verification",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 12,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-integration-projection-wip",
+   "sha": "13a08c3da7687bb5fa85d7e489fb113c5f3c296c",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-inputd-integration-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-inputd-schema-control-head",
+   "sha": "b15087d4625a3bbc9898bcad1d8012ef75f58454",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-inputd-schema-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 15,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-inputd-uid-control-head",
+   "sha": "1e52690d7131ae88f047aba5d1ea4b48adaee898",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-inputd-uid-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 15,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-inputd-validation",
+   "sha": "b8223be4aa6aec02fadc99bbe35bb3f3cabf771f",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-inputd-validation",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 14,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-lint-greenboot",
+   "sha": "b288169bac8277b30869264e0c0dfef10f045f37",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-lint-greenboot",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-lint-greenboot-new-control",
+   "sha": "581c2492e9405cde63bffead9a77a9bf367947c1",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-lint-greenboot-new-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-lint-greenboot-old-control",
+   "sha": "86ccb10294acca9dbdf856c8a52185d71a24990f",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-lint-greenboot-old-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mon-power-wip",
+   "sha": "2f7bfa6c651921386263d67ce2934f8076b6794c",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mon-power",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-ascii-overlay",
+   "sha": "e9decf048309fcd1cc50c66133f4bfa6ff096d81",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-ascii-overlay",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 5,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-browser-pointer-verify-wip",
+   "sha": "74de99bfd18aa66e1f4492536b9c82a2567507d9",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-browser-pointer-verify",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-camera",
+   "sha": "71fbea718967e8c5ae0d713628ab8507c8977fc1",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-camera-controls",
+   "sha": "ba32022c05b5d569ee3378d128a3df5806310948",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera-controls",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 8,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-camera-follow",
+   "sha": "0e7c693b8242d0342049cfd90b659ab2da1301a3",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera-follow",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 55,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-camera-hint-control",
+   "sha": "fd2cf9da5a76266d95e4d9c6219a9bdfb26482c3",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera-hint-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-camera-precedence-control",
+   "sha": "39946c7a4ec12a5a8b9010fec4d218eb8ef09f68",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera-precedence-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-camera-settings",
+   "sha": "8358aef0e75b3a07647870fc287493b87be23af4",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-camera-settings",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 48,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-camera-yaw-audit-head",
+   "sha": "58d1882811a59964bfa92d5afe9fba62359e2bf3",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-camera-yaw-audit",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 6,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-care-hud-control",
+   "sha": "7cebb49622268c8c7093a35a36738f8ddc56214d",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-care-hud-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-console-hud-wip",
+   "sha": "008378b9ddee67327bf89a49ef0cc6af16c9131a",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-console-hud",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-console-projection-wip",
+   "sha": "3ee075e25bd2944dcdc2f8929b2c9a60cd2b9f69",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-console-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-controller-form",
+   "sha": "a58157a4c83d87f86b07d49440dbfaaa5cecf787",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-controller-form",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 40,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-controller-policy",
+   "sha": "63fc6fd2fa2ca77705563f01b3c94987db5f7433",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-controller-policy",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 35,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-controller-ui-projection-wip",
+   "sha": "c96a5ff6bd39239702e0a5770ac6307e50277717",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-controller-ui-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-doll-geometry",
+   "sha": "53b6b6ed4579fd6d897b92d9e8b0fa536cda6682",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-doll-geometry",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-eyes-preview",
+   "sha": "2e22bf54419e434b89dafaf2512c351ccf850ffe",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-eyes-preview",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-face-shaded-band",
+   "sha": "c0a24f7da69a0cf9c13ff26ab3df91e64ed4fc86",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-face-shaded-band",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-facet-review",
+   "sha": "585f0407358783b3b26878084dbdd1e121358076",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-facet-review",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-format-wip",
+   "sha": "fc2728e74dcc5ab4e02da06ce6eb09539a20aa4b",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-habitat-wip",
+   "sha": "4ed4ac866d265904ba7ea123072993db2e61cf8d",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-habitat",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-handoff-projection-wip",
+   "sha": "4f47b7174ad2ffda4a0dcc56f19b3da82cf66c33",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-handoff-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-hud-format-wip",
+   "sha": "3c555012ff92eb9438f491d4495c6c83617c61c9",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-hud-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-hud-negative-head",
+   "sha": "abfe2e8d3b444bd500d8dbd683910d4e73eaef3b",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-hud-negative",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-hud-projection-wip",
+   "sha": "506267f0baad0ffc062eaab3f9324dbdca4390ef",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-hud-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-hud-review-format-wip",
+   "sha": "c6ca743ab71b7ab7f26c30abb88afb1694672064",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-hud-review-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-input-completion",
+   "sha": "fb49657e85fbbe13d8620b6c8e674223e25a558e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-input-completion",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 54,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-input-followup",
+   "sha": "02f8505cb08ea3c404e618988674323e6c3eea68",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-input-followup",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-kaomoji-scale",
+   "sha": "9f20004d749b5cc3a76ac2d3f2f0d076b4f9e074",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-kaomoji-scale",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-kaomoji-scale-build-head",
+   "sha": "c0a24f7da69a0cf9c13ff26ab3df91e64ed4fc86",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-kaomoji-scale-build",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-legible-render",
+   "sha": "48c3cb981283e19d79a737571fd6a9a15283ae60",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-legible-render",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-legible-render-build-head",
+   "sha": "48c3cb981283e19d79a737571fd6a9a15283ae60",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-legible-render-build",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-menu-alias-control",
+   "sha": "dd6eac2b7bcddc1ea36ae5637238f6b75db3ead7",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-menu-alias-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-menu-geometry",
+   "sha": "26eb01d492382da7a59d7b17cf5e24af6be55f27",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-menu-geometry",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 54,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-menu-navigation",
+   "sha": "fb49657e85fbbe13d8620b6c8e674223e25a558e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-menu-navigation",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 54,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-orbit-control",
+   "sha": "515a49935cef70803348edb94a5640a818bc5671",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-orbit-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-orbit-verification",
+   "sha": "797f0b98699482cc53c973cd021deb9565fe939c",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-orbit-verification",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-overlay-preview",
+   "sha": "0341412b4b08f4e0659bfc569636b85d609e2062",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-overlay-preview",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-preview-format-wip",
+   "sha": "325477eb7e273b2a8813501ab10385c5691ffc2e",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-preview-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-preview-negative-head",
+   "sha": "0f1f65c1b685dceaa1386bd54e2a180b94bbf7d9",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-preview-negative",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-prompt-cache-control",
+   "sha": "5b771f89819ddd6ddf04068934718c6dd3a5d4cd",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-prompt-cache-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-render-controls-head",
+   "sha": "cb58072372f1cb7a34b1dc60747cb5e47f670288",
+   "kind": "detached-head",
+   "blade_origin": "/.worktrees/mios-mons-render-controls",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-render-projection-wip",
+   "sha": "02319655d246349c0c7dacd452af32e8ee44fbfb",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-render-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-seed-editor-wip",
+   "sha": "5ac2d2fa6cec4aa7c154edf9a382dc5a00d8f20f",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-seed-editor",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-shaded-projection-wip",
+   "sha": "19239671eb5b770699fa257351e7bbbeb08f5b6a",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-shaded-projection",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-shapes-wip",
+   "sha": "9ecb860b7eaa9af32e2550bf289474abf8fd2d11",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-shapes",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-sprite-finish-wip",
+   "sha": "3ad51289e4e4d52a6f7b6cf08eacaa48496642bc",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-sprite-finish",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-subject-format-wip",
+   "sha": "1ca690c10e5072aac4c3d7714d412f7339d17095",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-subject-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-subject-negative",
+   "sha": "d3a04bf5d509826fcc192ec0f50812200f39338f",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-subject-negative",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-voxel-overlay-r4-wip",
+   "sha": "a5dc1205c5deb5865be3b2891ada6fff76c0d59c",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-voxel-overlay-r4-wip",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-world-camera-wip",
+   "sha": "050ebd489e17caecf29817dabffb142ae25da3f1",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-world-camera",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-world-edge-control",
+   "sha": "7581cc2bdfa23d952510ee697f3bc41b654fa285",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-edge-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-inverse-control",
+   "sha": "590b2c286d375452f4e2d991356fd8dbd1cab2da",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-inverse-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-lattice-control",
+   "sha": "76df75ff8f57f2375f836b68644ca23f7ca3bbaf",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-lattice-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-normal-edge-control",
+   "sha": "94ee961abd547d2fb7f125e3b0206e97c8c092d9",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-normal-edge-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-normal-extent-control",
+   "sha": "5d8189b05188c7a3ca4301bb4620fa1b3562b70f",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-normal-extent-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-normal-inverse-control",
+   "sha": "0214e491f4800b9d3f81080ca8922f1b3d3aeb26",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-normal-inverse-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-normal-tangent-control",
+   "sha": "2ae8d2e75638498d6b8d880fdbbde537ea3739e2",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-normal-tangent-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-mons-world-surface",
+   "sha": "006bcfea4033552f881194d5006f5a56428db8cf",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-world-surface",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 3,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-world-voxel-wip",
+   "sha": "83c108482ed5a2e9bd9162dfc67560a0d5383ba3",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-world-voxel",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-yaw-format-wip",
+   "sha": "6e56f4d3e856980db2adc03165e3f78735711f0d",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-mons-yaw-format",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 0,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-mons-yaw-hints-negative",
+   "sha": "12cab17c062cff5830de91284dd08f7980481b25",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-yaw-hints-negative",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 2
+  },
+  {
+   "ref": "mios-mons-yaw-negative",
+   "sha": "0e3c1ff3f7668f32f00f453ef6f13d8da4c484e6",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-mons-yaw-negative",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-native-build-monitor",
+   "sha": "ea6a08f7164117bc620b697a7c035969c18f584e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-native-build-monitor",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-nested-controller-return",
+   "sha": "995d883e691542b2d13007655d1a3789cf855645",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-nested-controller-return",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 39,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-pip-resize-gravity",
+   "sha": "136d90dd1371e667f644b29f94231492d8d3ed80",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-pip-resize-gravity",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-array-control",
+   "sha": "769efe653ab9e8eb61437a8e2cf2ef0f1cf976f4",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-array-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 9,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-array-guard-control",
+   "sha": "147030ffbbd43e56bad33f22d92603751345d970",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-array-guard-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 10,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-array-safety",
+   "sha": "758a38c3048ac92bb6760e5c17af737cec88d3c9",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-array-safety",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 9,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-delta-control",
+   "sha": "d63dc12afaeef9f9fb6e201ca178ce83024f88dc",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-delta-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 10,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-diagnostic-control",
+   "sha": "3f79b7fd18d3b9f332a9d4ee96761b804eb89241",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-diagnostic-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 10,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-error-control",
+   "sha": "56ae6acd18749d8fa511c2604172a6bd942979d0",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-error-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 9,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-integrated-review",
+   "sha": "aa4f2e0ca6f0c0e4f25a08d9810fa4047273b019",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-integrated-review",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 21,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-marker-safety",
+   "sha": "e068d73c5fa1e5e8443162a916c43eee4629b5b6",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-marker-safety",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 6,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-marker-safety-wip",
+   "sha": "c06097385bb25bf20684b6af87f5c93592792a98",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-portal-marker-safety",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-native-array-control",
+   "sha": "1c665b7c31b26616e8a1a9071b26282be49fafab",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-array-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 29,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-native-delta-control",
+   "sha": "3b54a24df918e118c9db1536d11deaf8c7699e7e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-delta-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 29,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-native-diagnostic-control",
+   "sha": "962c923c1df4a2cc7400a5886d48552e3e482ad6",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-diagnostic-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 29,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-native-mode-control",
+   "sha": "982662f7cb55108f67c8eea853d4338bfcefaff3",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-mode-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 29,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-native-review",
+   "sha": "3c9afa08e2c7b3728d13ef5a46e71dae3ab34ac8",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-review",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 28,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-portal-native-temporary-control",
+   "sha": "86470b819a2530b1c38b5d437f4e117bf13a9038",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-native-temporary-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 29,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-opaque-type-control",
+   "sha": "05dde5bb1f4584bf4aa6c448d436cdd444975648",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-opaque-type-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 10,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-portal-type-control",
+   "sha": "032b4bab71f36064b8e31329a238b2a5fb540616",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-portal-type-control",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 9,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-quadlet-port-verification-wip",
+   "sha": "f8811b9a7c8afba89ccaba4a3aa341ac85b811df",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-quadlet-port-verification",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-rdp-camera-v4l2",
+   "sha": "4b842b90e5627e1161a33e9a3c6ce2b2497925b8",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-rdp-camera-v4l2",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-rdp-refinement-lint-wip",
+   "sha": "05896c3ee16951074ff3c009a30ef36d12881e7d",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-rdp-refinement-lint",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-rdp-refinement-src-wip",
+   "sha": "27cd9f5b9cca4f9bed99125089ee1611a5ecb059",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-rdp-refinement-src",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-remount-umask-guard",
+   "sha": "eb092287c3cbcd97c3c502ad6291f10f144332bf",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-remount-umask-guard",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-roadmap-units",
+   "sha": "4cdd8fe57a9e0b4e58ff41c60c65a50ec9b5f890",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-roadmap-units",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-roadmap-units-wip",
+   "sha": "5edba85f79ca346da2c9e04f46c66d280da44bf0",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-roadmap-units",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 1
+  },
+  {
+   "ref": "mios-room-capture-render",
+   "sha": "3d8d390040e4f6d0253adc339512fce54fe91405",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-room-capture-render",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-service-entrypoints",
+   "sha": "ec6a5189624017acd040e25299c33603aa95b025",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-service-entrypoints",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-session-continuity",
+   "sha": "f57e9f452079ce90f591f073dc0caba06528e3c3",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-session-continuity",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 4,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-session-repair",
+   "sha": "3cde9cd84bfe31c70fa83ce2da3bc1eb4b64b40e",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-session-repair",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-session-worker-tests-wip",
+   "sha": "f9931b26798cc3e076049d4fc00522fb299414a9",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-session-worker-tests",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-characters-wip",
+   "sha": "3f0e94e3bcc9dc75e3a05c47da69528bb41b48f4",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-tamagotchi-characters",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-controller-wip",
+   "sha": "c571650a5fc27445abf2bc1817ac6fd86c0c50e0",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-tamagotchi-controller",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-live",
+   "sha": "afc6356ba469cba753c6f8aba40d6bd5dd09c304",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-tamagotchi-live",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-popups-wip",
+   "sha": "1afeb18100c8a768a6b52586e525b540691d3e1d",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-tamagotchi-popups",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-sprites-wip",
+   "sha": "f1aa68201b1255657882e0d5dd99834eb5384ae0",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-tamagotchi-sprites",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tamagotchi-voxels-wip",
+   "sha": "c18df1184b3f65a1a140bf4bb9077ffae297dfc2",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-tamagotchi-voxels",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-terminal-pointer-rows-wip",
+   "sha": "15077c1c2a4450f9600720f522ebfcb4e396ca26",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-terminal-pointer-rows",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-tmuxos-live-fix",
+   "sha": "e777a44ee0143983150705237910b60b8e09ba91",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-tmuxos-live-fix",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-ui-margin-unify",
+   "sha": "663c87a21ebe784085f9784350a99fac97ccfd6f",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-ui-margin-unify",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 2,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-unit-projection-drift",
+   "sha": "958bd58cba0f457aa02e6feb88b6d9f651871477",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-unit-projection-drift",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-vfy-input-platform-merge-wip",
+   "sha": "8b8c646a195fffea533dd6827fe369270049898f",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/merge",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-vo-perf-base-wip",
+   "sha": "5e23f5db23981c145b339cfa36d29af76575b5f9",
+   "kind": "uncommitted-snapshot",
+   "blade_origin": "/.worktrees/mios-vo-perf-base",
+   "preserved_in": ".devloop/handoff/mios-blade-lane-archive.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-vt-identity",
+   "sha": "cd275a1db952fa0a7b9ba3f5986755ff4957f62c",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-vt-identity",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "mios-webtools-producer",
+   "sha": "975bcd333e13d7bec21af8ab75220d907ea39005",
+   "kind": "branch",
+   "blade_origin": "refs/heads/mios-webtools-producer",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 1,
+   "negative_control_subjects": 0
+  },
+  {
+   "ref": "recover/agy-desktop-profiles-blade",
+   "sha": "ab758b869a455465f33a11c975ae79a20982301c",
+   "kind": "branch",
+   "blade_origin": "refs/heads/recover/agy-desktop-profiles",
+   "preserved_in": "main history or .devloop/handoff/mios-blade-recovery.bundle",
+   "unique_commits_vs_main": 7,
+   "negative_control_subjects": 0
+  }
+ ]
+}
