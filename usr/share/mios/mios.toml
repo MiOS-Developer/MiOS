@@ -12025,7 +12025,7 @@ message_limit_bytes = 65536
 [terminal.remote_login.labels]
 title = "MiOS remote login"
 greeting = "Select a MiOS user to sign in"
-background = "MiOS remote access"
+background = "Enter: sign in | MiOS remote access"
 
 # Global MiOS console surfaces inherit existing per-type launch sizes. Native
 # consumers center and clamp them using physical font cells, without permanent

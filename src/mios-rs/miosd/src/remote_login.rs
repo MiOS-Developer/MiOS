@@ -1309,11 +1309,299 @@ fn resize(
     Ok(())
 }
 
+// Retry input belongs only to this private unauthenticated anchor. Existing
+// greeter and desktop panes retain their own input and normal PAM lifecycle.
+const CANVAS_FORMAT: &str = "#{pane_id}|#{pane_pid}|#{pane_tty}|#{session_id}|#{window_id}|#{pane_dead}|#{pane_active}|#{pane_floating_flag}|#{window_panes}|#{pid}";
+const CANVAS_CLIENT_FORMAT: &str = "#{client_name}|#{client_pid}|#{client_instance}|#{session_id}|#{client_window_id}|#{client_tty}|#{client_pane_id}|#{client_pane_pid}|#{client_flags}";
+
+fn canvas_namespace(socket: &Path, uid: u32) -> Result<&Path, String> {
+    let parent = socket.parent().ok_or("canvas socket has no namespace")?;
+    let name = parent.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let nonce = name.strip_prefix("mios-remote-login-").unwrap_or("");
+    if uid == 0
+        || socket.file_name().and_then(|n| n.to_str()) != Some("terminal.sock")
+        || parent.parent() != Some(Path::new(&format!("/run/user/{uid}")))
+        || nonce.len() != 32
+        || !nonce
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return Err("retry requires an isolated caller-owned remote portal".into());
+    }
+    Ok(parent)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CanvasClient {
+    name: String,
+    pid: u32,
+    instance: u64,
+    session: String,
+    window: String,
+    tty: PathBuf,
+    flags: String,
+}
+
+// An ordinary list-panes can omit a live float. The direct native window count
+// must instead show only the anchor, and the client's actual input must target
+// it. Ignore nonterminal command clients, whose PID changes on every query;
+// retain the complete terminal client incarnation for the second observation.
+fn canvas_retry_client(
+    snapshot: &str,
+    clients: &str,
+    anchor: &str,
+    pid: u32,
+    terminal: &Path,
+    server: u32,
+) -> Option<CanvasClient> {
+    let f: Vec<_> = snapshot.split('|').collect();
+    if f.len() != 10
+        || f[0] != anchor
+        || f[1].parse::<u32>().ok() != Some(pid)
+        || Path::new(f[2]) != terminal
+        || !id(f[3], '$')
+        || !id(f[4], '@')
+        || f[5..9] != ["0", "1", "0", "1"]
+        || f[9].parse::<u32>().ok() != Some(server)
+    {
+        return None;
+    }
+    let mut selected = None;
+    for row in clients.lines() {
+        let c: Vec<_> = row.split('|').collect();
+        if c.len() != 9 {
+            return None;
+        }
+        let flags: Vec<_> = c[8].split(',').collect();
+        if c[5].is_empty() {
+            if c[0].starts_with("/dev/pts/")
+                || c[1].parse::<u32>().ok().filter(|pid| *pid > 1).is_none()
+                || c[2].parse::<u64>().ok().filter(|n| *n > 0).is_none()
+                || flags.contains(&"attached")
+                || flags.contains(&"control-mode")
+            {
+                return None;
+            }
+            continue;
+        }
+        if selected.is_some()
+            || c[0] != c[5]
+            || !c[5].starts_with("/dev/pts/")
+            || !flags.contains(&"attached")
+            || ["control-mode", "read-only", "suspended"]
+                .iter()
+                .any(|flag| flags.contains(flag))
+            || c[3] != f[3]
+            || c[4] != f[4]
+            || c[6] != anchor
+            || c[7].parse::<u32>().ok() != Some(pid)
+        {
+            return None;
+        }
+        let client = exact_client(
+            &format!("{}|{}|{}|{}|{}", c[0], c[1], c[3], c[4], c[5]),
+            c[0],
+        )
+        .ok()?;
+        let instance = c[2].parse::<u64>().ok().filter(|n| *n > 0)?;
+        selected = Some(CanvasClient {
+            name: c[0].into(),
+            pid: client.pid,
+            instance,
+            session: client.session,
+            window: client.window,
+            tty: client.tty,
+            flags: c[8].into(),
+        });
+    }
+    selected
+}
+
+fn canvas_retry_requested(bytes: &[u8]) -> bool {
+    matches!(bytes, b"\r" | b"\n" | b"\r\n")
+}
+
+struct CanvasIdentity {
+    socket: PathBuf,
+    anchor: String,
+    process: ProcessIdentity,
+    server: ProcessIdentity,
+    terminal: PathBuf,
+    socket_identity: (u64, u64),
+    namespace_identity: (u64, u64),
+    terminal_identity: (u64, u64, u64),
+    executable_identity: (u64, u64),
+    tmux_identity: (u64, u64),
+}
+impl CanvasIdentity {
+    fn capture(p: &Policy) -> Result<Self, String> {
+        let uid = unsafe { libc::getuid() };
+        if unsafe { libc::geteuid() } != uid {
+            return Err("canvas must be unprivileged".into());
+        }
+        let (socket, anchor) = tmux_environment()?;
+        let namespace = canvas_namespace(&socket, uid)?;
+        let directory = fs::symlink_metadata(namespace).map_err(|_| "canvas namespace ended")?;
+        if !directory.is_dir() || directory.uid() != uid || directory.mode() & 0o077 != 0 {
+            return Err("canvas namespace must be private and caller-owned".into());
+        }
+        let sm = socket_owned(&socket, uid)?;
+        let pid = std::process::id();
+        let process = process_identity(pid).ok_or("canvas process ended")?;
+        let actual = fs::metadata(format!("/proc/{pid}/exe"))
+            .map_err(|_| "canvas executable ended")?;
+        let expected = fs::metadata(&p.executable).map_err(|_| "installed canvas unavailable")?;
+        let executable_identity = (actual.dev(), actual.ino());
+        if executable_identity != (expected.dev(), expected.ino()) {
+            return Err("canvas executable differs from the installed entry".into());
+        }
+        let terminal = tty(0)?;
+        let t = fs::metadata(&terminal).map_err(|_| "canvas terminal ended")?;
+        let fd = fs::metadata("/proc/self/fd/0").map_err(|_| "canvas terminal ended")?;
+        let terminal_identity = (t.dev(), t.ino(), t.rdev());
+        if !t.file_type().is_char_device()
+            || t.uid() != uid
+            || terminal_identity != (fd.dev(), fd.ino(), fd.rdev())
+        {
+            return Err("canvas terminal belongs to another account".into());
+        }
+        let snapshot = tmux(
+            p,
+            &socket,
+            &["display-message", "-p", "-t", &anchor, CANVAS_FORMAT],
+        )?;
+        let f: Vec<_> = snapshot.split('|').collect();
+        if f.len() != 10
+            || f[0] != anchor
+            || f[1].parse::<u32>().ok() != Some(pid)
+            || Path::new(f[2]) != terminal
+        {
+            return Err("canvas is not the selected private anchor".into());
+        }
+        let server = process_identity(f[9].parse().map_err(|_| "invalid canvas server")?)
+            .ok_or("canvas server ended")?;
+        if server.uid != uid {
+            return Err("canvas server belongs to another account".into());
+        }
+        let actual = fs::metadata(format!("/proc/{}/exe", server.pid))
+            .map_err(|_| "canvas server ended")?;
+        let expected = fs::metadata(&p.tmux).map_err(|_| "installed terminal unavailable")?;
+        let tmux_identity = (actual.dev(), actual.ino());
+        if tmux_identity != (expected.dev(), expected.ino()) {
+            return Err("canvas server differs from the installed terminal".into());
+        }
+        Ok(Self {
+            socket,
+            anchor,
+            process,
+            server,
+            terminal,
+            socket_identity: (sm.dev(), sm.ino()),
+            namespace_identity: (directory.dev(), directory.ino()),
+            terminal_identity,
+            executable_identity,
+            tmux_identity,
+        })
+    }
+    fn verify(&self, p: &Policy) -> Result<(), String> {
+        let uid = self.process.uid;
+        let d = fs::symlink_metadata(canvas_namespace(&self.socket, uid)?)
+            .map_err(|_| "canvas namespace ended")?;
+        let s = socket_owned(&self.socket, uid)?;
+        let t = fs::metadata(&self.terminal).map_err(|_| "canvas terminal ended")?;
+        let fd = fs::metadata("/proc/self/fd/0").map_err(|_| "canvas terminal ended")?;
+        if !d.is_dir()
+            || d.uid() != uid
+            || d.mode() & 0o077 != 0
+            || (d.dev(), d.ino()) != self.namespace_identity
+            || (s.dev(), s.ino()) != self.socket_identity
+            || (t.dev(), t.ino(), t.rdev()) != self.terminal_identity
+            || (fd.dev(), fd.ino(), fd.rdev()) != self.terminal_identity
+            || !process_identity(self.process.pid)
+                .is_some_and(|p| p.start == self.process.start && p.uid == uid)
+            || !process_identity(self.server.pid)
+                .is_some_and(|p| p.start == self.server.start && p.uid == uid)
+        {
+            return Err("canvas identity changed".into());
+        }
+        for (pid, path, identity) in [
+            (self.process.pid, &p.executable, self.executable_identity),
+            (self.server.pid, &p.tmux, self.tmux_identity),
+        ] {
+            let actual = fs::metadata(format!("/proc/{pid}/exe"))
+                .map_err(|_| "canvas executable ended")?;
+            let installed = fs::metadata(path).map_err(|_| "installed canvas unavailable")?;
+            if (actual.dev(), actual.ino()) != identity
+                || (installed.dev(), installed.ino()) != identity
+            {
+                return Err("canvas executable identity changed".into());
+            }
+        }
+        Ok(())
+    }
+    fn observe_client(&self, p: &Policy) -> Result<Option<CanvasClient>, String> {
+        let snapshot = tmux(
+            p,
+            &self.socket,
+            &["display-message", "-p", "-t", &self.anchor, CANVAS_FORMAT],
+        )?;
+        let clients = tmux(
+            p,
+            &self.socket,
+            &["list-clients", "-F", CANVAS_CLIENT_FORMAT],
+        )?;
+        Ok(canvas_retry_client(
+            &snapshot,
+            &clients,
+            &self.anchor,
+            self.process.pid,
+            &self.terminal,
+            self.server.pid,
+        ))
+    }
+    fn retry(&self, p: &Policy) -> Result<bool, String> {
+        self.verify(p)?;
+        let Some(client) = self.observe_client(p)? else {
+            return Ok(false);
+        };
+        let identity = process_identity(client.pid).ok_or("canvas client ended")?;
+        let actual = fs::metadata(format!("/proc/{}/exe", client.pid))
+            .map_err(|_| "canvas client ended")?;
+        let expected = fs::metadata(&p.tmux).map_err(|_| "installed terminal unavailable")?;
+        let t = fs::metadata(&client.tty).map_err(|_| "canvas client terminal ended")?;
+        let fd = fs::metadata(format!("/proc/{}/fd/0", client.pid))
+            .map_err(|_| "canvas client terminal ended")?;
+        if identity.uid != self.process.uid
+            || (actual.dev(), actual.ino()) != (expected.dev(), expected.ino())
+            || !t.file_type().is_char_device()
+            || t.uid() != self.process.uid
+            || (t.dev(), t.ino(), t.rdev()) != (fd.dev(), fd.ino(), fd.rdev())
+        {
+            return Err("canvas client witness changed".into());
+        }
+        // Repeat the native sole-pane/focus check immediately before ordinary
+        // spawn_entry. Compare only the witnessed terminal client, never the
+        // command-client rows created by the observations themselves.
+        self.verify(p)?;
+        if !process_identity(client.pid)
+            .is_some_and(|p| p.start == identity.start && p.uid == identity.uid)
+            || self.observe_client(p)?.as_ref() != Some(&client)
+        {
+            return Ok(false);
+        }
+        spawn_entry(p, &self.socket, &self.anchor, &client.name)?;
+        Ok(true)
+    }
+}
+
 async fn canvas() -> Result<(), String> {
     let p = policy()?;
+    let canvas = CanvasIdentity::capture(&p)?;
+    let _terminal = TerminalRaw::arm()?;
+    let input = BridgeFd::inherited(0)?;
     let mut winch = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
         .map_err(|_| "cannot observe viewport")?;
-    loop {
+    let draw = || -> Result<(), String> {
         let (w, h) = terminal_size();
         let label: String = p
             .background
@@ -1328,9 +1616,29 @@ async fn canvas() -> Result<(), String> {
         );
         std::io::stdout()
             .flush()
-            .map_err(|_| "portal output closed")?;
-        if winch.recv().await.is_none() {
-            break;
+            .map_err(|_| "portal output closed".into())
+    };
+    draw()?;
+    loop {
+        let mut bytes = Frame(vec![0; 64]);
+        tokio::select! {
+            changed = winch.recv() => {
+                if changed.is_none() { break; }
+                draw()?;
+            },
+            result = input.read(&mut bytes.0) => {
+                let count = result.map_err(|_| "canvas input closed")?;
+                if count == 0 { break; }
+                if canvas_retry_requested(&bytes.0[..count]) {
+                    // This is only the anchor's own PTY. Clear its buffered
+                    // typeahead before changing input owners; no greeter or
+                    // selected desktop terminal is read or flushed here.
+                    if unsafe { libc::tcflush(input.io.as_raw_fd(), libc::TCIFLUSH) } != 0 {
+                        return Err("cannot clear expired canvas input".into());
+                    }
+                    let _ = canvas.retry(&p);
+                }
+            },
         }
     }
     Ok(())
@@ -2788,6 +3096,105 @@ async fn proxy_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canvas_retry_requires_only_anchor_and_unique_terminal_input_focus() {
+        let snapshot = "%0|42|/dev/pts/3|$0|@0|0|1|0|1|91";
+        let client = "/dev/pts/8|92|7|$0|@0|/dev/pts/8|%0|42|attached,UTF-8";
+        let parse = |snapshot: &str, clients: &str| {
+            canvas_retry_client(snapshot, clients, "%0", 42, Path::new("/dev/pts/3"), 91)
+        };
+        assert!(parse(snapshot, client).is_some());
+        // Native window_panes includes floats omitted by ordinary list-panes.
+        for invalid in [
+            snapshot.replace("|0|1|0|1|91", "|0|1|0|2|91"),
+            snapshot.replace("|0|1|0|1|91", "|0|0|0|1|91"),
+            snapshot.replace("|0|1|0|1|91", "|1|1|0|1|91"),
+            snapshot.replace("|0|1|0|1|91", "|0|1|1|1|91"),
+            snapshot.replace("|42|", "|43|"),
+            snapshot.replace("/dev/pts/3", "/dev/pts/4"),
+            snapshot.replace("|91", "|99"),
+        ] {
+            assert!(parse(&invalid, client).is_none(), "accepted {invalid}");
+        }
+        for invalid in [
+            String::new(),
+            format!("{client}\n{client}"),
+            client.replace("|%0|42", "|%1|43"),
+            client.replace("|@0|", "|@1|"),
+            client.replace("|$0|", "|$1|"),
+            client.replace("|7|", "|0|"),
+            client.replace("attached,UTF-8", "attached,read-only,UTF-8"),
+            client.replace("attached,UTF-8", "attached,control-mode,UTF-8"),
+            client.replace("attached,UTF-8", "attached,suspended,UTF-8"),
+            client.replace("attached,UTF-8", "UTF-8"),
+            format!("{client}\nmalformed"),
+            format!("{client}\n|99|8|$0|@0||%0|42|control-mode"),
+            format!("{client}\n|99|8|$0|@0||%0|42|attached"),
+        ] {
+            assert!(parse(snapshot, &invalid).is_none(), "accepted {invalid}");
+        }
+        // Once the old float has gone, the same still-focused anchor may retry.
+        assert!(parse(snapshot, client).is_some());
+    }
+
+    #[test]
+    fn canvas_retry_ignores_only_transient_command_client_changes() {
+        let snapshot = "%0|42|/dev/pts/3|$0|@0|0|1|0|1|91";
+        let client = "/dev/pts/8|92|7|$0|@0|/dev/pts/8|%0|42|attached,UTF-8";
+        let parse = |clients: &str| {
+            canvas_retry_client(snapshot, clients, "%0", 42, Path::new("/dev/pts/3"), 91)
+        };
+        let first = format!("{client}\nclient-100|100|8|$0|@0||%0|42|UTF-8");
+        let second = format!("client-101|101|9|$0|@0||%0|42|UTF-8\n{client}");
+        assert_ne!(first, second);
+        let witnessed = parse(&first).unwrap();
+        assert_eq!(Some(&witnessed), parse(&second).as_ref());
+        for changed in [
+            client.replace("|7|", "|8|"),
+            client.replace("|92|", "|93|"),
+            client.replace("/dev/pts/8", "/dev/pts/9"),
+            client.replace("attached,UTF-8", "attached,focused,UTF-8"),
+        ] {
+            assert_ne!(Some(&witnessed), parse(&changed).as_ref());
+        }
+    }
+
+    #[test]
+    fn canvas_retry_rejects_global_and_foreign_namespace_targets() {
+        let good = Path::new(
+            "/run/user/1000/mios-remote-login-0123456789abcdef0123456789abcdef/terminal.sock",
+        );
+        assert!(canvas_namespace(good, 1000).is_ok());
+        assert!(canvas_namespace(good, 0).is_err());
+        assert!(canvas_namespace(good, 1001).is_err());
+        for bad in [
+            "/tmp/tmux-1000/default",
+            "/run/user/1000/mios-remote-login-short/terminal.sock",
+            "/run/user/1000/mios-remote-login-0123456789ABCDEF0123456789abcdef/terminal.sock",
+            "/run/user/1000/mios-remote-login-0123456789abcdef0123456789abcdef/foreign.sock",
+            "/run/user/1000/elsewhere/mios-remote-login-0123456789abcdef0123456789abcdef/terminal.sock",
+        ] {
+            assert!(canvas_namespace(Path::new(bad), 1000).is_err());
+        }
+    }
+
+    #[test]
+    fn canvas_retry_requires_an_explicit_enter_without_buffered_text() {
+        for enter in [b"\r".as_slice(), b"\n".as_slice(), b"\r\n".as_slice()] {
+            assert!(canvas_retry_requested(enter));
+        }
+        for other in [
+            b"".as_slice(),
+            b"name\n".as_slice(),
+            b"\r\r".as_slice(),
+            b"\x1b".as_slice(),
+            b"\x1b[A".as_slice(),
+            b"\x1b[200~name\n\x1b[201~".as_slice(),
+        ] {
+            assert!(!canvas_retry_requested(other));
+        }
+    }
 
     #[test]
     fn post_auth_session_locale_comes_from_trusted_ssot() {
