@@ -76,65 +76,19 @@
  
    #[tokio::test]
    async fn ctrl_u() {
---- a/src/ui/common/masked.rs
-+++ b/src/ui/common/masked.rs
-@@ -1,3 +1,4 @@
-+use std::borrow::Cow;
- use zeroize::Zeroize;
- 
- #[derive(Default)]
-@@ -15,6 +16,14 @@
-     match self.mask {
-       Some(ref mask) => mask,
-       None => &self.value,
-+    }
-+  }
-+
-+  // Account display metadata must never obscure the actual login identity.
-+  pub fn display(&self) -> Cow<'_, str> {
-+    match self.mask.as_deref() {
-+      Some(name) if !name.is_empty() && name != self.value => Cow::Owned(format!("{} ({})", self.get(), self.value)),
-+      _ => Cow::Borrowed(&self.value),
-     }
-   }
- 
-@@ -46,4 +55,18 @@
- 
-     assert_eq!(masked.get(), "mask");
-   }
-+
-+  #[test]
-+  fn pretty_name_keeps_the_real_account_visible() {
-+    let masked = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
-+    assert_eq!(masked.display(), "MiOS (mios)");
-+    assert_eq!(masked.value, "mios");
-+  }
-+
-+  #[test]
-+  fn account_without_distinct_pretty_name_is_not_duplicated() {
-+    for name in [None, Some("".to_string()), Some("mios".to_string())] {
-+      assert_eq!(MaskedString::from("mios".to_string(), name).display(), "mios");
-+    }
-+  }
- }
 --- a/src/ui/prompt.rs
 +++ b/src/ui/prompt.rs
-@@ -79,7 +79,13 @@
+@@ -79,7 +79,8 @@
      Paragraph::new(username_text)
    };
  
 -  let username = greeter.username.get();
-+  // The editable field is always the NSS login name. The selected account's
-+  // pretty name is additional presentation metadata after entering a password.
-+  let username = if greeter.mode == Mode::Username {
-+    std::borrow::Cow::Borrowed(greeter.username.value.as_str())
-+  } else {
-+    greeter.username.display()
-+  };
++  // Every username field uses the NSS login. Pretty names belong to the user menu.
++  let username = greeter.username.value.as_str();
    let username_value_text = Span::from(username);
    let username_value = Paragraph::new(username_value_text).style(theme.of(&[Themed::Input]));
  
-@@ -149,7 +155,7 @@
+@@ -149,7 +150,7 @@
  
    match greeter.mode {
      Mode::Username => {
@@ -143,3 +97,42 @@
        let offset = get_cursor_offset(greeter, username_length);
  
        Ok((2 + cursor.x + fl!("username").chars().count() as u16 + offset as u16, USERNAME_INDEX as u16 + cursor.y))
+@@ -169,3 +170,38 @@
+     _ => Ok((1, 1)),
+   }
+ }
++
++#[cfg(test)]
++mod tests {
++  use tui::{backend::TestBackend, Terminal};
++
++  use super::draw;
++  use crate::{ui::common::masked::MaskedString, Greeter, Mode};
++
++  #[test]
++  fn selected_account_renders_raw_login_in_every_prompt_mode() {
++    for mode in [Mode::Username, Mode::Password, Mode::Action] {
++      let mut greeter = Greeter::default();
++      greeter.config = Greeter::options().parse(&["--width", "60"]).ok();
++      greeter.user_menu = true;
++      greeter.username = MaskedString::from("mios".to_string(), Some("MiOS".to_string()));
++      greeter.mode = mode;
++      greeter.prompt = Some("Password:".to_string());
++      greeter.asking_for_secret = true;
++      let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
++      terminal.draw(|frame| { draw(&mut greeter, frame).unwrap(); }).unwrap();
++
++      // Read the actual rendered username row, rather than a display helper.
++      let buffer = terminal.backend().buffer();
++      let rows: Vec<String> = (0..24)
++        .map(|y| (0..80).map(|x| buffer.get(x, y).symbol()).collect())
++        .collect();
++      let label = fl!("username");
++      let row = rows.iter().find(|row| row.contains(&label)).unwrap();
++      let (_, value) = row.split_once(&label).unwrap();
++      assert_eq!(value.trim_start().split_whitespace().next(), Some("mios"), "mode {mode:?}");
++      assert!(!value.contains("MiOS"), "pretty name leaked into username field in {mode:?}");
++      assert_eq!(greeter.username.mask.as_deref(), Some("MiOS"));
++    }
++  }
++}

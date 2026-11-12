@@ -7,13 +7,14 @@ tuigreet 0.9.1 masks the username field with the NSS GECOS display name after
 account selection. Its edit handlers change the login value without removing
 that old display name, making edits appear ineffective. Its remembered-session
 lookup also uses the display value. The carried patch keeps the editable NSS
-login visible, displays `MiOS (mios)` after selection, clears old display
-metadata when editing, and uses the actual login for remembered sessions.
+login visible in every prompt mode, retains pretty names in the user menu,
+clears old display metadata when editing, and uses the actual login for
+remembered sessions.
 Account lookup, UID filtering and PAM authentication are unchanged.
 
 The SSOT pins upstream commit
 `86bf7bbc156bf38a0ca8be08804c1a4cc99cffa5`, the source archive, the exact patch,
-all four changed source files and the unmodified upstream `Cargo.lock` in this
+all three changed source files and the unmodified upstream `Cargo.lock` in this
 directory. The lock contains 219 registry packages with their upstream crate
 checksums. A newer upstream release requires reviewing the patch and refreshing
 those seals, tests and package release together; it is never silently rebased.
@@ -44,8 +45,8 @@ any actual source file. The input seal, copy comparison and output inventory
 remain in provenance. Missing dependencies, a stale seal or changed source
 bytes refuse preparation; there is no network fallback in this mode.
 
-The RPM tests first require all three named regression cases to exist, run
-each exact case, and then run the full 32-case upstream suite. A missing test
+The RPM tests first require both named regression cases to exist, run
+each exact case, and then run the full 31-case upstream suite. A missing test
 cannot yield a zero-test success. The builder also checks the real GNU loader
 and dynamic dependencies, rejects embedded library search paths, and records
 the actual binary and package hashes. Toolchain channel, Cargo version, source
@@ -64,12 +65,14 @@ preserving the GNU GPL v3 corresponding source with the image. The carried
 patch is a derivative of the upstream GPL v3 program; it is not relicensed as
 MiOS's Apache-2.0 management code.
 
-The original private native validation of this exact upstream patch passed
-the three focused cases, all 32 unfiltered tests, the GNU release build and ELF
-audit. Its binary SHA-256 was
-`9198b99b3b9268f7d0b12b7fd23001b2ffde916895d245e0e437a2ff0638081d`;
-its unchanged lock SHA-256 was
+The current raw-login-field patch passed both exact focused cases, all 31
+unfiltered tests, the GNU release build and ELF audit in private Native
+MiOS-DEV validation. Its binary SHA-256 is
+`085e7b9b027d5688d2d21b6eef6f8e1bf8286e981cd1e492cc12b2761c7f944e`.
+The unchanged lock SHA-256 is
 `c533d7ccd43367daade00bdc672b02d91abc5a16e134e30cdbfe5143890b0131`.
-That validation covered the upstream patch. It does not substitute for running
-this RPM producer or prove a fresh PAM login, controller routing, or full-image
-acceptance. Normal image builds must produce their own source-bound receipts.
+The earlier display-masking patch passed 32 tests and produced binary
+`9198b99b3b9268f7d0b12b7fd23001b2ffde916895d245e0e437a2ff0638081d`.
+These leaf validations do not substitute for executing the owned RPM producer
+or prove a fresh PAM login, controller routing, or full-image acceptance.
+Normal image builds must produce their own source-bound receipts.
