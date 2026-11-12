@@ -4927,3 +4927,52 @@ Multiplayer revision3 incorporates the operator's four answers and preserves rev
 - Sealed current runtime proof: three native PTY tests/seven replays, all seven save digests identical. The owned 150-resize/100Hz ABBA trace measured baseline 0.94/0.93 CPU seconds versus candidate 0.07/0.06, with 6,532,000 versus 261,399 output bytes per trace; these are this fixed seeded workload, not universal CPU/output guarantees.
 
 - Metadata projection sync raised only the generated tracked-size counter max_tracked_mb from693 to695 and refreshed its declared outputs. Exact byte normalization proves the remaining vendor TOML unchanged; compiled artifact source84ae9c5 and the original365-input/archive manifests remain intact.
+
+## 2026-11-12 01:40 · efe67942b · pre-compact
+- objective: context compaction
+- done: see git log -5
+- next: re-read AGENTS.md, TASKS.md, this ledger; continue the in_progress task
+- blockers: -
+- unverified: anything not yet committed: 0 dirty path(s)
+
+## 2026-11-12 01:57 · efe67942b · partial
+- objective: Operator lockout fix + SSOT compliance of Blade surfaces; Portal live status
+- done: Forgejo admin + code-server restored to layered SSOT [identity].default_password (verified both ways, incl. tailnet URL); stale random password file removed; /tmp tailnet share replaced by /srv/mios/share (token exposure closed); agents told over MiOS-MCP
+- next: Collect wf_5c510dd6-8b4 (SSOT compliance) + wf_c1691ff8-8f2 (Portal status) patches and verdicts; apply to main; gates; announce; push; one root handoff to Root: ff Blade / e8af2bfc1->main (root-owned paths ROADMAP.md, .gitignore, README, metadata.json) + reconcile steps
+- blockers: Blade / fast-forward needs root (root-owned tracked files); 179 preservation branches need operator deletion (proxy 403)
+- unverified: credential re-sync on mios.html change (not implemented yet); SSOT keys for tailnet serve routes and share dir; Portal patch
+
+## 2026-11-12 04:38 · efe67942b · partial
+- objective: Operator lockout fix + SSOT compliance of Blade surfaces; Portal live status
+- done: Portal now tailnet front door (/ -> 127.0.0.1:[ports].agent_pipe); stale fedora-3 serve handler removed (snapshot kept); /share/ taken offline after proving root-tailscaled symlink exfil (marker probe, cleaned); Forgejo login verified over the tailnet URL both ways; 8 operator decisions recorded (scratchpad operator-decisions.md); serverbox-relay.token traced to lapsed remote agent (no local consumer), reported to Root; Root informed this session will not take the coordinator lease
+- next: Collect wf_485a54d2-ff8 (Portal fix loop) and wf_72712510-80e (SSOT round 3 on main d12fe6890, both repos); integrate both onto main, regenerate once, gates both sides; send Root the diff stat + commit message; push to main; root rollout via Root (ff Blade /, daemon-reload, presets, mios-credential apply --all --verify, build mios-agents, retire mios-ide); re-enable share via non-root symlink-refusing server
+- blockers: root-only rollout steps need Root; 179 preservation branches need operator deletion
+- unverified: Portal still accepts only vendor credential until SSOT patch deploys; Cockpit/PAM, ttyd, OWUI not yet on operator credential; share offline
+
+## 2026-11-12 09:44 · efe67942b · partial
+- objective: SSOT one-credential + Portal live status landed live on the Blade; agents told; code-server live over tailnet
+- done: Linux login for mios set to the operator mios.html credential (PAM two-sided: vendor 401, operator 200; rollback copy /var/lib/mios/shadow-rollback-20261112T054702Z). Tailnet front door: Portal at /, unauthenticated agent-pipe API prefixes (/v1/, /a2a, /.well-known/, /skills, /dci, /kg, /iostest) answered with a notice (snapshot /var/lib/mios/tailscale-serve-snapshot-20261112T090039Z.json). Operator chose 'work alongside Root' (no lease transfer); all agents told. Root's login fix (main 9942fc56) verified live by Root. Bake fonts installed on the Blade for the agents image build. Landing workflow wf_25f7c893-51e: A (SSOT) and B (Portal) finished, round-1 reviews done, fix round running.
+- next: Collect round-2 verdicts + integrated patch; rebase on 9942fc56; announce diff to Root; commit + push main; Blade: ff /, tmpfiles, daemon-reload, presets, mios-credential apply --check then --all --verify, agent-pipe restart, user unit; verify Portal accepts operator credential and refuses vendor; finish mios-agents image (retrying on the Blade's lossy exit-node link) and switch :8900 from interim mios-ide.
+- blockers: -
+- unverified: Portal still on vendor credential until patch A deploys; mios-agents image not yet built (npm registry unreachable through the Blade's exit node on first tries); Portal chat/app-search over the tailnet blocked until API auth is SSOT-declared
+
+## 2026-11-12 20:25 · efe67942b · blocked
+- objective: SSOT one-credential + Portal live status landed live on the Blade
+- done: Reviewed + integrated change committed as MiOS 3efc6e21d (on a2f4aa596; 88 files) and mios-bootstrap ef30c45; installer follow-up 88c6547f5 / 11942ae (no line-regex TOML; tomllib-verified; shadow pre-check). Sealed bundles, receipts and a 15-step install manifest staged on the Blade under /home/mios/.local/state/mios/mios-cloud-review/{land-3efc6e21d,instfix-88c6547f5}. Root imported them, published its own docs leaf (main 5150ff06), froze credential/Portal corrections, and took the installer reconciliation. Local refs refs/claude/land-3efc6e21d and refs/claude/instfix keep the commits.
+- next: Root (coordinator, sole main publisher per operator decision) runs Native acceptance on the reconciled tree, publishes main, fast-forwards /; then claude-cloud runs its announced install steps (tmpfiles, sync-env, credential apply check/apply, agent-pipe restart, agent-share, forge restart, podman-ps spec, user unit) and verifies the Portal takes the operator credential. Follow-ups: ttyd behind the Portal on a unix socket (Q9, task_3798); agent-pipe anonymous-route gating (task_3809); mios-agents image needs a working npm path on the Blade.
+- blockers: Root holds the main publication window and Native acceptance; mios-agents build blocked by the Blade's registry connectivity (ECONNRESET)
+- unverified: Nothing from 3efc6e21d/88c6547f5 is installed live yet; Portal still uses the vendor credential until then
+
+## 2026-11-12 20:26 · efe67942b · pre-compact
+- objective: context compaction
+- done: see git log -5
+- next: re-read AGENTS.md, TASKS.md, this ledger; continue the in_progress task
+- blockers: -
+- unverified: anything not yet committed: 2 dirty path(s)
+
+## 2026-11-12 22:20 UTC · installer and Native acceptance reconciliation
+- objective: preserve the reviewed Portal, credential and installer histories and validate the resulting source on the Blade.
+- done: actual MiOS source merge58663530 preserves main5150, original3ef and installer88 histories; corrected bootstrap e6775ac preserves719,ef30,119 and all owned followups with the same reviewed installer bytes. Unicode authentication, IPv6 targets, durable activation retries, session-preserving periodic reconciliation, fail-closed environment output and the Portal stylesheet extraction are included.
+- next: complete the verified Native bootstrap object recovery; seal and run the exact Native MiOS-DEV packet, then publish accepted source and install with component-specific proofs. Earlier proposed install-manifest service actions require the reconciled scoped sequence; no automatic execution of those historical steps.
+- blockers: Tailscale connections intermittently time out; the earlier full-bootstrap bundle omitted an ancestor, so its original failed receipt is retained while the exact missing object closure is restored from the complete local repository.
+- unverified: this candidate has no Native test/build acceptance, push or live installation yet. Current verified live/main is5150ff06. Retained B4 does not implement the new redaction; new miosd/gate artifacts are required. Physical controllers remain unrun and network input transport stays disabled.
