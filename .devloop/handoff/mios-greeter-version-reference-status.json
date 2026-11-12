@@ -1,0 +1,28 @@
+{
+  "kind": "mios-greeter-version-reference-handoff",
+  "native_acceptance_contract": {
+    "host_result": "/home/mios/.local/state/mios/mios-greeter-version-reference-validation/host-result.json",
+    "image_sha256": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
+    "job": "/home/mios/.local/state/mios/mios-greeter-version-reference-validation-input/job.json",
+    "required": "Exact source/immutable origin and runtime guards, baseline version gate reproduces the one known finding, candidate clears it with unchanged scanner, all generated projections fresh after bounded private-index regeneration, five standing gates and ci-suites pass. Actual sealed external receipts are authoritative; this contract does not claim an unrun result.",
+    "result": "/home/mios/.local/state/mios/mios-greeter-version-reference-validation/result.json",
+    "state": "/home/mios/.local/state/mios/mios-greeter-version-reference-validation"
+  },
+  "owned_source_paths": [
+    "tools/upstream/tuigreet/README.md",
+    ".devloop/handoff/mios-greeter-version-reference-status.json"
+  ],
+  "publication_contract": "Main-only publication after exact Native accepted tree/hash review; guarded live source/data fast-forward preserving operator edits, untracked data, current binary/process identities and original receipts. Record the actual installation receipt outside source.",
+  "readme_sha256": "4f78c7204e7cacdd132ff9047d935d65af8840ae19b1e6e6c9d76593a1956138",
+  "remaining_scope": "Claude Portal/credential candidate is separate pending source transfer/review. Physical controller trials and cross-network transport remain unrun/disabled.",
+  "retained_runtime_provenance": {
+    "compiled_from_this_documentation_change_claimed": false,
+    "gen": "fa0949afb90b1be05801eb713907d5c5be1ed88f9c602918eac9cf028f516962",
+    "inputd": "cc51baaa6c11265919d2f4351ec57cb583872a84be73082c257b4c4044e09dab",
+    "miosd": "b4ae9a6475f346f846aed46c020cbc0fcbb1e4c9258ccc28548e694b4a75a5f4",
+    "prior_source_data_installation": "fe799357663b202a0abf321b8890c7ef3f0707c196b84c148f3111ac9477afc6"
+  },
+  "scope": "Replace the redundant current upstream greeter release literal with the authoritative SSOT pin reference; preserve all other README bytes and historical package/build evidence. The version scanner and all runtime code remain unchanged.",
+  "source_base": "a2f4aa596a83fa9824c1b960778e767cd344aa5e",
+  "source_review_commit": "e382ce524e0027ac68dd6ae3c489cd082ff78027"
+}
