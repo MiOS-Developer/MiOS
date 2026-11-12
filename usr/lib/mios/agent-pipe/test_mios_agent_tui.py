@@ -183,6 +183,62 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
         return monitor.MiosMonitorApp(ui_request={"agents": agents or CLIENTS}, ui_mode=mode,
                                       observer=observer or (lambda: copy.deepcopy(SNAPSHOT)), collectors=False)
 
+    async def test_hidden_monitor_logs_bound_pending_and_rendered_history(self):
+        # Most log views have never received a nonzero size while another tab
+        # is selected. RichLog's max_lines alone does not bound their queue.
+        with patch.object(monitor, "monitor_sources_config", return_value={"scrollback_rows": 100}):
+            app = self.app(mode="clients")
+            async with app.run_test(size=(140, 40)) as pilot:
+                logs = list(app.query(monitor.MonitorLog))
+                self.assertEqual({log.id for log in logs},
+                                 {"ai-log-box", "log-box", "build-log-box", "flash-log-box"})
+                for log in logs:
+                    self.assertEqual(log.max_lines, 100)
+                    for index in range(500):
+                        log.write(f"retained-{index:04}")
+                    self.assertLessEqual(len(log._deferred_renders), 100, log.id)
+                    self.assertLessEqual(len(log.lines), 100, log.id)
+                for tab, log_id in (("tab-agents", "ai-log-box"), ("tab-global", "log-box"),
+                                    ("tab-build", "build-log-box"), ("tab-flash", "flash-log-box")):
+                    app.query_one(TabbedContent).active = tab
+                    await pilot.pause()
+                    log = app.query_one("#" + log_id, monitor.MonitorLog)
+                    self.assertTrue(log.lines, log_id)
+                    self.assertLessEqual(len(log.lines), 100, log_id)
+                    self.assertFalse(log._deferred_renders, log_id)
+                    text = "".join(segment.text for segment in log.lines[-1])
+                    self.assertIn("retained-0499", text, log_id)
+
+    async def test_log_expiry_preserves_scrolled_content_and_follow_mode(self):
+        class LogApp(App):
+            def compose(self):
+                yield monitor.MonitorLog(id="reader", max_lines=100, min_width=1)
+
+        app = LogApp()
+        async with app.run_test(size=(60, 14)) as pilot:
+            log = app.query_one("#reader", monitor.MonitorLog)
+            for index in range(100):
+                log.write(f"line-{index:04}")
+            await pilot.pause()
+            log.scroll_to(y=40, animate=False, force=True, immediate=True)
+            top = "".join(segment.text for segment in log.lines[int(log.scroll_y)])
+            for index in range(100, 115):
+                log.write(f"line-{index:04}")
+            await pilot.pause()
+            self.assertEqual(len(log.lines), 100)
+            self.assertEqual(log.scroll_y, 25)
+            self.assertEqual("".join(segment.text for segment in log.lines[int(log.scroll_y)]), top)
+            await pilot.resize_terminal(45, 12)
+            await pilot.pause()
+            log.write("line-0115")
+            await pilot.pause()
+            self.assertEqual(log.scroll_y, 24)
+            self.assertEqual("".join(segment.text for segment in log.lines[int(log.scroll_y)]), top)
+            log.scroll_end(animate=False, immediate=True)
+            log.write("line-0116")
+            await pilot.pause()
+            self.assertTrue(log.is_vertical_scroll_end)
+
     async def test_all_clients_fit_and_select_at_native_half_width(self):
         app = self.app()
         async with app.run_test(size=(35, 19)) as pilot:

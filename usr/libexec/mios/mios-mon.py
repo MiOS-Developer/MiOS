@@ -726,12 +726,30 @@ if TEXTUAL_AVAILABLE:
         return f"[{color}]{'█' * filled}[/][dim]{'░' * empty}[/]"
 
     class MonitorLog(RichLog):
-        """Keep a reader's viewport while new journal/build/agent lines arrive."""
+        """Bound visible and not-yet-sized logs without moving a reader's anchor."""
+        def __init__(self, *args, max_lines=None, **kwargs):
+            limit = monitor_sources_config()["scrollback_rows"] if max_lines is None else max_lines
+            if type(limit) is not int or limit <= 0:
+                raise ValueError("Monitor log history must be a positive row count")
+            super().__init__(*args, max_lines=limit, **kwargs)
+            # RichLog defers every write until its first nonzero width, which
+            # may never arrive for an unopened tab. Its rendered-line limit
+            # does not bound that queue, so cap pending records separately.
+            self._deferred_renders = deque(self._deferred_renders, maxlen=limit)
+
         def write(self, content, width=None, expand=False, shrink=True,
                   scroll_end=None, animate=False):
             if scroll_end is None:
                 scroll_end = self.auto_scroll and self.is_vertical_scroll_end
-            return super().write(content, width, expand, shrink, scroll_end, animate)
+            start_line, x, y = self._start_line, self.scroll_x, self.scroll_y
+            result = super().write(content, width, expand, shrink, scroll_end, animate)
+            removed = self._start_line - start_line
+            if removed and not scroll_end:
+                # Retained rows shift upward when history expires. Preserve
+                # the same content at the top until that content itself expires.
+                self.scroll_to(x=x, y=max(0, y - removed), animate=False,
+                               force=True, immediate=True)
+            return result
 
     class MiosMonitorApp(App):
         TITLE = "MiOS Unified System & AI Monitor"
@@ -1509,8 +1527,7 @@ if TEXTUAL_AVAILABLE:
                         try:
                             self.call_from_thread(flash_log_box.write, Text(f"Streaming flash log: {os.path.basename(current_log)}", style=SSOT['success']))
                             file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
-                            lines = file_obj.readlines()
-                            for line in lines[-40:]:
+                            for line in deque(file_obj, maxlen=40):
                                 line = line.replace('\x00', '').strip()
                                 if line:
                                     self.call_from_thread(flash_log_box.write, Text(line))
