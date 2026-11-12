@@ -24,12 +24,12 @@
   "milestone": "Current MiOS-Mons task/reference naming and generated projection repair",
   "native_acceptance_contract": {
     "environment": "Native pinned MiOS-DEV only",
-    "export_manifest_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/exports.json",
-    "host_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/host-result.json",
+    "export_manifest_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-preserved-source/export-manifest.json",
+    "host_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-preserved-source/host-result.json",
     "image_sha256": "e9ce37c8285d13e1ea1479069cecc7d1f730d2059f318b6f2cdee85558fa8aaf",
-    "inside_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/result.json",
-    "job_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-input/job.json",
-    "private_state": "/home/mios/.local/state/mios/mios-private-projection-task-repair",
+    "inside_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-preserved-source/result.json",
+    "job_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair-preserved-source-input/job.json",
+    "private_state": "/home/mios/.local/state/mios/mios-private-projection-task-repair-preserved-source",
     "publication_condition": "Publish only after the sealed successful Native receipts and exact exported bytes have been verified. These external receipts are authoritative for the actual Native result; this preauthored contract does not substitute for them.",
     "required_before_publication": [
       "Exact declared source and output ownership; immutable original source/cache and live-binary guards",
@@ -40,6 +40,12 @@
       "Full Gen suite has zero failures; existing C95 T20/T21 and all 23 desktop checks pass",
       "Standing gate results are retained with explicit baseline debt and no introduced failures"
     ]
+  },
+  "prior_private_setup_attempt": {
+    "host_result_path": "/home/mios/.local/state/mios/mios-private-projection-task-repair/host-result.json",
+    "host_result_sha256": "99d7d6d1aafc05170a654d460dbaba48ffaa459867d9a7b986e16d51e174ffe7",
+    "job_sha256": "3ba1e1351fc7fa2bfc310a76d270e273b4a717041357dbf05cbfc2b74f6bb3b9",
+    "result": "Failed before container/test execution: Git recreated the byte-identical incoming fixture with the private umask permission; original and live guards remained unchanged. The successor restores only already-verified identical incoming collision permissions and retains the exact preservation guard."
   },
   "recorded_at": "2026-11-12T15:52:03.147449+00:00",
   "remaining_scope": [
