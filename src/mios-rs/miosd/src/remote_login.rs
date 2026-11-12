@@ -1458,8 +1458,8 @@ impl CanvasIdentity {
         let sm = socket_owned(&socket, uid)?;
         let pid = std::process::id();
         let process = process_identity(pid).ok_or("canvas process ended")?;
-        let actual = fs::metadata(format!("/proc/{pid}/exe"))
-            .map_err(|_| "canvas executable ended")?;
+        let actual =
+            fs::metadata(format!("/proc/{pid}/exe")).map_err(|_| "canvas executable ended")?;
         let expected = fs::metadata(&p.executable).map_err(|_| "installed canvas unavailable")?;
         let executable_identity = (actual.dev(), actual.ino());
         if executable_identity != (expected.dev(), expected.ino()) {
@@ -1493,8 +1493,8 @@ impl CanvasIdentity {
         if server.uid != uid {
             return Err("canvas server belongs to another account".into());
         }
-        let actual = fs::metadata(format!("/proc/{}/exe", server.pid))
-            .map_err(|_| "canvas server ended")?;
+        let actual =
+            fs::metadata(format!("/proc/{}/exe", server.pid)).map_err(|_| "canvas server ended")?;
         let expected = fs::metadata(&p.tmux).map_err(|_| "installed terminal unavailable")?;
         let tmux_identity = (actual.dev(), actual.ino());
         if tmux_identity != (expected.dev(), expected.ino()) {
@@ -1538,8 +1538,8 @@ impl CanvasIdentity {
             (self.process.pid, &p.executable, self.executable_identity),
             (self.server.pid, &p.tmux, self.tmux_identity),
         ] {
-            let actual = fs::metadata(format!("/proc/{pid}/exe"))
-                .map_err(|_| "canvas executable ended")?;
+            let actual =
+                fs::metadata(format!("/proc/{pid}/exe")).map_err(|_| "canvas executable ended")?;
             let installed = fs::metadata(path).map_err(|_| "installed canvas unavailable")?;
             if (actual.dev(), actual.ino()) != identity
                 || (installed.dev(), installed.ino()) != identity
@@ -1575,8 +1575,8 @@ impl CanvasIdentity {
             return Ok(false);
         };
         let identity = process_identity(client.pid).ok_or("canvas client ended")?;
-        let actual = fs::metadata(format!("/proc/{}/exe", client.pid))
-            .map_err(|_| "canvas client ended")?;
+        let actual =
+            fs::metadata(format!("/proc/{}/exe", client.pid)).map_err(|_| "canvas client ended")?;
         let expected = fs::metadata(&p.tmux).map_err(|_| "installed terminal unavailable")?;
         let t = fs::metadata(&client.tty).map_err(|_| "canvas client terminal ended")?;
         let fd = fs::metadata(format!("/proc/{}/fd/0", client.pid))
@@ -3374,28 +3374,52 @@ mod tests {
         let master = BridgeFd::new(master, false).unwrap();
         let visible = tokio::time::timeout(Duration::from_secs(1), async {
             let mut visible = Vec::new();
-            while !visible.windows(b"fixture-return-hint".len()).any(|v| v == b"fixture-return-hint") {
+            while !visible
+                .windows(b"fixture-return-hint".len())
+                .any(|v| v == b"fixture-return-hint")
+            {
                 let mut bytes = [0; 256];
                 let count = master.read(&mut bytes).await.unwrap();
                 assert!(count > 0);
                 visible.extend_from_slice(&bytes[..count]);
             }
             visible
-        }).await.unwrap();
-        assert!(visible.windows(b"fixture-desktop-failure".len()).any(|v| v == b"fixture-desktop-failure"));
-        assert!(!task.is_finished(), "old desktop input must not acknowledge the failure");
+        })
+        .await
+        .unwrap();
+        assert!(visible
+            .windows(b"fixture-desktop-failure".len())
+            .any(|v| v == b"fixture-desktop-failure"));
+        assert!(
+            !task.is_finished(),
+            "old desktop input must not acknowledge the failure"
+        );
         master.write_all(b"x").await.unwrap();
         tokio::task::yield_now().await;
-        assert!(!task.is_finished(), "unknown new keys must not acknowledge the failure");
+        assert!(
+            !task.is_finished(),
+            "unknown new keys must not acknowledge the failure"
+        );
         master.write_all(b"\r").await.unwrap();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(expected));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(expected)
+        );
     }
 
     #[tokio::test]
     async fn pre_child_geometry_error_waits_for_ack_without_rendering_private_details() {
         let (p, _) = fixture();
-        let error = geometry_connection(&p, Path::new("/outside/session-size.sock"), "session-size.sock")
-            .await.unwrap_err();
+        let error = geometry_connection(
+            &p,
+            Path::new("/outside/session-size.sock"),
+            "session-size.sock",
+        )
+        .await
+        .unwrap_err();
         let original = format!("{error}: fixture-private-detail");
         let expected = original.clone();
         let (master, slave) = input_boundary_test_pty();
@@ -3414,12 +3438,24 @@ mod tests {
             let mut bytes = [0; 256];
             let count = master.read(&mut bytes).await.unwrap();
             bytes[..count].to_vec()
-        }).await.unwrap();
-        assert!(visible.windows(b"fixture-generic-startup-failure".len()).any(|v| v == b"fixture-generic-startup-failure"));
-        assert!(!visible.windows(b"fixture-private-detail".len()).any(|v| v == b"fixture-private-detail"));
+        })
+        .await
+        .unwrap();
+        assert!(visible
+            .windows(b"fixture-generic-startup-failure".len())
+            .any(|v| v == b"fixture-generic-startup-failure"));
+        assert!(!visible
+            .windows(b"fixture-private-detail".len())
+            .any(|v| v == b"fixture-private-detail"));
         assert!(!task.is_finished());
         master.write_all(b"\x1b").await.unwrap();
-        assert_eq!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(expected));
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .unwrap()
+                .unwrap(),
+            Err(expected)
+        );
     }
 
     #[tokio::test]
@@ -3432,13 +3468,21 @@ mod tests {
             let bytes = [b'x'; 4096];
             let mut total = 0;
             loop {
-                let count = unsafe { libc::write(output.io.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+                let count = unsafe {
+                    libc::write(output.io.as_raw_fd(), bytes.as_ptr().cast(), bytes.len())
+                };
                 if count < 0 {
-                    assert_eq!(std::io::Error::last_os_error().kind(), std::io::ErrorKind::WouldBlock);
+                    assert_eq!(
+                        std::io::Error::last_os_error().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
                     break;
                 }
                 total += count as usize;
-                assert!(total <= 1024 * 1024, "fixture output must become backpressured");
+                assert!(
+                    total <= 1024 * 1024,
+                    "fixture output must become backpressured"
+                );
             }
             let (geometry, peer) = UnixStream::pair().unwrap();
             let (cancel, cancelled) = tokio::sync::oneshot::channel::<()>();
@@ -3447,17 +3491,28 @@ mod tests {
                     hint: "fixture-return-hint".into(),
                     deadline: tokio::time::Instant::now() + Duration::from_secs(5),
                 };
-                let stopped = session_failure_cancelled(async { let _ = cancelled.await; }, Some(geometry));
+                let stopped = session_failure_cancelled(
+                    async {
+                        let _ = cancelled.await;
+                    },
+                    Some(geometry),
+                );
                 acknowledge_session_failure(&input, &output, &ack, stopped).await;
             });
             tokio::task::yield_now().await;
             assert!(!task.is_finished());
             if close_geometry {
                 drop(peer);
-                tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+                tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap();
             } else {
                 cancel.send(()).unwrap();
-                tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+                tokio::time::timeout(Duration::from_secs(1), task)
+                    .await
+                    .unwrap()
+                    .unwrap();
                 // Geometry remained alive while cancellation ended the blocked write.
                 assert!(peer.peer_cred().is_ok());
             }
@@ -3468,13 +3523,21 @@ mod tests {
     #[tokio::test]
     async fn failure_geometry_watch_tolerates_a_previously_part_read_size_frame() {
         let (geometry, mut peer) = UnixStream::pair().unwrap();
-        let mut task = tokio::spawn(session_failure_cancelled(std::future::pending(), Some(geometry)));
+        let mut task = tokio::spawn(session_failure_cancelled(
+            std::future::pending(),
+            Some(geometry),
+        ));
         // The old size relay can be cancelled after consuming a frame header or
         // part of its payload. The ACK observes EOF, not a fresh size-frame parse.
         peer.write_all(b"remaining-size-payload").await.unwrap();
-        assert!(tokio::time::timeout(Duration::from_millis(20), &mut task).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(20), &mut task)
+            .await
+            .is_err());
         peer.shutdown().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -3487,19 +3550,42 @@ mod tests {
             hint: "must-not-be-presented".into(),
             deadline: tokio::time::Instant::now() - Duration::from_secs(1),
         };
-        assert_eq!(hold_session_failure(Err("original-error".into()), &input, &output, &expired, std::future::pending()).await, Err("original-error".into()));
+        assert_eq!(
+            hold_session_failure(
+                Err("original-error".into()),
+                &input,
+                &output,
+                &expired,
+                std::future::pending()
+            )
+            .await,
+            Err("original-error".into())
+        );
         assert!(!input_boundary_ready(master.as_raw_fd(), 0));
         let live = SessionFailureAck {
             hint: "must-not-be-presented".into(),
             deadline: tokio::time::Instant::now() + Duration::from_secs(5),
         };
-        assert_eq!(tokio::time::timeout(Duration::from_secs(1), hold_session_failure(Ok(()), &input, &output, &live, std::future::pending())).await.unwrap(), Ok(()));
+        assert_eq!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                hold_session_failure(Ok(()), &input, &output, &live, std::future::pending())
+            )
+            .await
+            .unwrap(),
+            Ok(())
+        );
         assert!(!input_boundary_ready(master.as_raw_fd(), 0));
         let short = SessionFailureAck {
             hint: "fixture-deadline".into(),
             deadline: tokio::time::Instant::now() + Duration::from_millis(30),
         };
-        tokio::time::timeout(Duration::from_secs(1), acknowledge_session_failure(&input, &output, &short, std::future::pending())).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            acknowledge_session_failure(&input, &output, &short, std::future::pending()),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -3512,47 +3598,84 @@ mod tests {
         assert_eq!(unsafe { libc::tcgetattr(fd, &mut original) }, 0);
         {
             let _terminal = SessionFailureTerminal::pin_fds(fd, fd).unwrap();
-            assert_ne!(unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_NONBLOCK, 0);
+            assert_ne!(
+                unsafe { libc::fcntl(fd, libc::F_GETFL) } & libc::O_NONBLOCK,
+                0
+            );
         }
         assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
         let mut restored: libc::termios = unsafe { std::mem::zeroed() };
         assert_eq!(unsafe { libc::tcgetattr(fd, &mut restored) }, 0);
-        assert_eq!((original.c_iflag, original.c_oflag, original.c_cflag, original.c_lflag),
-                   (restored.c_iflag, restored.c_oflag, restored.c_cflag, restored.c_lflag));
+        assert_eq!(
+            (
+                original.c_iflag,
+                original.c_oflag,
+                original.c_cflag,
+                original.c_lflag
+            ),
+            (
+                restored.c_iflag,
+                restored.c_oflag,
+                restored.c_cflag,
+                restored.c_lflag
+            )
+        );
         let other_flags = unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) };
         assert!(SessionFailureTerminal::pin_fds(fd, other_slave.as_raw_fd()).is_err());
         assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
-        assert_eq!(unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) }, other_flags);
+        assert_eq!(
+            unsafe { libc::fcntl(other_slave.as_raw_fd(), libc::F_GETFL) },
+            other_flags
+        );
 
         // Separate open file descriptions of the same TTY can have distinct
         // original flags; successful pinning must restore each exact flag set.
-        let independent = OpenOptions::new().read(true).write(true)
+        let independent = OpenOptions::new()
+            .read(true)
+            .write(true)
             .custom_flags(libc::O_NONBLOCK)
-            .open(format!("/proc/self/fd/{fd}")).unwrap();
+            .open(format!("/proc/self/fd/{fd}"))
+            .unwrap();
         let independent_flags = unsafe { libc::fcntl(independent.as_raw_fd(), libc::F_GETFL) };
         {
             let _terminal = SessionFailureTerminal::pin_fds(fd, independent.as_raw_fd()).unwrap();
         }
         assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
-        assert_eq!(unsafe { libc::fcntl(independent.as_raw_fd(), libc::F_GETFL) }, independent_flags);
+        assert_eq!(
+            unsafe { libc::fcntl(independent.as_raw_fd(), libc::F_GETFL) },
+            independent_flags
+        );
 
         let regular = tempfile::tempfile().unwrap();
-        let null = OpenOptions::new().read(true).write(true).open("/dev/null").unwrap();
+        let null = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/null")
+            .unwrap();
         for output in [&regular, &null] {
             let before = unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) };
             assert!(SessionFailureTerminal::pin_fds(fd, output.as_raw_fd()).is_err());
             assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETFL) }, flags);
-            assert_eq!(unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) }, before);
+            assert_eq!(
+                unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) },
+                before
+            );
         }
         let null_flags = unsafe { libc::fcntl(null.as_raw_fd(), libc::F_GETFL) };
         assert!(SessionFailureTerminal::pin_fds(null.as_raw_fd(), null.as_raw_fd()).is_err());
-        assert_eq!(unsafe { libc::fcntl(null.as_raw_fd(), libc::F_GETFL) }, null_flags);
+        assert_eq!(
+            unsafe { libc::fcntl(null.as_raw_fd(), libc::F_GETFL) },
+            null_flags
+        );
 
         // Registration itself can fail after O_NONBLOCK was set (epoll rejects
         // regular files). The retained duplicate must restore the original OFD.
         let regular_flags = unsafe { libc::fcntl(regular.as_raw_fd(), libc::F_GETFL) };
         assert!(BridgeFd::new(regular.try_clone().unwrap(), true).is_err());
-        assert_eq!(unsafe { libc::fcntl(regular.as_raw_fd(), libc::F_GETFL) }, regular_flags);
+        assert_eq!(
+            unsafe { libc::fcntl(regular.as_raw_fd(), libc::F_GETFL) },
+            regular_flags
+        );
     }
 
     #[tokio::test]
@@ -4779,7 +4902,9 @@ impl BridgeFd {
         // AsyncFd::new consumes its File even on error. Keep a live duplicate
         // until registration succeeds so failure can restore this same open
         // file description, never a closed or recycled raw descriptor number.
-        let rollback = file.try_clone().map_err(|_| "cannot pin remote stream flags")?;
+        let rollback = file
+            .try_clone()
+            .map_err(|_| "cannot pin remote stream flags")?;
         if flags < 0
             || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
         {
@@ -4788,7 +4913,9 @@ impl BridgeFd {
         let io = match tokio::io::unix::AsyncFd::new(file) {
             Ok(io) => io,
             Err(_) => {
-                unsafe { libc::fcntl(rollback.as_raw_fd(), libc::F_SETFL, flags); }
+                unsafe {
+                    libc::fcntl(rollback.as_raw_fd(), libc::F_SETFL, flags);
+                }
                 return Err("remote stream readiness unavailable".into());
             }
         };
@@ -4928,8 +5055,12 @@ impl SessionFailureTerminal {
         // can acquire nonblocking flags or the terminal can enter raw mode.
         let input_file = BridgeFd::duplicate(input_fd)?;
         let output_file = BridgeFd::duplicate(output_fd)?;
-        let i = input_file.metadata().map_err(|_| "selected session input ended")?;
-        let o = output_file.metadata().map_err(|_| "selected session output ended")?;
+        let i = input_file
+            .metadata()
+            .map_err(|_| "selected session input ended")?;
+        let o = output_file
+            .metadata()
+            .map_err(|_| "selected session output ended")?;
         if !i.file_type().is_char_device()
             || !o.file_type().is_char_device()
             || (i.dev(), i.ino(), i.rdev()) != (o.dev(), o.ino(), o.rdev())
@@ -4950,7 +5081,11 @@ impl SessionFailureTerminal {
         let input = BridgeFd::new(input_file, true)?;
         let mut output = BridgeFd::new(output_file, true)?;
         output.previous_flags = Some(output_flags);
-        Ok(Self { input, output, _terminal: terminal })
+        Ok(Self {
+            input,
+            output,
+            _terminal: terminal,
+        })
     }
 }
 
@@ -4965,7 +5100,8 @@ fn duplicate_geometry(stream: &UnixStream) -> Result<UnixStream, String> {
         return Err("cannot retain selected session geometry lifetime".into());
     }
     let stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) };
-    UnixStream::from_std(stream).map_err(|_| "cannot observe selected session geometry lifetime".into())
+    UnixStream::from_std(stream)
+        .map_err(|_| "cannot observe selected session geometry lifetime".into())
 }
 
 async fn session_failure_cancelled(
