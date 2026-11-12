@@ -694,7 +694,12 @@ fn guard(
     // directly already proved its process, PTY, session and window above.
     panes.insert(p.id.clone(), p.clone());
     let focused = server.cmd(&[
-        "display-message", "-p", "-c", &c.name, "-t", &c.window,
+        "display-message",
+        "-p",
+        "-c",
+        &c.name,
+        "-t",
+        &c.window,
         "#{client_pid}\t#{client_window_id}\t#{client_pane_id}",
     ])?;
     let focused: Vec<_> = focused.split('\t').collect();
@@ -717,7 +722,10 @@ fn guard(
     }
     for window in windows {
         let info = server.cmd(&[
-            "display-message", "-p", "-t", window,
+            "display-message",
+            "-p",
+            "-t",
+            window,
             "#{window_id}\t#{window_panes}\t#{pane_id}",
         ])?;
         let info: Vec<_> = info.split('\t').collect();
@@ -1623,8 +1631,18 @@ mod tests {
         assert_eq!(app, PaneProtection::Application);
         window.push(app);
         for action in [
-            "new", "monitor", "center", "float", "tile", "focus", "maximize",
-            "minimize", "restore", "snap-left", "close", "close-confirm",
+            "new",
+            "monitor",
+            "center",
+            "float",
+            "tile",
+            "focus",
+            "maximize",
+            "minimize",
+            "restore",
+            "snap-left",
+            "close",
+            "close-confirm",
         ] {
             assert!(guard_protection(app, action, &window, 5).is_ok());
         }
@@ -1638,8 +1656,16 @@ mod tests {
         let roles = desktop_roles();
         for role in &roles {
             for action in [
-                "center", "float", "tile", "minimize", "maximize", "restore",
-                "snap-left", "title-click", "close", "close-confirm",
+                "center",
+                "float",
+                "tile",
+                "minimize",
+                "maximize",
+                "restore",
+                "snap-left",
+                "title-click",
+                "close",
+                "close-confirm",
             ] {
                 assert!(guard_protection(*role, action, &roles, 4).is_err());
             }
@@ -1647,7 +1673,9 @@ mod tests {
         // All three real agent flags are evaluated by the same expression
         // emitted into the generated bindings. A forged desktop flag loses.
         for flag in [
-            "@mios-workspace-head", "@mios-mcp-owner", "@mios-workspace-worker",
+            "@mios-workspace-head",
+            "@mios-mcp-owner",
+            "@mios-workspace-worker",
         ] {
             assert!(AGENT_PANE.contains(flag));
             let agent = pane_protection("1", MANAGED_PANE, "1", &["1", "", "", ""]);
