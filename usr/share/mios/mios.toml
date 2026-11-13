@@ -12112,7 +12112,7 @@ prefixes = ["sourcedir", "confdir", "driftfile", "rtcsync", "ntsdumpdir", "leaps
 [wsl2]
 networking_mode      = "NAT"
 localhost_forwarding = true
-firewall             = false        # only meaningful under mirrored mode
+firewall             = true         # retain WSL filtering in NAT and mirrored modes
 gui_applications     = true
 dns_tunneling        = true
 auto_proxy           = true
