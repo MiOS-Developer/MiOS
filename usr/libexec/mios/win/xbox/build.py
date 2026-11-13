@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: THE MiOS-Xbox image build entry (xb-15, XB-1..XB-4): render_spec (layered SSOT -> xbox-spec.json) -> resolve_latest (newest upstream, no pins -> build-manifest.json) -> fetch (download + verify every artefact) -> family (offline: the image's BuildBranch has a captured Start layout) -> answer (autounattend + SetupComplete chain + offline .reg + components from the SAME spec) -> conform rendered gate -> GPU-less worker over WinRM (UUP Dump converter + New-MiOSXboxImage.ps1 DISM servicing + ISO) -> read-only copy-out -> conform image gate -> build-<ts>/ manifest. Every stage fails closed; heavy stages run under the SSOT heavy lock in a MemoryMax scope; the worker never runs next to the target/base VM and never holds a GPU.
-# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
+# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/spec_coverage.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
 # AI-functions: build_layers, storage_capacity, require_storage_capacity, plan, Build, host_preflight, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
 """MiOS-Xbox build.
 
@@ -38,6 +38,7 @@ import answer as A  # noqa: E402
 import fetch as F  # noqa: E402
 import worker as W  # noqa: E402
 import capture as CAP  # noqa: E402
+import spec_coverage as SC  # noqa: E402
 
 mios_toml = render_spec.mios_toml
 SCOPED_ENV = "MIOS_XBOX_BUILD_SCOPED"
@@ -186,7 +187,8 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
             if pw.lower() == "mios":
                 raise BuildError(f"[plan] users.{u_key}.password: equals vendor default 'mios' (refused)")
     x = doc["spec"]
-    problems: List[str] = []
+    coverage, coverage_bad = SC.check(merged, layers, _TREE)
+    problems: List[str] = [f"spec coverage: {v}" for v in coverage_bad]
     for c in x["components"]["ship"]:
         if c["kind"] != "native" and not os.path.isfile(os.path.join(_TREE, c["source"])):
             problems.append(f"component {c['name']}: {c['source']} missing")
@@ -250,6 +252,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
         "worker_needs_gib": need,
         "storage": capacity,
         "watchdog_inactive": W.watchdog_inactive(),
+        "spec_coverage": coverage,
         "problems": problems,
         "blockers": blockers,
     }

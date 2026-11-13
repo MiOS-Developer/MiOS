@@ -19467,6 +19467,7 @@ unit = [
     "tests/test-mios-xbox-identity.py",
     "tests/test-mios-xbox-fetch-pinned.py",
     "tests/test-mios-xbox-shell.py",
+    "tests/test-mios-spec-coverage.py",
     "tests/test-adversarial-r7-desktop-resilience.py",
     "tests/test-adversarial-r8-dock-drawer.py",
     "tests/test-tasks-integrity.py",
@@ -19641,6 +19642,88 @@ archetype = "endpoint"
 artifacts = ["usb-installer", "iso"]
 doc       = "usr/share/doc/mios/adr/0008-mios-cat-unified-entry-and-minification.md"
 status    = "partial"
+
+# Spec coverage (mios-spec-01): the images each spec section applies to; spec_coverage.py fails applicable keys an image never reads.
+[spec.coverage]
+images_ref = "variants.entries"   # the image identities
+gated      = ["mios-xbox"]        # images whose pipeline the gate traces; the others report UNRUN
+roots      = { colors = "key", theme = "key", branding = "key", "windows.xbox" = "section" }
+
+[spec.coverage.sections]
+colors                 = { images = "all" }
+theme                  = { images = "all" }
+"theme.cursor_linux"   = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"theme.cursor_windows" = { images = ["mios-xbox", "mios-xbox-arm"] }
+"theme.edge"           = { images = ["mios", "mios-dev", "mios-field"] }
+"theme.fastfetch"      = { images = "all" }
+"theme.font"           = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"theme.prompt"         = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"theme.search"         = { images = ["mios", "mios-dev", "mios-field"] }
+"theme.shell"          = { images = ["mios", "mios-dev", "mios-field"] }
+"theme.terminal"       = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"theme.tmux"           = { images = ["mios", "mios-dev", "mios-metal", "mios-field"] }
+"theme.wallpaper"      = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"theme.web"            = { images = ["mios", "mios-dev", "mios-field"] }
+"theme.windows"        = { images = ["mios-xbox", "mios-xbox-arm"] }
+branding               = { images = "all" }
+"branding.dashboard"   = { images = ["mios", "mios-dev", "mios-field", "mios-xbox", "mios-xbox-arm"] }
+"windows.xbox"         = { images = ["mios-xbox", "mios-xbox-arm"] }
+
+[spec.coverage.not_applicable.mios-xbox]
+"theme.cursor_linux.size"           = "the Windows build sizes cursors with [theme.cursor_windows].base_size; [spec.parity] keeps the two equal"
+"theme.font.url"                    = "a Linux build download; Windows images install the vendored, sha256-pinned native_archive"
+"theme.font.vercel_repo"            = "a Linux build download; Windows images install the vendored, sha256-pinned native_archive"
+"theme.font.symbols_url"            = "a Linux build download; Windows images install the vendored, sha256-pinned native_archive"
+"theme.font.install_scope"          = "the Linux per-user or system font install choice; Windows images register the font machine-wide"
+"theme.font.cell_w_px"              = "terminal window geometry of the bootstrap Windows host (Get-MiOS window sizing)"
+"theme.font.cell_h_px"              = "terminal window geometry of the bootstrap Windows host (Get-MiOS window sizing)"
+"theme.font.chrome_w_px"            = "terminal window geometry of the bootstrap Windows host (Get-MiOS window sizing)"
+"theme.font.chrome_h_px"            = "terminal window geometry of the bootstrap Windows host (Get-MiOS window sizing)"
+"theme.terminal.dev_profile_name"   = "the bootstrap host's MiOS-DEV hub terminal; MiOS-Xbox carries no MiOS-DEV"
+"theme.terminal.hub_target_profile" = "the bootstrap host's MiOS-DEV hub terminal; MiOS-Xbox carries no MiOS-DEV"
+"theme.terminal.summon_keys"        = "the bootstrap host's MiOS-DEV hub terminal; MiOS-Xbox carries no MiOS-DEV"
+"theme.terminal.summon_window_name" = "the bootstrap host's MiOS-DEV hub terminal; MiOS-Xbox carries no MiOS-DEV"
+"theme.terminal.center_on_launch"   = "window placement on the bootstrap Windows host; the image's WT fragment carries profiles only"
+"theme.prompt.glyph_mode"           = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.remote_glyph_mode"    = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.powerline_right"      = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.powerline_left"       = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.powerline_right_soft" = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.powerline_left_soft"  = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.leading_diamond"      = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.trailing_diamond"     = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.prompt_symbol"        = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.prompt_symbol_root"   = "an input of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme the image stages"
+"theme.prompt.ascii"                = "ASCII fallbacks of the Linux prompt and tmux renderers; the Windows prompt is the omp_path theme"
+"theme.wallpaper.linux_runner"      = "the Linux QML wallpaper host"
+"theme.wallpaper.linux_host"        = "the Linux QML wallpaper host"
+"theme.wallpaper.linux_web_host"    = "the Linux QML wallpaper host"
+"windows.xbox.research"             = "maintainers' research notes kept beside the spec; not image content"
+
+[spec.coverage.pending.mios-xbox]
+"theme.unfocused_acrylic"         = "Windows Terminal unfocused look: not in the MiOS WT fragment yet (xbox-bm-39)"
+"theme.unfocused_opacity"         = "Windows Terminal unfocused look: not in the MiOS WT fragment yet (xbox-bm-39)"
+"theme.system_backdrop"           = "Windows Terminal backdrop: not in the MiOS WT fragment yet (xbox-bm-39)"
+"theme.launch_mode"               = "a Windows Terminal global setting; fragments carry profiles only, so it needs a per-user step (xbox-bm-39)"
+"theme.font.weight"               = "Windows Terminal profile font weight: not in the MiOS WT fragment yet (xbox-bm-39)"
+"theme.terminal.windows_codepage" = "the UTF-8 console code page: the image's all-users profile does not set it yet (xbox-bm-39)"
+"theme.windows.opacity_pct"       = "the Windows transparency level: no image mechanism yet (xbox-bm-39)"
+"theme.wallpaper.renderer"        = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"theme.wallpaper.framerate"       = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"theme.wallpaper.motion"          = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"theme.wallpaper.native"          = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"branding.living_wallpaper"       = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"branding.living_wallpaper_mode"  = "living-wallpaper settings: MiOS-Xbox renders none of them yet (xbox-bm-39)"
+"branding.logo_ascii"             = "the MiOS ASCII logo for fastfetch: the image does not stage it yet (xbox-bm-39)"
+"branding.logo_image"             = "the MiOS raster logo: no Windows surface uses it yet (xbox-bm-39)"
+"branding.icon_ico"               = "the MiOS app icon: no image shortcut uses it yet (xbox-bm-39)"
+"branding.tagline"                = "the MiOS taglines: no Windows surface renders them yet (xbox-bm-39)"
+"branding.tagline_long"           = "the MiOS taglines: no Windows surface renders them yet (xbox-bm-39)"
+"branding.tagline_app"            = "the MiOS taglines: no Windows surface renders them yet (xbox-bm-39)"
+"branding.dashboard"              = "the framed mios dash dashboard: the image's local dash verb does not render it yet (xbox-bm-39)"
+
+[spec.parity]
+equal = [["theme.cursor_windows.base_size", "theme.cursor_linux.size"]]   # shared identity values Windows and Linux images must match
 
 # Image profiles (ADR-0025): every MiOS image kind is the one pipeline run
 # under a profile. A profile selects phases from [build.phases].list and
