@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for xbox-bm-01 (ONE MiOS-Xbox image for VMs and bare metal, decided per PCI device at setup) and xbox-bm-37 (exactly one Looking Glass server): the SSOT [windows.xbox.devices] table and every guest-only piece's required_device are validated by render_spec; the SetupComplete stage probes devices first and gates every guest step on its device (HypervisorPresent is a fact only); the rendered PowerShell gate, EXECUTED against a fake bare-metal and a fake VM PCI set, records not applicable (never failed) on bare metal and runs every step on the VM; the image gate (conform) reports an ungated or wrongly gated step, a second Looking Glass server and a mirror task off \MiOS\; the probe counts not applicable (with evidence) as conforming and still reports a VM that claims Looking Glass without IVSHMEM, a guest service running without its device, a leftover root-path mirror task and two servers. Every positive control has a planted negative control. No network, no VM.
-# AI-related: usr/share/mios/mios.toml [windows.xbox.devices] [windows.xbox.guest_tools.*] [windows.xbox.provision], usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, usr/share/mios/windows/mios-looking-glass-idd.ps1
+# AI-hint: Two-sided tests for xbox-bm-01/37: one MiOS-Xbox image for VMs and bare metal (guest steps gated per PCI device at setup, executed in PowerShell) and one Looking Glass server; spec, image gate and probe each name a planted defect.
+# AI-related: usr/share/mios/mios.toml, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, usr/share/mios/windows/mios-looking-glass-idd.ps1
 """Run: python3 -I tests/test-mios-xbox-aio-devices.py -v   (temp dirs only; no network, no VM; the PowerShell gate
 cases run with pwsh or Windows PowerShell and are skipped, named as UNRUN, without either)"""
 
@@ -43,6 +43,12 @@ class Base(P.PayloadBase):
         super().setUpClass()
         cls.items = S.items_from_spec(cls.doc, P.ROOT)
         cls.gate_items = [it for it in cls.items if it["kind"] in ("guest_tool", "looking_glass")]
+
+    def scratch(self, prefix: str = "t.") -> str:
+        """A fresh directory under the class scratch, removed when the test ends."""
+        d = tempfile.mkdtemp(prefix=prefix, dir=self.tmp)
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
 
     def conform_findings(self, setup_text: str):
         d = self.copy_payload()
@@ -135,7 +141,7 @@ class TestGateExecution(Base):
     def run_gate(self, pci, plant_ungated: bool = False):
         """Execute the rendered PS library + environment_probe + every guest gate (bodies replaced by a marker, or by the
         old bare-metal failure when plant_ungated) against a fake PCI set. Returns (steps state, environment record)."""
-        d = tempfile.mkdtemp(dir=self.tmp)
+        d = self.scratch("gate.")
         rec = os.path.join(d, "environment.json")
         state = os.path.join(d, "setup-state.json")
         probe = self.step("environment_probe").replace(self.x["devices"]["record"].replace("'", "''"), rec.replace("'", "''"))

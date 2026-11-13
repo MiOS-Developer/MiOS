@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for the MiOS Windows shell in every MiOS-Xbox image (xbox-bm-39): resolve_latest resolves PowerShell 7, oh-my-posh and fastfetch to the newest GitHub release's ONE asset of the SSOT glob anchored by GitHub's asset digest and refuses drafts, zero/several matches, a missing digest, a foreign download URL and pinned channels/assets; render_spec renders the machine-wide Windows Terminal fragment (MiOS profile + the wt_profile_inject colour scheme), the all-users PowerShell profile with the [verbs] catalogue, its two hooks and the tool configs, each with exact bytes and sha256, and refuses non-GitHub upstreams, pins, unsafe names/properties, a non-RemoteSigned machine policy, a misplaced fragment/profile, missing local verbs and bad terminal looks; answer.py stages exactly those bytes and the verified tool files (refusing tampered spec text, unfetched or changed inputs and unsafe/incomplete archives) and installs PowerShell 7 in the SYSTEM stage behind its sha256 + Authenticode; conform and the probe name a missing/altered shell file, a missing tool, an unstaged or never-run PowerShell installer, a missing pwsh.exe in the guest and an off-spec execution policy; the rendered profile is EXECUTED in Windows PowerShell 5.1 and PowerShell 7. No network, no VM.
-# AI-related: usr/share/mios/mios.toml [windows.xbox.shell] [verbs] [theme] [theme.terminal] [theme.fastfetch], usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/libexec/mios/win/wt_profile_inject.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, tests/_mios_xbox_fixtures.py
+# AI-hint: Two-sided tests for the MiOS Windows shell in MiOS-Xbox images (xbox-bm-39): resolver, render, payload, the SYSTEM PowerShell 7 install, image gate and probe each refuse or name a planted drift; the profile runs in PowerShell 5.1 and 7.
+# AI-related: usr/share/mios/mios.toml, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/libexec/mios/win/wt_profile_inject.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, tests/_mios_xbox_fixtures.py
 """Run: python3 -I tests/test-mios-xbox-shell.py -v   (temp dirs only; no network, no VM; the profile-execution cases run
 with Windows PowerShell and/or pwsh and are skipped, named as UNRUN, without them)"""
 
@@ -77,6 +77,12 @@ class Base(P.PayloadBase):
         cls.sh = cls.doc["shell"]
         cls.files = {f["name"]: f for f in cls.sh["files"]}
         cls.inst_rel = A._win_rel(cls.x["components"]["dest_dir"]) + "/installers"
+
+    def scratch(self, prefix: str = "t.") -> str:
+        """A fresh directory under the class scratch, removed when the test ends."""
+        d = tempfile.mkdtemp(prefix=prefix, dir=self.tmp)
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
 
     def resolved(self, merged):
         x = merged["windows"]["xbox"]
@@ -233,7 +239,7 @@ _DEL = _Del()
 
 class TestPayload(Base):
     def stage(self, doc, inputs):
-        return A.stage_shell(doc, inputs, tempfile.mkdtemp(prefix="shell.", dir=self.tmp), P.ROOT)
+        return A.stage_shell(doc, inputs, self.scratch("shell."), P.ROOT)
 
     def test_positive_payload_carries_every_shell_file(self):
         rows = {r["name"]: r for r in self.summary["shell"]}
@@ -265,7 +271,7 @@ class TestPayload(Base):
             d["shell"]["files"][0]["text"] += " "
 
         def bad_zip(member):
-            p = os.path.join(tempfile.mkdtemp(dir=self.tmp), "fastfetch-windows-amd64.zip")
+            p = os.path.join(self.scratch("zip."), "fastfetch-windows-amd64.zip")
             with zipfile.ZipFile(p, "w") as z:
                 z.writestr(member, b"x")
             inputs = copy.deepcopy(self.inputs)

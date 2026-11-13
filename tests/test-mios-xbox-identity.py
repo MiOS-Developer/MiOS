@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for xbox-bm-39 (the MiOS identity in every MiOS-Xbox image): render_spec derives the accent, the Bibata cursor scheme and the Geist Mono Nerd Font family from the one shared SSOT value each and refuses a malformed accent, an unpinned/plain-http/off-theme cursor build, a role outside the scheme, an escaping install_dir, a bad base size and a font archive that drifted from its pin; answer.py stages exactly the pinned files and refuses a cursor archive with the wrong sha256, an install.inf that disagrees with the SSOT (scheme name, CUR_DIR, file order, role map), a missing cursor file and a changed font archive; the image gate (conform, rendered) and the in-guest probe (probe.py, and the probe script's file_hash branch EXECUTED in PowerShell) name a missing or altered font, a missing cursor file, a missing scheme value and an off-spec accent. Every positive control has a planted negative control. No network, no VM.
-# AI-related: usr/share/mios/mios.toml [windows.xbox.identity] [theme.cursor_windows] [theme.font] [colors], usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, tests/_mios_xbox_fixtures.py
+# AI-hint: Two-sided tests for xbox-bm-39, the MiOS identity of every MiOS-Xbox image: accent, cursor scheme, font, persistent theme and OEM branding from the SSOT; render, payload, image gate and probe each refuse or name a planted drift.
+# AI-related: usr/share/mios/mios.toml, usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, tests/_mios_xbox_fixtures.py
 """Run: python3 -I tests/test-mios-xbox-identity.py -v   (temp dirs only; no network, no VM; the probe-script case runs
 with pwsh or Windows PowerShell and is skipped, named as UNRUN, without either)"""
 
@@ -85,6 +85,12 @@ class Base(P.PayloadBase):
         cls.idn = cls.doc["identity"]
         cls.cur = cls.idn["cursor"]
         cls.font = cls.idn["font"]
+
+    def scratch(self, prefix: str = "t.") -> str:
+        """A fresh directory under the class scratch, removed when the test ends."""
+        d = tempfile.mkdtemp(prefix=prefix, dir=self.tmp)
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
 
     def resolved(self, merged=None):
         """(windows.xbox table, every resolved identity *_ref) the way render() hands them to render_identity."""
@@ -237,7 +243,7 @@ class TestSpec(Base):
 
 class TestPayload(Base):
     def stage(self, doc, inputs, tree_root=None):
-        out = tempfile.mkdtemp(prefix="ident.", dir=self.tmp)
+        out = self.scratch("ident.")
         return A.stage_identity(doc, inputs, out, tree_root or P.ROOT), out
 
     def bad_archive(self, plant):
@@ -246,7 +252,7 @@ class TestPayload(Base):
         doc = copy.deepcopy(self.doc)
         fake = copy.deepcopy(doc)
         plant(fake["identity"]["cursor"])
-        inp = FX.cursor_archive_inputs(tempfile.mkdtemp(prefix="cur.", dir=self.tmp), fake)
+        inp = FX.cursor_archive_inputs(self.scratch("cur."), fake)
         doc["identity"]["cursor"]["asset_sha256"] = inp["cursor_archive"]["sha256"]
         return doc, {"identity": inp}
 
@@ -323,14 +329,14 @@ class TestPayload(Base):
                 self.stage(doc, inputs)
 
     def test_negative_stage_refuses_a_font_archive_changed_since_render(self):
-        tree = tempfile.mkdtemp(prefix="tree.", dir=self.tmp)
+        tree = self.scratch("tree.")
         arch = os.path.join(tree, *self.font["archive"].split("/"))
         os.makedirs(os.path.dirname(arch))
         rezip(os.path.join(P.ROOT, *self.font["archive"].split("/")), arch, drop=(self.font["files"][0]["member"],))
         with self.assertRaisesRegex(A.PayloadError, "absent or changed"):
             self.stage(self.doc, self.inputs, tree)
         with self.assertRaisesRegex(A.PayloadError, "absent or changed"):
-            self.stage(self.doc, self.inputs, tempfile.mkdtemp(prefix="empty.", dir=self.tmp))
+            self.stage(self.doc, self.inputs, self.scratch("empty."))
 
     def test_negative_stage_refuses_a_background_that_differs_from_the_spec(self):
         doc = copy.deepcopy(self.doc)
@@ -468,7 +474,7 @@ class TestProbe(Base):
         m = re.search(r"^([ \t]*)'file_hash' \{\r?\n.*?^\1\}", text, re.S | re.M)
         self.assertIsNotNone(m, "the probe script has no file_hash branch")
         f0 = self.font["files"][0]
-        drive = tempfile.mkdtemp(prefix="sysdrive.", dir=self.tmp)
+        drive = self.scratch("sysdrive.")
         dst = os.path.join(drive, *self.font["dest_dir"].split("/"), f0["file"])
         os.makedirs(os.path.dirname(dst))
         shutil.copyfile(os.path.join(self.pay, *self.font["dest_dir"].split("/"), f0["file"]), dst)

@@ -209,7 +209,8 @@ Get-Service -Name 'Looking Glass (host)', 'LGIddHelper' -ErrorAction SilentlyCon
 # -- Mirror every guest display (Looking Glass IDD, emulated VNC/SPICE console, dGPU output) -------------
 # Windows only applies a display topology inside a signed-in session and remembers it afterwards (the
 # sign-in screen then uses it too), so a scheduled task applies Duplicate at every sign-in, for any user.
-# The task lives under \MiOS\ with the other MiOS tasks so Verify, the probe and the image gate see it (xbox-bm-01).
+
+# The task lives under \MiOS\ with the other MiOS tasks, so Verify, the probe and the image gate see it (xbox-bm-01).
 function Split-MiOSTaskName([string]$Name) {
     $parts = @($Name -split '[\\/]' | Where-Object { $_ })
     if (-not $parts.Count) { throw "empty scheduled task name '$Name'" }

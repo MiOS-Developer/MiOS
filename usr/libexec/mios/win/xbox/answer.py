@@ -269,8 +269,7 @@ def render_answer_file(doc: Dict[str, Any]) -> bytes:
     _el(o, "HideOnlineAccountScreens", bool(oobe["hide_online_account_screens"]))
     _el(o, "HideWirelessSetupInOOBE", bool(oobe["hide_wireless_setup"]))
     _el(o, "ProtectYourPC", int(oobe["protect_your_pc"]))
-    # the persistent MiOS theme (xbox-bm-39): Microsoft's supported way to customize the Windows default theme every new
-    # profile gets as its CurrentTheme (a .theme file can no longer be the default)
+    # the persistent MiOS theme (xbox-bm-39): unattend Themes, the supported way to set the default theme
     th = ((doc.get("identity") or {}).get("theme") or {})
     if not th.get("name") or not (th.get("background") or {}).get("unattend") or not th.get("window_color"):
         raise PayloadError("xbox-spec.json has no identity.theme (render it with render_spec.py)")

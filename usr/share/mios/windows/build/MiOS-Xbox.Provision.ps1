@@ -149,11 +149,8 @@ if ($Stage -eq 'Retry') {
 
 # Verify (SYSTEM) -- records state read-only; its only writes besides the record: removing the finished hydrate task, and
 # the first-sign-in reconcile below (AutoLogonCount deleted, the desktop hive's DEFAULT_USER values re-applied)
-#
-# Guest devices (xbox-bm-01): ONE image for VMs and bare metal. The SSOT [windows.xbox.devices] PCI ids are re-probed
-# live here; a guest-only service whose required_device is absent (or that the SSOT does not install) is recorded
-# "not applicable" with the evidence and is never counted as not running -- but one that RUNS without its device is an
-# issue. HypervisorPresent is recorded as a fact only (MiOS's nested_virt_features makes it true on bare metal).
+
+# Guest devices (xbox-bm-01): live PCI re-probe; a guest service without its device is "not applicable" unless it runs.
 $pciOk = $true
 $pciNow = @()
 try {

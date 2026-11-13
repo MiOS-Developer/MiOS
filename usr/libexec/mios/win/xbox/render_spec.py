@@ -698,10 +698,7 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     def add(owner: str, hive: str, key: str, name: str, typ: str, data) -> None:
         reg.append({"owner": owner, "hive": hive, "key": key, "name": name, "type": typ, "data": data})
 
-    # accent: the shared [colors].accent reaches Windows through Themes/WindowColor (the answer file), from which Windows
-    # derives its accent palette at the first sign-in; the Default profile carries the accent values Windows keeps
-    # as given (DWM AccentColor, Explorer AccentColorMenu) and shows it on title bars and Start/taskbar (prevalence).
-    # Derived values (StartColorMenu, AccentPalette, ColorizationColor's alpha) are Windows' own and are not pinned.
+    # accent: WindowColor drives Windows' palette; the Default profile pins only the values Windows keeps as given
     add("identity.accent.dwm_accent", "DEFAULT_USER", DWM_KEY, "AccentColor", "REG_DWORD", abgr)
     add("identity.accent.dwm_prevalence", "DEFAULT_USER", DWM_KEY, "ColorPrevalence", "REG_DWORD", 1)
     add("identity.accent.menu", "DEFAULT_USER", ACCENT_KEY, "AccentColorMenu", "REG_DWORD", abgr)

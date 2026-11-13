@@ -13152,8 +13152,7 @@ tagline_long        = "My Personal Operating System  --  Immutable Fedora AI Wor
 tagline_app         = "My Personal Operating System"
 living_wallpaper      = true
 living_wallpaper_mode = "shader"
-# Windows OEM information (Settings > System > About; OEMInformation). Vendor defaults of the keys the
-# mios-bootstrap host layer also carries (Law 15: one surface, the same values in both repos).
+# Windows OEM information (OEMInformation): vendor defaults of the keys the mios-bootstrap host layer carries (Law 15).
 oem_manufacturer    = "MiOS"
 oem_model           = "My Personal Operating System"
 oem_support_url     = "https://github.com/mios-dev"
@@ -13684,13 +13683,10 @@ install_at  = "SetupComplete"     # staged offline, installed by the IDD install
 installer   = "usr/share/mios/windows/mios-looking-glass-idd.ps1"   # MiOS installer reused for the IDD
 required_device = "ivshmem"       # [windows.xbox.devices.ivshmem]: no IVSHMEM -> no IDD and no Duplicate topology (not applicable)
 
-# --- guest devices (xbox-bm-01): ONE MiOS-Xbox image for VMs and bare metal. SetupComplete probes the present PCI
-# functions; a guest tool or Looking Glass piece whose required_device is absent is "not applicable" -- recorded with
-# the probe's evidence, never "failed", never retried, its service never started. Win32_ComputerSystem.HypervisorPresent
-# is recorded as a fact only: MiOS's own nested_virt_features step makes it true on bare metal. pci = "VVVV:DDDD"
-# vendor:device ids (hex, as in PCI\VEN_VVVV&DEV_DDDD), "VVVV:*" = any function of that vendor.
+# --- guest devices (xbox-bm-01): one image for VMs and bare metal; a piece whose device is absent is "not applicable".
 [windows.xbox.devices]
 record = 'C:\ProgramData\MiOS\environment.json'   # SetupComplete's device facts; Verify and the probe re-probe live
+# pci: "VVVV:DDDD" hex vendor:device ids (PCI\VEN_VVVV&DEV_DDDD); "VVVV:*" = any function of that vendor
 
 [windows.xbox.devices.virtio]
 pci = ["1AF4:*"]                  # any virtio function (Red Hat PCI vendor): the virtio-win guest tools MSI
@@ -13713,13 +13709,8 @@ cursor_ref        = "theme.cursor_windows"          # pinned Windows build of th
 cursor_theme_ref  = "theme.cursor_linux.theme"      # the same cursor theme as the Linux images (parity)
 font_ref          = "theme.font"                    # family + vendored, sha256-pinned archive (native_archive/native_sha256)
 font_dir          = 'Windows\Fonts'                 # image-relative: the system font directory
-system_root       = 'Windows'                       # image-relative: %SystemRoot% (cursor install_dir, theme background)
-# The cursor role/scheme values are absolute REG_SZ paths on C: -- every MiOS-Xbox install lands on C: (the answer file's
-# ModifyPartition gives the Windows partition Letter C); an install elsewhere would need REG_EXPAND_SZ %SystemRoot% paths.
-# The persistent MiOS theme: the Windows default theme every new profile gets (its CurrentTheme), written through the
-# supported unattend Themes element (ThemeName + DesktopBackground + WindowColor + UWPAppsUseLightTheme), plus the
-# Default profile's system/app colour mode and transparency. The background is a solid image of background_color_ref
-# rendered at build time (Themes requires one under %WINDIR%; no stock wallpaper is shipped).
+system_root       = 'Windows'                       # image-relative %SystemRoot%; cursor paths are absolute REG_SZ on C: (Letter C)
+# The persistent MiOS theme: unattend Themes plus the Default profile's colour mode; the background is a solid BMP.
 theme_name_ref        = "theme.windows.theme_name"
 theme_mode_ref        = "theme.mode"                # "dark" | "light"
 transparency_ref      = "theme.windows.transparency"
@@ -13731,11 +13722,7 @@ oem_model_ref         = "branding.oem_model"
 oem_support_url_ref   = "branding.oem_support_url"
 oem_support_hours_ref = "branding.oem_support_hours"
 
-# --- The MiOS Windows shell (xbox-bm-39, mios-spec-01): what Get-MiOS Pass 1 installs per user, baked for every profile
-# of every MiOS-Xbox image -- PowerShell 7, oh-my-posh with the MiOS prompt, fastfetch with the MiOS config, the MiOS
-# Windows Terminal profile + colour scheme (a machine-wide WT fragment) and an all-users PowerShell profile carrying
-# the `mios` verbs ([verbs]). The binaries are resolved to the newest release at build time with the GitHub
-# release-asset sha256 (resolve_latest.py; no pins). A per-user profile (Get-MiOS) runs after the all-users one.
+# --- The MiOS Windows shell (xbox-bm-39): PowerShell 7, oh-my-posh, fastfetch, WT fragment, all-users profile; tools resolved latest.
 [windows.xbox.shell]
 dir                  = "shell"                      # under components.dest_dir: the MiOS profile + the tool configs
 bin_dir              = "bin"                        # under components.dest_dir: oh-my-posh.exe, fastfetch\
@@ -19474,6 +19461,10 @@ unit = [
     "tests/test-mios-xbox-inbox-apps.py",
     "tests/test-mios-xbox-policy-gates.py",
     "tests/test-mios-xbox-provisioning.py",
+    "tests/test-mios-xbox-aio-devices.py",
+    "tests/test-mios-xbox-identity.py",
+    "tests/test-mios-xbox-fetch-pinned.py",
+    "tests/test-mios-xbox-shell.py",
     "tests/test-adversarial-r7-desktop-resilience.py",
     "tests/test-adversarial-r8-dock-drawer.py",
     "tests/test-tasks-integrity.py",

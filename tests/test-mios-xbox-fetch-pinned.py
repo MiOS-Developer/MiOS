@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for fetch.fetch_pinned (xbox-bm-39), the build-time download of a release asset its upstream publishes no digest for (the Windows cursor build), pinned by sha256 in the SSOT: matching bytes return the path and a matching cached file is reused without a download; a stale cached file is replaced; a plain-http URL, a pin that is not a lower-case sha256, an unsafe file name and downloaded bytes that differ from the pin are refused with FetchError, and no file is left behind. A fake Downloader writes chosen bytes and records its calls. No network.
-# AI-related: usr/libexec/mios/win/xbox/fetch.py, usr/share/mios/mios.toml [theme.cursor_windows], tests/test-mios-xbox-identity.py
+# AI-hint: Two-sided tests for fetch.fetch_pinned (xbox-bm-39): a sha256-pinned asset is reused or replaced when cached and is refused over http, with a malformed pin, an unsafe name or wrong bytes, leaving no file. No network.
+# AI-related: usr/libexec/mios/win/xbox/fetch.py, usr/share/mios/mios.toml, tests/test-mios-xbox-identity.py
 """Run: python3 -I tests/test-mios-xbox-fetch-pinned.py -v   (temp dirs only; no network)"""
 
 from __future__ import annotations

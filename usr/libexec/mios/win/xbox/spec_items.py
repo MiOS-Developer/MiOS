@@ -19,8 +19,7 @@ reg            scope (user|software|system), path, name, type, value
 feature        name, state (enabled|disabled|conditional)
 driver         inf (base name, e.g. ``viostor``) -- must be in the driver set
 guest_tool     name, installer (payload path) and/or service, file
-component      name, path (image-relative), sha256?, task?, service?, installed_by? (installer glob: the image gate checks
-               the installer is staged and run instead of the path; the guest probe checks the path)
+component      name, path (image-relative), sha256?, task?, service?
 capability     name (Windows capability name prefix, e.g. OpenSSH.Server), proof? (image-relative file of the offline-baked FOD)
 file_hash      path (image-relative), sha256
 build_family   family (list of BuildBranch names with Start assets), families{}
@@ -29,7 +28,6 @@ rid500         state (disabled)
 computer_name  value
 appx           name (package family prefix), present (bool), pfn + inbox (integrated offline: image gate + probe) -- else probe only
 gpu_step       record (guest path of the post-setup JSON record)
-theme          name, window_color, uwp_apps_use_light_theme, background -- the answer file's unattend Themes element
 =============  ===============================================================
 
 Credentials only ever appear here as sha256 hex digests; nothing in this module
@@ -46,6 +44,7 @@ import sys
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SCHEMA = "mios-xbox-spec/1"
+# Also (xbox-bm-01/39): looking_glass; theme (the answer file's Themes element); component.installed_by (an installer glob).
 KINDS = ("reg", "feature", "capability", "driver", "guest_tool", "component", "file_hash",
          "build_family", "user", "rid500", "computer_name", "appx", "gpu_step", "looking_glass", "theme")
 USER_SCOPES = ("user",)
