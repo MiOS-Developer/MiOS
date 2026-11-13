@@ -485,10 +485,7 @@ impl Registry {
             started.elapsed().as_secs(), if failed + missing > 0 { if ctx.soft { "ADVISORY: INCOMPLETE/FAILED" } else { "INCOMPLETE/FAILED" } } else if skipped > 0 { "COMPLETE WITH EXCLUSIONS" } else { "COMPLETE" }
         );
 
-        if (failed > 0 || missing > 0 || executed == 0) && !ctx.soft {
-            return false;
-        }
-        true
+        ctx.soft || (failed == 0 && missing == 0 && executed != 0)
     }
 }
 
