@@ -4044,6 +4044,7 @@ main() {
     check_metal_vs_hosted
     check_unit_projection
     check_ssot_consumer_keys
+    check_spec_coverage
     check_fleet_safety
     check_adr_index
     check_vendored_assets_non_stub
@@ -4757,6 +4758,7 @@ check_ports_bound() { _run_py_check check_ports_bound "tools/check-ssot.py ports
 check_blade_coverage() { _run_py_check check_blade_coverage "tools/check-ssot.py blade-coverage" ""; }
 check_fleet_safety() { _run_py_check check_fleet_safety "tools/check-ssot.py fleet-safety" ""; }
 check_ssot_consumer_keys() { _run_py_check check_ssot_consumer_keys "tools/check-ssot.py consumer-keys" ""; }
+check_spec_coverage() { _run_py_check check_spec_coverage "usr/libexec/mios/win/xbox/spec_coverage.py --check --require-image mios-xbox"; }
 check_unit_projection() { _run_py_check check_unit_projection "tools/check-ssot.py unit-projection" ""; }
 check_metal_vs_hosted() {
     echo "[98-drift-checks]   check_metal_vs_hosted"

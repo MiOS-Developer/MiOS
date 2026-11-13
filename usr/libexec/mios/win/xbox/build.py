@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: THE MiOS-Xbox image build entry (xb-15, XB-1..XB-4): render_spec (layered SSOT -> xbox-spec.json) -> resolve_latest (newest upstream, no pins -> build-manifest.json) -> fetch (download + verify every artefact) -> family (offline: the image's BuildBranch has a captured Start layout) -> answer (autounattend + SetupComplete chain + offline .reg + components from the SAME spec) -> conform rendered gate -> GPU-less worker over WinRM (UUP Dump converter + New-MiOSXboxImage.ps1 DISM servicing + ISO) -> read-only copy-out -> conform image gate -> build-<ts>/ manifest. Every stage fails closed; heavy stages run under the SSOT heavy lock in a MemoryMax scope; the worker never runs next to the target/base VM and never holds a GPU.
-# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
+# AI-related: usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/spec_coverage.py, usr/libexec/mios/win/xbox/resolve_latest.py, usr/libexec/mios/win/xbox/fetch.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/worker.py, usr/share/mios/windows/build/New-MiOSXboxImage.ps1, usr/share/mios/windows/build/MiOS-Xbox-Worker.ps1, tests/test-mios-xbox-build.py
 # AI-functions: build_layers, storage_capacity, require_storage_capacity, plan, Build, host_preflight, stage_render, stage_resolve, stage_fetch, stage_family, stage_payload, stage_gate_rendered, stage_job, stage_worker, stage_gate_image, stage_manifest, run, main
 """MiOS-Xbox build.
 
@@ -16,6 +16,7 @@ Exit 0 ok; 1 a gate found non-conformance; 2 a stage failed (named). Credentials
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as _dt
 import json
 import os
@@ -38,6 +39,7 @@ import answer as A  # noqa: E402
 import fetch as F  # noqa: E402
 import worker as W  # noqa: E402
 import capture as CAP  # noqa: E402
+import spec_coverage as SC  # noqa: E402
 
 mios_toml = render_spec.mios_toml
 SCOPED_ENV = "MIOS_XBOX_BUILD_SCOPED"
@@ -186,7 +188,8 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
             if pw.lower() == "mios":
                 raise BuildError(f"[plan] users.{u_key}.password: equals vendor default 'mios' (refused)")
     x = doc["spec"]
-    problems: List[str] = []
+    coverage, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
+    problems: List[str] = [f"spec coverage: {v}" for v in coverage_bad]
     for c in x["components"]["ship"]:
         if c["kind"] != "native" and not os.path.isfile(os.path.join(_TREE, c["source"])):
             problems.append(f"component {c['name']}: {c['source']} missing")
@@ -250,6 +253,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
         "worker_needs_gib": need,
         "storage": capacity,
         "watchdog_inactive": W.watchdog_inactive(),
+        "spec_coverage": coverage,
         "problems": problems,
         "blockers": blockers,
     }
@@ -260,9 +264,13 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
 # ---------------------------------------------------------------------------
 
 class Build:
-    def __init__(self, root: str, layers: List[str], log: Optional[Callable[[str], None]] = None):
+    def __init__(self, root: str, layers: List[str], log: Optional[Callable[[str], None]] = None,
+                 *, merged: Optional[Dict[str, Any]] = None):
         self.root = root
-        self.layers = layers
+        self.layers = list(layers)
+        self._candidate = copy.deepcopy(merged)
+        self._merged: Optional[Dict[str, Any]] = None
+        self._recorded_storage: Dict[str, str] = {}
         self._log = log
         self.spec_path = os.path.join(root, "xbox-spec.json")
         self.guest_spec_path = os.path.join(root, "xbox-spec.guest.json")
@@ -273,13 +281,32 @@ class Build:
         self.doc: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def new(cls, artifact_root: str, layers: List[str], now: Optional[_dt.datetime] = None) -> "Build":
+    def new(cls, artifact_root: str, layers: List[str], now: Optional[_dt.datetime] = None,
+            *, merged: Optional[Dict[str, Any]] = None) -> "Build":
         ts = (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-        os.makedirs(artifact_root, exist_ok=True)
         root = os.path.join(artifact_root, f"build-{ts}")
+        b = cls(root, layers, merged=merged)
+        b.admitted_merged()   # direct callers must be admitted before any build-directory write
+        os.makedirs(artifact_root, exist_ok=True)
         os.mkdir(root, 0o700)   # refuses an existing build directory
         os.makedirs(os.path.join(root, "reports"), mode=0o700)
-        return cls(root, layers)
+        return b
+
+    def admitted_merged(self) -> Dict[str, Any]:
+        """Freeze one checked config; a later save cannot change render or resolver inputs."""
+        if self._merged is None:
+            candidate = copy.deepcopy(self._candidate if self._candidate is not None
+                                      else mios_toml.load_merged(self.layers))
+            # Resumes retain their recorded storage locations. Every other input
+            # must reproduce the saved credential-free rendering below.
+            if self._recorded_storage:
+                candidate["windows"]["xbox"]["build"].update(self._recorded_storage)
+            _, bad = SC.check(candidate, self.layers, _TREE, required_image="mios-xbox")
+            if bad:
+                raise BuildError("[preflight] spec coverage: " + "; ".join(bad))
+            self._merged = candidate
+            self._candidate = None
+        return copy.deepcopy(self._merged)
 
     def log(self, msg: str) -> None:
         line = f"[{_dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}] {msg}"
@@ -293,7 +320,23 @@ class Build:
 
     def spec(self) -> Dict[str, Any]:
         if self.doc is None:
-            self.doc = _json_read(self.spec_path)
+            try:
+                saved = _json_read(self.spec_path)
+                storage = saved["spec"]["build"]
+                self._recorded_storage = {k: storage[k] for k in ("work_root", "artifact_root")}
+                expected = render_spec.render(self.admitted_merged(), self.layers)
+                actual_identity = render_spec.guest_projection(saved)
+                expected_identity = render_spec.guest_projection(expected)
+                # Layer paths identify provenance, not config content. Passwords
+                # are excluded by the existing guest projection; no password hash is persisted.
+                actual_identity.pop("layers", None)
+                expected_identity.pop("layers", None)
+                if actual_identity != expected_identity:
+                    raise ValueError("saved rendering differs")
+            except (OSError, ValueError, KeyError, TypeError, render_spec.SpecError, RL.ResolveError):
+                raise BuildError("[preflight] cannot bind saved spec to the admitted configuration; "
+                                 "preserve this build state and start a new build or re-render before resuming") from None
+            self.doc = saved
         return self.doc
 
     @property
@@ -313,7 +356,7 @@ class Build:
 
 
 def stage_render(b: Build) -> Dict[str, Any]:
-    merged = mios_toml.load_merged(b.layers)
+    merged = b.admitted_merged()
     doc = render_spec.render(merged, b.layers)
     render_spec._write_atomic(b.spec_path, json.dumps(doc, indent=2, sort_keys=True) + "\n")   # 0600: credentials
     _json_write(b.guest_spec_path, render_spec.guest_projection(doc))
@@ -322,7 +365,8 @@ def stage_render(b: Build) -> Dict[str, Any]:
 
 
 def stage_resolve(b: Build, http: Any = None, sleep: Callable[[float], None] = None) -> Dict[str, Any]:
-    cfg = RL.load_config(mios_toml.load_merged(b.layers))
+    b.spec()   # re-admit and bind an existing saved spec before any remote resolver request
+    cfg = RL.load_config(b.admitted_merged())
     manifest = RL.resolve_all(cfg, http or RL.Http(), **({"sleep": sleep} if sleep else {}))
     RL.write_manifest_atomic(b.manifest_path, manifest)
     return {n: a["version"] for n, a in manifest["artifacts"].items()}
@@ -649,6 +693,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if os.geteuid() != 0:
             raise BuildError("stage/service/gate/run write root-only build artefacts and drive libvirt: run with sudo")
         merged = mios_toml.load_merged(layers)
+        _, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
+        if coverage_bad:
+            raise BuildError("[preflight] spec coverage: " + "; ".join(coverage_bad))
         x = render_spec.render(merged, layers)["spec"]
         # Reject before even the heavy-lock/scope handoff can create a file.
         # host_preflight repeats admission inside the scope before build writes.
@@ -674,7 +721,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if a.command in ("service", "gate") and not a.build_dir:
             raise BuildError(f"{a.command} needs --build-dir build-<ts>")
         host_preflight(a.command, x)
-        b = Build(a.build_dir, layers) if a.build_dir else Build.new(x["build"]["artifact_root"], layers)
+        b = (Build(a.build_dir, layers, merged=merged) if a.build_dir
+             else Build.new(x["build"]["artifact_root"], layers, merged=merged))
         if a.command == "capture":
             b.step("render", lambda: stage_render(b))
             b.step("capture", lambda: stage_capture(b, a.family or None))
