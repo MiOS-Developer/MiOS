@@ -187,7 +187,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
             if pw.lower() == "mios":
                 raise BuildError(f"[plan] users.{u_key}.password: equals vendor default 'mios' (refused)")
     x = doc["spec"]
-    coverage, coverage_bad = SC.check(merged, layers, _TREE)
+    coverage, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
     problems: List[str] = [f"spec coverage: {v}" for v in coverage_bad]
     for c in x["components"]["ship"]:
         if c["kind"] != "native" and not os.path.isfile(os.path.join(_TREE, c["source"])):
@@ -652,6 +652,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if os.geteuid() != 0:
             raise BuildError("stage/service/gate/run write root-only build artefacts and drive libvirt: run with sudo")
         merged = mios_toml.load_merged(layers)
+        _, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
+        if coverage_bad:
+            raise BuildError("[preflight] spec coverage: " + "; ".join(coverage_bad))
         x = render_spec.render(merged, layers)["spec"]
         # Reject before even the heavy-lock/scope handoff can create a file.
         # host_preflight repeats admission inside the scope before build writes.

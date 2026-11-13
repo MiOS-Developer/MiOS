@@ -2705,6 +2705,39 @@ test_account_column_parity() {
     log "Test_account_column_parity negative test passed"
 }
 
+test_spec_coverage() {
+    log "Testing check_spec_coverage"
+    local toml="${ROOT}/usr/share/mios/mios.toml"
+    local bak; bak="$(mktemp)"; cp -p "$toml" "$bak"
+    _sc_restore() { cp -p "$bak" "$toml"; rm -f "$bak"; unset -f _sc_restore; }
+    _neg_gate check_spec_coverage || { _sc_restore; die "check_spec_coverage failed on clean tree: ${_NEG_GATE_OUT}"; }
+    # Add a real, well-formed key in the existing table, so a TOML parse error
+    # cannot stand in for the expected unread-key coverage violation.
+    if ! python3 - "$toml" <<'PYEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+rows = p.read_bytes().splitlines(keepends=True)
+for i, row in enumerate(rows):
+    if row.strip() == b"[colors]":
+        nl = b"\r\n" if row.endswith(b"\r\n") else b"\n"
+        probe = b"spec_" + b"probe_unread = " + b'"#010203"'
+        rows.insert(i + 1, probe + nl)
+        p.write_bytes(b"".join(rows))
+        break
+else:
+    raise SystemExit("vendor [colors] table not found")
+PYEOF
+    then
+        _sc_restore; die "could not plant the spec coverage probe"
+    fi
+    _neg_gate check_spec_coverage && { _sc_restore; die "check_spec_coverage passed with an unread applicable key"; }
+    [[ "$_NEG_GATE_OUT" == *"colors.spec_probe_unread applies to mios-xbox but its pipeline never reads it"* ]] \
+        || { _sc_restore; die "check_spec_coverage failed without naming the unread probe: ${_NEG_GATE_OUT}"; }
+    _sc_restore
+    _neg_gate check_spec_coverage || die "check_spec_coverage failed after restoration: ${_NEG_GATE_OUT}"
+    log "check_spec_coverage negative test passed"
+}
+
 test_ssot_consumer_keys() {
     log "Testing check_ssot_consumer_keys"
     local toml="${ROOT}/usr/share/mios/mios.toml"
@@ -6150,6 +6183,7 @@ _run_test test_leaked_fixtures
     # A negative test nobody invokes looks like coverage in a file listing
     # and provides none; check_negatives_registered keeps this list whole.
     _run_test test_ssot_consumer_keys
+    _run_test test_spec_coverage
     _run_test test_unit_projection
     _run_test test_metal_vs_hosted
     _run_test test_node_pool

@@ -161,6 +161,27 @@ class TestMap(Base):
         self.assertViolation(bad, "[spec.coverage].gated: no pipeline tracer for mios")
         self.assertViolation(bad, "[spec.coverage.pending].mios-nope: not an image")
 
+    def test_empty_gated_list_cannot_disable_coverage(self):
+        _, bad = self.gate('[spec.coverage]\ngated = []\n')
+        self.assertViolation(bad, "[spec.coverage].gated must be a non-empty list")
+
+    def test_a_required_image_cannot_be_replaced_by_another_valid_image(self):
+        m, cov = self.cov()
+        cov["gated"] = ["mios"]
+        def read_all(*args):
+            return set(SC.leaves(m, ""))
+        with mock.patch.dict(SC.TRACERS, {"mios": read_all}):
+            _, bad = SC.check(m, LAYERS, tracers={"mios": read_all}, required_image=IMAGE)
+        self.assertEqual(bad, [f"{IMAGE}: this pipeline requires its image in [spec.coverage].gated"])
+
+    def test_an_empty_applicability_map_cannot_pass(self):
+        m, cov = self.cov()
+        cov["roots"] = {}
+        cov["pending"] = {}
+        cov["not_applicable"] = {}
+        _, bad = SC.check(m, LAYERS)
+        self.assertViolation(bad, f"{IMAGE}: no applicable coverage units")
+
 
 class TestParity(Base):
     def test_vendor_parity_holds(self):
@@ -216,6 +237,10 @@ class TestTracer(Base):
         _, bad = SC.check(self.merged, LAYERS, tracers={IMAGE: broken})
         self.assertViolation(bad, "mios-xbox: its pipeline does not render from this SSOT (colors.bg: planted render failure)")
 
+    def test_a_missing_configured_tracer_does_not_skip_or_use_the_default(self):
+        _, bad = SC.check(self.merged, LAYERS, tracers={})
+        self.assertViolation(bad, f"{IMAGE}: configured pipeline tracer is unavailable")
+
 
 class TestBuildPlan(Base):
     def plan(self, layers):
@@ -231,6 +256,54 @@ class TestBuildPlan(Base):
         with overlay_layers(PROBE) as layers:
             plan = self.plan(layers)
         self.assertTrue([p for p in plan["problems"] if p.startswith("spec coverage: mios-xbox: colors.spec_probe_unread")])
+
+
+class TestBuildAdmission(Base):
+    """Exercise the real non-plan CLI; machine admission and every mutation are tripwired."""
+
+    @contextlib.contextmanager
+    def admission(self, layers):
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(B, "build_layers", return_value=layers))
+            stack.enter_context(mock.patch.object(B.os, "geteuid", return_value=0, create=True))
+            storage = stack.enter_context(mock.patch.object(
+                B, "require_storage_capacity", side_effect=RuntimeError("admission-reached")))
+            effects = [stack.enter_context(mock.patch.object(owner, name, side_effect=AssertionError(name)))
+                       for owner, name in ((B.os, "execv"), (B.os, "execvp"), (B, "host_preflight"),
+                                           (B.Build, "new"), (B, "run_stage"), (B, "run_service"), (B, "run_gate"))]
+            yield storage, effects
+
+    def test_valid_coverage_reaches_admission_without_starting_work(self):
+        with self.admission(LAYERS) as (storage, effects):
+            with self.assertRaisesRegex(RuntimeError, "admission-reached"):
+                B.main(["stage"])
+            storage.assert_called_once()
+            for effect in effects:
+                effect.assert_not_called()
+
+    def test_every_nonplan_command_rejects_unread_keys_before_any_machine_admission(self):
+        with overlay_layers(PROBE) as layers:
+            for command in ("capture", "stage", "service", "gate", "run"):
+                with self.subTest(command=command), self.admission(layers) as (storage, effects):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        self.assertEqual(B.main([command]), 2)
+                    self.assertIn("[preflight] spec coverage:", err.getvalue())
+                    self.assertIn("colors.spec_probe_unread", err.getvalue())
+                    storage.assert_not_called()
+                    for effect in effects:
+                        effect.assert_not_called()
+
+    def test_the_nonplan_build_cannot_turn_off_coverage(self):
+        with overlay_layers('[spec.coverage]\ngated = []\n') as layers:
+            with self.admission(layers) as (storage, effects):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(B.main(["run"]), 2)
+                self.assertIn("this pipeline requires its image", err.getvalue())
+                storage.assert_not_called()
+                for effect in effects:
+                    effect.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -207,8 +207,13 @@ def plan(merged: dict) -> Tuple[dict, List[str]]:
                 if _get(merged, path) is None:
                     bad.append(f"[spec.coverage.{kind}.{image}].\"{path}\": no such SSOT key")
                 decl[kind].setdefault(image, {})[path] = str(why)
-    gated = list(cov.get("gated") or [])
+    gated = cov.get("gated")
+    if not isinstance(gated, list) or not gated or any(not isinstance(i, str) or not i for i in gated):
+        bad.append("[spec.coverage].gated must be a non-empty list of image names")
+        gated = []
     for image in gated:
+        if image not in images:
+            bad.append(f"[spec.coverage].gated: {image} is not an image")
         if image not in TRACERS:
             bad.append(f"[spec.coverage].gated: no pipeline tracer for {image}")
     return {"images": images, "roots": roots, "sections": sections, "decl": decl, "gated": gated}, bad
@@ -234,6 +239,8 @@ def evaluate(merged: dict, cmap: dict, image: str, reads: Set[str]) -> Tuple[dic
             units += [p for p in leaves(node, root) if image in cmap["sections"].get(_section_of(p, cmap["sections"]) or "", set())]
         elif image in cmap["sections"].get(root, set()):
             units += [f"{root}.{k}" for k in node]   # each subtable as one unit; each own scalar on its own
+    if not units:
+        bad.append(f"{image}: no applicable coverage units are mapped to this gated image")
     for unit in units:
         if _covered(unit, reads):
             counts["covered"] += 1
@@ -270,16 +277,22 @@ def parity(merged: dict) -> List[str]:
     return bad
 
 
-def check(merged: dict, layers: List[str], tree_root: str = _TREE, tracers: Optional[Dict[str, Callable[..., Set[str]]]] = None
+def check(merged: dict, layers: List[str], tree_root: str = _TREE, tracers: Optional[Dict[str, Callable[..., Set[str]]]] = None,
+          required_image: Optional[str] = None
           ) -> Tuple[dict, List[str]]:
-    """The whole gate: map validity, coverage of every gated image, parity. Returns (report, violations)."""
+    """Map validity, coverage of every gated image and parity. Declared pending work remains
+    unimplemented in the returned (report, violations)."""
     cmap, bad = plan(merged)
     report: Dict[str, Any] = {"images": {}}
     if not cmap:
         return report, bad
+    if required_image is not None and required_image not in cmap["gated"]:
+        bad.append(f"{required_image}: this pipeline requires its image in [spec.coverage].gated")
+    active_tracers = TRACERS if tracers is None else tracers
     for image in cmap["gated"]:
-        fn = (tracers or TRACERS).get(image)
+        fn = active_tracers.get(image)
         if fn is None:
+            bad.append(f"{image}: configured pipeline tracer is unavailable")
             continue
         try:
             reads = fn(merged, layers, tree_root)
@@ -297,9 +310,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="spec_coverage.py", description=__doc__)
     ap.add_argument("--check", action="store_true", required=True)
     ap.add_argument("--layer", action="append", default=[], help="SSOT layer (default: the tree's vendor mios.toml)")
+    ap.add_argument("--require-image", help="the caller's image must be gated, even if a layer changes the gated list")
     a = ap.parse_args(argv)
     layers = a.layer or [os.path.join(_TREE, "usr", "share", "mios", "mios.toml")]
-    report, bad = check(R.mios_toml.load_merged(layers), layers)
+    report, bad = check(R.mios_toml.load_merged(layers), layers, required_image=a.require_image)
     for image, r in report.get("images", {}).items():
         print(f"[spec-coverage] {image}: {r['covered']} covered, {r['not_applicable']} not applicable, "
               f"{r['pending']} pending of {r['units']} applicable")
