@@ -80,21 +80,41 @@ Write-MiOSPrivateText -Path (Join-Path $env:MIOS_PRIVATE_TEST_DIR 'output.env') 
         (self.root / "vendor.toml").write_text(
             '[identity]\nusername="fixture-fork-user"\ndefault_password="""fixture-multiline\nvalue"""\n'
             '[autounattend]\nautologon_enable=false\naccounts=[{name="fixture-fork-account", password="fixture-fork-value"}]\n'
-            '[autounattend.service]\nenable=false\n', encoding="utf-8")
+            '[autounattend.service]\nenable=false\n'
+            '[branding]\noem_manufacturer="fixture-base-brand"\n'
+            '[editions.fixture.identity]\nusername="fixture-edition-user"\ndefault_password="fixture-edition-value"\n'
+            '[editions.fixture.autounattend]\nautologon_enable=false\nautologon_user="fixture-edition-user"\nautologon_persistent=false\nautologon_count=2\n'
+            '[editions.fixture.autounattend.service]\nenable=true\nsvc_user="fixture-edition-service"\nsvc_password="fixture-edition-service-value"\n'
+            '[editions.fixture.field.sysrescue]\nusername="fixture-edition-rescue"\npassword="fixture-edition-rescue-value"\n'
+            '[editions.fixture.auth]\npassword_hash="$6$fixturesalt$fixturehashvalue"\n'
+            '[editions.fixture.branding]\noem_manufacturer="fixture-edition-brand"\n', encoding="utf-8")
         projection = {"schema": "mios-resolved-credentials/1", "scalars": {
             "identity.username": "fixture-projected-user", "identity.default_password": "fixture-π-quoted-'#-value",
-            "autounattend.service.enable": "false"}, "accounts": [], "has_accounts": False}
+            "autounattend.service.enable": "false", "field.sysrescue.username": "fixture-projected-rescue",
+            "field.sysrescue.password": "fixture-projected-rescue-value"}, "accounts": [], "has_accounts": False}
         path = self.root / "resolved.json"
         path.write_text(json.dumps(projection, ensure_ascii=False), encoding="utf-8")
         path.chmod(0o600)
-        result = self.ps(r'''
+        # A private projection owns complete credential planes across every
+        # later edition call. An unrelated edition setting must still change.
+        for edition in ("", "fixture"):
+            with self.subTest(edition=edition or "base"):
+                self.env["MIOS_PRIVATE_TEST_EDITION"] = edition
+                result = self.ps(r'''
 $t=Read-MiosToml -Path $env:MIOS_VENDOR_TOML -ResolvedJson (Join-Path $env:MIOS_PRIVATE_TEST_DIR 'resolved.json')
+$t=Apply-MiosEdition -T $t -Edition $env:MIOS_PRIVATE_TEST_EDITION
 $c=Resolve-MiOSCredentials -Toml $t
-@{ user_ok=($c.username -ceq 'fixture-projected-user'); count=$c.accounts.Count; account_ok=($c.accounts[0].name -ceq $c.username); pass_ok=($c.autologon.password -ceq $c.default_password); enabled=$c.autologon.enable; persistent=$c.autologon.persistent } | ConvertTo-Json -Compress
+@{ user_ok=($c.username -ceq 'fixture-projected-user'); count=$c.accounts.Count; account_ok=($c.accounts[0].name -ceq $c.username); pass_ok=($c.autologon.password -ceq $c.default_password); pass_exact=($c.default_password -ceq 'fixture-π-quoted-''#-value'); enabled=$c.autologon.enable; persistent=$c.autologon.persistent; logon_count=$c.autologon.count; service_disabled=(-not $c.service.enable); rescue_user_ok=((Get-Toml $t 'field.sysrescue.username') -ceq 'fixture-projected-rescue'); rescue_pass_ok=((Get-Toml $t 'field.sysrescue.password') -ceq 'fixture-projected-rescue-value'); hash_absent=(-not $t.scalars.ContainsKey('auth.password_hash')); brand=(Get-Toml $t 'branding.oem_manufacturer') } | ConvertTo-Json -Compress
 ''')
-        self.assertEqual(result.returncode, 0, result.stderr[-700:])
-        self.assertEqual(json.loads(result.stdout), {"user_ok": True, "count": 1, "account_ok": True,
-                                                    "pass_ok": True, "enabled": True, "persistent": True})
+                self.assertEqual(result.returncode, 0, result.stderr[-700:])
+                self.assertEqual(json.loads(result.stdout), {
+                    "user_ok": True, "count": 1, "account_ok": True, "pass_ok": True,
+                    "pass_exact": True, "enabled": True, "persistent": True,
+                    "logon_count": 9999999, "service_disabled": True, "rescue_user_ok": True,
+                    "rescue_pass_ok": True, "hash_absent": True,
+                    "brand": "fixture-edition-brand" if edition else "fixture-base-brand"})
+                self.assertNotIn(projection["scalars"]["identity.default_password"],
+                                 result.stdout + result.stderr)
         without = self.ps("Read-MiosToml -Path $env:MIOS_VENDOR_TOML | Out-Null")
         self.assertNotEqual(without.returncode, 0, "complex credential syntax must refuse without a valid projection")
         self.assertNotIn(projection["scalars"]["identity.default_password"], result.stdout + result.stderr)
