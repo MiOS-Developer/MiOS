@@ -128,7 +128,7 @@ def test_linux_core_dispatch():
 def _function(source, name):
     match = re.search(r"^" + name + r"\(\) \{.*?^}", source, re.M | re.S)
     assert match, name
-    return match.group(0)
+    return match.group(0) + "\n"
 
 
 def _operator_write(source, home, password):
