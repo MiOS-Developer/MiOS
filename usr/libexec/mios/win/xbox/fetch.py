@@ -469,7 +469,7 @@ def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) ->
     if not re.fullmatch(r"[0-9a-f]{64}", str(sha256)):
         raise FetchError(f"[{what}] the SSOT pin is not a lower-case sha256")
     fname = os.path.basename(urllib.parse.urlsplit(url).path)
-    if not re.fullmatch(r"[\w.\-]+", fname or ""):
+    if not re.fullmatch(r"[A-Za-z0-9][\w.\-]*", fname or ""):   # starts with a letter/digit: never "", "." or ".."
         raise FetchError(f"[{what}] unsafe file name {fname!r}")
     path = os.path.join(work, fname)
     if os.path.isfile(path) and _sha256(path) != sha256:
