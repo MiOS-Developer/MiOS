@@ -3,6 +3,7 @@
 # AI-functions: TestAgentTui
 
 import copy
+import asyncio
 import threading
 import importlib.machinery
 import json
@@ -10,9 +11,12 @@ import os
 import pty
 import select
 import signal
+import socket
+import tempfile
 import termios
 import time
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import unittest
 from unittest.mock import patch
@@ -585,6 +589,140 @@ class TestAgentTui(unittest.IsolatedAsyncioTestCase):
                 os.kill(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)
             os.close(terminal)
+
+
+class TestDesktopIdleCollection(unittest.IsolatedAsyncioTestCase):
+    def app(self, observer=None, desktop_panel=True):
+        return monitor.MiosMonitorApp(desktop_panel=desktop_panel, ui_mode="agents", collectors=False,
+                                      ui_request={"observation_request": {"observation": {"refresh_s": .05}}},
+                                      observer=observer or (lambda: copy.deepcopy(SNAPSHOT)))
+
+    def test_attachment_probe_requires_exact_private_own_panel_witness(self):
+        cfg = {"keybindings": {"tmux": {"desktop": {"binary": "/private/tmux", "command_timeout_ms": 3000}}}}
+        master, slave = pty.openpty()
+        try:
+            terminal = os.fstat(slave)
+            with tempfile.TemporaryDirectory(prefix="mios-desktop-attachment-") as root, \
+                 socket.socket(socket.AF_UNIX) as server:
+                path = os.path.join(root, "desktop")
+                server.bind(path)
+                reply = SimpleNamespace(returncode=0, stdout="")
+                fields = [path, "1234", "%7", str(os.getpid()), os.ttyname(slave), "0", "1"]
+                with patch.dict(os.environ, TMUX=path + ",1234,0", TMUX_PANE="%7"), \
+                     patch.object(monitor, "IS_WINDOWS", False), \
+                     patch.object(monitor, "monitor_config", return_value=cfg), \
+                     patch.object(monitor.os, "fstat", return_value=terminal), \
+                     patch.object(monitor.subprocess, "run", return_value=reply) as run:
+                    for count, expected in (("0", False), ("1", True), ("2", True)):
+                        fields[5] = count
+                        reply.stdout = "|".join(fields) + "\n"
+                        self.assertIs(monitor.desktop_attached(), expected)
+                    for index, value in ((0, path + "-other"), (1, "9999"), (2, "%8"),
+                                         (3, str(os.getpid() + 1)), (4, os.devnull), (5, "unknown"), (6, "")):
+                        broken = list(fields)
+                        broken[index] = value
+                        reply.stdout = "|".join(broken) + "\n"
+                        self.assertIsNone(monitor.desktop_attached(), (index, value))
+                    run.reset_mock()
+                    os.chmod(root, 0o755)
+                    self.assertIsNone(monitor.desktop_attached())
+                    run.assert_not_called()
+                    os.chmod(root, 0o700)
+        finally:
+            os.close(master)
+            os.close(slave)
+
+    async def test_detach_pauses_inventory_and_owned_process_then_attach_resumes(self):
+        from mios_mcp_federation import AgentObservationProcess
+        frame = {**SNAPSHOT, "sources": [], "sessions": [], "subagents": []}
+        command = [sys.executable, "-I", "-c", "import time;print(" + repr(json.dumps(frame))
+                   + ",flush=True);time.sleep(30)"]
+        calls = []
+        app = self.app(observer=lambda: calls.append(True) or copy.deepcopy(SNAPSHOT))
+        inventory = app.agent_inventory = AgentObservationProcess(command, 65536)
+        app._owned_observation = True
+        async with app.run_test(size=(80, 12)) as pilot:
+            inventory.start_background()
+            for _ in range(40):
+                if inventory.latest is not None:
+                    break
+                await pilot.pause(.05)
+            self.assertIsNotNone(inventory.latest)
+            original = inventory.process
+            view = app.query_one(AgentView)
+            await view.workers.wait_for_complete()
+            retained = copy.deepcopy(view.snapshot)
+            app.collectors_enabled = True
+            with patch.object(monitor, "desktop_attached", return_value=True):
+                await app.refresh_desktop_attachment()
+            self.assertIs(inventory.process, original)
+            self.assertIsNone(original.returncode)
+            with patch.object(monitor, "desktop_attached", return_value=False):
+                await app.refresh_desktop_attachment()
+                await app.refresh_desktop_attachment()
+            self.assertTrue(app._collection_paused)
+            self.assertTrue(view.refresh_paused)
+            self.assertIsNotNone(original.returncode)
+            self.assertIsNone(inventory.task)
+            count = len(calls)
+            view.schedule_refresh()
+            await view.refresh_snapshot()
+            await pilot.pause(.1)
+            self.assertEqual(len(calls), count)
+            self.assertEqual(view.snapshot, retained)
+            self.assertFalse(app._start_snapshot("must-stay-idle", lambda: self.fail("detached collector ran"), lambda _: None))
+            with patch.object(monitor, "desktop_attached", return_value=True):
+                await app.refresh_desktop_attachment()
+            for _ in range(40):
+                if inventory.process is not original and inventory.process.returncode is None:
+                    break
+                await pilot.pause(.05)
+            self.assertFalse(app._collection_paused)
+            self.assertFalse(view.refresh_paused)
+            self.assertIsNot(inventory.process, original)
+            self.assertIsNone(inventory.process.returncode)
+            await pilot.pause(.1)
+            self.assertGreater(len(calls), count)
+
+    async def test_unknown_attachment_and_standalone_leave_collectors_enabled(self):
+        app = self.app()
+        async with app.run_test(size=(80, 12)):
+            app.collectors_enabled = True
+            app._collection_paused = True
+            app.query_one(AgentView).set_refresh_paused(True)
+            with patch.object(monitor, "desktop_attached", return_value=None) as probe:
+                await app.refresh_desktop_attachment()
+                self.assertFalse(app._collection_paused)
+                self.assertFalse(app.query_one(AgentView).refresh_paused)
+                probe.assert_called_once()
+            app.desktop_panel = False
+            with patch.object(monitor, "desktop_attached") as probe:
+                await app.refresh_desktop_attachment()
+                probe.assert_not_called()
+            self.assertFalse(app._collection_paused)
+
+    async def test_attachment_poll_coalesces_without_blocking_navigation(self):
+        entered, release = threading.Event(), threading.Event()
+        def probe():
+            entered.set()
+            if not release.wait(3):
+                raise RuntimeError("attachment probe not released")
+            return False
+        app = self.app()
+        async with app.run_test(size=(80, 12)) as pilot:
+            app.collectors_enabled = True
+            with patch.object(monitor, "desktop_attached", side_effect=probe) as read:
+                pending = asyncio.create_task(app.refresh_desktop_attachment())
+                try:
+                    self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                    for _ in range(20):
+                        await app.refresh_desktop_attachment()
+                    await pilot.press("ctrl+f")
+                    self.assertEqual(app.focused.id, "agent-search")
+                    self.assertEqual(read.call_count, 1)
+                finally:
+                    release.set()
+                    await pending
 
 
 class TestDesktopPanel(unittest.IsolatedAsyncioTestCase):
