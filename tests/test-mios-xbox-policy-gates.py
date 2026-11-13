@@ -289,6 +289,10 @@ CFG = {"virtio_iso": f"{VIO}/latest-virtio/virtio-win.iso", "qemu_ga_dir": f"{VI
 def _rpmbuild(tmp: str, files: dict, name: str = "virtio-win") -> str:
     """A real noarch RPM (rpmbuild) carrying `files` under / -- what rpm2cpio + cpio and the header parser read."""
     top = os.path.join(tmp, "rpmtop")
+    # RPM writes its build-step shell scripts through _tmppath, independently of _topdir.
+    # A read-only /var/tmp must not prevent the real fixture build inside writable private scratch.
+    rpm_tmp = os.path.join(tmp, "rpmtmp")
+    os.makedirs(rpm_tmp, mode=0o700, exist_ok=True)
     src = os.path.join(tmp, "rpmsrc")
     for rel, data in files.items():
         p = os.path.join(src, rel)
@@ -300,7 +304,8 @@ def _rpmbuild(tmp: str, files: dict, name: str = "virtio-win") -> str:
         fh.write(f"Name: {name}\nVersion: 0.1.302\nRelease: 1\nSummary: fixture\nLicense: MIT\nBuildArch: noarch\n"
                  "%description\nfixture\n%install\nmkdir -p %{buildroot}\ncp -a " + src + "/. %{buildroot}/\n%files\n"
                  + "".join(f"/{rel}\n" for rel in files))
-    r = subprocess.run(["rpmbuild", "-bb", "--quiet", "--define", f"_topdir {top}", "--define", "__os_install_post %{nil}",
+    r = subprocess.run(["rpmbuild", "-bb", "--quiet", "--define", f"_topdir {top}", "--define", f"_tmppath {rpm_tmp}",
+                        "--define", "__os_install_post %{nil}",
                         "--define", "_build_id_links none", "--define", "debug_package %{nil}", spec],
                        capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
