@@ -1168,7 +1168,7 @@ class TestDevcontainerAccountGuard(unittest.TestCase):
     """A container whose account no longer matches the checkout's vendor [identity].username
     stops its lifecycle with a rebuild instruction instead of running as a stale account."""
 
-    def _run(self, ssot_user, account, uid="1000", toml=True):
+    def _run(self, ssot_user, account, uid="1000", toml=True, inherited_layers=False, native_provider=False):
         source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
         guard = re.search(r"(?ms)^mios_account_guard\(\) \{.*?^\}", source).group(0)
         with tempfile.TemporaryDirectory(prefix="mios-account-guard-") as tmp:
@@ -1186,9 +1186,39 @@ class TestDevcontainerAccountGuard(unittest.TestCase):
             # remoteEnv names a native catalog that a fresh container may not have yet.
             env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"], FAKE_USER=account,
                        FAKE_UID=uid, MIOS_NATIVE_BIN_DIR=str(Path(tmp) / "absent-native-catalog"))
+            if inherited_layers:
+                vendor = Path(tmp) / "host-vendor.toml"
+                vendor.write_text("[identity]\nusername = 'host-user'\n")
+                fragments = Path(tmp) / "host-vendor.d"
+                fragments.mkdir()
+                (fragments / "99-identity.toml").write_text("[identity]\nusername = 'fragment-user'\n")
+                env.update(MIOS_VENDOR_TOML=str(vendor), MIOS_VENDOR_TOML_D=str(fragments),
+                           MIOS_TOML=str(vendor), MIOS_TOML_ROOT=str(Path(tmp) / "host-root"))
+            native_calls = Path(tmp) / "native-calls.json"
+            if native_provider:
+                native = root / "tools/native/target/release/mios-toml-get"
+                native.parent.mkdir(parents=True)
+                # Exercise the real delegator's native dispatch. The provider
+                # uses the real shared vendor resolver, including its drop-ins,
+                # so this boundary fixture also covers fallback semantics.
+                native.write_text('''#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+Path(os.environ["NATIVE_CALLS"]).write_text(json.dumps(sys.argv[1:]))
+sys.path.insert(0, str(Path(os.environ["MIOS_TOML_ROOT"]) / "usr/lib/mios"))
+import mios_toml
+assert sys.argv[1:] == ["--vendor", "identity", "username"]
+print(mios_toml.section(mios_toml.load_vendor(), "identity").get("username", ""))
+''')
+                native.chmod(0o755)
+                env["NATIVE_CALLS"] = str(native_calls)
             script = "set -euo pipefail\n" + guard + '\nmios_account_guard "$1"\necho guard-passed\n'
-            return subprocess.run(["bash", "-c", script, "guard", str(root)], env=env,
-                                  capture_output=True, text=True)
+            result = subprocess.run(["bash", "-c", script, "guard", str(root)], env=env,
+                                    capture_output=True, text=True)
+            if native_provider:
+                self.assertTrue(native_calls.is_file(), "the real delegator did not invoke the native provider")
+                self.assertEqual(["--vendor", "identity", "username"], json.loads(native_calls.read_text()))
+            return result
 
     def test_matching_account_passes(self):
         result = self._run("fx-user", "fx-user")
@@ -1209,6 +1239,29 @@ class TestDevcontainerAccountGuard(unittest.TestCase):
                 result = self._run(**kwargs)
                 self.assertNotEqual(0, result.returncode)
                 self.assertNotIn("guard-passed", result.stdout)
+
+    def test_inherited_vendor_inputs_cannot_replace_the_checkout_identity(self):
+        for account in ("fx-user", "host-user", "fragment-user"):
+            with self.subTest(account=account):
+                result = self._run("fx-user", account, inherited_layers=True)
+                self.assertEqual(account == "fx-user", result.returncode == 0, result.stderr)
+                self.assertEqual(account == "fx-user", "guard-passed" in result.stdout)
+
+    def test_native_dispatch_preserves_checkout_vendor_and_fragment_inputs(self):
+        for account in ("fx-user", "host-user", "fragment-user"):
+            with self.subTest(account=account):
+                result = self._run("fx-user", account, inherited_layers=True, native_provider=True)
+                self.assertEqual(account == "fx-user", result.returncode == 0, result.stderr)
+                self.assertEqual(account == "fx-user", "guard-passed" in result.stdout)
+
+    def test_missing_checkout_vendor_does_not_fall_back_to_inherited_vendor(self):
+        for native in (False, True):
+            with self.subTest(native_provider=native):
+                result = self._run("fx-user", "host-user", toml=False,
+                                   inherited_layers=True, native_provider=native)
+                self.assertNotEqual(0, result.returncode)
+                self.assertNotIn("guard-passed", result.stdout)
+                self.assertIn("username did not resolve", result.stderr)
 
     def test_create_and_start_run_the_guard_first(self):
         source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))

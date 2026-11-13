@@ -13,7 +13,11 @@ cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 # rebuild provisions the new account: say so and stop before any lifecycle work.
 mios_account_guard() {
     local root="$1" want have uid
+    # This guard describes the checkout's image account, so an inherited vendor
+    # monolith or drop-in directory must not retarget it to the running host.
     want="$(env -u MIOS_NATIVE_BIN_DIR MIOS_TOML_ROOT="$root" \
+        MIOS_VENDOR_TOML="${root}/usr/share/mios/mios.toml" \
+        MIOS_VENDOR_TOML_D="${root}/usr/lib/mios/mios.d" \
         python3 "${root}/usr/libexec/mios/mios-toml-get" --vendor identity username)" || want=""
     have="$(id -un)"; uid="$(id -u)"
     if [[ -z "$want" ]]; then
