@@ -401,18 +401,17 @@ class TestItem7TrustAnchors(unittest.TestCase):
                  "pwsh", "oh_my_posh", "fastfetch")}
         files = {"qemu_ga": "qga.msi", "winfsp": "winfsp.msi", "webview2": "wv2.exe", "looking_glass_host": "lgh.zip",
                  "looking_glass_idd": "lgi.zip", "pwsh": "pwsh.msi", "oh_my_posh": "omp.exe", "fastfetch": "ff.zip"}
-        saved = (F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_pinned)
-        ident = {"cursor": {"asset_url": "https://example.invalid/cursor.zip", "asset_sha256": "0" * 64}}   # xbox-bm-39 pin
+        saved = (F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_cursor)
         try:
             F.fetch_virtio = lambda *a, **k: {"gt_msi": paths["gt.msi"], "spice_msi": paths["spice.msi"], "drivers": self.tmp}
             F.fetch_file = lambda m, art, *a, **k: paths[files[art]]
             F.fetch_converter = F.fetch_uup = F.fetch_fod = lambda *a, **k: self.tmp
             F.fetch_apps = lambda *a, **k: []
-            F.fetch_pinned = lambda *a, **k: paths["lgi.zip"]
-            got = F.fetch_all({"artifacts": arts}, {"spec": x, "identity": ident}, os.path.join(self.tmp, "w"))
+            F.fetch_cursor = lambda *a, **k: {"path": paths["lgi.zip"]}   # xbox-bm-39: the floated cursor build
+            got = F.fetch_all({"artifacts": arts}, {"spec": x}, os.path.join(self.tmp, "w"))
             rows = got["installers"]
         finally:
-            F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_pinned = saved
+            F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_cursor = saved
         for role in ("virtio_guest_tools", "spice_vdagent", "qemu_ga"):
             self.assertEqual(rows[role]["signer"], "", role)
             self.assertIn("sha256", rows[role]["anchor"], role)

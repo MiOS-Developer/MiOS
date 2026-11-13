@@ -267,9 +267,11 @@ class TestSpec(Base):
     def test_negative_render_identity_refuses_drift(self):
         cases = {
             "accent not #RRGGBB": ("accent_ref", None, "#1A407"),
-            "cursor build over plain http": ("cursor_ref", "asset_url", "http://example.invalid/c.zip"),
-            "cursor pin not a sha256": ("cursor_ref", "asset_sha256", "0" * 63),
-            "cursor pin missing": ("cursor_ref", "asset_sha256", ""),
+            "cursor channel pins a release": ("cursor_ref", "channel", "v2.0.7"),
+            "cursor asset names a version": ("cursor_ref", "asset", "Bibata-Modern-Classic-2.0.7-Windows.zip"),
+            "cursor asset not a plain .zip name": ("cursor_ref", "asset", "../Bibata-Modern-Classic-Windows.zip"),
+            "cursor asset missing": ("cursor_ref", "asset", ""),
+            "cursor repo not owner/name": ("cursor_repo_ref", None, "https://github.com/ful1e5/Bibata_Cursor"),
             "role outside the scheme": ("cursor_ref", "roles", lambda v: {**v, "Arrow": "not_in_scheme.cur"}),
             "role file not a plain name": ("cursor_ref", "roles", lambda v: {**v, "Arrow": "..\\x.cur"}),
             "base size out of range": ("cursor_ref", "base_size", 8),
@@ -473,6 +475,129 @@ class TestOemLogo(Base):
 
 
 # ---------------------------------------------------------------------------
+# cursor float: the newest release resolved, its identity and actual sha256 recorded
+# ---------------------------------------------------------------------------
+
+class GitHubLatest:
+    """GitHub's releases/latest answer for one repository; any other URL fails the test (no network)."""
+
+    def __init__(self, repo: str, release: dict):
+        self.url, self.release = f"https://api.github.com/repos/{repo}/releases/latest", release
+
+    def request(self, url, method="GET", follow=True, headers=None, limit=None):
+        if url != self.url:
+            raise AssertionError(f"unmocked upstream call {method} {url}")
+        return P.RL.Response(200, {}, json.dumps(self.release).encode())
+
+
+class Bytes:
+    """A Downloader that writes chosen bytes and counts its calls."""
+    tries = 1
+
+    def __init__(self, data: bytes):
+        self.data, self.calls = data, 0
+
+    @staticmethod
+    def sleep(_s):
+        return None
+
+    def get(self, url, dest, size=None):
+        self.calls += 1
+        with open(dest, "wb") as fh:
+            fh.write(self.data)
+
+
+class TestCursorFloat(Base):
+    BUILD = b"the newest Windows cursor build"
+
+    def release(self, digest=True, draft=False, names=None, url=None, size=None, tag="v9.9.9"):
+        cur = self.cur
+        names = names or [cur["asset"], cur["asset"].replace("Classic", "Ice"), cur["theme"] + ".tar.xz"]
+        return {"tag_name": tag, "draft": draft, "prerelease": False, "html_url": f"https://github.com/{cur['repo']}/releases/{tag}",
+                "assets": [{"name": n, "size": len(self.BUILD) if size is None else size,
+                            **({"digest": digest if isinstance(digest, str) else "sha256:" + _sha(self.BUILD)} if digest else {}),
+                            "browser_download_url": url or f"https://github.com/{cur['repo']}/releases/download/{tag}/{n}"}
+                           for n in names]}
+
+    def resolve(self, rel):
+        cfg = {"github_api": "https://api.github.com", "cursor_repo": self.cur["repo"], "cursor_asset": self.cur["asset"]}
+        return P.RL.resolve_cursor_windows(cfg, GitHubLatest(self.cur["repo"], rel), sleep=lambda s: None)
+
+    def fetch(self, art, data=None, work=None):
+        work = work or self.scratch("fetch.")
+        dl = Bytes(self.BUILD if data is None else data)
+        return P.F.fetch_cursor({"artifacts": {"cursor_windows": art}}, self.doc, work, dl), dl, work
+
+    def test_positive_the_ssot_floats_and_shares_the_linux_upstream(self):
+        tc = self.merged["theme"]
+        self.assertEqual(tc["cursor_windows"]["channel"], "latest")
+        self.assertNotIn("asset_url", tc["cursor_windows"])
+        self.assertNotIn("asset_sha256", tc["cursor_windows"])
+        self.assertEqual(self.cur["repo"], tc["cursor_linux"]["source_repo"])   # one upstream for Linux and Windows
+        self.assertNotRegex(self.cur["asset"], r"\d+\.\d+")
+
+    def test_positive_newest_release_with_its_github_digest(self):
+        art = self.resolve(self.release())
+        self.assertEqual((art["version"], art["tag"], art["asset"]), ("9.9.9", "v9.9.9", self.cur["asset"]))
+        self.assertEqual(art["integrity"], {"kind": "sha256", "value": _sha(self.BUILD), "source": "GitHub release asset digest"})
+        entry, dl, _ = self.fetch(art)
+        self.assertEqual((entry["sha256"], entry["integrity"], entry["version"], entry["url"]),
+                         (_sha(self.BUILD), "sha256", "9.9.9", art["fetch"]))
+        self.assertIn("upstream GitHub release asset digest (verified)", entry["anchor"])
+
+    def test_positive_no_digest_records_an_observed_hash_never_called_authenticated(self):
+        art = self.resolve(self.release(digest=False))
+        self.assertEqual((art["integrity"]["kind"], art["integrity"]["size"]), ("sha256-observed", len(self.BUILD)))
+        self.assertIn("not publisher authentication", art["integrity"]["source"])
+        entry, dl, work = self.fetch(art)
+        self.assertEqual((entry["sha256"], entry["integrity"]), (_sha(self.BUILD), "sha256-observed"))
+        self.assertIn("OBSERVED", entry["anchor"])
+        self.assertIn("not publisher authentication", entry["anchor"])
+        _, dl2, _ = self.fetch(art, work=work)   # a cached undigested file proves nothing: downloaded again
+        self.assertEqual(dl2.calls, 1)
+
+    def test_negative_resolve_refuses_drafts_ambiguity_foreign_urls_and_bad_digests(self):
+        a = self.cur["asset"]
+        cases = {
+            "a draft": (self.release(draft=True), "draft"),
+            "no matching asset": (self.release(names=["Other-Windows.zip"]), "exactly one"),
+            "two matching assets": (self.release(names=[a, a]), "exactly one"),
+            "a download URL outside the repo": (self.release(url="https://example.invalid/" + a), "not this repository"),
+            "a non-sha256 digest": (self.release(digest="md5:" + "0" * 32), "no sha256 digest"),
+            "no digest and no size": (self.release(digest=False, size=0), "nothing to check"),
+        }
+        for name, (rel, why) in cases.items():
+            with self.subTest(case=name), self.assertRaisesRegex(P.RL.ResolveError, why):
+                self.resolve(rel)
+
+    def test_negative_fetch_refuses_tampered_bytes_bad_paths_and_another_build(self):
+        good = self.resolve(self.release())
+        obs = self.resolve(self.release(digest=False))
+        cases = {
+            "bytes differ from the GitHub digest": (good, b"a tampered build", "differs from the expected digest"),
+            "undigested bytes of another size": (obs, b"a tampered, longer build", "the release lists"),
+            "a dot-dot download name": ({**good, "fetch": good["fetch"].rsplit("/", 1)[0] + "/.."}, None, "unsafe file name"),
+            "another asset than the spec's": ({**good, "asset": "Other-Windows.zip"}, None, "is not the spec's"),
+            "a URL outside the spec's repo": ({**good, "fetch": "https://github.com/someone/else/releases/download/v1/" + self.cur["asset"]},
+                                              None, "is not the spec's"),
+            "no usable integrity": ({**good, "integrity": {"kind": "md5"}}, None, "unusable integrity"),
+        }
+        for name, (art, data, why) in cases.items():
+            work = self.scratch("fetchneg.")
+            with self.subTest(case=name):
+                with self.assertRaisesRegex(P.F.FetchError, why):
+                    self.fetch(art, data, work)
+                self.assertEqual(os.listdir(work), [], "a refused build leaves no file")
+
+    def test_positive_the_build_output_records_the_resolved_cursor(self):
+        src = self.summary["sources"]["cursor"]
+        arc = self.inputs["identity"]["cursor_archive"]
+        self.assertEqual(src, {k: arc[k] for k in ("asset", "version", "tag", "url", "sha256", "integrity", "anchor")})
+        with open(os.path.join(self.pay, *A.STATE_DIR.split("/"), "payload.json")) as fh:
+            self.assertEqual(json.load(fh)["sources"], self.summary["sources"])
+
+
+# ---------------------------------------------------------------------------
 # payload: exactly the pinned files, refused on any disagreement
 # ---------------------------------------------------------------------------
 
@@ -482,14 +607,12 @@ class TestPayload(Base):
         return A.stage_identity(doc, inputs, out, tree_root or P.ROOT), out
 
     def bad_archive(self, plant):
-        """(doc, inputs) whose cursor archive was built from a planted contract and is re-pinned in the doc, so only the
-        install.inf/member check can catch it."""
+        """(doc, inputs) whose cursor archive was built from a planted contract and recorded by fetch with its own sha256,
+        so only the install.inf/member check can catch it."""
         doc = copy.deepcopy(self.doc)
         fake = copy.deepcopy(doc)
         plant(fake["identity"]["cursor"])
-        inp = FX.cursor_archive_inputs(self.scratch("cur."), fake)
-        doc["identity"]["cursor"]["asset_sha256"] = inp["cursor_archive"]["sha256"]
-        return doc, {"identity": inp}
+        return doc, {"identity": FX.cursor_archive_inputs(self.scratch("cur."), fake)}
 
     def test_positive_payload_carries_every_identity_file(self):
         rows = {r["name"]: r for r in self.summary["identity"]}
@@ -538,11 +661,11 @@ class TestPayload(Base):
         missing = rezip(src, os.path.join(self.tmp, "missing.zip"), drop=(f"{var}/{self.cur['scheme_files'][-1]}",))
         no_inf = rezip(src, os.path.join(self.tmp, "noinf.zip"), drop=(f"{var}/install.inf",))
 
-        def repinned(path):
-            doc = copy.deepcopy(self.doc)
+        recorded = self.inputs["identity"]["cursor_archive"]
+
+        def repinned(path):   # fetch recorded this archive's own sha256: only the install.inf/member check is left
             with open(path, "rb") as fh:
-                doc["identity"]["cursor"]["asset_sha256"] = _sha(fh.read())
-            return doc, {"identity": {"cursor_archive": {"path": path}}}
+                return self.doc, {"identity": {"cursor_archive": {**recorded, "path": path, "sha256": _sha(fh.read())}}}
 
         def swap_roles(c):
             a = sorted(c["roles"])[0]
@@ -550,7 +673,12 @@ class TestPayload(Base):
             c["roles"][a], c["roles"][b] = c["roles"][b], c["roles"][a]
 
         cases = {
-            "archive differs from the pin": ((self.doc, {"identity": {"cursor_archive": {"path": tampered}}}), "sha256 differs"),
+            "archive differs from what fetch recorded": ((self.doc, {"identity": {"cursor_archive": {**recorded, "path": tampered}}}),
+                                                         "sha256 differs from the one fetch.py recorded"),
+            "no recorded sha256": ((self.doc, {"identity": {"cursor_archive": {**recorded, "sha256": ""}}}),
+                                   "sha256 differs from the one fetch.py recorded"),
+            "another asset than the spec's": ((self.doc, {"identity": {"cursor_archive": {**recorded, "asset": "Other-Windows.zip"}}}),
+                                              "is not the spec's"),
             "archive not fetched": ((self.doc, {}), "not fetched"),
             "SCHEME_NAME differs": (self.bad_archive(lambda c: c.__setitem__("scheme_name", c["scheme_name"] + " X")), "SCHEME_NAME"),
             "CUR_DIR differs": (self.bad_archive(lambda c: c.__setitem__("install_dir", "Cursors\\Other")), "CUR_DIR"),

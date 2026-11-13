@@ -126,6 +126,10 @@ SHELL_RELEASES = {"PowerShell/PowerShell": ("v7.99.0", ["PowerShell-7.99.0-win-x
                   "fastfetch-cli/fastfetch": ("2.99.0", ["fastfetch-windows-amd64.zip", "fastfetch-windows-amd64.7z"])}
 
 
+# the Windows cursor build (xbox-bm-39, ADR-0003 a): the Linux theme's upstream repo, newest release
+CURSOR_REPO, CURSOR_TAG, CURSOR_ASSET = "ful1e5/Bibata_Cursor", "v9.9.9", "Bibata-Modern-Classic-Windows.zip"
+
+
 def gh_release(repo: str, tag: str, names: list) -> dict:
     return {"tag_name": tag, "draft": False, "prerelease": False, "html_url": f"https://github.com/{repo}/releases/{tag}",
             "assets": [{"name": n, "size": len(n), "digest": "sha256:" + hashlib.sha256(n.encode()).hexdigest(),
@@ -138,6 +142,8 @@ def routes() -> dict:
     return {
         **{("GET", f"{GH}/repos/{repo}/releases/latest"): (200, {}, j(gh_release(repo, tag, names)))
            for repo, (tag, names) in SHELL_RELEASES.items()},
+        ("GET", f"{GH}/repos/{CURSOR_REPO}/releases/latest"): (200, {}, j(gh_release(
+            CURSOR_REPO, CURSOR_TAG, [CURSOR_ASSET, "Bibata-Modern-Ice-Windows.zip", "Bibata-Modern-Classic.tar.xz"]))),
         ("GET", f"{API}/fetchupd.php?arch=amd64&ring=Dev"): (200, {}, j({"response": {"updateArray": [
             {"updateId": UUID, "updateTitle": "Windows 11 Insider Preview 29683.1000 (rs_prerelease)",
              "foundBuild": "29683.1000", "arch": "amd64"},
@@ -281,7 +287,10 @@ class ResolveLatestTest(unittest.TestCase):
         m = _load(self.out)
         a = m["artifacts"]
         self.assertEqual(set(a), {"windows_uup", "virtio_win", "qemu_ga", "looking_glass_host", "looking_glass_idd",
-                                  "winfsp", "webview2", "uup_converter", "pwsh", "oh_my_posh", "fastfetch"})
+                                  "winfsp", "webview2", "uup_converter", "pwsh", "oh_my_posh", "fastfetch", "cursor_windows"})
+        # the Windows cursor build floats (ADR-0003 a): the newest release's SSOT asset, with GitHub's digest
+        self.assertEqual((a["cursor_windows"]["tag"], a["cursor_windows"]["asset"], a["cursor_windows"]["integrity"]["value"]),
+                         (CURSOR_TAG, CURSOR_ASSET, hashlib.sha256(CURSOR_ASSET.encode()).hexdigest()))
         # the MiOS Windows shell tools (xbox-bm-39): the ONE asset of the glob, anchored by GitHub's asset digest
         for tool, name in (("pwsh", "PowerShell-7.99.0-win-x64.msi"), ("oh_my_posh", "posh-windows-amd64.exe"),
                            ("fastfetch", "fastfetch-windows-amd64.zip")):
@@ -465,6 +474,10 @@ class ResolveLatestTest(unittest.TestCase):
             "missing edition": lambda d: d["windows"]["xbox"]["source"].pop("edition"),
             "missing endpoint": lambda d: d["windows"]["xbox"]["resolve"].pop("uupdump_api"),
             "unknown channel": lambda d: d["windows"]["xbox"]["source"].__setitem__("channel", "nightly"),
+            "pinned cursor channel": lambda d: d["theme"]["cursor_windows"].__setitem__("channel", "v2.0.7"),
+            "versioned cursor asset": lambda d: d["theme"]["cursor_windows"].__setitem__(
+                "asset", "Bibata-Modern-Classic-2.0.7-Windows.zip"),
+            "missing cursor repo": lambda d: d["theme"]["cursor_linux"].pop("source_repo"),
         }
         for name, mut in mutations.items():
             d = copy.deepcopy(self.data)

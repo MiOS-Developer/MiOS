@@ -129,7 +129,8 @@ REQUIRED = {
     "provision.mirror_task": str, "provision.legacy_mirror_tasks": list,
     "devices.record": str, "drivers.looking_glass_idd.required_device": str,
     "guest_tools.looking_glass_host.install": bool,
-    "identity.accent_ref": str, "identity.cursor_ref": str, "identity.cursor_theme_ref": str, "identity.font_ref": str,
+    "identity.accent_ref": str, "identity.cursor_ref": str, "identity.cursor_theme_ref": str, "identity.cursor_repo_ref": str,
+    "identity.font_ref": str,
     "identity.font_dir": str, "identity.system_root": str,
     "identity.theme_name_ref": str, "identity.theme_mode_ref": str, "identity.transparency_ref": str,
     "identity.background_color_ref": str, "identity.background": str,
@@ -524,8 +525,10 @@ def _check_devices(x: dict) -> None:
 # ---------------------------------------------------------------------------
 
 ACCENT_RE = re.compile(r"^#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$")
-SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CURSOR_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*\.(cur|ani)$")
+CURSOR_ASSET_RE = re.compile(r"[A-Za-z0-9][\w.\-]*\.zip")
+VERSION_RE = re.compile(r"\d+\.\d+")       # an asset name carrying a version would pin the release
+GITHUB_SLUG_RE = re.compile(r"[\w.-]+/[\w.-]+")
 CURSOR_KEY = r"Control Panel\Cursors"
 CURSOR_SCHEMES_KEY = r"Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Schemes"
 FONTS_KEY = r"Microsoft\Windows NT\CurrentVersion\Fonts"
@@ -738,8 +741,9 @@ def _font_members(family: str, archive: str) -> list:
 
 def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     """(identity record, registry items) for the MiOS identity (xbox-bm-39). Every value comes from the shared SSOT key
-    the [windows.xbox.identity] refs name; the cursor archive is pinned there and checked against its own install.inf at
-    payload time; the font archive is the vendored one, verified against its SSOT sha256 here."""
+    the [windows.xbox.identity] refs name; the cursor build floats to its newest release (resolved and recorded at build
+    time) and is checked against its own install.inf at payload time; the font archive is the vendored one, verified
+    against its SSOT sha256 here."""
     idn = x["identity"]
     accent = resolved["identity.accent_ref"]
     r, g, b = _rgb(accent, idn["accent_ref"])
@@ -753,13 +757,18 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     cur = resolved["identity.cursor_ref"]
     if not isinstance(cur, dict):
         raise SpecError(_full("identity.cursor_ref"), "must reference a table ([theme.cursor_windows])")
-    for k in ("asset_url", "asset_sha256", "variant_dir", "scheme_name", "install_dir", "scheme_files", "roles", "base_size"):
+    for k in ("channel", "asset", "variant_dir", "scheme_name", "install_dir", "scheme_files", "roles", "base_size"):
         if cur.get(k) in (None, "", [], {}):
             raise SpecError(f"{idn['cursor_ref']}.{k}", "missing")
-    if not str(cur["asset_url"]).startswith("https://"):
-        raise SpecError(f"{idn['cursor_ref']}.asset_url", "must be an https URL")
-    if not SHA256_RE.match(str(cur["asset_sha256"])):
-        raise SpecError(f"{idn['cursor_ref']}.asset_sha256", "must be a lower-case sha256")
+    # floating (ADR-0003 a): the newest release's asset, resolved and recorded at build time; the SSOT never pins it
+    if cur["channel"] != "latest":
+        raise SpecError(f"{idn['cursor_ref']}.channel", f"{cur['channel']!r} pins a release; the Windows build floats ('latest')")
+    asset = str(cur["asset"])
+    if not CURSOR_ASSET_RE.fullmatch(asset) or VERSION_RE.search(asset):
+        raise SpecError(f"{idn['cursor_ref']}.asset", f"{asset!r} must be a plain .zip release-asset name with no version")
+    repo = str(resolved["identity.cursor_repo_ref"]).strip()
+    if not GITHUB_SLUG_RE.fullmatch(repo):
+        raise SpecError(idn["cursor_repo_ref"], f"{repo!r} is not a GitHub owner/name repository")
     files = [str(f) for f in cur["scheme_files"]]
     roles = {str(k): str(v) for k, v in cur["roles"].items()}
     for f in set(files) | set(roles.values()):
@@ -880,7 +889,7 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
         "theme": {"name": theme_name, "mode": mode, "window_color": "0x%08x" % argb, "uwp_apps_use_light_theme": mode == "light",
                   "transparency": transparency, "background": background},
         "oem": oem, "oem_logo": oem_logo,
-        "cursor": {"theme": theme, "asset_url": str(cur["asset_url"]), "asset_sha256": str(cur["asset_sha256"]),
+        "cursor": {"theme": theme, "repo": repo, "channel": "latest", "asset": asset,
                    "variant_dir": str(cur["variant_dir"]), "scheme_name": str(cur["scheme_name"]),
                    "install_dir": install_dir, "scheme_files": files, "roles": roles, "base_size": size,
                    "dest_dir": (root_rel + "/" + install_dir).replace("\\", "/")},

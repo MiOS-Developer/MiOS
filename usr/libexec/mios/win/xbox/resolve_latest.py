@@ -284,6 +284,12 @@ def load_config(data: Dict[str, Any], profile: str = "mios-xbox") -> Dict[str, A
         mt = _GITHUB_REPO.fullmatch(str(_dig(xb, "shell", tool, "upstream") or ""))
         cfg[f"{tool}_repo"] = mt.group(1) if mt else None
         cfg[f"{tool}_asset"] = _dig(xb, "shell", tool, "asset")
+    # the Windows cursor build (xbox-bm-39, ADR-0003 a): the same upstream repo as the Linux theme, newest release
+    idn = xb.get("identity") or {}
+    cursor = _dig(data, *str(idn.get("cursor_ref") or "-").split(".")) or {}
+    repo = _dig(data, *str(idn.get("cursor_repo_ref") or "-").split("."))
+    cfg["cursor_repo"] = repo if isinstance(repo, str) and re.fullmatch(r"[\w.-]+/[\w.-]+", repo) else None
+    cfg["cursor_asset"] = cursor.get("asset") if isinstance(cursor, dict) else None
     # capabilities baked OFFLINE (F4): capability -> FOD package of the same update, plus its FOD metadata
     caps = list(_dig(xb, "features", "capabilities_add") or [])
     fod = _dig(xb, "features", "capability_fod") or {}
@@ -333,6 +339,10 @@ def load_config(data: Dict[str, Any], profile: str = "mios-xbox") -> Dict[str, A
     for tool in SHELL_TOOLS:   # an asset glob naming a version would pin it
         if re.search(r"\d+\.\d+", str(cfg[f"{tool}_asset"] or "")):
             pins.append(f"windows.xbox.shell.{tool}.asset={cfg[f'{tool}_asset']!r} (a glob, never a version)")
+    if isinstance(cursor, dict) and cursor.get("channel") not in (None, "latest"):
+        pins.append(f"{idn.get('cursor_ref')}.channel={cursor.get('channel')!r} (expected 'latest')")
+    if re.search(r"\d+\.\d+", str(cfg["cursor_asset"] or "")):
+        pins.append(f"{idn.get('cursor_ref')}.asset={cfg['cursor_asset']!r} (an asset name, never a version)")
     if "/latest-virtio/" not in str(cfg["virtio_iso"]):
         pins.append(f"windows.xbox.drivers.virtio_win.upstream={cfg['virtio_iso']} (must be the latest-virtio channel)")
     if "/latest-qemu-ga" not in str(cfg["qemu_ga_dir"]):
@@ -858,10 +868,10 @@ def resolve_webview2(cfg: Dict[str, Any], http: Any, sleep: Callable[[float], No
 
 
 def resolve_github_asset(cfg: Dict[str, Any], http: Any, tool: str,
-                         sleep: Callable[[float], None] = time.sleep) -> Dict[str, Any]:
+                         sleep: Callable[[float], None] = time.sleep, observed_ok: bool = False) -> Dict[str, Any]:
     """A MiOS shell tool (xbox-bm-39): the newest GitHub release's ONE asset matching the SSOT glob, anchored by the
     sha256 digest GitHub publishes for every release asset. A draft/prerelease, zero or several matching assets, or an
-    asset without a sha256 digest aborts the resolve."""
+    asset without a sha256 digest aborts the resolve -- unless observed_ok: then the sha256 is observed at download."""
     api = str(cfg["github_api"]).rstrip("/")
     repo = str(cfg[f"{tool}_repo"]).strip("/")
     rel = _fetch(http, f"{api}/repos/{repo}/releases/latest", sleep=sleep).json()
@@ -874,16 +884,23 @@ def resolve_github_asset(cfg: Dict[str, Any], http: Any, tool: str,
         raise ResolveError(f"{repo} latest release {tag!r}: expected exactly one {glob} asset, got {len(assets)}")
     a = assets[0]
     dg = str(a.get("digest") or "")
-    if not dg.startswith("sha256:"):
+    if not dg.startswith("sha256:") and not (observed_ok and not dg):
         raise ResolveError(f"{repo} {a['name']}: GitHub published no sha256 digest")
     url = str(a.get("browser_download_url") or "")
     if not url.startswith(f"https://github.com/{repo}/releases/download/"):
         raise ResolveError(f"{repo} {a['name']}: download URL {url!r} is not this repository's release asset")
+    if dg:
+        integrity = {"kind": "sha256", "value": _hex("sha256", dg[7:], f"{repo} {a['name']}"),
+                     "source": "GitHub release asset digest"}
+    else:
+        size = a.get("size")
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            raise ResolveError(f"{repo} {a['name']}: no digest and no size: nothing to check the download against")
+        integrity = {"kind": "sha256-observed", "size": size,
+                     "source": "upstream publishes no digest: the sha256 is OBSERVED at download (not publisher authentication)"}
     return {
         "version": re.sub(r"^v", "", tag), "tag": tag, "source": rel.get("html_url", ""), "asset": a["name"],
-        "fetch": url, "size": a.get("size"),
-        "integrity": {"kind": "sha256", "value": _hex("sha256", dg[7:], f"{repo} {a['name']}"),
-                      "source": "GitHub release asset digest"},
+        "fetch": url, "size": a.get("size"), "integrity": integrity,
     }
 
 
@@ -892,6 +909,11 @@ def _shell_resolver(tool: str) -> Callable[..., Dict[str, Any]]:
         return resolve_github_asset(cfg, http, tool, sleep=sleep)
     fn.__name__ = f"resolve_{tool}"
     return fn
+
+
+def resolve_cursor_windows(cfg: Dict[str, Any], http: Any, sleep: Callable[[float], None] = time.sleep) -> Dict[str, Any]:
+    """The Windows cursor build (ADR-0003 a): the newest release's SSOT asset; GitHub's digest, else a sha256 observed at fetch."""
+    return resolve_github_asset(cfg, http, "cursor", sleep=sleep, observed_ok=True)
 
 
 RESOLVERS: Dict[str, Callable[..., Dict[str, Any]]] = {
@@ -904,6 +926,7 @@ RESOLVERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "webview2": resolve_webview2,
     "uup_converter": resolve_converter,
     **{tool: _shell_resolver(tool) for tool in SHELL_TOOLS},
+    "cursor_windows": resolve_cursor_windows,
 }
 
 
@@ -1045,6 +1068,10 @@ def verify_file(manifest: Dict[str, Any], artifact: str, path: str, member: Opti
             raise ResolveError(f"{name}: size {os.path.getsize(path)} != published {integ['size']}")
         _authenticode(path, str(integ.get("signer", "")))
         return "authenticode"
+    if kind == "sha256-observed":   # no published digest: only the listed size can refuse bytes; the hash is recorded
+        if os.path.getsize(path) != int(integ.get("size") or -1):
+            raise ResolveError(f"{name}: size {os.path.getsize(path)} != the release's listed {integ.get('size')}")
+        return "sha256-observed"
     raise ResolveError(f"artifact {artifact!r} has no usable integrity entry ({kind!r})")
 
 

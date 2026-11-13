@@ -473,12 +473,12 @@ def _stage_virtio_drivers(iso: str, vw: Dict[str, Any], work: str) -> str:
 # ---------------------------------------------------------------------------
 
 def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) -> str:
-    """A release asset its upstream publishes no digest for: the sha256 is pinned in the SSOT (xbox-bm-39). Any other
-    bytes are refused; a cached file is reused only when it still matches the pin."""
+    """A release asset verified against an expected sha256 (the upstream digest the resolver recorded). Any other bytes
+    are refused; a cached file is reused only when it still matches."""
     if not str(url).startswith("https://"):
         raise FetchError(f"[{what}] {url!r} is not an https URL")
     if not re.fullmatch(r"[0-9a-f]{64}", str(sha256)):
-        raise FetchError(f"[{what}] the SSOT pin is not a lower-case sha256")
+        raise FetchError(f"[{what}] the expected digest is not a lower-case sha256")
     fname = _safe_name(os.path.basename(urllib.parse.urlsplit(url).path), what)
     path = os.path.join(work, fname)
     if os.path.isfile(path) and _sha256(path) != sha256:
@@ -488,8 +488,52 @@ def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) ->
     got = _sha256(path)
     if got != sha256:
         os.remove(path)
-        raise FetchError(f"[{what}] {fname}: sha256 {got} differs from the SSOT pin {sha256}")
+        raise FetchError(f"[{what}] {fname}: sha256 {got} differs from the expected digest {sha256}")
     return path
+
+
+def fetch_observed(url: str, size: int, work: str, dl: Downloader, what: str) -> str:
+    """A release asset its upstream publishes no digest for: always downloaded fresh (a cached copy proves nothing) and
+    refused unless it has the release's listed size. The caller records its sha256 as OBSERVED, never authenticated."""
+    if not str(url).startswith("https://"):
+        raise FetchError(f"[{what}] {url!r} is not an https URL")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise FetchError(f"[{what}] no listed size to check an undigested download against")
+    fname = _safe_name(os.path.basename(urllib.parse.urlsplit(url).path), what)
+    path = os.path.join(work, fname)
+    if os.path.isfile(path):
+        os.remove(path)
+    dl.get(url, path, size)
+    got = os.path.getsize(path)
+    if got != size:
+        os.remove(path)
+        raise FetchError(f"[{what}] {fname}: {got} bytes, the release lists {size}")
+    return path
+
+
+CURSOR_ANCHORS = {
+    "sha256": "sha256 = the upstream GitHub release asset digest (verified)",
+    "sha256-observed": "sha256 OBSERVED at download: upstream publishes no digest (not publisher authentication)",
+}
+
+
+def fetch_cursor(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Downloader) -> Dict[str, Any]:
+    """The floated cursor build's inputs.json entry: resolved version, tag, asset and URL, the actual sha256, its anchor."""
+    cur = (spec.get("identity") or {}).get("cursor") or {}
+    art = (manifest.get("artifacts") or {}).get("cursor_windows") or {}
+    integ = art.get("integrity") or {}
+    if not cur.get("asset") or not art.get("fetch"):
+        raise FetchError("[cursor_windows] the spec or the manifest has no cursor build (render + resolve first)")
+    if art.get("asset") != cur["asset"] or not str(art["fetch"]).startswith(f"https://github.com/{cur.get('repo')}/releases/download/"):
+        raise FetchError(f"[cursor_windows] the manifest's {art.get('asset')!r} is not the spec's {cur['asset']!r} from {cur.get('repo')}")
+    if integ.get("kind") == "sha256":
+        path = fetch_pinned(art["fetch"], str(integ.get("value")), work, dl, "identity.cursor")
+    elif integ.get("kind") == "sha256-observed":
+        path = fetch_observed(art["fetch"], integ.get("size"), work, dl, "identity.cursor")
+    else:
+        raise FetchError(f"[cursor_windows] unusable integrity entry {integ.get('kind')!r}")
+    return {"path": path, "sha256": _sha256(path), "url": art["fetch"], "version": art.get("version", ""),
+            "tag": art.get("tag", ""), "asset": art["asset"], "integrity": integ["kind"], "anchor": CURSOR_ANCHORS[integ["kind"]]}
 
 
 def fetch_file(manifest: Dict[str, Any], artifact: str, work: str, dl: Downloader, name: Optional[str] = None) -> str:
@@ -614,10 +658,7 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
     uup = fetch_uup(manifest, spec, os.path.join(work, "uup"), dl, http)
     fetch_apps(manifest, spec, uup, dl, http)   # the converter integrates them from its UUPs dir
     fod = fetch_fod(manifest, spec, os.path.join(work, "fod"), dl, http)
-    cur = ((spec.get("identity") or {}).get("cursor") or {})
-    if not cur.get("asset_url") or not cur.get("asset_sha256"):
-        raise FetchError("xbox-spec.json has no identity.cursor pin (render it with render_spec.py)")
-    cursor = fetch_pinned(cur["asset_url"], cur["asset_sha256"], work, dl, "identity.cursor")
+    cursor = fetch_cursor(manifest, spec, work, dl)
     # the MiOS Windows shell (xbox-bm-39): newest releases, each verified against its GitHub release-asset sha256
     shell = x.get("shell") or {}
     if not all(isinstance(shell.get(t), dict) for t in RL.SHELL_TOOLS):
@@ -654,9 +695,8 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
         "uup_dir": uup,
         "fod_dir": fod,
         "converter_dir": conv,
-        # MiOS identity (xbox-bm-39): the cursor build is pinned in the SSOT; the font is vendored in the tree
-        "identity": {"cursor_archive": {"path": cursor, "sha256": _sha256(cursor), "url": cur["asset_url"],
-                                        "anchor": "sha256 pinned in [theme.cursor_windows].asset_sha256 (upstream publishes no digest)"}},
+        # MiOS identity (xbox-bm-39): the cursor build floats (resolved + recorded here); the font is vendored in the tree
+        "identity": {"cursor_archive": cursor},
     }
 
 

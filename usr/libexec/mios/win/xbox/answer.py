@@ -1245,7 +1245,7 @@ def parse_cursor_inf(text: str) -> Dict[str, Any]:
 
 
 def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_root: str = _TREE) -> List[Dict[str, Any]]:
-    """MiOS identity files into the image (xbox-bm-39): the pinned cursor build checked against its own install.inf, and the
+    """MiOS identity files into the image (xbox-bm-39): the fetched cursor build checked against its own install.inf, and the
     SSOT font family from the vendored archive. Returns payload rows {name, path, sha256}; any drift refuses the payload."""
     idn = doc.get("identity")
     if not isinstance(idn, dict) or "cursor" not in idn or "font" not in idn:
@@ -1256,8 +1256,11 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
     path = arc.get("path")
     if not path or not os.path.isfile(path):
         raise PayloadError("build input identity.cursor_archive: not fetched/verified (inputs.json)")
-    if _sha256(path) != str(cur["asset_sha256"]).lower():
-        raise PayloadError("cursor archive sha256 differs from the SSOT pin ([theme.cursor_windows].asset_sha256)")
+    want = str(arc.get("sha256") or "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", want) or _sha256(path) != want:
+        raise PayloadError("cursor archive sha256 differs from the one fetch.py recorded (inputs.json)")
+    if arc.get("asset") != cur.get("asset"):
+        raise PayloadError(f"cursor archive {arc.get('asset')!r} is not the spec's {cur.get('asset')!r}")
     with zipfile.ZipFile(path) as z:
         names = set(z.namelist())
         inf_name = f"{cur['variant_dir']}/install.inf"
@@ -1407,8 +1410,11 @@ def render_payload(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
         inst_rows[role] = {"path": rel, "sha256": ins["sha256"], "version": ins.get("version", ""), "signer": ins.get("signer", "")}
     ident_rows = stage_identity(doc, inputs, out_dir, tree_root)
     shell_rows = stage_shell(doc, inputs, out_dir, tree_root)
+    # the floating builds' resolved identity and actual sha256, recorded in the build output (ADR-0003 a)
+    arc = (inputs.get("identity") or {}).get("cursor_archive") or {}
+    sources = {"cursor": {k: arc.get(k, "") for k in ("asset", "version", "tag", "url", "sha256", "integrity", "anchor")}}
     summary = {"schema": "mios-xbox-payload/1", "components": comps, "installers": inst_rows, "identity": ident_rows,
-               "shell": shell_rows,
+               "shell": shell_rows, "sources": sources,
                "registry_items": len(doc["registry"]) + len(doc.get("debloat_services") or []),
                "answer_file": "autounattend.xml"}
     _write(os.path.join(state, "payload.json"), (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8"))

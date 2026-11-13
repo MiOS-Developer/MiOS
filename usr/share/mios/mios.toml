@@ -12957,11 +12957,9 @@ pkgs = ["rpm-build", "gcc", "glibc-devel", "binutils", "curl", "git", "tar", "gz
 
 [theme.cursor_windows]
 base_size           = 24
-# The Windows build of [theme.cursor_linux].theme for every Windows image (MiOS-Xbox, xbox-bm-39). Upstream publishes
-# no digest for its release assets, so the asset is pinned by sha256 here; the build verifies it and checks
-# scheme_files/roles against the archive's own install.inf (any drift fails the build, never a silent fallback).
-asset_url           = "https://github.com/ful1e5/Bibata_Cursor/releases/download/v2.0.7/Bibata-Modern-Classic-Windows.zip"
-asset_sha256        = "b98eca4077d6e7796ff7e710e4d220ca13439f1118160d1e7b3db9e91fdec2be"
+# Windows build of [theme.cursor_linux].theme from its repo, resolved latest at build; the build records version and sha256.
+channel             = "latest"
+asset               = "Bibata-Modern-Classic-Windows.zip"                # the release asset's name (never a version)
 variant_dir         = "Bibata-Modern-Classic-Regular-Windows"            # the size variant drawn at base_size
 scheme_name         = "Bibata-Modern-Classic-Regular Cursors"            # install.inf SCHEME_NAME
 install_dir         = 'Cursors\Bibata-Modern-Classic-Regular Cursors'    # under %SystemRoot% (install.inf CUR_DIR)
@@ -13706,8 +13704,9 @@ pci = ["1AF4:1110"]               # IVSHMEM: the Looking Glass shared-memory dev
 # Windows\Fonts) and verified by the image gate and the probe. Values: [colors], [theme.cursor_*], [theme.font].
 [windows.xbox.identity]
 accent_ref        = "colors.accent"                 # "#RRGGBB" -> Themes/WindowColor, DWM AccentColor, Explorer accent
-cursor_ref        = "theme.cursor_windows"          # pinned Windows build of the cursor theme, scheme and roles
+cursor_ref        = "theme.cursor_windows"          # the Windows build of the cursor theme: release asset, scheme, roles
 cursor_theme_ref  = "theme.cursor_linux.theme"      # the same cursor theme as the Linux images (parity)
+cursor_repo_ref   = "theme.cursor_linux.source_repo"   # the same upstream repository as the Linux images
 font_ref          = "theme.font"                    # family + vendored, sha256-pinned archive (native_archive/native_sha256)
 font_dir          = 'Windows\Fonts'                 # image-relative: the system font directory
 system_root       = 'Windows'                       # image-relative %SystemRoot%; cursor paths are absolute REG_SZ on C: (Letter C)

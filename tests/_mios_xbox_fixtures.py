@@ -29,8 +29,8 @@ import spec_items as S  # noqa: E402
 
 def cursor_archive_inputs(tmp: str, doc: Dict[str, Any]) -> Dict[str, Any]:
     """A fixture cursor build (xbox-bm-39): an archive whose install.inf states exactly the SSOT cursor contract
-    (clickgen's layout: [Scheme.Reg], [Wreg], [Strings]) with stub cursor files. The fixture spec is re-pinned to its
-    sha256 -- tests never download. Returns the inputs.json 'identity' entry."""
+    (clickgen's layout: [Scheme.Reg], [Wreg], [Strings]) with stub cursor files, recorded the way fetch.fetch_cursor
+    records the floated build -- tests never download. Returns the inputs.json 'identity' entry."""
     import zipfile
     cur = doc["identity"]["cursor"]
     os.makedirs(tmp, exist_ok=True)
@@ -49,8 +49,9 @@ def cursor_archive_inputs(tmp: str, doc: Dict[str, Any]) -> Dict[str, Any]:
             z.writestr(f"{cur['variant_dir']}/{f}", f"fixture cursor {f}".encode())
     with open(path, "rb") as fh:
         sha = hashlib.sha256(fh.read()).hexdigest()
-    cur["asset_sha256"] = sha
-    return {"cursor_archive": {"path": path, "sha256": sha, "url": cur["asset_url"]}}
+    url = f"https://github.com/{cur['repo']}/releases/download/v0.0.0/{cur['asset']}"
+    return {"cursor_archive": {"path": path, "sha256": sha, "url": url, "version": "0.0.0", "tag": "v0.0.0",
+                               "asset": cur["asset"], "integrity": "sha256", "anchor": "fixture"}}
 
 
 def shell_inputs(tmp: str) -> Dict[str, Any]:

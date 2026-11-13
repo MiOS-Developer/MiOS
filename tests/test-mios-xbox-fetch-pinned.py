@@ -112,11 +112,11 @@ class TestFetchPinned(unittest.TestCase):
                 self.assertRefused(url, PIN, FakeDownloader(GOOD), "unsafe file name", 0)
 
     def test_negative_downloaded_bytes_differ_from_the_pin(self):
-        self.assertRefused(URL, PIN, FakeDownloader(b"a tampered build"), "differs from the SSOT pin", 1)
+        self.assertRefused(URL, PIN, FakeDownloader(b"a tampered build"), "differs from the expected digest", 1)
 
     def test_negative_stale_cache_and_wrong_download(self):
         self.cache(b"an older build")
-        self.assertRefused(URL, PIN, FakeDownloader(b"a tampered build"), "differs from the SSOT pin", 1)
+        self.assertRefused(URL, PIN, FakeDownloader(b"a tampered build"), "differs from the expected digest", 1)
 
 
 class FakeUupApi:
