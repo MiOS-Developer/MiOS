@@ -45,6 +45,17 @@ FIXTURE_IDENTITY = os.path.join(HERE, "fixtures", "mios-xbox", "fixture-identity
 LAYERS = [VENDOR, FIXTURE_IDENTITY]
 mios_toml = R.mios_toml
 UNS = "{urn:schemas-microsoft-com:unattend}"
+_REAL_RENDER = R.render
+
+
+def _orchestration_render(doc):
+    # B.render_spec and SC.R share the same module. A plain render stub would
+    # also erase the gate's reads; keep its actual renderer for traced inputs.
+    def render(merged, layers):
+        if isinstance(merged, B.SC.Traced):
+            return _REAL_RENDER(merged, layers)
+        return copy.deepcopy(doc)
+    return render
 
 
 def _rd(p: str) -> str:
@@ -1042,9 +1053,10 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(len(calls), n)
         B.host_preflight("run", x, lambda cmd, **kw: (0, "Domain 'mios-virsh-probe' defined"))
 
-    def _main_until_build_dir(self, probe_ok):
+    def _main_until_build_dir(self, probe_ok, layers=None):
         """main() as root inside the scope, with the probe stubbed: does it reach Build.new?"""
         from unittest import mock
+        layers = LAYERS if layers is None else layers
         doc = copy.deepcopy(self.doc)
         doc["spec"]["probe"]["python"] = sys.executable   # no re-exec into the venv
         reached = []
@@ -1059,8 +1071,8 @@ class TestBuild(unittest.TestCase):
 
         def no_exec(*a, **k):
             raise AssertionError(f"exec {a[:1]}")
-        with mock.patch.object(B, "build_layers", lambda env=None: LAYERS), \
-                mock.patch.object(B.render_spec, "render", lambda merged, layers: copy.deepcopy(doc)), \
+        with mock.patch.object(B, "build_layers", lambda env=None: layers), \
+                mock.patch.object(B.render_spec, "render", _orchestration_render(doc)), \
                 mock.patch.object(B.W, "virsh_file_access", probe), \
                 mock.patch.object(B.W, "_qemu_access"), \
                 mock.patch.object(B.Build, "new", classmethod(lambda cls, *a, **k: new(*a, **k))), \
@@ -1077,6 +1089,13 @@ class TestBuild(unittest.TestCase):
         rc, reached, err = self._main_until_build_dir(probe_ok=True)
         self.assertEqual(len(reached), 1)                       # the probe passes -> the build proceeds
         self.assertIn("stop at Build.new", err)
+        # The orchestration stub must preserve actual coverage admission too.
+        probe = os.path.join(self.tmp, "spec-probe.toml")
+        _wr(probe, '[colors]\n' + 'spec_' + 'probe_unread = "#010203"\n')
+        rc, reached, err = self._main_until_build_dir(probe_ok=True, layers=LAYERS + [probe])
+        self.assertEqual(rc, 2)
+        self.assertEqual(reached, [])
+        self.assertIn("colors.spec_probe_unread applies to mios-xbox but its pipeline never reads it", err)
 
     def test_stage_family_negative_uncaptured(self):
         inputs_dir = os.path.join(self.b.work)
@@ -1149,7 +1168,7 @@ class TestBuild(unittest.TestCase):
         for current in (real, venv_py):
             with self.subTest(interpreter=current), \
                     mock.patch.object(B, "build_layers", return_value=LAYERS), \
-                    mock.patch.object(B.render_spec, "render", return_value=doc), \
+                    mock.patch.object(B.render_spec, "render", _orchestration_render(doc)), \
                     mock.patch("os.geteuid", return_value=0), \
                     mock.patch.object(B.sys, "executable", current), \
                     mock.patch.object(B.os, "execv", side_effect=StopExec) as reexec, \
@@ -1267,7 +1286,7 @@ class TestStorageCapacity(unittest.TestCase):
 
     def test_main_refuses_before_exec_scope_or_build_directory(self):
         with mock.patch.object(B, "build_layers", return_value=LAYERS), \
-                mock.patch.object(B.render_spec, "render", return_value=self.doc), \
+                mock.patch.object(B.render_spec, "render", _orchestration_render(self.doc)), \
                 mock.patch.object(B.shutil, "disk_usage", return_value=self.usage(self.required - 1)), \
                 mock.patch.object(B.os, "geteuid", return_value=0), \
                 mock.patch.object(B.os, "execv") as reexec, \
@@ -1295,7 +1314,7 @@ class TestStorageCapacity(unittest.TestCase):
             for low, key in ((existing, "artifact_root"), (recorded_work, "work_root")):
                 with self.subTest(command=command, low=key), \
                         mock.patch.object(B, "build_layers", return_value=LAYERS), \
-                        mock.patch.object(B.render_spec, "render", return_value=self.doc), \
+                        mock.patch.object(B.render_spec, "render", _orchestration_render(self.doc)), \
                         mock.patch.object(B.os, "geteuid", return_value=0), \
                         mock.patch.object(B.shutil, "disk_usage",
                                           side_effect=lambda p: self.usage(self.required - 1 if p == low else self.required)), \
