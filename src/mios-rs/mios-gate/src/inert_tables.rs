@@ -151,6 +151,168 @@ fn ssot_keys(text: &str, re: &Res) -> BTreeSet<String> {
     keys
 }
 
+/// Skip Rust whitespace/comments without allowing a commented call to count.
+fn rust_trivia(bytes: &[u8], mut at: usize) -> usize {
+    loop {
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        if bytes.get(at..at + 2) == Some(b"//") {
+            while bytes.get(at).is_some_and(|b| *b != b'\n') {
+                at += 1;
+            }
+        } else if bytes.get(at..at + 2) == Some(b"/*") {
+            at += 2;
+            let mut depth = 1;
+            while at < bytes.len() && depth > 0 {
+                match bytes.get(at..at + 2) {
+                    Some(b"/*") => {
+                        depth += 1;
+                        at += 2;
+                    }
+                    Some(b"*/") => {
+                        depth -= 1;
+                        at += 2;
+                    }
+                    _ => at += 1,
+                }
+            }
+        } else {
+            return at;
+        }
+    }
+}
+
+/// Locate a whole Rust string, including raw strings. Ordinary pointer literals
+/// must use JSON-compatible escapes; unsupported Rust escapes fail closed. Even
+/// an undecodable literal is skipped whole, so quoted code cannot credit a table.
+fn rust_string(text: &str, at: usize) -> Option<(usize, Option<String>)> {
+    let bytes = text.as_bytes();
+    if bytes.get(at) == Some(&b'r') {
+        let mut quote = at + 1;
+        while bytes.get(quote) == Some(&b'#') {
+            quote += 1;
+        }
+        if bytes.get(quote) != Some(&b'"') {
+            return None;
+        }
+        let suffix = format!("\"{}", "#".repeat(quote - at - 1));
+        return Some(match text[quote + 1..].find(&suffix) {
+            Some(end) => {
+                let end = quote + 1 + end;
+                (end + suffix.len(), Some(text[quote + 1..end].to_string()))
+            }
+            None => (bytes.len(), None),
+        });
+    }
+    if bytes.get(at) != Some(&b'"') {
+        return None;
+    }
+    let mut end = at + 1;
+    let mut compatible = true;
+    while end < bytes.len() {
+        match bytes[end] {
+            b'\\' => {
+                compatible &= bytes
+                    .get(end + 1)
+                    .is_some_and(|b| matches!(b, b'"' | b'\\' | b'n' | b'r' | b't'));
+                end += 2;
+            }
+            b'"' => {
+                let value = if compatible {
+                    serde_json::from_str(&text[at..=end]).ok()
+                } else {
+                    None
+                };
+                return Some((end + 1, value));
+            }
+            _ => end += 1,
+        }
+    }
+    Some((bytes.len(), None))
+}
+
+/// Decode one RFC6901 segment exactly once (not a prefix or recursive replace).
+fn pointer_segment(segment: &str) -> Option<String> {
+    let mut decoded = String::new();
+    let mut chars = segment.chars();
+    while let Some(c) = chars.next() {
+        decoded.push(if c == '~' {
+            match chars.next()? {
+                '0' => '~',
+                '1' => '/',
+                _ => return None,
+            }
+        } else {
+            c
+        });
+    }
+    Some(decoded)
+}
+
+/// Like a quoted REAL dotted key, a literal `.pointer("/table/key")` is
+/// access-shaped evidence, not whole-program proof of the receiver's origin.
+/// Require an actual Rust call outside comments/strings and two complete real
+/// key segments. Existing parsed-binding rules still govern ordinary subscripts.
+fn json_pointer_tables(text: &str, top: &toml::map::Map<String, toml::Value>) -> BTreeSet<String> {
+    let bytes = text.as_bytes();
+    let mut tables = BTreeSet::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        at = rust_trivia(bytes, at);
+        if at >= bytes.len() {
+            break;
+        }
+        if let Some((end, _)) = rust_string(text, at) {
+            at = end;
+            continue;
+        }
+        // Skip ordinary character literals, but not lifetimes such as 'a.
+        if bytes[at] == b'\'' {
+            let end = if bytes.get(at + 1) == Some(&b'\\') {
+                at + 3
+            } else {
+                at + 1 + text[at + 1..].chars().next().map_or(0, char::len_utf8)
+            };
+            if bytes.get(end) == Some(&b'\'') {
+                at = end + 1;
+                continue;
+            }
+        }
+        if bytes[at] == b'.' {
+            let method = rust_trivia(bytes, at + 1);
+            let open = rust_trivia(bytes, method + "pointer".len());
+            if bytes.get(method..method + "pointer".len()) == Some(b"pointer")
+                && bytes.get(open) == Some(&b'(')
+            {
+                let arg = rust_trivia(bytes, open + 1);
+                if let Some((end, Some(path))) = rust_string(text, arg) {
+                    let close = rust_trivia(bytes, end);
+                    if bytes.get(close) == Some(&b')') {
+                        if let Some(path) = path.strip_prefix('/') {
+                            let segments: Option<Vec<String>> =
+                                path.split('/').map(pointer_segment).collect();
+                            if let Some(segments) = segments {
+                                if let [table, key, ..] = segments.as_slice() {
+                                    if top
+                                        .get(table)
+                                        .and_then(toml::Value::as_table)
+                                        .is_some_and(|value| value.contains_key(key))
+                                    {
+                                        tables.insert(table.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        at += 1;
+    }
+    tables
+}
+
 /// Table -> (context-free evidence patterns, optional MIOS_<TABLE>_* projection rule).
 type Pending = BTreeMap<String, (Vec<Regex>, Option<(Regex, BTreeSet<String>)>)>;
 
@@ -328,11 +490,18 @@ pub fn check(root: &Path) -> Report {
             BTreeSet::new()
         };
 
+        let pointer_tables = if rel.ends_with(".rs") {
+            json_pointer_tables(&text, top)
+        } else {
+            BTreeSet::new()
+        };
+
         let hits: Vec<String> = pending
             .iter()
             .filter(|(name, (anywhere, var))| {
                 anywhere.iter().any(|p| p.is_match(&text))
                     || keys.contains(name.as_str())
+                    || pointer_tables.contains(name.as_str())
                     || var
                         .as_ref()
                         .map(|(r, toks)| {
@@ -595,6 +764,157 @@ mod tests {
             "the fixture must put the window edge inside the char"
         );
         assert!(keys(&src).contains("tbl"), "the loader must still credit");
+    }
+
+    fn pointer_hits(src: &str) -> BTreeSet<String> {
+        let data: toml::Value = r#"
+[mios_pointer_fixture]
+rows = ["one"]
+"slash\\key" = 1
+"quoted\"key" = 2
+["mios/pointer~fixture"]
+"rows/~" = 1
+"rows~1" = 2
+"#
+        .parse()
+        .unwrap_or_else(|error| panic!("invalid fixture: {error}"));
+        json_pointer_tables(src, data.as_table().unwrap_or_else(|| unreachable!()))
+    }
+
+    #[test]
+    fn json_pointer_literal_calls_credit_real_keys() {
+        for src in [
+            r#"let rows = value.pointer("/mios_pointer_fixture/rows");"#,
+            "let rows = value\n .pointer(\n \"/mios_pointer_fixture/rows\"\n);",
+            r##"let rows = value.pointer(r#"/mios_pointer_fixture/rows"#);"##,
+            r#"let rows = value. /* method */ pointer(/* path */ "/mios_pointer_fixture/rows");"#,
+            r#"let quote = '"'; let rows = value.pointer("/mios_pointer_fixture/rows/0");"#,
+            r#"let rows = value.pointer("/mios_pointer_fixture/slash\\key");"#,
+            r#"let rows = value.pointer("/mios_pointer_fixture/quoted\"key");"#,
+        ] {
+            assert!(pointer_hits(src).contains("mios_pointer_fixture"), "{src}");
+        }
+    }
+
+    #[test]
+    fn json_pointer_segments_require_real_keys_and_valid_escapes() {
+        let escaped = r#"v.pointer("/mios~1pointer~0fixture/rows~1~0")"#;
+        assert!(pointer_hits(escaped).contains("mios/pointer~fixture"));
+        let once = r#"v.pointer("/mios~1pointer~0fixture/rows~01")"#;
+        assert!(pointer_hits(once).contains("mios/pointer~fixture"));
+        for path in [
+            "/mios_pointer_fixture_extra/rows",
+            "/mios_pointer_fixture/rows_extra",
+            "/mios_pointer_fixture/missing",
+            "/unknown/rows",
+            "/mios_pointer_fixture",
+            "mios_pointer_fixture/rows",
+            "/mios_pointer_fixture/rows/~2",
+            "/mios_pointer_fixture/rows/~",
+            "/mios~2pointer~0fixture/rows~1~0",
+        ] {
+            let src = format!("v.pointer({path:?})");
+            assert!(pointer_hits(&src).is_empty(), "{src}");
+        }
+    }
+
+    #[test]
+    fn json_pointer_text_comments_and_quoted_code_do_not_credit() {
+        for src in [
+            r#"let path = "/mios_pointer_fixture/rows";"#,
+            r#"let message = "read /mios_pointer_fixture/rows here";"#,
+            r#"// v.pointer("/mios_pointer_fixture/rows");"#,
+            r#"/* outer /* nested */ v.pointer("/mios_pointer_fixture/rows"); */"#,
+            r#"let code = "v.pointer(\"/mios_pointer_fixture/rows\")";"#,
+            r###"let code = r##"v.pointer("/mios_pointer_fixture/rows")"##;"###,
+            r#"let code = b"v.pointer(\"/mios_pointer_fixture/rows\")";"#,
+            r###"let code = br##"v.pointer("/mios_pointer_fixture/rows")"##;"###,
+        ] {
+            assert!(pointer_hits(src).is_empty(), "{src}");
+        }
+    }
+
+    #[test]
+    fn json_pointer_requires_a_single_literal_method_argument() {
+        for src in [
+            r#"v.pointer(path)"#,
+            r#"pointer("/mios_pointer_fixture/rows")"#,
+            r#"v.pointer_mut("/mios_pointer_fixture/rows")"#,
+            r#"v.my_pointer("/mios_pointer_fixture/rows")"#,
+            r#"v.pointer_extra("/mios_pointer_fixture/rows")"#,
+            r#"v.pointer("/mios_pointer_fixture/rows", other)"#,
+            r#"v.pointer(concat!("/mios_pointer_fixture", "/rows"))"#,
+            r#"v.pointer("/mios_pointer_fixture/rows\q")"#,
+            r#"v.pointer("\u002fmios_pointer_fixture/rows")"#,
+            r#"v.pointer("\u{2f}mios_pointer_fixture/rows")"#,
+        ] {
+            assert!(pointer_hits(src).is_empty(), "{src}");
+        }
+    }
+
+    fn pointer_gate(sources: &[(&str, &str)]) -> Report {
+        let dir = tempfile::tempdir().unwrap_or_else(|error| panic!("fixture: {error}"));
+        let root = dir.path();
+        let ssot = root.join(SSOT);
+        std::fs::create_dir_all(ssot.parent().unwrap_or_else(|| unreachable!()))
+            .unwrap_or_else(|error| panic!("fixture parent: {error}"));
+        std::fs::write(
+            ssot,
+            "[mios_pointer_fixture]\nrows = ['one']\n[ssot_tables]\nunconsumed = []\nmax_unconsumed = 0\n",
+        )
+        .unwrap_or_else(|error| panic!("fixture SSOT: {error}"));
+        let register_reader = "import tomllib\nwith open('usr/share/mios/mios.toml', 'rb') as fh:\n    data = tomllib.load(fh)\nlimit = data['ssot_tables']['max_unconsumed']\n";
+        for (path, text) in std::iter::once(("register.py", register_reader))
+            .chain(sources.iter().copied())
+        {
+            let path = root.join(path);
+            std::fs::create_dir_all(path.parent().unwrap_or_else(|| unreachable!()))
+                .unwrap_or_else(|error| panic!("fixture directory: {error}"));
+            std::fs::write(path, text).unwrap_or_else(|error| panic!("fixture source: {error}"));
+        }
+        for args in [["init", "-q"], ["add", "--all"]] {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap_or_else(|error| panic!("fixture Git: {error}"));
+            assert!(status.success());
+        }
+        check(root)
+    }
+
+    #[test]
+    fn json_pointer_call_is_seen_without_a_local_loader_binding() {
+        let result = pointer_gate(&[(
+            "src/project.rs",
+            r#"pub fn project(doc: &serde_json::Value) {
+    let _rows = doc.pointer("/mios_pointer_fixture/rows");
+}"#,
+        )]);
+        assert!(result.ok, "{:?}", result.findings);
+    }
+
+    #[test]
+    fn json_pointer_corpus_exclusions_remain_non_consumers() {
+        let call = r#"let rows = doc.pointer("/mios_pointer_fixture/rows");"#;
+        let generated = format!("// {GENERATED}\n{call}");
+        let result = pointer_gate(&[
+            ("tests/project.rs", call),
+            ("docs/project.rs", call),
+            ("usr/share/doc/project.rs", call),
+            ("nested/docs/project.rs", call),
+            ("usr/share/mios/reference/project.rs", call),
+            ("src/decoy.js", call),
+            ("src/generated.rs", &generated),
+            (
+                "src/message.rs",
+                r#"let message = "doc.pointer(\"/mios_pointer_fixture/rows\")";"#,
+            ),
+        ]);
+        assert!(!result.ok);
+        assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
+        assert!(result.findings[0].contains("[mios_pointer_fixture]"));
     }
 
     #[test]
