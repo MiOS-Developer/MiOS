@@ -771,7 +771,7 @@ class TestBuilders(unittest.TestCase):
 class TestDevcontainerPublicationSmoke(unittest.TestCase):
     """Exercise the actual publication gate across a private container boundary."""
 
-    def _run(self, fault="", revision="", collision=False, minimum=4, dirty=""):
+    def _run(self, fault="", revision="", collision=False, minimum=4, dirty="", doc=None, containerfile=None):
         with tempfile.TemporaryDirectory(prefix="mios-devcontainer-publication-") as tmp:
             root = Path(tmp)
             (root / "usr/share/mios").mkdir(parents=True)
@@ -779,9 +779,9 @@ class TestDevcontainerPublicationSmoke(unittest.TestCase):
             (root / "usr/share/mios/mios.toml").write_text(
                 "[identity]\nusername='developer'\n[bootstrap.dev_vm]\nminimum_cpus="
                 + str(minimum) + "\n[ci]\nsuite_timeout_s=30\n")
-            doc = {"remoteUser": "developer", "build": {"args": {"MIOS_IDENTITY_USERNAME": "developer"}}}
+            doc = doc or {"build": {"args": {"MIOS_IDENTITY_USERNAME": "developer"}}}
             (root / ".devcontainer/devcontainer.json").write_text(json.dumps(doc))
-            (root / ".devcontainer/Containerfile").write_text(_read(DEV_CF))
+            (root / ".devcontainer/Containerfile").write_text(_read(DEV_CF) if containerfile is None else containerfile)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             subprocess.run(["git", "-C", str(root), "add", "."], check=True)
             subprocess.run(["git", "-C", str(root), "-c", "user.name=MiOS",
@@ -887,6 +887,21 @@ else: raise AssertionError(args)
         result, calls, _, _, _ = self._run(minimum=2)
         self.assertNotEqual(0, result.returncode)
         self.assertEqual([], calls)
+
+    def test_literal_remote_user_or_fixed_image_user_never_starts_a_probe(self):
+        """Attach must select the account the image's own build created: a devcontainer.json
+        literal, or a Containerfile that ends on a fixed USER, refuses publication."""
+        literal = {"remoteUser": "developer", "build": {"args": {"MIOS_IDENTITY_USERNAME": "developer"}}}
+        fixed = _read(DEV_CF).replace("USER ${MIOS_IDENTITY_USERNAME:-1000}\n", "USER 1000\n")
+        self.assertNotEqual(fixed, _read(DEV_CF))
+        for kwargs, message in (({"doc": literal}, "must not name a remoteUser"),
+                                ({"containerfile": fixed}, "must end as USER")):
+            with self.subTest(message=message):
+                result, calls, _, receipt, _ = self._run(**kwargs)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn(message, result.stderr)
+                self.assertEqual([], calls)
+                self.assertIsNone(receipt)
 
     def test_failed_start_cleans_only_the_successfully_created_id(self):
         result, calls, _, receipt, _ = self._run(fault="start")
@@ -1089,7 +1104,7 @@ save()
         names = [c[0] for c in state["calls"]]
         self.assertLess(names.index("systemd-sysusers"), max(i for i, name in enumerate(names) if name == "getent"))
         self.assertEqual("setpriv", names[-1])
-        self.assertIn("USER 1000", _read(DEV_CF))
+        self.assertEqual("${MIOS_IDENTITY_USERNAME:-1000}", re.findall(r"(?m)^USER (.*)$", _read(DEV_CF))[-1])
 
     def test_source_identity_replaces_only_the_known_stale_image_identity(self):
         result, state = self._run(requested="developer", image_user="image-user")
@@ -1135,28 +1150,92 @@ save()
                 result, _ = self._run(fail=command)
                 self.assertNotEqual(0, result.returncode)
 
-    def test_both_profiles_pass_the_same_user_selected_for_attach(self):
+    def test_both_profiles_attach_as_the_account_their_image_builds(self):
+        """No profile names a remoteUser: the devcontainer CLI attaches as the image's last
+        USER, which is the build argument the RUN provisions, projected from [identity]."""
+        canonical = tomllib.loads(_read(os.path.join(ROOT, "usr/share/mios/mios.toml")))["identity"]["username"]
+        self.assertEqual("${MIOS_IDENTITY_USERNAME:-1000}", re.findall(r"(?m)^USER (.*)$", _read(DEV_CF))[-1])
         for rel in (".devcontainer/devcontainer.json", ".devcontainer/artifact-builder/devcontainer.json"):
-            doc = json.loads(_read(os.path.join(ROOT, rel)))
-            self.assertEqual(doc["remoteUser"], doc["build"]["args"]["MIOS_IDENTITY_USERNAME"])
-            self.assertNotEqual("root", doc["remoteUser"])
+            with self.subTest(rel=rel):
+                doc = json.loads(_read(os.path.join(ROOT, rel)))
+                self.assertNotIn("remoteUser", doc)
+                self.assertNotIn("containerUser", doc)
+                self.assertEqual(canonical, doc["build"]["args"]["MIOS_IDENTITY_USERNAME"])
+                self.assertNotEqual("root", canonical)
+
+
+class TestDevcontainerAccountGuard(unittest.TestCase):
+    """A container whose account no longer matches the checkout's vendor [identity].username
+    stops its lifecycle with a rebuild instruction instead of running as a stale account."""
+
+    def _run(self, ssot_user, account, uid="1000", toml=True):
+        source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
+        guard = re.search(r"(?ms)^mios_account_guard\(\) \{.*?^\}", source).group(0)
+        with tempfile.TemporaryDirectory(prefix="mios-account-guard-") as tmp:
+            root = Path(tmp) / "checkout"
+            for rel in ("usr/libexec/mios/mios-toml-get", "usr/lib/mios/mios_toml.py"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(os.path.join(ROOT, rel), root / rel)
+            (root / "usr/share/mios").mkdir(parents=True)
+            if toml:
+                (root / "usr/share/mios/mios.toml").write_text(f"[identity]\nusername = '{ssot_user}'\n")
+            tools = Path(tmp) / "bin"
+            tools.mkdir()
+            (tools / "id").write_text('#!/bin/sh\ncase "$1" in -un) echo "$FAKE_USER" ;; -u) echo "$FAKE_UID" ;; *) exit 2 ;; esac\n')
+            (tools / "id").chmod(0o755)
+            # remoteEnv names a native catalog that a fresh container may not have yet.
+            env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"], FAKE_USER=account,
+                       FAKE_UID=uid, MIOS_NATIVE_BIN_DIR=str(Path(tmp) / "absent-native-catalog"))
+            script = "set -euo pipefail\n" + guard + '\nmios_account_guard "$1"\necho guard-passed\n'
+            return subprocess.run(["bash", "-c", script, "guard", str(root)], env=env,
+                                  capture_output=True, text=True)
+
+    def test_matching_account_passes(self):
+        result = self._run("fx-user", "fx-user")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("guard-passed", result.stdout)
+
+    def test_renamed_identity_stops_with_a_rebuild_instruction(self):
+        result = self._run("fx-user", "user")
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("guard-passed", result.stdout)
+        self.assertIn("runs as user (UID 1000), but [identity].username is fx-user", result.stderr)
+        self.assertIn("rebuild the container", result.stderr)
+
+    def test_wrong_uid_or_unresolved_identity_stops(self):
+        for kwargs in (dict(ssot_user="fx-user", account="fx-user", uid="1001"),
+                       dict(ssot_user="fx-user", account="fx-user", toml=False)):
+            with self.subTest(kwargs=kwargs):
+                result = self._run(**kwargs)
+                self.assertNotEqual(0, result.returncode)
+                self.assertNotIn("guard-passed", result.stdout)
+
+    def test_create_and_start_run_the_guard_first(self):
+        source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
+        for mode in ("create", "start"):
+            with self.subTest(mode=mode):
+                body = re.search(rf"(?m)^    {mode}\)\n((?:        .*\n)+?)        ;;", source).group(1)
+                self.assertEqual('mios_account_guard "$PWD"', body.splitlines()[0].strip())
 
 
 class TestCloudContainerAccountReuse(unittest.TestCase):
     """A stale container or missing canonical account cannot reach lifecycle hooks."""
 
-    def _run(self, container_image="sha256:current", account=True, uid="1000", configured="user"):
+    def _run(self, container_image="sha256:current", account=True, uid="1000", configured="user", config=None):
         source = _read(os.path.join(ROOT, ".devcontainer/cloud-shell/bootstrap.sh"))
         functions = "\n".join(re.search(rf"(?ms)^{name}\(\) \{{.*?^\}}", source).group(0)
-                              for name in ("container_account", "up"))
+                              for name in ("dc_user", "container_account", "up"))
         with tempfile.TemporaryDirectory(prefix="mios-cloud-account-") as tmp:
+            fixture = os.path.join(tmp, "devcontainer.json")
+            Path(fixture).write_text(json.dumps(
+                config if config is not None else {"build": {"args": {"MIOS_IDENTITY_USERNAME": configured}}}))
             env = dict(os.environ, TROOT=tmp, TSTATE=os.path.join(tmp, "state"),
                        CALLS=os.path.join(tmp, "calls"), HOOKS=os.path.join(tmp, "hooks"),
                        CONTAINER_IMAGE=container_image, ACCOUNT="1" if account else "0",
-                       ACCOUNT_UID=uid, CONFIGURED_USER=configured)
+                       ACCOUNT_UID=uid, TCONFIG=fixture)
             harness = r'''
 set -euo pipefail
-ROOT="$TROOT"; STATE="$TSTATE"; CONFIG=fixture; RT=mock_runtime
+ROOT="$TROOT"; STATE="$TSTATE"; CONFIG="$TCONFIG"; RT=mock_runtime
 log() { :; }
 die() { echo "$*" >&2; exit 1; }
 require_root_checkout() { :; }
@@ -1178,7 +1257,6 @@ need() {
 }
 dc_json() {
     case "$1" in
-        remoteUser) echo "$CONFIGURED_USER" ;;
         workspaceFolder) echo /workspaces ;;
         *) return 2 ;;
     esac
@@ -1228,6 +1306,15 @@ status() { :; }
         result, _, hooks, created = self._run(account=False)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("cannot select canonical user", result.stderr)
+        self.assertFalse(hooks or created)
+
+    def test_a_remote_user_literal_is_not_the_account_source(self):
+        """The launcher reads the build account, never remoteUser: a config that names only
+        a remoteUser has no account and never builds or reaches a lifecycle hook."""
+        result, calls, hooks, created = self._run(config={"remoteUser": "user"})
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("needs a non-root build.args.MIOS_IDENTITY_USERNAME", result.stderr)
+        self.assertEqual("", calls)
         self.assertFalse(hooks or created)
 
     def test_root_or_wrong_uid_never_reaches_lifecycle(self):

@@ -13,8 +13,15 @@ Packages, toolchains and application payloads belong to the OS pipeline.
 mios-bootstrap and -dev-loop carry byte-identical copies of this Containerfile;
 edit this source and synchronize its mirrors.
 
-The checkout's `[identity].username` projects both `remoteUser` and
-`build.args.MIOS_IDENTITY_USERNAME`. The build materializes sysusers before
+The checkout's `[identity].username` projects
+`build.args.MIOS_IDENTITY_USERNAME`. No `devcontainer.json` names a
+`remoteUser`: the Containerfile ends with `USER ${MIOS_IDENTITY_USERNAME:-1000}`,
+and the Dev Containers CLI attaches as that image user, so a container only
+ever attaches as an account its own image created. If the checkout's identity
+changes after the build, `boot-mios-systems.sh` stops `create` and `start`
+with a rebuild instruction instead of running as the old account.
+`tools/sync-dotfiles.py --check` reports a literal `remoteUser` as drift.
+The build materializes sysusers before
 requiring the account, preserves UID 1000, initializes its home and workspace,
 and validates noninteractive development sudo policy. A known image identity can be
 renamed to the selected checkout identity while keeping its UID and group
@@ -51,7 +58,9 @@ An error such as `unable to find user user: no matching entries in passwd file`
 occurs before post-create commands can run. Creating an account in
 `postCreateCommand` cannot repair that attach path. The recovery container is a
 separate fallback environment; its account list does not describe the failed
-MiOS image.
+MiOS image. A container created while `devcontainer.json` still named a
+`remoteUser` keeps that name in its stored metadata, so it needs one full
+rebuild; containers created after that attach as their image's own user.
 
 Keep source changes and required files under `/workspaces`, update the checkout
 to the repaired configuration, then perform a full container rebuild. A

@@ -241,7 +241,6 @@
   ],
   "postCreateCommand": "bash MiOS/.devcontainer/boot-mios-systems.sh create",
   "postStartCommand": "bash MiOS/.devcontainer/boot-mios-systems.sh start",
-  "remoteUser": "user",
   "workspaceFolder": "/workspaces",
   "hostRequirements": {
     "cpus": 16,

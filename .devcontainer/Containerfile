@@ -5,8 +5,8 @@
 ARG MIOS_IMAGE_REF=ghcr.io/mios-developer/mios:latest
 FROM ${MIOS_IMAGE_REF}
 
-# The checkout projects this from [identity].username together with remoteUser.
-# Direct image builds default to the baked image's canonical identity.
+# The checkout projects this from [identity].username. Direct image builds
+# default to the baked image's canonical identity.
 ARG MIOS_IDENTITY_USERNAME
 USER 0
 RUN set -euo pipefail; \
@@ -70,6 +70,9 @@ RUN set -euo pipefail; \
     setpriv --reuid "$user" --regid "$(id -gn "$user")" --init-groups -- /usr/bin/true
 
 ENV MIOS_DEVCONTAINER=1
-USER 1000
+# The image runs as the account the RUN above created. devcontainer.json names no
+# remoteUser, so the devcontainer CLI attaches as this USER (build args substituted),
+# a name the container's own image always has. UID 1000 when the argument is empty.
+USER ${MIOS_IDENTITY_USERNAME:-1000}
 WORKDIR /workspaces
 CMD ["/bin/bash", "-l"]

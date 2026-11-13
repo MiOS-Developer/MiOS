@@ -341,9 +341,16 @@ from pathlib import Path
 root = Path(sys.argv[1])
 data = tomllib.loads((root / "usr/share/mios/mios.toml").read_text())
 doc = json.loads((root / ".devcontainer/devcontainer.json").read_text())
-user = doc["remoteUser"]
-assert user == doc["build"]["args"]["MIOS_IDENTITY_USERNAME"] == data["identity"]["username"]
+# Attach selects the image's own USER (the account its build created), never a
+# devcontainer.json literal that a container built for another identity lacks.
+assert "remoteUser" not in doc, "devcontainer.json must not name a remoteUser"
+user = doc["build"]["args"]["MIOS_IDENTITY_USERNAME"]
+assert user == data["identity"]["username"]
 assert isinstance(user, str) and re.fullmatch(r"[a-z_][a-z0-9_-]*", user) and user != "root"
+containerfile = (root / ".devcontainer/Containerfile").read_text()
+users = re.findall(r"(?m)^USER (.*)$", containerfile)
+assert users and users[-1] == "${MIOS_IDENTITY_USERNAME:-1000}", \
+    "Containerfile must end as USER ${MIOS_IDENTITY_USERNAME:-1000}, the account its build created"
 cpus, limit = data["bootstrap"]["dev_vm"]["minimum_cpus"], data["ci"]["suite_timeout_s"]
 assert type(cpus) is int and cpus >= 4 and type(limit) is int and limit > 0
 print(cpus, limit, user)

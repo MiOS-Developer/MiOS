@@ -84,6 +84,19 @@ else:
 PY
 }
 
+# The devcontainer account: build.args.MIOS_IDENTITY_USERNAME, projected from
+# [identity].username. devcontainer.json names no remoteUser; the image's USER is
+# the account its build created from this argument.
+dc_user() {
+    python3 - "$CONFIG" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+build = doc.get("build") if isinstance(doc.get("build"), dict) else {}
+args = build.get("args") if isinstance(build.get("args"), dict) else {}
+print(args.get("MIOS_IDENTITY_USERNAME", ""))
+PY
+}
+
 select_config() {
     [[ "$BUILDER" == 0 || "$BUILDER" == 1 ]] || die "deployment.cloud.builder must be 0 or 1"
     if [[ "$BUILDER" == 1 ]]; then
@@ -252,10 +265,10 @@ up() {
     local ref dev name user wsf wsroot primary uid gid repo src ca line target canonical selected_image container_image
     require_root_checkout; select_runtime; select_config
     ref="$(need image ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
-    user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
+    user="$(dc_user)"; wsf="$(dc_json workspaceFolder)"
     canonical="$(ssot --vendor identity username)"
-    [[ -n "$user" && "$user" != root && -n "$wsf" ]] || die "$CONFIG needs a non-root remoteUser and workspaceFolder"
-    [[ "$user" == "$canonical" ]] || die "$CONFIG remoteUser differs from [identity].username; re-project the devcontainer before rebuilding"
+    [[ -n "$user" && "$user" != root && -n "$wsf" ]] || die "$CONFIG needs a non-root build.args.MIOS_IDENTITY_USERNAME and workspaceFolder"
+    [[ "$user" == "$canonical" ]] || die "$CONFIG build.args.MIOS_IDENTITY_USERNAME differs from [identity].username; re-project the devcontainer before rebuilding"
     preflight
     pull_image
     "$RT" build --build-arg "MIOS_IMAGE_REF=$ref" --build-arg "MIOS_IDENTITY_USERNAME=$user" \
@@ -320,7 +333,7 @@ up() {
 container_account() {
     local name="$1" user="$2" uid
     [[ -n "$user" && "$user" != root && "$user" == "$(ssot --vendor identity username)" ]] \
-        || die "configured remoteUser is not the canonical non-root identity; re-project before attachment"
+        || die "configured devcontainer account is not the canonical non-root identity; re-project before attachment"
     uid="$("$RT" exec -u "$user" "$name" id -u)" \
         || die "container $name cannot select canonical user $user; rebuild the devcontainer, not the recovery image"
     [[ "$uid" == 1000 ]] || die "container $name canonical developer account is not UID 1000; rebuild its account wiring"
@@ -329,7 +342,7 @@ container_account() {
 lifecycle() {
     local cmd user wsf
     cmd="$(dc_json "$1")"; [[ -n "$cmd" ]] || return 0
-    user="$(dc_json remoteUser)"; wsf="$(dc_json workspaceFolder)"
+    user="$(dc_user)"; wsf="$(dc_json workspaceFolder)"
     container_account "$(container_name)" "$user"
     log "$1 as $user in $wsf: $cmd"
     # A Tailscale pre-auth key reaches the lifecycle (mios-tailscale-sync enrolls
@@ -362,7 +375,7 @@ enter() {
         status >/dev/null || { status; exit 3; }
     fi
     name="$(container_name)"
-    container_account "$name" "$(dc_json remoteUser)"
+    container_account "$name" "$(dc_user)"
     wsroot="$(need workspace root)"; primary="$(need workspace primary)"
     if [[ "$PWD" == "$ROOT" || "$PWD" == "$ROOT/"* ]]; then
         wd="$wsroot/$primary${PWD#"$ROOT"}"
@@ -375,7 +388,7 @@ enter() {
     [[ -n "$wd" ]] || wd="$(dc_json workspaceFolder)"
     [[ $# -gt 0 ]] || set -- bash -l
     local tty=(-i); [[ -t 0 && -t 1 ]] && tty=(-it)
-    exec "$RT" exec "${tty[@]}" -u "$(dc_json remoteUser)" -w "$wd" "$name" "$@"
+    exec "$RT" exec "${tty[@]}" -u "$(dc_user)" -w "$wd" "$name" "$@"
 }
 
 write_wrapper() {  # $1 = install path: a `mios-dev` that enters this checkout's container
@@ -432,12 +445,12 @@ codex() {
             codex check ;;
         start)
             select_runtime; select_config; up
-            "$RT" exec -u "$(dc_json remoteUser)" "$(container_name)" bash -lc \
+            "$RT" exec -u "$(dc_user)" "$(container_name)" bash -lc \
                 "bash $(need workspace root)/$(need workspace primary)/.devcontainer/mios-agent-pipe-dev start && /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --project-agent-clients"
             codex check ;;
         check)
             select_runtime; select_config
-            "$RT" exec -u "$(dc_json remoteUser)" -e "WORKSPACE_ROOT=$(need workspace root)/$(need workspace primary)" \
+            "$RT" exec -u "$(dc_user)" -e "WORKSPACE_ROOT=$(need workspace root)/$(need workspace primary)" \
                 "$(container_name)" bash -lc '
 set -euo pipefail
 . /etc/os-release

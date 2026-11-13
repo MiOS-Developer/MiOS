@@ -7,6 +7,26 @@ set -euo pipefail
 # below (.devloop_artifacts, harness/) are this repo's.
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 
+# The container runs as the account its own image's build created (the image's USER,
+# from build.args.MIOS_IDENTITY_USERNAME), so attach never names a missing account.
+# When the checkout's vendor [identity].username has changed since that build, only a
+# rebuild provisions the new account: say so and stop before any lifecycle work.
+mios_account_guard() {
+    local root="$1" want have uid
+    want="$(env -u MIOS_NATIVE_BIN_DIR MIOS_TOML_ROOT="$root" \
+        python3 "${root}/usr/libexec/mios/mios-toml-get" --vendor identity username)" || want=""
+    have="$(id -un)"; uid="$(id -u)"
+    if [[ -z "$want" ]]; then
+        echo "[devcontainer:account] ERROR: [identity].username did not resolve from ${root}" >&2
+        exit 1
+    fi
+    if [[ "$have" != "$want" || "$uid" != 1000 ]]; then
+        echo "[devcontainer:account] ERROR: this container runs as ${have} (UID ${uid}), but [identity].username is ${want} (UID 1000)." >&2
+        echo "[devcontainer:account] The account is created when the image is built: rebuild the container (Codespaces: Rebuild Container, Full Rebuild)." >&2
+        exit 1
+    fi
+}
+
 mios_platform() {
     local platform config_dir
     if [[ -n "${CODESPACES:-}" ]]; then
@@ -302,10 +322,12 @@ mios_post_start() {
 
 case "${1:-start}" in
     create)
+        mios_account_guard "$PWD"
         mios_create
         mios_platform
         ;;
     start)
+        mios_account_guard "$PWD"
         mios_start
         mios_post_start
         ;;
