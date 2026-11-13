@@ -8,10 +8,12 @@ from __future__ import annotations
 import contextlib
 import copy
 import io
+import json
 import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.dont_write_bytecode = True
@@ -26,6 +28,9 @@ FIXTURE_IDENTITY = os.path.join(HERE, "fixtures", "mios-xbox", "fixture-identity
 LAYERS = [VENDOR, FIXTURE_IDENTITY]
 IMAGE = "mios-xbox"
 PROBE = '[colors]\nspec_probe_unread = "#010203"\n'
+PRIVATE_VALUE = "fixture-" + "private-parity-value"
+PRIVATE_PARITY = ('[identity]\ndefault_password = ' + json.dumps(PRIVATE_VALUE)
+                  + '\n[spec.parity]\nequal = [["identity.default_password", "identity.username"]]\n')
 
 
 def load(layers):
@@ -199,6 +204,22 @@ class TestParity(Base):
         self.assertViolation(bad, "is not a pair of SSOT keys")
         self.assertViolation(bad, "theme.no_such is not an SSOT key")
 
+    def test_parity_pairs_have_exactly_two_nonempty_string_paths(self):
+        for row in (["theme.cursor_linux.size", "theme.cursor_linux.size", "theme.no_such"],
+                    ["theme.cursor_linux.size", 3], ["", "theme.cursor_linux.size"]):
+            with self.subTest(row=row):
+                m = copy.deepcopy(self.merged)
+                m["spec"]["parity"]["equal"] = [row]
+                self.assertViolation(SC.parity(m), "exactly two non-empty string key paths required")
+
+    def test_parity_diagnostics_report_paths_without_merged_values(self):
+        m = copy.deepcopy(self.merged)
+        m["identity"]["default_password"] = PRIVATE_VALUE
+        m["spec"]["parity"]["equal"] = [["identity.default_password", "identity.username"]]
+        bad = SC.parity(m)
+        self.assertViolation(bad, "parity: identity.default_password differs from identity.username")
+        self.assertNotIn(PRIVATE_VALUE, json.dumps(bad))
+
 
 class TestTracer(Base):
     def test_reads_lookups_and_iteration_are_recorded(self):
@@ -257,6 +278,17 @@ class TestBuildPlan(Base):
             plan = self.plan(layers)
         self.assertTrue([p for p in plan["problems"] if p.startswith("spec coverage: mios-xbox: colors.spec_probe_unread")])
 
+    def test_private_parity_values_never_enter_plan_json_or_gate_output(self):
+        with overlay_layers(PRIVATE_PARITY) as layers:
+            plan_json = json.dumps(self.plan(layers))
+            self.assertIn("identity.default_password differs from identity.username", plan_json)
+            self.assertNotIn(PRIVATE_VALUE, plan_json)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(SC.main(["--check"] + [a for p in layers for a in ("--layer", p)]), 1)
+            self.assertIn("identity.default_password differs from identity.username", err.getvalue())
+            self.assertNotIn(PRIVATE_VALUE, out.getvalue() + err.getvalue())
+
 
 class TestBuildAdmission(Base):
     """Exercise the real non-plan CLI; machine admission and every mutation are tripwired."""
@@ -304,6 +336,113 @@ class TestBuildAdmission(Base):
                 storage.assert_not_called()
                 for effect in effects:
                     effect.assert_not_called()
+
+    def test_private_parity_values_never_enter_build_errors(self):
+        with overlay_layers(PRIVATE_PARITY) as layers:
+            with self.admission(layers) as (storage, effects):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(B.main(["run"]), 2)
+                self.assertIn("identity.default_password differs from identity.username", err.getvalue())
+                self.assertNotIn(PRIVATE_VALUE, err.getvalue())
+                storage.assert_not_called()
+                for effect in effects:
+                    effect.assert_not_called()
+
+
+class TestBuildSnapshot(Base):
+    @contextlib.contextmanager
+    def state(self):
+        with tempfile.TemporaryDirectory(prefix="mios-spec-snapshot-test.") as tmp:
+            root = Path(tmp)
+            layer = root / "operator.toml"
+            text = ('[windows.xbox.build]\nwork_root = ' + json.dumps(str(root / "work"))
+                    + '\nartifact_root = ' + json.dumps(str(root / "artifacts"))
+                    + '\n[windows.xbox.probe]\npython = ' + json.dumps(sys.executable) + '\n')
+            layer.write_text(text, encoding="utf-8")
+            yield root, layer, text, LAYERS + [str(layer)]
+
+    def test_a_save_after_preflight_cannot_change_render_or_resolver_inputs(self):
+        with self.state() as (root, layer, text, layers):
+            edition = SC._get(load(layers), "windows.xbox.source.edition")
+            observed = []
+
+            def late_save(*args):
+                layer.write_text(text + PROBE + '[windows.xbox.source]\nedition = "unadmitted-edition"\n', encoding="utf-8")
+
+            def resolve(cfg, *args, **kwargs):
+                observed.append(cfg["uup_edition"])
+                return {"artifacts": {}}
+
+            with mock.patch.object(B, "build_layers", return_value=layers), \
+                    mock.patch.object(B.os, "geteuid", return_value=0, create=True), \
+                    mock.patch.dict(os.environ, {B.SCOPED_ENV: "1"}), \
+                    mock.patch.object(B, "require_storage_capacity"), \
+                    mock.patch.object(B, "host_preflight", side_effect=late_save), \
+                    mock.patch.object(B.RL, "resolve_all", side_effect=resolve), \
+                    mock.patch.object(B, "stage_fetch", side_effect=B.BuildError("fixture stop before download")), \
+                    mock.patch.object(B.F, "fetch_all", side_effect=AssertionError("download")) as download, \
+                    mock.patch.object(B, "run_service", side_effect=AssertionError("worker")) as worker, \
+                    mock.patch.object(B.os, "execv", side_effect=AssertionError("exec")), \
+                    mock.patch.object(B.os, "execvp", side_effect=AssertionError("scope")), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(B.main(["run"]), 2)
+            self.assertIn("fixture stop before download", err.getvalue())
+            self.assertIn("spec_probe_unread", layer.read_text())
+            saved = list((root / "artifacts").glob("build-*/xbox-spec.json"))
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(json.loads(saved[0].read_text())["source"]["edition"], edition)
+            self.assertEqual(observed, [edition])
+            download.assert_not_called()
+            worker.assert_not_called()
+
+    def test_direct_new_freezes_admission_and_direct_render_rejects_unadmitted_state(self):
+        with self.state() as (root, layer, text, layers):
+            b = B.Build.new(str(root / "artifacts"), layers)
+            layer.write_text(text + PROBE, encoding="utf-8")
+            B.stage_render(b)   # uses the earlier admitted snapshot
+            self.assertTrue(os.path.isfile(b.spec_path))
+            other = B.Build(str(root / "unadmitted"), layers)
+            with mock.patch.object(B.render_spec, "_write_atomic") as write:
+                with self.assertRaisesRegex(B.BuildError, "colors.spec_probe_unread"):
+                    B.stage_render(other)
+                write.assert_not_called()
+
+    def test_clean_resume_keeps_recorded_storage_and_reuses_validated_config(self):
+        with self.state() as (root, layer, text, layers):
+            b = B.Build.new(str(root / "artifacts"), layers)
+            B.stage_render(b)
+            layer.write_text(text.replace(json.dumps(str(root / "work")),
+                                          json.dumps(str(root / "changed-work"))), encoding="utf-8")
+            resumed = B.Build(b.root, layers)
+            with mock.patch.object(B.RL, "resolve_all", return_value={"artifacts": {}}) as resolve:
+                B.stage_resolve(resumed)
+            self.assertEqual(resumed.spec()["spec"]["build"]["work_root"], str(root / "work"))
+            resolve.assert_called_once()
+
+    def test_stale_or_unread_saved_state_stops_before_resolver_and_preserves_cache(self):
+        with self.state() as (root, layer, text, layers):
+            b = B.Build.new(str(root / "artifacts"), layers)
+            B.stage_render(b)
+            original = {p: Path(p).read_bytes() for p in (b.spec_path, b.guest_spec_path)}
+            for change, message in ((PROBE, "colors.spec_probe_unread"),
+                                    ('[windows.xbox.source]\nedition = "changed-edition"\n', "preserve this build state")):
+                layer.write_text(text + change, encoding="utf-8")
+                with self.subTest(change=change), mock.patch.object(B.RL, "resolve_all") as resolve:
+                    with self.assertRaisesRegex(B.BuildError, message):
+                        B.stage_resolve(B.Build(b.root, layers))
+                    resolve.assert_not_called()
+                for path, data in original.items():
+                    with open(path, "rb") as fh:
+                        self.assertEqual(fh.read(), data)
+                self.assertFalse(os.path.exists(b.manifest_path))
+
+    def test_missing_saved_spec_requires_new_state_without_resolver_effects(self):
+        with self.state() as (root, layer, text, layers):
+            with mock.patch.object(B.RL, "resolve_all") as resolve:
+                with self.assertRaisesRegex(B.BuildError, "start a new build or re-render"):
+                    B.stage_resolve(B.Build(str(root / "missing"), layers))
+                resolve.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ Exit 0 ok; 1 a gate found non-conformance; 2 a stage failed (named). Credentials
 from __future__ import annotations
 
 import argparse
+import copy
 import datetime as _dt
 import json
 import os
@@ -263,9 +264,13 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
 # ---------------------------------------------------------------------------
 
 class Build:
-    def __init__(self, root: str, layers: List[str], log: Optional[Callable[[str], None]] = None):
+    def __init__(self, root: str, layers: List[str], log: Optional[Callable[[str], None]] = None,
+                 *, merged: Optional[Dict[str, Any]] = None):
         self.root = root
-        self.layers = layers
+        self.layers = list(layers)
+        self._candidate = copy.deepcopy(merged)
+        self._merged: Optional[Dict[str, Any]] = None
+        self._recorded_storage: Dict[str, str] = {}
         self._log = log
         self.spec_path = os.path.join(root, "xbox-spec.json")
         self.guest_spec_path = os.path.join(root, "xbox-spec.guest.json")
@@ -276,13 +281,32 @@ class Build:
         self.doc: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def new(cls, artifact_root: str, layers: List[str], now: Optional[_dt.datetime] = None) -> "Build":
+    def new(cls, artifact_root: str, layers: List[str], now: Optional[_dt.datetime] = None,
+            *, merged: Optional[Dict[str, Any]] = None) -> "Build":
         ts = (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-        os.makedirs(artifact_root, exist_ok=True)
         root = os.path.join(artifact_root, f"build-{ts}")
+        b = cls(root, layers, merged=merged)
+        b.admitted_merged()   # direct callers must be admitted before any build-directory write
+        os.makedirs(artifact_root, exist_ok=True)
         os.mkdir(root, 0o700)   # refuses an existing build directory
         os.makedirs(os.path.join(root, "reports"), mode=0o700)
-        return cls(root, layers)
+        return b
+
+    def admitted_merged(self) -> Dict[str, Any]:
+        """Freeze one checked config; a later save cannot change render or resolver inputs."""
+        if self._merged is None:
+            candidate = copy.deepcopy(self._candidate if self._candidate is not None
+                                      else mios_toml.load_merged(self.layers))
+            # Resumes retain their recorded storage locations. Every other input
+            # must reproduce the saved credential-free rendering below.
+            if self._recorded_storage:
+                candidate["windows"]["xbox"]["build"].update(self._recorded_storage)
+            _, bad = SC.check(candidate, self.layers, _TREE, required_image="mios-xbox")
+            if bad:
+                raise BuildError("[preflight] spec coverage: " + "; ".join(bad))
+            self._merged = candidate
+            self._candidate = None
+        return copy.deepcopy(self._merged)
 
     def log(self, msg: str) -> None:
         line = f"[{_dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}] {msg}"
@@ -296,7 +320,23 @@ class Build:
 
     def spec(self) -> Dict[str, Any]:
         if self.doc is None:
-            self.doc = _json_read(self.spec_path)
+            try:
+                saved = _json_read(self.spec_path)
+                storage = saved["spec"]["build"]
+                self._recorded_storage = {k: storage[k] for k in ("work_root", "artifact_root")}
+                expected = render_spec.render(self.admitted_merged(), self.layers)
+                actual_identity = render_spec.guest_projection(saved)
+                expected_identity = render_spec.guest_projection(expected)
+                # Layer paths identify provenance, not config content. Passwords
+                # are excluded by the existing guest projection; no password hash is persisted.
+                actual_identity.pop("layers", None)
+                expected_identity.pop("layers", None)
+                if actual_identity != expected_identity:
+                    raise ValueError("saved rendering differs")
+            except (OSError, ValueError, KeyError, TypeError, render_spec.SpecError, RL.ResolveError):
+                raise BuildError("[preflight] cannot bind saved spec to the admitted configuration; "
+                                 "preserve this build state and start a new build or re-render before resuming") from None
+            self.doc = saved
         return self.doc
 
     @property
@@ -316,7 +356,7 @@ class Build:
 
 
 def stage_render(b: Build) -> Dict[str, Any]:
-    merged = mios_toml.load_merged(b.layers)
+    merged = b.admitted_merged()
     doc = render_spec.render(merged, b.layers)
     render_spec._write_atomic(b.spec_path, json.dumps(doc, indent=2, sort_keys=True) + "\n")   # 0600: credentials
     _json_write(b.guest_spec_path, render_spec.guest_projection(doc))
@@ -325,7 +365,8 @@ def stage_render(b: Build) -> Dict[str, Any]:
 
 
 def stage_resolve(b: Build, http: Any = None, sleep: Callable[[float], None] = None) -> Dict[str, Any]:
-    cfg = RL.load_config(mios_toml.load_merged(b.layers))
+    b.spec()   # re-admit and bind an existing saved spec before any remote resolver request
+    cfg = RL.load_config(b.admitted_merged())
     manifest = RL.resolve_all(cfg, http or RL.Http(), **({"sleep": sleep} if sleep else {}))
     RL.write_manifest_atomic(b.manifest_path, manifest)
     return {n: a["version"] for n, a in manifest["artifacts"].items()}
@@ -680,7 +721,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if a.command in ("service", "gate") and not a.build_dir:
             raise BuildError(f"{a.command} needs --build-dir build-<ts>")
         host_preflight(a.command, x)
-        b = Build(a.build_dir, layers) if a.build_dir else Build.new(x["build"]["artifact_root"], layers)
+        b = (Build(a.build_dir, layers, merged=merged) if a.build_dir
+             else Build.new(x["build"]["artifact_root"], layers, merged=merged))
         if a.command == "capture":
             b.step("render", lambda: stage_render(b))
             b.step("capture", lambda: stage_capture(b, a.family or None))

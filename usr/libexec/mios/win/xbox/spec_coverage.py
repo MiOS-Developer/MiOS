@@ -265,15 +265,16 @@ def parity(merged: dict) -> List[str]:
     """[spec.parity].equal: shared identity values the Windows and Linux images must carry identically."""
     bad = []
     for pair in ((merged.get("spec") or {}).get("parity") or {}).get("equal") or []:
-        a, b = (pair + [None, None])[:2] if isinstance(pair, list) else (None, None)
-        if not a or not b:
-            bad.append(f"[spec.parity].equal: {pair!r} is not a pair of SSOT keys")
+        if not isinstance(pair, list) or len(pair) != 2 or any(not isinstance(k, str) or not k.strip() for k in pair):
+            bad.append("[spec.parity].equal: entry is not a pair of SSOT keys "
+                       "(exactly two non-empty string key paths required)")
             continue
+        a, b = pair
         va, vb = _get(merged, a), _get(merged, b)
         if va is None or vb is None:
             bad.append(f"[spec.parity]: {a if va is None else b} is not an SSOT key")
         elif va != vb:
-            bad.append(f"parity: {a} = {va!r} differs from {b} = {vb!r} (Windows and Linux images must match)")
+            bad.append(f"parity: {a} differs from {b} (Windows and Linux images must match)")
     return bad
 
 
