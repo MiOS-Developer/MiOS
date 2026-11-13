@@ -133,6 +133,11 @@ def evaluate(items: List[Dict[str, Any]], probe: Dict[str, Any], host: Optional[
         k, iid = it["kind"], it["id"]
         o = obs.get(iid)
         before = len(findings)
+        if k == "theme":
+            # xbox-bm-39: an answer-file element (verified by the image gate); in the guest its effect is the
+            # identity.accent/identity.theme registry items of the desktop user, which this probe checks
+            res(it, "skipped", "answer-file Themes element: verified by the image gate; its effect is checked as identity.* values")
+            continue
         if o is None:
             findings.append(Finding(f"probe.no-observation:{iid}", "the guest returned nothing for this item"))
         elif o.get("error"):

@@ -268,6 +268,16 @@ def render_answer_file(doc: Dict[str, Any]) -> bytes:
     _el(o, "HideOnlineAccountScreens", bool(oobe["hide_online_account_screens"]))
     _el(o, "HideWirelessSetupInOOBE", bool(oobe["hide_wireless_setup"]))
     _el(o, "ProtectYourPC", int(oobe["protect_your_pc"]))
+    # the persistent MiOS theme (xbox-bm-39): Microsoft's supported way to customize the Windows default theme every new
+    # profile gets as its CurrentTheme (a .theme file can no longer be the default)
+    th = ((doc.get("identity") or {}).get("theme") or {})
+    if not th.get("name") or not (th.get("background") or {}).get("unattend") or not th.get("window_color"):
+        raise PayloadError("xbox-spec.json has no identity.theme (render it with render_spec.py)")
+    tm = _el(sh2, "Themes")
+    _el(tm, "DesktopBackground", th["background"]["unattend"])
+    _el(tm, "ThemeName", th["name"])
+    _el(tm, "UWPAppsUseLightTheme", bool(th["uwp_apps_use_light_theme"]))
+    _el(tm, "WindowColor", th["window_color"])
     ua = _el(sh2, "UserAccounts")
     _password(ua, "AdministratorPassword", users["builtin_administrator"]["password"])
     las = _el(ua, "LocalAccounts")
@@ -1273,6 +1283,15 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
             rel = f"{font['dest_dir']}/{f['file']}"
             _write(os.path.join(out_dir, *rel.split("/")), data)
             rows.append({"name": f"font:{f['file']}", "path": rel, "sha256": f["sha256"]})
+    # the theme's DesktopBackground: the solid SSOT background colour, rendered byte-identically to the spec's record
+    bg = ((idn.get("theme") or {}).get("background") or {})
+    if not bg.get("path") or not bg.get("sha256"):
+        raise PayloadError("xbox-spec.json has no identity.theme.background (render it with render_spec.py)")
+    data = render_spec.solid_bmp(render_spec._rgb(bg["color"], "identity.theme.background.color"), int(bg["px"]))
+    if hashlib.sha256(data).hexdigest() != bg["sha256"]:
+        raise PayloadError("theme background: the rendered image differs from the spec's sha256")
+    _write(os.path.join(out_dir, *bg["path"].split("/")), data)
+    rows.append({"name": "theme:background", "path": bg["path"], "sha256": bg["sha256"]})
     return rows
 
 

@@ -14,8 +14,10 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 import tempfile
 import unittest
 import zipfile
@@ -85,15 +87,19 @@ class Base(P.PayloadBase):
         cls.font = cls.idn["font"]
 
     def resolved(self, merged=None):
-        """(windows.xbox table, the four resolved identity refs) the way render() hands them to render_identity."""
+        """(windows.xbox table, every resolved identity *_ref) the way render() hands them to render_identity."""
         m = merged if merged is not None else self.merged
         x = m["windows"]["xbox"]
         get = lambda dotted: functools.reduce(lambda d, k: d[k], dotted.split("."), m)   # noqa: E731
-        return x, {f"identity.{k}": get(x["identity"][k]) for k in ("accent_ref", "cursor_ref", "cursor_theme_ref", "font_ref")}
+        return x, {f"identity.{k}": get(v) for k, v in x["identity"].items() if k.endswith("_ref")}
 
     def ref(self, merged, key):
-        """The SSOT table/value a [windows.xbox.identity] ref names, inside merged (so a plant edits the SSOT)."""
-        path = merged["windows"]["xbox"]["identity"][key].split(".")
+        """The SSOT table/value a [windows.xbox.identity] ref names, inside merged (so a plant edits the SSOT); for a key
+        that is not a ref, the [windows.xbox.identity] table itself."""
+        idn = merged["windows"]["xbox"]["identity"]
+        if not key.endswith("_ref"):
+            return idn, key
+        path = idn[key].split(".")
         return functools.reduce(lambda d, k: d[k], path[:-1], merged), path[-1]
 
 
@@ -106,12 +112,15 @@ class TestSpec(Base):
         x, res = self.resolved()
         res["identity.accent_ref"] = "#1A407F"
         rec, reg = R.render_identity(x, res)
-        self.assertEqual(rec["accent_abgr"], 0xFF7F401A)   # DWM AccentColor / Explorer accent: 0xAABBGGRR
-        self.assertEqual(rec["accent_argb"], 0xFF1A407F)   # DWM ColorizationColor: 0xAARRGGBB
+        self.assertEqual(rec["accent_abgr"], 0xFF7F401A)   # DWM AccentColor / Explorer AccentColorMenu: 0xAABBGGRR
+        self.assertEqual(rec["accent_argb"], 0xFF1A407F)   # unattend Themes/WindowColor: 0xAARRGGBB
+        self.assertEqual(rec["theme"]["window_color"], "0xff1a407f")   # lower-case with the 0x prefix (Microsoft's format)
         by = {r["owner"]: r for r in reg}
-        for owner in ("identity.accent.dwm_accent", "identity.accent.menu", "identity.accent.start_menu"):
+        for owner in ("identity.accent.dwm_accent", "identity.accent.menu"):
             self.assertEqual(by[owner]["data"], 0xFF7F401A, owner)
-        self.assertEqual(by["identity.accent.dwm_colorization"]["data"], 0xFF1A407F)
+        # values Windows derives from WindowColor at the first sign-in are not pinned (they would read off-spec in the guest)
+        self.assertNotIn("identity.accent.start_menu", by)
+        self.assertNotIn("identity.accent.dwm_colorization", by)
         # the rendered spec carries the SSOT accent itself, never a second copy
         tbl, key = self.ref(self.merged, "accent_ref")
         self.assertEqual(self.idn["accent"], tbl[key])
@@ -136,6 +145,32 @@ class TestSpec(Base):
             self.assertEqual(reg[f"identity.font.{f['file']}"]["name"], f["registry_name"])
             self.assertEqual(reg[f"identity.font.{f['file']}"]["data"], f["file"])
 
+    def test_positive_theme_and_oem_come_from_the_ssot(self):
+        th, m = self.idn["theme"], self.merged
+        self.assertEqual(th["name"], m["theme"]["windows"]["theme_name"])
+        self.assertEqual(th["mode"], m["theme"]["mode"])
+        self.assertEqual(th["uwp_apps_use_light_theme"], m["theme"]["mode"] == "light")
+        self.assertEqual(th["transparency"], m["theme"]["windows"]["transparency"])
+        bg = th["background"]
+        self.assertEqual(bg["color"].lower(), m["colors"]["bg"].lower())
+        self.assertTrue(bg["unattend"].lower().startswith("%windir%\\web\\"), bg["unattend"])   # a subfolder of %WINDIR%
+        data = R.solid_bmp(R._rgb(bg["color"], "test"), bg["px"])
+        self.assertEqual((_sha(data), len(data)), (bg["sha256"], bg["size"]))
+        self.assertEqual(data, R.solid_bmp(R._rgb(bg["color"], "test"), bg["px"]))   # byte-identical every time
+        self.assertEqual(data[:2], b"BM")
+        self.assertEqual(struct.unpack("<iiHH", data[18:30]), (bg["px"], bg["px"], 1, 24))
+        self.assertEqual(data[54:57], bytes(reversed(R._rgb(bg["color"], "test"))))   # BGR
+        reg = {r["owner"]: r for r in self.doc["registry"] if r["owner"].startswith("identity.")}
+        light = 1 if th["mode"] == "light" else 0
+        self.assertEqual(reg["identity.theme.apps_light"]["data"], light)
+        self.assertEqual(reg["identity.theme.system_light"]["data"], light)
+        self.assertEqual(reg["identity.theme.transparency"]["data"], int(m["theme"]["windows"]["transparency"]))
+        for value_name, key in (("Manufacturer", "oem_manufacturer"), ("Model", "oem_model"),
+                                ("SupportURL", "oem_support_url"), ("SupportHours", "oem_support_hours")):
+            r = reg[f"identity.oem.{key[4:]}"]
+            self.assertEqual((r["hive"], r["key"], r["name"], r["data"]), ("SOFTWARE", R.OEM_KEY, value_name, m["branding"][key]))
+            self.assertEqual(self.idn["oem"][value_name], m["branding"][key])
+
     def test_positive_items_cover_every_identity_file_and_value(self):
         ids = {it["id"] for it in self.ident}
         self.assertIn("reg.identity.cursor.scheme_name", ids)
@@ -144,6 +179,10 @@ class TestSpec(Base):
             self.assertIn(f"identity.cursor.{f}", ids)
         for f in self.font["files"]:
             self.assertIn(f"identity.font.{f['file']}", ids)
+        for iid in ("identity.theme", "identity.theme.background", "reg.identity.theme.system_light",
+                    "reg.identity.theme.apps_light", "reg.identity.theme.transparency", "reg.identity.oem.manufacturer",
+                    "reg.identity.oem.model", "reg.identity.oem.support_url", "reg.identity.oem.support_hours"):
+            self.assertIn(iid, ids)
         S.validate_items(self.ident)
 
     def test_negative_render_identity_refuses_drift(self):
@@ -160,6 +199,18 @@ class TestSpec(Base):
             "font archive drifted from its pin": ("font_ref", "native_sha256", "0" * 64),
             "font family absent from the archive": ("font_ref", "family", "No Such Family Mono"),
             "font archive not in the tree": ("font_ref", "native_archive", "usr/share/mios/vendored/fonts/absent.zip"),
+            "accent too dark for WindowColor": ("accent_ref", None, "#05050A"),
+            "accent too light for WindowColor": ("accent_ref", None, "#F0F0FA"),
+            "theme name empty": ("theme_name_ref", None, " "),
+            "theme mode not dark/light": ("theme_mode_ref", None, "dim"),
+            "transparency not a boolean": ("transparency_ref", None, "yes"),
+            "background colour not #RRGGBB": ("background_color_ref", None, "indigo"),
+            "background not a .bmp": ("background", None, "Windows\\Web\\Wallpaper\\MiOS\\mios.jpg"),
+            "background outside %WINDIR%": ("background", None, "ProgramData\\MiOS\\mios-background.bmp"),
+            "background not in a subfolder": ("background", None, "Windows\\mios-background.bmp"),
+            "background escapes": ("background", None, "Windows\\..\\Temp\\mios-background.bmp"),
+            "OEM manufacturer empty": ("oem_manufacturer_ref", None, " "),
+            "OEM support URL not a string": ("oem_support_url_ref", None, 7),
         }
         for name, (ref, field, val) in cases.items():
             merged = copy.deepcopy(self.merged)
@@ -201,7 +252,8 @@ class TestPayload(Base):
 
     def test_positive_payload_carries_every_identity_file(self):
         rows = {r["name"]: r for r in self.summary["identity"]}
-        want = {f"cursor:{f}" for f in self.cur["scheme_files"]} | {f"font:{f['file']}" for f in self.font["files"]}
+        want = ({f"cursor:{f}" for f in self.cur["scheme_files"]} | {f"font:{f['file']}" for f in self.font["files"]}
+                | {"theme:background"})
         self.assertEqual(set(rows), want)
         for r in rows.values():
             with open(os.path.join(self.pay, *r["path"].split("/")), "rb") as fh:
@@ -215,6 +267,23 @@ class TestPayload(Base):
         for f in self.font["files"]:
             self.assertIn(f'"{f["registry_name"]}"="{f["file"]}"', text.splitlines())
         self.assertNotIn('""=', text)
+
+    def test_positive_answer_file_carries_the_theme(self):
+        root = ET.parse(os.path.join(self.pay, "autounattend.xml")).getroot()
+        ns = {"u": A.UNS}
+        tms = root.findall("u:settings[@pass='oobeSystem']/u:component[@name='Microsoft-Windows-Shell-Setup']/u:Themes", ns)
+        self.assertEqual(len(tms), 1)
+        th = self.idn["theme"]
+        got = [(e.tag.split("}")[-1], e.text) for e in tms[0]]
+        self.assertEqual(got, [("DesktopBackground", th["background"]["unattend"]), ("ThemeName", th["name"]),
+                               ("UWPAppsUseLightTheme", str(th["uwp_apps_use_light_theme"]).lower()),
+                               ("WindowColor", th["window_color"])])   # the schema's element order
+
+    def test_negative_answer_file_refuses_a_spec_without_a_theme(self):
+        doc = copy.deepcopy(self.doc)
+        del doc["identity"]["theme"]
+        with self.assertRaisesRegex(A.PayloadError, "identity.theme"):
+            A.render_answer_file(doc)
 
     def test_positive_stage_identity_on_a_fresh_tree(self):
         rows, _ = self.stage(self.doc, self.inputs)
@@ -263,6 +332,20 @@ class TestPayload(Base):
         with self.assertRaisesRegex(A.PayloadError, "absent or changed"):
             self.stage(self.doc, self.inputs, tempfile.mkdtemp(prefix="empty.", dir=self.tmp))
 
+    def test_negative_stage_refuses_a_background_that_differs_from_the_spec(self):
+        doc = copy.deepcopy(self.doc)
+        doc["identity"]["theme"]["background"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(A.PayloadError, "differs from the spec's sha256"):
+            self.stage(doc, self.inputs)
+        doc = copy.deepcopy(self.doc)
+        doc["identity"]["theme"]["background"]["color"] = "#000001"   # a colour the recorded sha256 is not of
+        with self.assertRaisesRegex(A.PayloadError, "differs from the spec's sha256"):
+            self.stage(doc, self.inputs)
+        doc = copy.deepcopy(self.doc)
+        del doc["identity"]["theme"]
+        with self.assertRaisesRegex(A.PayloadError, "identity.theme.background"):
+            self.stage(doc, self.inputs)
+
 
 # ---------------------------------------------------------------------------
 # image gate (conform, rendered inputs)
@@ -278,6 +361,15 @@ class TestImageGate(Base):
         p = os.path.join(pay, *REG_REL)
         write_reg(p, fn(read_reg(p)))
 
+    def plant_answer(self, pay, fn):
+        p = os.path.join(pay, "autounattend.xml")
+        with open(p, encoding="utf-8") as fh:
+            text = fh.read()
+        new = fn(text)
+        assert new != text, "the plant changed nothing"
+        with open(p, "w", encoding="utf-8", newline="") as fh:
+            fh.write(new)
+
     def test_positive_conforming_payload_has_no_identity_finding(self):
         _, ids = self.ids(self.pay)
         self.assertEqual(ids, set())
@@ -288,6 +380,8 @@ class TestImageGate(Base):
         font_path = lambda d: os.path.join(d, *self.font["dest_dir"].split("/"), f0["file"])   # noqa: E731
         cur_path = lambda d: os.path.join(d, *self.cur["dest_dir"].split("/"), c0)             # noqa: E731
         accent = f'"AccentColor"=dword:{self.idn["accent_abgr"]:08x}'
+        th = self.idn["theme"]
+        light = 1 if th["mode"] == "light" else 0
         cases = {
             "font file removed": (lambda d: os.remove(font_path(d)), f"missing:identity.font.{f0['file']}"),
             "font file altered": (lambda d: append_byte(font_path(d)), f"off-spec:identity.font.{f0['file']}"),
@@ -298,6 +392,22 @@ class TestImageGate(Base):
                                 "off-spec:reg.identity.accent.dwm_accent"),
             "font registration removed": (lambda d: self.plant_reg(d, lambda t: t.replace(f'"{f0["registry_name"]}"="{f0["file"]}"\r\n', "")),
                                           f"missing:reg.identity.font.{f0['file']}"),
+            "Themes element removed": (lambda d: self.plant_answer(d, lambda t: re.sub(r"\s*<Themes>.*?</Themes>", "", t, flags=re.S)),
+                                       "missing:identity.theme"),
+            "WindowColor not the accent": (lambda d: self.plant_answer(d, lambda t: t.replace(f"<WindowColor>{th['window_color']}<", "<WindowColor>0xff0078d7<")),
+                                           "off-spec:identity.theme.WindowColor"),
+            "another theme name": (lambda d: self.plant_answer(d, lambda t: t.replace(f"<ThemeName>{th['name']}<", "<ThemeName>Windows<")),
+                                   "off-spec:identity.theme.ThemeName"),
+            "apps colour mode flipped": (lambda d: self.plant_answer(d, lambda t: re.sub(r"<UWPAppsUseLightTheme>\w+<",
+                                         f"<UWPAppsUseLightTheme>{str(not th['uwp_apps_use_light_theme']).lower()}<", t)),
+                                         "off-spec:identity.theme.UWPAppsUseLightTheme"),
+            "theme background removed": (lambda d: os.remove(os.path.join(d, *th["background"]["path"].split("/"))),
+                                         "missing:identity.theme.background"),
+            "system colour mode flipped": (lambda d: self.plant_reg(d, lambda t: t.replace(f'"SystemUsesLightTheme"=dword:{light:08x}',
+                                                                                             f'"SystemUsesLightTheme"=dword:{1 - light:08x}')),
+                                           "off-spec:reg.identity.theme.system_light"),
+            "OEM manufacturer removed": (lambda d: self.plant_reg(d, lambda t: t.replace(f'"Manufacturer"="{self.idn["oem"]["Manufacturer"]}"\r\n', "")),
+                                         "missing:reg.identity.oem.manufacturer"),
         }
         for name, (plant, want) in cases.items():
             d = self.copy_payload()
@@ -321,8 +431,11 @@ class TestProbe(Base):
         return {r["id"]: r for r in results}, {f.id for f in findings}
 
     def test_positive_conforming_guest(self):
-        _, ids = self.ev(self.probe())
+        res, ids = self.ev(self.probe())
         self.assertEqual(ids, set())
+        self.assertEqual(res["identity.theme"]["status"], "skipped")   # an answer-file element: the image gate's check
+        for iid in ("reg.identity.theme.system_light", "reg.identity.oem.manufacturer", "identity.theme.background"):
+            self.assertEqual(res[iid]["status"], "pass", iid)
 
     def test_negative_guest_drift_is_named(self):
         f0 = self.font["files"][0]["file"]
@@ -334,6 +447,11 @@ class TestProbe(Base):
             "scheme value absent": ("reg.identity.cursor.scheme_name", {"present": False}, "missing:reg.identity.cursor.scheme_name"),
             "accent off-spec": ("reg.identity.accent.dwm_accent", {"present": True, "type": "dword", "value": 0xFF000000},
                                 "off-spec:reg.identity.accent.dwm_accent"),
+            "system colour mode flipped": ("reg.identity.theme.system_light",
+                                           {"present": True, "type": "dword", "value": 0 if self.idn["theme"]["mode"] == "light" else 1},
+                                           "off-spec:reg.identity.theme.system_light"),
+            "theme background absent": ("identity.theme.background", {"present": False}, "missing:identity.theme.background"),
+            "OEM manufacturer absent": ("reg.identity.oem.manufacturer", {"present": False}, "missing:reg.identity.oem.manufacturer"),
         }
         for name, (iid, obs, want) in cases.items():
             doc = self.probe()

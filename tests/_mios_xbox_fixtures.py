@@ -159,6 +159,10 @@ def answer_file(doc: Dict[str, Any], specialize: str, desktop_pw: Optional[str] 
         admpw = adm["password"]
         adm_group = (adm.get("groups") or ["Administrators"])[0]
         admin_tag = f'\n          <LocalAccount wcm:action="add"><Name>{adm["name"]}</Name><Group>{adm_group}</Group><Password><Value>{_uapw(admpw, "Password")}</Value><PlainText>false</PlainText></Password></LocalAccount>'
+    th = (doc.get("identity") or {}).get("theme")   # xbox-bm-39: the persistent MiOS theme (unattend Themes)
+    themes_tag = (f'\n      <Themes><DesktopBackground>{th["background"]["unattend"]}</DesktopBackground><ThemeName>{th["name"]}</ThemeName>'
+                  f'<UWPAppsUseLightTheme>{str(bool(th["uwp_apps_use_light_theme"])).lower()}</UWPAppsUseLightTheme>'
+                  f'<WindowColor>{th["window_color"]}</WindowColor></Themes>') if th else ""
     return f"""<?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
   <settings pass="specialize">
@@ -167,7 +171,7 @@ def answer_file(doc: Dict[str, Any], specialize: str, desktop_pw: Optional[str] 
     </component>
   </settings>
   <settings pass="oobeSystem">
-    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">{themes_tag}
       <UserAccounts>
         <AdministratorPassword><Value>{_uapw(apw, "AdministratorPassword")}</Value><PlainText>false</PlainText></AdministratorPassword>
         <LocalAccounts>
@@ -276,6 +280,12 @@ def _write_component(dst: str, it: Dict[str, Any], doc: Dict[str, Any], root: st
     if it["id"].startswith("identity.cursor."):   # xbox-bm-39: a cursor file of the pinned build (presence item)
         with open(dst, "wb") as fh:
             fh.write(f"fixture {it['id']}\n".encode())
+        return
+    if it["id"] == "identity.theme.background":   # xbox-bm-39: the solid SSOT background, byte-identical to the spec's
+        import render_spec as RS
+        bg = doc["identity"]["theme"]["background"]
+        with open(dst, "wb") as fh:
+            fh.write(RS.solid_bmp(RS._rgb(bg["color"], "fixture"), int(bg["px"])))
         return
     if it["id"] == "gpu.script":
         src = os.path.join(root, x["drivers"]["gpu_step"])

@@ -13152,6 +13152,12 @@ tagline_long        = "My Personal Operating System  --  Immutable Fedora AI Wor
 tagline_app         = "My Personal Operating System"
 living_wallpaper      = true
 living_wallpaper_mode = "shader"
+# Windows OEM information (Settings > System > About; OEMInformation). Vendor defaults of the keys the
+# mios-bootstrap host layer also carries (Law 15: one surface, the same values in both repos).
+oem_manufacturer    = "MiOS"
+oem_model           = "My Personal Operating System"
+oem_support_url     = "https://github.com/mios-dev"
+oem_support_hours   = "Always on"
 
 [branding.dashboard]
 frame_width_cols    = 80
@@ -13702,12 +13708,28 @@ pci = ["1AF4:1110"]               # IVSHMEM: the Looking Glass shared-memory dev
 # ONE SSOT value (never copied here), rendered into the image offline (Default profile + system hives, Windows\Cursors,
 # Windows\Fonts) and verified by the image gate and the probe. Values: [colors], [theme.cursor_*], [theme.font].
 [windows.xbox.identity]
-accent_ref        = "colors.accent"                 # "#RRGGBB" -> DWM AccentColor/ColorizationColor, Explorer accent
+accent_ref        = "colors.accent"                 # "#RRGGBB" -> Themes/WindowColor, DWM AccentColor, Explorer accent
 cursor_ref        = "theme.cursor_windows"          # pinned Windows build of the cursor theme, scheme and roles
 cursor_theme_ref  = "theme.cursor_linux.theme"      # the same cursor theme as the Linux images (parity)
 font_ref          = "theme.font"                    # family + vendored, sha256-pinned archive (native_archive/native_sha256)
 font_dir          = 'Windows\Fonts'                 # image-relative: the system font directory
-cursor_root       = 'Windows'                       # image-relative: %SystemRoot% (the cursor install_dir lives under it)
+system_root       = 'Windows'                       # image-relative: %SystemRoot% (cursor install_dir, theme background)
+# The cursor role/scheme values are absolute REG_SZ paths on C: -- every MiOS-Xbox install lands on C: (the answer file's
+# ModifyPartition gives the Windows partition Letter C); an install elsewhere would need REG_EXPAND_SZ %SystemRoot% paths.
+# The persistent MiOS theme: the Windows default theme every new profile gets (its CurrentTheme), written through the
+# supported unattend Themes element (ThemeName + DesktopBackground + WindowColor + UWPAppsUseLightTheme), plus the
+# Default profile's system/app colour mode and transparency. The background is a solid image of background_color_ref
+# rendered at build time (Themes requires one under %WINDIR%; no stock wallpaper is shipped).
+theme_name_ref        = "theme.windows.theme_name"
+theme_mode_ref        = "theme.mode"                # "dark" | "light"
+transparency_ref      = "theme.windows.transparency"
+background_color_ref  = "colors.bg"
+background            = 'Windows\Web\Wallpaper\MiOS\mios-background.bmp'   # image-relative, under system_root
+# OEM branding (HKLM OEMInformation): each value from the one [branding] key.
+oem_manufacturer_ref  = "branding.oem_manufacturer"
+oem_model_ref         = "branding.oem_model"
+oem_support_url_ref   = "branding.oem_support_url"
+oem_support_hours_ref = "branding.oem_support_hours"
 
 # --- GPU post-setup step (xb-09, XB-3): mios-gpu-driver.ps1 reads these keys from xbox-spec.json. No driver
 # version, build or versioned URL here -- only vendor API/index endpoints, host allowlists and signer
@@ -20553,6 +20575,8 @@ CapabilityBoundingSet = "CAP_DAC_READ_SEARCH CAP_SYS_PTRACE"
 
 [theme.windows]
 opacity_pct = 85
+theme_name   = "MiOS"     # the Windows default theme's name (unattend Microsoft-Windows-Shell-Setup Themes/ThemeName)
+transparency = true       # Windows transparency effects (Themes\Personalize EnableTransparency) for every new profile
 
 [theme.search]
 width_px = 640

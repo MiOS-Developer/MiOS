@@ -28,6 +28,7 @@ rid500         state (disabled)
 computer_name  value
 appx           name (package family prefix), present (bool), pfn + inbox (integrated offline: image gate + probe) -- else probe only
 gpu_step       record (guest path of the post-setup JSON record)
+theme          name, window_color, uwp_apps_use_light_theme, background -- the answer file's unattend Themes element
 =============  ===============================================================
 
 Credentials only ever appear here as sha256 hex digests; nothing in this module
@@ -45,7 +46,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SCHEMA = "mios-xbox-spec/1"
 KINDS = ("reg", "feature", "capability", "driver", "guest_tool", "component", "file_hash",
-         "build_family", "user", "rid500", "computer_name", "appx", "gpu_step", "looking_glass")
+         "build_family", "user", "rid500", "computer_name", "appx", "gpu_step", "looking_glass", "theme")
 USER_SCOPES = ("user",)
 SCOPES = ("user", "software", "system")
 
@@ -251,7 +252,8 @@ def validate_items(items: List[Dict[str, Any]]) -> None:
                 "driver": ("inf",), "guest_tool": ("name",), "component": ("name", "path"),
                 "file_hash": ("path", "sha256"), "build_family": ("family",), "capability": ("name",), "computer_name": ("value",),
                 "user": ("name", "password_sha256"), "rid500": ("state",), "appx": ("name",),
-                "gpu_step": ("record",), "looking_glass": ("device", "device_pci", "task")}[kind]
+                "gpu_step": ("record",), "looking_glass": ("device", "device_pci", "task"),
+                "theme": ("name", "window_color", "background")}[kind]
         for k in need:
             # "" is a real value, and a real name for a reg item: the key's default value (@)
             if it.get(k) in (None, "") and not (k == "value" and it.get(k) == "") and not (kind == "reg" and k == "name" and it.get(k) == ""):
@@ -374,6 +376,12 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
     cur = idn.get("cursor") or {}
     for f in cur.get("scheme_files") or []:
         items.append({"id": f"identity.cursor.{f}", "kind": "component", "name": f"cursor:{f}", "path": f"{cur['dest_dir']}/{f}"})
+    th = idn.get("theme") or {}
+    if th:
+        bg = th.get("background") or {}
+        items.append({"id": "identity.theme", "kind": "theme", "name": th.get("name"), "window_color": th.get("window_color"),
+                      "uwp_apps_use_light_theme": bool(th.get("uwp_apps_use_light_theme")), "background": bg.get("unattend")})
+        items.append({"id": "identity.theme.background", "kind": "file_hash", "path": bg.get("path"), "sha256": bg.get("sha256")})
     comps = x.get("components") or {}
     dest = _win_rel(comps.get("dest_dir", ""))
     for c in comps.get("ship") or []:

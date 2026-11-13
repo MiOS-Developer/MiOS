@@ -127,7 +127,11 @@ REQUIRED = {
     "devices.record": str, "drivers.looking_glass_idd.required_device": str,
     "guest_tools.looking_glass_host.install": bool,
     "identity.accent_ref": str, "identity.cursor_ref": str, "identity.cursor_theme_ref": str, "identity.font_ref": str,
-    "identity.font_dir": str, "identity.cursor_root": str,
+    "identity.font_dir": str, "identity.system_root": str,
+    "identity.theme_name_ref": str, "identity.theme_mode_ref": str, "identity.transparency_ref": str,
+    "identity.background_color_ref": str, "identity.background": str,
+    "identity.oem_manufacturer_ref": str, "identity.oem_model_ref": str, "identity.oem_support_url_ref": str,
+    "identity.oem_support_hours_ref": str,
     "provision.serial_baud": int, "provision.network_category": str, "provision.network_wait_s": int,
     "ssh.install": str, "ssh.port_ref": str, "ssh.settings_ref": str, "ssh.authorized_keys_key": str,
     "ssh.authorized_keys_files": list, "ssh.settings_path": str, "ssh.authorized_keys_path": str,
@@ -514,7 +518,36 @@ FONTS_KEY = r"Microsoft\Windows NT\CurrentVersion\Fonts"
 DWM_KEY = r"Software\Microsoft\Windows\DWM"
 ACCENT_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent"
 PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+OEM_KEY = r"Microsoft\Windows\CurrentVersion\OEMInformation"
 SCHEME_SOURCE_SYSTEM = 2   # Control Panel\Cursors "Scheme Source": 2 = a scheme registered system-wide (HKLM)
+THEME_MODES = ("dark", "light")
+# Themes/WindowColor: Windows lightens or darkens an accent outside HSL luminosity 25%..75% (Microsoft's
+# unattend reference), so such an SSOT accent would never be the colour the image shows.
+WINDOW_COLOR_LUMINOSITY = (0.25, 0.75)
+BACKGROUND_PX = 64   # a solid colour: any size scales to the screen identically; small keeps the payload small
+OEM_VALUES = (("Manufacturer", "oem_manufacturer_ref"), ("Model", "oem_model_ref"),
+              ("SupportURL", "oem_support_url_ref"), ("SupportHours", "oem_support_hours_ref"))
+
+
+def solid_bmp(rgb: tuple, px: int = BACKGROUND_PX) -> bytes:
+    """A px x px 24-bit BMP of one colour: byte-identical on every host (no compressor involved), so the sha256
+    render_spec records is the sha256 answer.py stages and conform/probe check."""
+    row = bytes((rgb[2], rgb[1], rgb[0])) * px            # BGR pixels; px * 3 is a multiple of 4: no row padding
+    pixels = row * px
+    header = struct.pack("<2sIHHI", b"BM", 54 + len(pixels), 0, 0, 54)
+    info = struct.pack("<IiiHHIIiiII", 40, px, px, 1, 24, 0, len(pixels), 2835, 2835, 0, 0)
+    return header + info + pixels
+
+
+def _rgb(value: str, key: str) -> tuple:
+    m = ACCENT_RE.match(str(value))
+    if not m:
+        raise SpecError(key, f"{value!r} is not #RRGGBB")
+    return tuple(int(v, 16) for v in m.groups())
+
+
+def _luminosity(rgb: tuple) -> float:
+    return (max(rgb) + min(rgb)) / 2 / 255
 
 
 def font_names(data: bytes) -> dict:
@@ -567,12 +600,13 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     payload time; the font archive is the vendored one, verified against its SSOT sha256 here."""
     idn = x["identity"]
     accent = resolved["identity.accent_ref"]
-    m = ACCENT_RE.match(str(accent))
-    if not m:
-        raise SpecError(idn["accent_ref"], f"{accent!r} is not #RRGGBB")
-    r, g, b = (int(v, 16) for v in m.groups())
-    abgr = (0xFF << 24) | (b << 16) | (g << 8) | r   # DWM AccentColor / Explorer accent: 0xAABBGGRR
-    argb = (0xFF << 24) | (r << 16) | (g << 8) | b   # DWM ColorizationColor: 0xAARRGGBB
+    r, g, b = _rgb(accent, idn["accent_ref"])
+    abgr = (0xFF << 24) | (b << 16) | (g << 8) | r   # DWM AccentColor / Explorer AccentColorMenu: 0xAABBGGRR
+    argb = (0xFF << 24) | (r << 16) | (g << 8) | b   # unattend Themes/WindowColor: 0xAARRGGBB
+    lo, hi = WINDOW_COLOR_LUMINOSITY
+    if not lo <= _luminosity((r, g, b)) <= hi:
+        raise SpecError(idn["accent_ref"], f"{accent!r} has HSL luminosity {_luminosity((r, g, b)):.0%}: Windows replaces a "
+                        f"WindowColor outside {lo:.0%}..{hi:.0%}, so the image would not show the SSOT accent")
 
     cur = resolved["identity.cursor_ref"]
     if not isinstance(cur, dict):
@@ -597,7 +631,8 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     theme = str(resolved["identity.cursor_theme_ref"])
     if not str(cur["scheme_name"]).startswith(theme) or not str(cur["variant_dir"]).startswith(theme):
         raise SpecError(f"{idn['cursor_ref']}", f"the Windows build is not of the SSOT cursor theme {theme!r} (parity)")
-    sysroot = "C:\\" + str(idn["cursor_root"]).strip("\\/").replace("/", "\\")
+    root_rel = str(idn["system_root"]).strip("\\/").replace("/", "\\")
+    sysroot = "C:\\" + root_rel
     install_dir = str(cur["install_dir"]).strip("\\/").replace("/", "\\")
     if ".." in install_dir.split("\\"):
         raise SpecError(f"{idn['cursor_ref']}.install_dir", "must stay under the system root")
@@ -618,18 +653,52 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
         raise SpecError(f"{idn['font_ref']}.family", f"no font of family {font['family']!r} in {font['native_archive']}")
     font_dir = str(idn["font_dir"]).strip("\\/").replace("\\", "/")
 
+    # the persistent MiOS theme (unattend Themes) and the Default profile's colour mode
+    theme_name = str(resolved["identity.theme_name_ref"]).strip()
+    if not theme_name or len(theme_name) > 259:
+        raise SpecError(idn["theme_name_ref"], "must be a theme name of 1..259 characters")
+    mode = str(resolved["identity.theme_mode_ref"]).strip().lower()
+    if mode not in THEME_MODES:
+        raise SpecError(idn["theme_mode_ref"], f"{mode!r} is not one of {THEME_MODES}")
+    transparency = resolved["identity.transparency_ref"]
+    if not isinstance(transparency, bool):
+        raise SpecError(idn["transparency_ref"], "must be a boolean")
+    bg = _rgb(resolved["identity.background_color_ref"], idn["background_color_ref"])
+    bg_rel = str(idn["background"]).strip("\\/").replace("/", "\\")
+    parts = bg_rel.split("\\")
+    if parts[0].lower() != root_rel.lower() or ".." in parts or len(parts) < 3 or not bg_rel.lower().endswith(".bmp"):
+        raise SpecError(_full("identity.background"), "must be a .bmp in a folder under system_root (Themes/DesktopBackground "
+                        "must live in a subfolder of %WINDIR%)")
+    bmp = solid_bmp(bg)
+    background = {"path": bg_rel.replace("\\", "/"), "unattend": "%WINDIR%\\" + "\\".join(parts[1:]),
+                  "color": "#%02X%02X%02X" % bg, "px": BACKGROUND_PX, "sha256": hashlib.sha256(bmp).hexdigest(), "size": len(bmp)}
+
+    # OEM branding: every OEMInformation value from its one [branding] key
+    oem = {}
+    for value_name, ref in OEM_VALUES:
+        v = resolved[f"identity.{ref}"]
+        if not isinstance(v, str) or not v.strip():
+            raise SpecError(idn[ref], "must be a non-empty string")
+        oem[value_name] = v.strip()
+
     reg: list = []
 
     def add(owner: str, hive: str, key: str, name: str, typ: str, data) -> None:
         reg.append({"owner": owner, "hive": hive, "key": key, "name": name, "type": typ, "data": data})
 
-    # accent: the shared [colors].accent on DWM (title bars), the Explorer accent (Start/taskbar) and their prevalence
+    # accent: the shared [colors].accent reaches Windows through Themes/WindowColor (the answer file), from which Windows
+    # derives its accent palette at the first sign-in; the Default profile carries the accent values Windows keeps
+    # as given (DWM AccentColor, Explorer AccentColorMenu) and shows it on title bars and Start/taskbar (prevalence).
+    # Derived values (StartColorMenu, AccentPalette, ColorizationColor's alpha) are Windows' own and are not pinned.
     add("identity.accent.dwm_accent", "DEFAULT_USER", DWM_KEY, "AccentColor", "REG_DWORD", abgr)
-    add("identity.accent.dwm_colorization", "DEFAULT_USER", DWM_KEY, "ColorizationColor", "REG_DWORD", argb)
     add("identity.accent.dwm_prevalence", "DEFAULT_USER", DWM_KEY, "ColorPrevalence", "REG_DWORD", 1)
     add("identity.accent.menu", "DEFAULT_USER", ACCENT_KEY, "AccentColorMenu", "REG_DWORD", abgr)
-    add("identity.accent.start_menu", "DEFAULT_USER", ACCENT_KEY, "StartColorMenu", "REG_DWORD", abgr)
     add("identity.accent.prevalence", "DEFAULT_USER", PERSONALIZE_KEY, "ColorPrevalence", "REG_DWORD", 1)
+    # colour mode + transparency of every new profile (Themes/UWPAppsUseLightTheme covers apps only, not the system)
+    light = 1 if mode == "light" else 0
+    add("identity.theme.apps_light", "DEFAULT_USER", PERSONALIZE_KEY, "AppsUseLightTheme", "REG_DWORD", light)
+    add("identity.theme.system_light", "DEFAULT_USER", PERSONALIZE_KEY, "SystemUsesLightTheme", "REG_DWORD", light)
+    add("identity.theme.transparency", "DEFAULT_USER", PERSONALIZE_KEY, "EnableTransparency", "REG_DWORD", int(transparency))
     # cursor: the scheme as the Default profile's active cursors and a system-wide scheme
     add("identity.cursor.scheme_name", "DEFAULT_USER", CURSOR_KEY, "", "REG_SZ", str(cur["scheme_name"]))
     add("identity.cursor.scheme_source", "DEFAULT_USER", CURSOR_KEY, "Scheme Source", "REG_DWORD", SCHEME_SOURCE_SYSTEM)
@@ -641,13 +710,19 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     # font: every member of the SSOT family, registered system-wide
     for f in fonts:
         add(f"identity.font.{f['file']}", "SOFTWARE", FONTS_KEY, f["registry_name"], "REG_SZ", f["file"])
+    # OEM branding (Settings > System > About)
+    for value_name, ref in OEM_VALUES:
+        add(f"identity.oem.{ref[4:-4]}", "SOFTWARE", OEM_KEY, value_name, "REG_SZ", oem[value_name])
 
     record = {
         "accent": str(accent), "accent_abgr": abgr, "accent_argb": argb,
+        "theme": {"name": theme_name, "mode": mode, "window_color": "0x%08x" % argb, "uwp_apps_use_light_theme": mode == "light",
+                  "transparency": transparency, "background": background},
+        "oem": oem,
         "cursor": {"theme": theme, "asset_url": str(cur["asset_url"]), "asset_sha256": str(cur["asset_sha256"]),
                    "variant_dir": str(cur["variant_dir"]), "scheme_name": str(cur["scheme_name"]),
                    "install_dir": install_dir, "scheme_files": files, "roles": roles, "base_size": size,
-                   "dest_dir": (str(idn["cursor_root"]).strip("\\/") + "/" + install_dir).replace("\\", "/")},
+                   "dest_dir": (root_rel + "/" + install_dir).replace("\\", "/")},
         "font": {"family": str(font["family"]), "archive": str(font["native_archive"]), "archive_sha256": got,
                  "dest_dir": font_dir, "files": fonts},
     }

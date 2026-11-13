@@ -70,6 +70,7 @@ class Observations:
     computer_names: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (name, source)
     listing: Set[str] = dataclasses.field(default_factory=set)  # image-relative lower paths seen by wimlib dir
     answer_seen: bool = False
+    themes: List[Dict[str, Any]] = dataclasses.field(default_factory=list)   # unattend Themes elements (xbox-bm-39)
     first_logon_commands: List[Tuple[str, str]] = dataclasses.field(default_factory=list)  # (command line, source)
     group_adds: List[Tuple[str, str, str]] = dataclasses.field(default_factory=list)  # (group, member, source) from scripts
     # the image's own Windows\PolicyDefinitions\TerminalServer.admx: policy name -> {key, value, enabled, disabled}
@@ -536,6 +537,14 @@ def parse_answer_file(path: str, source: str, obs: Observations) -> None:
     for flc in root.iter(f"{{{UNS}}}FirstLogonCommands"):   # run as the first account to log on (fix-a M1)
         for cl in flc.iter(f"{{{UNS}}}CommandLine"):
             obs.first_logon_commands.append(((cl.text or "").strip(), f"{source}#FirstLogonCommands"))
+    for st in root.iter(f"{{{UNS}}}settings"):
+        for comp in st.iter(f"{{{UNS}}}component"):
+            if comp.get("name") != "Microsoft-Windows-Shell-Setup":
+                continue
+            for tm in comp.findall(f"{{{UNS}}}Themes"):
+                obs.themes.append({k: (tm.findtext(f"{{{UNS}}}{k}") or "").strip()
+                                   for k in ("ThemeName", "DesktopBackground", "WindowColor", "UWPAppsUseLightTheme")}
+                                  | {"pass": st.get("pass") or "", "source": f"{source}#Themes"})
     for comp in root.iter(f"{{{UNS}}}component"):
         for ua in comp.iter(f"{{{UNS}}}UserAccounts"):
             ap = ua.find(f"{{{UNS}}}AdministratorPassword")
@@ -1156,6 +1165,22 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
                         findings.append(Finding("missing:start.start2_bin", "Default profile start2.bin not staged"))
                     elif _sha256_file(p) != want:
                         findings.append(Finding("off-spec:start.start2_bin", f"staged start2.bin is not the {fam} asset"))
+        elif k == "theme":
+            # xbox-bm-39: the persistent MiOS theme is the answer file's Themes element (Windows' default theme for every
+            # new profile); a missing or different element ships the stock theme
+            if not obs.answer_seen:
+                res(it, "skipped", "no answer file in these inputs"); continue
+            tms = [t for t in obs.themes if t["pass"] in ("specialize", "oobeSystem")]
+            if not tms:
+                findings.append(Finding(f"missing:{it['id']}", "the answer file sets no Themes element: new profiles get the stock Windows theme"))
+            want = {"ThemeName": str(it["name"]), "DesktopBackground": str(it["background"]).lower(),
+                    "WindowColor": str(it["window_color"]).lower(),
+                    "UWPAppsUseLightTheme": str(bool(it.get("uwp_apps_use_light_theme"))).lower()}
+            for t in tms:
+                for field, v in want.items():
+                    got = t[field] if field == "ThemeName" else t[field].lower()
+                    if got != v:
+                        findings.append(Finding(f"off-spec:{it['id']}.{field}", f"Themes/{field}={t[field]!r}, spec {v!r}", t["source"]))
         elif k == "user":
             if not obs.answer_seen:
                 res(it, "skipped", "no answer file in these inputs"); continue

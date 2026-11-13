@@ -159,6 +159,10 @@ foreach ($it in @($req.items)) {
                 $a = @(Get-AppxPackage -AllUsers -Name ([string]$it.name) -ErrorAction SilentlyContinue)
                 $obsMap[$id] = [ordered]@{ present = ($a.Count -gt 0); version = $(if ($a.Count) { [string]$a[0].Version } else { $null }) }
             }
+            'theme' {
+                # xbox-bm-39: the answer file's Themes element; the image gate checks it, its effect is the identity.* values
+                $obsMap[$id] = [ordered]@{ answer_file_element = $true }
+            }
             'gpu_step' {
                 $o = [ordered]@{ present = $false }
                 $rp = [string]$it.record
