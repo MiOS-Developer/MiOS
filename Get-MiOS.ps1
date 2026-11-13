@@ -726,7 +726,12 @@ function Set-MiosHostTierAcl {
         $acl.AddAccessRule($rule)
     }
     $acl.SetOwner((New-Object System.Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
-    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    # Persist only the modified owner/DACL. Set-Acl can request SACL privilege after File.Replace.
+    $info = if ($isDir) { New-Object IO.DirectoryInfo $Path } else { New-Object IO.FileInfo $Path }
+    try {
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $info.SetAccessControl($acl) }
+        else { [IO.FileSystemAclExtensions]::SetAccessControl($info, $acl) }
+    } catch { throw }
 }
 
 function Initialize-MiosHostTierDirectory {
@@ -789,7 +794,12 @@ function Set-MiosPrivateUserTomlAcl {
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
     }
     $acl.SetOwner($owner)
-    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    # A fresh FileSecurity modifies owner/access only; do not ask Set-Acl to persist an audit section.
+    $info = New-Object IO.FileInfo $Path
+    try {
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $info.SetAccessControl($acl) }
+        else { [IO.FileSystemAclExtensions]::SetAccessControl($info, $acl) }
+    } catch { throw }
 }
 
 function Import-MiosUserToml {
@@ -848,7 +858,16 @@ function Sync-MiosUserTomlToBuilder {
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     $proc = New-Object Diagnostics.Process
     $proc.StartInfo = $psi
+    $savedInputEncoding = $null; $changedInputEncoding = $false
     try {
+        # .NET Framework's redirected StreamWriter can flush Console.InputEncoding's BOM on Close,
+        # even when all payload bytes went through BaseStream. Bind a BOM-less writer before Start.
+        if ($PSVersionTable.PSEdition -eq 'Desktop') {
+            $savedInputEncoding = [Console]::InputEncoding; $changedInputEncoding = $true
+            [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
+        } elseif ($psi.PSObject.Properties['StandardInputEncoding']) {
+            $psi.StandardInputEncoding = New-Object Text.UTF8Encoding($false)
+        }
         if (-not $proc.Start()) { throw 'Could not start the private builder handoff.' }
         $stdout = $proc.StandardOutput.ReadToEndAsync(); $stderr = $proc.StandardError.ReadToEndAsync()
         $write = $proc.StandardInput.BaseStream.WriteAsync($bytes, 0, $bytes.Length)
@@ -861,7 +880,8 @@ function Sync-MiosUserTomlToBuilder {
     } finally {
         # An input error/timeout can happen before WaitForExit. Do not leave a blocked writer child behind.
         try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
-        $proc.Dispose()
+        try { $proc.Dispose() }
+        finally { if ($changedInputEncoding) { [Console]::InputEncoding = $savedInputEncoding } }
     }
 }
 
