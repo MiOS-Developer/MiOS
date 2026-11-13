@@ -8,6 +8,8 @@ param(
     [string]$Package = '',                             # offline bake: local copy of the zip (verified against Sha256 exactly like a download)
     [int]$ExclusiveMonitor = 0,                        # 0 = keep the emulated console display (VNC: virt-manager/Cockpit) and other outputs; [vm.looking_glass] idd_exclusive
     [int]$MirrorDisplays = 1,                          # 1 = Windows Duplicate (clone) topology at every sign-in: Looking Glass (IDD), the emulated VNC/SPICE console and the dGPU output show the same picture; [vm.looking_glass] mirror_displays
+    [Parameter(Mandatory = $true)][string]$MirrorTask, # task path\name of that sign-in task; [windows.xbox.provision] mirror_task (under \MiOS\)
+    [string[]]$LegacyMirrorTasks = @(),                # earlier registrations of it, removed here; [windows.xbox.provision] legacy_mirror_tasks
     [switch]$Force
 )
 # Operator decision 2026-10-16: trust exactly this upstream publisher certificate (CN=HostFission, Sectigo-issued,
@@ -207,7 +209,21 @@ Get-Service -Name 'Looking Glass (host)', 'LGIddHelper' -ErrorAction SilentlyCon
 # -- Mirror every guest display (Looking Glass IDD, emulated VNC/SPICE console, dGPU output) -------------
 # Windows only applies a display topology inside a signed-in session and remembers it afterwards (the
 # sign-in screen then uses it too), so a scheduled task applies Duplicate at every sign-in, for any user.
-$mirrorTask = 'MiOS display mirror'
+# The task lives under \MiOS\ with the other MiOS tasks so Verify, the probe and the image gate see it (xbox-bm-01).
+function Split-MiOSTaskName([string]$Name) {
+    $parts = @($Name -split '[\\/]' | Where-Object { $_ })
+    if (-not $parts.Count) { throw "empty scheduled task name '$Name'" }
+    $path = if ($parts.Count -gt 1) { '\' + (($parts[0..($parts.Count - 2)]) -join '\') + '\' } else { '\' }
+    return @($path, $parts[-1])
+}
+foreach ($old in $LegacyMirrorTasks) {
+    $o = Split-MiOSTaskName $old
+    if (Get-ScheduledTask -TaskPath $o[0] -TaskName $o[1] -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskPath $o[0] -TaskName $o[1] -Confirm:$false
+        Say "earlier display mirror task $($o[0])$($o[1]) removed"
+    }
+}
+$mt = Split-MiOSTaskName $MirrorTask
 if ($MirrorDisplays) {
     # Every user runs this script at sign-in: only administrators may write it (users read/execute).
     Protect-MiOSDir (Join-Path $env:ProgramData 'MiOS') $true $false
@@ -254,9 +270,9 @@ if ($rc -eq 5) {
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$mirrorScript`""
     $trigger = New-ScheduledTaskTrigger -AtLogOn
     $principal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited   # BUILTIN\Users: runs in the signing-in user's session
-    Register-ScheduledTask -TaskName $mirrorTask -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-    Say "display mirror task registered ($mirrorScript, at every sign-in)"
-} elseif (Get-ScheduledTask -TaskName $mirrorTask -ErrorAction SilentlyContinue) {
-    Unregister-ScheduledTask -TaskName $mirrorTask -Confirm:$false
-    Say "display mirror task removed"
+    Register-ScheduledTask -TaskPath $mt[0] -TaskName $mt[1] -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+    Say "display mirror task $($mt[0])$($mt[1]) registered ($mirrorScript, at every sign-in)"
+} elseif (Get-ScheduledTask -TaskPath $mt[0] -TaskName $mt[1] -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskPath $mt[0] -TaskName $mt[1] -Confirm:$false
+    Say "display mirror task $($mt[0])$($mt[1]) removed"
 }

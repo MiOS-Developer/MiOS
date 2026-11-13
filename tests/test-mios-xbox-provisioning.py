@@ -154,12 +154,13 @@ class PayloadBase(unittest.TestCase):
         return d
 
     def step(self, name: str) -> str:
-        m = re.search(r"^Invoke-MiOSStep '" + re.escape(name) + r"' \{\n(.*?)^\}", self.setup, re.S | re.M)
+        # a guest-only step is rendered behind its device gate (xbox-bm-01): Invoke-MiOSGuestStep 'name' 'device' {
+        m = re.search(r"^Invoke-MiOS(?:Guest)?Step '" + re.escape(name) + r"'(?: '[^']+')? \{\n(.*?)^\}", self.setup, re.S | re.M)
         self.assertIsNotNone(m, f"no SYSTEM step {name}")
         return m.group(1)
 
     def steps(self):
-        return re.findall(r"^Invoke-MiOSStep '([^']+)'", self.setup, re.M)
+        return re.findall(r"^Invoke-MiOS(?:Guest)?Step '([^']+)'", self.setup, re.M)
 
 
 # ---------------------------------------------------------------------------

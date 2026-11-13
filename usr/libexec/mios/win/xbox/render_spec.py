@@ -120,6 +120,9 @@ REQUIRED = {
     "features.capability_fod": dict, "features.fod_metadata": str,
     "provision.first_logon_commands": bool, "provision.state_dir": str, "provision.log_dir": str,
     "provision.verify_task": str, "provision.hydrate_task": str, "provision.retry_task": str, "provision.serial_port": str,
+    "provision.mirror_task": str, "provision.legacy_mirror_tasks": list,
+    "devices.record": str, "drivers.looking_glass_idd.required_device": str,
+    "guest_tools.looking_glass_host.install": bool,
     "provision.serial_baud": int, "provision.network_category": str, "provision.network_wait_s": int,
     "ssh.install": str, "ssh.port_ref": str, "ssh.settings_ref": str, "ssh.authorized_keys_key": str,
     "ssh.authorized_keys_files": list, "ssh.settings_path": str, "ssh.authorized_keys_path": str,
@@ -429,6 +432,7 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
     ssh = _ssh_inputs(merged, x, resolved)
     _check_provision(x, resolved)
     _check_apps(x)
+    _check_devices(x)
 
     out = {
         "schema": SCHEMA,
@@ -448,6 +452,46 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
     for p in CREDENTIAL_REFS:
         out["resolved"][p] = "<credential>"
     return out
+
+
+PCI_ID_RE = re.compile(r"^[0-9A-F]{4}:([0-9A-F]{4}|\*)$")
+
+
+def device_tables(x: dict) -> dict:
+    """[windows.xbox.devices.<name>] tables (name -> {pci: [...]}); the scalar keys of [windows.xbox.devices] are not devices."""
+    return {k: v for k, v in (x.get("devices") or {}).items() if isinstance(v, dict)}
+
+
+def _check_devices(x: dict) -> None:
+    """xbox-bm-01: one image for VMs and bare metal. Every guest-only piece names the PCI device it needs, so SetupComplete,
+    Verify, the probe and the image gate decide per device -- never on HypervisorPresent, which MiOS's own
+    nested_virt_features step makes true on bare metal."""
+    devs = device_tables(x)
+    if not devs:
+        raise SpecError(_full("devices"), "no [windows.xbox.devices.<name>] table (pci = [\"VVVV:DDDD\", ...])")
+    for name, d in devs.items():
+        pci = d.get("pci")
+        if not isinstance(pci, list) or not pci:
+            raise SpecError(_full(f"devices.{name}.pci"), "must be a non-empty list of \"VVVV:DDDD\" PCI ids")
+        for p in pci:
+            if not isinstance(p, str) or not PCI_ID_RE.match(p):
+                raise SpecError(_full(f"devices.{name}.pci"), f"{p!r} is not \"VVVV:DDDD\" (upper-case hex) or \"VVVV:*\"")
+    users = [(f"guest_tools.{g}", t) for g, t in x["guest_tools"].items() if isinstance(t, dict)]
+    users.append(("drivers.looking_glass_idd", x["drivers"]["looking_glass_idd"]))
+    for path, t in users:
+        dev = t.get("required_device")
+        if not isinstance(dev, str) or not dev:
+            raise SpecError(_full(f"{path}.required_device"), "missing: every guest-only piece names the device it needs")
+        if dev not in devs:
+            raise SpecError(_full(f"{path}.required_device"), f"{dev!r} is not a [windows.xbox.devices] table")
+        if "install" in t and not isinstance(t["install"], bool):
+            raise SpecError(_full(f"{path}.install"), "must be true or false")
+    if x["guest_tools"]["looking_glass_host"]["install"]:
+        # exactly one Looking Glass server per IVSHMEM device (xbox-bm-37): the IDD retires the legacy host app
+        raise SpecError(_full("guest_tools.looking_glass_host.install"),
+                        "must be false while the Looking Glass IDD is installed: one Looking Glass server per IVSHMEM device")
+    if not str(x["provision"]["mirror_task"]).replace("/", "\\").strip("\\"):
+        raise SpecError(_full("provision.mirror_task"), "empty task name")
 
 
 def _check_accounts(merged: dict, x: dict, resolved: dict) -> int:

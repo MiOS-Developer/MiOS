@@ -305,11 +305,16 @@ class TestPayload(unittest.TestCase):
     def test_setup_script_bakes_guest_tools_lg_gpu_winrm(self):
         s = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", A.SETUP_SCRIPT))
         for needle in ("virtio-win-gt-x64.msi", "spice-vdagent-x64.msi", "Invoke-MiOSMsi", "qemu-ga-x86_64.msi", "winfsp-9.9.99999.msi", "VirtioFsSvc",
-                       "MicrosoftEdgeWebView2RuntimeInstallerX64.exe", "looking-glass-host-setup.exe", "mios-looking-glass-idd.ps1",
+                       "MicrosoftEdgeWebView2RuntimeInstallerX64.exe", "mios-looking-glass-idd.ps1",
                        "mios-gpu-driver.ps1", "-Register", "Enable-PSRemoting", "MiOS-WinRM-HTTP", "-RemoteAddress 'LocalSubnet'",
                        "Assert-MiOSSigned", "Assert-MiOSSha256", "S-1-5-32-555", "Add-WindowsCapability"):
             self.assertIn(needle, s)
         self.assertNotIn("AllowUnencrypted -Value $true", s)
+        # xbox-bm-37: the IDD is the one Looking Glass server (the legacy host app is staged, never installed);
+        # xbox-bm-01: the IDD and every guest tool run behind their SSOT device gate
+        self.assertNotIn("looking-glass-host-setup.exe", s)
+        self.assertRegex(s, r"(?m)^Invoke-MiOSGuestStep 'looking_glass_idd' 'ivshmem' \{")
+        self.assertRegex(s, r"(?m)^Invoke-MiOSGuestStep 'qemu_ga' 'virtio_serial' \{")
         cmd = _rd(os.path.join(self.pay, "Windows", "Setup", "Scripts", "SetupComplete.cmd"))
         self.assertIn(A.SETUP_SCRIPT, cmd)
         # fix-a M1: the former first-logon work is SYSTEM (SetupComplete); no first-logon script, no FirstLogonCommands

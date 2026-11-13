@@ -158,6 +158,24 @@ foreach ($it in @($req.items)) {
                 if (Test-Path -LiteralPath $rp) { $o.present = $true; $o.record = (Get-Content -LiteralPath $rp -Raw | ConvertFrom-Json) }
                 $obsMap[$id] = $o
             }
+            'looking_glass' {
+                # xbox-bm-01/37: the IDD display, its \MiOS\ mirror task, earlier root-path registrations, the legacy host service
+                function Get-TaskObs([string]$Name) {
+                    $parts = @($Name.Split('\') | Where-Object { $_ })
+                    if (-not $parts.Count) { return [ordered]@{ present = $false } }
+                    $tp = if ($parts.Count -gt 1) { '\' + ((@($parts[0..($parts.Count - 2)]) | ForEach-Object { $_ + '\' }) -join '') } else { '\' }
+                    $t = Get-ScheduledTask -TaskPath $tp -TaskName $parts[-1] -ErrorAction SilentlyContinue
+                    return [ordered]@{ present = [bool]$t; state = $(if ($t) { [string]$t.State } else { $null }) }
+                }
+                $o = [ordered]@{ idd = (@(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*Looking Glass*' }).Count -gt 0) }
+                $o.task = $(if ($it.PSObject.Properties['task'] -and $it.task) { Get-TaskObs ([string]$it.task) } else { [ordered]@{ present = $false } })
+                $o.legacy_tasks = @(@($it.legacy_tasks) | Where-Object { $_ -and (Get-TaskObs ([string]$_)).present })
+                if ($it.PSObject.Properties['host_service'] -and $it.host_service) {
+                    $s = Get-Service -Name ([string]$it.host_service) -ErrorAction SilentlyContinue
+                    $o.host_service = [ordered]@{ present = [bool]$s; status = $(if ($s) { [string]$s.Status } else { $null }); start = $(if ($s) { [string]$s.StartType } else { $null }) }
+                }
+                $obsMap[$id] = $o
+            }
             default { $obsMap[$id] = [ordered]@{ error = "unknown kind $($it.kind)" } }
         }
     } catch {
@@ -183,6 +201,13 @@ $display = @(Get-CimInstance Win32_PnPSignedDriver -Filter "DeviceClass='DISPLAY
                 version = [string]$_.DriverVersion; inf = [string]$_.InfName } })
 $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
 $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+# present PCI functions 'VVVV:DDDD' (xbox-bm-01: guest-only items are decided per device, never on HypervisorPresent)
+$pciPresent = $null
+try {
+    $pciPresent = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | ForEach-Object {
+        if ([string]$_.InstanceId -match '^PCI\\VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') { '{0}:{1}' -f $Matches[1].ToUpper(), $Matches[2].ToUpper() }
+    } | Sort-Object -Unique)
+} catch { $errors += "pci probe: $($_.Exception.Message)" }
 
 $out = [ordered]@{
     schema       = 'mios-xbox-probe/1'
@@ -195,6 +220,7 @@ $out = [ordered]@{
     autologon    = $autologon
     nested_virt  = $(if ($cpu) { [bool]$cpu.VirtualizationFirmwareEnabled } else { $null })
     hypervisor   = $(if ($cs) { [bool]$cs.HypervisorPresent } else { $null })
+    pci_present  = $pciPresent
     display      = $display
     third_party_drivers = @(Get-DriverInventory)
     observations = $obsMap

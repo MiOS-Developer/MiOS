@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+# AI-hint: Two-sided tests for xbox-bm-01 (ONE MiOS-Xbox image for VMs and bare metal, decided per PCI device at setup) and xbox-bm-37 (exactly one Looking Glass server): the SSOT [windows.xbox.devices] table and every guest-only piece's required_device are validated by render_spec; the SetupComplete stage probes devices first and gates every guest step on its device (HypervisorPresent is a fact only); the rendered PowerShell gate, EXECUTED against a fake bare-metal and a fake VM PCI set, records not applicable (never failed) on bare metal and runs every step on the VM; the image gate (conform) reports an ungated or wrongly gated step, a second Looking Glass server and a mirror task off \MiOS\; the probe counts not applicable (with evidence) as conforming and still reports a VM that claims Looking Glass without IVSHMEM, a guest service running without its device, a leftover root-path mirror task and two servers. Every positive control has a planted negative control. No network, no VM.
+# AI-related: usr/share/mios/mios.toml [windows.xbox.devices] [windows.xbox.guest_tools.*] [windows.xbox.provision], usr/libexec/mios/win/xbox/render_spec.py, usr/libexec/mios/win/xbox/answer.py, usr/libexec/mios/win/xbox/spec_items.py, usr/libexec/mios/win/xbox/conform.py, usr/libexec/mios/win/xbox/probe.py, usr/share/mios/windows/build/MiOS-Xbox.Provision.ps1, usr/share/mios/windows/xbox/mios-xbox-probe.ps1, usr/share/mios/windows/mios-looking-glass-idd.ps1
+"""Run: python3 -I tests/test-mios-xbox-aio-devices.py -v   (temp dirs only; no network, no VM; the PowerShell gate
+cases run with pwsh or Windows PowerShell and are skipped, named as UNRUN, without either)"""
+
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.abspath(__file__))
+_spec = importlib.util.spec_from_file_location("test_mios_xbox_provisioning_aio", os.path.join(HERE, "test-mios-xbox-provisioning.py"))
+P = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(P)
+A, C, R, S = P.A, P.C, P.R, P.S
+_probe_spec = importlib.util.spec_from_file_location("mios_xbox_probe_aio", os.path.join(P.XBOX, "probe.py"))
+PR = importlib.util.module_from_spec(_probe_spec)
+_probe_spec.loader.exec_module(PR)
+
+GUEST_STEPS = ("virtio_win_guest_tools", "qemu_ga", "spice_vdagent", "winfsp", "virtiofs", "looking_glass_idd")
+BARE_METAL_PCI = ["10DE:2489", "1022:1480", "1022:1481", "8086:1539", "1987:5021"]   # GPU, host bridges, NIC, NVMe
+VM_PCI = ["1AF4:1000", "1AF4:1003", "1AF4:1041", "1AF4:105A", "1AF4:1110", "1B36:0001", "10DE:2489"]
+VM_NO_IVSHMEM = [p for p in VM_PCI if p != "1AF4:1110"]
+
+
+def _powershell():
+    return shutil.which("pwsh") or (shutil.which("powershell") if os.name == "nt" else None)
+
+
+class Base(P.PayloadBase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.items = S.items_from_spec(cls.doc, P.ROOT)
+        cls.gate_items = [it for it in cls.items if it["kind"] in ("guest_tool", "looking_glass")]
+
+    def conform_findings(self, setup_text: str):
+        d = self.copy_payload()
+        with open(os.path.join(d, "Windows", "Setup", "Scripts", A.SETUP_SCRIPT), "w", encoding="utf-8") as fh:
+            fh.write(setup_text)
+        obs = C.collect_rendered([d, self.inputs["drivers_dir"]])
+        _, findings = C.evaluate(self.gate_items, obs, "rendered", S.spec_policy(self.doc))
+        return {f.id for f in findings}
+
+
+# ---------------------------------------------------------------------------
+# SSOT: the device table and every guest-only piece's required_device
+# ---------------------------------------------------------------------------
+
+class TestSpec(Base):
+    def test_positive_every_guest_piece_names_a_declared_device(self):
+        devs = {k for k, v in self.x["devices"].items() if isinstance(v, dict)}
+        self.assertTrue({"virtio", "virtio_serial", "viofs", "ivshmem"} <= devs)
+        for g, t in self.x["guest_tools"].items():
+            self.assertIn(t["required_device"], devs, g)
+        self.assertEqual(self.x["drivers"]["looking_glass_idd"]["required_device"], "ivshmem")
+        self.assertIn("1AF4:1110", self.x["devices"]["ivshmem"]["pci"])
+        self.assertTrue(self.x["provision"]["mirror_task"].startswith("MiOS\\"))
+
+    def test_negative_spec_refuses_a_missing_unknown_or_malformed_device(self):
+        cases = {
+            "missing required_device": lambda x: x["guest_tools"]["qemu_ga"].pop("required_device"),
+            "unknown device": lambda x: x["guest_tools"]["virtiofs"].__setitem__("required_device", "nvme"),
+            "malformed pci": lambda x: x["devices"]["ivshmem"].__setitem__("pci", ["1af4:1110"]),
+            "second Looking Glass server": lambda x: x["guest_tools"]["looking_glass_host"].__setitem__("install", True),
+            "no device tables": lambda x: [x["devices"].pop(k) for k in [k for k, v in x["devices"].items() if isinstance(v, dict)]],
+        }
+        for name, plant in cases.items():
+            merged = copy.deepcopy(self.merged)
+            plant(merged["windows"]["xbox"])
+            with self.subTest(case=name), self.assertRaises(R.SpecError):
+                R.render(merged, P.LAYERS)
+
+
+# ---------------------------------------------------------------------------
+# SetupComplete: probe first, every guest step gated on its device, one Looking Glass server
+# ---------------------------------------------------------------------------
+
+class TestSetupComplete(Base):
+    def test_positive_probe_first_and_every_guest_step_gated(self):
+        names = self.steps()
+        self.assertEqual(names[0], "environment_probe")
+        for s in GUEST_STEPS:
+            self.assertIn(s, names)
+            self.assertLess(names.index("environment_probe"), names.index(s))
+        for g in ("virtio_win_guest_tools", "qemu_ga", "spice_vdagent", "winfsp", "virtiofs"):
+            dev = self.x["guest_tools"][g]["required_device"]
+            self.assertRegex(self.setup, rf"(?m)^Invoke-MiOSGuestStep '{g}' '{dev}' \{{")
+        self.assertRegex(self.setup, r"(?m)^Invoke-MiOSGuestStep 'looking_glass_idd' 'ivshmem' \{")
+        self.assertNotIn("looking_glass_host", names)
+        self.assertIn(f"-MirrorTask '{self.x['provision']['mirror_task']}'", self.step("looking_glass_idd"))
+        probe = self.step("environment_probe")
+        self.assertIn("HypervisorPresent", probe)
+        self.assertNotRegex(probe, r"if \(\$hv")   # a fact only, never the deciding gate
+
+    def test_positive_image_gate_is_green_for_the_rendered_gates(self):
+        ids = self.conform_findings(self.setup)
+        self.assertFalse({i for i in ids if i.startswith(("guest_tools.", "looking_glass.", "missing:guest_tools", "missing:looking_glass"))}, ids)
+
+    def test_negative_image_gate_catches_each_planted_defect(self):
+        qd = self.x["guest_tools"]["qemu_ga"]["required_device"]
+        vd = self.x["guest_tools"]["virtiofs"]["required_device"]
+        plants = {
+            "ungated qemu_ga": (f"Invoke-MiOSGuestStep 'qemu_ga' '{qd}' {{", "Invoke-MiOSStep 'qemu_ga' {",
+                                "guest_tools.ungated:guest_tools.qemu_ga"),
+            "virtiofs on the wrong device": (f"Invoke-MiOSGuestStep 'virtiofs' '{vd}' {{", "Invoke-MiOSGuestStep 'virtiofs' 'virtio' {",
+                                             "guest_tools.wrong-device:guest_tools.virtiofs"),
+            "second Looking Glass server": ("Invoke-MiOSGuestStep 'winfsp'", "Invoke-MiOSGuestStep 'looking_glass_host' 'ivshmem' {\n}\nInvoke-MiOSGuestStep 'winfsp'",
+                                            "looking_glass.two-servers"),
+            "mirror task at the root path": (f"-MirrorTask '{self.x['provision']['mirror_task']}'", "-MirrorTask 'MiOS display mirror'",
+                                             "looking_glass.mirror-task-path"),
+        }
+        for name, (old, new, fid) in plants.items():
+            self.assertEqual(self.setup.count(old), 1, name)
+            with self.subTest(plant=name):
+                self.assertIn(fid, self.conform_findings(self.setup.replace(old, new)))
+
+
+# ---------------------------------------------------------------------------
+# the rendered PowerShell gate, executed against fake device sets
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(_powershell(), "UNRUN: needs pwsh or Windows PowerShell to execute the rendered gate")
+class TestGateExecution(Base):
+    def run_gate(self, pci, plant_ungated: bool = False):
+        """Execute the rendered PS library + environment_probe + every guest gate (bodies replaced by a marker, or by the
+        old bare-metal failure when plant_ungated) against a fake PCI set. Returns (steps state, environment record)."""
+        d = tempfile.mkdtemp(dir=self.tmp)
+        rec = os.path.join(d, "environment.json")
+        state = os.path.join(d, "setup-state.json")
+        probe = self.step("environment_probe").replace(self.x["devices"]["record"].replace("'", "''"), rec.replace("'", "''"))
+        gates = re.findall(r"(?m)^Invoke-MiOSGuestStep '([^']+)' '([^']+)' \{", self.setup)
+        self.assertEqual({g for g, _ in gates}, set(GUEST_STEPS))
+        lines = [
+            f"$MiOSStage = 'test'; $MiOSLogFile = '{os.path.join(d, 'setup.log')}'; $MiOSLogDir = '{d}'",
+            "$MiOSSerialPort = 'COM250'; $MiOSSerialBaud = 115200",
+            A._PS_LIB.strip("\n"),
+            "$script:FakePci = @(" + ", ".join(f"'PCI\\VEN_{p[:4]}&DEV_{p[5:]}&SUBSYS_00000000&REV_00\\3&0&0'" for p in pci) + ")",
+            "function Get-PnpDevice { param([switch]$PresentOnly, $ErrorAction) $script:FakePci | ForEach-Object { [pscustomobject]@{ InstanceId = $_ } } }",
+            "function Get-CimInstance { param($ClassName, $ErrorAction) [pscustomobject]@{ HypervisorPresent = $true } }",
+        ]
+        if plant_ungated:   # the old behaviour: no gate, the guest service start throws on bare metal
+            lines.append("function Invoke-MiOSGuestStep([string]$Name, [string]$Device, [scriptblock]$Body) { Invoke-MiOSStep $Name { throw \"service $Name is Stopped after start\" } }")
+        lines += ["Invoke-MiOSStep 'environment_probe' {", probe.rstrip("\n"), "}"]
+        lines += [f"Invoke-MiOSGuestStep '{g}' '{dev}' {{ $null = 1 }}" for g, dev in gates]
+        lines.append(f"Save-MiOSState '{state}' | Out-Null")
+        script = os.path.join(d, "gate.ps1")
+        with open(script, "w", encoding="utf-8-sig") as fh:
+            fh.write("\n".join(lines) + "\n")
+        r = subprocess.run([_powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+        with open(state, encoding="utf-8-sig") as fh:
+            steps = json.load(fh)["steps"]
+        with open(rec, encoding="utf-8-sig") as fh:
+            env = json.load(fh)
+        return steps, env
+
+    @staticmethod
+    def bare_metal_problems(steps):
+        return [f"{s}: {v}" for s, v in steps.items() if s in GUEST_STEPS and not str(v).startswith("not applicable")] + \
+               [f"{s}: {v}" for s, v in steps.items() if str(v).startswith("failed")]
+
+    def test_positive_bare_metal_records_not_applicable_never_failed(self):
+        steps, env = self.run_gate(BARE_METAL_PCI)
+        self.assertEqual(self.bare_metal_problems(steps), [])
+        self.assertEqual(steps["environment_probe"], "ok")
+        self.assertIn("no virtio_serial device", steps["qemu_ga"])
+        self.assertIn("1AF4:1110", steps["looking_glass_idd"])
+        self.assertTrue(env["hypervisor_present"])          # recorded as a fact ...
+        self.assertFalse(env["devices"]["ivshmem"]["present"])   # ... and it decided nothing
+
+    def test_positive_vm_runs_every_guest_step(self):
+        steps, env = self.run_gate(VM_PCI)
+        self.assertEqual({s: steps[s] for s in GUEST_STEPS}, {s: "ok" for s in GUEST_STEPS})
+        self.assertTrue(all(v["present"] for v in env["devices"].values()))
+
+    def test_negative_old_ungated_failure_is_caught(self):
+        steps, _ = self.run_gate(BARE_METAL_PCI, plant_ungated=True)
+        problems = self.bare_metal_problems(steps)
+        self.assertTrue(any("failed" in p for p in problems), problems)
+
+
+# ---------------------------------------------------------------------------
+# the in-guest probe: not applicable is conforming, with evidence; claims without the device are findings
+# ---------------------------------------------------------------------------
+
+class TestProbe(Base):
+    def probe_doc(self, pci, running=(), idd=False, task_state=None, legacy=(), host_svc=None):
+        obs = {}
+        for it in self.gate_items:
+            if it["kind"] == "guest_tool":
+                svc = it.get("service")
+                obs[it["id"]] = {"service": ({"present": svc in running, "status": "Running" if svc in running else None,
+                                              "start": "Automatic" if svc in running else None})} if svc else {}
+            else:
+                obs[it["id"]] = {"idd": idd, "task": {"present": task_state is not None, "state": task_state},
+                                 "legacy_tasks": list(legacy), "host_service": host_svc or {"present": False}}
+        return {"schema": PR.PROBE_SCHEMA, "pci_present": list(pci), "observations": obs}
+
+    def ev(self, doc):
+        results, findings = PR.evaluate(self.gate_items, doc)
+        return {r["id"]: r for r in results}, {f.id for f in findings}
+
+    def services(self):
+        return [it["service"] for it in self.gate_items if it["kind"] == "guest_tool" and it.get("service") and it.get("install") is not False]
+
+    def test_positive_bare_metal_is_conforming_with_evidence(self):
+        res, ids = self.ev(self.probe_doc(BARE_METAL_PCI))
+        self.assertEqual(ids, set())
+        for it in self.gate_items:
+            self.assertEqual(res[it["id"]]["status"], "not-applicable", it["id"])
+            self.assertRegex(res[it["id"]]["detail"], r"no \w+ device \(PCI .* absent|not installed by the SSOT")
+
+    def test_positive_vm_with_every_device_passes(self):
+        res, ids = self.ev(self.probe_doc(VM_PCI, running=self.services(), idd=True, task_state="Ready"))
+        self.assertEqual(ids, set())
+        self.assertEqual(res["looking_glass.idd"]["status"], "pass")
+        self.assertEqual(res["guest_tools.qemu_ga"]["status"], "pass")
+        self.assertEqual(res["guest_tools.looking_glass_host"]["status"], "not-applicable")   # one server: the IDD
+
+    def test_negative_claims_without_the_device_and_leftovers_are_findings(self):
+        cases = {
+            "VM claims Looking Glass without IVSHMEM": (dict(pci=VM_NO_IVSHMEM, running=self.services(), idd=True), "looking_glass.idd-without-ivshmem"),
+            "Duplicate task enabled without IVSHMEM": (dict(pci=BARE_METAL_PCI, task_state="Ready"), "looking_glass.mirror-without-ivshmem"),
+            "bare metal runs QEMU-GA anyway": (dict(pci=BARE_METAL_PCI, running=["QEMU-GA"]), "guest_tools.running-not-applicable:guest_tools.qemu_ga"),
+            "root-path mirror task left behind": (dict(pci=VM_PCI, running=self.services(), idd=True, task_state="Ready",
+                                                       legacy=["\\MiOS display mirror"]), "looking_glass.legacy-mirror-task"),
+            "two Looking Glass servers": (dict(pci=VM_PCI, running=self.services(), idd=True, task_state="Ready",
+                                               host_svc={"present": True, "status": "Stopped", "start": "Automatic"}), "looking_glass.two-servers"),
+            "VM device present, service stopped": (dict(pci=VM_PCI, running=[s for s in self.services() if s != "QEMU-GA"], idd=True, task_state="Ready"),
+                                                   "guest_tools.not-running:guest_tools.qemu_ga"),
+        }
+        for name, (kw, fid) in cases.items():
+            doc = self.probe_doc(**kw)
+            if name == "VM device present, service stopped":
+                doc["observations"]["guest_tools.qemu_ga"]["service"] = {"present": True, "status": "Stopped", "start": "Automatic"}
+            with self.subTest(case=name):
+                self.assertIn(fid, self.ev(doc)[1])
+
+    def test_negative_a_guest_without_a_pci_list_waives_nothing(self):
+        doc = self.probe_doc(BARE_METAL_PCI)
+        doc.pop("pci_present")
+        _, ids = self.ev(doc)
+        self.assertIn("missing:guest_tools.qemu_ga", ids)
+
+
+if __name__ == "__main__":
+    unittest.main()

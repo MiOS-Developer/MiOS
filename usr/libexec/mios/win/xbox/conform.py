@@ -923,6 +923,38 @@ def _mentioned(obs: Observations, name: str) -> bool:
     return any(rx.search(t.lower()) for _, t in obs.script_text)
 
 
+def _stage_step(obs: Observations, step: str) -> Optional[Tuple[str, str]]:
+    """How the SYSTEM SetupComplete stage renders a step: ('gated', device), ('ungated', '') or None when absent
+    (xbox-bm-01). None is also returned when no stage script was ingested (the caller then cannot judge)."""
+    texts = [t for s, t in obs.script_text if _is_stage_script(s)]
+    for t in texts:
+        m = re.search(r"^Invoke-MiOSGuestStep '" + re.escape(step) + r"' '([^']+)' \{", t, re.M)
+        if m:
+            return "gated", m.group(1)
+        if re.search(r"^Invoke-MiOSStep '" + re.escape(step) + r"' \{", t, re.M):
+            return "ungated", ""
+    return None
+
+
+def _guest_gate_findings(it: Dict[str, Any], obs: Observations, step: str) -> List[Finding]:
+    """xbox-bm-01/37: a guest-only step runs only behind its SSOT device gate; a step the SSOT does not install is
+    never rendered."""
+    if not any(_is_stage_script(s) for s, _ in obs.script_text):
+        return []
+    got = _stage_step(obs, step)
+    if it.get("install") is False:
+        return [Finding("looking_glass.two-servers" if step == "looking_glass_host" else f"off-spec:{it['id']}",
+                        f"SetupComplete installs {step} although the SSOT does not")] if got else []
+    if got is None:
+        return [Finding(f"missing:{it['id']}.step", f"SetupComplete has no {step} step")]
+    if got[0] == "ungated":
+        return [Finding(f"guest_tools.ungated:{it['id']}", f"SetupComplete runs {step} without its device gate "
+                        f"({it.get('device') or 'no device'}): bare metal records it failed instead of not applicable")]
+    if it.get("device") and got[1] != it["device"]:
+        return [Finding(f"guest_tools.wrong-device:{it['id']}", f"{step} is gated on {got[1]}, the SSOT says {it['device']}")]
+    return []
+
+
 def _user_context(src: str, obs: Observations) -> bool:
     """A script source that runs as the logged-on user: an answer-file CommandLine (FirstLogonCommands /
     LogonCommands) or a file a FirstLogonCommand names."""
@@ -1074,10 +1106,20 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
         elif k == "driver":
             if it["inf"].lower() not in obs.driver_bases:
                 findings.append(Finding(f"missing:{it['id']}", f"driver {it['inf']}.inf not in the driver set"))
+        elif k == "looking_glass":
+            findings.extend(_guest_gate_findings(it, obs, "looking_glass_idd"))
+            stage = [t for s, t in obs.script_text if _is_stage_script(s)]
+            if stage and it.get("task") and not any(re.search(r"-MirrorTask '" + re.escape(it["task"]) + "'", t) for t in stage):
+                findings.append(Finding("looking_glass.mirror-task-path",
+                                        f"the IDD step does not register the display mirror task at {it['task']}"))
         elif k == "guest_tool":
-            if not it.get("installer"):
-                res(it, "skipped", "service-only guest tool; verified in-guest"); continue
-            if not _staged(obs, it["installer"]):
+            findings.extend(_guest_gate_findings(it, obs, it["name"]))
+            if it.get("install") is False:
+                pass   # staged for the image, never installed (xbox-bm-37): the gate above is the whole check
+            elif not it.get("installer"):
+                if len(findings) == before:
+                    res(it, "skipped", "service-only guest tool; verified in-guest"); continue
+            elif not _staged(obs, it["installer"]):
                 findings.append(Finding(f"missing:{it['id']}", f"installer {it['installer']} not staged"))
             elif mode == "rendered" and not _mentioned(obs, it["installer"]):
                 findings.append(Finding(f"missing:{it['id']}", f"installer {it['installer']} is staged but no setup script runs it"))

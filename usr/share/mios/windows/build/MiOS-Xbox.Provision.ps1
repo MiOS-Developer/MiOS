@@ -149,15 +149,64 @@ if ($Stage -eq 'Retry') {
 
 # Verify (SYSTEM) -- records state read-only; its only writes besides the record: removing the finished hydrate task, and
 # the first-sign-in reconcile below (AutoLogonCount deleted, the desktop hive's DEFAULT_USER values re-applied)
+#
+# Guest devices (xbox-bm-01): ONE image for VMs and bare metal. The SSOT [windows.xbox.devices] PCI ids are re-probed
+# live here; a guest-only service whose required_device is absent (or that the SSOT does not install) is recorded
+# "not applicable" with the evidence and is never counted as not running -- but one that RUNS without its device is an
+# issue. HypervisorPresent is recorded as a fact only (MiOS's nested_virt_features makes it true on bare metal).
+$pciOk = $true
+$pciNow = @()
+try {
+    $pciNow = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | ForEach-Object {
+        if ([string]$_.InstanceId -match '^PCI\\VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') { '{0}:{1}' -f $Matches[1].ToUpper(), $Matches[2].ToUpper() }
+    } | Sort-Object -Unique)
+} catch { $pciOk = $false; Log "PCI probe failed ($($_.Exception.Message)): every guest service is treated as applicable" 'WARN' }
+$devFacts = [ordered]@{}
+$devTable = Get-Prop $x 'devices'
+if ($devTable) {
+    foreach ($dp in @($devTable.PSObject.Properties | Where-Object { $_.Value -is [pscustomobject] })) {
+        $hit = $null
+        foreach ($p in @($dp.Value.pci)) {
+            $pv, $pd = ([string]$p).ToUpper() -split ':', 2
+            $hit = $pciNow | Where-Object { ($_ -split ':')[0] -eq $pv -and ($pd -eq '*' -or ($_ -split ':')[1] -eq $pd) } | Select-Object -First 1
+            if ($hit) { break }
+        }
+        $devFacts[$dp.Name] = [ordered]@{ present = ((-not $pciOk) -or [bool]$hit); matched = $hit; pci = @($dp.Value.pci) }
+    }
+}
+function Test-MiOSDevicePresent([string]$Device) {
+    if (-not $Device -or -not $devFacts.Contains($Device)) { return $true }   # undeclared: never silently not applicable
+    return [bool]$devFacts[$Device].present
+}
+$hv = $null; try { $hv = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent } catch {}
+$issues = @()
 $services = [ordered]@{}
 $names = @()
-foreach ($g in @($x.guest_tools.PSObject.Properties)) { $n = [string](Get-Prop $g.Value 'service'); if ($n) { $names += $n } }
+$guestSvc = @{}
+foreach ($g in @($x.guest_tools.PSObject.Properties)) {
+    $n = [string](Get-Prop $g.Value 'service')
+    if (-not $n) { continue }
+    $names += $n
+    $inst = Get-Prop $g.Value 'install'
+    $guestSvc[$n] = [ordered]@{ tool = $g.Name; device = [string](Get-Prop $g.Value 'required_device'); install = ($null -eq $inst -or [bool]$inst) }
+}
 $svcTable = Get-Prop $x 'services'
 if ($svcTable) { $names += @($svcTable.PSObject.Properties | ForEach-Object { $_.Name }) }
 $names += 'sshd', 'TermService', 'WinRM'
 foreach ($name in $names) {
     $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-    $services[$name] = if ($svc) { [ordered]@{ present = $true; status = [string]$svc.Status; start = [string]$svc.StartType } } else { [ordered]@{ present = $false } }
+    $rec = if ($svc) { [ordered]@{ present = $true; status = [string]$svc.Status; start = [string]$svc.StartType } } else { [ordered]@{ present = $false } }
+    if ($guestSvc.ContainsKey($name)) {
+        $g = $guestSvc[$name]
+        $devOk = Test-MiOSDevicePresent $g.device
+        $rec['applicable'] = ($devOk -and $g.install)
+        if (-not $devOk) { $rec['reason'] = "no $($g.device) device (PCI $(@($devFacts[$g.device].pci) -join '|') absent)" }
+        elseif (-not $g.install) { $rec['reason'] = 'not installed by the SSOT (one Looking Glass server per IVSHMEM device)' }
+        if (-not $rec['applicable'] -and $svc -and [string]$svc.Status -eq 'Running') {
+            $issues += "$name runs although it is not applicable ($($rec['reason']))"
+        }
+    }
+    $services[$name] = $rec
 }
 $tasks = [ordered]@{}
 $taskTable = Get-Prop $x 'tasks'
@@ -187,6 +236,30 @@ if ($rec -and (Test-Path -LiteralPath $rec)) {
     $gpu = [ordered]@{ present = $true; status = [string](Get-Prop $g 'status') }
 }
 $idd = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*Looking Glass*' })
+# Looking Glass (xbox-bm-01, xbox-bm-37): only with IVSHMEM, one server, the mirror task under \MiOS\
+$lgDev = [string](Get-Prop (Get-Prop $x.drivers 'looking_glass_idd') 'required_device')
+$ivshmem = Test-MiOSDevicePresent $lgDev
+$prov = Get-Prop $x 'provision'
+$mirror = [ordered]@{ task = [string](Get-Prop $prov 'mirror_task'); present = $false; state = $null }
+if ($mirror.task) {
+    $mtn = Split-TaskName $mirror.task
+    $mtk = Get-ScheduledTask -TaskPath $mtn[0] -TaskName $mtn[1] -ErrorAction SilentlyContinue
+    if ($mtk) { $mirror.present = $true; $mirror.state = [string]$mtk.State }
+}
+$legacyMirror = @()
+foreach ($lt in @(Get-Prop $prov 'legacy_mirror_tasks')) {
+    if (-not $lt) { continue }
+    $ltn = Split-TaskName ([string]$lt)
+    if (Get-ScheduledTask -TaskPath $ltn[0] -TaskName $ltn[1] -ErrorAction SilentlyContinue) { $legacyMirror += [string]$lt }
+}
+$lgHostSvc = [string](Get-Prop $x.guest_tools.looking_glass_host 'service')
+$lgHost = if ($lgHostSvc) { Get-Service -Name $lgHostSvc -ErrorAction SilentlyContinue } else { $null }
+if (-not $ivshmem -and $idd.Count) { $issues += "the Looking Glass IDD is installed without an IVSHMEM device" }
+if (-not $ivshmem -and $mirror.present -and $mirror.state -ne 'Disabled') { $issues += "display mirror task $($mirror.task) is enabled without an IVSHMEM device (Duplicate topology on the physical output)" }
+if ($legacyMirror.Count) { $issues += "earlier display mirror task(s) still registered: $($legacyMirror -join ', ')" }
+if ($idd.Count -and $lgHost -and [string]$lgHost.StartType -ne 'Disabled') { $issues += "two Looking Glass servers: the IDD and the legacy host service $lgHostSvc ($($lgHost.StartType))" }
+$lookingGlass = [ordered]@{ ivshmem = $ivshmem; idd = ($idd.Count -gt 0); mirror_task = $mirror; legacy_mirror_tasks = @($legacyMirror)
+                            legacy_host = $(if ($lgHost) { [ordered]@{ status = [string]$lgHost.Status; start = [string]$lgHost.StartType } } else { $null }) }
 $rid = Get-LocalUser | Where-Object { $_.SID.Value -like '*-500' } | Select-Object -First 1
 # --- reconcile (SYSTEM): the two changes Windows' FIRST desktop sign-in makes necessary; both happen after SetupComplete
 # (round-1 boot of build-20261023T224037Z), so they belong to this startup/logon task, never to the SetupComplete stage.
@@ -241,13 +314,17 @@ $answerCache = @(@('Panther\unattend.xml', 'Panther\unattend-original.xml', 'Pan
     ForEach-Object { Join-Path $env:SystemRoot $_ } | Where-Object { Test-Path -LiteralPath $_ })
 $setup = Join-Path $StateDir 'setup-state.json'
 Save-Json (Join-Path $StateDir 'provision-state.json') ([ordered]@{
-    schema = 'mios-xbox-provision-state/2'; at = [DateTime]::UtcNow.ToString('o'); account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    schema = 'mios-xbox-provision-state/3'; at = [DateTime]::UtcNow.ToString('o'); account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    environment = [ordered]@{ hypervisor_present = $hv; probe_ok = $pciOk; pci_present = @($pciNow); devices = $devFacts }
     services = $services; tasks = $tasks; store_packages = $store; gpu_driver = $gpu
-    looking_glass_idd = ($idd.Count -gt 0); rid500_enabled = $(if ($rid) { [bool]$rid.Enabled } else { $false })
+    looking_glass_idd = ($idd.Count -gt 0); looking_glass = $lookingGlass; issues = @($issues)
+    rid500_enabled = $(if ($rid) { [bool]$rid.Enabled } else { $false })
     autologon = $autologon; user_defaults = $userDefaults; listening = $listen; answer_file_cache = @($answerCache)
     setup = $(if (Test-Path -LiteralPath $setup) { Get-Content -LiteralPath $setup -Raw | ConvertFrom-Json } else { $null })
 })
-$bad = @($services.Keys | Where-Object { -not $services[$_].present -or $services[$_].status -ne 'Running' })
+$bad = @($services.Keys | Where-Object { $services[$_]['applicable'] -ne $false -and (-not $services[$_].present -or $services[$_].status -ne 'Running') })
+$na = @($services.Keys | Where-Object { $services[$_]['applicable'] -eq $false } | ForEach-Object { "$_ ($($services[$_]['reason']))" })
 $deaf = @($listen.Keys | Where-Object { -not $listen[$_].listening })
-Log ("provision-state.json written; services not running: {0}; not listening: {1}; rid500_enabled={2}; cached answer files: {3}" -f $(if ($bad.Count) { $bad -join ', ' } else { 'none' }), $(if ($deaf.Count) { $deaf -join ', ' } else { 'none' }), $(if ($rid) { [bool]$rid.Enabled } else { $false }), $answerCache.Count)
+Log ("provision-state.json written; services not running: {0}; not applicable: {1}; issues: {2}; not listening: {3}; rid500_enabled={4}; cached answer files: {5}" -f $(if ($bad.Count) { $bad -join ', ' } else { 'none' }), $(if ($na.Count) { $na -join ', ' } else { 'none' }), $(if ($issues.Count) { $issues -join ' | ' } else { 'none' }), $(if ($deaf.Count) { $deaf -join ', ' } else { 'none' }), $(if ($rid) { [bool]$rid.Enabled } else { $false }), $answerCache.Count)
+if ($issues.Count) { foreach ($i in $issues) { Log $i 'ERROR' } }
 if ($script:Serial) { try { $script:Serial.Close() } catch {} }

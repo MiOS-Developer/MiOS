@@ -45,7 +45,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 SCHEMA = "mios-xbox-spec/1"
 KINDS = ("reg", "feature", "capability", "driver", "guest_tool", "component", "file_hash",
-         "build_family", "user", "rid500", "computer_name", "appx", "gpu_step")
+         "build_family", "user", "rid500", "computer_name", "appx", "gpu_step", "looking_glass")
 USER_SCOPES = ("user",)
 SCOPES = ("user", "software", "system")
 
@@ -251,7 +251,7 @@ def validate_items(items: List[Dict[str, Any]]) -> None:
                 "driver": ("inf",), "guest_tool": ("name",), "component": ("name", "path"),
                 "file_hash": ("path", "sha256"), "build_family": ("family",), "capability": ("name",), "computer_name": ("value",),
                 "user": ("name", "password_sha256"), "rid500": ("state",), "appx": ("name",),
-                "gpu_step": ("record",)}[kind]
+                "gpu_step": ("record",), "looking_glass": ("device", "device_pci", "task")}[kind]
         for k in need:
             if it.get(k) in (None, "") and not (k == "value" and it.get(k) == ""):
                 raise SpecError(f"{iid}: missing {k}")
@@ -338,6 +338,8 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
             for inf in d.get("inf") or []:
                 base = re.sub(r"\.inf$", "", str(inf), flags=re.I)
                 items.append({"id": f"drivers.{dname}.{base}", "kind": "driver", "inf": base})
+    # guest devices (xbox-bm-01): each guest-only piece names the PCI device it needs; absent -> not applicable
+    devs = {k: v for k, v in (x.get("devices") or {}).items() if isinstance(v, dict)}
     for gname, g in (x.get("guest_tools") or {}).items():
         if not isinstance(g, dict):
             continue
@@ -347,8 +349,22 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
             it["installer"] = inst
         if g.get("service"):
             it["service"] = g["service"]
+        dev = g.get("required_device")
+        if dev:
+            it["device"] = dev
+            it["device_pci"] = list((devs.get(dev) or {}).get("pci") or [])
+        if g.get("install") is False:
+            it["install"] = False
         if inst or g.get("service"):
             items.append(it)
+    lgi = (x.get("drivers") or {}).get("looking_glass_idd") or {}
+    prov = x.get("provision") or {}
+    if lgi.get("required_device"):
+        # one Looking Glass server per IVSHMEM device (xbox-bm-37); IDD + Duplicate topology only with IVSHMEM
+        items.append({"id": "looking_glass.idd", "kind": "looking_glass", "name": "looking_glass_idd",
+                      "device": lgi["required_device"], "device_pci": list((devs.get(lgi["required_device"]) or {}).get("pci") or []),
+                      "task": str(prov.get("mirror_task") or ""), "legacy_tasks": list(prov.get("legacy_mirror_tasks") or []),
+                      "host_service": str(((x.get("guest_tools") or {}).get("looking_glass_host") or {}).get("service") or "")})
     comps = x.get("components") or {}
     dest = _win_rel(comps.get("dest_dir", ""))
     for c in comps.get("ship") or []:

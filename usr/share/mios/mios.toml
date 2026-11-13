@@ -13664,6 +13664,27 @@ upstream    = "looking-glass"     # Looking Glass upstream artifact feed (resolv
 channel     = "match-client"      # the release matching the host Looking Glass client's commit ([windows.xbox.resolve].lg_client_build_record)
 install_at  = "SetupComplete"     # staged offline, installed by the IDD installer at SetupComplete
 installer   = "usr/share/mios/windows/mios-looking-glass-idd.ps1"   # MiOS installer reused for the IDD
+required_device = "ivshmem"       # [windows.xbox.devices.ivshmem]: no IVSHMEM -> no IDD and no Duplicate topology (not applicable)
+
+# --- guest devices (xbox-bm-01): ONE MiOS-Xbox image for VMs and bare metal. SetupComplete probes the present PCI
+# functions; a guest tool or Looking Glass piece whose required_device is absent is "not applicable" -- recorded with
+# the probe's evidence, never "failed", never retried, its service never started. Win32_ComputerSystem.HypervisorPresent
+# is recorded as a fact only: MiOS's own nested_virt_features step makes it true on bare metal. pci = "VVVV:DDDD"
+# vendor:device ids (hex, as in PCI\VEN_VVVV&DEV_DDDD), "VVVV:*" = any function of that vendor.
+[windows.xbox.devices]
+record = 'C:\ProgramData\MiOS\environment.json'   # SetupComplete's device facts; Verify and the probe re-probe live
+
+[windows.xbox.devices.virtio]
+pci = ["1AF4:*"]                  # any virtio function (Red Hat PCI vendor): the virtio-win guest tools MSI
+
+[windows.xbox.devices.virtio_serial]
+pci = ["1AF4:1003", "1AF4:1043"]  # virtio-serial (legacy, modern): carries the QEMU-GA and SPICE vdagent ports
+
+[windows.xbox.devices.viofs]
+pci = ["1AF4:105A"]               # virtio-fs: VirtIO-FS and the WinFsp it needs
+
+[windows.xbox.devices.ivshmem]
+pci = ["1AF4:1110"]               # IVSHMEM: the Looking Glass shared-memory device
 
 # --- GPU post-setup step (xb-09, XB-3): mios-gpu-driver.ps1 reads these keys from xbox-spec.json. No driver
 # version, build or versioned URL here -- only vendor API/index endpoints, host allowlists and signer
@@ -13759,12 +13780,14 @@ from       = "drivers.virtio_win"            # taken from the same resolved virt
 file       = "virtio-win-gt-x64.msi"         # the driver/service MSI at the ISO root (virtio drivers, VirtioFsSvc, BalloonService), run alone by msiexec
 bundle     = "virtio-win-guest-tools.exe"    # the composite Burn bundle is only a verified SOURCE (the SPICE agent MSI is carved from it); never run: its silent session-0 install exited 1603
 install_at = "SetupComplete"                 # msiexec /qn as SYSTEM before first logon, verbose log under provision.log_dir
+required_device = "virtio"                   # [windows.xbox.devices]: absent -> not applicable (bare metal)
 
 [windows.xbox.guest_tools.qemu_ga]
 upstream   = "https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-qemu-ga/"   # latest-qemu-ga channel
 channel    = "latest"           # newest qemu-ga MSI; version recorded in the manifest only
 package    = "qemu-ga-x86_64.msi"   # MSI name inside the channel directory (and under guest-agent/ in the virtio-win RPM)
 service    = "QEMU-GA"          # service the probe requires Running
+required_device = "virtio_serial"   # its port lives on virtio-serial; absent -> not applicable, never installed or started
 # integrity: the MSI is unsigned and upstream publishes no digest for it. Its anchor is the sha256 that the RPM header
 # of the same resolved virtio-win release records for guest-agent/<package> (FILEDIGESTS); that RPM is anchored by the
 # md5 upstream publishes in CHECKSUM. A latest-qemu-ga MSI that the latest virtio-win release does not carry aborts.
@@ -13774,23 +13797,31 @@ from       = "guest_tools.virtio_win_guest_tools"   # carved from the verified b
 product    = "Spice Agent"            # ProductName marker that selects the agent among the bundle's 64-bit MSI packages
 package    = "spice-vdagent-x64.msi"  # name the image stages it under (msiexec /qn as SYSTEM)
 service    = "spice-agent"      # service the probe requires Running
+required_device = "virtio_serial"   # the SPICE vdagent port lives on virtio-serial
 
 [windows.xbox.guest_tools.winfsp]
 upstream   = "https://github.com/winfsp/winfsp"   # GitHub releases
 channel    = "latest"           # newest release MSI
 asset      = "winfsp-*.msi"     # release asset glob
 install_at = "SetupComplete"    # installed before VirtIO-FS is enabled
+required_device = "viofs"       # WinFsp serves VirtIO-FS only
 
 [windows.xbox.guest_tools.virtiofs]
 from       = "drivers.virtio_win"   # viofs driver + virtiofs.exe from the virtio-win ISO
 service    = "VirtioFsSvc"          # VirtIO-FS service (needs winfsp); set to Automatic
 requires   = ["winfsp"]             # install order dependency
+required_device = "viofs"           # absent -> not applicable: the service is never set Automatic or started
 
 [windows.xbox.guest_tools.looking_glass_host]
 upstream   = "looking-glass"    # Looking Glass host application (same feed as the IDD)
 channel    = "match-client"     # same release as the host client (protocol-compatible); resolved by xb-06
 service    = "Looking Glass (host)"   # service the probe requires Running
 install_at = "SetupComplete"    # silent install as SYSTEM
+required_device = "ivshmem"     # a Looking Glass server serves the IVSHMEM device
+# Exactly ONE Looking Glass server per IVSHMEM device (xbox-bm-37): the IDD (drivers.looking_glass_idd) is that server
+# and retires this legacy host application, so the artifact stays staged but is never installed while false; Verify,
+# the probe and the image gate report a second server.
+install    = false
 
 # --- MiOS componentry staged into the image (plan Q8) ---
 [windows.xbox.components]
@@ -14088,6 +14119,8 @@ verify_task  = 'MiOS\MiOS-Verify'             # SYSTEM task: MiOS-Xbox.Provision
 hydrate_task = 'MiOS\MiOS-StoreHydrate'       # the desktop user's logon task (Store installs are per user); registered by SYSTEM
 retry_task   = 'MiOS\MiOS-GuestToolsRetry'   # SYSTEM startup task: re-runs a guest-tool MSI that failed at SetupComplete (e.g. qemu-ga RegisterCom
                                              # 0x8004E00F while COM+ cannot reach MSDTC) until its service exists, then removes itself
+mirror_task  = 'MiOS\MiOS-DisplayMirror'     # [vm.looking_glass].mirror_displays: Duplicate topology at every sign-in; registered only with IVSHMEM
+legacy_mirror_tasks = ['\MiOS display mirror']   # earlier root-path registration of that task: removed on install, reported if present
 serial_port  = "COM1"                         # every provisioning log line is mirrored here (System.IO.Ports.SerialPort); host side: [vm.looking_glass].serial_log
 serial_baud  = 115200
 network_category = "Private"                  # Set-NetConnectionProfile before WinRM: a Public profile blocks the WinRM firewall exception

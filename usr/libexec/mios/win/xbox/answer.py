@@ -388,6 +388,38 @@ function Invoke-MiOSStep([string]$Name, [scriptblock]$Body) {
     try { & $Body; $MiOSState[$Name] = 'ok'; Write-MiOSLog "$Name ok" }
     catch { $MiOSState[$Name] = "failed: $($_.Exception.Message)"; Write-MiOSLog "$Name FAILED: $($_.Exception.Message)" }
 }
+# -- guest devices (xbox-bm-01): one image for VMs and bare metal, decided per PCI device ---------------------------
+$MiOSDevices = [ordered]@{}
+function Get-MiOSPciIds {
+    # present PCI functions as 'VVVV:DDDD' (PCI\VEN_VVVV&DEV_DDDD...)
+    @(Get-PnpDevice -PresentOnly -ErrorAction Stop | ForEach-Object {
+        if ([string]$_.InstanceId -match '^PCI\\VEN_([0-9A-Fa-f]{4})&DEV_([0-9A-Fa-f]{4})') { '{0}:{1}' -f $Matches[1].ToUpper(), $Matches[2].ToUpper() }
+    } | Sort-Object -Unique)
+}
+function Find-MiOSPciMatch([string[]]$Patterns, [string[]]$Present) {
+    # the first present id a 'VVVV:DDDD' / 'VVVV:*' pattern matches, else $null
+    foreach ($p in $Patterns) {
+        $pv, $pd = ([string]$p).ToUpper() -split ':', 2
+        foreach ($id in $Present) {
+            $iv, $id2 = ([string]$id) -split ':', 2
+            if ($iv -eq $pv -and ($pd -eq '*' -or $pd -eq $id2)) { return $id }
+        }
+    }
+    return $null
+}
+function Invoke-MiOSGuestStep([string]$Name, [string]$Device, [scriptblock]$Body) {
+    # a guest-only step runs only when its SSOT-declared device is present; otherwise it is "not applicable" with the
+    # probe's evidence -- never failed, never queued for retry, its service never started
+    $d = $MiOSDevices[$Device]
+    if (-not $d) { $MiOSState[$Name] = "failed: device $Device was not probed"; Write-MiOSLog "$Name FAILED: device $Device was not probed"; return }
+    if (-not $d.present) {
+        $why = "not applicable: no $Device device (PCI $(@($d.pci) -join '|') absent)"
+        $MiOSState[$Name] = $why
+        Write-MiOSLog "$Name $why"
+        return
+    }
+    Invoke-MiOSStep $Name $Body
+}
 function Assert-MiOSSha256([string]$Path, [string]$Sha256) {
     $got = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($got -ne $Sha256.ToLowerInvariant()) { throw "$Path sha256 $got does not match the build manifest" }
@@ -456,9 +488,29 @@ function Save-MiOSState([string]$Path) {
     $tmp = "$Path.tmp"
     [IO.File]::WriteAllText($tmp, ($doc | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $tmp -Destination $Path -Force
-    Write-MiOSLog "state written: $Path ($(@($MiOSState.Values | Where-Object { $_ -ne 'ok' }).Count) failed of $($MiOSState.Count))"
+    $na = @($MiOSState.Values | Where-Object { [string]$_ -like 'not applicable*' }).Count
+    Write-MiOSLog "state written: $Path ($(@($MiOSState.Values | Where-Object { $_ -ne 'ok' -and [string]$_ -notlike 'not applicable*' }).Count) failed, $na not applicable, of $($MiOSState.Count))"
 }
 '''
+
+
+def guest_devices(x: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """[windows.xbox.devices.<name>] tables (xbox-bm-01): name -> {pci: ['VVVV:DDDD' | 'VVVV:*', ...]}."""
+    devs = {k: v for k, v in (x.get("devices") or {}).items() if isinstance(v, dict)}
+    if not devs or not str((x.get("devices") or {}).get("record") or ""):
+        raise PayloadError("windows.xbox.devices: no device tables or no record path (render the spec with render_spec.py)")
+    for n, d in devs.items():
+        if not isinstance(d.get("pci"), list) or not d["pci"]:
+            raise PayloadError(f"windows.xbox.devices.{n}.pci: empty")
+    return devs
+
+
+def guest_device(x: Dict[str, Any], path: str) -> str:
+    """The SSOT required_device of a guest-only piece ('guest_tools.qemu_ga', 'drivers.looking_glass_idd')."""
+    dev = _req(x, f"{path}.required_device")
+    if dev not in guest_devices(x):
+        raise PayloadError(f"windows.xbox.{path}.required_device: {dev!r} is not a [windows.xbox.devices] table")
+    return str(dev)
 
 
 def _installer(inputs: Dict[str, Any], role: str) -> Dict[str, Any]:
@@ -575,6 +627,9 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
     lg = doc["resolved"].get("vm.display_ref") or {}
     if not isinstance(lg, dict) or "idd_exclusive" not in lg or "mirror_displays" not in lg:
         raise PayloadError("windows.xbox.vm.display_ref: must resolve to [vm.looking_glass] (idd_exclusive, mirror_displays)")
+    devs = guest_devices(x)
+    need = {g: guest_device(x, f"guest_tools.{g}") for g in gt}
+    idd_dev = guest_device(x, "drivers.looking_glass_idd")
     if not ssh.get("authorized_keys"):
         raise PayloadError("xbox-spec.json ssh: no operator public key (render it with render_spec.py)")
     desk = doc["users"]["desktop"]
@@ -596,14 +651,31 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
         f"New-Item -ItemType Directory -Force -Path {_ps(state_dir)}, $MiOSLogDir | Out-Null",
         "Write-MiOSLog ('SYSTEM stage start as {0}' -f (Get-MiOSAccount))",
         "",
-        # -- guest tools: one verified MSI each (fix-a 9) -----------------------------------------------------------
-        "Invoke-MiOSStep 'virtio_win_guest_tools' {",
+        # -- guest devices (xbox-bm-01): probed once, before any guest-only step ----------------------------------
+        "Invoke-MiOSStep 'environment_probe' {",
+        "    # SSOT [windows.xbox.devices]. HypervisorPresent is recorded as a FACT only: MiOS's own nested_virt_features",
+        "    # step makes it true on bare metal, so it never decides a step. A failed PCI probe runs every guest step.",
+        "    $hv = $null; try { $hv = [bool](Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).HypervisorPresent } catch {}",
+        "    $pci = @(); $probeOk = $true",
+        "    try { $pci = @(Get-MiOSPciIds) } catch { $probeOk = $false; Write-MiOSLog \"PCI probe failed ($($_.Exception.Message)): every guest step runs\" }",
+        "    $want = [ordered]@{ " + "; ".join(f"{_ps(n)} = @({', '.join(_ps(p) for p in d['pci'])})" for n, d in devs.items()) + " }",
+        "    foreach ($k in $want.Keys) {",
+        "        $hit = if ($probeOk) { Find-MiOSPciMatch $want[$k] $pci } else { $null }",
+        "        $MiOSDevices[$k] = [ordered]@{ present = ((-not $probeOk) -or [bool]$hit); pci = @($want[$k]); matched = $hit; probed = $probeOk }",
+        "    }",
+        "    $rec = [ordered]@{ schema = 'mios-xbox-environment/1'; at = [DateTime]::UtcNow.ToString('o'); hypervisor_present = $hv",
+        "                       probe_ok = $probeOk; pci_present = @($pci); devices = $MiOSDevices }",
+        f"    [IO.File]::WriteAllText({_ps(x['devices']['record'])}, ($rec | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))",
+        "    Write-MiOSLog ('devices: ' + (@($MiOSDevices.Keys | ForEach-Object { '{0}={1}' -f $_, $(if ($MiOSDevices[$_].present) { 'present' } else { 'absent' }) }) -join ', ') + \"; HypervisorPresent=$hv (fact only)\")",
+        "}",
+        # -- guest tools: one verified MSI each (fix-a 9), each gated on its device (xbox-bm-01) --------------------
+        f"Invoke-MiOSGuestStep 'virtio_win_guest_tools' {_ps(need['virtio_win_guest_tools'])} {{",
         f"    $f = Join-Path $Inst {_ps(names['virtio_guest_tools'])}",
         f"    Assert-MiOSSha256 $f {_ps(ins['virtio_guest_tools']['sha256'])}",
         *_signed("$f", ins["virtio_guest_tools"]),
         "    Invoke-MiOSMsi $f 'virtio-win-gt'",
         "}",
-        "Invoke-MiOSStep 'qemu_ga' {",
+        f"Invoke-MiOSGuestStep 'qemu_ga' {_ps(need['qemu_ga'])} {{",
         f"    $f = Join-Path $Inst {_ps(names['qemu_ga'])}",
         f"    Assert-MiOSSha256 $f {_ps(ins['qemu_ga']['sha256'])}",
         *_signed("$f", ins["qemu_ga"]),
@@ -611,7 +683,7 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
         f"    try {{ Invoke-MiOSMsi $f 'qemu-ga' }} catch {{ Add-MiOSRetry 'qemu-ga' $f {_ps(ins['qemu_ga']['sha256'])} {_ps(gt['qemu_ga']['service'])}; throw }}",
         f"    Start-MiOSService {_ps(gt['qemu_ga']['service'])}",
         "}",
-        "Invoke-MiOSStep 'spice_vdagent' {",
+        f"Invoke-MiOSGuestStep 'spice_vdagent' {_ps(need['spice_vdagent'])} {{",
         f"    $f = Join-Path $Inst {_ps(names['spice_vdagent'])}",
         f"    Assert-MiOSSha256 $f {_ps(ins['spice_vdagent']['sha256'])}",
         *_signed("$f", ins["spice_vdagent"]),
@@ -633,34 +705,40 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
         "    }",
         "    if ($missing.Count) { throw \"virtio driver packages not in the driver store: $($missing -join ', ')\" }",
         "}",
-        "Invoke-MiOSStep 'looking_glass_idd' {",
+        # Looking Glass only with IVSHMEM (xbox-bm-01): no IDD, no Duplicate topology on a machine without it. The mirror
+        # task lives under \MiOS\ ([windows.xbox.provision].mirror_task); an earlier root-path one is removed.
+        f"Invoke-MiOSGuestStep 'looking_glass_idd' {_ps(idd_dev)} {{",
         f"    $z = Join-Path $Inst {_ps(names['looking_glass_idd'])}",
         f"    & (Join-Path $MiOS 'mios-looking-glass-idd.ps1') -Url {_ps(ins['looking_glass_idd']['url'])} "
         f"-Sha256 {_ps(ins['looking_glass_idd']['sha256'])} -Version {_ps(ins['looking_glass_idd']['version'])} "
         f"-Signer {_ps('CN=' + str(ins['looking_glass_idd']['signer']))} -Package $z "
-        f"-ExclusiveMonitor {1 if lg['idd_exclusive'] else 0} -MirrorDisplays {1 if lg['mirror_displays'] else 0}",
+        f"-ExclusiveMonitor {1 if lg['idd_exclusive'] else 0} -MirrorDisplays {1 if lg['mirror_displays'] else 0} "
+        f"-MirrorTask {_ps(pv['mirror_task'])} -LegacyMirrorTasks @({', '.join(_ps(t) for t in pv['legacy_mirror_tasks'])})",
         "}",
-        "Invoke-MiOSStep 'looking_glass_host' {",
-        f"    $z = Join-Path $Inst {_ps(names['looking_glass_host'])}",
-        f"    Assert-MiOSSha256 $z {_ps(ins['looking_glass_host']['sha256'])}",
-        "    $d = Join-Path $env:ProgramData 'MiOS\\looking-glass\\host'",
-        "    Expand-Archive -Force -LiteralPath $z -DestinationPath $d",
-        "    $exe = Get-ChildItem -Path $d -Recurse -Filter 'looking-glass-host-setup.exe' | Select-Object -First 1",
-        "    if (-not $exe) { throw 'looking-glass-host-setup.exe not in the host artifact' }",
-        *_signed("$exe.FullName", ins["looking_glass_host"], required=True),
-        "    Invoke-MiOSInstaller $exe.FullName @('/S')",
-        # the installer must register the service (a missing service fails the step); it only RUNS with the IVSHMEM
-        # device of the GPU domain, so a start failure is logged by name, never swallowed (reconcile: no false ok)
-        f"    Set-Service -Name {_ps(gt['looking_glass_host']['service'])} -StartupType Automatic",
-        f"    try {{ Start-Service -Name {_ps(gt['looking_glass_host']['service'])} }} catch {{ Write-MiOSLog ('{{0}} registered but not running "
-        f"(it needs the IVSHMEM device of the GPU domain): {{1}}' -f {_ps(gt['looking_glass_host']['service'])}, $_.Exception.Message) }}",
-        "}",
-        "Invoke-MiOSStep 'winfsp' {",
+    ]
+    if gt["looking_glass_host"].get("install", True):
+        # exactly one Looking Glass server per IVSHMEM device (xbox-bm-37): rendered only when the SSOT selects the
+        # legacy host app (render_spec refuses that while the IDD is installed)
+        out += [
+            f"Invoke-MiOSGuestStep 'looking_glass_host' {_ps(need['looking_glass_host'])} {{",
+            f"    $z = Join-Path $Inst {_ps(names['looking_glass_host'])}",
+            f"    Assert-MiOSSha256 $z {_ps(ins['looking_glass_host']['sha256'])}",
+            "    $d = Join-Path $env:ProgramData 'MiOS\\looking-glass\\host'",
+            "    Expand-Archive -Force -LiteralPath $z -DestinationPath $d",
+            "    $exe = Get-ChildItem -Path $d -Recurse -Filter 'looking-glass-host-setup.exe' | Select-Object -First 1",
+            "    if (-not $exe) { throw 'looking-glass-host-setup.exe not in the host artifact' }",
+            *_signed("$exe.FullName", ins["looking_glass_host"], required=True),
+            "    Invoke-MiOSInstaller $exe.FullName @('/S')",
+            f"    Start-MiOSService {_ps(gt['looking_glass_host']['service'])}",
+            "}",
+        ]
+    out += [
+        f"Invoke-MiOSGuestStep 'winfsp' {_ps(need['winfsp'])} {{",
         f"    $f = Join-Path $Inst {_ps(names['winfsp'])}",
         f"    Assert-MiOSSha256 $f {_ps(ins['winfsp']['sha256'])}",
         "    Invoke-MiOSMsi $f 'winfsp'",
         "}",
-        "Invoke-MiOSStep 'virtiofs' {",
+        f"Invoke-MiOSGuestStep 'virtiofs' {_ps(need['virtiofs'])} {{",
         f"    $svc = Get-Service -Name {_ps(gt['virtiofs']['service'])} -ErrorAction SilentlyContinue",
         "    if (-not $svc) {",
         "        $exe = Get-ChildItem -Path (Join-Path $env:ProgramFiles 'Virtio-Win') -Recurse -Filter 'virtiofs.exe' -ErrorAction SilentlyContinue | Select-Object -First 1",

@@ -123,6 +123,10 @@ def lg_config(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg = dict(LG_DEFAULTS)
     sect = (data.get("vm") or {}).get("looking_glass") or {}
     cfg.update({k: v for k, v in sect.items()})
+    # the guest's display-mirror task (xbox-bm-01): the same SSOT keys the MiOS-Xbox SetupComplete stage passes
+    prov = ((data.get("windows") or {}).get("xbox") or {}).get("provision") or {}
+    cfg["guest_mirror_task"] = prov.get("mirror_task")
+    cfg["guest_legacy_mirror_tasks"] = list(prov.get("legacy_mirror_tasks") or [])
     return cfg
 
 
@@ -747,6 +751,8 @@ def guest_commands(cfg: Dict[str, Any], plan: Dict[str, str], chunk: int = 2000)
     """PowerShell commands that stage mios-looking-glass-idd.ps1 in the guest and run it with the plan bound.
     WinRM runs each through a cmd.exe line (8191 chars, UTF-16 base64), so the script travels in chunks."""
     import base64
+    if not cfg.get("guest_mirror_task"):
+        raise ValueError("[windows.xbox.provision].mirror_task is not set: the guest display-mirror task has no SSOT path")
     script = guest_script(cfg)
     blob = base64.b64encode(script.encode("utf-8")).decode("ascii")
     stage = "$env:ProgramData + '\\MiOS\\looking-glass\\mios-looking-glass-idd.b64'"
@@ -764,7 +770,9 @@ def guest_commands(cfg: Dict[str, Any], plan: Dict[str, str], chunk: int = 2000)
         f"& ([scriptblock]::Create($s)) -Url {_ps_quote(plan['url'])} -Sha256 {_ps_quote(plan['sha256'])} "
         f"-Version {_ps_quote(plan['version'])} -Signer {_ps_quote(plan['signer'])} "
         f"-ExclusiveMonitor {1 if cfg.get('idd_exclusive') else 0} "
-        f"-MirrorDisplays {1 if cfg.get('mirror_displays', True) else 0}")
+        f"-MirrorDisplays {1 if cfg.get('mirror_displays', True) else 0} "
+        f"-MirrorTask {_ps_quote(str(cfg['guest_mirror_task']))} "
+        f"-LegacyMirrorTasks @({', '.join(_ps_quote(str(t)) for t in cfg.get('guest_legacy_mirror_tasks') or [])})")
     return cmds
 
 

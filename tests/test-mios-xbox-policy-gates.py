@@ -416,7 +416,7 @@ class TestItem7TrustAnchors(unittest.TestCase):
         _, doc = Fixture.get()
         inputs = FX_inputs(self.tmp, doc)
         setup = A.render_setup_script(doc, inputs, ROOT)
-        step = lambda n: re.search(r"^Invoke-MiOSStep '" + re.escape(n) + r"' \{\n(.*?)^\}", setup, re.S | re.M).group(1)  # noqa: E731
+        step = lambda n: re.search(r"^Invoke-MiOS(?:Guest)?Step '" + re.escape(n) + r"'(?: '[^']+')? \{\n(.*?)^\}", setup, re.S | re.M).group(1)  # noqa: E731
         for name in ("virtio_win_guest_tools", "qemu_ga", "spice_vdagent"):
             self.assertIn("Assert-MiOSSha256 $f", step(name))
             self.assertNotIn("Assert-MiOSSigned", step(name))      # unsigned upstream: sha256 is the anchor

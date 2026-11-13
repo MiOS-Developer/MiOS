@@ -143,12 +143,20 @@ class TestReachabilityAndCleanup(P.PayloadBase):
             with self.subTest(stage=name), self.assertRaises(AssertionError):
                 check(planted)
 
-    def test_positive_looking_glass_host_start_failure_is_logged_not_swallowed(self):
-        s = self.step("looking_glass_host")
-        svc = self.x["guest_tools"]["looking_glass_host"]["service"]
-        self.assertIn(f"Set-Service -Name '{svc}' -StartupType Automatic\n", s)
-        self.assertRegex(s, r"try \{ Start-Service -Name '" + re.escape(svc) + r"' \} catch \{ Write-MiOSLog \(")
-        self.assertNotIn("SilentlyContinue", s)
+    def test_positive_one_looking_glass_server_behind_the_ivshmem_gate(self):
+        # xbox-bm-37: the IDD is the one Looking Glass server; the legacy host app is staged but never installed, so no
+        # step starts (or swallows the start failure of) a second server. xbox-bm-01: the IDD runs only with IVSHMEM.
+        self.assertFalse(self.x["guest_tools"]["looking_glass_host"]["install"])
+        self.assertNotIn("looking_glass_host", self.steps())
+        self.assertRegex(self.setup, r"(?m)^Invoke-MiOSGuestStep 'looking_glass_idd' '"
+                         + re.escape(self.x["drivers"]["looking_glass_idd"]["required_device"]) + r"' \{")
+        self.assertNotIn("registered but not running", self.setup)
+
+    def test_negative_two_looking_glass_servers_are_refused_by_the_spec(self):
+        merged, _ = P.Fixture.get()   # deep copies
+        merged["windows"]["xbox"]["guest_tools"]["looking_glass_host"]["install"] = True
+        with self.assertRaisesRegex(R.SpecError, "one Looking Glass server per IVSHMEM device"):
+            R.render(merged, P.LAYERS)
 
     def test_positive_answer_file_cache_removed_before_rid500(self):
         names = self.steps()

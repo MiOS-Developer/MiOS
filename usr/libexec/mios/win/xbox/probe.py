@@ -37,7 +37,7 @@ REPORT_SCHEMA = "mios-xbox-probe-report/1"
 _HERE = os.path.dirname(os.path.abspath(__file__))
 GUEST_SCRIPT = os.path.normpath(os.path.join(_HERE, "..", "..", "..", "..", "share", "mios", "windows", "xbox", "mios-xbox-probe.ps1"))
 _REQ_FIELDS = ("id", "kind", "scope", "path", "name", "type", "inf", "service", "installer", "task",
-               "record", "groups", "state")
+               "record", "groups", "state", "legacy_tasks", "host_service")
 
 
 def desktop_user(items: List[Dict[str, Any]]) -> str:
@@ -100,6 +100,22 @@ def _gpu_findings(it: Dict[str, Any], o: Dict[str, Any], probe: Dict[str, Any]) 
     return out
 
 
+def device_present(it: Dict[str, Any], probe: Dict[str, Any]) -> Tuple[Optional[bool], str]:
+    """(present?, evidence) of an item's SSOT required device from the guest's present PCI ids (xbox-bm-01).
+    None when the item names no device or the guest could not list its PCI functions (then nothing is waived)."""
+    pats = [str(p).upper() for p in it.get("device_pci") or []]
+    pci = probe.get("pci_present")
+    if not it.get("device") or not pats or not isinstance(pci, list):
+        return None, ""
+    for p in pats:
+        pv, _, pd = p.partition(":")
+        for got in pci:
+            gv, _, gd = str(got).upper().partition(":")
+            if gv == pv and (pd == "*" or pd == gd):
+                return True, f"{it['device']} present ({got})"
+    return False, f"no {it['device']} device (PCI {'|'.join(pats)} absent among {len(pci)} present functions)"
+
+
 def evaluate(items: List[Dict[str, Any]], probe: Dict[str, Any], host: Optional[Dict[str, Any]] = None
              ) -> Tuple[List[Dict[str, Any]], List[Finding]]:
     if probe.get("schema") != PROBE_SCHEMA:
@@ -151,12 +167,39 @@ def evaluate(items: List[Dict[str, Any]], probe: Dict[str, Any], host: Optional[
                 findings.append(Finding(f"missing:{iid}", f"driver {it['inf']}.inf is not installed"))
         elif k == "guest_tool":
             svc = o.get("service")
-            if not it.get("service"):
+            present, why = device_present(it, probe)
+            if present is False or it.get("install") is False:
+                # not applicable on this machine (xbox-bm-01) or not installed by the SSOT (xbox-bm-37): conforming,
+                # unless the service RUNS anyway (bare metal with qemu-ga --retry-path, a second Looking Glass server)
+                why = why if present is False else "not installed by the SSOT (one Looking Glass server per IVSHMEM device)"
+                if svc and svc.get("present") and str(svc.get("status")) == "Running":
+                    findings.append(Finding(f"guest_tools.running-not-applicable:{iid}", f"service {it.get('service')} runs although {why}"))
+                else:
+                    res(it, "not-applicable", why); continue
+            elif not it.get("service"):
                 res(it, "skipped", "installer-only guest tool; covered by its services"); continue
-            if not svc or not svc.get("present"):
+            elif not svc or not svc.get("present"):
                 findings.append(Finding(f"missing:{iid}", f"service {it['service']} is not installed"))
             elif str(svc.get("status")) != "Running":
                 findings.append(Finding(f"guest_tools.not-running:{iid}", f"service {it['service']} is {svc.get('status')}"))
+        elif k == "looking_glass":
+            present, why = device_present(it, probe)
+            task = o.get("task") or {}
+            hs = o.get("host_service") or {}
+            for lt in o.get("legacy_tasks") or []:
+                findings.append(Finding("looking_glass.legacy-mirror-task", f"earlier display mirror task {lt} is still registered"))
+            if o.get("idd") and hs.get("present") and str(hs.get("start")) != "Disabled":
+                findings.append(Finding("looking_glass.two-servers", f"the IDD and the legacy host service {it.get('host_service')} ({hs.get('start')})"))
+            if present is False:
+                if o.get("idd"):
+                    findings.append(Finding("looking_glass.idd-without-ivshmem", f"the Looking Glass IDD is installed: {why}"))
+                if task.get("present") and str(task.get("state")) != "Disabled":
+                    findings.append(Finding("looking_glass.mirror-without-ivshmem",
+                                            f"display mirror task {it.get('task')} is enabled ({task.get('state')}): {why}"))
+                if len(findings) == before:
+                    res(it, "not-applicable", why); continue
+            elif present is True and not o.get("idd"):
+                findings.append(Finding(f"missing:{iid}", f"{why} but the Looking Glass IDD is not installed"))
         elif k in ("component", "file_hash"):
             if not o.get("present"):
                 findings.append(Finding(f"missing:{iid}", f"{it['path']} is not in the guest"))
@@ -413,10 +456,14 @@ def _finish(results, findings, report: Optional[str]) -> int:
                              "findings": [f.as_dict() for f in findings]})
     passed = sum(1 for r in results if r["status"] == "pass")
     skipped = sum(1 for r in results if r["status"] == "skipped")
+    na = sum(1 for r in results if r["status"] == "not-applicable")   # conforming, with the device evidence in detail
     for f in findings:
         print(f"FINDING {f}")
-    print(f"probe: {passed} pass, {len(results) - passed - skipped} fail, {skipped} skipped, {len(findings)} findings -> "
-          f"{'CONFORMING' if not findings else 'NON-CONFORMING'}")
+    for r in results:
+        if r["status"] == "not-applicable":
+            print(f"NOT-APPLICABLE {r['id']}: {r['detail']}")
+    print(f"probe: {passed} pass, {na} not applicable, {len(results) - passed - skipped - na} fail, {skipped} skipped, "
+          f"{len(findings)} findings -> {'CONFORMING' if not findings else 'NON-CONFORMING'}")
     return 0 if not findings else 1
 
 
