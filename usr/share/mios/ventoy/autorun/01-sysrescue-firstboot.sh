@@ -98,7 +98,7 @@ FW=\$( [ -d /sys/firmware/efi ] && echo UEFI || echo BIOS )
 printf '%s\n' "\${b}=======================================================================\${r}"
 printf '%s\n' "\${g}  MiOS  |  SystemRescue Live Diagnostic + Remote Environment\${r}"
 printf '%s\n' "\${b}=======================================================================\${r}"
-printf '  %sSSH%s      : %s (port %s)   login: %sroot%s / %s%s%s  |  %s%s%s / %s\n' "\$y" "\$r" "\$SSHST" "\$SSHPORT" "\$g" "\$r" "\$g" "${MIOS_USER}" "\$r" "\$g" "${MIOS_USER}" "\$r" "${_mios_sysrescue_password}"
+printf '  %sSSH%s      : %s (port %s)   login: root / %s  |  credential: MiOS SSOT (not displayed)\n' "\$y" "\$r" "\$SSHST" "\$SSHPORT" "${MIOS_USER}"
 printf '  %sConnect%s  : %sssh ${MIOS_USER}@<ip>%s   (any IP below; sudo is passwordless)\n' "\$y" "\$r" "\$b" "\$r"
 printf '  %sHost%s     : %s   firmware: %s\n' "\$y" "\$r" "\$HOSTN" "\$FW"
 printf '  %sIPv4%s     : %s\n' "\$y" "\$r" "\$IPS"
