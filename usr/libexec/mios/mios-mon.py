@@ -18,6 +18,7 @@ import platform
 import subprocess
 from datetime import datetime
 import argparse
+import asyncio
 import threading
 import queue
 import signal
@@ -181,6 +182,34 @@ def desktop_panel_config():
     if any(policy[key] <= 0 for key in ("overview_columns", "overview_rows") if key in policy):
         raise ValueError("terminal.monitor.desktop_panel overview sizes must be positive")
     return policy
+
+def desktop_attached():
+    """Attachment of this exact desktop panel; an absent or invalid witness leaves collection enabled."""
+    ambient = os.environ.get("TMUX", "").rsplit(",", 2)
+    pane = os.environ.get("TMUX_PANE", "")
+    if IS_WINDOWS or len(ambient) != 3 or not ambient[1].isdigit() or not re.fullmatch(r"%\d+", pane):
+        return None
+    try:
+        path = Path(ambient[0])
+        node, parent, terminal = path.lstat(), path.parent.lstat(), os.fstat(0)
+        if (not path.is_absolute() or path.resolve() != path or not stat.S_ISSOCK(node.st_mode)
+                or node.st_uid != os.getuid() or parent.st_uid != os.getuid() or parent.st_mode & 0o077
+                or not stat.S_ISCHR(terminal.st_mode)):
+            return None
+        cfg = monitor_config()["keybindings"]["tmux"]["desktop"]
+        reply = subprocess.run([cfg["binary"], "-S", str(path), "display-message", "-p", "-t", pane,
+                                "#{socket_path}|#{pid}|#{pane_id}|#{pane_pid}|#{pane_tty}|#{session_attached}|#{@mios-desktop-panel}"],
+                               capture_output=True, text=True, timeout=cfg["command_timeout_ms"] / 1000)
+        fields = reply.stdout.rstrip("\n").split("|")
+        if (reply.returncode or len(fields) != 7 or fields[:4] != [str(path), ambient[1], pane, str(os.getpid())]
+                or not fields[5].isdigit() or fields[6] != "1"):
+            return None
+        tty = os.stat(fields[4])
+        if (tty.st_dev, tty.st_ino, tty.st_rdev) != (terminal.st_dev, terminal.st_ino, terminal.st_rdev):
+            return None
+        return int(fields[5]) > 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return None
 
 def collect_panel_tasks(root):
     """Use the existing read-only native task API, including every ready row."""
@@ -771,6 +800,11 @@ if TEXTUAL_AVAILABLE:
             self._panel_last_started = {}
             self._panel_log_lines = deque(maxlen=monitor_sources_config()["scrollback_rows"]) if desktop_panel else None
             self._panel_log_lock = threading.Lock()
+            self._panel_log_timer = None
+            self._collection_paused = False
+            self._attachment_checking = False
+            self._attachment_task = None
+            self._attachment_stop_task = None
             self.collectors_enabled = collectors and not client_chooser
             self.collectors_started = False
             self._snapshot_jobs = set()
@@ -778,10 +812,13 @@ if TEXTUAL_AVAILABLE:
             self._snapshot_closing = False
             self.observer = observer or self.observe_agents
             self.agent_inventory = None
+            self._owned_observation = False
             self.agent_federation = None
             self.enable_agent_federation = observer is None and self.collectors_enabled
 
         def observe_agents(self):
+            if self._collection_paused:
+                raise RuntimeError("Desktop detached · collection paused")
             request = self.ui_request.get("observation_request")
             if not request:
                 raise RuntimeError("Relay configuration unavailable")
@@ -1183,6 +1220,7 @@ if TEXTUAL_AVAILABLE:
                     self.agent_inventory = mios_mcp_federation.AgentObservationProcess(
                         command, cfg["max_state_bytes"])
                     self.agent_inventory.start_background()
+                    self._owned_observation = True
                 except (ImportError, ValueError, OSError, KeyError):
                     # Keep the native inventory available, while showing incomplete coverage.
                     from mios_mcp_federation import AgentObservationCache
@@ -1224,6 +1262,9 @@ if TEXTUAL_AVAILABLE:
                 if self.collectors_enabled:
                     self.collectors_started = True
                     self.set_interval(self.panel_policy["poll_s"], self.update_panel_view)
+                    if not IS_WINDOWS:
+                        self.set_interval(self.panel_policy["poll_s"], self.schedule_desktop_attachment)
+                        self.call_after_refresh(self.schedule_desktop_attachment)
                 return
 
             table = self.query_one("#svc-table", DataTable)
@@ -1248,6 +1289,50 @@ if TEXTUAL_AVAILABLE:
             event.stop()
             cells = event.data_table.get_row(event.row_key)
             self.push_screen(InventoryDetails(" · ".join(clean(cell, 2000) for cell in cells)))
+
+        def schedule_desktop_attachment(self):
+            # Textual awaits async timer/message callbacks. Return immediately
+            # and keep the entire probe/child shutdown off its message pump.
+            if (self._snapshot_closing or not self.desktop_panel or not self.collectors_enabled
+                    or self._attachment_task is not None and not self._attachment_task.done()):
+                return
+            self._attachment_task = asyncio.create_task(self.refresh_desktop_attachment())
+            self._attachment_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception())
+
+        async def refresh_desktop_attachment(self):
+            if (not self.desktop_panel or not self.collectors_enabled or self._snapshot_closing
+                    or self._attachment_checking):
+                return
+            self._attachment_checking = True
+            try:
+                attached = await asyncio.to_thread(desktop_attached)
+                if self._snapshot_closing:
+                    return
+                paused = attached is False
+                if paused == self._collection_paused:
+                    return
+                self._collection_paused = paused
+                self.query_one(AgentView).set_refresh_paused(paused)
+                if paused:
+                    # These children belong to this UI, never to a work pane,
+                    # the shared tmux server, or the physical input daemon.
+                    if self._owned_observation and self.agent_inventory:
+                        self._attachment_stop_task = asyncio.create_task(self.agent_inventory.close())
+                        await asyncio.shield(self._attachment_stop_task)
+                        self._attachment_stop_task = None
+                    self.tailing = False
+                    for proc in list(getattr(self, "journal_procs", [])):
+                        try: proc.terminate()
+                        except OSError: pass
+                    self._panel_logs_started = False
+                else:
+                    if self._owned_observation and self.agent_inventory:
+                        self.agent_inventory.state = "pending"
+                        self.agent_inventory.start_background()
+                    self._panel_last_started.clear()
+            finally:
+                self._attachment_checking = False
 
         def collect_panel_view(self, view):
             try:
@@ -1284,20 +1369,23 @@ if TEXTUAL_AVAILABLE:
                           else "Input facts · read-only; target unavailable")
 
         def update_panel_view(self):
-            if not self.desktop_panel or not self.collectors_enabled:
+            if not self.desktop_panel or not self.collectors_enabled or self._collection_paused:
                 return
             view = self.query_one(TabbedContent).active
             if self._panel_overview_split and view in {"tab-agents", "tab-global"}:
                 view = "tab-global"
             if view == "tab-logs":
                 if not self._panel_logs_started:
+                    if getattr(self, "log_thread", None) and self.log_thread.is_alive():
+                        return  # Let the prior journal reader finish before starting another.
                     self._panel_logs_started = True
                     self.tailing = True
                     self.journal_procs = []
                     self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True,
                                                        name="mios-panel-journal")
                     self.log_thread.start()
-                    self.set_interval(monitor_sources_config()["flush_interval_s"], self.flush_panel_logs)
+                    if self._panel_log_timer is None:
+                        self._panel_log_timer = self.set_interval(monitor_sources_config()["flush_interval_s"], self.flush_panel_logs)
             elif view in {"tab-global", "tab-tasks", "tab-input"}:
                 now = time.monotonic()
                 if now - self._panel_last_started.get(view, float("-inf")) < self.panel_policy["poll_s"]:
@@ -1314,6 +1402,8 @@ if TEXTUAL_AVAILABLE:
                 self.call_from_thread(widget.write, content)
 
         def flush_panel_logs(self):
+            if self._collection_paused:
+                return
             if self.query_one(TabbedContent).active != "tab-logs":
                 return
             batch = []
@@ -1324,7 +1414,7 @@ if TEXTUAL_AVAILABLE:
                 self.query_one("#log-box", MonitorLog).write(Group(*batch))
 
         def _start_snapshot(self, name, collect, apply):
-            if self._snapshot_closing or name in self._snapshot_jobs:
+            if self._snapshot_closing or self._collection_paused or name in self._snapshot_jobs:
                 return False
             self._snapshot_jobs.add(name)
             if name not in self._snapshot_queues:
@@ -1340,8 +1430,10 @@ if TEXTUAL_AVAILABLE:
                         except queue.Empty:
                             continue
                         try:
+                            if self._collection_paused:
+                                continue
                             sample = collect_next()
-                            if not self._snapshot_closing:
+                            if not self._snapshot_closing and not self._collection_paused:
                                 self.call_from_thread(apply_next, sample)
                         except Exception:
                             # Keep the successful view if collection fails or
@@ -2067,6 +2159,15 @@ if TEXTUAL_AVAILABLE:
 
         async def on_unmount(self) -> None:
             self._snapshot_closing = True
+            if self._attachment_task is not None:
+                self._attachment_task.cancel()
+                await asyncio.gather(self._attachment_task, return_exceptions=True)
+                self._attachment_task = None
+            if self._attachment_stop_task is not None:
+                # Cancelling a pending probe must not interrupt an owned
+                # observer's terminate/wait/kill cleanup already in progress.
+                await asyncio.gather(self._attachment_stop_task, return_exceptions=True)
+                self._attachment_stop_task = None
             self.tailing = False
             if self.agent_inventory:
                 await self.agent_inventory.close()

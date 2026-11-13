@@ -299,6 +299,7 @@ class AgentView(Vertical):
         super().__init__(**kwargs)
         self.observer, self.refresh_s = observer, refresh_s
         self.refreshing = False
+        self.refresh_paused = False
         self.snapshot = {}
         self.scope = "all"
         self.inventory = {}
@@ -319,15 +320,23 @@ class AgentView(Vertical):
         table = self.query_one("#peer-table", DataTable)
         for title, width in (("Agent / session", 18), ("State", 8), ("Type", 8)):
             table.add_column(title, width=width)
-        self.set_interval(self.refresh_s, self.schedule_refresh)
+        self.refresh_timer = self.set_interval(self.refresh_s, self.schedule_refresh)
         self.call_after_refresh(self.schedule_refresh)
 
+    def set_refresh_paused(self, paused):
+        self.refresh_paused = paused
+        if paused:
+            self.refresh_timer.pause()
+        else:
+            self.refresh_timer.resume()
+            self.schedule_refresh()
+
     def schedule_refresh(self):
-        if not self.refreshing:
+        if not self.refreshing and not self.refresh_paused:
             self.run_worker(self.refresh_snapshot(), group="snapshot", exit_on_error=False)
 
     async def refresh_snapshot(self):
-        if self.refreshing:
+        if self.refreshing or self.refresh_paused:
             return
         self.refreshing = True
         try:
