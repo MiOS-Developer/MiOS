@@ -207,6 +207,14 @@ PY
         -e XDG_RUNTIME_DIR=/run/mios-portal-build \
         podman-MiOS-DEV bash --noprofile --norc -c '
             set -euo pipefail
+            # podman exec starts this shell in the container root cgroup, and
+            # cgroup v2 delegates no controller below a cgroup holding
+            # processes: from a leaf, systemd can give the scope memory.max.
+            if [[ "$(sed -n s/^0:://p /proc/self/cgroup)" == / ]]; then
+                { mkdir -p /sys/fs/cgroup/mios-ci-exec && echo $$ >/sys/fs/cgroup/mios-ci-exec/cgroup.procs \
+                    && echo "+memory +pids" >/sys/fs/cgroup/cgroup.subtree_control; } \
+                    || echo "portal-cgroup: could not delegate from a leaf cgroup" >&2
+            fi
             mkdir -p /run/systemd/system
             for u in systemd-tmpfiles-setup.service systemd-tmpfiles-clean.service systemd-tmpfiles-clean.timer; do
                 ln -sf /dev/null "/run/systemd/system/$u"
@@ -226,6 +234,15 @@ PY
             eval "$config"
             free_gb=$(( $(df --output=avail -k /var/lib/mios-build/portal | tail -1) / 1024 / 1024 ))
             [[ "$free_gb" -ge "$PB_MIN_FREE_GB" ]] || { echo "Portal requires $PB_MIN_FREE_GB GB free" >&2; exit 1; }
+            # Report the cgroup v2 delegation the memory-capped scope inherits,
+            # so a scope without memory.max is diagnosable from the CI log.
+            for f in /sys/fs/cgroup/cgroup.controllers /sys/fs/cgroup/cgroup.subtree_control \
+                /sys/fs/cgroup/system.slice/cgroup.controllers /sys/fs/cgroup/system.slice/cgroup.subtree_control; do
+                echo "portal-cgroup $f: $(cat "$f" 2>&1 || true)"
+            done
+            echo "portal-cgroup systemd: $(systemctl --version 2>&1 | head -n 1 || true); exec shell: $(sed -n s/^0:://p /proc/self/cgroup)"
+            systemd-run --scope --quiet --collect -p MemoryMax="$PB_SCOPE_MEM" -p Delegate=yes \
+                sh -c "c=/sys/fs/cgroup\$(sed -n s/^0:://p /proc/self/cgroup); echo portal-cgroup probe \$c: \$(ls \$c | tr \"\\n\" \" \")" || true
             # The browser smoke opens the real Portal URL. A fresh CI machine
             # has no gateway service, so serve its actual router in this private
             # development namespace for the complete build/smoke lifetime.
