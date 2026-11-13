@@ -15,6 +15,7 @@ built a `tailscale up` command and never ran it) fails the same apply check.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import importlib.machinery
 import importlib.util
 import json
@@ -65,6 +66,21 @@ def _peer(name: str, ip: str, online: bool, exit_opt: bool) -> dict:
     return {"HostName": name, "DNSName": f"{name}.tail0000.ts.net.",
             "TailscaleIPs": [ip, "fd7a:115c:a1e0::1"], "Online": online,
             "ExitNodeOption": exit_opt}
+
+
+@contextmanager
+def private_script(source: str):
+    """Keep mutations off the source mount and resolve helpers from the candidate source tree."""
+    with tempfile.TemporaryDirectory(prefix="mios-tailscale-script-") as root:
+        script_dir = os.path.join(root, "usr", "libexec", "mios")
+        os.makedirs(script_dir)
+        os.makedirs(os.path.join(root, "usr", "lib"))
+        os.symlink(os.path.join(_ROOT, "usr", "lib", "mios"),
+                   os.path.join(root, "usr", "lib", "mios"))
+        script = os.path.join(script_dir, "mios-tailscale-sync")
+        with open(script, "w") as f:
+            f.write(source)
+        yield script
 
 
 def load_sync(path: str):
@@ -338,13 +354,8 @@ class TestTailscaleSync(unittest.TestCase):
                              capture_output=True, text=True)
         if old.returncode != 0:
             self.skipTest(f"pre-enrollment revision {_PRE_ENROLL} unavailable")
-        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
-                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
-            f.write(old.stdout)
-        try:
-            defect = check_enrolls(f.name)
-        finally:
-            os.unlink(f.name)
+        with private_script(old.stdout) as script:
+            defect = check_enrolls(script)
         self.assertIsNotNone(defect)
         self.assertIn("never enrolled", defect)
 
@@ -362,13 +373,8 @@ class TestTailscaleSync(unittest.TestCase):
         with open(_SCRIPT) as f:
             source = f.read()
         self.assertEqual(source.count(_LOADER), 1)
-        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
-                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
-            f.write(source.replace(_LOADER, _MONOLITHS_ONLY))
-        try:
-            defect = check_host_dropin(f.name)
-        finally:
-            os.unlink(f.name)
+        with private_script(source.replace(_LOADER, _MONOLITHS_ONLY)) as script:
+            defect = check_host_dropin(script)
         self.assertIsNotNone(defect)
         self.assertIn("drop-in ignored", defect)
 
@@ -405,13 +411,8 @@ class TestTailscaleSync(unittest.TestCase):
         with open(_SCRIPT) as f:
             source = f.read()
         self.assertEqual(source.count(_STANDBY), 1)
-        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
-                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
-            f.write(source.replace(_STANDBY, "if False:"))
-        try:
-            defect = check_standby(f.name)
-        finally:
-            os.unlink(f.name)
+        with private_script(source.replace(_STANDBY, "if False:")) as script:
+            defect = check_standby(script)
         self.assertIsNotNone(defect)
         self.assertIn("healthy uplink", defect)
 
@@ -437,13 +438,8 @@ class TestTailscaleSync(unittest.TestCase):
         with open(_SCRIPT) as f:
             source = f.read()
         self.assertEqual(source.count(_KEEP), 1)
-        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
-                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
-            f.write(source.replace(_KEEP, "is_worse = False"))
-        try:
-            defect = check_health_gate(f.name)
-        finally:
-            os.unlink(f.name)
+        with private_script(source.replace(_KEEP, "is_worse = False")) as script:
+            defect = check_health_gate(script)
         self.assertIsNotNone(defect)
         self.assertIn("worse exit node kept", defect)
 
@@ -453,13 +449,8 @@ class TestTailscaleSync(unittest.TestCase):
                              capture_output=True, text=True)
         if old.returncode != 0:
             self.skipTest(f"pre-fix revision {_PRE_FIX} unavailable")
-        with tempfile.NamedTemporaryFile("w", suffix="-mios-tailscale-sync",
-                                         dir=os.path.dirname(_SCRIPT), delete=False) as f:
-            f.write(old.stdout)
-        try:
-            defect = check_applies(f.name)
-        finally:
-            os.unlink(f.name)
+        with private_script(old.stdout) as script:
+            defect = check_applies(script)
         self.assertIsNotNone(defect)
         self.assertIn("never applied", defect)
 
