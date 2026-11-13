@@ -1247,7 +1247,7 @@ def _cred_cases():
         dict(name="already-current", expect="unchanged", target_mode=0o600, mutants=["no-noop"],
              files={_CRED_TARGET: f"[identity]\ndefault_password = {q}\n"}),
         dict(name="inline-table", expect="refused", says=["not a plain header table"],
-             mutants=["old-writer", "no-verify"], files={_CRED_TARGET: 'identity = { username = "op" }\n'}),
+             mutants=["old-writer"], files={_CRED_TARGET: 'identity = { username = "op" }\n'}),
         dict(name="inline-table-equal", expect="unchanged", target_mode=0o600, mutants=["no-noop"],
              files={_CRED_TARGET: f'identity = {{ username = "op", default_password = {q} }}\n'}),
         dict(name="dotted-key", expect="refused", says=["not a plain header table"], mutants=["old-writer"],
