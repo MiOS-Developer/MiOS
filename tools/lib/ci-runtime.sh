@@ -226,6 +226,15 @@ PY
             eval "$config"
             free_gb=$(( $(df --output=avail -k /var/lib/mios-build/portal | tail -1) / 1024 / 1024 ))
             [[ "$free_gb" -ge "$PB_MIN_FREE_GB" ]] || { echo "Portal requires $PB_MIN_FREE_GB GB free" >&2; exit 1; }
+            # Report the cgroup v2 delegation the memory-capped scope inherits,
+            # so a scope without memory.max is diagnosable from the CI log.
+            for f in /sys/fs/cgroup/cgroup.controllers /sys/fs/cgroup/cgroup.subtree_control \
+                /sys/fs/cgroup/system.slice/cgroup.controllers /sys/fs/cgroup/system.slice/cgroup.subtree_control; do
+                echo "portal-cgroup $f: $(cat "$f" 2>&1 || true)"
+            done
+            echo "portal-cgroup systemd: $(systemctl --version 2>&1 | head -n 1 || true)"
+            systemd-run --scope --quiet --collect -p MemoryMax="$PB_SCOPE_MEM" -p Delegate=yes \
+                sh -c "c=/sys/fs/cgroup\$(sed -n s/^0:://p /proc/self/cgroup); echo portal-cgroup probe \$c: \$(ls \$c | tr \"\\n\" \" \")" || true
             # The browser smoke opens the real Portal URL. A fresh CI machine
             # has no gateway service, so serve its actual router in this private
             # development namespace for the complete build/smoke lifetime.
