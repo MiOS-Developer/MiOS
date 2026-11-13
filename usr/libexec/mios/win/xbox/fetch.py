@@ -110,6 +110,18 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+SAFE_NAME = re.compile(r"[A-Za-z0-9][\w.\-]*")       # a download target in the work dir: never "", "." or ".."
+SAFE_FOD_NAME = re.compile(r"[A-Za-z0-9][\w.~\-]*")  # Microsoft's FOD repository names also carry "~"
+
+
+def _safe_name(name: Any, what: str, pattern: "re.Pattern[str]" = SAFE_NAME, label: str = "file name") -> str:
+    """A file name joined onto a work directory. It starts with a letter or digit, so it is never empty, '.' or '..'
+    (the directory itself or its parent), and it has no separator."""
+    if not isinstance(name, str) or not pattern.fullmatch(name):
+        raise FetchError(f"[{what}] unsafe {label} {name!r}")
+    return name
+
+
 def _art(manifest: Dict[str, Any], name: str) -> Dict[str, Any]:
     a = (manifest.get("artifacts") or {}).get(name)
     if not isinstance(a, dict) or not a.get("integrity"):
@@ -241,7 +253,7 @@ def extract_rpm_members(manifest: Dict[str, Any], rpm: str, ex: str, roles: Tupl
 def fetch_virtio(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Downloader) -> Dict[str, str]:
     a = _art(manifest, "virtio_win")
     vw = spec["spec"]["drivers"]["virtio_win"]
-    rpm = os.path.join(work, os.path.basename(urllib.parse.urlsplit(a["fetch"]).path))
+    rpm = os.path.join(work, _safe_name(os.path.basename(urllib.parse.urlsplit(a["fetch"]).path), "virtio_win"))
     if not os.path.isfile(rpm):
         dl.get(a["fetch"], rpm)
     _verify(manifest, "virtio_win", rpm)          # CHECKSUM (md5): the only digest upstream publishes
@@ -358,9 +370,8 @@ def fetch_fod(manifest: Dict[str, Any], spec: Dict[str, Any], dest: str, dl: "Do
                     tries=dl.tries, sleep=dl.sleep, retry=RL.UUP_API_RETRY).json().get("response") or {}
     live = got.get("files") or {}
     for f in fods:
-        canon = str(f["canonical"])
-        if not re.fullmatch(r"[\w.~\-]+", canon) or not re.fullmatch(r"[\w.\-]+", str(f["name"])):
-            raise FetchError(f"[windows_uup] unsafe FOD file name {f['name']!r} / {canon!r}")
+        canon = _safe_name(str(f["canonical"]), "windows_uup", SAFE_FOD_NAME, "FOD file name")
+        _safe_name(str(f["name"]), "windows_uup", SAFE_NAME, "FOD file name")
         target = os.path.join(dest, canon)
         if os.path.isfile(target) and os.path.getsize(target) == int(f["size"]) and _sha256(target) == f["sha256"]:
             continue
@@ -468,9 +479,7 @@ def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) ->
         raise FetchError(f"[{what}] {url!r} is not an https URL")
     if not re.fullmatch(r"[0-9a-f]{64}", str(sha256)):
         raise FetchError(f"[{what}] the SSOT pin is not a lower-case sha256")
-    fname = os.path.basename(urllib.parse.urlsplit(url).path)
-    if not re.fullmatch(r"[A-Za-z0-9][\w.\-]*", fname or ""):   # starts with a letter/digit: never "", "." or ".."
-        raise FetchError(f"[{what}] unsafe file name {fname!r}")
+    fname = _safe_name(os.path.basename(urllib.parse.urlsplit(url).path), what)
     path = os.path.join(work, fname)
     if os.path.isfile(path) and _sha256(path) != sha256:
         os.remove(path)
@@ -485,9 +494,7 @@ def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) ->
 
 def fetch_file(manifest: Dict[str, Any], artifact: str, work: str, dl: Downloader, name: Optional[str] = None) -> str:
     a = _art(manifest, artifact)
-    fname = name or os.path.basename(urllib.parse.urlsplit(a["fetch"]).path)
-    if not re.fullmatch(r"[\w.\-]+", fname or ""):
-        raise FetchError(f"[{artifact}] unsafe file name {fname!r}")
+    fname = _safe_name(name if name is not None else os.path.basename(urllib.parse.urlsplit(a["fetch"]).path), artifact)
     path = os.path.join(work, fname)
     size = (a.get("integrity") or {}).get("size")
     if not os.path.isfile(path):
