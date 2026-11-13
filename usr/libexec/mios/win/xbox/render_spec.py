@@ -914,7 +914,7 @@ def _rel(path: str, what: str) -> str:
     return p
 
 
-def _psq(v: Any) -> str:
+def _psq(v: object) -> str:
     """PowerShell single-quoted literal."""
     return "'" + str(v).replace("'", "''") + "'"
 
