@@ -196,7 +196,22 @@ class TestSpec(Base):
             fh.write(b"fixture source")
         for rel, fhs in (("usr/share/mios/config.json", False), ("/usr/share/mios/config.json", True)):
             with self.subTest(path=rel):
-                self.assertEqual(R.checked_tree_file(root, rel, "source", fhs=fhs), source)
+                self.assertEqual(os.path.realpath(R.checked_tree_file(root, rel, "source", fhs=fhs)), os.path.realpath(source))
+
+    def test_positive_checked_paths_allow_symlinks_that_stay_inside_the_root(self):
+        root = self.scratch("bounded-alias.")
+        os.makedirs(os.path.join(root, "files"))
+        source = os.path.join(root, "files", "config.json")
+        with open(source, "wb") as fh:
+            fh.write(b"fixture source")
+        try:
+            os.symlink("files", os.path.join(root, "alias"), target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"UNRUN: directory symlinks unavailable: {type(exc).__name__}")
+        checked = R.checked_tree_file(root, "alias/config.json", "source")
+        self.assertEqual(os.path.realpath(checked), os.path.realpath(source))
+        with open(checked, "rb") as fh:
+            self.assertEqual(fh.read(), b"fixture source")
 
     def test_negative_checked_paths_reject_traversal_drives_and_unc(self):
         for path in ("../../outside", r"..\..\outside", "/outside", r"C:\outside", "C:outside", r"D:\outside",
@@ -444,7 +459,7 @@ class TestOemLogo(Base):
         src_key = re.escape(self.x["identity"]["oem_logo_source_ref"])
         marks = {
             "mark not in the tree": ("usr/share/mios/portal/absent.png", None, "not a file in the tree"),
-            "mark escapes the tree": ("../outside.png", None, "not a file in the tree"),
+            "mark escapes the tree": ("../outside.png", None, "path contains traversal"),
             "mark absolute": ("/etc/hosts", None, "not a file in the tree"),
             "mark not a PNG": ("usr/share/mios/branding/mios.txt", None, "not a PNG"),
             "mark too small": ("usr/share/mios/test/small.png", png_file(64, 64, bytes(64 * 64 * 4)), "at least 120x120"),
