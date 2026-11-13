@@ -1304,6 +1304,19 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
         raise PayloadError("theme background: the rendered image differs from the spec's sha256")
     _write(os.path.join(out_dir, *bg["path"].split("/")), data)
     rows.append({"name": "theme:background", "path": bg["path"], "sha256": bg["sha256"]})
+    # the OEM logo: the MiOS mark from the tree, rendered byte-identically to the spec's record
+    lg = idn.get("oem_logo") or {}
+    if not lg.get("path") or not lg.get("sha256") or not lg.get("source"):
+        raise PayloadError("xbox-spec.json has no identity.oem_logo (render it with render_spec.py)")
+    mark = os.path.join(tree_root, *str(lg["source"]).split("/"))
+    if not os.path.isfile(mark) or _sha256(mark) != str(lg["source_sha256"]).lower():
+        raise PayloadError(f"{lg['source']} is absent or changed since the spec was rendered")
+    with open(mark, "rb") as fh:
+        data = render_spec.oem_logo_bmp(fh.read(), int(lg["px"]), render_spec._rgb(lg["background"], "identity.oem_logo.background"))
+    if hashlib.sha256(data).hexdigest() != lg["sha256"]:
+        raise PayloadError("OEM logo: the rendered image differs from the spec's sha256")
+    _write(os.path.join(out_dir, *lg["path"].split("/")), data)
+    rows.append({"name": "oem:logo", "path": lg["path"], "sha256": lg["sha256"]})
     return rows
 
 

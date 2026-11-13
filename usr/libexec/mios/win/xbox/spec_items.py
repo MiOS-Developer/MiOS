@@ -382,6 +382,9 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
         items.append({"id": "identity.theme", "kind": "theme", "name": th.get("name"), "window_color": th.get("window_color"),
                       "uwp_apps_use_light_theme": bool(th.get("uwp_apps_use_light_theme")), "background": bg.get("unattend")})
         items.append({"id": "identity.theme.background", "kind": "file_hash", "path": bg.get("path"), "sha256": bg.get("sha256")})
+    lg = idn.get("oem_logo") or {}
+    if lg:
+        items.append({"id": "identity.oem_logo", "kind": "file_hash", "path": lg.get("path"), "sha256": lg.get("sha256")})
     # the MiOS Windows shell (xbox-bm-39): every rendered file by sha256, the staged tools by presence, PowerShell 7 by
     # its MSI (image gate: staged + run by the SYSTEM stage) and its pwsh.exe (in the guest)
     shl = doc.get("shell") or {}

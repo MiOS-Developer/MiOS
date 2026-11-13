@@ -324,6 +324,15 @@ def _write_component(dst: str, it: Dict[str, Any], doc: Dict[str, Any], root: st
         with open(dst, "wb") as fh:
             fh.write(RS.solid_bmp(RS._rgb(bg["color"], "fixture"), int(bg["px"])))
         return
+    if it["id"] == "identity.oem_logo":   # xbox-bm-39: the MiOS mark rendered to the OEM logo, byte-identical to the spec's
+        import render_spec as RS
+        lg = doc["identity"]["oem_logo"]
+        src = os.path.join(root, *lg["source"].split("/"))
+        if not os.path.isfile(src):   # a fixture tree does not copy the mark: read it from the repo
+            src = os.path.join(ROOT, *lg["source"].split("/"))
+        with open(src, "rb") as s, open(dst, "wb") as fh:
+            fh.write(RS.oem_logo_bmp(s.read(), int(lg["px"]), RS._rgb(lg["background"], "fixture")))
+        return
     if it["id"] == "gpu.script":
         src = os.path.join(root, x["drivers"]["gpu_step"])
     else:

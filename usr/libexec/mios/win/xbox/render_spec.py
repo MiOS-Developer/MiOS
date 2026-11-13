@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import functools
 import hashlib
 import hmac
 import json
@@ -32,6 +33,7 @@ import sys
 import tempfile
 import uuid
 import zipfile
+import zlib
 
 _TREE = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", ".."))
 _LIB = os.path.join(_TREE, "usr", "lib", "mios")
@@ -132,7 +134,7 @@ REQUIRED = {
     "identity.theme_name_ref": str, "identity.theme_mode_ref": str, "identity.transparency_ref": str,
     "identity.background_color_ref": str, "identity.background": str,
     "identity.oem_manufacturer_ref": str, "identity.oem_model_ref": str, "identity.oem_support_url_ref": str,
-    "identity.oem_support_hours_ref": str,
+    "identity.oem_support_hours_ref": str, "identity.oem_logo_ref": str, "identity.oem_logo_source_ref": str,
     "shell.dir": str, "shell.bin_dir": str, "shell.wt_fragment": str, "shell.all_users_profiles": list,
     "shell.profile_name_ref": str, "shell.scheme_name_ref": str, "shell.look_ref": str, "shell.font_ref": str,
     "shell.prompt_config_ref": str, "shell.fastfetch_config_ref": str, "shell.fastfetch_theme_ref": str,
@@ -539,6 +541,8 @@ WINDOW_COLOR_LUMINOSITY = (0.25, 0.75)
 BACKGROUND_PX = 64   # a solid colour: any size scales to the screen identically; small keeps the payload small
 OEM_VALUES = (("Manufacturer", "oem_manufacturer_ref"), ("Model", "oem_model_ref"),
               ("SupportURL", "oem_support_url_ref"), ("SupportHours", "oem_support_hours_ref"))
+OEM_LOGO_PX = 120          # OEMInformation/Logo: 32-bit colour; Windows scales a larger bitmap to 120x120
+OEM_LOGO_MAX_PATH = 256    # the Logo path's maximum length (Microsoft's unattend reference)
 
 
 def solid_bmp(rgb: tuple, px: int = BACKGROUND_PX) -> bytes:
@@ -560,6 +564,132 @@ def _rgb(value: str, key: str) -> tuple:
 
 def _luminosity(rgb: tuple) -> float:
     return (max(rgb) + min(rgb)) / 2 / 255
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+PNG_MAX_SIDE = 4096
+
+
+def png_rgba(data: bytes) -> tuple:
+    """(width, height, RGBA bytes) of an 8-bit RGB/RGBA non-interlaced PNG; any other PNG, or a bad chunk, is a ValueError."""
+    if data[:8] != PNG_SIGNATURE:
+        raise ValueError("not a PNG file")
+    pos, ihdr, idat = 8, None, []
+    while pos + 12 <= len(data):
+        n = struct.unpack(">I", data[pos:pos + 4])[0]
+        end = pos + 12 + n
+        if end > len(data):
+            raise ValueError("truncated PNG chunk")
+        tag, body = data[pos + 4:pos + 8], data[pos + 8:end - 4]
+        if zlib.crc32(tag + body) != struct.unpack(">I", data[end - 4:end])[0]:
+            raise ValueError(f"PNG chunk {tag!r} fails its CRC")
+        if tag == b"IHDR":
+            if n != 13:
+                raise ValueError("malformed PNG IHDR")
+            ihdr = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat.append(body)
+        elif tag == b"IEND":
+            break
+        pos = end
+    else:
+        raise ValueError("truncated PNG chunk" if pos < len(data) else "PNG has no IEND chunk")
+    if ihdr is None or not idat:
+        raise ValueError("PNG has no IHDR/IDAT chunk")
+    w, h, depth, ctype, comp, filt, interlace = ihdr
+    if depth != 8 or ctype not in (2, 6) or comp or filt or interlace:
+        raise ValueError(f"unsupported PNG (bit depth {depth}, colour type {ctype}, interlace {interlace}): "
+                         "only 8-bit RGB/RGBA, non-interlaced")
+    if not (0 < w <= PNG_MAX_SIDE and 0 < h <= PNG_MAX_SIDE):
+        raise ValueError(f"PNG size {w}x{h} is outside 1..{PNG_MAX_SIDE}")
+    bpp = 4 if ctype == 6 else 3
+    stride = w * bpp
+    try:
+        raw = zlib.decompress(b"".join(idat))
+    except zlib.error as e:
+        raise ValueError(f"PNG image data does not inflate: {e}") from None
+    if len(raw) != h * (stride + 1):
+        raise ValueError("PNG image data has the wrong size")
+    out = bytearray()
+    prev = bytes(stride)
+    for y in range(h):
+        ft, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        if ft == 1:
+            for i in range(bpp, stride):
+                line[i] = (line[i] + line[i - bpp]) & 0xFF
+        elif ft == 2:
+            line = bytearray((a + b) & 0xFF for a, b in zip(line, prev))
+        elif ft == 3:
+            for i in range(stride):
+                line[i] = (line[i] + ((line[i - bpp] if i >= bpp else 0) + prev[i]) // 2) & 0xFF
+        elif ft == 4:
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                c = prev[i - bpp] if i >= bpp else 0
+                b = prev[i]
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 0xFF
+        elif ft != 0:
+            raise ValueError(f"PNG row {y} has filter type {ft}")
+        out += line
+        prev = bytes(line)
+    if bpp == 3:
+        rgb, out = out, bytearray()
+        for i in range(0, len(rgb), 3):
+            out += rgb[i:i + 3] + b"\xff"
+    return w, h, bytes(out)
+
+
+def _box_taps(n_src: int, n_dst: int) -> list:
+    """Per destination pixel, [(source index, integer weight)] of the exact box filter; each row's weights sum to n_src."""
+    taps = []
+    for d in range(n_dst):
+        lo, hi = d * n_src, (d + 1) * n_src
+        taps.append([(s, min(hi, (s + 1) * n_dst) - max(lo, s * n_dst))
+                     for s in range(lo // n_dst, min(n_src, -(-hi // n_dst)))
+                     if min(hi, (s + 1) * n_dst) > max(lo, s * n_dst)])
+    return taps
+
+
+def rgba_to_bmp32(w: int, h: int, rgba: bytes, px: int, bg: tuple) -> bytes:
+    """A px x px 32-bit BMP: an exact box-filter downscale of premultiplied RGBA composited over bg (integer maths only)."""
+    tx, ty = _box_taps(w, px), _box_taps(h, px)
+    rows = []
+    for y in range(h):
+        line, acc = rgba[y * w * 4:(y + 1) * w * 4], []
+        for taps in tx:
+            r = g = b = a = 0
+            for s, wt in taps:
+                aw = line[s * 4 + 3] * wt
+                r += line[s * 4] * aw
+                g += line[s * 4 + 1] * aw
+                b += line[s * 4 + 2] * aw
+                a += aw
+            acc.append((r, g, b, a))
+        rows.append(acc)
+    full = 255 * w * h   # every output pixel's weights sum to w * h; colour sums carry one more factor of alpha (255)
+    pixels = bytearray()
+    for taps in reversed(ty):   # BMP rows run bottom-up
+        for x in range(px):
+            r = g = b = a = 0
+            for s, wt in taps:
+                pr, pg, pb, pa = rows[s][x]
+                r, g, b, a = r + pr * wt, g + pg * wt, b + pb * wt, a + pa * wt
+            rest = full - a
+            pixels += bytes(((c + bg[i] * rest + full // 2) // full for i, c in ((2, b), (1, g), (0, r)))) + b"\xff"
+    header = struct.pack("<2sIHHI", b"BM", 54 + len(pixels), 0, 0, 54)
+    info = struct.pack("<IiiHHIIiiII", 40, px, px, 1, 32, 0, len(pixels), 2835, 2835, 0, 0)
+    return header + info + bytes(pixels)
+
+
+@functools.lru_cache(maxsize=4)
+def oem_logo_bmp(png: bytes, px: int, bg: tuple) -> bytes:
+    """The OEM logo: a square PNG mark at least px wide, rendered to a px x px 32-bit BMP over bg (byte-identical)."""
+    w, h, rgba = png_rgba(png)
+    if w != h or w < px:
+        raise ValueError(f"the mark is {w}x{h}: it must be square and at least {px}x{px} (no stretching, no upscaling)")
+    return rgba_to_bmp32(w, h, rgba, px, bg)
 
 
 def font_names(data: bytes) -> dict:
@@ -692,6 +822,27 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
         if not isinstance(v, str) or not v.strip():
             raise SpecError(idn[ref], "must be a non-empty string")
         oem[value_name] = v.strip()
+    # OEMInformation/Logo: the MiOS mark as a 32-bit bitmap (Microsoft's 120x120 limit), at the [branding] path
+    logo_live = str(resolved["identity.oem_logo_ref"]).strip().replace("/", "\\")
+    logo_rel = logo_live[3:] if re.match(r"(?i)^C:\\", logo_live) else ""
+    lparts = logo_rel.split("\\")
+    if (not logo_rel or len(logo_live) > OEM_LOGO_MAX_PATH or not logo_rel.lower().endswith(".bmp") or len(lparts) < 3
+            or lparts[0].lower() != root_rel.lower() or ".." in lparts or "" in lparts):
+        raise SpecError(idn["oem_logo_ref"], f"{logo_live!r} must be a C:\\{root_rel}\\<folder>\\...\\<name>.bmp path of at "
+                        f"most {OEM_LOGO_MAX_PATH} characters")
+    src_rel = str(resolved["identity.oem_logo_source_ref"]).strip().replace("\\", "/")
+    src = os.path.join(tree_root, *src_rel.split("/"))
+    if not src_rel or src_rel.startswith("/") or ".." in src_rel.split("/") or not os.path.isfile(src):
+        raise SpecError(idn["oem_logo_source_ref"], f"{src_rel!r} is not a file in the tree")
+    with open(src, "rb") as fh:
+        mark = fh.read()
+    try:
+        logo = oem_logo_bmp(mark, OEM_LOGO_PX, bg)
+    except ValueError as e:
+        raise SpecError(idn["oem_logo_source_ref"], f"{src_rel}: {e}") from None
+    oem_logo = {"path": logo_rel.replace("\\", "/"), "live": logo_live, "source": src_rel,
+                "source_sha256": hashlib.sha256(mark).hexdigest(), "px": OEM_LOGO_PX, "background": "#%02X%02X%02X" % bg,
+                "sha256": hashlib.sha256(logo).hexdigest(), "size": len(logo)}
 
     reg: list = []
 
@@ -722,12 +873,13 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     # OEM branding (Settings > System > About)
     for value_name, ref in OEM_VALUES:
         add(f"identity.oem.{ref[4:-4]}", "SOFTWARE", OEM_KEY, value_name, "REG_SZ", oem[value_name])
+    add("identity.oem.logo", "SOFTWARE", OEM_KEY, "Logo", "REG_SZ", logo_live)
 
     record = {
         "accent": str(accent), "accent_abgr": abgr, "accent_argb": argb,
         "theme": {"name": theme_name, "mode": mode, "window_color": "0x%08x" % argb, "uwp_apps_use_light_theme": mode == "light",
                   "transparency": transparency, "background": background},
-        "oem": oem,
+        "oem": oem, "oem_logo": oem_logo,
         "cursor": {"theme": theme, "asset_url": str(cur["asset_url"]), "asset_sha256": str(cur["asset_sha256"]),
                    "variant_dir": str(cur["variant_dir"]), "scheme_name": str(cur["scheme_name"]),
                    "install_dir": install_dir, "scheme_files": files, "roles": roles, "base_size": size,

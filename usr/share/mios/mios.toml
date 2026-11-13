@@ -13157,6 +13157,7 @@ oem_manufacturer    = "MiOS"
 oem_model           = "My Personal Operating System"
 oem_support_url     = "https://github.com/mios-dev"
 oem_support_hours   = "Always on"
+oem_logo            = 'C:\Windows\Web\MiOS\mios-logo.bmp'   # OEMInformation/Logo: the bitmap's path on the installed system
 
 [branding.dashboard]
 frame_width_cols    = 80
@@ -13721,6 +13722,8 @@ oem_manufacturer_ref  = "branding.oem_manufacturer"
 oem_model_ref         = "branding.oem_model"
 oem_support_url_ref   = "branding.oem_support_url"
 oem_support_hours_ref = "branding.oem_support_hours"
+oem_logo_ref          = "branding.oem_logo"         # a C:\ .bmp path under system_root
+oem_logo_source_ref   = "desktop.portal.gecko.icon_source"   # the MiOS mark (PNG) the 32-bit logo is rendered from
 
 # --- The MiOS Windows shell (xbox-bm-39): PowerShell 7, oh-my-posh, fastfetch, WT fragment, all-users profile; tools resolved latest.
 [windows.xbox.shell]
