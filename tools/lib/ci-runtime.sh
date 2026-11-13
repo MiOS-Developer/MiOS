@@ -207,6 +207,14 @@ PY
         -e XDG_RUNTIME_DIR=/run/mios-portal-build \
         podman-MiOS-DEV bash --noprofile --norc -c '
             set -euo pipefail
+            # podman exec starts this shell in the container root cgroup, and
+            # cgroup v2 delegates no controller below a cgroup holding
+            # processes: from a leaf, systemd can give the scope memory.max.
+            if [[ "$(sed -n s/^0:://p /proc/self/cgroup)" == / ]]; then
+                { mkdir -p /sys/fs/cgroup/mios-ci-exec && echo $$ >/sys/fs/cgroup/mios-ci-exec/cgroup.procs \
+                    && echo "+memory +pids" >/sys/fs/cgroup/cgroup.subtree_control; } \
+                    || echo "portal-cgroup: could not delegate from a leaf cgroup" >&2
+            fi
             mkdir -p /run/systemd/system
             for u in systemd-tmpfiles-setup.service systemd-tmpfiles-clean.service systemd-tmpfiles-clean.timer; do
                 ln -sf /dev/null "/run/systemd/system/$u"
@@ -232,7 +240,7 @@ PY
                 /sys/fs/cgroup/system.slice/cgroup.controllers /sys/fs/cgroup/system.slice/cgroup.subtree_control; do
                 echo "portal-cgroup $f: $(cat "$f" 2>&1 || true)"
             done
-            echo "portal-cgroup systemd: $(systemctl --version 2>&1 | head -n 1 || true)"
+            echo "portal-cgroup systemd: $(systemctl --version 2>&1 | head -n 1 || true); exec shell: $(sed -n s/^0:://p /proc/self/cgroup)"
             systemd-run --scope --quiet --collect -p MemoryMax="$PB_SCOPE_MEM" -p Delegate=yes \
                 sh -c "c=/sys/fs/cgroup\$(sed -n s/^0:://p /proc/self/cgroup); echo portal-cgroup probe \$c: \$(ls \$c | tr \"\\n\" \" \")" || true
             # The browser smoke opens the real Portal URL. A fresh CI machine
