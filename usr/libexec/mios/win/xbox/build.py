@@ -171,6 +171,20 @@ def require_storage_capacity(x: Dict[str, Any]) -> None:
         raise BuildError("[preflight] " + "; ".join(capacity["blockers"]))
 
 
+def oem_logo_problems() -> List[str]:
+    """The canonical tracked projection, independent of the operator's admitted image configuration."""
+    try:
+        return [f"oem logo projection: {p}" for p in render_spec.check_oem_logo_projection(_TREE)]
+    except (render_spec.SpecError, OSError) as exc:
+        return [f"oem logo projection: {exc}"]
+
+
+def require_oem_logo_projection() -> None:
+    bad = oem_logo_problems()
+    if bad:
+        raise BuildError("[preflight] " + "; ".join(bad))
+
+
 def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runner) -> Dict[str, Any]:
     """Everything that can be checked without writing or downloading. Raises BuildError on a hard fault."""
     layers = layers if layers is not None else build_layers()
@@ -190,6 +204,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
     x = doc["spec"]
     coverage, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
     problems: List[str] = [f"spec coverage: {v}" for v in coverage_bad]
+    problems += oem_logo_problems()
     for c in x["components"]["ship"]:
         if c["kind"] != "native" and not os.path.isfile(os.path.join(_TREE, c["source"])):
             problems.append(f"component {c['name']}: {c['source']} missing")
@@ -304,6 +319,7 @@ class Build:
             _, bad = SC.check(candidate, self.layers, _TREE, required_image="mios-xbox")
             if bad:
                 raise BuildError("[preflight] spec coverage: " + "; ".join(bad))
+            require_oem_logo_projection()
             self._merged = candidate
             self._candidate = None
         return copy.deepcopy(self._merged)
@@ -696,6 +712,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         _, coverage_bad = SC.check(merged, layers, _TREE, required_image="mios-xbox")
         if coverage_bad:
             raise BuildError("[preflight] spec coverage: " + "; ".join(coverage_bad))
+        require_oem_logo_projection()
         x = render_spec.render(merged, layers)["spec"]
         # Reject before even the heavy-lock/scope handoff can create a file.
         # host_preflight repeats admission inside the scope before build writes.

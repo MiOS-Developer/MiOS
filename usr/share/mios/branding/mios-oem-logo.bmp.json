@@ -1,0 +1,11 @@
+{
+  "background": "#282262",
+  "background_key": "colors.bg",
+  "file": "mios-oem-logo.bmp",
+  "px": 120,
+  "schema": "mios-oem-logo/1",
+  "sha256": "01cc44fc5c583cca2ee579d30074e73370e9167d1364945caf30f916173a9983",
+  "size": 57654,
+  "source": "usr/share/mios/portal/icon-512.png",
+  "source_sha256": "37685f07df8c0c500665cf061b1c6c53d08cb35be58db870006b18c42da53f16"
+}

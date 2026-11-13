@@ -804,7 +804,8 @@ check_edge_generators() {
     local mgen; mgen="$(native_bin mios-gen || true)"
     for spec in "usr/libexec/mios/ux/wm_config_gen.py ." "usr/libexec/mios/desktop/gpu_terminal.py ." \
                 "usr/libexec/mios/win/wt_profile_inject.py ." "usr/libexec/mios/ux/tmux_theme.py ." \
-                "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py ."; do
+                "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py ." \
+                "usr/libexec/mios/win/xbox/render_spec.py ."; do
         read -r gen arg <<<"$spec"
         if [[ "$gen" == "usr/libexec/mios/ux/tmux_theme.py" ]]; then  # ported to mios-gen render-tmux-theme
             [[ -n "$mgen" ]] || { _violation "$_GEN_MISSING" || :; continue; }
@@ -827,8 +828,8 @@ check_edge_generators() {
             _violations_from "$gen --check-fixture $arg: " "$out" || :
         fi
     done
-    (( n == 5 )) || return 1
-    echo "[98-drift-checks]   hyprland.conf, sway/config, skel alacritty.toml, WSL terminal-profile.json, mios-theme.tmux.conf, portal-term.css and ttyd-page.json each match their generator"
+    (( n == 6 )) || return 1
+    echo "[98-drift-checks]   hyprland.conf, sway/config, skel alacritty.toml, WSL terminal-profile.json, mios-theme.tmux.conf, portal-term.css, ttyd-page.json and the OEM logo with its evidence sidecar each match their generator"
 }
 
 check_edge_status() {

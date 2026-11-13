@@ -278,6 +278,14 @@ class TestBuildPlan(Base):
             plan = self.plan(layers)
         self.assertTrue([p for p in plan["problems"] if p.startswith("spec coverage: mios-xbox: colors.spec_probe_unread")])
 
+    def test_plan_reports_stale_projection_and_named_path_faults(self):
+        with mock.patch.object(B.render_spec, "check_oem_logo_projection", return_value=["logo.bmp: stale"]):
+            self.assertIn("oem logo projection: logo.bmp: stale", self.plan(LAYERS)["problems"])
+        fault = B.render_spec.SpecError("windows.xbox.identity.oem_logo_projection", "path resolves outside its tree/payload root")
+        with mock.patch.object(B.render_spec, "check_oem_logo_projection", side_effect=fault):
+            problems = self.plan(LAYERS)["problems"]
+        self.assertTrue(any(p.startswith("oem logo projection: windows.xbox.identity.oem_logo_projection:") for p in problems))
+
     def test_private_parity_values_never_enter_plan_json_or_gate_output(self):
         with overlay_layers(PRIVATE_PARITY) as layers:
             plan_json = json.dumps(self.plan(layers))
@@ -325,6 +333,29 @@ class TestBuildAdmission(Base):
                     storage.assert_not_called()
                     for effect in effects:
                         effect.assert_not_called()
+
+    def test_every_nonplan_command_rejects_stale_projection_before_machine_admission(self):
+        problem = "usr/share/mios/branding/mios-oem-logo.bmp: sha256 differs from its render"
+        with mock.patch.object(B.render_spec, "check_oem_logo_projection", return_value=[problem]):
+            for command in ("capture", "stage", "service", "gate", "run"):
+                with self.subTest(command=command), self.admission(LAYERS) as (storage, effects):
+                    err = io.StringIO()
+                    with contextlib.redirect_stderr(err):
+                        self.assertEqual(B.main([command]), 2)
+                    self.assertIn("[preflight] oem logo projection: " + problem, err.getvalue())
+                    storage.assert_not_called()
+                    for effect in effects:
+                        effect.assert_not_called()
+
+    def test_invalid_projection_path_stops_as_a_named_build_error(self):
+        fault = B.render_spec.SpecError("windows.xbox.identity.oem_logo_projection", "path resolves outside its tree/payload root")
+        with mock.patch.object(B.render_spec, "check_oem_logo_projection", side_effect=fault), \
+                self.admission(LAYERS) as (storage, effects), contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(B.main(["run"]), 2)
+        self.assertIn("[preflight] oem logo projection: windows.xbox.identity.oem_logo_projection:", err.getvalue())
+        storage.assert_not_called()
+        for effect in effects:
+            effect.assert_not_called()
 
     def test_the_nonplan_build_cannot_turn_off_coverage(self):
         with overlay_layers('[spec.coverage]\ngated = []\n') as layers:
@@ -407,6 +438,35 @@ class TestBuildSnapshot(Base):
                 with self.assertRaisesRegex(B.BuildError, "colors.spec_probe_unread"):
                     B.stage_render(other)
                 write.assert_not_called()
+
+    def test_stale_projection_blocks_direct_new_before_a_directory_is_created(self):
+        with self.state() as (root, layer, text, layers), \
+                mock.patch.object(B.render_spec, "check_oem_logo_projection", return_value=["logo.bmp: stale"]):
+            with self.assertRaisesRegex(B.BuildError, "oem logo projection: logo.bmp: stale"):
+                B.Build.new(str(root / "artifacts"), layers)
+            self.assertFalse((root / "artifacts").exists())
+
+    def test_stale_projection_blocks_resume_before_resolver_and_preserves_saved_state(self):
+        with self.state() as (root, layer, text, layers):
+            b = B.Build.new(str(root / "artifacts"), layers)
+            B.stage_render(b)
+            before = {p: Path(p).read_bytes() for p in (b.spec_path, b.guest_spec_path)}
+            with mock.patch.object(B.render_spec, "check_oem_logo_projection", return_value=["logo.bmp: stale"]), \
+                    mock.patch.object(B.RL, "resolve_all") as resolve:
+                with self.assertRaisesRegex(B.BuildError, "oem logo projection: logo.bmp: stale"):
+                    B.stage_resolve(B.Build(b.root, layers))
+                resolve.assert_not_called()
+            for path, data in before.items():
+                self.assertEqual(Path(path).read_bytes(), data)
+            self.assertFalse(Path(b.manifest_path).exists())
+
+    def test_operator_background_drives_the_image_without_regrading_the_vendor_asset(self):
+        with self.state() as (root, layer, text, layers):
+            layer.write_text(text + '[colors]\nbg = "#010203"\n', encoding="utf-8")
+            b = B.Build.new(str(root / "artifacts"), layers)
+            B.stage_render(b)
+            self.assertEqual(b.spec()["identity"]["oem_logo"]["background"], "#010203")
+            self.assertEqual(B.render_spec.check_oem_logo_projection(ROOT), [])
 
     def test_clean_resume_keeps_recorded_storage_and_reuses_validated_config(self):
         with self.state() as (root, layer, text, layers):

@@ -2898,6 +2898,7 @@ surfaces = [
   { generator = "usr/libexec/mios/win/wt_profile_inject.py", check = "check_edge_generators", output = "usr/share/mios/wsl/terminal-profile.json" },
   { generator = "tools/native/mios-gen/src/terminal.rs", check = "check_edge_generators", output = "usr/share/mios/tmux/mios-theme.tmux.conf" },
   { generator = "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py", check = "check_edge_generators", output = "usr/share/mios/theme/fixtures/edge/portal-term.css, usr/share/mios/theme/fixtures/edge/ttyd-page.json" },
+  { generator = "usr/libexec/mios/win/xbox/render_spec.py", check = "check_edge_generators", output = "usr/share/mios/branding/mios-oem-logo.bmp, usr/share/mios/branding/mios-oem-logo.bmp.json" },
   { generator = "tools/native/mios-edge-status/src/main.rs", check = "check_edge_status", output = "stdout (one reach line per [theme.edge.reach] key)" },
   { generator = "tools/native/mios-gen/src/terminal.rs", check = "check_tmux_theme", output = "usr/share/mios/tmux/mios-theme.tmux.conf" },
   { generator = "tools/native/mios-gen/src/btop_theme.rs", check = "check_btop_theme", output = "etc/btop/themes/mios.theme" },
@@ -13723,6 +13724,7 @@ oem_support_url_ref   = "branding.oem_support_url"
 oem_support_hours_ref = "branding.oem_support_hours"
 oem_logo_ref          = "branding.oem_logo"         # a C:\ .bmp path under system_root
 oem_logo_source_ref   = "desktop.portal.gecko.icon_source"   # the MiOS mark (PNG) the 32-bit logo is rendered from
+oem_logo_projection   = "usr/share/mios/branding/mios-oem-logo.bmp"   # tracked render (+ .json sidecar) the Windows bootstrap stages
 
 # --- The MiOS Windows shell (xbox-bm-39): PowerShell 7, oh-my-posh, fastfetch, WT fragment, all-users profile; tools resolved latest.
 [windows.xbox.shell]

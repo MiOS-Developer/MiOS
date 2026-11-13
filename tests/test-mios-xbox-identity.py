@@ -7,11 +7,13 @@ with pwsh or Windows PowerShell and is skipped, named as UNRUN, without either)"
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import fractions
 import functools
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
@@ -25,6 +27,7 @@ import tempfile
 import unittest
 import zipfile
 import zlib
+from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -514,6 +517,167 @@ class TestOemLogo(Base):
         lw, lh, lpx = gdip(files["logo"])
         self.assertEqual((lw, lh), (lg["px"], lg["px"]))
         self.assertEqual([p[:3] for p in lpx], [p[:3] for p in bmp32_pixels(logo, lg["px"])])
+
+
+class TestOemLogoProjection(Base):
+    """The tracked projection the Windows bootstrap stages: the image render, byte for byte, plus its sidecar."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.vendor = R.mios_toml.load_merged([P.VENDOR])
+        cls.rel = cls.vendor["windows"]["xbox"]["identity"]["oem_logo_projection"]
+
+    def projection_tree(self) -> str:
+        tree = self.scratch("proj.")
+        for rel in ("usr/share/mios/mios.toml", self.idn["oem_logo"]["source"], self.rel, self.rel + ".json"):
+            dst = os.path.join(tree, *rel.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(os.path.join(P.ROOT, *rel.split("/")), dst)
+        return tree
+
+    def cli(self, *argv):
+        err = io.StringIO()
+        with mock.patch.dict(os.environ), contextlib.redirect_stderr(err):
+            os.environ.pop("MIOS_VENDOR_TOML", None)
+            return R.main(list(argv)), err.getvalue()
+
+    def test_positive_tracked_projection_is_the_image_render(self):
+        lg = self.idn["oem_logo"]
+        with open(os.path.join(P.ROOT, *self.rel.split("/")), "rb") as fh:
+            tracked = fh.read()
+        with open(os.path.join(P.ROOT, *(self.rel + ".json").split("/")), encoding="utf-8") as fh:
+            side = json.load(fh)
+        self.assertEqual(_sha(tracked), lg["sha256"])
+        self.assertEqual(R.oem_logo_projection(self.vendor)[self.rel], tracked)
+        self.assertEqual(side, {"schema": R.OEM_LOGO_SIDECAR, "file": os.path.basename(self.rel), "sha256": lg["sha256"],
+                                "size": lg["size"], "px": lg["px"], "background": lg["background"],
+                                "background_key": self.vendor["windows"]["xbox"]["identity"]["background_color_ref"],
+                                "source": lg["source"], "source_sha256": lg["source_sha256"]})
+        self.assertEqual(R.check_oem_logo_projection(P.ROOT), [])
+        self.assertEqual(self.cli("--check-fixture", P.ROOT)[0], 0)
+
+    def test_positive_write_regenerates_the_tracked_bytes(self):
+        tree = self.projection_tree()
+        for rel in (self.rel, self.rel + ".json"):
+            os.unlink(os.path.join(tree, *rel.split("/")))
+        with mock.patch.dict(os.environ):
+            os.environ.pop("MIOS_VENDOR_TOML", None)
+            self.assertEqual(R.write_oem_logo_projection(tree), [self.rel, self.rel + ".json"])
+        for rel in (self.rel, self.rel + ".json"):
+            with open(os.path.join(tree, *rel.split("/")), "rb") as a, open(os.path.join(P.ROOT, *rel.split("/")), "rb") as b:
+                self.assertEqual(a.read(), b.read(), rel)
+
+    def test_negative_check_names_a_drifted_missing_or_stale_file(self):
+        tree = self.projection_tree()
+        self.assertEqual(self.cli("--check-fixture", tree)[0], 0)
+        bmp = os.path.join(tree, *self.rel.split("/"))
+        with open(bmp, "r+b") as fh:
+            fh.seek(200)
+            b = fh.read(1)
+            fh.seek(200)
+            fh.write(bytes([b[0] ^ 1]))
+        code, err = self.cli("--check-fixture", tree)
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.rel}: sha256", err)
+        self.assertNotIn(f"{self.rel}.json:", err)
+        os.unlink(bmp)
+        self.assertIn(f"{self.rel}: missing", self.cli("--check-fixture", tree)[1])
+        m = copy.deepcopy(self.vendor)
+        m["colors"]["bg"] = "#010203"   # the SSOT moved on; both tracked files are now stale
+        stale = R.check_oem_logo_projection(P.ROOT, merged=m)
+        self.assertEqual(sorted(p.split(":")[0] for p in stale), [self.rel, self.rel + ".json"])
+
+    def test_negative_projection_path_must_be_a_tree_relative_bmp(self):
+        for bad in ("../outside.bmp", "/abs/logo.bmp", "usr/share/mios/branding/logo.png", "usr\\share\\logo.bmp", "",
+                    "C:/outside.bmp", "C:outside.bmp", "//host/share/logo.bmp", "safe/.. /logo.bmp",
+                    "safe//logo.bmp", "safe/./logo.bmp", "safe/logo:stream.bmp", "safe/\x00logo.bmp", None, 1):
+            m = copy.deepcopy(self.vendor)
+            m["windows"]["xbox"]["identity"]["oem_logo_projection"] = bad
+            with self.subTest(path=bad), self.assertRaisesRegex(R.SpecError, "identity.oem_logo_projection"):
+                R.oem_logo_projection(m)
+
+    def symlink(self, target, link):
+        try:
+            os.symlink(target, link, target_is_directory=os.path.isdir(target))
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"UNRUN: symlinks unavailable: {type(exc).__name__}")
+
+    def test_negative_projection_cli_refuses_operator_layer_inputs(self):
+        for flag in ("--layers", "--with-fragment"):
+            err = io.StringIO()
+            with self.subTest(flag=flag), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as exc:
+                    R.main(["--check-fixture", P.ROOT, flag, P.VENDOR])
+                self.assertEqual(exc.exception.code, 2)
+                self.assertIn("vendor SSOT", err.getvalue())
+
+    def test_negative_projection_source_reuses_the_bounded_tree_checks(self):
+        for bad in ("../outside.png", "C:/outside.png", "//host/share/logo.png", "safe/.. /logo.png"):
+            m = copy.deepcopy(self.vendor)
+            tbl, key = self.ref(m, "oem_logo_source_ref")
+            tbl[key] = bad
+            with self.subTest(path=bad), self.assertRaises(R.SpecError):
+                R.oem_logo_projection(m)
+        tree = self.projection_tree()
+        rel = self.idn["oem_logo"]["source"]
+        src = os.path.join(tree, *rel.split("/"))
+        os.unlink(src)
+        self.symlink(os.path.join(P.ROOT, *rel.split("/")), src)
+        with self.assertRaisesRegex(R.SpecError, "outside its tree/payload root"):
+            R.oem_logo_projection(self.vendor, tree)
+
+    def test_negative_projection_read_and_write_refuse_escaped_destinations(self):
+        outside = self.scratch("outside-projection.")
+        sentinel = os.path.join(outside, "unchanged.bmp")
+        with open(sentinel, "wb") as fh:
+            fh.write(b"outside sentinel")
+        for rel in (self.rel, self.rel + ".json"):
+            tree = self.projection_tree()
+            bmp = os.path.join(tree, *self.rel.split("/"))
+            with open(bmp, "rb") as fh:
+                original_bmp = fh.read()
+            dst = os.path.join(tree, *rel.split("/"))
+            os.unlink(dst)
+            self.symlink(sentinel, dst)
+            for operation in (R.check_oem_logo_projection, R.write_oem_logo_projection):
+                with self.subTest(path=rel, operation=operation.__name__), \
+                        self.assertRaisesRegex(R.SpecError, "identity.oem_logo_projection: .*outside"):
+                    operation(tree)
+            with open(sentinel, "rb") as fh:
+                self.assertEqual(fh.read(), b"outside sentinel")
+            if rel.endswith(".json"):
+                with open(bmp, "rb") as fh:
+                    self.assertEqual(fh.read(), original_bmp)   # prevalidate both before writing either
+
+    def test_positive_projection_ignores_another_vendor_tier_and_old_temp_symlink(self):
+        tree = self.projection_tree()
+        sentinel = os.path.join(self.scratch("outside-temp."), "unchanged")
+        with open(sentinel, "wb") as fh:
+            fh.write(b"outside sentinel")
+        trap = os.path.join(tree, *(self.rel + ".tmp").split("/"))
+        self.symlink(sentinel, trap)
+        with mock.patch.dict(os.environ, {"MIOS_VENDOR_TOML": os.path.join(self.tmp, "absent-vendor.toml")}):
+            self.assertEqual(R.check_oem_logo_projection(tree), [])
+            self.assertEqual(R.write_oem_logo_projection(tree), [self.rel, self.rel + ".json"])
+        self.assertEqual(R.check_oem_logo_projection(tree), [])
+        with open(sentinel, "rb") as fh:
+            self.assertEqual(fh.read(), b"outside sentinel")
+        self.assertTrue(os.path.islink(trap))
+
+    def test_negative_failed_replace_keeps_original_and_removes_private_temp(self):
+        tree = self.projection_tree()
+        path = os.path.join(tree, *self.rel.split("/"))
+        directory = os.path.dirname(path)
+        before = sorted(os.listdir(directory))
+        with open(path, "rb") as fh:
+            original = fh.read()
+        with mock.patch.object(R.os, "replace", side_effect=OSError("fixture replace refused")):
+            with self.assertRaisesRegex(OSError, "fixture replace refused"):
+                R.write_oem_logo_projection(tree)
+        with open(path, "rb") as fh:
+            self.assertEqual(fh.read(), original)
+        self.assertEqual(sorted(os.listdir(directory)), before)
 
 
 # ---------------------------------------------------------------------------

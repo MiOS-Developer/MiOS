@@ -5937,9 +5937,11 @@ PY
 test_edge_generators() {
     log "Testing check_edge_generators"
     local conf="${ROOT}/usr/share/mios/hyprland/hyprland.conf"
-    local bak plant; bak="$(mktemp)"; cp -p "$conf" "$bak"
+    local logo="${ROOT}/usr/share/mios/branding/mios-oem-logo.bmp" side="${ROOT}/usr/share/mios/branding/mios-oem-logo.bmp.json"
+    local bak lbak sbak plant; bak="$(mktemp)"; lbak="$(mktemp)"; sbak="$(mktemp)"
+    cp -p "$conf" "$bak"; cp -p "$logo" "$lbak"; cp -p "$side" "$sbak"
     plant="$(printf 'gaps_%s = %d' out 10)"
-    _eg_restore() { cp -p "$bak" "$conf"; rm -f "$bak"; unset -f _eg_restore; }
+    _eg_restore() { cp -p "$bak" "$conf"; cp -p "$lbak" "$logo"; cp -p "$sbak" "$side"; rm -f "$bak" "$lbak" "$sbak"; unset -f _eg_restore; }
 
     _neg_gate check_edge_generators || { _eg_restore; die "check_edge_generators is red before any plant, so a plant proves nothing: ${_NEG_GATE_OUT}"; }
     sed -i "s/^    gaps_out = .*/    ${plant}/" "$conf"
@@ -5947,6 +5949,32 @@ test_edge_generators() {
     _neg_gate check_edge_generators && { _eg_restore; die "check_edge_generators passed with a non-zero gap planted in the hyprland.conf the image installs"; }
     grep -q "hyprland.conf" <<<"$_NEG_GATE_OUT" || { _eg_restore; die "check_edge_generators went red without naming the planted file: ${_NEG_GATE_OUT}"; }
     grep -qF "$plant" <<<"$_NEG_GATE_OUT" || { _eg_restore; die "check_edge_generators went red without naming the planted line: ${_NEG_GATE_OUT}"; }
+    cp -p "$bak" "$conf"
+
+    # The installed bitmap and the evidence the bootstrap consumes are separate
+    # projections. Catch independent drift in either, with the other intact.
+    if ! python3 - "$logo" <<'PY'
+import sys
+with open(sys.argv[1], 'r+b') as fh:
+    fh.seek(200)
+    old = fh.read(1)
+    if not old:
+        raise SystemExit('the bitmap plant needs an existing pixel byte')
+    fh.seek(200)
+    fh.write(bytes([old[0] ^ 1]))
+PY
+    then
+        _eg_restore
+        die "the bitmap plant could not be written"
+    fi
+    cmp -s "$logo" "$lbak" && { _eg_restore; die "the bitmap plant did not land"; }
+    _neg_gate check_edge_generators && { _eg_restore; die "check_edge_generators passed with a planted OEM bitmap pixel"; }
+    grep -qF "mios-oem-logo.bmp: sha256" <<<"$_NEG_GATE_OUT" || { _eg_restore; die "check_edge_generators went red without naming the planted bitmap: ${_NEG_GATE_OUT}"; }
+    cp -p "$lbak" "$logo"
+
+    printf '\n' >>"$side"
+    _neg_gate check_edge_generators && { _eg_restore; die "check_edge_generators passed with stale OEM logo evidence bytes"; }
+    grep -qF "mios-oem-logo.bmp.json: sha256" <<<"$_NEG_GATE_OUT" || { _eg_restore; die "check_edge_generators went red without naming the planted sidecar: ${_NEG_GATE_OUT}"; }
 
     _eg_restore
     _neg_gate check_edge_generators || die "check_edge_generators failed after restoration: ${_NEG_GATE_OUT}"
