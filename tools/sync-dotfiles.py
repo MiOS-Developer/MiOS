@@ -77,9 +77,10 @@ def _name_list(dc, key, what):
 def devcontainer_projection():
     """What every devcontainer.json owns, as the resolver emits it (emit_exports: stack_id offset and
     ${MIOS_*} applied): forwardPorts from each [ports] key of [dotfiles.devcontainer].forward_port_keys,
-    in order; containerEnv[n] for each MIOS_* name n of .container_env_keys; remoteUser from
-    [identity].username; hostRequirements from .host_requirements. Exit 3 on an absent or empty list,
-    a name without a resolved (integer, for a port) value, or an invalid user or host requirement."""
+    in order; containerEnv[n] for each MIOS_* name n of .container_env_keys; identityUser (the
+    build.args.MIOS_IDENTITY_USERNAME account) from [identity].username; hostRequirements from
+    .host_requirements. Exit 3 on an absent or empty list, a name without a resolved (integer, for a
+    port) value, or an invalid user or host requirement."""
     merged = _vendor_merged()
     dc = mios_toml.section(merged, "dotfiles.devcontainer")
     keys = _name_list(dc, "forward_port_keys", "[ports] key names")
@@ -119,7 +120,7 @@ def devcontainer_projection():
         raise SystemExit(_fatal("mios.toml [dotfiles.devcontainer].host_requirements must be "
                                 "{ cpus = <int>, memory = \"<n>gb\", storage = \"<n>gb\" }", EXIT_BAD_POLICY))
     return {"forwardPorts": [int(v) for v in ports], "containerEnv": env,
-            "remoteUser": user, "hostRequirements": dict(host),
+            "identityUser": user, "hostRequirements": dict(host),
             "workspaceFolder": ws["root"],
             # Pinned so a local clone under any directory name lands where Codespaces puts it.
             "workspaceMount": f"source=${{localWorkspaceFolder}},target={ws['root']}/{primary},type=bind",
@@ -270,9 +271,9 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
     devcontainer.json / *.code-workspace settings block and PRUNE every
     [dotfiles.vscode] desktop-only / User-only / unregistered key already there.
     SSOT keys win on conflict; any surface-only key (installer-specific zenMode.*
-    tuning) survives. A devcontainer.json's forwardPorts array, remoteUser/build account,
-    hostRequirements and the containerEnv entries in dc_owned are owned. Returns [(label, reason)] -- one line per key and file, so
-    --check names exactly what is wrong where."""
+    tuning) survives. A devcontainer.json's forwardPorts array, build account (and the absence of a
+    literal remoteUser), hostRequirements and the containerEnv entries in dc_owned are owned. Returns
+    [(label, reason)] -- one line per key and file, so --check names exactly what is wrong where."""
     pruned = pruned_keys(pol)
     portable = {k: v for k, v in ssot_settings.items() if k not in pruned}
     drift = []
@@ -315,24 +316,29 @@ def project_json_merges(check, pol, ssot_settings, dc_owned):
             reasons.extend(f"containerEnv.{n} {cenv.get(n)!r} differs from the resolved SSOT value {v!r} "
                            "([dotfiles.devcontainer].container_env_keys)" for n, v in env.items() if cenv.get(n) != v)
             owned_stale = doc.get("forwardPorts") != fwd or any(cenv.get(n) != v for n, v in env.items())
-            for key, source in (("remoteUser", "[identity].username"),
-                                ("hostRequirements", "[dotfiles.devcontainer].host_requirements")):
-                if doc.get(key) != dc_owned[key]:
-                    reasons.append(f"{key} {doc.get(key)!r} differs from the {source} projection {dc_owned[key]!r}")
-                    owned_stale = True
+            # The image's USER is the [identity].username account its build created; a literal
+            # here overrides it and names an account a container built for another identity lacks.
+            if "remoteUser" in doc:
+                reasons.append(f"remoteUser {doc['remoteUser']!r} must not be set: the image's USER is "
+                               "the [identity].username account its build created")
+                owned_stale = True
+            if doc.get("hostRequirements") != dc_owned["hostRequirements"]:
+                reasons.append(f"hostRequirements {doc.get('hostRequirements')!r} differs from the "
+                               f"[dotfiles.devcontainer].host_requirements projection {dc_owned['hostRequirements']!r}")
+                owned_stale = True
             build = doc.get("build")
             if not isinstance(build, dict) or not isinstance(build.get("args", {}), dict):
                 raise SystemExit(_fatal(f"{rel_target} needs a build object with an args object for the canonical account", EXIT_BAD_POLICY))
             build_args = build.get("args", {})
-            if build_args.get("MIOS_IDENTITY_USERNAME") != dc_owned["remoteUser"]:
+            if build_args.get("MIOS_IDENTITY_USERNAME") != dc_owned["identityUser"]:
                 reasons.append(f"build.args.MIOS_IDENTITY_USERNAME {build_args.get('MIOS_IDENTITY_USERNAME')!r} "
-                               f"differs from the [identity].username projection {dc_owned['remoteUser']!r}")
+                               f"differs from the [identity].username projection {dc_owned['identityUser']!r}")
                 owned_stale = True
             if owned_stale:
-                doc["build"] = dict(build, args=dict(build_args, MIOS_IDENTITY_USERNAME=dc_owned["remoteUser"]))
+                doc["build"] = dict(build, args=dict(build_args, MIOS_IDENTITY_USERNAME=dc_owned["identityUser"]))
                 doc["forwardPorts"] = list(fwd)
                 doc["containerEnv"] = dict(cenv, **env)
-                doc["remoteUser"] = dc_owned["remoteUser"]
+                doc.pop("remoteUser", None)
                 doc["hostRequirements"] = dict(dc_owned["hostRequirements"])
         # [workspace]: the primary devcontainer opens the workspace root and every
         # *.code-workspace here lists the same repos, so each MiOS image opens one set.

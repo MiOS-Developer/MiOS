@@ -16760,7 +16760,8 @@ container_env_keys = ["MIOS_AI_ENDPOINT"]
 # containerd keeps both, so the pull alone needs ~72 GB before the workspace or a
 # nested build of the image. Codespaces offers 128 GB of storage only on its
 # 16-core / 64 GB machine, which is also what a rebuild of MiOS inside it needs.
-# remoteUser is projected from [identity].username: the image's own user.
+# build.args.MIOS_IDENTITY_USERNAME is projected from [identity].username; the image's
+# USER is the account its build created, so devcontainer.json carries no remoteUser.
 host_requirements = { cpus = 16, memory = "64gb", storage = "128gb" }
 
 [dotfiles.registry.btop]

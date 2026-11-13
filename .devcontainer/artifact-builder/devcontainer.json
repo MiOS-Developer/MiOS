@@ -31,7 +31,6 @@
   ],
   "postCreateCommand": "bash .devcontainer/boot-mios-systems.sh create",
   "postStartCommand": "bash .devcontainer/boot-mios-systems.sh start",
-  "remoteUser": "user",
   "workspaceFolder": "/workspaces/MiOS",
   "customizations": {
     "vscode": {

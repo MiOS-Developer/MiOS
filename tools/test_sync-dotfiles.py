@@ -304,23 +304,25 @@ def test_container_env_projection():
 
 
 def test_user_and_host_projection():
-    """The devcontainer runs the MiOS image, so remoteUser is its [identity].username and hostRequirements
-    is [dotfiles.devcontainer].host_requirements, on every devcontainer.json; a stale literal is drift,
-    an absent or malformed source is exit 3."""
+    """The devcontainer runs the MiOS image, so its build account (build.args.MIOS_IDENTITY_USERNAME) is
+    [identity].username and hostRequirements is [dotfiles.devcontainer].host_requirements, on every
+    devcontainer.json; no devcontainer.json names a remoteUser (the image's USER is the account its build created, so attach
+    never selects a name a container built for another identity lacks); a stale build account or any literal
+    remoteUser is drift, an absent or malformed source is exit 3."""
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.join(tmp, "MiOS")
         boot = _fixture(root)
         rc, out = _run(root, boot, "--check", "--client-surfaces")
         check("user: an unprojected surface is drift", rc, 1)
         check("user: the missing user is named",
-              "DRIFT MiOS/.devcontainer/devcontainer.json: remoteUser None differs from the "
+              "DRIFT MiOS/.devcontainer/devcontainer.json: build.args.MIOS_IDENTITY_USERNAME None differs from the "
               "[identity].username projection 'fx-user'" in out, True)
         check("host: the missing requirement is named on bootstrap too",
               "DRIFT mios-bootstrap/.devcontainer/devcontainer.json: hostRequirements None differs" in out, True)
         check("user: projection succeeds", _run(root, boot, "--client-surfaces")[0], 0)
         for label, repo in (("MiOS", root), ("bootstrap", boot)):
             dev = json.load(open(os.path.join(repo, ".devcontainer/devcontainer.json"), encoding="utf-8"))
-            check(f"user: {label} remoteUser", dev.get("remoteUser"), "fx-user")
+            check(f"user: {label} names no remoteUser", "remoteUser" in dev, False)
             check(f"user: {label} build account", dev["build"]["args"].get("MIOS_IDENTITY_USERNAME"), "fx-user")
             check(f"user: {label} unrelated build args survive", dev["build"]["args"].get("KEEP_ME"), "preserved")
             check(f"host: {label} hostRequirements", dev.get("hostRequirements"),
@@ -328,7 +330,7 @@ def test_user_and_host_projection():
         ws = json.load(open(os.path.join(root, "x.code-workspace"), encoding="utf-8"))
         check("user: a workspace file gets none", "remoteUser" in ws or "hostRequirements" in ws, False)
         check("user: green after projection", _run(root, boot, "--check", "--client-surfaces")[0], 0)
-        # Account provisioning must track identity changes before attach, independently of remoteUser drift.
+        # Account provisioning must track identity changes on its own (the image's USER is the attach account).
         p = os.path.join(root, ".devcontainer/devcontainer.json")
         dev = json.load(open(p, encoding="utf-8"))
         dev["build"]["args"]["MIOS_IDENTITY_USERNAME"] = "stale-user"
@@ -340,7 +342,7 @@ def test_user_and_host_projection():
         check("user: nondefault identity reprojects", _run(root, boot, "--client-surfaces")[0], 0)
         for repo in (root, boot):
             dev = json.load(open(os.path.join(repo, ".devcontainer/devcontainer.json"), encoding="utf-8"))
-            check("user: attach/build identities change together", (dev["remoteUser"], dev["build"]["args"]["MIOS_IDENTITY_USERNAME"]), ("another-user", "another-user"))
+            check("user: the build account follows the identity", (dev["build"]["args"]["MIOS_IDENTITY_USERNAME"], "remoteUser" in dev), ("another-user", False))
         _write(os.path.join(root, "usr/share/mios/mios.toml"), _toml(DESKTOP_ONLY))
         check("user: restore fixture identity", _run(root, boot, "--client-surfaces")[0], 0)
         # A planted literal (the retired mios-dev user, the old 32 GB host) is drift again.
@@ -349,8 +351,17 @@ def test_user_and_host_projection():
         dev["remoteUser"], dev["hostRequirements"]["storage"] = "mios-dev", "32gb"
         _write(p, json.dumps(dev, indent=2) + "\n")
         rc, out = _run(root, boot, "--check", "--client-surfaces")
-        check("user: a planted literal user is drift", rc == 1 and "remoteUser 'mios-dev' differs" in out, True)
+        check("user: a planted literal user is drift", rc == 1 and "remoteUser 'mios-dev' must not be set" in out, True)
         check("host: a planted small disk is drift", "'storage': '32gb'} differs" in out, True)
+        check("user: projection removes the planted literal", _run(root, boot, "--client-surfaces")[0], 0)
+        check("user: no remoteUser after projection",
+              "remoteUser" in json.load(open(p, encoding="utf-8")), False)
+        dev = json.load(open(p, encoding="utf-8"))
+        dev["remoteUser"] = "fx-user"   # even the SSOT name: a literal outranks the image's own USER
+        _write(p, json.dumps(dev, indent=2) + "\n")
+        rc, out = _run(root, boot, "--check", "--client-surfaces")
+        check("user: a literal equal to the SSOT name is still drift", rc == 1 and "remoteUser 'fx-user' must not be set" in out, True)
+        check("user: and is removed", _run(root, boot, "--client-surfaces")[0], 0)
         for bad in (dict(host=None), dict(host='{ cpus = 8, memory = "32", storage = "64gb" }'),
                     dict(host='{ cpus = 0, memory = "32gb", storage = "64gb" }'), dict(identity=None),
                     dict(identity='[identity]\nusername = "Not A User"\n')):
