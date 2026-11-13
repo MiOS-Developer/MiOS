@@ -136,6 +136,7 @@ REQUIRED = {
     "identity.background_color_ref": str, "identity.background": str,
     "identity.oem_manufacturer_ref": str, "identity.oem_model_ref": str, "identity.oem_support_url_ref": str,
     "identity.oem_support_hours_ref": str, "identity.oem_logo_ref": str, "identity.oem_logo_source_ref": str,
+    "identity.oem_logo_projection": str,
     "shell.dir": str, "shell.bin_dir": str, "shell.wt_fragment": str, "shell.all_users_profiles": list,
     "shell.profile_name_ref": str, "shell.scheme_name_ref": str, "shell.look_ref": str, "shell.font_ref": str,
     "shell.prompt_config_ref": str, "shell.fastfetch_config_ref": str, "shell.fastfetch_theme_ref": str,
@@ -739,6 +740,75 @@ def _font_members(family: str, archive: str) -> list:
     return rows
 
 
+def _oem_logo_bitmap(src_rel: str, bg: tuple, tree_root: str, key: str) -> tuple:
+    """(mark PNG bytes, 32-bit logo BMP) for a tree-relative mark; a SpecError names `key`."""
+    src = os.path.join(tree_root, *src_rel.split("/"))
+    if not src_rel or src_rel.startswith("/") or ".." in src_rel.split("/") or not os.path.isfile(src):
+        raise SpecError(key, f"{src_rel!r} is not a file in the tree")
+    with open(src, "rb") as fh:
+        mark = fh.read()
+    try:
+        return mark, oem_logo_bmp(mark, OEM_LOGO_PX, bg)
+    except ValueError as e:
+        raise SpecError(key, f"{src_rel}: {e}") from None
+
+
+OEM_LOGO_SIDECAR = "mios-oem-logo/1"   # schema of the projection's .json sidecar
+
+
+def oem_logo_projection(merged: dict, tree_root: str = _TREE) -> dict:
+    """{tree path: bytes}: the logo every image renders, from the vendor SSOT, plus its .json sidecar."""
+    idn = _get(merged, f"{ROOT}.identity")
+    if not isinstance(idn, dict):
+        raise SpecError(_full("identity"), "missing")
+    rel = str(idn.get("oem_logo_projection") or "").strip()
+    parts = rel.split("/")
+    if not rel.endswith(".bmp") or rel.startswith("/") or "\\" in rel or ".." in parts or "" in parts:
+        raise SpecError(_full("identity.oem_logo_projection"), f"{rel!r} must be a tree-relative .bmp path")
+    bg_key, src_key = idn["background_color_ref"], idn["oem_logo_source_ref"]
+    bg = _rgb(resolve_ref(merged, "identity.background_color_ref", bg_key), bg_key)
+    src_rel = str(resolve_ref(merged, "identity.oem_logo_source_ref", src_key)).strip().replace("\\", "/")
+    mark, logo = _oem_logo_bitmap(src_rel, bg, tree_root, src_key)
+    sidecar = {"schema": OEM_LOGO_SIDECAR, "file": parts[-1], "sha256": hashlib.sha256(logo).hexdigest(), "size": len(logo),
+               "px": OEM_LOGO_PX, "background": "#%02X%02X%02X" % bg, "background_key": bg_key, "source": src_rel,
+               "source_sha256": hashlib.sha256(mark).hexdigest()}
+    return {rel: logo, rel + ".json": (json.dumps(sidecar, indent=2, sort_keys=True) + "\n").encode()}
+
+
+def _vendor_merged(tree_root: str) -> dict:
+    vendor = os.environ.get("MIOS_VENDOR_TOML") or os.path.join(tree_root, "usr", "share", "mios", "mios.toml")
+    return mios_toml.load_merged([vendor])
+
+
+def check_oem_logo_projection(tree_root: str = _TREE, merged: dict | None = None) -> list:
+    """Problems with the tracked projection: each file must equal its render from the vendor SSOT."""
+    bad = []
+    for rel, want in oem_logo_projection(merged if merged is not None else _vendor_merged(tree_root), tree_root).items():
+        try:
+            with open(os.path.join(tree_root, *rel.split("/")), "rb") as fh:
+                have = fh.read()
+        except OSError:
+            bad.append(f"{rel}: missing; regenerate with render_spec.py --write-oem-logo")
+            continue
+        if have != want:
+            bad.append(f"{rel}: sha256 {hashlib.sha256(have).hexdigest()} differs from its render "
+                       f"{hashlib.sha256(want).hexdigest()}; regenerate with render_spec.py --write-oem-logo")
+    return bad
+
+
+def write_oem_logo_projection(tree_root: str = _TREE) -> list:
+    """Regenerate the tracked projection in place; returns the paths written."""
+    written = []
+    for rel, data in oem_logo_projection(_vendor_merged(tree_root), tree_root).items():
+        path = os.path.join(tree_root, *rel.split("/"))
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+        written.append(rel)
+    return written
+
+
 def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     """(identity record, registry items) for the MiOS identity (xbox-bm-39). Every value comes from the shared SSOT key
     the [windows.xbox.identity] refs name; the cursor build floats to its newest release (resolved and recorded at build
@@ -840,15 +910,7 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
         raise SpecError(idn["oem_logo_ref"], f"{logo_live!r} must be a C:\\{root_rel}\\<folder>\\...\\<name>.bmp path of at "
                         f"most {OEM_LOGO_MAX_PATH} characters")
     src_rel = str(resolved["identity.oem_logo_source_ref"]).strip().replace("\\", "/")
-    src = os.path.join(tree_root, *src_rel.split("/"))
-    if not src_rel or src_rel.startswith("/") or ".." in src_rel.split("/") or not os.path.isfile(src):
-        raise SpecError(idn["oem_logo_source_ref"], f"{src_rel!r} is not a file in the tree")
-    with open(src, "rb") as fh:
-        mark = fh.read()
-    try:
-        logo = oem_logo_bmp(mark, OEM_LOGO_PX, bg)
-    except ValueError as e:
-        raise SpecError(idn["oem_logo_source_ref"], f"{src_rel}: {e}") from None
+    mark, logo = _oem_logo_bitmap(src_rel, bg, tree_root, idn["oem_logo_source_ref"])
     oem_logo = {"path": logo_rel.replace("\\", "/"), "live": logo_live, "source": src_rel,
                 "source_sha256": hashlib.sha256(mark).hexdigest(), "px": OEM_LOGO_PX, "background": "#%02X%02X%02X" % bg,
                 "sha256": hashlib.sha256(logo).hexdigest(), "size": len(logo)}
@@ -1406,11 +1468,32 @@ def parse_args(argv=None):
     out = ap.add_mutually_exclusive_group(required=True)
     out.add_argument("--out", metavar="JSON", help="write xbox-spec.json here (mode 0600)")
     out.add_argument("--check", action="store_true", help="validate only; write nothing")
+    out.add_argument("--write-oem-logo", action="store_true", help="regenerate the tracked OEM logo projection")
+    out.add_argument("--check-fixture", metavar="ROOT", help="verify ROOT's tracked OEM logo projection against its render")
     return ap.parse_args(argv)
+
+
+def _oem_logo_projection_cli(args) -> int:
+    try:
+        if args.write_oem_logo:
+            for rel in write_oem_logo_projection(_TREE):
+                print(f"render_spec: wrote {rel}", file=sys.stderr)
+            return 0
+        bad = check_oem_logo_projection(os.path.abspath(args.check_fixture))
+    except SpecError as exc:
+        print(f"render_spec: {exc}", file=sys.stderr)
+        return 2
+    for problem in bad:
+        print(f"render_spec: {problem}", file=sys.stderr)
+    if not bad:
+        print("render_spec: the OEM logo projection matches its render", file=sys.stderr)
+    return 1 if bad else 0
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.write_oem_logo or args.check_fixture:
+        return _oem_logo_projection_cli(args)
     layers = args.layers
     if args.with_fragment:
         if not os.path.isfile(args.with_fragment):

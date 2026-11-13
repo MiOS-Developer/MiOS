@@ -13723,6 +13723,7 @@ oem_support_url_ref   = "branding.oem_support_url"
 oem_support_hours_ref = "branding.oem_support_hours"
 oem_logo_ref          = "branding.oem_logo"         # a C:\ .bmp path under system_root
 oem_logo_source_ref   = "desktop.portal.gecko.icon_source"   # the MiOS mark (PNG) the 32-bit logo is rendered from
+oem_logo_projection   = "usr/share/mios/branding/mios-oem-logo.bmp"   # tracked render (+ .json sidecar) the Windows bootstrap stages
 
 # --- The MiOS Windows shell (xbox-bm-39): PowerShell 7, oh-my-posh, fastfetch, WT fragment, all-users profile; tools resolved latest.
 [windows.xbox.shell]

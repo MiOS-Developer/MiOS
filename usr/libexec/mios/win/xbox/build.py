@@ -189,6 +189,7 @@ def plan(layers: Optional[List[str]] = None, runner: W.Runner = W._default_runne
     x = doc["spec"]
     coverage, coverage_bad = SC.check(merged, layers, _TREE)
     problems: List[str] = [f"spec coverage: {v}" for v in coverage_bad]
+    problems += [f"oem logo projection: {p}" for p in render_spec.check_oem_logo_projection(_TREE)]
     for c in x["components"]["ship"]:
         if c["kind"] != "native" and not os.path.isfile(os.path.join(_TREE, c["source"])):
             problems.append(f"component {c['name']}: {c['source']} missing")
