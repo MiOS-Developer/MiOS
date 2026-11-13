@@ -166,7 +166,7 @@ class TestSetupComplete(Base):
 
 @unittest.skipUnless(_powershell(), "UNRUN: needs pwsh or Windows PowerShell to execute the rendered gate")
 class TestGateExecution(Base):
-    def run_shared_prelude(self, ivshmem, fail_acl=False):
+    def run_shared_prelude(self, ivshmem, fail_acl=False, fail_prelude=False):
         """Run the actual setup prefix with recording stand-ins for filesystem/ACL effects; a failed ACL must stop it."""
         prefix = self.setup.split("Invoke-MiOSStep 'environment_probe' {", 1)[0]
         standins = r'''
@@ -179,18 +179,40 @@ function Write-MiOSLog($m) { $script:Events.Add('write:log') }
 function Get-MiOSAccount { 'fixture SYSTEM' }
 '''
         standins += "$MiOSDevices['ivshmem'] = @{ present = $" + str(ivshmem).lower() + " }\n"
-        prefix = prefix.replace(A.shared_directory_acl(self.doc, P.ROOT), standins)
+        acl = A.shared_directory_acl(self.doc, P.ROOT)
+        self.assertEqual(prefix.count(acl), 1, "the rendered ACL must be replaced by the recording stand-in exactly once")
+        prefix = prefix.replace(acl, standins, 1)
         d = self.scratch("shared-prelude.")
+        # The rendered prefix resolves $PsExe before its first ACL call. Linux has no SystemRoot;
+        # use a private, existing directory without changing the real Windows environment or prefix.
+        system_root = os.path.join(d, "SystemRoot")
+        os.mkdir(system_root, 0o700)
+        env = {k: v for k, v in os.environ.items() if k.casefold() != "systemroot"}
+        env["SystemRoot"] = system_root
         script = os.path.join(d, "prelude.ps1")
         with open(script, "w", encoding="utf-8-sig") as fh:
             fh.write("$script:Events = New-Object 'System.Collections.Generic.List[string]'\n")
-            fh.write("$script:FailAcl = $" + str(fail_acl).lower() + "\ntry {\n" + prefix)
-            fh.write("$script:Events.Add('write:environment')\n} catch { $script:Events.Add('failed:acl') }\n")
-            fh.write("ConvertTo-Json -InputObject @($script:Events.ToArray()) -Compress\n")
+            fh.write("$script:UnexpectedFailure = $null\n")
+            fh.write("$script:FailAcl = $" + str(fail_acl).lower() + "\ntry {\n")
+            if fail_prelude:
+                fh.write("throw [InvalidOperationException]::new('planted prelude failure')\n")
+            fh.write(prefix)
+            fh.write("$script:Events.Add('write:environment')\n} catch {\n"
+                     "    if ($script:FailAcl -and $_.Exception.Message -ceq 'planted ACL failure') {\n"
+                     "        $script:Events.Add('failed:acl')\n"
+                     "    } else {\n"
+                     "        $script:UnexpectedFailure = [ordered]@{ type = $_.Exception.GetType().FullName; "
+                     "message = $_.Exception.Message; position = $_.InvocationInfo.PositionMessage }\n"
+                     "    }\n}\n")
+            fh.write("ConvertTo-Json -InputObject ([ordered]@{ events = @($script:Events.ToArray()); "
+                     "unexpected_failure = $script:UnexpectedFailure }) -Depth 4 -Compress\n")
         r = subprocess.run([_powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
-                           capture_output=True, text=True, timeout=120)
+                           capture_output=True, text=True, timeout=120, env=env)
         self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
-        return json.loads(r.stdout)
+        result = json.loads(r.stdout)
+        self.assertIsNone(result["unexpected_failure"],
+                          "unexpected shared prelude exception: " + json.dumps(result["unexpected_failure"]))
+        return result["events"]
 
     def test_positive_shared_roots_are_secured_before_bare_metal_or_vm_writes(self):
         expected = [f"acl:{p}:True:False" for p in (self.x["components"]["dest_dir"], self.x["provision"]["state_dir"])]
@@ -203,6 +225,11 @@ function Get-MiOSAccount { 'fixture SYSTEM' }
     def test_negative_acl_failure_stops_all_shared_writes(self):
         events = self.run_shared_prelude(False, fail_acl=True)
         self.assertEqual(events, [f"acl:{self.x['components']['dest_dir']}:True:False", "failed:acl"])
+
+    def test_negative_unexpected_prelude_exception_is_not_an_acl_failure(self):
+        with self.assertRaisesRegex(
+                AssertionError, r"unexpected shared prelude exception: .*System.InvalidOperationException.*planted prelude failure"):
+            self.run_shared_prelude(False, fail_prelude=True)
 
     def run_gate(self, pci, plant_ungated: bool = False):
         """Execute the rendered PS library + environment_probe + every guest gate (bodies replaced by a marker, or by the
