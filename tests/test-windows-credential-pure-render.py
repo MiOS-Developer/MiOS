@@ -102,7 +102,7 @@ Write-MiOSPrivateText -Path (Join-Path $env:MIOS_PRIVATE_TEST_DIR 'output.env') 
                 self.env["MIOS_PRIVATE_TEST_EDITION"] = edition
                 result = self.ps(r'''
 $t=Read-MiosToml -Path $env:MIOS_VENDOR_TOML -ResolvedJson (Join-Path $env:MIOS_PRIVATE_TEST_DIR 'resolved.json')
-$t=Apply-MiosEdition -T $t -Edition $env:MIOS_PRIVATE_TEST_EDITION
+$t=Apply-MiosEdition -T $t -Edition $env:MIOS_PRIVATE_TEST_EDITION 6>$null
 $c=Resolve-MiOSCredentials -Toml $t
 @{ user_ok=($c.username -ceq 'fixture-projected-user'); count=$c.accounts.Count; account_ok=($c.accounts[0].name -ceq $c.username); pass_ok=($c.autologon.password -ceq $c.default_password); pass_exact=($c.default_password -ceq 'fixture-π-quoted-''#-value'); enabled=$c.autologon.enable; persistent=$c.autologon.persistent; logon_count=$c.autologon.count; service_disabled=(-not $c.service.enable); rescue_user_ok=((Get-Toml $t 'field.sysrescue.username') -ceq 'fixture-projected-rescue'); rescue_pass_ok=((Get-Toml $t 'field.sysrescue.password') -ceq 'fixture-projected-rescue-value'); hash_absent=(-not $t.scalars.ContainsKey('auth.password_hash')); brand=(Get-Toml $t 'branding.oem_manufacturer') } | ConvertTo-Json -Compress
 ''')
