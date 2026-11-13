@@ -705,24 +705,30 @@ class TestDesktopIdleCollection(unittest.IsolatedAsyncioTestCase):
         entered, release = threading.Event(), threading.Event()
         def probe():
             entered.set()
-            if not release.wait(3):
+            if not release.wait(10):
                 raise RuntimeError("attachment probe not released")
             return False
         app = self.app()
-        async with app.run_test(size=(80, 12)) as pilot:
-            app.collectors_enabled = True
-            with patch.object(monitor, "desktop_attached", side_effect=probe) as read:
-                pending = asyncio.create_task(app.refresh_desktop_attachment())
-                try:
+        app.collectors_enabled = True
+        app.panel_policy["poll_s"] = .05
+        try:
+            with patch.object(monitor, "desktop_attached", side_effect=probe) as read, \
+                 patch.object(app, "_start_snapshot", return_value=False):
+                async with app.run_test(size=(80, 12)) as pilot:
+                    # Exercise the real on_mount after-refresh callback and
+                    # repeated Textual timer callbacks, not a test-created task.
                     self.assertTrue(await asyncio.to_thread(entered.wait, 2))
-                    for _ in range(20):
-                        await app.refresh_desktop_attachment()
-                    await pilot.press("ctrl+f")
+                    await asyncio.wait_for(pilot.press("ctrl+f"), 1)
                     self.assertEqual(app.focused.id, "agent-search")
+                    await asyncio.wait_for(pilot.press("f4"), 1)
+                    self.assertEqual(app.query_one(TabbedContent).active, "tab-tasks")
+                    await pilot.pause(.15)
                     self.assertEqual(read.call_count, 1)
-                finally:
-                    release.set()
-                    await pending
+                    self.assertFalse(app._attachment_task.done())
+                self.assertIsNone(app._attachment_task)
+                self.assertFalse(app._attachment_checking)
+        finally:
+            release.set()
 
 
 class TestDesktopPanel(unittest.IsolatedAsyncioTestCase):

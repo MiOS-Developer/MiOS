@@ -803,6 +803,8 @@ if TEXTUAL_AVAILABLE:
             self._panel_log_timer = None
             self._collection_paused = False
             self._attachment_checking = False
+            self._attachment_task = None
+            self._attachment_stop_task = None
             self.collectors_enabled = collectors and not client_chooser
             self.collectors_started = False
             self._snapshot_jobs = set()
@@ -1261,8 +1263,8 @@ if TEXTUAL_AVAILABLE:
                     self.collectors_started = True
                     self.set_interval(self.panel_policy["poll_s"], self.update_panel_view)
                     if not IS_WINDOWS:
-                        self.set_interval(self.panel_policy["poll_s"], self.refresh_desktop_attachment)
-                        self.call_after_refresh(self.refresh_desktop_attachment)
+                        self.set_interval(self.panel_policy["poll_s"], self.schedule_desktop_attachment)
+                        self.call_after_refresh(self.schedule_desktop_attachment)
                 return
 
             table = self.query_one("#svc-table", DataTable)
@@ -1288,6 +1290,16 @@ if TEXTUAL_AVAILABLE:
             cells = event.data_table.get_row(event.row_key)
             self.push_screen(InventoryDetails(" · ".join(clean(cell, 2000) for cell in cells)))
 
+        def schedule_desktop_attachment(self):
+            # Textual awaits async timer/message callbacks. Return immediately
+            # and keep the entire probe/child shutdown off its message pump.
+            if (self._snapshot_closing or not self.desktop_panel or not self.collectors_enabled
+                    or self._attachment_task is not None and not self._attachment_task.done()):
+                return
+            self._attachment_task = asyncio.create_task(self.refresh_desktop_attachment())
+            self._attachment_task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception())
+
         async def refresh_desktop_attachment(self):
             if (not self.desktop_panel or not self.collectors_enabled or self._snapshot_closing
                     or self._attachment_checking):
@@ -1306,7 +1318,9 @@ if TEXTUAL_AVAILABLE:
                     # These children belong to this UI, never to a work pane,
                     # the shared tmux server, or the physical input daemon.
                     if self._owned_observation and self.agent_inventory:
-                        await self.agent_inventory.close()
+                        self._attachment_stop_task = asyncio.create_task(self.agent_inventory.close())
+                        await asyncio.shield(self._attachment_stop_task)
+                        self._attachment_stop_task = None
                     self.tailing = False
                     for proc in list(getattr(self, "journal_procs", [])):
                         try: proc.terminate()
@@ -2145,6 +2159,15 @@ if TEXTUAL_AVAILABLE:
 
         async def on_unmount(self) -> None:
             self._snapshot_closing = True
+            if self._attachment_task is not None:
+                self._attachment_task.cancel()
+                await asyncio.gather(self._attachment_task, return_exceptions=True)
+                self._attachment_task = None
+            if self._attachment_stop_task is not None:
+                # Cancelling a pending probe must not interrupt an owned
+                # observer's terminate/wait/kill cleanup already in progress.
+                await asyncio.gather(self._attachment_stop_task, return_exceptions=True)
+                self._attachment_stop_task = None
             self.tailing = False
             if self.agent_inventory:
                 await self.agent_inventory.close()
