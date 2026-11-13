@@ -868,15 +868,19 @@ rows = ["one"]
             "[mios_pointer_fixture]\nrows = ['one']\n[ssot_tables]\nunconsumed = []\nmax_unconsumed = 0\n",
         )?;
         let register_reader = "import tomllib\nwith open('usr/share/mios/mios.toml', 'rb') as fh:\n    data = tomllib.load(fh)\nlimit = data['ssot_tables']['max_unconsumed']\n";
-        for (path, text) in std::iter::once(("register.py", register_reader))
-            .chain(sources.iter().copied())
+        for (path, text) in
+            std::iter::once(("register.py", register_reader)).chain(sources.iter().copied())
         {
             let path = root.join(path);
             std::fs::create_dir_all(path.parent().ok_or("fixture source has no parent")?)?;
             std::fs::write(path, text)?;
         }
         for args in [["init", "-q"], ["add", "--all"]] {
-            let status = Command::new("git").arg("-C").arg(root).args(args).status()?;
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()?;
             if !status.success() {
                 return Err(format!("fixture Git {args:?} failed: {status}").into());
             }
