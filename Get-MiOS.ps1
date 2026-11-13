@@ -606,7 +606,7 @@ function Get-MiosTomlAssignments {
             while ($true) {
                 $key = Read-MiosTomlKey
                 $name = $Prefix + '.' + ($key -join '.')
-                if ($key[-1] -match $Script:MiosCredentialKeyRe) { $state.Names.Add($name) }
+                if (@($key | Where-Object { $_ -match $Script:MiosCredentialKeyRe }).Count) { $state.Names.Add($name) }
                 if ($state.Pos -ge $state.Length -or $state.Text[$state.Pos] -ne '=') { Stop-MiosTomlRead }
                 $state.Pos++; Skip-MiosTomlSpace $false
                 Read-MiosTomlValue $name ($Depth + 1)
@@ -632,6 +632,9 @@ function Get-MiosTomlAssignments {
             $state.Pos++; $array = $state.Pos -lt $state.Length -and $state.Text[$state.Pos] -eq '['
             if ($array) { $state.Pos++ }
             $section = Read-MiosTomlKey
+            if (@($section | Where-Object { $_ -match $Script:MiosCredentialKeyRe }).Count) {
+                throw 'A credential field cannot be projected as a TOML table; no public write was made.'
+            }
             if ($state.Pos -ge $state.Length -or $state.Text[$state.Pos] -ne ']') { Stop-MiosTomlRead }
             $state.Pos++
             if ($array) {
@@ -643,7 +646,7 @@ function Get-MiosTomlAssignments {
             $key = Read-MiosTomlKey
             $name = (@($section) + @($key)) -join '.'
             $state.Names = New-Object System.Collections.Generic.List[string]
-            if ($key[-1] -match $Script:MiosCredentialKeyRe) { $state.Names.Add($name) }
+            if (@($key | Where-Object { $_ -match $Script:MiosCredentialKeyRe }).Count) { $state.Names.Add($name) }
             if ($state.Pos -ge $state.Length -or $state.Text[$state.Pos] -ne '=') { Stop-MiosTomlRead }
             $state.Pos++; Skip-MiosTomlSpace $false
             $valueStart = $state.Pos
@@ -3588,7 +3591,7 @@ function Resolve-MiosDevDistro {
     `$name = $miosDevDistroLiteral
     `$registered = @((& wsl.exe -l -q 2>`$null) -split "`r?`n" | ForEach-Object { (`$_ -replace [char]0, '').Trim() } | Where-Object { `$_ })
     if (`$LASTEXITCODE -ne 0) { throw 'Could not enumerate the configured MiOS builder.' }
-    foreach (`$candidate in @('podman-' + `$name, `$name)) { if (`$registered -contains `$candidate) { return `$candidate } }
+    foreach (`$candidate in @(('podman-' + `$name), `$name)) { if (`$registered -contains `$candidate) { return `$candidate } }
     throw 'The configured MiOS builder is unavailable; the saved TOML was retained for retry.'
 }
 
@@ -4742,14 +4745,26 @@ function Get-MiosDefenderExclusionPlan {
 
 function Add-MiosDefenderExclusions {
     if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { return }
-    $legacy = @('M:\')
+    # Remove only the exact signatures this bootstrap historically installed. Do not sweep administrator policy.
+    $systemDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
+    $legacyPaths = @(($systemDrive + '\MiOS'), ($systemDrive + '\MiOS\bin'), ($systemDrive + '\usr'),
+                     ($systemDrive + '\etc\mios'), 'M:\', 'M:\MiOS')
+    if ($env:LOCALAPPDATA) { $legacyPaths += $env:LOCALAPPDATA + '\Microsoft\WinGet' }
     foreach ($temp in @($env:TEMP, $env:TMP)) {
-        if ($temp) { $legacy += ConvertTo-MiosWindowsPath $temp }
+        if ($temp) { $legacyPaths += ConvertTo-MiosWindowsPath $temp }
     }
-    foreach ($current in @((Get-MpPreference -ErrorAction Stop).ExclusionPath)) {
+    $legacyProcesses = @(($systemDrive + '\MiOS\bin\mios-launch.exe'), ($systemDrive + '\MiOS\bin\fastfetch.exe'),
+                         ($systemDrive + '\MiOS\bin\btop.exe'), 'M:\MiOS\bin\mios-launch.exe')
+    $preferences = Get-MpPreference -ErrorAction Stop
+    foreach ($current in @($preferences.ExclusionPath)) {
         if (-not $current) { continue }
         try { $canonical = if ($current -match '^[A-Za-z]:$') { ConvertTo-MiosWindowsPath ($current + '\') } else { ConvertTo-MiosWindowsPath $current } } catch { continue }
-        if ($legacy -contains $canonical) { Remove-MpPreference -ExclusionPath $current -ErrorAction Stop }
+        if ($legacyPaths -contains $canonical) { Remove-MpPreference -ExclusionPath $current -ErrorAction Stop }
+    }
+    foreach ($current in @($preferences.ExclusionProcess)) {
+        if (-not $current) { continue }
+        try { $canonical = ConvertTo-MiosWindowsPath $current } catch { continue }
+        if ($legacyProcesses -contains $canonical) { Remove-MpPreference -ExclusionProcess $current -ErrorAction Stop }
     }
     $plan = Get-MiosDefenderExclusionPlan
     foreach ($r in $plan.refused) { Write-Host "  [!] Defender exclusion refused ($r)" -ForegroundColor Yellow }
