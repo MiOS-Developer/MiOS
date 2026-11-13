@@ -28,7 +28,9 @@ import xml.etree.ElementTree as ET
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.environ.get("MIOS_CRED_TEST_ROOT") or os.path.join(_HERE, ".."))
-BOOT = os.path.abspath(os.environ.get("MIOS_BOOTSTRAP_DIR") or "/var/lib/mios-build/repos/mios-bootstrap-build")
+BOOT = os.path.abspath(os.environ.get("MIOS_BOOTSTRAP_DIR") or
+                       os.environ.get("MIOS_BOOTSTRAP_ROOT") or
+                       "/var/lib/mios-build/repos/mios-bootstrap-build")
 LIB = os.path.join(ROOT, "usr", "lib", "mios")
 CRED_CLI = os.path.join(ROOT, "usr", "libexec", "mios", "mios-credential")
 AU = os.path.join(BOOT, "field", "autounattend")

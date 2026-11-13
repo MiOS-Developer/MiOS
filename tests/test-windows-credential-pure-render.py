@@ -16,7 +16,9 @@ import subprocess
 import tempfile
 import unittest
 
-BOOT = Path(os.environ.get("MIOS_BOOTSTRAP_DIR", "/var/lib/mios-build/repos/mios-bootstrap-build"))
+BOOT = Path(os.environ.get("MIOS_BOOTSTRAP_DIR") or
+            os.environ.get("MIOS_BOOTSTRAP_ROOT") or
+            "/var/lib/mios-build/repos/mios-bootstrap-build")
 LIB = BOOT / "field/autounattend/MiOS-Provision.lib.ps1"
 PWSH = shutil.which("pwsh")
 
