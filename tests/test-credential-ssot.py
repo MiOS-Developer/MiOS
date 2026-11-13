@@ -1813,6 +1813,27 @@ enabled = false
         before = len(self._recorded())
         self._apply("ttyd", operator=made_shared)           # nothing left to withdraw: no restart again
         self.assertEqual(restarts(before), [])
+        # Withdrawal remains pending after --no-restart or an unsuccessful enqueue,
+        # even though a later apply has no credential file left to remove.
+        for deferred in (True, False):
+            with self.subTest(deferred=deferred):
+                r = self._apply("ttyd", operator=f'[identity]\ndefault_password = "{OP_PASS}"\n[ttyd]\nauth_pass = "{own}"\n')
+                self.assertEqual(r.returncode, 0, r.stderr)
+                before = len(self._recorded())
+                r = self._apply(*(("--no-restart",) if deferred else ()), "ttyd", operator=made_shared,
+                                extra={} if deferred else {"FAKE_RESTART_FAIL": "1"})
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(self.d, "credstore", "mios.ttyd.password")))
+                self.assertEqual(sorted(restarts(before)), [] if deferred else sorted(ttyd))
+                with open(os.path.join(self.d, "var", "ledger", "state.json"), encoding="utf-8") as fh:
+                    self.assertEqual(sorted(json.load(fh)["_restart_pending"]["ttyd"]), sorted(ttyd))
+                before = len(self._recorded())
+                r = self._apply("ttyd", operator=made_shared)
+                self.assertEqual(r.returncode, 1, r.stderr)  # the colliding login is still refused
+                self.assertEqual(sorted(restarts(before)), sorted(ttyd))
+                before = len(self._recorded())
+                self._apply("ttyd", operator=made_shared)
+                self.assertEqual(restarts(before), [])
 
     def test_clearing_the_operator_credential_never_downgrades_a_surface(self):
         r = self._apply("portal", "forge")
@@ -2109,6 +2130,9 @@ enabled = false
         self.assertIn("# the operator's own note", text)
         self.assertNotIn("paths", doc)
         self.assertEqual(stat.S_IMODE(os.stat(user).st_mode), 0o600)
+        with open(os.path.join(self.d, "credstore", "mios.portal.password")) as fh:
+            self.assertEqual(fh.read(), "fixture-portal-saved")
+        self.assertNotIn("fixture-portal-saved", r.stdout + r.stderr)
 
     def test_portal_save_shadowed_by_user_fragment_stays_queued_without_writes(self):
         self.assertEqual(self._apply("portal").returncode, 0)
@@ -2139,9 +2163,6 @@ enabled = false
         self.assertFalse(os.path.exists(pending))
         with open(os.path.join(self.d, "credstore", "mios.portal.password"), encoding="utf-8") as fh:
             self.assertEqual(fh.read(), "fixture-shadowed-save")
-        with open(os.path.join(self.d, "credstore", "mios.portal.password")) as fh:
-            self.assertEqual(fh.read(), "fixture-portal-saved")
-        self.assertNotIn("fixture-portal-saved", r.stdout + r.stderr)
 
     def test_unmerged_save_stays_queued_with_every_later_one(self):
         inbox = os.path.join(self.d, "inbox")
