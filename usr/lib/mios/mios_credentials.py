@@ -943,10 +943,20 @@ def _apply_ttyd(data, user, secret, ctx):
     if ctx.get("collides"):
         ctx["no_record"] = True
         if not ctx["check"]:
-            _stage_restarts(ctx)
-            for name in ("mios.ttyd.password", "mios.ttyd.user"):
+            paths = [os.path.join(credstore_dir(), name)
+                     for name in ("mios.ttyd.password", "mios.ttyd.user")]
+            for path in paths:
                 try:
-                    os.unlink(os.path.join(credstore_dir(), name))
+                    os.lstat(path)
+                except FileNotFoundError:
+                    continue
+                # Stage before withdrawal, including dangling links. Once the files
+                # are gone, only a previously pending activation needs retrying.
+                _stage_restarts(ctx)
+                break
+            for path in paths:
+                try:
+                    os.unlink(path)
                 except FileNotFoundError:
                     pass
         return ("failed (ttyd's own login equals a credential another surface uses -- refused and "
