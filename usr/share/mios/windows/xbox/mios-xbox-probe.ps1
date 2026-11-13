@@ -123,6 +123,13 @@ foreach ($it in @($req.items)) {
                 }
                 $obsMap[$id] = $o
             }
+            'file_hash' {
+                # an image-relative file the spec pins by sha256 (xbox-bm-39: the SSOT font family under Windows\Fonts)
+                $p = Join-Path $env:SystemDrive ([string]$it.path -replace '/', '\')
+                $o = [ordered]@{ present = (Test-Path -LiteralPath $p -PathType Leaf) }
+                if ($o.present) { $o.sha256 = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower() }
+                $obsMap[$id] = $o
+            }
             'build_family' {
                 $o = [ordered]@{ present = $false }
                 if ($profilePath) {

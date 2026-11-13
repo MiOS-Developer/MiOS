@@ -140,6 +140,8 @@ def fake_inputs(tmp: str, doc) -> dict:
     with open(os.path.join(fod, x["features"]["fod_metadata"]), "wb") as fh:
         fh.write(b"fixture fod metadata")
     inputs["fod_dir"] = fod
+    import _mios_xbox_fixtures as FX   # tests/ is on sys.path (above)
+    inputs["identity"] = FX.cursor_archive_inputs(os.path.join(tmp, "identity"), doc)   # xbox-bm-39 (re-pins doc)
     return inputs
 
 

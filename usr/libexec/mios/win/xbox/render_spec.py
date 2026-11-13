@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import hmac
 import json
 import os
 import re
+import struct
 import sys
 import tempfile
+import zipfile
 
 _TREE = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", ".."))
 _LIB = os.path.join(_TREE, "usr", "lib", "mios")
@@ -123,6 +126,8 @@ REQUIRED = {
     "provision.mirror_task": str, "provision.legacy_mirror_tasks": list,
     "devices.record": str, "drivers.looking_glass_idd.required_device": str,
     "guest_tools.looking_glass_host.install": bool,
+    "identity.accent_ref": str, "identity.cursor_ref": str, "identity.cursor_theme_ref": str, "identity.font_ref": str,
+    "identity.font_dir": str, "identity.cursor_root": str,
     "provision.serial_baud": int, "provision.network_category": str, "provision.network_wait_s": int,
     "ssh.install": str, "ssh.port_ref": str, "ssh.settings_ref": str, "ssh.authorized_keys_key": str,
     "ssh.authorized_keys_files": list, "ssh.settings_path": str, "ssh.authorized_keys_path": str,
@@ -433,6 +438,7 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
     _check_provision(x, resolved)
     _check_apps(x)
     _check_devices(x)
+    ident, ident_registry = render_identity(x, resolved)
 
     out = {
         "schema": SCHEMA,
@@ -443,7 +449,8 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
         "region": {"timezone": win_tz, "ui_language": ui_lang, "input_locale": input_locale},
         "source": source,
         "feature_overrides": _feature_ids(x),
-        "registry": build_registry(x),
+        "registry": build_registry(x) + ident_registry,
+        "identity": ident,
         "debloat_services": debloat_services,
         "winrm": {"enable": x["winrm"]["enable"], "remote_address": x["winrm"]["remote_address"], "port": port},
         "ssh": ssh,
@@ -492,6 +499,159 @@ def _check_devices(x: dict) -> None:
                         "must be false while the Looking Glass IDD is installed: one Looking Glass server per IVSHMEM device")
     if not str(x["provision"]["mirror_task"]).replace("/", "\\").strip("\\"):
         raise SpecError(_full("provision.mirror_task"), "empty task name")
+
+
+# ---------------------------------------------------------------------------
+# MiOS identity (xbox-bm-39): accent, cursor scheme, font -- from the ONE SSOT value each, rendered offline
+# ---------------------------------------------------------------------------
+
+ACCENT_RE = re.compile(r"^#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+CURSOR_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]*\.(cur|ani)$")
+CURSOR_KEY = r"Control Panel\Cursors"
+CURSOR_SCHEMES_KEY = r"Microsoft\Windows\CurrentVersion\Control Panel\Cursors\Schemes"
+FONTS_KEY = r"Microsoft\Windows NT\CurrentVersion\Fonts"
+DWM_KEY = r"Software\Microsoft\Windows\DWM"
+ACCENT_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent"
+PERSONALIZE_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+SCHEME_SOURCE_SYSTEM = 2   # Control Panel\Cursors "Scheme Source": 2 = a scheme registered system-wide (HKLM)
+
+
+def font_names(data: bytes) -> dict:
+    """{name id: string} from an OpenType/TrueType 'name' table (Windows platform, Unicode BMP, en-US first)."""
+    if len(data) < 12:
+        raise ValueError("not an OpenType file")
+    num_tables = struct.unpack(">H", data[4:6])[0]
+    name_off = None
+    for i in range(num_tables):
+        tag, _, off, _ = struct.unpack(">4sIII", data[12 + 16 * i:28 + 16 * i])
+        if tag == b"name":
+            name_off = off
+    if name_off is None:
+        raise ValueError("no name table")
+    _, count, str_off = struct.unpack(">HHH", data[name_off:name_off + 6])
+    out: dict = {}
+    for i in range(count):
+        pid, eid, lid, nid, ln, off = struct.unpack(">HHHHHH", data[name_off + 6 + 12 * i:name_off + 18 + 12 * i])
+        if pid != 3 or eid not in (0, 1):
+            continue
+        raw = data[name_off + str_off + off:name_off + str_off + off + ln]
+        if nid not in out or lid == 0x409:
+            out[nid] = raw.decode("utf-16-be", "replace")
+    return out
+
+
+def _font_members(family: str, archive: str) -> list:
+    """Members of the vendored font archive whose typographic family (name id 16, else 1) is the SSOT family."""
+    rows = []
+    with zipfile.ZipFile(archive) as z:
+        for m in sorted(z.namelist()):
+            base = os.path.basename(m)
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.\-]*\.(otf|ttf)", base, re.I):
+                continue
+            data = z.read(m)
+            names = font_names(data)
+            fam = names.get(16) or names.get(1) or ""
+            if fam != family:
+                continue
+            full = names.get(4) or base.rsplit(".", 1)[0]
+            kind = "OpenType" if base.lower().endswith(".otf") else "TrueType"
+            rows.append({"member": m, "file": base, "full_name": full, "registry_name": f"{full} ({kind})",
+                         "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)})
+    return rows
+
+
+def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
+    """(identity record, registry items) for the MiOS identity (xbox-bm-39). Every value comes from the shared SSOT key
+    the [windows.xbox.identity] refs name; the cursor archive is pinned there and checked against its own install.inf at
+    payload time; the font archive is the vendored one, verified against its SSOT sha256 here."""
+    idn = x["identity"]
+    accent = resolved["identity.accent_ref"]
+    m = ACCENT_RE.match(str(accent))
+    if not m:
+        raise SpecError(idn["accent_ref"], f"{accent!r} is not #RRGGBB")
+    r, g, b = (int(v, 16) for v in m.groups())
+    abgr = (0xFF << 24) | (b << 16) | (g << 8) | r   # DWM AccentColor / Explorer accent: 0xAABBGGRR
+    argb = (0xFF << 24) | (r << 16) | (g << 8) | b   # DWM ColorizationColor: 0xAARRGGBB
+
+    cur = resolved["identity.cursor_ref"]
+    if not isinstance(cur, dict):
+        raise SpecError(_full("identity.cursor_ref"), "must reference a table ([theme.cursor_windows])")
+    for k in ("asset_url", "asset_sha256", "variant_dir", "scheme_name", "install_dir", "scheme_files", "roles", "base_size"):
+        if cur.get(k) in (None, "", [], {}):
+            raise SpecError(f"{idn['cursor_ref']}.{k}", "missing")
+    if not str(cur["asset_url"]).startswith("https://"):
+        raise SpecError(f"{idn['cursor_ref']}.asset_url", "must be an https URL")
+    if not SHA256_RE.match(str(cur["asset_sha256"])):
+        raise SpecError(f"{idn['cursor_ref']}.asset_sha256", "must be a lower-case sha256")
+    files = [str(f) for f in cur["scheme_files"]]
+    roles = {str(k): str(v) for k, v in cur["roles"].items()}
+    for f in set(files) | set(roles.values()):
+        if not CURSOR_FILE_RE.match(f):
+            raise SpecError(f"{idn['cursor_ref']}", f"cursor file {f!r} is not a plain .cur/.ani name")
+    if not set(roles.values()) <= set(files):
+        raise SpecError(f"{idn['cursor_ref']}.roles", f"names files outside scheme_files: {sorted(set(roles.values()) - set(files))}")
+    size = cur["base_size"]
+    if isinstance(size, bool) or not isinstance(size, int) or not 16 <= size <= 256:
+        raise SpecError(f"{idn['cursor_ref']}.base_size", "must be an integer 16..256")
+    theme = str(resolved["identity.cursor_theme_ref"])
+    if not str(cur["scheme_name"]).startswith(theme) or not str(cur["variant_dir"]).startswith(theme):
+        raise SpecError(f"{idn['cursor_ref']}", f"the Windows build is not of the SSOT cursor theme {theme!r} (parity)")
+    sysroot = "C:\\" + str(idn["cursor_root"]).strip("\\/").replace("/", "\\")
+    install_dir = str(cur["install_dir"]).strip("\\/").replace("/", "\\")
+    if ".." in install_dir.split("\\"):
+        raise SpecError(f"{idn['cursor_ref']}.install_dir", "must stay under the system root")
+    live = {f: f"{sysroot}\\{install_dir}\\{f}" for f in files}
+
+    font = resolved["identity.font_ref"]
+    if not isinstance(font, dict) or not font.get("family") or not font.get("native_archive") or not font.get("native_sha256"):
+        raise SpecError(_full("identity.font_ref"), "must reference [theme.font] with family, native_archive and native_sha256")
+    archive = os.path.join(tree_root, str(font["native_archive"]).replace("/", os.sep))
+    if not os.path.isfile(archive):
+        raise SpecError(f"{idn['font_ref']}.native_archive", f"{font['native_archive']} is not in the tree")
+    with open(archive, "rb") as fh:
+        got = hashlib.sha256(fh.read()).hexdigest()
+    if got != str(font["native_sha256"]).lower():
+        raise SpecError(f"{idn['font_ref']}.native_sha256", "the vendored font archive does not match its pinned sha256")
+    fonts = _font_members(str(font["family"]), archive)
+    if not fonts:
+        raise SpecError(f"{idn['font_ref']}.family", f"no font of family {font['family']!r} in {font['native_archive']}")
+    font_dir = str(idn["font_dir"]).strip("\\/").replace("\\", "/")
+
+    reg: list = []
+
+    def add(owner: str, hive: str, key: str, name: str, typ: str, data) -> None:
+        reg.append({"owner": owner, "hive": hive, "key": key, "name": name, "type": typ, "data": data})
+
+    # accent: the shared [colors].accent on DWM (title bars), the Explorer accent (Start/taskbar) and their prevalence
+    add("identity.accent.dwm_accent", "DEFAULT_USER", DWM_KEY, "AccentColor", "REG_DWORD", abgr)
+    add("identity.accent.dwm_colorization", "DEFAULT_USER", DWM_KEY, "ColorizationColor", "REG_DWORD", argb)
+    add("identity.accent.dwm_prevalence", "DEFAULT_USER", DWM_KEY, "ColorPrevalence", "REG_DWORD", 1)
+    add("identity.accent.menu", "DEFAULT_USER", ACCENT_KEY, "AccentColorMenu", "REG_DWORD", abgr)
+    add("identity.accent.start_menu", "DEFAULT_USER", ACCENT_KEY, "StartColorMenu", "REG_DWORD", abgr)
+    add("identity.accent.prevalence", "DEFAULT_USER", PERSONALIZE_KEY, "ColorPrevalence", "REG_DWORD", 1)
+    # cursor: the scheme as the Default profile's active cursors and a system-wide scheme
+    add("identity.cursor.scheme_name", "DEFAULT_USER", CURSOR_KEY, "", "REG_SZ", str(cur["scheme_name"]))
+    add("identity.cursor.scheme_source", "DEFAULT_USER", CURSOR_KEY, "Scheme Source", "REG_DWORD", SCHEME_SOURCE_SYSTEM)
+    add("identity.cursor.base_size", "DEFAULT_USER", CURSOR_KEY, "CursorBaseSize", "REG_DWORD", size)
+    for role in sorted(roles):
+        add(f"identity.cursor.role.{role}", "DEFAULT_USER", CURSOR_KEY, role, "REG_SZ", live[roles[role]])
+    add("identity.cursor.system_scheme", "SOFTWARE", CURSOR_SCHEMES_KEY, str(cur["scheme_name"]), "REG_SZ",
+        ",".join(live[f] for f in files))
+    # font: every member of the SSOT family, registered system-wide
+    for f in fonts:
+        add(f"identity.font.{f['file']}", "SOFTWARE", FONTS_KEY, f["registry_name"], "REG_SZ", f["file"])
+
+    record = {
+        "accent": str(accent), "accent_abgr": abgr, "accent_argb": argb,
+        "cursor": {"theme": theme, "asset_url": str(cur["asset_url"]), "asset_sha256": str(cur["asset_sha256"]),
+                   "variant_dir": str(cur["variant_dir"]), "scheme_name": str(cur["scheme_name"]),
+                   "install_dir": install_dir, "scheme_files": files, "roles": roles, "base_size": size,
+                   "dest_dir": (str(idn["cursor_root"]).strip("\\/") + "/" + install_dir).replace("\\", "/")},
+        "font": {"family": str(font["family"]), "archive": str(font["native_archive"]), "archive_sha256": got,
+                 "dest_dir": font_dir, "files": fonts},
+    }
+    return record, reg
 
 
 def _check_accounts(merged: dict, x: dict, resolved: dict) -> int:

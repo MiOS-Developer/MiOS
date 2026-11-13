@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import xml.etree.ElementTree as ET
+import zipfile
 from typing import Any, Dict, List, Optional, Tuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -348,7 +349,7 @@ def render_registry(doc: Dict[str, Any]) -> bytes:
     for hive, key in order:
         lines.append(f"[HKEY_LOCAL_MACHINE\\{OFFLINE_MOUNT[hive]}\\{key}]")
         for name, data in keys[(hive, key)].items():
-            lines.append(f"{_reg_str(name)}={data}")
+            lines.append(f"{'@' if name == '' else _reg_str(name)}={data}")   # @ = the key's default value
         lines.append("")
     return b"\xff\xfe" + ("\r\n".join(lines) + "\r\n").encode("utf-16-le")   # REGEDIT5 = UTF-16LE with BOM
 
@@ -1184,6 +1185,97 @@ def stage_extras(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree
 # whole payload
 # ---------------------------------------------------------------------------
 
+def parse_cursor_inf(text: str) -> Dict[str, Any]:
+    """A cursor build's install.inf: SCHEME_NAME, CUR_DIR, the [Wreg] Control Panel\\Cursors role -> file map and the
+    [Scheme.Reg] file order (the contract [theme.cursor_windows] declares; xbox-bm-39)."""
+    sections: Dict[str, List[str]] = {}
+    cur = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(";"):
+            continue
+        m = re.match(r"^\[([^\]]+)\]$", line)
+        if m:
+            cur = m.group(1)
+            sections.setdefault(cur, [])
+        elif cur:
+            sections[cur].append(line)
+    strings: Dict[str, str] = {}
+    for line in sections.get("Strings", []):
+        m = re.match(r'^([^=]+?)\s*=\s*"(.*)"$', line)
+        if m:
+            strings[m.group(1).strip().lower()] = m.group(2)
+
+    def sub(v: str) -> str:
+        return re.sub(r"%([^%]+)%", lambda mm: strings.get(mm.group(1).lower(), mm.group(0)), v)
+
+    roles: Dict[str, str] = {}
+    for line in sections.get("Wreg", []):
+        parts = [p.strip() for p in line.split(",", 4)]
+        if len(parts) == 5 and parts[0] == "HKCU" and parts[1].strip('"') == "Control Panel\\Cursors" and parts[2]:
+            roles[parts[2]] = sub(parts[4].strip('"')).split("\\")[-1]
+    order: List[str] = []
+    for line in sections.get("Scheme.Reg", []):
+        parts = line.split(",", 4)
+        if len(parts) == 5:
+            order = [sub(p).split("\\")[-1] for p in parts[4].strip().strip('"').split(",")]
+    return {"scheme_name": strings.get("scheme_name", ""), "cur_dir": strings.get("cur_dir", ""), "roles": roles, "order": order}
+
+
+def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_root: str = _TREE) -> List[Dict[str, Any]]:
+    """MiOS identity files into the image (xbox-bm-39): the pinned cursor build checked against its own install.inf, and the
+    SSOT font family from the vendored archive. Returns payload rows {name, path, sha256}; any drift refuses the payload."""
+    idn = doc.get("identity")
+    if not isinstance(idn, dict) or "cursor" not in idn or "font" not in idn:
+        raise PayloadError("xbox-spec.json has no identity record (render it with render_spec.py)")
+    rows: List[Dict[str, Any]] = []
+    cur = idn["cursor"]
+    arc = ((inputs.get("identity") or {}).get("cursor_archive") or {})
+    path = arc.get("path")
+    if not path or not os.path.isfile(path):
+        raise PayloadError("build input identity.cursor_archive: not fetched/verified (inputs.json)")
+    if _sha256(path) != str(cur["asset_sha256"]).lower():
+        raise PayloadError("cursor archive sha256 differs from the SSOT pin ([theme.cursor_windows].asset_sha256)")
+    with zipfile.ZipFile(path) as z:
+        names = set(z.namelist())
+        inf_name = f"{cur['variant_dir']}/install.inf"
+        if inf_name not in names:
+            raise PayloadError(f"cursor archive has no {inf_name}")
+        inf = parse_cursor_inf(z.read(inf_name).decode("utf-8-sig", "replace"))
+        problems = []
+        if inf["scheme_name"] != cur["scheme_name"]:
+            problems.append(f"SCHEME_NAME {inf['scheme_name']!r}")
+        if inf["cur_dir"].replace("/", "\\").strip("\\") != cur["install_dir"]:
+            problems.append(f"CUR_DIR {inf['cur_dir']!r}")
+        if inf["order"] != list(cur["scheme_files"]):
+            problems.append("the scheme file order")
+        if {k.lower(): v for k, v in inf["roles"].items()} != {k.lower(): v for k, v in cur["roles"].items()}:
+            problems.append("the role map")
+        if problems:
+            raise PayloadError("cursor archive install.inf disagrees with [theme.cursor_windows]: " + "; ".join(problems))
+        for f in cur["scheme_files"]:
+            member = f"{cur['variant_dir']}/{f}"
+            if member not in names:
+                raise PayloadError(f"cursor file {f} is missing from {cur['variant_dir']}")
+            data = z.read(member)
+            rel = f"{cur['dest_dir']}/{f}"
+            _write(os.path.join(out_dir, *rel.split("/")), data)
+            rows.append({"name": f"cursor:{f}", "path": rel, "sha256": hashlib.sha256(data).hexdigest()})
+    font = idn["font"]
+    arch = os.path.join(tree_root, *str(font["archive"]).split("/"))
+    if not os.path.isfile(arch) or _sha256(arch) != str(font["archive_sha256"]).lower():
+        raise PayloadError(f"{font['archive']} is absent or changed since the spec was rendered")
+    with zipfile.ZipFile(arch) as z:
+        for f in font["files"]:
+            data = z.read(f["member"])
+            if hashlib.sha256(data).hexdigest() != f["sha256"]:
+                raise PayloadError(f"font {f['file']}: sha256 differs from the rendered spec")
+            rel = f"{font['dest_dir']}/{f['file']}"
+            _write(os.path.join(out_dir, *rel.split("/")), data)
+            rows.append({"name": f"font:{f['file']}", "path": rel, "sha256": f["sha256"]})
+    return rows
+
+
 def render_payload(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_root: str = _TREE,
                    native_dir: Optional[str] = None) -> Dict[str, Any]:
     """Write the payload tree; return its summary (no secret)."""
@@ -1215,7 +1307,8 @@ def render_payload(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
         os.makedirs(os.path.dirname(os.path.join(out_dir, rel)), exist_ok=True)
         shutil.copyfile(ins["path"], os.path.join(out_dir, rel))
         inst_rows[role] = {"path": rel, "sha256": ins["sha256"], "version": ins.get("version", ""), "signer": ins.get("signer", "")}
-    summary = {"schema": "mios-xbox-payload/1", "components": comps, "installers": inst_rows,
+    ident_rows = stage_identity(doc, inputs, out_dir, tree_root)
+    summary = {"schema": "mios-xbox-payload/1", "components": comps, "installers": inst_rows, "identity": ident_rows,
                "registry_items": len(doc["registry"]) + len(doc.get("debloat_services") or []),
                "answer_file": "autounattend.xml"}
     _write(os.path.join(state, "payload.json"), (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8"))

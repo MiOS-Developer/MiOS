@@ -27,6 +27,32 @@ sys.path.insert(0, XBOX_DIR)
 import spec_items as S  # noqa: E402
 
 
+def cursor_archive_inputs(tmp: str, doc: Dict[str, Any]) -> Dict[str, Any]:
+    """A fixture cursor build (xbox-bm-39): an archive whose install.inf states exactly the SSOT cursor contract
+    (clickgen's layout: [Scheme.Reg], [Wreg], [Strings]) with stub cursor files. The fixture spec is re-pinned to its
+    sha256 -- tests never download. Returns the inputs.json 'identity' entry."""
+    import zipfile
+    cur = doc["identity"]["cursor"]
+    os.makedirs(tmp, exist_ok=True)
+    path = os.path.join(tmp, "fixture-cursor-windows.zip")
+    var = {f: f"f{i}" for i, f in enumerate(cur["scheme_files"])}
+    lines = ["[Version]", 'signature="$CHICAGO$"', "", "[Scheme.Reg]",
+             'HKCU,"Control Panel\\Cursors\\Schemes","%SCHEME_NAME%",,"'
+             + ",".join(f"%10%\\%CUR_DIR%\\%{var[f]}%" for f in cur["scheme_files"]) + '"',
+             "", "[Wreg]", 'HKCU,"Control Panel\\Cursors",,0x00020000,"%SCHEME_NAME%"']
+    lines += [f'HKCU,"Control Panel\\Cursors",{role},0x00020000,"%10%\\%CUR_DIR%\\%{var[f]}%"' for role, f in cur["roles"].items()]
+    lines += ["", "[Strings]", f'CUR_DIR = "{cur["install_dir"]}"', f'SCHEME_NAME = "{cur["scheme_name"]}"']
+    lines += [f'{v} = "{f}"' for f, v in var.items()]
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"{cur['variant_dir']}/install.inf", "\r\n".join(lines) + "\r\n")
+        for f in cur["scheme_files"]:
+            z.writestr(f"{cur['variant_dir']}/{f}", f"fixture cursor {f}".encode())
+    with open(path, "rb") as fh:
+        sha = hashlib.sha256(fh.read()).hexdigest()
+    cur["asset_sha256"] = sha
+    return {"cursor_archive": {"path": path, "sha256": sha, "url": cur["asset_url"]}}
+
+
 def load_module(name: str, path: str):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -207,7 +233,7 @@ def render_bundle(out: str, doc: Dict[str, Any], items: List[Dict[str, Any]], ro
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, i["inf"] + ".inf"), "w", encoding="utf-8") as fh:
                 fh.write(virtio_inf(i["inf"]))
-        elif i["kind"] in ("component",):
+        elif i["kind"] in ("component", "file_hash"):
             dst = os.path.join(out, "payload", i["path"])
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             _write_component(dst, i, doc, root)
@@ -237,6 +263,20 @@ def guest_spec(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 def _write_component(dst: str, it: Dict[str, Any], doc: Dict[str, Any], root: str) -> None:
     x = doc["spec"]
+    if it["id"].startswith("identity.font."):   # xbox-bm-39: the real font member, so its pinned sha256 matches
+        import zipfile
+        font = doc["identity"]["font"]
+        f = next(f for f in font["files"] if f"identity.font.{f['file']}" == it["id"])
+        arch = os.path.join(root, *font["archive"].split("/"))
+        if not os.path.isfile(arch):   # a fixture tree does not copy the vendored archive: read it from the repo
+            arch = os.path.join(ROOT, *font["archive"].split("/"))
+        with zipfile.ZipFile(arch) as z, open(dst, "wb") as fh:
+            fh.write(z.read(f["member"]))
+        return
+    if it["id"].startswith("identity.cursor."):   # xbox-bm-39: a cursor file of the pinned build (presence item)
+        with open(dst, "wb") as fh:
+            fh.write(f"fixture {it['id']}\n".encode())
+        return
     if it["id"] == "gpu.script":
         src = os.path.join(root, x["drivers"]["gpu_step"])
     else:
@@ -435,7 +475,7 @@ def conforming_probe(items: List[Dict[str, Any]], branch: str, root: str, doc: D
             obs[it["id"]] = {"present": True, "version": "100.0.0.0"}
         elif k == "guest_tool":
             obs[it["id"]] = {"service": {"present": True, "status": "Running", "start": "Automatic"}} if it.get("service") else {}
-        elif k == "component":
+        elif k in ("component", "file_hash"):   # file_hash: the MiOS identity fonts (xbox-bm-39)
             o: Dict[str, Any] = {"present": True}
             if it.get("sha256"):
                 o["sha256"] = it["sha256"]

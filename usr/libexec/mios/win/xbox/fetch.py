@@ -461,6 +461,28 @@ def _stage_virtio_drivers(iso: str, vw: Dict[str, Any], work: str) -> str:
 # single-file artefacts
 # ---------------------------------------------------------------------------
 
+def fetch_pinned(url: str, sha256: str, work: str, dl: Downloader, what: str) -> str:
+    """A release asset its upstream publishes no digest for: the sha256 is pinned in the SSOT (xbox-bm-39). Any other
+    bytes are refused; a cached file is reused only when it still matches the pin."""
+    if not str(url).startswith("https://"):
+        raise FetchError(f"[{what}] {url!r} is not an https URL")
+    if not re.fullmatch(r"[0-9a-f]{64}", str(sha256)):
+        raise FetchError(f"[{what}] the SSOT pin is not a lower-case sha256")
+    fname = os.path.basename(urllib.parse.urlsplit(url).path)
+    if not re.fullmatch(r"[\w.\-]+", fname or ""):
+        raise FetchError(f"[{what}] unsafe file name {fname!r}")
+    path = os.path.join(work, fname)
+    if os.path.isfile(path) and _sha256(path) != sha256:
+        os.remove(path)
+    if not os.path.isfile(path):
+        dl.get(url, path)
+    got = _sha256(path)
+    if got != sha256:
+        os.remove(path)
+        raise FetchError(f"[{what}] {fname}: sha256 {got} differs from the SSOT pin {sha256}")
+    return path
+
+
 def fetch_file(manifest: Dict[str, Any], artifact: str, work: str, dl: Downloader, name: Optional[str] = None) -> str:
     a = _art(manifest, artifact)
     fname = name or os.path.basename(urllib.parse.urlsplit(a["fetch"]).path)
@@ -585,6 +607,10 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
     uup = fetch_uup(manifest, spec, os.path.join(work, "uup"), dl, http)
     fetch_apps(manifest, spec, uup, dl, http)   # the converter integrates them from its UUPs dir
     fod = fetch_fod(manifest, spec, os.path.join(work, "fod"), dl, http)
+    cur = ((spec.get("identity") or {}).get("cursor") or {})
+    if not cur.get("asset_url") or not cur.get("asset_sha256"):
+        raise FetchError("xbox-spec.json has no identity.cursor pin (render it with render_spec.py)")
+    cursor = fetch_pinned(cur["asset_url"], cur["asset_sha256"], work, dl, "identity.cursor")
     arts = manifest["artifacts"]
 
     def row(path: str, art: str, signer: str, anchor: str) -> Dict[str, Any]:
@@ -610,6 +636,9 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
         "uup_dir": uup,
         "fod_dir": fod,
         "converter_dir": conv,
+        # MiOS identity (xbox-bm-39): the cursor build is pinned in the SSOT; the font is vendored in the tree
+        "identity": {"cursor_archive": {"path": cursor, "sha256": _sha256(cursor), "url": cur["asset_url"],
+                                        "anchor": "sha256 pinned in [theme.cursor_windows].asset_sha256 (upstream publishes no digest)"}},
     }
 
 

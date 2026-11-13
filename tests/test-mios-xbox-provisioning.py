@@ -33,6 +33,8 @@ import conform as C  # noqa: E402
 import fetch as F  # noqa: E402
 import resolve_latest as RL  # noqa: E402
 import spec_items as S  # noqa: E402
+sys.path.insert(0, HERE)
+import _mios_xbox_fixtures as FX  # noqa: E402
 
 VENDOR = os.path.join(ROOT, "usr", "share", "mios", "mios.toml")
 FIXTURE_IDENTITY = os.path.join(HERE, "fixtures", "mios-xbox", "fixture-identity.toml")
@@ -118,6 +120,7 @@ def fake_inputs(tmp: str, doc) -> dict:
     with open(os.path.join(fod, x["features"]["fod_metadata"]), "wb") as fh:
         fh.write(b"fixture fod metadata")
     inputs["fod_dir"] = fod
+    inputs["identity"] = FX.cursor_archive_inputs(os.path.join(tmp, "identity"), doc)   # xbox-bm-39 (re-pins doc)
     return inputs
 
 

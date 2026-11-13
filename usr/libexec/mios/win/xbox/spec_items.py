@@ -253,7 +253,8 @@ def validate_items(items: List[Dict[str, Any]]) -> None:
                 "user": ("name", "password_sha256"), "rid500": ("state",), "appx": ("name",),
                 "gpu_step": ("record",), "looking_glass": ("device", "device_pci", "task")}[kind]
         for k in need:
-            if it.get(k) in (None, "") and not (k == "value" and it.get(k) == ""):
+            # "" is a real value, and a real name for a reg item: the key's default value (@)
+            if it.get(k) in (None, "") and not (k == "value" and it.get(k) == "") and not (kind == "reg" and k == "name" and it.get(k) == ""):
                 raise SpecError(f"{iid}: missing {k}")
         if kind == "reg" and it["scope"] not in SCOPES:
             raise SpecError(f"{iid}: scope must be one of {SCOPES}")
@@ -365,6 +366,14 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
                       "device": lgi["required_device"], "device_pci": list((devs.get(lgi["required_device"]) or {}).get("pci") or []),
                       "task": str(prov.get("mirror_task") or ""), "legacy_tasks": list(prov.get("legacy_mirror_tasks") or []),
                       "host_service": str(((x.get("guest_tools") or {}).get("looking_glass_host") or {}).get("service") or "")})
+    # MiOS identity files (xbox-bm-39); its registry values are reg items above (owners identity.*)
+    idn = doc.get("identity") or {}
+    for f in (idn.get("font") or {}).get("files") or []:
+        items.append({"id": f"identity.font.{f['file']}", "kind": "file_hash",
+                      "path": f"{idn['font']['dest_dir']}/{f['file']}", "sha256": f["sha256"]})
+    cur = idn.get("cursor") or {}
+    for f in cur.get("scheme_files") or []:
+        items.append({"id": f"identity.cursor.{f}", "kind": "component", "name": f"cursor:{f}", "path": f"{cur['dest_dir']}/{f}"})
     comps = x.get("components") or {}
     dest = _win_rel(comps.get("dest_dir", ""))
     for c in comps.get("ship") or []:
