@@ -766,7 +766,9 @@ mod tests {
         assert!(keys(&src).contains("tbl"), "the loader must still credit");
     }
 
-    fn pointer_hits(src: &str) -> BTreeSet<String> {
+    type FixtureResult<T> = Result<T, Box<dyn std::error::Error>>;
+
+    fn pointer_hits(src: &str) -> FixtureResult<BTreeSet<String>> {
         let data: toml::Value = r#"
 [mios_pointer_fixture]
 rows = ["one"]
@@ -776,13 +778,13 @@ rows = ["one"]
 "rows/~" = 1
 "rows~1" = 2
 "#
-        .parse()
-        .unwrap_or_else(|error| panic!("invalid fixture: {error}"));
-        json_pointer_tables(src, data.as_table().unwrap_or_else(|| unreachable!()))
+        .parse()?;
+        let top = data.as_table().ok_or("pointer fixture is not a table")?;
+        Ok(json_pointer_tables(src, top))
     }
 
     #[test]
-    fn json_pointer_literal_calls_credit_real_keys() {
+    fn json_pointer_literal_calls_credit_real_keys() -> FixtureResult<()> {
         for src in [
             r#"let rows = value.pointer("/mios_pointer_fixture/rows");"#,
             "let rows = value\n .pointer(\n \"/mios_pointer_fixture/rows\"\n);",
@@ -792,16 +794,17 @@ rows = ["one"]
             r#"let rows = value.pointer("/mios_pointer_fixture/slash\\key");"#,
             r#"let rows = value.pointer("/mios_pointer_fixture/quoted\"key");"#,
         ] {
-            assert!(pointer_hits(src).contains("mios_pointer_fixture"), "{src}");
+            assert!(pointer_hits(src)?.contains("mios_pointer_fixture"), "{src}");
         }
+        Ok(())
     }
 
     #[test]
-    fn json_pointer_segments_require_real_keys_and_valid_escapes() {
+    fn json_pointer_segments_require_real_keys_and_valid_escapes() -> FixtureResult<()> {
         let escaped = r#"v.pointer("/mios~1pointer~0fixture/rows~1~0")"#;
-        assert!(pointer_hits(escaped).contains("mios/pointer~fixture"));
+        assert!(pointer_hits(escaped)?.contains("mios/pointer~fixture"));
         let once = r#"v.pointer("/mios~1pointer~0fixture/rows~01")"#;
-        assert!(pointer_hits(once).contains("mios/pointer~fixture"));
+        assert!(pointer_hits(once)?.contains("mios/pointer~fixture"));
         for path in [
             "/mios_pointer_fixture_extra/rows",
             "/mios_pointer_fixture/rows_extra",
@@ -814,12 +817,13 @@ rows = ["one"]
             "/mios~2pointer~0fixture/rows~1~0",
         ] {
             let src = format!("v.pointer({path:?})");
-            assert!(pointer_hits(&src).is_empty(), "{src}");
+            assert!(pointer_hits(&src)?.is_empty(), "{src}");
         }
+        Ok(())
     }
 
     #[test]
-    fn json_pointer_text_comments_and_quoted_code_do_not_credit() {
+    fn json_pointer_text_comments_and_quoted_code_do_not_credit() -> FixtureResult<()> {
         for src in [
             r#"let path = "/mios_pointer_fixture/rows";"#,
             r#"let message = "read /mios_pointer_fixture/rows here";"#,
@@ -830,12 +834,13 @@ rows = ["one"]
             r#"let code = b"v.pointer(\"/mios_pointer_fixture/rows\")";"#,
             r###"let code = br##"v.pointer("/mios_pointer_fixture/rows")"##;"###,
         ] {
-            assert!(pointer_hits(src).is_empty(), "{src}");
+            assert!(pointer_hits(src)?.is_empty(), "{src}");
         }
+        Ok(())
     }
 
     #[test]
-    fn json_pointer_requires_a_single_literal_method_argument() {
+    fn json_pointer_requires_a_single_literal_method_argument() -> FixtureResult<()> {
         for src in [
             r#"v.pointer(path)"#,
             r#"pointer("/mios_pointer_fixture/rows")"#,
@@ -848,55 +853,51 @@ rows = ["one"]
             r#"v.pointer("\u002fmios_pointer_fixture/rows")"#,
             r#"v.pointer("\u{2f}mios_pointer_fixture/rows")"#,
         ] {
-            assert!(pointer_hits(src).is_empty(), "{src}");
+            assert!(pointer_hits(src)?.is_empty(), "{src}");
         }
+        Ok(())
     }
 
-    fn pointer_gate(sources: &[(&str, &str)]) -> Report {
-        let dir = tempfile::tempdir().unwrap_or_else(|error| panic!("fixture: {error}"));
+    fn pointer_gate(sources: &[(&str, &str)]) -> FixtureResult<Report> {
+        let dir = tempfile::tempdir()?;
         let root = dir.path();
         let ssot = root.join(SSOT);
-        std::fs::create_dir_all(ssot.parent().unwrap_or_else(|| unreachable!()))
-            .unwrap_or_else(|error| panic!("fixture parent: {error}"));
+        std::fs::create_dir_all(ssot.parent().ok_or("fixture SSOT has no parent")?)?;
         std::fs::write(
             ssot,
             "[mios_pointer_fixture]\nrows = ['one']\n[ssot_tables]\nunconsumed = []\nmax_unconsumed = 0\n",
-        )
-        .unwrap_or_else(|error| panic!("fixture SSOT: {error}"));
+        )?;
         let register_reader = "import tomllib\nwith open('usr/share/mios/mios.toml', 'rb') as fh:\n    data = tomllib.load(fh)\nlimit = data['ssot_tables']['max_unconsumed']\n";
         for (path, text) in std::iter::once(("register.py", register_reader))
             .chain(sources.iter().copied())
         {
             let path = root.join(path);
-            std::fs::create_dir_all(path.parent().unwrap_or_else(|| unreachable!()))
-                .unwrap_or_else(|error| panic!("fixture directory: {error}"));
-            std::fs::write(path, text).unwrap_or_else(|error| panic!("fixture source: {error}"));
+            std::fs::create_dir_all(path.parent().ok_or("fixture source has no parent")?)?;
+            std::fs::write(path, text)?;
         }
         for args in [["init", "-q"], ["add", "--all"]] {
-            let status = Command::new("git")
-                .arg("-C")
-                .arg(root)
-                .args(args)
-                .status()
-                .unwrap_or_else(|error| panic!("fixture Git: {error}"));
-            assert!(status.success());
+            let status = Command::new("git").arg("-C").arg(root).args(args).status()?;
+            if !status.success() {
+                return Err(format!("fixture Git {args:?} failed: {status}").into());
+            }
         }
-        check(root)
+        Ok(check(root))
     }
 
     #[test]
-    fn json_pointer_call_is_seen_without_a_local_loader_binding() {
+    fn json_pointer_call_is_seen_without_a_local_loader_binding() -> FixtureResult<()> {
         let result = pointer_gate(&[(
             "src/project.rs",
             r#"pub fn project(doc: &serde_json::Value) {
     let _rows = doc.pointer("/mios_pointer_fixture/rows");
 }"#,
-        )]);
+        )])?;
         assert!(result.ok, "{:?}", result.findings);
+        Ok(())
     }
 
     #[test]
-    fn json_pointer_corpus_exclusions_remain_non_consumers() {
+    fn json_pointer_corpus_exclusions_remain_non_consumers() -> FixtureResult<()> {
         let call = r#"let rows = doc.pointer("/mios_pointer_fixture/rows");"#;
         let generated = format!("// {GENERATED}\n{call}");
         let result = pointer_gate(&[
@@ -911,10 +912,11 @@ rows = ["one"]
                 "src/message.rs",
                 r#"let message = "doc.pointer(\"/mios_pointer_fixture/rows\")";"#,
             ),
-        ]);
+        ])?;
         assert!(!result.ok);
         assert_eq!(result.findings.len(), 1, "{:?}", result.findings);
         assert!(result.findings[0].contains("[mios_pointer_fixture]"));
+        Ok(())
     }
 
     #[test]
