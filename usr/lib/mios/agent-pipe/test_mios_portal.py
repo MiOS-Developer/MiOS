@@ -945,6 +945,13 @@ def test_portal_page_status_mount():
     check("portal assets remain below the SSOT submodule ceiling",
           _portal_lines(assets) <= _VENDOR["refactor"]["max_lines"], str(_portal_lines(assets)))
 
+def _git_fixture_readable(repo):
+    """Only synthetic repos: the throwaway account must read them even under an inherited umask 077."""
+    for path in (repo, *repo.rglob("*")):
+        if path.is_symlink():
+            raise AssertionError("synthetic Git fixture contains a symlink")
+        _os.chmod(path, 0o755 if path.is_dir() or path.stat().st_mode & 0o111 else 0o644)
+
 def test_portal_status_write_spec():
     git = _shutil.which("git")
     with _tempfile.TemporaryDirectory() as tmp:
@@ -961,6 +968,7 @@ def test_portal_status_write_spec():
             _subprocess.run(g + ["add", "a"], check=True)
             _subprocess.run(g + ["commit", "-qm", "a"], check=True)
             (repo / "a").write_text("2")
+            _git_fixture_readable(repo)
         tools = [str(_Path(git).parent)] if git else []
         with _StatusEnv(doc, path_dirs=tools):
             rc = portal_spec.main(["--write-spec"])
@@ -1074,6 +1082,7 @@ def _git_probe(mode, identity=None):
         (repo / ".git/info/attributes").write_text("a filter=x\n")
         (repo / "b").write_text("22")
         _os.utime(repo / "a", (1, 1))  # stat-dirty only: git re-hashes it through the clean filter
+        _git_fixture_readable(repo)
         if mode == "gid":
             for path in [repo, *repo.rglob("*")]:
                 _os.lchown(path, _GIT_OWNER, 0)
@@ -1131,6 +1140,7 @@ def test_portal_status_git_dirty_skips_unreadable():
             (repo / name).write_text("1")
         _subprocess.run(g + [str(repo), "add", "private", "open"], check=True)
         _subprocess.run(g + [str(repo), "commit", "-qm", "c"], check=True)
+        _git_fixture_readable(repo)
         _os.chmod(repo / "private", 0o600)
         _os.utime(repo / "private", (1, 1))
         clean = portal_spec._git_dirty(str(repo), timeout)
