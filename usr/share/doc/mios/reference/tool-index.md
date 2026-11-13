@@ -543,7 +543,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/owui.py` | Adapter for Open WebUI requests that identifies and strips OWUI-specific RAG/task templates to isolate the raw user query from downstream processing in the agent-pipe. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/planner.py` | Planner / DAG-decomposition layer extracted verbatim from server.py. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py` | WEB PORTAL helper logic + PWA asset builders + the swarm-roster probe, extracted VERBATIM from server.py (refactor R10 wave). |
-| `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py` | Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page, the status & goals view script and the iOS embed test page, split out of portal.py. |
+| `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py` | Portal STATIC ASSETS -- dashboard style, SVG/PNG icons, PWA web manifest, service worker, sign-in page, status & goals script and iOS embed test page, split out of portal.py. |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/portal_edge.py` | Portal terminal edge CSS from mios.toml [theme.edge] plus the patched ttyd -I page baked from [ttyd].version; pure, imports only mios_toml |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/provider_translate.py` | Pure cross-provider wire-format adapter extracted from server.py (refactor WS R2 leaf wave). |
 | `usr/lib/mios/agent-pipe/mios_pipe/routing/pty.py` | Pure PTY-session protocol for the persistent shell substrate (SHELL-01). |
