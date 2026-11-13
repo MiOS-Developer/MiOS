@@ -367,6 +367,7 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
         items.append({"id": "looking_glass.idd", "kind": "looking_glass", "name": "looking_glass_idd",
                       "device": lgi["required_device"], "device_pci": list((devs.get(lgi["required_device"]) or {}).get("pci") or []),
                       "task": str(prov.get("mirror_task") or ""), "legacy_tasks": list(prov.get("legacy_mirror_tasks") or []),
+                      "mirror_required": bool((doc.get("resolved", {}).get("vm.display_ref") or {}).get("mirror_displays", True)),
                       "host_service": str(((x.get("guest_tools") or {}).get("looking_glass_host") or {}).get("service") or "")})
     # MiOS identity files (xbox-bm-39); its registry values are reg items above (owners identity.*)
     idn = doc.get("identity") or {}

@@ -141,6 +141,55 @@ class TestResolver(Base):
 # ---------------------------------------------------------------------------
 
 class TestRender(Base):
+    def shell_tree(self):
+        """Only the three tree sources render_shell needs; paths retain the real SSOT conventions."""
+        tree = self.scratch("shell-tree.")
+        _, res = self.resolved(self.merged)
+        sources = [self.files["omp_config"]["source"], self.files["fastfetch_logo"]["source"],
+                   "usr/share/mios/" + res["shell.fastfetch_config_ref"]]
+        for rel in sources:
+            dst = os.path.join(tree, *rel.split("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copyfile(os.path.join(P.ROOT, *rel.split("/")), dst)
+        return tree
+
+    def test_positive_fhs_and_relative_prompt_sources_render_identically(self):
+        tree = self.shell_tree()
+        x, res = self.resolved(self.merged)
+        self.assertTrue(res["shell.prompt_config_ref"].startswith("/usr/"))
+        absolute, _ = R.render_shell(x, res, self.merged, tree)
+        res["shell.prompt_config_ref"] = res["shell.prompt_config_ref"].lstrip("/")
+        relative, _ = R.render_shell(x, res, self.merged, tree)
+        self.assertEqual(absolute, relative)
+        self.assertEqual(absolute, self.sh)
+
+    def test_negative_existing_prompt_file_outside_the_tree_is_not_embedded(self):
+        sandbox = self.scratch("prompt-boundary.")
+        tree = os.path.join(sandbox, "nested", "tree")
+        shutil.copytree(self.shell_tree(), tree)
+        outside = os.path.join(sandbox, "external-prompt.json")
+        with open(outside, "wb") as fh:
+            fh.write(b'{"fixture":"external builder file"}')
+        x, res = self.resolved(self.merged)
+        res["shell.prompt_config_ref"] = "../../external-prompt.json"
+        with self.assertRaisesRegex(R.SpecError, "shell.prompt_config_ref"):
+            R.render_shell(x, res, self.merged, tree)
+
+    def test_negative_prompt_and_logo_sources_cannot_follow_external_symlinks(self):
+        for name, key in (("omp_config", "shell.prompt_config_ref"), ("fastfetch_logo", "shell.fastfetch_config_ref")):
+            with self.subTest(source=name):
+                tree = self.shell_tree()
+                rel = self.files[name]["source"]
+                source = os.path.join(tree, *rel.split("/"))
+                os.unlink(source)
+                try:
+                    os.symlink(os.path.join(P.ROOT, *rel.split("/")), source)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"UNRUN: file symlinks unavailable: {type(exc).__name__}")
+                x, res = self.resolved(self.merged)
+                with self.assertRaisesRegex(R.SpecError, key):
+                    R.render_shell(x, res, self.merged, tree)
+
     def test_positive_terminal_fragment_from_the_ssot(self):
         f = self.files["wt_fragment"]
         self.assertTrue(f["path"].lower().startswith("programdata/microsoft/windows terminal/fragments/"))
@@ -211,6 +260,10 @@ class TestRender(Base):
             "opacity out of range": lambda m: m["theme"].__setitem__("opacity", 150),
             "fastfetch colour not a name": lambda m: m["theme"]["fastfetch"].__setitem__("logo_color", "#123456"),
             "fastfetch padding negative": lambda m: m["theme"]["fastfetch"].__setitem__("logo_padding_top", -1),
+            "prompt source traversal": lambda m: m["theme"]["prompt"].__setitem__("omp_path", "../../outside.json"),
+            "prompt source drive": lambda m: m["theme"]["prompt"].__setitem__("omp_path", r"C:\outside.json"),
+            "prompt source UNC": lambda m: m["theme"]["prompt"].__setitem__("omp_path", r"\\host\share\outside.json"),
+            "fastfetch config traversal": lambda m: m["branding"].__setitem__("fastfetch_config", "../../outside.jsonc"),
         }
         for name, plant in cases.items():
             merged = copy.deepcopy(self.merged)
@@ -265,6 +318,44 @@ class TestPayload(Base):
         self.assertIn(f"Invoke-MiOSMsi $f 'pwsh' @({props})", body)
         self.assertIn(self.sh["tools"]["pwsh"]["exe"].replace("/", "\\"), body)
         self.assertTrue(os.path.isfile(os.path.join(self.pay, *self.inst_rel.split("/"), name)))
+
+    def test_negative_shell_file_destination_cannot_escape_the_payload(self):
+        sandbox = self.scratch("shell-boundary.")
+        out = os.path.join(sandbox, "nested", "payload")
+        victim = os.path.join(sandbox, "outside.json")
+        os.makedirs(out)
+        with open(victim, "wb") as fh:
+            fh.write(b"external fixture must survive")
+        doc = copy.deepcopy(self.doc)
+        doc["shell"]["files"][0]["path"] = "../../outside.json"
+        with self.assertRaises(R.SpecError):
+            A.stage_shell(doc, self.inputs, out, P.ROOT)
+        with open(victim, "rb") as fh:
+            self.assertEqual(fh.read(), b"external fixture must survive")
+
+    def test_negative_payload_rechecks_tree_source_boundaries_after_render(self):
+        tree = self.scratch("shell-source.")
+        external = os.path.join(os.path.dirname(tree), "external-shell.json")
+        with open(external, "wb") as fh:
+            fh.write(b'{"fixture":"external builder file"}')
+        self.addCleanup(os.unlink, external)
+        doc = copy.deepcopy(self.doc)
+        entry = next(f for f in doc["shell"]["files"] if f["name"] == "omp_config")
+        entry.update(source="../external-shell.json", sha256=A._sha256(external))
+        with self.assertRaisesRegex(A.PayloadError, "shell file omp_config"):
+            A.stage_shell(doc, self.inputs, self.scratch("shell-output."), tree)
+
+    def test_negative_tool_destination_cannot_follow_an_external_symlink(self):
+        doc = copy.deepcopy(self.doc)
+        out, outside = self.scratch("shell-payload."), self.scratch("shell-external.")
+        try:
+            os.symlink(outside, os.path.join(out, "tool-link"), target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"UNRUN: directory symlinks unavailable: {type(exc).__name__}")
+        doc["shell"]["tools"]["oh_my_posh"]["path"] = "tool-link/oh-my-posh.exe"
+        with self.assertRaisesRegex(R.SpecError, "outside"):
+            A.stage_shell(doc, self.inputs, out, P.ROOT)
+        self.assertEqual(os.listdir(outside), [])
 
     def test_negative_stage_refuses_tampered_or_unverified_inputs(self):
         def tampered_text(d, i):

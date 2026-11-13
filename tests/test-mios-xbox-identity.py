@@ -186,6 +186,28 @@ class Base(P.PayloadBase):
 # ---------------------------------------------------------------------------
 
 class TestSpec(Base):
+    def test_positive_checked_paths_preserve_windows_and_fhs_conventions(self):
+        self.assertEqual(R.checked_relative(r"Windows\Fonts", "font_dir"), "Windows/Fonts")
+        self.assertEqual(R._rel(r"C:\Program Files\MiOS", "dest_dir", system_drive=True), r"Program Files\MiOS")
+        root = self.scratch("bounded-tree.")
+        source = os.path.join(root, "usr", "share", "mios", "config.json")
+        os.makedirs(os.path.dirname(source))
+        with open(source, "wb") as fh:
+            fh.write(b"fixture source")
+        for rel, fhs in (("usr/share/mios/config.json", False), ("/usr/share/mios/config.json", True)):
+            with self.subTest(path=rel):
+                self.assertEqual(R.checked_tree_file(root, rel, "source", fhs=fhs), source)
+
+    def test_negative_checked_paths_reject_traversal_drives_and_unc(self):
+        for path in ("../../outside", r"..\..\outside", "/outside", r"C:\outside", "C:outside", r"D:\outside",
+                     r"\\host\share\outside", r"\\?\C:\outside", "//host/share/outside", "safe/../outside",
+                     "safe/.. /outside", "safe//outside", "safe/./outside", "safe/file:stream", "safe/\x00outside"):
+            with self.subTest(path=path), self.assertRaises(R.SpecError):
+                R.checked_path(self.tmp, path, "bounded path")
+        for path in (r"D:\outside", "C:outside", r"\\host\share\outside", r"C:\..\outside"):
+            with self.subTest(windows_path=path), self.assertRaises(R.SpecError):
+                R._rel(path, "dest_dir", system_drive=True)
+
     def test_positive_accent_byte_order_from_the_shared_accent(self):
         x, res = self.resolved()
         res["identity.accent_ref"] = "#1A407F"
@@ -280,6 +302,11 @@ class TestSpec(Base):
             "font archive drifted from its pin": ("font_ref", "native_sha256", "0" * 64),
             "font family absent from the archive": ("font_ref", "family", "No Such Family Mono"),
             "font archive not in the tree": ("font_ref", "native_archive", "usr/share/mios/vendored/fonts/absent.zip"),
+            "font destination escapes the payload": ("font_dir", None, "../../outside"),
+            "font destination has a drive": ("font_dir", None, r"C:\Windows\Fonts"),
+            "font destination is UNC": ("font_dir", None, r"\\host\share\Fonts"),
+            "font source escapes the tree": ("font_ref", "native_archive", "../../outside.zip"),
+            "font source has a drive": ("font_ref", "native_archive", r"C:\outside.zip"),
             "accent too dark for WindowColor": ("accent_ref", None, "#05050A"),
             "accent too light for WindowColor": ("accent_ref", None, "#F0F0FA"),
             "theme name empty": ("theme_name_ref", None, " "),
@@ -653,6 +680,46 @@ class TestPayload(Base):
     def test_positive_stage_identity_on_a_fresh_tree(self):
         rows, _ = self.stage(self.doc, self.inputs)
         self.assertEqual(rows, self.summary["identity"])
+
+    def test_negative_font_destination_cannot_overwrite_an_existing_external_file(self):
+        sandbox = self.scratch("font-boundary.")
+        out = os.path.join(sandbox, "nested", "payload")
+        outside = os.path.join(sandbox, "outside")
+        os.makedirs(out)
+        os.makedirs(outside)
+        victim = os.path.join(outside, self.font["files"][0]["file"])
+        with open(victim, "wb") as fh:
+            fh.write(b"external fixture must survive")
+        doc = copy.deepcopy(self.doc)
+        doc["identity"]["font"]["dest_dir"] = "../../outside"
+        with self.assertRaises(R.SpecError):
+            A.stage_identity(doc, self.inputs, out, P.ROOT)
+        with open(victim, "rb") as fh:
+            self.assertEqual(fh.read(), b"external fixture must survive")
+
+    def test_negative_font_destination_cannot_follow_an_external_directory_symlink(self):
+        out, outside = self.scratch("font-payload."), self.scratch("font-external.")
+        os.makedirs(os.path.join(out, "Windows"))
+        try:
+            os.symlink(outside, os.path.join(out, "Windows", "Fonts"), target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"UNRUN: directory symlinks unavailable: {type(exc).__name__}")
+        doc = copy.deepcopy(self.doc)
+        doc["identity"]["font"]["dest_dir"] = "Windows/Fonts"
+        with self.assertRaisesRegex(R.SpecError, "outside"):
+            A.stage_identity(doc, self.inputs, out, P.ROOT)
+        self.assertEqual(os.listdir(outside), [])
+
+    def test_negative_font_source_cannot_follow_an_external_file_symlink(self):
+        tree = self.scratch("font-source.")
+        archive = os.path.join(tree, *self.font["archive"].split("/"))
+        os.makedirs(os.path.dirname(archive))
+        try:
+            os.symlink(os.path.join(P.ROOT, *self.font["archive"].split("/")), archive)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"UNRUN: file symlinks unavailable: {type(exc).__name__}")
+        with self.assertRaisesRegex(R.SpecError, "outside"):
+            A.stage_identity(self.doc, self.inputs, self.scratch("font-output."), tree)
 
     def test_negative_stage_refuses_a_wrong_or_disagreeing_cursor_archive(self):
         src = self.inputs["identity"]["cursor_archive"]["path"]

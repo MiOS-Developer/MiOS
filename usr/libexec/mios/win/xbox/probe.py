@@ -203,8 +203,15 @@ def evaluate(items: List[Dict[str, Any]], probe: Dict[str, Any], host: Optional[
                                             f"display mirror task {it.get('task')} is enabled ({task.get('state')}): {why}"))
                 if len(findings) == before:
                     res(it, "not-applicable", why); continue
-            elif present is True and not o.get("idd"):
-                findings.append(Finding(f"missing:{iid}", f"{why} but the Looking Glass IDD is not installed"))
+            else:
+                # Unknown PCI evidence never waives a required component, just as for guest-tool services.
+                if present is None:
+                    findings.append(Finding(f"probe.device-unknown:{iid}", "present PCI devices were not reported"))
+                if not o.get("idd"):
+                    findings.append(Finding(f"missing:{iid}", f"{why or 'device applicability is unknown'} but the Looking Glass IDD is not installed"))
+                if it.get("mirror_required", True) and (
+                        not task.get("present") or str(task.get("state")) == "Disabled"):
+                    findings.append(Finding(f"missing:{iid}.task", f"required display mirror task {it.get('task')} is absent or disabled"))
         elif k in ("component", "file_hash"):
             if not o.get("present"):
                 findings.append(Finding(f"missing:{iid}", f"{it['path']} is not in the guest"))

@@ -593,6 +593,19 @@ def _stage_header(doc: Dict[str, Any], stage: str, log_file: str) -> List[str]:
     ]
 
 
+def shared_directory_acl(doc: Dict[str, Any], tree_root: str = _TREE) -> str:
+    """Reuse the canonical directory ACL function in the trusted SetupComplete script, independently of IVSHMEM."""
+    source = render_spec.checked_tree_file(tree_root, _req(doc["spec"], "drivers.looking_glass_idd.installer"),
+                                          "drivers.looking_glass_idd.installer")
+    with open(source, encoding="utf-8-sig") as fh:
+        text = fh.read()
+    begin, end = "# BEGIN Protect-MiOSDir", "# END Protect-MiOSDir"
+    if text.count(begin) != 1 or text.count(end) != 1:
+        raise PayloadError("canonical Protect-MiOSDir function markers are missing or duplicated")
+    body = text.split(begin, 1)[1].split(end, 1)[0]
+    return "\n".join(body.splitlines()[1:]).strip()
+
+
 def service_binpath(doc: Dict[str, Any], name: str, tree_root: str = _TREE) -> Tuple[str, str]:
     """(binary path name for CreateService, the exe that must exist) of [windows.xbox.services.<name>]."""
     x = doc["spec"]
@@ -656,12 +669,15 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
         "# Every value below is the spec's; re-render instead of editing. Results: setup-state.json + provision-state.json;",
         "# every log line also goes to the guest serial port the host logs ([vm.looking_glass].serial_log).",
         *_stage_header(doc, "setupcomplete", state_dir + "\\setup.log"),
+        shared_directory_acl(doc, tree_root),
         f"$MiOS = {_ps(dest)}",
         f"$Inst = {_ps(inst_dir)}",
         f"$Fod = {_ps(dest + chr(92) + 'fod')}",
         f"$Prov = {_ps(prov)}",
         f"$Drv = {_ps(dest + chr(92) + 'drivers')}",
         f"$PsExe = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",
+        # This ACL is shared by every device shape. The IDD step may be inapplicable on bare metal.
+        f"foreach ($d in @($MiOS, {_ps(state_dir)}) | Select-Object -Unique) {{ Protect-MiOSDir $d $true $false }}",
         f"New-Item -ItemType Directory -Force -Path {_ps(state_dir)}, $MiOSLogDir | Out-Null",
         "Write-MiOSLog ('SYSTEM stage start as {0}' -f (Get-MiOSAccount))",
         "",
@@ -1284,10 +1300,10 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
                 raise PayloadError(f"cursor file {f} is missing from {cur['variant_dir']}")
             data = z.read(member)
             rel = f"{cur['dest_dir']}/{f}"
-            _write(os.path.join(out_dir, *rel.split("/")), data)
+            _write(render_spec.checked_path(out_dir, rel, "identity.cursor destination"), data)
             rows.append({"name": f"cursor:{f}", "path": rel, "sha256": hashlib.sha256(data).hexdigest()})
     font = idn["font"]
-    arch = os.path.join(tree_root, *str(font["archive"]).split("/"))
+    arch = render_spec.checked_path(tree_root, font["archive"], "identity.font archive")
     if not os.path.isfile(arch) or _sha256(arch) != str(font["archive_sha256"]).lower():
         raise PayloadError(f"{font['archive']} is absent or changed since the spec was rendered")
     with zipfile.ZipFile(arch) as z:
@@ -1296,7 +1312,7 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
             if hashlib.sha256(data).hexdigest() != f["sha256"]:
                 raise PayloadError(f"font {f['file']}: sha256 differs from the rendered spec")
             rel = f"{font['dest_dir']}/{f['file']}"
-            _write(os.path.join(out_dir, *rel.split("/")), data)
+            _write(render_spec.checked_path(out_dir, rel, "identity.font destination"), data)
             rows.append({"name": f"font:{f['file']}", "path": rel, "sha256": f["sha256"]})
     # the theme's DesktopBackground: the solid SSOT background colour, rendered byte-identically to the spec's record
     bg = ((idn.get("theme") or {}).get("background") or {})
@@ -1305,20 +1321,20 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
     data = render_spec.solid_bmp(render_spec._rgb(bg["color"], "identity.theme.background.color"), int(bg["px"]))
     if hashlib.sha256(data).hexdigest() != bg["sha256"]:
         raise PayloadError("theme background: the rendered image differs from the spec's sha256")
-    _write(os.path.join(out_dir, *bg["path"].split("/")), data)
+    _write(render_spec.checked_path(out_dir, bg["path"], "identity.theme destination"), data)
     rows.append({"name": "theme:background", "path": bg["path"], "sha256": bg["sha256"]})
     # the OEM logo: the MiOS mark from the tree, rendered byte-identically to the spec's record
     lg = idn.get("oem_logo") or {}
     if not lg.get("path") or not lg.get("sha256") or not lg.get("source"):
         raise PayloadError("xbox-spec.json has no identity.oem_logo (render it with render_spec.py)")
-    mark = os.path.join(tree_root, *str(lg["source"]).split("/"))
+    mark = render_spec.checked_path(tree_root, lg["source"], "identity.oem_logo source")
     if not os.path.isfile(mark) or _sha256(mark) != str(lg["source_sha256"]).lower():
         raise PayloadError(f"{lg['source']} is absent or changed since the spec was rendered")
     with open(mark, "rb") as fh:
         data = render_spec.oem_logo_bmp(fh.read(), int(lg["px"]), render_spec._rgb(lg["background"], "identity.oem_logo.background"))
     if hashlib.sha256(data).hexdigest() != lg["sha256"]:
         raise PayloadError("OEM logo: the rendered image differs from the spec's sha256")
-    _write(os.path.join(out_dir, *lg["path"].split("/")), data)
+    _write(render_spec.checked_path(out_dir, lg["path"], "identity.oem_logo destination"), data)
     rows.append({"name": "oem:logo", "path": lg["path"], "sha256": lg["sha256"]})
     return rows
 
@@ -1339,11 +1355,11 @@ def stage_shell(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_
     for f in doc["shell"]["files"]:
         try:
             data = render_spec.shell_file_bytes(f, tree_root)
-        except OSError as e:
+        except (OSError, render_spec.SpecError) as e:
             raise PayloadError(f"shell file {f.get('name')}: {e}") from None
         if hashlib.sha256(data).hexdigest() != f["sha256"]:
             raise PayloadError(f"shell file {f['name']}: bytes differ from the rendered spec's sha256")
-        _write(os.path.join(out_dir, *f["path"].split("/")), data)
+        _write(render_spec.checked_path(out_dir, f["path"], "shell file destination"), data)
         rows.append({"name": f"shell:{f['name']}", "path": f["path"], "sha256": f["sha256"]})
     shin = inputs.get("shell") or {}
     for tool in ("oh_my_posh", "fastfetch"):
@@ -1354,7 +1370,7 @@ def stage_shell(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_
             raise PayloadError(f"build input shell.{tool}: sha256 differs from inputs.json (changed since the fetch)")
     with open(shin["oh_my_posh"]["path"], "rb") as fh:
         data = fh.read()
-    _write(os.path.join(out_dir, *tools["oh_my_posh"]["path"].split("/")), data)
+    _write(render_spec.checked_path(out_dir, tools["oh_my_posh"]["path"], "shell.oh_my_posh destination"), data)
     rows.append({"name": "shell:oh_my_posh", "path": tools["oh_my_posh"]["path"], "sha256": hashlib.sha256(data).hexdigest()})
     dest = tools["fastfetch"]["dest_dir"]
     with zipfile.ZipFile(shin["fastfetch"]["path"]) as z:
@@ -1370,7 +1386,7 @@ def stage_shell(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_
             rel = i.filename.split("/", 1)[1] if strip else i.filename
             data = z.read(i)
             path = f"{dest}/{rel}"
-            _write(os.path.join(out_dir, *path.split("/")), data)
+            _write(render_spec.checked_path(out_dir, path, "shell.fastfetch destination"), data)
             rows.append({"name": f"shell:fastfetch/{rel}", "path": path, "sha256": hashlib.sha256(data).hexdigest()})
     if not any(r["path"] == tools["fastfetch"]["path"] for r in rows):
         raise PayloadError(f"build input shell.fastfetch: the archive has no {os.path.basename(tools['fastfetch']['path'])}")

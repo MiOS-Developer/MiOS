@@ -93,6 +93,34 @@ class TestSpec(Base):
 # ---------------------------------------------------------------------------
 
 class TestSetupComplete(Base):
+    def test_positive_shared_directory_acl_precedes_every_write_and_device_gate(self):
+        acl = A.shared_directory_acl(self.doc, P.ROOT)
+        with open(os.path.join(P.ROOT, self.x["drivers"]["looking_glass_idd"]["installer"]), encoding="utf-8-sig") as fh:
+            canonical = fh.read().split("# BEGIN Protect-MiOSDir", 1)[1].split("# END Protect-MiOSDir", 1)[0]
+        self.assertEqual(acl, "\n".join(canonical.splitlines()[1:]).strip())
+        self.assertEqual(self.setup.count("function Protect-MiOSDir("), 1)
+        protect = f"foreach ($d in @($MiOS, {A._ps(self.x['provision']['state_dir'])}) | Select-Object -Unique) {{ Protect-MiOSDir $d $true $false }}"
+        self.assertIn(protect, self.setup)
+        for later in ("\nNew-Item -ItemType Directory -Force -Path", "Write-MiOSLog ('SYSTEM stage start", "Invoke-MiOSStep 'environment_probe'", "Invoke-MiOSGuestStep 'looking_glass_idd'"):
+            self.assertLess(self.setup.index(protect), self.setup.index(later))
+        doc = copy.deepcopy(self.doc)
+        doc["spec"]["components"]["dest_dir"] = r"C:\Program Files\MiOS-Fixture"
+        doc["spec"]["provision"]["state_dir"] = r"C:\ProgramData\MiOS-Fixture"
+        setup = A.render_setup_script(doc, self.inputs, P.ROOT)
+        self.assertIn("$MiOS = 'C:\\Program Files\\MiOS-Fixture'", setup)
+        self.assertIn("@($MiOS, 'C:\\ProgramData\\MiOS-Fixture')", setup)
+
+    def test_negative_shared_acl_source_requires_unique_canonical_markers(self):
+        src = self.x["drivers"]["looking_glass_idd"]["installer"]
+        for body in ("function Protect-MiOSDir {}", "# BEGIN Protect-MiOSDir\n# BEGIN Protect-MiOSDir\n# END Protect-MiOSDir"):
+            tree = self.scratch("acl-source.")
+            target = os.path.join(tree, *src.split("/"))
+            os.makedirs(os.path.dirname(target))
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(body)
+            with self.subTest(body=body), self.assertRaisesRegex(A.PayloadError, "markers"):
+                A.shared_directory_acl(self.doc, tree)
+
     def test_positive_probe_first_and_every_guest_step_gated(self):
         names = self.steps()
         self.assertEqual(names[0], "environment_probe")
@@ -138,6 +166,44 @@ class TestSetupComplete(Base):
 
 @unittest.skipUnless(_powershell(), "UNRUN: needs pwsh or Windows PowerShell to execute the rendered gate")
 class TestGateExecution(Base):
+    def run_shared_prelude(self, ivshmem, fail_acl=False):
+        """Run the actual setup prefix with recording stand-ins for filesystem/ACL effects; a failed ACL must stop it."""
+        prefix = self.setup.split("Invoke-MiOSStep 'environment_probe' {", 1)[0]
+        standins = r'''
+function Protect-MiOSDir([string]$Path, [bool]$UsersRead, [bool]$Quarantine) {
+    $script:Events.Add(('acl:{0}:{1}:{2}' -f $Path, $UsersRead, $Quarantine))
+    if ($script:FailAcl) { throw 'planted ACL failure' }
+}
+function New-Item { param($ItemType, [switch]$Force, $Path) $script:Events.Add('write:directories') }
+function Write-MiOSLog($m) { $script:Events.Add('write:log') }
+function Get-MiOSAccount { 'fixture SYSTEM' }
+'''
+        standins += "$MiOSDevices['ivshmem'] = @{ present = $" + str(ivshmem).lower() + " }\n"
+        prefix = prefix.replace(A.shared_directory_acl(self.doc, P.ROOT), standins)
+        d = self.scratch("shared-prelude.")
+        script = os.path.join(d, "prelude.ps1")
+        with open(script, "w", encoding="utf-8-sig") as fh:
+            fh.write("$script:Events = New-Object 'System.Collections.Generic.List[string]'\n")
+            fh.write("$script:FailAcl = $" + str(fail_acl).lower() + "\ntry {\n" + prefix)
+            fh.write("$script:Events.Add('write:environment')\n} catch { $script:Events.Add('failed:acl') }\n")
+            fh.write("ConvertTo-Json -InputObject @($script:Events.ToArray()) -Compress\n")
+        r = subprocess.run([_powershell(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script],
+                           capture_output=True, text=True, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout[-800:] + r.stderr[-800:])
+        return json.loads(r.stdout)
+
+    def test_positive_shared_roots_are_secured_before_bare_metal_or_vm_writes(self):
+        expected = [f"acl:{p}:True:False" for p in (self.x["components"]["dest_dir"], self.x["provision"]["state_dir"])]
+        for ivshmem in (False, True):
+            with self.subTest(ivshmem=ivshmem):
+                events = self.run_shared_prelude(ivshmem)
+                self.assertEqual(events[:2], expected)
+                self.assertEqual(events[2:], ["write:directories", "write:log", "write:environment"])
+
+    def test_negative_acl_failure_stops_all_shared_writes(self):
+        events = self.run_shared_prelude(False, fail_acl=True)
+        self.assertEqual(events, [f"acl:{self.x['components']['dest_dir']}:True:False", "failed:acl"])
+
     def run_gate(self, pci, plant_ungated: bool = False):
         """Execute the rendered PS library + environment_probe + every guest gate (bodies replaced by a marker, or by the
         old bare-metal failure when plant_ungated) against a fake PCI set. Returns (steps state, environment record)."""
@@ -235,6 +301,29 @@ class TestProbe(Base):
         self.assertEqual(res["guest_tools.qemu_ga"]["status"], "pass")
         self.assertEqual(res["guest_tools.looking_glass_host"]["status"], "not-applicable")   # one server: the IDD
 
+    def test_negative_vm_requires_idd_and_the_enabled_mirror_task(self):
+        for idd, task, finding in ((False, "Ready", "missing:looking_glass.idd"),
+                                   (True, None, "missing:looking_glass.idd.task"),
+                                   (True, "Disabled", "missing:looking_glass.idd.task")):
+            with self.subTest(idd=idd, task=task):
+                res, ids = self.ev(self.probe_doc(VM_PCI, running=self.services(), idd=idd, task_state=task))
+                self.assertIn(finding, ids)
+                self.assertEqual(res["looking_glass.idd"]["status"], "fail")
+
+    def test_positive_resolved_mirror_policy_can_disable_the_task_requirement(self):
+        doc = copy.deepcopy(self.doc)
+        doc["resolved"]["vm.display_ref"]["mirror_displays"] = False
+        items = [it for it in S.items_from_spec(doc, P.ROOT) if it["kind"] == "looking_glass"]
+        self.assertEqual(len(items), 1)
+        self.assertIs(items[0]["mirror_required"], False)
+        self.assertIs(next(it for it in self.gate_items if it["kind"] == "looking_glass")["mirror_required"], True)
+        self.assertIn("-MirrorDisplays 0", A.render_setup_script(doc, self.inputs, P.ROOT))
+        for task in (None, "Disabled"):
+            with self.subTest(task=task):
+                results, findings = PR.evaluate(items, self.probe_doc(VM_PCI, idd=True, task_state=task))
+                self.assertEqual(findings, [])
+                self.assertEqual(results[0]["status"], "pass")
+
     def test_negative_claims_without_the_device_and_leftovers_are_findings(self):
         cases = {
             "VM claims Looking Glass without IVSHMEM": (dict(pci=VM_NO_IVSHMEM, running=self.services(), idd=True), "looking_glass.idd-without-ivshmem"),
@@ -259,6 +348,16 @@ class TestProbe(Base):
         doc.pop("pci_present")
         _, ids = self.ev(doc)
         self.assertIn("missing:guest_tools.qemu_ga", ids)
+        self.assertIn("probe.device-unknown:looking_glass.idd", ids)
+        self.assertIn("missing:looking_glass.idd", ids)
+        self.assertIn("missing:looking_glass.idd.task", ids)
+
+    def test_negative_unknown_pci_evidence_never_passes_the_idd(self):
+        doc = self.probe_doc(VM_PCI, running=self.services(), idd=True, task_state="Ready")
+        doc.pop("pci_present")
+        res, ids = self.ev(doc)
+        self.assertIn("probe.device-unknown:looking_glass.idd", ids)
+        self.assertEqual(res["looking_glass.idd"]["status"], "fail")
 
 
 if __name__ == "__main__":

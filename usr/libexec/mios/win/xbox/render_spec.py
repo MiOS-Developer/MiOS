@@ -782,19 +782,17 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     theme = str(resolved["identity.cursor_theme_ref"])
     if not str(cur["scheme_name"]).startswith(theme) or not str(cur["variant_dir"]).startswith(theme):
         raise SpecError(f"{idn['cursor_ref']}", f"the Windows build is not of the SSOT cursor theme {theme!r} (parity)")
-    root_rel = str(idn["system_root"]).strip("\\/").replace("/", "\\")
+    root_rel = _rel(idn["system_root"], _full("identity.system_root"))
     sysroot = "C:\\" + root_rel
-    install_dir = str(cur["install_dir"]).strip("\\/").replace("/", "\\")
-    if ".." in install_dir.split("\\"):
-        raise SpecError(f"{idn['cursor_ref']}.install_dir", "must stay under the system root")
+    install_dir = _rel(cur["install_dir"], f"{idn['cursor_ref']}.install_dir")
+    variant_dir = checked_relative(cur["variant_dir"], f"{idn['cursor_ref']}.variant_dir")
     live = {f: f"{sysroot}\\{install_dir}\\{f}" for f in files}
 
     font = resolved["identity.font_ref"]
     if not isinstance(font, dict) or not font.get("family") or not font.get("native_archive") or not font.get("native_sha256"):
         raise SpecError(_full("identity.font_ref"), "must reference [theme.font] with family, native_archive and native_sha256")
-    archive = os.path.join(tree_root, str(font["native_archive"]).replace("/", os.sep))
-    if not os.path.isfile(archive):
-        raise SpecError(f"{idn['font_ref']}.native_archive", f"{font['native_archive']} is not in the tree")
+    archive_rel = checked_relative(font["native_archive"], f"{idn['font_ref']}.native_archive", fhs=True)
+    archive = checked_tree_file(tree_root, archive_rel, f"{idn['font_ref']}.native_archive")
     with open(archive, "rb") as fh:
         got = hashlib.sha256(fh.read()).hexdigest()
     if got != str(font["native_sha256"]).lower():
@@ -802,7 +800,7 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     fonts = _font_members(str(font["family"]), archive)
     if not fonts:
         raise SpecError(f"{idn['font_ref']}.family", f"no font of family {font['family']!r} in {font['native_archive']}")
-    font_dir = str(idn["font_dir"]).strip("\\/").replace("\\", "/")
+    font_dir = checked_relative(idn["font_dir"], _full("identity.font_dir"))
 
     # the persistent MiOS theme (unattend Themes) and the Default profile's colour mode
     theme_name = str(resolved["identity.theme_name_ref"]).strip()
@@ -815,7 +813,7 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     if not isinstance(transparency, bool):
         raise SpecError(idn["transparency_ref"], "must be a boolean")
     bg = _rgb(resolved["identity.background_color_ref"], idn["background_color_ref"])
-    bg_rel = str(idn["background"]).strip("\\/").replace("/", "\\")
+    bg_rel = _rel(idn["background"], _full("identity.background"))
     parts = bg_rel.split("\\")
     if parts[0].lower() != root_rel.lower() or ".." in parts or len(parts) < 3 or not bg_rel.lower().endswith(".bmp"):
         raise SpecError(_full("identity.background"), "must be a .bmp in a folder under system_root (Themes/DesktopBackground "
@@ -834,15 +832,15 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
     # OEMInformation/Logo: the MiOS mark as a 32-bit bitmap (Microsoft's 120x120 limit), at the [branding] path
     logo_live = str(resolved["identity.oem_logo_ref"]).strip().replace("/", "\\")
     logo_rel = logo_live[3:] if re.match(r"(?i)^C:\\", logo_live) else ""
+    if logo_rel:
+        logo_rel = checked_relative(logo_rel, idn["oem_logo_ref"]).replace("/", "\\")
     lparts = logo_rel.split("\\")
     if (not logo_rel or len(logo_live) > OEM_LOGO_MAX_PATH or not logo_rel.lower().endswith(".bmp") or len(lparts) < 3
             or lparts[0].lower() != root_rel.lower() or ".." in lparts or "" in lparts):
         raise SpecError(idn["oem_logo_ref"], f"{logo_live!r} must be a C:\\{root_rel}\\<folder>\\...\\<name>.bmp path of at "
                         f"most {OEM_LOGO_MAX_PATH} characters")
-    src_rel = str(resolved["identity.oem_logo_source_ref"]).strip().replace("\\", "/")
-    src = os.path.join(tree_root, *src_rel.split("/"))
-    if not src_rel or src_rel.startswith("/") or ".." in src_rel.split("/") or not os.path.isfile(src):
-        raise SpecError(idn["oem_logo_source_ref"], f"{src_rel!r} is not a file in the tree")
+    src_rel = checked_relative(resolved["identity.oem_logo_source_ref"], idn["oem_logo_source_ref"], fhs=True)
+    src = checked_tree_file(tree_root, src_rel, idn["oem_logo_source_ref"])
     with open(src, "rb") as fh:
         mark = fh.read()
     try:
@@ -890,10 +888,10 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
                   "transparency": transparency, "background": background},
         "oem": oem, "oem_logo": oem_logo,
         "cursor": {"theme": theme, "repo": repo, "channel": "latest", "asset": asset,
-                   "variant_dir": str(cur["variant_dir"]), "scheme_name": str(cur["scheme_name"]),
+                   "variant_dir": variant_dir, "scheme_name": str(cur["scheme_name"]),
                    "install_dir": install_dir, "scheme_files": files, "roles": roles, "base_size": size,
                    "dest_dir": (root_rel + "/" + install_dir).replace("\\", "/")},
-        "font": {"family": str(font["family"]), "archive": str(font["native_archive"]), "archive_sha256": got,
+        "font": {"family": str(font["family"]), "archive": archive_rel, "archive_sha256": got,
                  "dest_dir": font_dir, "files": fonts},
     }
     return record, reg
@@ -915,12 +913,51 @@ MSI_PROPERTY_RE = re.compile(r"[A-Z][A-Z0-9_]*=[\w.\-]*")
 VERB_RE = re.compile(r"[a-z][a-z0-9_-]*")
 
 
-def _rel(path: str, what: str) -> str:
-    """An image-relative Windows path: no drive, no '..', backslashes."""
-    p = re.sub(r"^[A-Za-z]:", "", str(path)).replace("/", "\\").strip("\\")
-    if not p or ".." in p.split("\\"):
-        raise SpecError(what, f"{path!r} is not an image-relative path")
-    return p
+def checked_relative(path: str, what: str, *, fhs: bool = False, system_drive: bool = False) -> str:
+    """A bounded tree/image path. Only declared FHS sources or the C: image root may carry a root prefix."""
+    if not isinstance(path, str) or not path or any(ord(c) < 32 for c in path):
+        raise SpecError(what, "must be a non-empty relative path without control characters")
+    p = path.replace("\\", "/")
+    if p.startswith("//"):
+        raise SpecError(what, "UNC/device paths are not tree/image paths")
+    if re.match(r"^[A-Za-z]:", p):
+        if not system_drive or not re.match(r"(?i)^C:/", p):
+            raise SpecError(what, "drive paths are not relative paths")
+        p = p[3:]
+    elif p.startswith("/"):
+        if not fhs:
+            raise SpecError(what, "absolute paths are not relative paths")
+        p = p[1:]
+    parts = p.split("/")
+    if any(part.rstrip(" .") in ("", ".", "..") or ":" in part for part in parts):
+        raise SpecError(what, "path contains traversal, a drive/stream, or an empty component")
+    return "/".join(parts)
+
+
+def checked_path(root: str, path: str, what: str, *, fhs: bool = False) -> str:
+    """Join only beneath root, including when an existing source or destination ancestor is a symlink."""
+    rel = checked_relative(path, what, fhs=fhs)
+    base = os.path.realpath(root)
+    target = os.path.join(base, *rel.split("/"))
+    resolved = os.path.realpath(target)
+    try:
+        contained = os.path.normcase(os.path.commonpath((base, resolved))) == os.path.normcase(base)
+    except ValueError:
+        contained = False
+    if not contained:
+        raise SpecError(what, "path resolves outside its tree/payload root")
+    return target
+
+
+def checked_tree_file(root: str, path: str, what: str, *, fhs: bool = False) -> str:
+    target = checked_path(root, path, what, fhs=fhs)
+    if not os.path.isfile(target):
+        raise SpecError(what, "source is not a file in the tree")
+    return target
+
+
+def _rel(path: str, what: str, *, system_drive: bool = False) -> str:
+    return checked_relative(path, what, system_drive=system_drive).replace("/", "\\")
 
 
 def _psq(v: object) -> str:
@@ -932,7 +969,7 @@ def shell_file_bytes(entry: dict, tree_root: str = _TREE) -> bytes:
     """The exact bytes of one shell file of the rendered spec: rendered text in its encoding, or the tree source."""
     if "text" in entry:
         return str(entry["text"]).encode(entry["encoding"])
-    with open(os.path.join(tree_root, *str(entry["source"]).split("/")), "rb") as fh:
+    with open(checked_tree_file(tree_root, entry["source"], "shell source"), "rb") as fh:
         return fh.read()
 
 
@@ -984,7 +1021,7 @@ def render_shell(x: dict, resolved: dict, merged: dict, tree_root: str = _TREE) 
     SSOT with its exact bytes and sha256 (answer.py stages them, conform/probe check them); the binaries are resolved
     at build time (resolve_latest.py) and only described here."""
     sh = x["shell"]
-    dest_rel = _rel(x["components"]["dest_dir"], _full("components.dest_dir"))
+    dest_rel = _rel(x["components"]["dest_dir"], _full("components.dest_dir"), system_drive=True)
     shell_rel = dest_rel + "\\" + _rel(sh["dir"], _full("shell.dir"))
     bin_rel = dest_rel + "\\" + _rel(sh["bin_dir"], _full("shell.bin_dir"))
     tools: dict = {}
@@ -1054,17 +1091,17 @@ def render_shell(x: dict, resolved: dict, merged: dict, tree_root: str = _TREE) 
               "text": json.dumps(fragment, indent=2, sort_keys=True) + "\n"}]
 
     # the tool configs: the vendored oh-my-posh config as is; the fastfetch config with the Windows logo + theme
-    omp_src = str(resolved["shell.prompt_config_ref"]).lstrip("/")
-    ff_src = "usr/share/mios/" + str(resolved["shell.fastfetch_config_ref"]).lstrip("/")
+    omp_src = checked_relative(resolved["shell.prompt_config_ref"], _full("shell.prompt_config_ref"), fhs=True)
+    ff_src = "usr/share/mios/" + checked_relative(resolved["shell.fastfetch_config_ref"], _full("shell.fastfetch_config_ref"))
     for src, key in ((omp_src, "shell.prompt_config_ref"), (ff_src, "shell.fastfetch_config_ref")):
-        if not os.path.isfile(os.path.join(tree_root, *src.split("/"))):
-            raise SpecError(_full(key), f"{src} is not in the tree")
-    with open(os.path.join(tree_root, *ff_src.split("/")), encoding="utf-8") as fh:
+        checked_tree_file(tree_root, src, _full(key))
+    with open(checked_tree_file(tree_root, ff_src, _full("shell.fastfetch_config_ref")), encoding="utf-8") as fh:
         ff_text = fh.read()
     m = re.search(r'"logo"\s*:\s*\{[^{}]*?"source"\s*:\s*"(/usr/share/mios/[^"]+)"', ff_text, re.S)
-    if not m or not os.path.isfile(os.path.join(tree_root, *m.group(1).lstrip("/").split("/"))):
+    if not m:
         raise SpecError(_full("shell.fastfetch_config_ref"), "the fastfetch config's logo source is not a /usr/share/mios file in the tree")
-    logo_src = m.group(1).lstrip("/")
+    logo_src = checked_relative(m.group(1), _full("shell.fastfetch_config_ref"), fhs=True)
+    checked_tree_file(tree_root, logo_src, _full("shell.fastfetch_config_ref"))
     logo_name = os.path.basename(logo_src)
     theme_ff = resolved["shell.fastfetch_theme_ref"]
     if not isinstance(theme_ff, dict):
