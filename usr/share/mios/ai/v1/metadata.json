@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4343,
-  "total_metadata_entries": 3474,
-  "total_hints": 3468,
+  "total_files_scanned": 4347,
+  "total_metadata_entries": 3475,
+  "total_hints": 3469,
   "total_functions_indexed": 2226,
-  "total_related_links": 6994,
+  "total_related_links": 6996,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -11455,6 +11455,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-windows-login-credential.py",
+      "hint": "Native provider-mock unit controls for the actual Windows installer login resolver and stdin hash handoff; never run the installer or a Windows provisioning command.",
+      "related": [
+        "build-mios.ps1",
+        "tests/test-credential-ssot.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-wireguard-endpoint-roaming.py",
       "hint": "Tests for task_697 & task_698: WireGuard endpoint roaming (<50ms) and PMTU clamping.",
       "related": [],
@@ -18543,7 +18555,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/mios_pipe/routing/portal_assets.py",
-      "hint": "Portal STATIC ASSETS -- the SVG/PNG icons, PWA web manifest, service worker, sign-in page, the status & goals view script and the iOS embed test page, split out of portal.py.",
+      "hint": "Portal STATIC ASSETS -- dashboard style, SVG/PNG icons, PWA web manifest, service worker, sign-in page, status & goals script and iOS embed test page, split out of portal.py.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_pipe/routing/portal.py",
         "usr/lib/mios/agent-pipe/test_mios_portal.py",
