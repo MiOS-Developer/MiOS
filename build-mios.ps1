@@ -276,17 +276,27 @@ function Get-MiosSsotPort {
 }
 
 function Resolve-MiosLoginCredential {
-    # Evaluate related auth keys within each layer before moving to the next.
-    # A host/user password must outrank a vendor password even when the keys differ.
+    # Related auth keys are resolved within each layer before the next layer.
+    # A missing credential is an error, never a built-in account password.
     foreach ($layer in @(Resolve-MiosTomlLayers)) {
         $hash = [string](Get-MiosTomlValue -Section 'auth' -Key 'password_hash' -Default '' -SourcePath $layer.Path)
-        if ($hash) { return @{ Hash = $hash; Plain = '' } }
-        $plain = [string](Get-MiosTomlValue -Section 'auth' -Key 'password' -Default '' -SourcePath $layer.Path)
-        if ($plain) { return @{ Hash = ''; Plain = $plain } }
-        $plain = [string](Get-MiosTomlValue -Section 'identity' -Key 'default_password' -Default '' -SourcePath $layer.Path)
-        if ($plain) { return @{ Hash = ''; Plain = $plain } }
+        if ($hash) {
+            if ($hash -notmatch '^\$6\$(?:rounds=[1-9][0-9]*\$)?[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}$') {
+                throw 'MiOS SSOT: auth.password_hash must be a sha512-crypt value.'
+            }
+            return @{ Hash = $hash; Plain = '' }
+        }
+        foreach ($key in @(@{ Section = 'auth'; Key = 'password' }, @{ Section = 'identity'; Key = 'default_password' })) {
+            $plain = [string](Get-MiosTomlValue -Section $key.Section -Key $key.Key -Default '' -SourcePath $layer.Path)
+            if ($plain) {
+                if ($plain -match '[\x00-\x1F\x7F]') {
+                    throw ('MiOS SSOT: {0}.{1} contains refused control characters.' -f $key.Section, $key.Key)
+                }
+                return @{ Hash = ''; Plain = $plain }
+            }
+        }
     }
-    return @{ Hash = ''; Plain = 'mios' }
+    throw 'MiOS SSOT: no login credential in any mios.toml layer; set identity.default_password or auth.password_hash in the operator configuration.'
 }
 
 $script:MiosInstCols = Get-MiosTomlValue -Section 'terminal.install' -Key 'cols' -Default 80
@@ -1535,28 +1545,32 @@ function Open-ConfiguratorOnWindows([string]$RepoDir, [string]$Html) {
 
 
 function Get-PasswordHash([string]$Plain) {
-    if ($Plain -eq "mios" -or [string]::IsNullOrWhiteSpace($Plain)) {
-        return '$6$miosmios0$ShHuf/TnPoEmEX//L9mrNNuP7kZ6l9aj/qV9WFj5LnjL3lunhKEwnJfY6tvlJbRiWkLTtPmdwCgWeOQB9eXuW.'
+    if ([string]::IsNullOrEmpty($Plain) -or $Plain -match '[\x00-\x1F\x7F]') {
+        throw 'MiOS SSOT: identity.default_password is missing or contains refused control characters.'
     }
-    $salt = -join ((48..57)+(65..90)+(97..122) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
-    foreach ($d in @($BuilderDistro, $LegacyDistro)) {
-        try {
-            $h = (& wsl.exe -d $d --exec openssl passwd -6 -salt $salt $Plain 2>$null) -join ""
-            if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
-        } catch {}
+    # OpenSSL creates its own random salt. The credential crosses only stdin;
+    # it is never an argument, encoded shell program, environment value or log.
+    $savedOutputEncoding = $OutputEncoding
+    $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    try {
+        foreach ($d in @(@($BuilderDistro, $LegacyDistro) | Where-Object { $_ } | Select-Object -Unique)) {
+            try {
+                $h = ($Plain | & wsl.exe -d $d --exec openssl passwd -6 -stdin 2>$null) -join ''
+                if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}$') { return $h.Trim() }
+            } catch {}
+        }
+        # The existing MiOS-DEV machine is the remaining supported provider.
+        # Do not pull or provision an unrelated image to invent a credential.
+        if ($BuilderDistro) {
+            try {
+                $h = ($Plain | & podman machine ssh $BuilderDistro -- openssl passwd -6 -stdin 2>$null) -join ''
+                if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}$') { return $h.Trim() }
+            } catch {}
+        }
+    } finally {
+        $OutputEncoding = $savedOutputEncoding
     }
-    # Dev-distro shell (works pre- AND post-rename via Invoke-DistroSh
-    # auto-detect): wsl-direct on MiOS-DEV, podman-machine-ssh on
-    # podman-MiOS-DEV. -NoSudo because openssl needs no privilege.
-    try {
-        $h = (Invoke-DistroSh -Bash "openssl passwd -6 -salt '$salt' '$Plain'" -MachineName $BuilderDistro -NoSudo 2>$null) -join ""
-        if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
-    } catch {}
-    try {
-        $h = (& podman run --rm docker.io/library/alpine:latest sh -c "apk add -q openssl && openssl passwd -6 -salt '$salt' '$Plain'" 2>$null) -join ""
-        if ($LASTEXITCODE -eq 0 -and $h -match '^\$6\$') { return $h.Trim() }
-    } catch {}
-    throw "Cannot generate sha512crypt hash -- install openssl or run from a distro."
+    throw 'Cannot generate sha512-crypt hash from the existing MiOS-DEV OpenSSL provider; no credential was substituted.'
 }
 
 function Get-MiosCpuMinimum {
