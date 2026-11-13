@@ -39,7 +39,8 @@ OFFLINE_MOUNT = {"SOFTWARE": "MIOS_SW", "SYSTEM": "MIOS_SYS", "DEFAULT_USER": "M
 # Well-known local group SIDs (locale-independent membership; the spec names English group names).
 GROUP_SIDS = {"administrators": "S-1-5-32-544", "users": "S-1-5-32-545", "remote desktop users": "S-1-5-32-555",
               "remote management users": "S-1-5-32-580", "performance log users": "S-1-5-32-559"}
-INSTALLER_ROLES = ("virtio_guest_tools", "spice_vdagent", "qemu_ga", "winfsp", "webview2", "looking_glass_host", "looking_glass_idd")
+INSTALLER_ROLES = ("virtio_guest_tools", "spice_vdagent", "qemu_ga", "winfsp", "webview2", "looking_glass_host", "looking_glass_idd",
+                   "pwsh")   # pwsh: PowerShell 7 of the MiOS Windows shell (xbox-bm-39)
 SETUP_SCRIPT = "mios-xbox-setup.ps1"
 PS_EXE = r"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 STATE_DIR = "ProgramData/MiOS"
@@ -447,12 +448,13 @@ function Invoke-MiOSInstaller([string]$File, [string[]]$Arguments) {
     $p = Start-Process -FilePath $File -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden
     if ($p.ExitCode -notin 0, 1641, 3010) { throw "$File exited $($p.ExitCode)" }
 }
-function Invoke-MiOSMsi([string]$Msi, [string]$Name) {
-    # One MSI per call (never a composite bundle), with a verbose log the failure message points at.
+function Invoke-MiOSMsi([string]$Msi, [string]$Name, [string[]]$Properties = @()) {
+    # One MSI per call (never a composite bundle), with a verbose log the failure message points at; $Properties are
+    # NAME=value public properties from the SSOT.
     New-Item -ItemType Directory -Force -Path $MiOSLogDir | Out-Null
     $log = Join-Path $MiOSLogDir "$Name.msi.log"
     $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -Wait -PassThru -WindowStyle Hidden `
-        -ArgumentList @('/i', ('"{0}"' -f $Msi), '/qn', '/norestart', '/l*v', ('"{0}"' -f $log))
+        -ArgumentList (@('/i', ('"{0}"' -f $Msi), '/qn', '/norestart', '/l*v', ('"{0}"' -f $log)) + @($Properties))
     if ($p.ExitCode -notin 0, 1641, 3010) {
         $why = ''
         try { $why = (@(Get-Content -LiteralPath $log -Tail 600 | Select-String -Pattern 'Return value 3|Error \d{4}\.' | Select-Object -Last 2 | ForEach-Object { $_.Line.Trim() }) -join ' | ') } catch {}
@@ -558,11 +560,13 @@ def installer_names(doc: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, st
         "looking_glass_host": "looking-glass-host.zip",
         "looking_glass_idd": "looking-glass-idd.zip",
     }
-    for role in ("winfsp", "webview2"):
+    for role in ("winfsp", "webview2", "pwsh"):
         names[role] = os.path.basename(_installer(inputs, role)["path"])
     import fnmatch
     if not fnmatch.fnmatchcase(names["winfsp"].lower(), str(gt["winfsp"]["asset"]).lower()):
         raise PayloadError(f"build input winfsp: {names['winfsp']} does not match guest_tools.winfsp.asset")
+    if not fnmatch.fnmatchcase(names["pwsh"].lower(), str(_req(x, "shell.pwsh.asset")).lower()):
+        raise PayloadError(f"build input pwsh: {names['pwsh']} does not match shell.pwsh.asset")
     if str(names["virtio_guest_tools"]).lower().endswith(".exe"):
         raise PayloadError("windows.xbox.guest_tools.virtio_win_guest_tools.file: the composite bundle .exe is never run "
                            "(silent session-0 install exits 1603); name the virtio-win-gt MSI")
@@ -764,6 +768,15 @@ def render_setup_script(doc: Dict[str, Any], inputs: Dict[str, Any], tree_root: 
         f"    Assert-MiOSSha256 $f {_ps(ins['webview2']['sha256'])}",
         *_signed("$f", ins["webview2"], required=True),
         "    Invoke-MiOSInstaller $f @('/silent', '/install')",
+        "}",
+        # the MiOS Windows shell (xbox-bm-39): PowerShell 7 for every profile; its files are staged by the payload
+        "Invoke-MiOSStep 'shell_pwsh' {",
+        f"    $f = Join-Path $Inst {_ps(names['pwsh'])}",
+        f"    Assert-MiOSSha256 $f {_ps(ins['pwsh']['sha256'])}",
+        *_signed("$f", ins["pwsh"], required=True),
+        f"    Invoke-MiOSMsi $f 'pwsh' @({', '.join(_ps(p) for p in _req(x, 'shell.pwsh.msi_properties'))})",
+        f"    if (-not (Test-Path -LiteralPath {_ps('C:' + chr(92) + _shell_tools(doc)['pwsh']['exe'].replace('/', chr(92)))})) "
+        "{ throw 'pwsh.exe is absent after the PowerShell 7 MSI' }",
         "}",
         "Invoke-MiOSStep 'gpu_step' {",
         f"    & {_ps(gpu['script_path'])} -SpecPath {_ps(gpu['spec_path'])} -Register",
@@ -1295,6 +1308,60 @@ def stage_identity(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
     return rows
 
 
+def _shell_tools(doc: Dict[str, Any]) -> Dict[str, Any]:
+    sh = doc.get("shell")
+    if not isinstance(sh, dict) or not isinstance(sh.get("tools"), dict) or not isinstance(sh.get("files"), list):
+        raise PayloadError("xbox-spec.json has no shell record (render it with render_spec.py)")
+    return sh["tools"]
+
+
+def stage_shell(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_root: str = _TREE) -> List[Dict[str, Any]]:
+    """The MiOS Windows shell into the image (xbox-bm-39): every rendered/tree file byte-identical to the spec's sha256,
+    oh-my-posh and the fastfetch archive's files from the build inputs (each re-checked against its recorded sha256).
+    PowerShell 7 is an installer (INSTALLER_ROLES), run by the SYSTEM stage. Returns payload rows {name, path, sha256}."""
+    tools = _shell_tools(doc)
+    rows: List[Dict[str, Any]] = []
+    for f in doc["shell"]["files"]:
+        try:
+            data = render_spec.shell_file_bytes(f, tree_root)
+        except OSError as e:
+            raise PayloadError(f"shell file {f.get('name')}: {e}") from None
+        if hashlib.sha256(data).hexdigest() != f["sha256"]:
+            raise PayloadError(f"shell file {f['name']}: bytes differ from the rendered spec's sha256")
+        _write(os.path.join(out_dir, *f["path"].split("/")), data)
+        rows.append({"name": f"shell:{f['name']}", "path": f["path"], "sha256": f["sha256"]})
+    shin = inputs.get("shell") or {}
+    for tool in ("oh_my_posh", "fastfetch"):
+        r = shin.get(tool) or {}
+        if not r.get("path") or not os.path.isfile(r["path"]) or not r.get("sha256"):
+            raise PayloadError(f"build input shell.{tool}: not fetched/verified (inputs.json)")
+        if _sha256(r["path"]) != str(r["sha256"]).lower():
+            raise PayloadError(f"build input shell.{tool}: sha256 differs from inputs.json (changed since the fetch)")
+    with open(shin["oh_my_posh"]["path"], "rb") as fh:
+        data = fh.read()
+    _write(os.path.join(out_dir, *tools["oh_my_posh"]["path"].split("/")), data)
+    rows.append({"name": "shell:oh_my_posh", "path": tools["oh_my_posh"]["path"], "sha256": hashlib.sha256(data).hexdigest()})
+    dest = tools["fastfetch"]["dest_dir"]
+    with zipfile.ZipFile(shin["fastfetch"]["path"]) as z:
+        members = [i for i in z.infolist() if not i.is_dir()]
+        for i in members:   # judged on the RAW member name, before any folder is stripped
+            fn = i.filename
+            if (i.external_attr >> 16) & 0o170000 == 0o120000 or fn.startswith("/") or ":" in fn or "\\" in fn or \
+                    any(p in ("", ".", "..") for p in fn.split("/")):
+                raise PayloadError(f"build input shell.fastfetch: unsafe archive member {fn!r}")
+        tops = {i.filename.split("/", 1)[0] for i in members}
+        strip = len(tops) == 1 and all("/" in i.filename for i in members)   # one top-level folder: drop it
+        for i in members:
+            rel = i.filename.split("/", 1)[1] if strip else i.filename
+            data = z.read(i)
+            path = f"{dest}/{rel}"
+            _write(os.path.join(out_dir, *path.split("/")), data)
+            rows.append({"name": f"shell:fastfetch/{rel}", "path": path, "sha256": hashlib.sha256(data).hexdigest()})
+    if not any(r["path"] == tools["fastfetch"]["path"] for r in rows):
+        raise PayloadError(f"build input shell.fastfetch: the archive has no {os.path.basename(tools['fastfetch']['path'])}")
+    return rows
+
+
 def render_payload(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tree_root: str = _TREE,
                    native_dir: Optional[str] = None) -> Dict[str, Any]:
     """Write the payload tree; return its summary (no secret)."""
@@ -1327,7 +1394,9 @@ def render_payload(doc: Dict[str, Any], inputs: Dict[str, Any], out_dir: str, tr
         shutil.copyfile(ins["path"], os.path.join(out_dir, rel))
         inst_rows[role] = {"path": rel, "sha256": ins["sha256"], "version": ins.get("version", ""), "signer": ins.get("signer", "")}
     ident_rows = stage_identity(doc, inputs, out_dir, tree_root)
+    shell_rows = stage_shell(doc, inputs, out_dir, tree_root)
     summary = {"schema": "mios-xbox-payload/1", "components": comps, "installers": inst_rows, "identity": ident_rows,
+               "shell": shell_rows,
                "registry_items": len(doc["registry"]) + len(doc.get("debloat_services") or []),
                "answer_file": "autounattend.xml"}
     _write(os.path.join(state, "payload.json"), (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8"))

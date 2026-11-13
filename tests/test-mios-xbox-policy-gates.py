@@ -388,16 +388,19 @@ class TestItem7TrustAnchors(unittest.TestCase):
 
     def test_inputs_rows_claim_no_signer_for_unsigned_artifacts(self):
         x = {"build": {"download_tries": 1}, "resolve": {"webview2_signer": "Microsoft Corporation", "lg_signer": "HostFission"},
-             "guest_tools": {"qemu_ga": {"package": "qemu-ga-x86_64.msi"}}}
+             "guest_tools": {"qemu_ga": {"package": "qemu-ga-x86_64.msi"}},
+             # xbox-bm-39: the MiOS Windows shell tools
+             "shell": {"pwsh": {"signer": "Microsoft Corporation"}, "oh_my_posh": {}, "fastfetch": {}}}
         paths = {}
-        for n in ("gt.msi", "spice.msi", "qga.msi", "winfsp.msi", "wv2.exe", "lgh.zip", "lgi.zip"):
+        for n in ("gt.msi", "spice.msi", "qga.msi", "winfsp.msi", "wv2.exe", "lgh.zip", "lgi.zip", "pwsh.msi", "omp.exe", "ff.zip"):
             paths[n] = os.path.join(self.tmp, n)
             with open(paths[n], "wb") as fh:
                 fh.write(n.encode())
         arts = {k: {"version": "v", "source": "https://example.invalid/"} for k in
-                ("virtio_win", "qemu_ga", "winfsp", "webview2", "looking_glass_host", "looking_glass_idd")}
+                ("virtio_win", "qemu_ga", "winfsp", "webview2", "looking_glass_host", "looking_glass_idd",
+                 "pwsh", "oh_my_posh", "fastfetch")}
         files = {"qemu_ga": "qga.msi", "winfsp": "winfsp.msi", "webview2": "wv2.exe", "looking_glass_host": "lgh.zip",
-                 "looking_glass_idd": "lgi.zip"}
+                 "looking_glass_idd": "lgi.zip", "pwsh": "pwsh.msi", "oh_my_posh": "omp.exe", "fastfetch": "ff.zip"}
         saved = (F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_pinned)
         ident = {"cursor": {"asset_url": "https://example.invalid/cursor.zip", "asset_sha256": "0" * 64}}   # xbox-bm-39 pin
         try:
@@ -406,13 +409,18 @@ class TestItem7TrustAnchors(unittest.TestCase):
             F.fetch_converter = F.fetch_uup = F.fetch_fod = lambda *a, **k: self.tmp
             F.fetch_apps = lambda *a, **k: []
             F.fetch_pinned = lambda *a, **k: paths["lgi.zip"]
-            rows = F.fetch_all({"artifacts": arts}, {"spec": x, "identity": ident}, os.path.join(self.tmp, "w"))["installers"]
+            got = F.fetch_all({"artifacts": arts}, {"spec": x, "identity": ident}, os.path.join(self.tmp, "w"))
+            rows = got["installers"]
         finally:
             F.fetch_virtio, F.fetch_file, F.fetch_converter, F.fetch_uup, F.fetch_fod, F.fetch_apps, F.fetch_pinned = saved
         for role in ("virtio_guest_tools", "spice_vdagent", "qemu_ga"):
             self.assertEqual(rows[role]["signer"], "", role)
             self.assertIn("sha256", rows[role]["anchor"], role)
         self.assertEqual(rows["webview2"]["signer"], "Microsoft Corporation")   # a publisher that signs keeps its check
+        self.assertEqual(rows["pwsh"]["signer"], "Microsoft Corporation")       # PowerShell 7: digest + Authenticode
+        for tool in ("oh_my_posh", "fastfetch"):                                 # staged files: the digest is the anchor
+            self.assertEqual(got["shell"][tool]["signer"], "", tool)
+            self.assertIn("sha256", got["shell"][tool]["anchor"], tool)
 
     def test_rendered_stage_never_accepts_notsigned(self):
         _, doc = Fixture.get()
@@ -423,6 +431,7 @@ class TestItem7TrustAnchors(unittest.TestCase):
             self.assertIn("Assert-MiOSSha256 $f", step(name))
             self.assertNotIn("Assert-MiOSSigned", step(name))      # unsigned upstream: sha256 is the anchor
         self.assertIn("Assert-MiOSSigned $f 'Microsoft Corporation'", step("webview2"))
+        self.assertIn("Assert-MiOSSigned $f 'Microsoft Corporation'", step("shell_pwsh"))   # PowerShell 7 (xbox-bm-39)
         self.assertNotRegex(A._PS_LIB, r"NotSigned")
         self.assertIsNone(NOTSIGNED_BYPASS_RE.search(_rd(IMAGE_PS)))
         # negative controls: the old bypass is recognised, and a signed installer without a signer is refused
@@ -456,11 +465,12 @@ def FX_inputs(tmp: str, doc) -> dict:
     """Verified-input stand-ins shaped like fetch.py's rows (signer "" for the sha256-anchored virtio-win artefacts)."""
     dl = os.path.join(tmp, "dl")
     os.makedirs(dl, exist_ok=True)
-    signers = {"webview2": "Microsoft Corporation", "looking_glass_host": "HostFission", "looking_glass_idd": "HostFission"}
+    signers = {"webview2": "Microsoft Corporation", "looking_glass_host": "HostFission", "looking_glass_idd": "HostFission",
+               "pwsh": "Microsoft Corporation"}
     names = {"virtio_guest_tools": "virtio-win-gt-x64.msi", "spice_vdagent": "spice-vdagent-x64.msi",
              "qemu_ga": "qemu-ga-x86_64.msi", "winfsp": "winfsp-9.9.99999.msi",
              "webview2": "MicrosoftEdgeWebView2RuntimeInstallerX64.exe", "looking_glass_host": "looking-glass-host.zip",
-             "looking_glass_idd": "looking-glass-idd.zip"}
+             "looking_glass_idd": "looking-glass-idd.zip", "pwsh": "PowerShell-7.99.0-win-x64.msi"}   # pwsh: xbox-bm-39
     inputs = {"installers": {}}
     for role in A.INSTALLER_ROLES:
         p = os.path.join(dl, names[role])

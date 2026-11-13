@@ -13731,6 +13731,50 @@ oem_model_ref         = "branding.oem_model"
 oem_support_url_ref   = "branding.oem_support_url"
 oem_support_hours_ref = "branding.oem_support_hours"
 
+# --- The MiOS Windows shell (xbox-bm-39, mios-spec-01): what Get-MiOS Pass 1 installs per user, baked for every profile
+# of every MiOS-Xbox image -- PowerShell 7, oh-my-posh with the MiOS prompt, fastfetch with the MiOS config, the MiOS
+# Windows Terminal profile + colour scheme (a machine-wide WT fragment) and an all-users PowerShell profile carrying
+# the `mios` verbs ([verbs]). The binaries are resolved to the newest release at build time with the GitHub
+# release-asset sha256 (resolve_latest.py; no pins). A per-user profile (Get-MiOS) runs after the all-users one.
+[windows.xbox.shell]
+dir                  = "shell"                      # under components.dest_dir: the MiOS profile + the tool configs
+bin_dir              = "bin"                        # under components.dest_dir: oh-my-posh.exe, fastfetch\
+wt_fragment          = 'ProgramData\Microsoft\Windows Terminal\Fragments\MiOS\mios.json'   # image-relative, machine-wide
+all_users_profiles   = ['Windows\System32\WindowsPowerShell\v1.0\profile.ps1', 'Program Files\PowerShell\7\profile.ps1']
+profile_name_ref     = "theme.terminal.profile_name"   # the MiOS-WIN Windows Terminal profile
+scheme_name_ref      = "theme.terminal.scheme_name"    # the MiOS colour scheme ([colors] via wt_profile_inject)
+look_ref             = "theme"                         # opacity, acrylic, cursor_shape, suppress_app_title
+font_ref             = "theme.font"                    # family + size of the terminal font (staged by the identity)
+prompt_config_ref    = "theme.prompt.omp_path"         # the MiOS oh-my-posh config (vendored in the tree)
+fastfetch_config_ref = "branding.fastfetch_config"     # the MiOS fastfetch config (under usr/share/mios)
+fastfetch_theme_ref  = "theme.fastfetch"               # its logo colour/padding and key/title/output colours
+verbs_ref            = "verbs"                         # the `mios <verb>` catalogue
+# Machine policy that lets the all-users profiles load (a Windows client defaults to Restricted). MiOS's policy is
+# RemoteSigned, never a machine-wide Bypass (usr/libexec/mios/win/ps_policy_config.py); PowerShell 7's MSI ships the
+# same default, so render_spec accepts only this value until it also renders PowerShell 7's powershell.config.json.
+execution_policy     = "RemoteSigned"
+
+[windows.xbox.shell.pwsh]
+upstream       = "https://github.com/PowerShell/PowerShell"   # GitHub releases
+channel        = "latest"                       # newest stable release MSI
+asset          = "PowerShell-*-win-x64.msi"     # release asset glob
+signer         = "Microsoft Corporation"        # Authenticode subject the MSI must carry (besides the GitHub sha256)
+install_dir    = 'Program Files\PowerShell\7'   # image-relative $PSHOME of the MSI (its all-users profile lives there)
+msi_properties = ["ADD_PATH=1", "REGISTER_MANIFEST=1", "USE_MU=0", "ENABLE_MU=0"]   # on PATH, event manifest, no Microsoft Update opt-in
+install_at     = "SetupComplete"                # SYSTEM stage
+
+[windows.xbox.shell.oh_my_posh]
+upstream = "https://github.com/JanDeDobbeleer/oh-my-posh"   # GitHub releases
+channel  = "latest"
+asset    = "posh-windows-amd64.exe"             # the standalone executable
+exe      = "oh-my-posh.exe"                     # its name under bin_dir
+
+[windows.xbox.shell.fastfetch]
+upstream = "https://github.com/fastfetch-cli/fastfetch"   # GitHub releases
+channel  = "latest"
+asset    = "fastfetch-windows-amd64.zip"        # every file of the archive is staged under bin_dir\fastfetch
+exe      = "fastfetch.exe"
+
 # --- GPU post-setup step (xb-09, XB-3): mios-gpu-driver.ps1 reads these keys from xbox-spec.json. No driver
 # version, build or versioned URL here -- only vendor API/index endpoints, host allowlists and signer
 # identities; resolved versions go to gpu-driver.json only.

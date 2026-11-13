@@ -120,10 +120,24 @@ def ipa_files(apps=None, framework=True) -> dict:
     return out
 
 
+# the MiOS Windows shell tools (xbox-bm-39): repo -> (latest tag, release asset names); one asset matches each SSOT glob
+SHELL_RELEASES = {"PowerShell/PowerShell": ("v7.99.0", ["PowerShell-7.99.0-win-x64.msi", "PowerShell-7.99.0-win-arm64.msi"]),
+                  "JanDeDobbeleer/oh-my-posh": ("v99.0.0", ["posh-windows-amd64.exe", "posh-windows-arm64.exe", "checksums.txt"]),
+                  "fastfetch-cli/fastfetch": ("2.99.0", ["fastfetch-windows-amd64.zip", "fastfetch-windows-amd64.7z"])}
+
+
+def gh_release(repo: str, tag: str, names: list) -> dict:
+    return {"tag_name": tag, "draft": False, "prerelease": False, "html_url": f"https://github.com/{repo}/releases/{tag}",
+            "assets": [{"name": n, "size": len(n), "digest": "sha256:" + hashlib.sha256(n.encode()).hexdigest(),
+                        "browser_download_url": f"https://github.com/{repo}/releases/download/{tag}/{n}"} for n in names]}
+
+
 def routes() -> dict:
     """(method, url) -> (status, headers, body) for one consistent upstream snapshot."""
     j = lambda o: json.dumps(o).encode()  # noqa: E731
     return {
+        **{("GET", f"{GH}/repos/{repo}/releases/latest"): (200, {}, j(gh_release(repo, tag, names)))
+           for repo, (tag, names) in SHELL_RELEASES.items()},
         ("GET", f"{API}/fetchupd.php?arch=amd64&ring=Dev"): (200, {}, j({"response": {"updateArray": [
             {"updateId": UUID, "updateTitle": "Windows 11 Insider Preview 29683.1000 (rs_prerelease)",
              "foundBuild": "29683.1000", "arch": "amd64"},
@@ -267,7 +281,11 @@ class ResolveLatestTest(unittest.TestCase):
         m = _load(self.out)
         a = m["artifacts"]
         self.assertEqual(set(a), {"windows_uup", "virtio_win", "qemu_ga", "looking_glass_host", "looking_glass_idd",
-                                  "winfsp", "webview2", "uup_converter"})
+                                  "winfsp", "webview2", "uup_converter", "pwsh", "oh_my_posh", "fastfetch"})
+        # the MiOS Windows shell tools (xbox-bm-39): the ONE asset of the glob, anchored by GitHub's asset digest
+        for tool, name in (("pwsh", "PowerShell-7.99.0-win-x64.msi"), ("oh_my_posh", "posh-windows-amd64.exe"),
+                           ("fastfetch", "fastfetch-windows-amd64.zip")):
+            self.assertEqual((a[tool]["asset"], a[tool]["integrity"]["value"]), (name, hashlib.sha256(name.encode()).hexdigest()))
         self.assertEqual((a["looking_glass_idd"]["version"], a["looking_glass_idd"]["integrity"]["value"]),
                          ("B7-829-cdba29f2", LG_IDD_SHA))   # the IDD of the SAME client commit as the host app
         c = a["uup_converter"]

@@ -53,6 +53,27 @@ def cursor_archive_inputs(tmp: str, doc: Dict[str, Any]) -> Dict[str, Any]:
     return {"cursor_archive": {"path": path, "sha256": sha, "url": cur["asset_url"]}}
 
 
+def shell_inputs(tmp: str) -> Dict[str, Any]:
+    """Fixture build inputs for the MiOS Windows shell tools (xbox-bm-39): an oh-my-posh executable and a fastfetch
+    archive (fastfetch.exe + a preset), as fetch.py records them -- tests never download. Returns inputs['shell']."""
+    import zipfile
+    os.makedirs(tmp, exist_ok=True)
+    omp = os.path.join(tmp, "posh-windows-amd64.exe")
+    with open(omp, "wb") as fh:
+        fh.write(b"fixture oh-my-posh")
+    ffz = os.path.join(tmp, "fastfetch-windows-amd64.zip")
+    with zipfile.ZipFile(ffz, "w") as z:
+        z.writestr("fastfetch.exe", b"fixture fastfetch")
+        z.writestr("presets/examples/1.jsonc", b"{}")
+
+    def row(p: str) -> Dict[str, Any]:
+        with open(p, "rb") as fh:
+            sha = hashlib.sha256(fh.read()).hexdigest()
+        return {"path": p, "sha256": sha, "signer": "", "anchor": "fixture", "version": "fixture",
+                "url": "https://example.invalid/" + os.path.basename(p)}
+    return {"oh_my_posh": row(omp), "fastfetch": row(ffz)}
+
+
 def load_module(name: str, path: str):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -237,6 +258,11 @@ def render_bundle(out: str, doc: Dict[str, Any], items: List[Dict[str, Any]], ro
             os.makedirs(d, exist_ok=True)
             with open(os.path.join(d, i["inf"] + ".inf"), "w", encoding="utf-8") as fh:
                 fh.write(virtio_inf(i["inf"]))
+        elif i["kind"] == "component" and i.get("installed_by"):   # xbox-bm-39: an MSI-installed component (PowerShell 7)
+            dst = os.path.join(out, "payload", "installers", i["installed_by"].replace("*", "fixture"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "wb") as fh:
+                fh.write(b"fixture installer\n")
         elif i["kind"] in ("component", "file_hash"):
             dst = os.path.join(out, "payload", i["path"])
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -278,6 +304,17 @@ def _write_component(dst: str, it: Dict[str, Any], doc: Dict[str, Any], root: st
             fh.write(z.read(f["member"]))
         return
     if it["id"].startswith("identity.cursor."):   # xbox-bm-39: a cursor file of the pinned build (presence item)
+        with open(dst, "wb") as fh:
+            fh.write(f"fixture {it['id']}\n".encode())
+        return
+    if it["id"].startswith("shell.") and it["kind"] == "file_hash":   # xbox-bm-39: a rendered/tree shell file, exact bytes
+        import render_spec as RS
+        f = next(f for f in doc["shell"]["files"] if f"shell.{f['name']}" == it["id"])
+        src_root = root if "source" not in f or os.path.isfile(os.path.join(root, *f["source"].split("/"))) else ROOT
+        with open(dst, "wb") as fh:
+            fh.write(RS.shell_file_bytes(f, src_root))
+        return
+    if it["id"] in ("shell.oh_my_posh", "shell.fastfetch"):   # xbox-bm-39: a staged tool (presence item)
         with open(dst, "wb") as fh:
             fh.write(f"fixture {it['id']}\n".encode())
         return

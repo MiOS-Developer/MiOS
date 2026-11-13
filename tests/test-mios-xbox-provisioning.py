@@ -97,12 +97,14 @@ def fake_inputs(tmp: str, doc) -> dict:
     for role, fn in (("virtio_guest_tools", "virtio-win-gt-x64.msi"), ("spice_vdagent", "spice-vdagent-x64.msi"),
                      ("qemu_ga", "qemu-ga-x86_64.msi"), ("winfsp", "winfsp-9.9.99999.msi"),
                      ("webview2", "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
-                     ("looking_glass_host", "looking-glass-host.zip"), ("looking_glass_idd", "looking-glass-idd.zip")):
+                     ("looking_glass_host", "looking-glass-host.zip"), ("looking_glass_idd", "looking-glass-idd.zip"),
+                     ("pwsh", "PowerShell-7.99.0-win-x64.msi")):   # pwsh: the MiOS Windows shell (xbox-bm-39)
         p = os.path.join(dl, fn)
         with open(p, "wb") as fh:
             fh.write(f"fixture {role}".encode())
         inputs["installers"][role] = {"path": p, "sha256": _sha(f"fixture {role}".encode()), "signer": "Fixture Signer",
                                       "version": "fixture", "url": f"https://example.invalid/{fn}"}
+    inputs["shell"] = FX.shell_inputs(os.path.join(tmp, "shell"))   # xbox-bm-39: oh-my-posh + fastfetch
     drv = os.path.join(tmp, "drivers")
     vw = doc["spec"]["drivers"]["virtio_win"]
     for inf in vw["inf"]:

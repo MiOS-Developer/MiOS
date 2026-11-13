@@ -19,7 +19,8 @@ reg            scope (user|software|system), path, name, type, value
 feature        name, state (enabled|disabled|conditional)
 driver         inf (base name, e.g. ``viostor``) -- must be in the driver set
 guest_tool     name, installer (payload path) and/or service, file
-component      name, path (image-relative), sha256?, task?, service?
+component      name, path (image-relative), sha256?, task?, service?, installed_by? (installer glob: the image gate checks
+               the installer is staged and run instead of the path; the guest probe checks the path)
 capability     name (Windows capability name prefix, e.g. OpenSSH.Server), proof? (image-relative file of the offline-baked FOD)
 file_hash      path (image-relative), sha256
 build_family   family (list of BuildBranch names with Start assets), families{}
@@ -382,6 +383,18 @@ def items_from_rendered(doc: Dict[str, Any], root: Optional[str] = None) -> List
         items.append({"id": "identity.theme", "kind": "theme", "name": th.get("name"), "window_color": th.get("window_color"),
                       "uwp_apps_use_light_theme": bool(th.get("uwp_apps_use_light_theme")), "background": bg.get("unattend")})
         items.append({"id": "identity.theme.background", "kind": "file_hash", "path": bg.get("path"), "sha256": bg.get("sha256")})
+    # the MiOS Windows shell (xbox-bm-39): every rendered file by sha256, the staged tools by presence, PowerShell 7 by
+    # its MSI (image gate: staged + run by the SYSTEM stage) and its pwsh.exe (in the guest)
+    shl = doc.get("shell") or {}
+    for f in shl.get("files") or []:
+        items.append({"id": f"shell.{f['name']}", "kind": "file_hash", "path": f["path"], "sha256": f["sha256"]})
+    tools = shl.get("tools") or {}
+    for tool, label in (("oh_my_posh", "oh-my-posh"), ("fastfetch", "fastfetch")):
+        if tool in tools:
+            items.append({"id": f"shell.{tool}", "kind": "component", "name": label, "path": tools[tool]["path"]})
+    if "pwsh" in tools:
+        items.append({"id": "shell.pwsh", "kind": "component", "name": "pwsh", "path": tools["pwsh"]["exe"],
+                      "installed_by": tools["pwsh"]["asset"]})
     comps = x.get("components") or {}
     dest = _win_rel(comps.get("dest_dir", ""))
     for c in comps.get("ship") or []:

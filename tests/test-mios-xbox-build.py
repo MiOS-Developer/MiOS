@@ -116,7 +116,8 @@ def fake_inputs(tmp: str, doc) -> dict:
     for role, fn in (("virtio_guest_tools", "virtio-win-gt-x64.msi"), ("spice_vdagent", "spice-vdagent-x64.msi"),
                      ("qemu_ga", "qemu-ga-x86_64.msi"),
                      ("winfsp", "winfsp-9.9.99999.msi"), ("webview2", "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"),
-                     ("looking_glass_host", "looking-glass-host.zip"), ("looking_glass_idd", "looking-glass-idd.zip")):
+                     ("looking_glass_host", "looking-glass-host.zip"), ("looking_glass_idd", "looking-glass-idd.zip"),
+                     ("pwsh", "PowerShell-7.99.0-win-x64.msi")):   # pwsh: the MiOS Windows shell (xbox-bm-39)
         p = os.path.join(dl, fn)
         b = f"fixture {role}".encode()
         with open(p, "wb") as fh:
@@ -142,6 +143,7 @@ def fake_inputs(tmp: str, doc) -> dict:
     inputs["fod_dir"] = fod
     import _mios_xbox_fixtures as FX   # tests/ is on sys.path (above)
     inputs["identity"] = FX.cursor_archive_inputs(os.path.join(tmp, "identity"), doc)   # xbox-bm-39 (re-pins doc)
+    inputs["shell"] = FX.shell_inputs(os.path.join(tmp, "shell"))                       # xbox-bm-39: oh-my-posh + fastfetch
     return inputs
 
 

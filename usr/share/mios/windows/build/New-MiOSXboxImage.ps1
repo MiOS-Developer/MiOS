@@ -85,15 +85,18 @@ foreach ($c in @($payload.components)) {
 # MiOS identity files (xbox-bm-39: cursor scheme, SSOT font family): verified like components before the robocopy below
 $identity = @(if ($payload.PSObject.Properties['identity']) { $payload.identity } else { @() })
 if (-not $identity.Count) { throw 'payload.json lists no MiOS identity files (cursor scheme, font): re-render the payload' }
-foreach ($c in $identity) {
+# the MiOS Windows shell (xbox-bm-39: WT fragment, all-users profile, oh-my-posh, fastfetch): verified the same way
+$shellFiles = @(if ($payload.PSObject.Properties['shell']) { $payload.shell } else { @() })
+if (-not $shellFiles.Count) { throw 'payload.json lists no MiOS shell files (Terminal profile, PowerShell profile, tools): re-render the payload' }
+foreach ($c in @($identity) + @($shellFiles)) {
     $f = Join-Path $PayloadDir ($c.path -replace '/', '\')
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf) -or (Get-Sha256 $f) -ne ([string]$c.sha256).ToLowerInvariant()) { throw "identity file $($c.name) missing or altered in the payload" }
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf) -or (Get-Sha256 $f) -ne ([string]$c.sha256).ToLowerInvariant()) { throw "identity/shell file $($c.name) missing or altered in the payload" }
 }
 $answer = Join-Path $PayloadDir 'autounattend.xml'
 $regFile = Join-Path $PayloadDir 'ProgramData\MiOS\xbox-registry.reg'
 foreach ($f in @($answer, $regFile)) { if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { throw "payload lacks $f" } }
 $Result.installers = $verified
-Say "payload verified: $(@($verified.Keys).Count) installers, $(@($payload.components).Count) components, $($identity.Count) identity files"
+Say "payload verified: $(@($verified.Keys).Count) installers, $(@($payload.components).Count) components, $($identity.Count) identity files, $($shellFiles.Count) shell files"
 
 # --- 3. exactly the spec edition -----------------------------------------------------------------
 $src = @('install.wim', 'install.esd') | ForEach-Object { Join-Path $MediaDir "sources\$_" } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1

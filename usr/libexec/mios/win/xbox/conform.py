@@ -1132,6 +1132,16 @@ def evaluate(items: List[Dict[str, Any]], obs: Observations, mode: str,
                 findings.append(Finding(f"missing:{it['id']}", f"installer {it['installer']} not staged"))
             elif mode == "rendered" and not _mentioned(obs, it["installer"]):
                 findings.append(Finding(f"missing:{it['id']}", f"installer {it['installer']} is staged but no setup script runs it"))
+        elif k == "component" and it.get("installed_by"):
+            # installed by an MSI at setup (xbox-bm-39: PowerShell 7): the image carries the installer and the SYSTEM
+            # stage runs it; the installed file itself only exists in the guest (the probe checks it)
+            stage = [t for s, t in obs.script_text if _is_stage_script(s)]
+            if not _staged(obs, it["installed_by"]):
+                findings.append(Finding(f"missing:{it['id']}", f"installer {it['installed_by']} not staged"))
+            elif stage and not any(re.search(re.escape(it["installed_by"].lower()).replace(r"\*", r"[\w.\-]*"), t.lower())
+                                   for t in stage):
+                # with no stage script in these inputs the gate cannot judge the run (as for the guest steps)
+                findings.append(Finding(f"missing:{it['id']}", f"installer {it['installed_by']} is staged but the SYSTEM stage never runs it"))
         elif k in ("component", "file_hash"):
             p = _find_file(obs, it["path"])
             if not p:

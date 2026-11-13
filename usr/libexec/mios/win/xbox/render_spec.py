@@ -30,6 +30,7 @@ import re
 import struct
 import sys
 import tempfile
+import uuid
 import zipfile
 
 _TREE = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "..", ".."))
@@ -132,6 +133,15 @@ REQUIRED = {
     "identity.background_color_ref": str, "identity.background": str,
     "identity.oem_manufacturer_ref": str, "identity.oem_model_ref": str, "identity.oem_support_url_ref": str,
     "identity.oem_support_hours_ref": str,
+    "shell.dir": str, "shell.bin_dir": str, "shell.wt_fragment": str, "shell.all_users_profiles": list,
+    "shell.profile_name_ref": str, "shell.scheme_name_ref": str, "shell.look_ref": str, "shell.font_ref": str,
+    "shell.prompt_config_ref": str, "shell.fastfetch_config_ref": str, "shell.fastfetch_theme_ref": str,
+    "shell.verbs_ref": str, "shell.execution_policy": str,
+    "shell.pwsh.upstream": str, "shell.pwsh.channel": str, "shell.pwsh.asset": str, "shell.pwsh.signer": str,
+    "shell.pwsh.install_dir": str, "shell.pwsh.msi_properties": list, "shell.pwsh.install_at": str,
+    "shell.oh_my_posh.upstream": str, "shell.oh_my_posh.channel": str, "shell.oh_my_posh.asset": str,
+    "shell.oh_my_posh.exe": str,
+    "shell.fastfetch.upstream": str, "shell.fastfetch.channel": str, "shell.fastfetch.asset": str, "shell.fastfetch.exe": str,
     "provision.serial_baud": int, "provision.network_category": str, "provision.network_wait_s": int,
     "ssh.install": str, "ssh.port_ref": str, "ssh.settings_ref": str, "ssh.authorized_keys_key": str,
     "ssh.authorized_keys_files": list, "ssh.settings_path": str, "ssh.authorized_keys_path": str,
@@ -443,6 +453,7 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
     _check_apps(x)
     _check_devices(x)
     ident, ident_registry = render_identity(x, resolved)
+    shell, shell_registry = render_shell(x, resolved, merged)
 
     out = {
         "schema": SCHEMA,
@@ -453,8 +464,9 @@ def render(merged: dict, layers: list[str] | None = None) -> dict:
         "region": {"timezone": win_tz, "ui_language": ui_lang, "input_locale": input_locale},
         "source": source,
         "feature_overrides": _feature_ids(x),
-        "registry": build_registry(x) + ident_registry,
+        "registry": build_registry(x) + ident_registry + shell_registry,
         "identity": ident,
+        "shell": shell,
         "debloat_services": debloat_services,
         "winrm": {"enable": x["winrm"]["enable"], "remote_address": x["winrm"]["remote_address"], "port": port},
         "ssh": ssh,
@@ -727,6 +739,256 @@ def render_identity(x: dict, resolved: dict, tree_root: str = _TREE) -> tuple:
                  "dest_dir": font_dir, "files": fonts},
     }
     return record, reg
+
+
+# ---------------------------------------------------------------------------
+# MiOS Windows shell (xbox-bm-39): PowerShell 7, oh-my-posh, fastfetch, the WT profile + scheme, the all-users profile
+# ---------------------------------------------------------------------------
+
+SHELL_TOOLS = ("pwsh", "oh_my_posh", "fastfetch")
+SHELL_LOCAL_VERBS = ("dash", "help")   # the `mios` verbs the image itself implements; the rest need the host layer
+PS51_PROFILE = r"Windows\System32\WindowsPowerShell\v1.0\profile.ps1"
+WT_FRAGMENTS = r"ProgramData\Microsoft\Windows Terminal\Fragments"
+WT_CURSOR_SHAPES = ("bar", "vintage", "underscore", "filledBox", "emptyBox", "doubleUnderscore")
+EXECUTION_POLICY_KEY = r"Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell"
+EXECUTION_POLICIES = ("RemoteSigned",)   # PowerShell 7's MSI default; MiOS never sets a machine-wide Bypass
+GITHUB_REPO_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?")
+MSI_PROPERTY_RE = re.compile(r"[A-Z][A-Z0-9_]*=[\w.\-]*")
+VERB_RE = re.compile(r"[a-z][a-z0-9_-]*")
+
+
+def _rel(path: str, what: str) -> str:
+    """An image-relative Windows path: no drive, no '..', backslashes."""
+    p = re.sub(r"^[A-Za-z]:", "", str(path)).replace("/", "\\").strip("\\")
+    if not p or ".." in p.split("\\"):
+        raise SpecError(what, f"{path!r} is not an image-relative path")
+    return p
+
+
+def _psq(v: Any) -> str:
+    """PowerShell single-quoted literal."""
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def shell_file_bytes(entry: dict, tree_root: str = _TREE) -> bytes:
+    """The exact bytes of one shell file of the rendered spec: rendered text in its encoding, or the tree source."""
+    if "text" in entry:
+        return str(entry["text"]).encode(entry["encoding"])
+    with open(os.path.join(tree_root, *str(entry["source"]).split("/")), "rb") as fh:
+        return fh.read()
+
+
+def _wt():
+    """usr/libexec/mios/win/wt_profile_inject.py: the ONE Windows Terminal colour-scheme/edge projection of the SSOT."""
+    import importlib.util
+    name = "mios_wt_profile_inject"
+    if name in sys.modules:
+        return sys.modules[name]
+    path = os.path.join(_TREE, "usr", "libexec", "mios", "win", "wt_profile_inject.py")
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod   # its dataclasses resolve their module through sys.modules
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    return mod
+
+
+def _fastfetch_config(text: str, theme: dict, logo_path: str, what: str) -> str:
+    """The MiOS fastfetch config for Windows: the logo source points at the staged logo and the [theme.fastfetch]
+    colours/padding are substituted, as Get-MiOS's Install-MiOSFastfetch does. Each value must occur exactly once."""
+    for k in ("logo_color", "keys_color", "title_color", "output_color"):
+        if not re.fullmatch(r"[a-z_]+", str(theme.get(k, ""))):
+            raise SpecError(f"theme.fastfetch.{k}", "must be an ANSI colour name")
+    for k in ("logo_padding_top", "logo_padding_right", "logo_padding_left"):
+        if isinstance(theme.get(k), bool) or not isinstance(theme.get(k), int) or theme[k] < 0:
+            raise SpecError(f"theme.fastfetch.{k}", "must be a non-negative integer")
+    subs = [
+        (r'("logo"\s*:\s*\{[^{}]*?"source"\s*:\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(logo_path)),
+        (r'("color"\s*:\s*\{\s*"1"\s*:\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(theme["logo_color"])),
+        (r'"padding"\s*:\s*\{[^{}]*\}', lambda m: '"padding": {{ "top": {}, "right": {}, "left": {} }}'.format(
+            theme["logo_padding_top"], theme["logo_padding_right"], theme["logo_padding_left"])),
+        (r'("keys"\s*:\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(theme["keys_color"])),
+        (r'("title"\s*:\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(theme["title_color"])),
+        (r'("output"\s*:\s*)"[^"]*"', lambda m: m.group(1) + json.dumps(theme["output_color"])),
+    ]
+    for pat, fn in subs:
+        text, n = re.subn(pat, fn, text, flags=re.S)
+        if n != 1:
+            raise SpecError(what, f"the MiOS fastfetch config has {n} matches for {pat!r} (expected exactly one)")
+    return text
+
+
+def render_shell(x: dict, resolved: dict, merged: dict, tree_root: str = _TREE) -> tuple:
+    """(shell record, registry items) for the MiOS Windows shell (xbox-bm-39). Every file is rendered here from the
+    SSOT with its exact bytes and sha256 (answer.py stages them, conform/probe check them); the binaries are resolved
+    at build time (resolve_latest.py) and only described here."""
+    sh = x["shell"]
+    dest_rel = _rel(x["components"]["dest_dir"], _full("components.dest_dir"))
+    shell_rel = dest_rel + "\\" + _rel(sh["dir"], _full("shell.dir"))
+    bin_rel = dest_rel + "\\" + _rel(sh["bin_dir"], _full("shell.bin_dir"))
+    tools: dict = {}
+    for t in SHELL_TOOLS:
+        tt = sh[t]
+        if not GITHUB_REPO_RE.fullmatch(str(tt["upstream"])):
+            raise SpecError(_full(f"shell.{t}.upstream"), "must be a GitHub repository URL (releases + asset digest)")
+        if tt["channel"] != "latest" or re.search(r"\d+\.\d+", str(tt["asset"])) or not str(tt["asset"]).strip():
+            raise SpecError(_full(f"shell.{t}"), "channel must be 'latest' and asset a glob without a version (no pins)")
+        tools[t] = {"upstream": str(tt["upstream"]), "asset": str(tt["asset"])}
+    for t in ("oh_my_posh", "fastfetch"):
+        if not re.fullmatch(r"[A-Za-z0-9][\w.\-]*\.exe", str(sh[t]["exe"])):
+            raise SpecError(_full(f"shell.{t}.exe"), "must be a plain .exe file name")
+    pw = sh["pwsh"]
+    pwsh_rel = _rel(pw["install_dir"], _full("shell.pwsh.install_dir"))
+    if not all(isinstance(p, str) and MSI_PROPERTY_RE.fullmatch(p) for p in pw["msi_properties"]):
+        raise SpecError(_full("shell.pwsh.msi_properties"), "must be NAME=value MSI public properties")
+    if pw["install_at"] != "SetupComplete" or not str(pw["signer"]).strip():
+        raise SpecError(_full("shell.pwsh"), "install_at must be SetupComplete and signer a non-empty subject")
+    tools["pwsh"].update(signer=str(pw["signer"]), install_dir=pwsh_rel.replace("\\", "/"),
+                         msi_properties=list(pw["msi_properties"]), exe=pwsh_rel.replace("\\", "/") + "/pwsh.exe")
+    tools["oh_my_posh"]["path"] = (bin_rel + "\\" + sh["oh_my_posh"]["exe"]).replace("\\", "/")
+    tools["fastfetch"].update(dest_dir=(bin_rel + "\\fastfetch").replace("\\", "/"),
+                              path=(bin_rel + "\\fastfetch\\" + sh["fastfetch"]["exe"]).replace("\\", "/"))
+    policy = str(sh["execution_policy"])
+    if policy not in EXECUTION_POLICIES:
+        raise SpecError(_full("shell.execution_policy"), f"{policy!r}: MiOS sets {EXECUTION_POLICIES} (never a machine-wide "
+                        "Bypass/Unrestricted)")
+
+    # Windows Terminal: a machine-wide fragment with the MiOS profile and colour scheme
+    frag_rel = _rel(sh["wt_fragment"], _full("shell.wt_fragment"))
+    if not frag_rel.lower().startswith(WT_FRAGMENTS.lower() + "\\") or len(frag_rel.split("\\")) != len(WT_FRAGMENTS.split("\\")) + 2 \
+            or not frag_rel.lower().endswith(".json"):
+        raise SpecError(_full("shell.wt_fragment"), f"must be {WT_FRAGMENTS}\\<app>\\<name>.json (a machine-wide WT fragment)")
+    wt = _wt()
+    scheme = wt.color_scheme(merged)
+    padding, scrollbar = wt.wt_edge(merged)
+    profile_name = str(resolved["shell.profile_name_ref"]).strip()
+    scheme_name = str(resolved["shell.scheme_name_ref"]).strip()
+    if not profile_name or scheme["name"] != scheme_name:
+        raise SpecError(_full("shell.scheme_name_ref"), "the terminal profile/scheme names must be the [theme.terminal] ones")
+    look, font = resolved["shell.look_ref"], resolved["shell.font_ref"]
+    if not isinstance(look, dict) or not isinstance(font, dict):
+        raise SpecError(_full("shell.look_ref"), "look_ref/font_ref must reference tables ([theme], [theme.font])")
+    opacity = look.get("opacity")
+    if isinstance(opacity, bool) or not isinstance(opacity, int) or not 0 <= opacity <= 100:
+        raise SpecError("theme.opacity", "must be an integer 0..100")
+    if not isinstance(look.get("acrylic"), bool) or not isinstance(look.get("suppress_app_title"), bool):
+        raise SpecError("theme", "acrylic and suppress_app_title must be booleans")
+    if look.get("cursor_shape") not in WT_CURSOR_SHAPES:
+        raise SpecError("theme.cursor_shape", f"must be one of {WT_CURSOR_SHAPES}")
+    size = font.get("size")
+    if not str(font.get("family") or "").strip() or isinstance(size, bool) or not isinstance(size, (int, float)) or size <= 0:
+        raise SpecError(_full("shell.font_ref"), "must reference [theme.font] with a family and a positive size")
+    guid = "{" + str(uuid.uuid5(uuid.NAMESPACE_URL, "mios:windows-terminal:" + profile_name)) + "}"   # stable per name
+    fragment = {
+        "profiles": [{
+            "guid": guid, "name": profile_name, "hidden": False,
+            "commandline": f'"C:\\{pwsh_rel}\\pwsh.exe" -NoLogo', "startingDirectory": "%USERPROFILE%",
+            "colorScheme": scheme_name, "font": {"face": str(font["family"]), "size": size},
+            "opacity": opacity, "useAcrylic": look["acrylic"], "cursorShape": look["cursor_shape"],
+            "padding": padding, "scrollbarState": scrollbar, "suppressApplicationTitle": look["suppress_app_title"],
+        }],
+        "schemes": [scheme],
+    }
+    files = [{"name": "wt_fragment", "path": frag_rel.replace("\\", "/"), "encoding": "utf-8",
+              "text": json.dumps(fragment, indent=2, sort_keys=True) + "\n"}]
+
+    # the tool configs: the vendored oh-my-posh config as is; the fastfetch config with the Windows logo + theme
+    omp_src = str(resolved["shell.prompt_config_ref"]).lstrip("/")
+    ff_src = "usr/share/mios/" + str(resolved["shell.fastfetch_config_ref"]).lstrip("/")
+    for src, key in ((omp_src, "shell.prompt_config_ref"), (ff_src, "shell.fastfetch_config_ref")):
+        if not os.path.isfile(os.path.join(tree_root, *src.split("/"))):
+            raise SpecError(_full(key), f"{src} is not in the tree")
+    with open(os.path.join(tree_root, *ff_src.split("/")), encoding="utf-8") as fh:
+        ff_text = fh.read()
+    m = re.search(r'"logo"\s*:\s*\{[^{}]*?"source"\s*:\s*"(/usr/share/mios/[^"]+)"', ff_text, re.S)
+    if not m or not os.path.isfile(os.path.join(tree_root, *m.group(1).lstrip("/").split("/"))):
+        raise SpecError(_full("shell.fastfetch_config_ref"), "the fastfetch config's logo source is not a /usr/share/mios file in the tree")
+    logo_src = m.group(1).lstrip("/")
+    logo_name = os.path.basename(logo_src)
+    theme_ff = resolved["shell.fastfetch_theme_ref"]
+    if not isinstance(theme_ff, dict):
+        raise SpecError(_full("shell.fastfetch_theme_ref"), "must reference [theme.fastfetch]")
+    ff_rendered = _fastfetch_config(ff_text, theme_ff, ("C:\\" + shell_rel + "\\" + logo_name).replace("\\", "/"),
+                                    _full("shell.fastfetch_config_ref"))
+    files += [
+        {"name": "omp_config", "path": (shell_rel + "\\mios.omp.json").replace("\\", "/"), "source": omp_src},
+        {"name": "fastfetch_logo", "path": (shell_rel + "\\" + logo_name).replace("\\", "/"), "source": logo_src},
+        {"name": "fastfetch_config", "path": (shell_rel + "\\fastfetch.jsonc").replace("\\", "/"), "encoding": "utf-8",
+         "text": ff_rendered},
+    ]
+
+    # the MiOS profile (UTF-8 with BOM: Windows PowerShell 5.1 reads a BOM-less script as ANSI) and its two hooks
+    table = resolved["shell.verbs_ref"]
+    if not isinstance(table, dict):
+        raise SpecError(_full("shell.verbs_ref"), "must reference the [verbs] table")
+    # the `mios <verb>` CLI catalogue: the [verbs] entries with a surface (the agent tool verbs share the table)
+    verbs = {n: v for n, v in table.items() if isinstance(v, dict) and "surface" in v}
+    if not verbs:
+        raise SpecError(_full("shell.verbs_ref"), "[verbs] has no `mios <verb>` entries (name = { description, surface })")
+    for name, v in verbs.items():
+        if not VERB_RE.fullmatch(str(name)) or not isinstance(v, dict) or not str(v.get("description") or "").strip():
+            raise SpecError(f"verbs.{name}", "every verb needs a lower-case name and a description")
+    missing = [v for v in SHELL_LOCAL_VERBS if v not in verbs]
+    if missing:
+        raise SpecError(_full("shell.verbs_ref"), f"[verbs] lacks the verbs the image implements: {missing}")
+    shell_abs, bin_abs = "C:\\" + shell_rel, "C:\\" + bin_rel
+    lines = [
+        "# MiOS all-users PowerShell profile (MiOS-Xbox image, xbox-bm-39). Rendered by render_spec.py from the SSOT",
+        "# ([windows.xbox.shell], [verbs], [theme.prompt]); re-render, never edit. Dot-sourced by the all-users profile of",
+        "# Windows PowerShell 5.1 and of PowerShell 7; a per-user profile (Get-MiOS) runs after it and may redefine both.",
+        f"$MiOSShellDir = {_psq(shell_abs)}",
+        f"$MiOSBinDir = {_psq(bin_abs)}",
+        "try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch {}",
+        "$OutputEncoding = [Text.UTF8Encoding]::new($false)",
+        "foreach ($d in @($MiOSBinDir, (Join-Path $MiOSBinDir 'fastfetch'))) {",
+        "    if ((Test-Path -LiteralPath $d) -and (@($env:PATH -split ';') -notcontains $d)) { $env:PATH = $d + ';' + $env:PATH }",
+        "}",
+        f"$MiOSPrompt = Join-Path $MiOSBinDir {_psq(sh['oh_my_posh']['exe'])}",
+        "if ([Environment]::UserInteractive -and $Host.Name -eq 'ConsoleHost' -and (Test-Path -LiteralPath $MiOSPrompt)) {",
+        "    $MiOSPromptShell = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh' } else { 'powershell' }",
+        "    try { & $MiOSPrompt init $MiOSPromptShell --config (Join-Path $MiOSShellDir 'mios.omp.json') | Invoke-Expression } catch {}",
+        "}",
+        "$MiOSVerbs = [ordered]@{",
+        *[f"    {_psq(n)} = {_psq(str(v['description']).strip())}" for n, v in verbs.items()],
+        "}",
+        "function global:mios {",
+        "    param([Parameter(Position = 0)][string]$Verb = 'help', [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest)",
+        "    switch ($Verb) {",
+        f"        'dash' {{ & (Join-Path $MiOSBinDir {_psq('fastfetch' + chr(92) + sh['fastfetch']['exe'])}) -c (Join-Path $MiOSShellDir 'fastfetch.jsonc') @Rest; return }}",
+        "        'help' { $MiOSVerbs.GetEnumerator() | ForEach-Object { '{0,-8} {1}' -f $_.Key, $_.Value }; return }",
+        "        default {",
+        "            if ($MiOSVerbs.Contains($Verb)) { Write-Host ('mios {0}: needs the MiOS host layer on this machine (Get-MiOS). {1}' -f $Verb, $MiOSVerbs[$Verb]); return }",
+        "            Write-Error (\"mios: unknown verb '{0}' (mios help lists every verb)\" -f $Verb)",
+        "        }",
+        "    }",
+        "}",
+    ]
+    profile_rel = shell_rel + "\\profile.ps1"
+    files.append({"name": "profile", "path": profile_rel.replace("\\", "/"), "encoding": "utf-8-sig", "text": "\r\n".join(lines) + "\r\n"})
+    hooks = [_rel(p, _full("shell.all_users_profiles")) for p in sh["all_users_profiles"]]
+    want_hooks = {PS51_PROFILE.lower(), (pwsh_rel + "\\profile.ps1").lower()}
+    if {h.lower() for h in hooks} != want_hooks or len(hooks) != 2:
+        raise SpecError(_full("shell.all_users_profiles"), f"must be the all-users profiles of Windows PowerShell 5.1 and "
+                        f"PowerShell 7: {sorted(want_hooks)}")
+    for h in hooks:
+        files.append({"name": "profile_hook:" + ("pwsh" if h.lower().startswith(pwsh_rel.lower()) else "powershell"),
+                      "path": h.replace("\\", "/"), "encoding": "utf-8-sig",
+                      "text": "\r\n".join(["# MiOS all-users profile hook (xbox-bm-39). Rendered by render_spec.py; re-render, never edit.",
+                                           f"$MiOSProfile = {_psq('C:' + chr(92) + profile_rel)}",
+                                           "if (Test-Path -LiteralPath $MiOSProfile) { . $MiOSProfile }"]) + "\r\n"})
+    for f in files:
+        data = shell_file_bytes(f, tree_root)
+        f["sha256"], f["size"] = hashlib.sha256(data).hexdigest(), len(data)
+
+    registry = [{"owner": "shell.execution_policy", "hive": "SOFTWARE", "key": EXECUTION_POLICY_KEY,
+                 "name": "ExecutionPolicy", "type": "REG_SZ", "data": policy}]
+    record = {"files": files, "tools": tools, "verbs": list(verbs), "local_verbs": list(SHELL_LOCAL_VERBS),
+              "profile_name": profile_name, "scheme_name": scheme_name, "execution_policy": policy,
+              "shell_dir": shell_rel.replace("\\", "/"), "bin_dir": bin_rel.replace("\\", "/")}
+    return record, registry
 
 
 def _check_accounts(merged: dict, x: dict, resolved: dict) -> int:

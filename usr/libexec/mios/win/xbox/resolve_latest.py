@@ -8,7 +8,7 @@
 #   stale manifest so nothing downstream can fall back to an older/cached version.
 # AI-related: usr/lib/mios/mios_toml.py, usr/libexec/mios/vfio/setup-looking-glass.py, automation/69-bake-lookingglass-client.sh, tests/test-mios-xbox-resolve-latest.py, usr/share/mios/mios.toml
 # AI-functions: load_config, resolve_uup, resolve_virtio, resolve_qemu_ga, resolve_lg_host, resolve_winfsp,
-#   resolve_webview2, resolve_lg_idd, resolve_converter, resolve_all, verify_file, verify_tree, git_blob_sha1,
+#   resolve_webview2, resolve_lg_idd, resolve_converter, resolve_github_asset, resolve_all, verify_file, verify_tree, git_blob_sha1,
 #   write_manifest_atomic, main
 """Resolve the latest upstream inputs of a MiOS-Xbox image build into build-manifest.json.
 
@@ -53,6 +53,9 @@ RINGS = {"canary": "Canary", "dev": "Dev", "beta": "Beta", "release_preview": "R
 # [windows.xbox] spec tree itself (source/drivers/guest_tools/baked), so there is one spec.
 REQUIRED_RESOLVE_KEYS = ("uupdump_api", "lg_downloads", "lg_client_build_record", "github_api",
                          "edge_products_api", "webview2_signer", "lg_signer")
+# The MiOS Windows shell tools ([windows.xbox.shell.<tool>], xbox-bm-39): GitHub releases, newest release + asset digest
+SHELL_TOOLS = ("pwsh", "oh_my_posh", "fastfetch")
+_GITHUB_REPO = re.compile(r"https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?")
 
 # Values that would pin a version: the pins gate (xb-04) rejects these in the SSOT; the resolver refuses them too.
 _PIN_KEY = re.compile(r"(^|_)(version|build|uuid|tag|commit|sha256|sha1|md5|release)$")
@@ -277,6 +280,10 @@ def load_config(data: Dict[str, Any], profile: str = "mios-xbox") -> Dict[str, A
         "converter_channel": _dig(xb, "build", "converter", "channel"),
         "converter_entry": _dig(xb, "build", "converter", "entry"),
     }
+    for tool in SHELL_TOOLS:
+        mt = _GITHUB_REPO.fullmatch(str(_dig(xb, "shell", tool, "upstream") or ""))
+        cfg[f"{tool}_repo"] = mt.group(1) if mt else None
+        cfg[f"{tool}_asset"] = _dig(xb, "shell", tool, "asset")
     # capabilities baked OFFLINE (F4): capability -> FOD package of the same update, plus its FOD metadata
     caps = list(_dig(xb, "features", "capabilities_add") or [])
     fod = _dig(xb, "features", "capability_fod") or {}
@@ -318,10 +325,14 @@ def load_config(data: Dict[str, Any], profile: str = "mios-xbox") -> Dict[str, A
             pins.append(f"{k}={v}")
     if not re.fullmatch(r"https://github\.com/[\w.-]+/[\w.-]+?(?:\.git)?/?", str(cfg["converter_upstream"])):
         raise ResolveError(f"windows.xbox.build.converter.upstream {cfg['converter_upstream']!r} is not a GitHub repository URL")
-    for path in (("drivers", "virtio_win"), ("guest_tools", "qemu_ga"), ("guest_tools", "winfsp"), ("build", "converter")):
+    for path in (("drivers", "virtio_win"), ("guest_tools", "qemu_ga"), ("guest_tools", "winfsp"), ("build", "converter"),
+                 *(("shell", t) for t in SHELL_TOOLS)):
         ch = _dig(xb, *path, "channel")
         if ch not in (None, "latest"):
             pins.append(f"windows.xbox.{'.'.join(path)}.channel={ch!r} (expected 'latest')")
+    for tool in SHELL_TOOLS:   # an asset glob naming a version would pin it
+        if re.search(r"\d+\.\d+", str(cfg[f"{tool}_asset"] or "")):
+            pins.append(f"windows.xbox.shell.{tool}.asset={cfg[f'{tool}_asset']!r} (a glob, never a version)")
     if "/latest-virtio/" not in str(cfg["virtio_iso"]):
         pins.append(f"windows.xbox.drivers.virtio_win.upstream={cfg['virtio_iso']} (must be the latest-virtio channel)")
     if "/latest-qemu-ga" not in str(cfg["qemu_ga_dir"]):
@@ -846,6 +857,43 @@ def resolve_webview2(cfg: Dict[str, Any], http: Any, sleep: Callable[[float], No
     }
 
 
+def resolve_github_asset(cfg: Dict[str, Any], http: Any, tool: str,
+                         sleep: Callable[[float], None] = time.sleep) -> Dict[str, Any]:
+    """A MiOS shell tool (xbox-bm-39): the newest GitHub release's ONE asset matching the SSOT glob, anchored by the
+    sha256 digest GitHub publishes for every release asset. A draft/prerelease, zero or several matching assets, or an
+    asset without a sha256 digest aborts the resolve."""
+    api = str(cfg["github_api"]).rstrip("/")
+    repo = str(cfg[f"{tool}_repo"]).strip("/")
+    rel = _fetch(http, f"{api}/repos/{repo}/releases/latest", sleep=sleep).json()
+    if rel.get("draft") or rel.get("prerelease"):
+        raise ResolveError(f"{repo} releases/latest returned a draft/prerelease")
+    tag = str(rel.get("tag_name") or "")
+    glob = str(cfg[f"{tool}_asset"])
+    assets = [a for a in rel.get("assets") or [] if fnmatch.fnmatchcase(str(a.get("name", "")), glob)]
+    if not tag or len(assets) != 1:
+        raise ResolveError(f"{repo} latest release {tag!r}: expected exactly one {glob} asset, got {len(assets)}")
+    a = assets[0]
+    dg = str(a.get("digest") or "")
+    if not dg.startswith("sha256:"):
+        raise ResolveError(f"{repo} {a['name']}: GitHub published no sha256 digest")
+    url = str(a.get("browser_download_url") or "")
+    if not url.startswith(f"https://github.com/{repo}/releases/download/"):
+        raise ResolveError(f"{repo} {a['name']}: download URL {url!r} is not this repository's release asset")
+    return {
+        "version": re.sub(r"^v", "", tag), "tag": tag, "source": rel.get("html_url", ""), "asset": a["name"],
+        "fetch": url, "size": a.get("size"),
+        "integrity": {"kind": "sha256", "value": _hex("sha256", dg[7:], f"{repo} {a['name']}"),
+                      "source": "GitHub release asset digest"},
+    }
+
+
+def _shell_resolver(tool: str) -> Callable[..., Dict[str, Any]]:
+    def fn(cfg: Dict[str, Any], http: Any, sleep: Callable[[float], None] = time.sleep) -> Dict[str, Any]:
+        return resolve_github_asset(cfg, http, tool, sleep=sleep)
+    fn.__name__ = f"resolve_{tool}"
+    return fn
+
+
 RESOLVERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "windows_uup": resolve_uup,
     "virtio_win": resolve_virtio,
@@ -855,6 +903,7 @@ RESOLVERS: Dict[str, Callable[..., Dict[str, Any]]] = {
     "winfsp": resolve_winfsp,
     "webview2": resolve_webview2,
     "uup_converter": resolve_converter,
+    **{tool: _shell_resolver(tool) for tool in SHELL_TOOLS},
 }
 
 

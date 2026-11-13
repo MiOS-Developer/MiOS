@@ -611,6 +611,13 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
     if not cur.get("asset_url") or not cur.get("asset_sha256"):
         raise FetchError("xbox-spec.json has no identity.cursor pin (render it with render_spec.py)")
     cursor = fetch_pinned(cur["asset_url"], cur["asset_sha256"], work, dl, "identity.cursor")
+    # the MiOS Windows shell (xbox-bm-39): newest releases, each verified against its GitHub release-asset sha256
+    shell = x.get("shell") or {}
+    if not all(isinstance(shell.get(t), dict) for t in RL.SHELL_TOOLS):
+        raise FetchError("xbox-spec.json has no [windows.xbox.shell] tools (render it with render_spec.py)")
+    pwsh = fetch_file(manifest, "pwsh", work, dl)
+    omp = fetch_file(manifest, "oh_my_posh", work, dl)
+    ffz = fetch_file(manifest, "fastfetch", work, dl)
     arts = manifest["artifacts"]
 
     def row(path: str, art: str, signer: str, anchor: str) -> Dict[str, Any]:
@@ -631,7 +638,11 @@ def fetch_all(manifest: Dict[str, Any], spec: Dict[str, Any], work: str, dl: Opt
             "webview2": row(wv2, "webview2", res["webview2_signer"], "Authenticode (Microsoft) + size"),
             "looking_glass_host": row(lgh, "looking_glass_host", res["lg_signer"], "sha256 (looking-glass.io) + Authenticode of the installer"),
             "looking_glass_idd": row(lgi, "looking_glass_idd", res["lg_signer"], "sha256 (looking-glass.io) + Authenticode of the installer"),
+            "pwsh": row(pwsh, "pwsh", shell["pwsh"]["signer"], "sha256 (GitHub release asset digest) + Authenticode of the MSI"),
         },
+        # MiOS Windows shell tools staged as files (never run at setup): the GitHub release-asset sha256 is the anchor
+        "shell": {"oh_my_posh": row(omp, "oh_my_posh", "", "sha256 (GitHub release asset digest)"),
+                  "fastfetch": row(ffz, "fastfetch", "", "sha256 (GitHub release asset digest)")},
         "drivers_dir": vio["drivers"],
         "uup_dir": uup,
         "fod_dir": fod,
