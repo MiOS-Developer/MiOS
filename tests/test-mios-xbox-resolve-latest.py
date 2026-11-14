@@ -16,13 +16,16 @@ import hashlib
 import importlib.util
 import io
 import json
+import ntpath
 import os
+import posixpath
 import socket
 import stat
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from unittest import mock
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -488,11 +491,34 @@ class ResolveLatestTest(unittest.TestCase):
             self.assertEqual(http.calls, [], f"{name}: no upstream call before the SSOT is validated")
             self.assertFalse(os.path.exists(self.out), name)
 
-    def test_output_guards(self):
-        rc, _, err = self.run_main(["resolve", "--out", "/usr/share/mios/build-manifest.json"],
-                                   http=FakeHttp(routes()), data=self.data)
+    def _assert_ssot_output_refused(self, destination):
+        # A broken guard must fail this test without fetching metadata, creating
+        # directories, writing/replacing a manifest, or deleting a live sentinel.
+        # These fences remain independent of the product's path classification.
+        http = FakeHttp(routes())
+        with ExitStack() as fences:
+            blocked = []
+            for owner, name in ((rl, "load_config"), (rl, "resolve_all"), (rl, "write_manifest_atomic"),
+                                (rl.os, "makedirs"), (rl.tempfile, "mkstemp"),
+                                (rl.os, "replace"), (rl.os, "unlink")):
+                blocked.append(fences.enter_context(mock.patch.object(
+                    owner, name, side_effect=AssertionError("fixture safety fence: " + name))))
+            rc, _, err = self.run_main(["resolve", "--out", destination, "--replace"],
+                                       http=http, data=self.data)
+            self.assertTrue(all(not call.called for call in blocked))
         self.assertEqual(rc, 2)
         self.assertIn("SSOT tree", err)
+        self.assertEqual(http.calls, [])
+
+    def test_output_guards(self):
+        destinations = [os.path.join(root, rl.MANIFEST_NAME) for root in rl.SSOT_OUTPUT_ROOTS]
+        if os.name == "nt":
+            destinations += [r"C:\USR\SHARE\MiOS\build-manifest.json",
+                             "D:/usr/lib/MiOS/nested/build-manifest.json",
+                             r"D:\Etc\MiOS\build-manifest.json"]
+        for destination in destinations:
+            with self.subTest(destination=destination):
+                self._assert_ssot_output_refused(destination)
         rc, _, err = self.run_main(["resolve", "--out", os.path.join(self.dir, "mios.toml")],
                                    http=FakeHttp(routes()), data=self.data)
         self.assertEqual(rc, 2)
@@ -500,6 +526,53 @@ class ResolveLatestTest(unittest.TestCase):
         rc, _, err = self.resolve()  # existing manifest without --replace
         self.assertEqual(rc, 2)
         self.assertIn("exists", err)
+
+    def test_output_guard_platform_path_forms(self):
+        # Pure path data exercises Win32 drive/case/separator rules on Native
+        # Linux too; no path in this table is opened or written.
+        windows = (r"C:\usr\share\mios", "D:/USR/share/MiOS/nested", r"\usr\lib\MiOS",
+                   r"E:\etc\mios", r"\\server\share\usr\share\mios\nested",
+                   r"\\?\C:\usr\share\mios", r"C:\usr\share\mios. \nested",
+                   r"C:\usr\share\staging\..\mios\nested")
+        for directory in windows:
+            with self.subTest(windows=directory):
+                self.assertIn(rl._ssot_output_tree(directory, ntpath), rl.SSOT_OUTPUT_ROOTS)
+        for directory in ("/usr/share/mios", "/usr/lib/mios/nested", "/etc/mios/nested"):
+            self.assertIn(rl._ssot_output_tree(directory, posixpath), rl.SSOT_OUTPUT_ROOTS)
+        for pathmod, directory in ((ntpath, r"C:\usr\share\mios-build"), (ntpath, r"C:\etc\mios-backup"),
+                                   (posixpath, "/usr/lib/mios2"), (posixpath, "/USR/share/mios"),
+                                   (posixpath, os.path.join(self.dir, "build"))):
+            self.assertIsNone(rl._ssot_output_tree(directory, pathmod), directory)
+
+    def test_output_guard_resolved_alias_preserves_sentinel(self):
+        protected = os.path.join(self.dir, "protected-ssot")
+        directory = os.path.join(protected, "nested")
+        os.makedirs(directory)
+        sentinel = os.path.join(directory, rl.MANIFEST_NAME)
+        _write(sentinel, b"fixture existing SSOT manifest\n")
+        before = _readb(sentinel)
+        alias = os.path.join(self.dir, "alias", "nested")
+        realpath = rl.os.path.realpath
+
+        def resolved(path, *args, **kwargs):
+            absolute = os.path.normcase(os.path.abspath(path))
+            if absolute == os.path.normcase(os.path.abspath("/usr/share/mios")):
+                return protected
+            if absolute == os.path.normcase(os.path.abspath(alias)):
+                return directory
+            return realpath(path, *args, **kwargs)
+
+        # Model a resolved symlink/junction without requiring Windows link privileges.
+        with mock.patch.object(rl.os.path, "realpath", side_effect=resolved):
+            self._assert_ssot_output_refused(os.path.join(alias, rl.MANIFEST_NAME))
+        self.assertEqual(_readb(sentinel), before)
+
+        # Retained mutation control: bypass classification entirely. The independent
+        # fence must catch it before any write/unlink, even with an existing manifest.
+        with mock.patch.object(rl, "_check_out", side_effect=lambda path: os.path.abspath(path)):
+            with self.assertRaisesRegex(AssertionError, "fixture safety fence"):
+                self._assert_ssot_output_refused(sentinel)
+        self.assertEqual(_readb(sentinel), before)
 
     def test_rate_limit_is_retried_then_resolves(self):
         t = routes()

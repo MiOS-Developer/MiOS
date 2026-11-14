@@ -43,6 +43,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 SCHEMA = "mios.xbox.build-manifest/1"
 MANIFEST_NAME = "build-manifest.json"
+SSOT_OUTPUT_ROOTS = ("/usr/share/mios", "/usr/lib/mios", "/etc/mios")
 USER_AGENT = "MiOS resolve_latest (xb-06)"
 
 # Channel -> UUP Dump / Windows Update ring. An unknown channel is an error, not a silent Retail.
@@ -953,14 +954,50 @@ def resolve_all(cfg: Dict[str, Any], http: Any, sleep: Callable[[float], None] =
 # Output and verification
 # ---------------------------------------------------------------------------
 
+def _ssot_output_tree(directory: str, pathmod: Any = os.path) -> Optional[str]:
+    """Recognize reserved FHS trees using the platform's path rules, on any drive.
+
+    A Windows root-relative /usr path acquires a drive in abspath/realpath. The
+    drive is irrelevant to this reservation; case and either separator are not.
+    Win32 also ignores trailing dots/spaces in ordinary path components.
+    """
+    _drive, tail = pathmod.splitdrive(pathmod.normcase(pathmod.normpath(directory)))
+    if pathmod.sep == "\\":
+        tail = "\\".join(part.rstrip(" .") for part in tail.split("\\"))
+    for forbidden in SSOT_OUTPUT_ROOTS:
+        root = pathmod.normcase(pathmod.normpath(forbidden))
+        if tail == root or tail.startswith(root + pathmod.sep):
+            return forbidden
+    return None
+
+
 def _check_out(out: str) -> str:
     out = os.path.abspath(out)
     if os.path.basename(out) != MANIFEST_NAME:
         raise ResolveError(f"--out must name {MANIFEST_NAME} (the resolver writes nothing else)")
-    real = os.path.realpath(os.path.dirname(out))
-    for forbidden in ("/usr/share/mios", "/usr/lib/mios", "/etc/mios"):
-        if real == forbidden or real.startswith(forbidden + "/"):
+    parent = os.path.dirname(out)
+    real = os.path.realpath(parent)
+    # Reject the reserved lexical spelling even when that tree is itself linked,
+    # and reject aliases whose resolved parent enters a protected physical tree.
+    for candidate in (parent, real):
+        forbidden = _ssot_output_tree(candidate)
+        if forbidden:
             raise ResolveError(f"--out {out} is inside the SSOT tree ({forbidden}); resolved versions belong in build output")
+    for forbidden in SSOT_OUTPUT_ROOTS:
+        roots = {forbidden}
+        if os.path.sep == "\\":
+            for candidate in (parent, real):
+                drive = os.path.splitdrive(candidate)[0]
+                if drive:
+                    roots.add(drive + forbidden.replace("/", "\\"))
+        for root in roots:
+            protected = os.path.normcase(os.path.realpath(root))
+            try:
+                inside = os.path.commonpath((os.path.normcase(real), protected)) == protected
+            except ValueError:  # Windows paths on distinct drives cannot share a parent.
+                inside = False
+            if inside:
+                raise ResolveError(f"--out {out} is inside the SSOT tree ({forbidden}); resolved versions belong in build output")
     return out
 
 
