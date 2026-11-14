@@ -5220,6 +5220,8 @@ function Invoke-MiosMachinePreparationCore {
     return $_platform
 }
 
+# Resolve the localized failure format before phase-zero work can throw.
+$_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
 $_freshVendorToml = Resolve-MiosVendorTomlText
 if (-not $_freshVendorToml -or
     $_freshVendorToml -notmatch '(?m)^\[meta\]\s*$' -or
@@ -5263,10 +5265,22 @@ if ($_desiredWslConfig -cne $_wslCfgRaw) {
 
 try { Invoke-MiOSFullReap } catch { Write-Host "  [!] Invoke-MiOSFullReap failed: $($_.Exception.Message)" -ForegroundColor Yellow }
 
-$_trapFmtFailed = Get-MiosTomlValue -Section 'messages.failure_trap' -Key 'install_failed_template' -Default '[!!] Install failed: {0}'
 trap {
+    # A scope-wide trap also handles errors before the TOML formatter is initialized.
+    # Keep the original reason when configuration is unavailable or cannot format it.
+    $_trapReason = [string]$_.Exception.Message
+    $_trapDisplay = $_trapReason
+    $_trapTemplate = Get-Variable -Name '_trapFmtFailed' -ValueOnly -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace([string]$_trapTemplate)) {
+        try {
+            $_trapFormatted = [string]($_trapTemplate -f $_trapReason)
+            if (-not [string]::IsNullOrWhiteSpace($_trapFormatted) -and $_trapFormatted.Contains($_trapReason)) {
+                $_trapDisplay = $_trapFormatted
+            }
+        } catch { }
+    }
     Write-Host ''
-    Write-Host ('  ' + ($_trapFmtFailed -f $_.Exception.Message)) -ForegroundColor Red
+    Write-Host ('  ' + $_trapDisplay) -ForegroundColor Red
     Write-Host '  [MiOS] Installation failed; existing distributions, persistent state and source checkouts are preserved.' -ForegroundColor Yellow
     exit 1
 }
