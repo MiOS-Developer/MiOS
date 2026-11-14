@@ -1142,11 +1142,19 @@ class TestParity(unittest.TestCase):
         try:
             for sect, key in self.KEYS:
                 self.assertEqual(self._cli_get(fx, f"{sect}.{key}"), self._native(fx, sect, key), f"{sect}.{key}")
-            env = dict(fx.env, MIOS_USER_TOML=fx.path("home-op/.config/mios/mios.toml"))
+            # A human caller merges its own policy in full. HOSTILE deliberately
+            # replaces that policy, so use a credential-only tier to exercise
+            # the public reader's vendor-declared secret refusal for either uid.
+            refusal_user = fx._w("home-public/.config/mios/mios.toml",
+                                 f'[identity]\ndefault_password = "{OP_PASS}"\n')
+            env = dict(self._parity_env(fx), MIOS_USER_TOML=refusal_user)
             r = subprocess.run([sys.executable, CRED_CLI, "get", "identity.default_password"], env=env,
                                capture_output=True, text=True, timeout=60)
             self.assertEqual(r.returncode, 2, "a secret path was printed")
-            self.assertNotIn(OP_PASS, r.stdout + r.stderr)
+            self.assertEqual(r.stdout, "", "the public reader emitted a secret scalar")
+            self.assertIn("identity.default_password is a secret path", r.stderr)
+            for secret in (V_PASS, U_PASS, OP_PASS, OTHER_PASS):
+                self.assertNotIn(secret, r.stdout + r.stderr)
         finally:
             fx.cleanup()
 
