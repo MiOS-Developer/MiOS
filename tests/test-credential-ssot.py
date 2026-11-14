@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -24,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import xml.etree.ElementTree as ET
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -620,7 +622,9 @@ def _getpw(homes: dict):
     def getpw(name):
         if name not in homes:
             raise KeyError(name)
-        return types.SimpleNamespace(pw_dir=homes[name])
+        # These homes/files belong to the real fixture creator. A missing pw_uid
+        # used to produce -1, accidentally passing only when every file was root-owned.
+        return types.SimpleNamespace(pw_dir=homes[name], pw_uid=os.geteuid())
     return getpw
 
 
@@ -1015,6 +1019,47 @@ class TestOperatorFiles(unittest.TestCase):
             self.assertEqual(fx.resolve()[0], OP_PASS)                   # control: a plain file is read
             fx._w("home-op/.config/mios/mios.d/50-frag.toml", '[identity]\ndefault_password = "fixture-frag"\n')
             self.assertEqual(fx.resolve()[0], "fixture-frag")            # its mios.d is read too
+            target = fx.path("home-op/.config/mios/mios.toml")
+            owned = os.stat(target)
+            real_fstat = os.fstat
+
+            def foreign_owner(fd):
+                st = real_fstat(fd)
+                if (st.st_dev, st.st_ino) == (owned.st_dev, owned.st_ino):
+                    fields = list(st)
+                    fields[4] = os.geteuid() + 1 or 4242
+                    return os.stat_result(fields)
+                return st
+
+            # Metadata injection models another owner's inode without requiring
+            # chown. All real bytes, file types, links and directory opens remain real.
+            with mock.patch.object(os, "fstat", foreign_owner):
+                with self.assertRaises(mc.CredentialError) as refused:
+                    fx.resolve()
+                self.assertIn("not by the operator", str(refused.exception))
+                self.assertNotIn(OP_PASS, str(refused.exception))
+        finally:
+            fx.cleanup()
+        fx = _OpFixture()
+        try:
+            target = fx.path("home-op/.config/mios/mios.toml")
+            secret = fx._w("root-only.toml", '[identity]\ndefault_password = "fixture-root-only"\n')
+            real_open = os.open
+            raced = []
+
+            def swap_after_open(name, flags, *args, **kwargs):
+                fd = real_open(name, flags, *args, **kwargs)
+                if name == "mios.toml" and kwargs.get("dir_fd") is not None and not raced:
+                    raced.append(True)
+                    os.rename(target, target + ".retained")
+                    os.symlink(secret, target)
+                return fd
+
+            # A replacement after open cannot redirect the already-open descriptor.
+            with mock.patch.object(os, "open", swap_after_open):
+                self.assertEqual(fx.resolve()[0], OP_PASS)
+            self.assertEqual(raced, [True])
+            self.assertTrue(os.path.islink(target))
         finally:
             fx.cleanup()
         for plant in (self._link_file, self._link_dir, self._hard_link, self._fragment_link,
@@ -1066,15 +1111,19 @@ class TestPortalLogin(unittest.TestCase):
 
 
 class TestParity(unittest.TestCase):
-    """Law 13: root code reading the SSOT in bash (forge-firstboot.sh) reads it through
-    `mios-credential get`, the same view `apply` uses -- and for every non-credential key
-    that view equals what the native resolver gives the same root caller."""
+    """Law 13: both executable readers compare the same public vendor/host projection
+    under the same actual caller. System/operator filtering has separate semantic
+    controls; a rootless run does not impersonate kernel root for either executable."""
 
     KEYS = (("network", "loopback"), ("ports", "forge_http"), ("services.forge", "initial_repo"),
             ("identity", "username"), ("units", "forge"))
 
+    def _parity_env(self, fx):
+        return dict(fx.env, MIOS_USER_TOML=fx.path("absent-user.toml"),
+                    MIOS_USER_TOML_D=fx.path("absent-user.d"), MIOS_RESOLVER_NATIVE="0")
+
     def _cli_get(self, fx, key):
-        env = dict(fx.env, MIOS_USER_TOML=fx.path("home-op/.config/mios/mios.toml"), MIOS_RESOLVER_NATIVE="0")
+        env = self._parity_env(fx)
         r = subprocess.run([sys.executable, CRED_CLI, "get", key], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout.strip()
@@ -1083,8 +1132,9 @@ class TestParity(unittest.TestCase):
         tool = shutil.which("mios-toml-get") or os.path.join(ROOT, "tools/native/target/x86_64-unknown-linux-musl/release/mios-toml-get")
         if not os.access(tool, os.X_OK):
             self.skipTest("native mios-toml-get is not built")
-        env = dict(fx.env, MIOS_USER_TOML=fx.path("absent-user.toml"), MIOS_USER_TOML_D=fx.path("absent-user.d"))
+        env = self._parity_env(fx)
         r = subprocess.run([tool, sect, key], env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout.strip()
 
     def test_positive_cli_get_equals_the_native_resolver(self):
@@ -1191,6 +1241,58 @@ class TestSurfaceChain(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- apply (fake tools + fake Forgejo)
+def _scrub_fixture_root_owner(data, log, check=False, *, scrub):
+    """Model only a known owned fixture's root metadata/write destination.
+
+    The production scrub still checks owner 0 and mode 0600 and requests a root
+    write. No process uid changes, chown capability or production trust override
+    is involved. The inode/metadata checks prevent the adapter covering a link,
+    wrong-mode file, foreign file or a replaced fixture.
+    """
+    from unittest import mock as fixture_mock
+
+    path = mc.secrets_env_path(data)
+    parent = os.path.dirname(os.path.abspath(path))
+    if (os.path.basename(path) != "secrets.env"
+            or not os.path.basename(parent).startswith("mios-cred-apply-")):
+        raise AssertionError("Root metadata adapter escaped its owned fixture")
+    try:
+        owned = os.lstat(path)
+    except FileNotFoundError:
+        return scrub(data, log, check=check)
+    if (not stat.S_ISREG(owned.st_mode) or owned.st_nlink != 1
+            or owned.st_uid != os.geteuid() or stat.S_IMODE(owned.st_mode) != 0o600):
+        return scrub(data, log, check=check)
+    real_fstat, real_atomic = os.fstat, mc._atomic
+
+    def root_metadata(fd):
+        st = real_fstat(fd)
+        if (st.st_dev, st.st_ino) == (owned.st_dev, owned.st_ino):
+            if (st.st_uid, st.st_mode, st.st_nlink, st.st_mtime_ns, st.st_size) != (
+                    owned.st_uid, owned.st_mode, owned.st_nlink, owned.st_mtime_ns, owned.st_size):
+                raise AssertionError("Owned scrub fixture changed before read")
+            fields = list(st)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return st
+
+    def owned_write(destination, text, mode, uid=-1, gid=-1):
+        if os.path.abspath(destination) != os.path.abspath(path):
+            raise AssertionError("Root scrub write escaped the known fixture")
+        current = os.lstat(path)
+        if (current.st_dev, current.st_ino, current.st_uid, current.st_mode,
+                current.st_nlink, current.st_mtime_ns, current.st_size) != (
+                owned.st_dev, owned.st_ino, owned.st_uid, owned.st_mode,
+                owned.st_nlink, owned.st_mtime_ns, owned.st_size):
+            raise AssertionError("Owned scrub fixture changed before write")
+        if (mode, uid, gid) != (0o600, 0, 0):
+            raise AssertionError("Production scrub no longer requires root-owned 0600")
+        return real_atomic(destination, text, mode, owned.st_uid, owned.st_gid)
+
+    with fixture_mock.patch.object(os, "fstat", root_metadata), fixture_mock.patch.object(mc, "_atomic", owned_write):
+        return scrub(data, log, check=check)
+
+
 _RECORDER = f"""#!{sys.executable}
 import json, os, sys, time
 stdin = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
@@ -1205,9 +1307,18 @@ if "try-restart" in sys.argv and os.environ.get("FAKE_RESTART_FAIL"):
 if "--property=ActiveState" in sys.argv:
     print(os.environ.get("FAKE_ACTIVE_STATE", "active"))
 """
-_RUN_CLI = """import os, runpy, sys
+_RUN_CLI = """import os, runpy, stat, sys
 sys.path.insert(0, os.environ["FAKE_LIB"])
 import mios_credentials as mc
+# The fake apply tools exercise system-caller policy only. Kernel identity remains
+# the actual uid; ownership-dependent writes stay in the explicit fixture below.
+_operator_load = mc.operator_load
+def _system_fixture_view(getpw=None, euid=None):
+    return _operator_load(getpw=getpw, euid=0 if euid is None else euid)
+mc.operator_load = _system_fixture_view
+""" + inspect.getsource(_scrub_fixture_root_owner) + """
+_scrub = mc.scrub_leftovers
+mc.scrub_leftovers = lambda data, log, check=False: _scrub_fixture_root_owner(data, log, check, scrub=_scrub)
 mc.CREDSTORE_DIR = os.environ["FAKE_CREDSTORE"]
 mc.ROOT_REPO = os.environ["FAKE_ROOT_REPO"]
 mc.SHADOW_FILE = os.environ["FAKE_SHADOW"]
@@ -2195,7 +2306,63 @@ enabled = false
 
     def test_scrub_reports_a_read_only_target_instead_of_failing(self):
         # forge-firstboot's sandbox keeps /etc/mios read-only: the scrub must report and go on.
-        _envfile(self.d, "secrets.env", "MIOS_IDENTITY_DEFAULT_PASSWORD=fixture-rotated\n")
+        path = _envfile(self.d, "secrets.env", "MIOS_IDENTITY_DEFAULT_PASSWORD=fixture-rotated\n")
+        data = {"paths": {"etc_dir": self.d}}
+        before = open(path, "rb").read()
+        owned, real_fstat = os.stat(path), os.fstat
+
+        def foreign_owner(fd):
+            st = real_fstat(fd)
+            if (st.st_dev, st.st_ino) == (owned.st_dev, owned.st_ino):
+                fields = list(st)
+                fields[4] = os.geteuid() + 1 or 4242
+                return os.stat_result(fields)
+            return st
+
+        def root_owner(fd):
+            st = real_fstat(fd)
+            if (st.st_dev, st.st_ino) == (owned.st_dev, owned.st_ino):
+                fields = list(st)
+                fields[4] = 0
+                return os.stat_result(fields)
+            return st
+
+        # Exercise the real production refusal separately from the semantic root
+        # adapter. No capability to manufacture a foreign-owned file is required.
+        forbidden_write = AssertionError("A refused scrub file reached the writer")
+        with mock.patch.object(os, "fstat", foreign_owner), mock.patch.object(mc, "_atomic", side_effect=forbidden_write):
+            self.assertEqual(mc.scrub_leftovers(data, lambda _message: None), 0)
+        self.assertEqual(open(path, "rb").read(), before)
+        os.chmod(path, 0o644)
+        with mock.patch.object(os, "fstat", root_owner), mock.patch.object(mc, "_atomic", side_effect=forbidden_write):
+            self.assertEqual(_scrub_fixture_root_owner(data, lambda _message: None, scrub=mc.scrub_leftovers), 0)
+        self.assertEqual(open(path, "rb").read(), before)
+        os.chmod(path, 0o600)
+        os.rename(path, path + ".retained")
+        os.symlink(path + ".retained", path)
+        with mock.patch.object(os, "fstat", root_owner), mock.patch.object(mc, "_atomic", side_effect=forbidden_write):
+            self.assertEqual(_scrub_fixture_root_owner(data, lambda _message: None, scrub=mc.scrub_leftovers), 0)
+        self.assertTrue(os.path.islink(path))
+        self.assertEqual(open(path + ".retained", "rb").read(), before)
+        os.unlink(path)
+        os.rename(path + ".retained", path)
+
+        raced = []
+
+        def replace_after_stat(fd):
+            st = real_fstat(fd)
+            if (st.st_dev, st.st_ino) == (owned.st_dev, owned.st_ino) and not raced:
+                raced.append(True)
+                os.rename(path, path + ".retained")
+                _envfile(self.d, "secrets.env", before.decode())
+            return st
+
+        with mock.patch.object(os, "fstat", replace_after_stat):
+            with self.assertRaisesRegex(AssertionError, "fixture changed before write"):
+                _scrub_fixture_root_owner(data, lambda _message: None, scrub=mc.scrub_leftovers)
+        self.assertEqual(raced, [True])
+        self.assertEqual(open(path, "rb").read(), before)
+        self.assertEqual(open(path + ".retained", "rb").read(), before)
         logs = []
         import errno
         orig = mc._atomic
@@ -2204,7 +2371,7 @@ enabled = false
             raise OSError(errno.EROFS, "Read-only file system")
         mc._atomic = readonly
         try:
-            n = mc.scrub_leftovers({"paths": {"etc_dir": self.d}}, logs.append)
+            n = _scrub_fixture_root_owner(data, logs.append, scrub=mc.scrub_leftovers)
         finally:
             mc._atomic = orig
         self.assertEqual(n, 0)
