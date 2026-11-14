@@ -12169,6 +12169,13 @@ git_pkg             = "Git.Git"                         # Git for Windows (Insta
 wsl_pkg             = "Microsoft.WSL"                   # WSL2 substrate (kernel + wsl.exe)
 podman_pkg          = "RedHat.Podman-Desktop"           # Podman Desktop GUI + machine
 podman_cli_pkg      = "RedHat.Podman"                   # Podman CLI MSI (lays down podman.exe + PATH)
+# Pinned Podman CLI that elevated machine preparation installs when the client is older than
+# [image].machine_os_tag (winget carries only the 5.8 line; machine-os 6.2 needs a 6.2 client).
+# Read from the system SSOT tier only. msiexec runs only after the downloaded bytes match the
+# sha256, the Authenticode signature is Valid and its signer equals this exact subject.
+podman_cli_msi_url     = "https://github.com/podman-container-tools/podman/releases/download/v6.2.0/podman-installer-windows-amd64.msi"
+podman_cli_msi_sha256  = "e4070491d0dba7138a06afd8e89e87a54b75b997801b5a81c911bc2869a743e9"
+podman_cli_msi_signer  = 'CN="Red Hat, LLC", OU=Podman, O="Red Hat, LLC", L=Raleigh, S=North Carolina, C=US, SERIALNUMBER=2945436, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.2=Delaware, OID.1.3.6.1.4.1.311.60.2.1.3=US'
 terminal_pkg        = "Microsoft.WindowsTerminal"       # Windows Terminal (Install-MiOSWindowsTerminal)
 pwsh_pkg            = "Microsoft.PowerShell"            # pwsh 7+ (Install-MiOSPwsh7)
 ohmyposh_pkg        = "JanDeDobbeleer.OhMyPosh"         # oh-my-posh prompt (Install-MiOSOhMyPoshTheme)
