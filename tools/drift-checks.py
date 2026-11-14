@@ -4373,10 +4373,10 @@ def check_ps_encoding_and_bom() -> int:
             has_bom = data.startswith(BOM)
             body = data[len(BOM):] if has_bom else data
             non_ascii = any(b > 0x7F for b in body)
-            # `irm | iex` hands 5.1 a string decoded as ISO-8859-1: a BOM becomes a token before param().
+            # Web fetches hand Invoke-Expression a string; a preserved BOM becomes a token before param().
             entry = any(b"| iex" in ln and ("/" + fn).encode() in ln for ln in body.splitlines()[:40])
             if entry and (has_bom or non_ascii):
-                viol.append(rel + " is an irm|iex entry point: it must be pure ASCII with no BOM (5.1 decodes it as ISO-8859-1)")
+                viol.append(rel + " is an irm|iex entry point: it must be pure ASCII with no BOM (the fetched string must begin with PowerShell source)")
             elif non_ascii and not has_bom:
                 viol.append(rel + " holds non-ASCII but has no UTF-8 BOM; Windows PowerShell 5.1 will read it as ANSI")
             elif has_bom and not non_ascii:
