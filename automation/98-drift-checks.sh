@@ -4009,6 +4009,7 @@ main() {
     check_vllm_name_canonical
     check_pipe_extraction_parity
     check_desktop_launchers
+    check_flatpak_overrides
     check_tmux_theme
     check_btop_theme
     check_fastfetch
@@ -4778,6 +4779,16 @@ check_desktop_launchers() {
     if ! out=$(cd "$ROOT" && "$bin" render-desktop --root "$ROOT" --check 2>&1); then
         printf '%s\n' "$out" | head -n 20 >&2
         _violation "desktop launchers drifted from SSOT (run 'just sync' or 'mios-gen render-desktop --root $ROOT')"
+    fi
+}
+check_flatpak_overrides() {
+    echo "[98-drift-checks]   checking global Flatpak overrides match SSOT"
+    local bin out
+    bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || { _violation "$_GEN_MISSING"; return; }
+    if out="$("$bin" render-flatpak-overrides --root "$ROOT" --check 2>&1)"; then
+        printf '[98-drift-checks]   %s\n' "$out"
+    else
+        _violations_from "check_flatpak_overrides: " "$out"
     fi
 }
 check_tmux_theme() {
