@@ -1,4 +1,4 @@
-﻿# UTF-8 source for Windows PowerShell.
+# UTF-8 source for Windows PowerShell.
 # AI-hint: Primary entry point for MiOS installation; handles admin elevation, environment validation, and fresh-clone of the bootstrap repo to initiate the preflight, VM setup, and OCI build pipeline.
 # AI-doc: usr/share/doc/mios/manual/root.md
 <#
