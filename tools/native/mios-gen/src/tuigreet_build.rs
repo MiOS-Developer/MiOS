@@ -906,7 +906,10 @@ mod tests {
         assert!(compiled_binary("x86_64-unknown-linux-gnu", top)
             .unwrap_err()
             .contains("exactly one compiled greeter"));
-        assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
         assert!(fs::symlink_metadata(top.join("BUILD/directory"))
             .unwrap()
             .file_type()
@@ -967,7 +970,10 @@ install -Dm0755 target/{target}/release/tuigreet %{{buildroot}}/usr/libexec/mios
         build_rpm(top, &spec_path).unwrap();
         let result = audit(&p, target, top).unwrap();
         assert!(hash(result["binary_sha256"].as_str().unwrap(), 64));
-        assert_eq!(result["interpreter"], p.interpreters[std::env::consts::ARCH]);
+        assert_eq!(
+            result["interpreter"],
+            p.interpreters[std::env::consts::ARCH]
+        );
         let checks = walkdir::WalkDir::new(top.join("BUILD"))
             .into_iter()
             .map(Result::unwrap)
