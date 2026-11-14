@@ -1,6 +1,6 @@
 // AI-hint: Build the pinned upstream GNU/NSS greeter and its carried account-display patch as an owned RPM, retaining locked corresponding source.
 // AI-related: usr/share/mios/mios.toml [desktop.greeter.tuigreet_source], automation/65-bake-hyprland.sh, tools/patches/tuigreet-login-account.patch
-// AI-functions: policy, spec, run, vendor_inventory
+// AI-functions: policy, spec, run, compiled_binary, audit, build_rpm, vendor_inventory
 #![forbid(unsafe_code)]
 
 use serde::{Deserialize, Serialize};
@@ -419,7 +419,7 @@ fn needed_libraries(dynamic: &str) -> Result<BTreeSet<String>, String> {
         })
         .collect()
 }
-fn audit(p: &Policy, target: &str, top: &Path) -> Result<serde_json::Value, String> {
+fn compiled_binary(target: &str, top: &Path) -> Result<PathBuf, String> {
     let suffix = Path::new("target").join(target).join("release/tuigreet");
     let mut binaries = Vec::new();
     for entry in walkdir::WalkDir::new(top.join("BUILD")) {
@@ -432,9 +432,13 @@ fn audit(p: &Policy, target: &str, top: &Path) -> Result<serde_json::Value, Stri
         binaries.len() == 1,
         "RPM build must retain exactly one compiled greeter for the GNU audit",
     )?;
-    let binary = binaries[0].to_str().ok_or("compiled greeter path")?;
-    let headers = command("readelf", &["-lW", binary], top)?;
-    let dynamic = command("readelf", &["-dW", binary], top)?;
+    Ok(binaries.remove(0))
+}
+fn audit(p: &Policy, target: &str, top: &Path) -> Result<serde_json::Value, String> {
+    let binary = compiled_binary(target, top)?;
+    let binary_path = binary.to_str().ok_or("compiled greeter path")?;
+    let headers = command("readelf", &["-lW", binary_path], top)?;
+    let dynamic = command("readelf", &["-dW", binary_path], top)?;
     let headers_text = std::str::from_utf8(&headers).map_err(|e| e.to_string())?;
     let interpreter = p
         .interpreters
@@ -450,8 +454,25 @@ fn audit(p: &Policy, target: &str, top: &Path) -> Result<serde_json::Value, Stri
         "greeter has an unreviewed dynamic dependency",
     )?;
     Ok(
-        serde_json::json!({"binary_sha256":sha(&fs::read(&binaries[0]).map_err(|e|e.to_string())?),"interpreter":interpreter,"needed":needed,"program_headers_sha256":sha(&headers),"dynamic_table_sha256":sha(&dynamic)}),
+        serde_json::json!({"binary_sha256":sha(&fs::read(&binary).map_err(|e|e.to_string())?),"interpreter":interpreter,"needed":needed,"program_headers_sha256":sha(&headers),"dynamic_table_sha256":sha(&dynamic)}),
     )
+}
+fn build_rpm(top: &Path, spec_path: &Path) -> Result<(), String> {
+    // RPM's final rmbuild stage removes BUILD on current releases. Retain this
+    // invocation's private tree until the exact-one-binary GNU audit completes;
+    // the owning TempDir still cleans it after outputs/provenance are copied.
+    command(
+        "rpmbuild",
+        &[
+            "-ba",
+            "--noclean",
+            "--define",
+            &format!("_topdir {}", top.display()),
+            spec_path.to_str().ok_or("spec path")?,
+        ],
+        top,
+    )?;
+    Ok(())
 }
 fn spec(
     p: &Policy,
@@ -735,16 +756,7 @@ pub fn run(
         ),
     )
     .map_err(|e| e.to_string())?;
-    command(
-        "rpmbuild",
-        &[
-            "-ba",
-            "--define",
-            &format!("_topdir {}", top.display()),
-            spec_path.to_str().ok_or("spec path")?,
-        ],
-        top,
-    )?;
+    build_rpm(top, &spec_path)?;
     let elf = audit(&p, target, top)?;
     source_files(&p, &tree, true)?;
     fs::create_dir_all(out.join("source")).map_err(|e| e.to_string())?;
@@ -839,6 +851,148 @@ mod tests {
         assert!(needed_libraries("0x1 (RPATH) Library rpath: [/tmp/foreign]").is_err());
         assert!(needed_libraries("0x1 (RUNPATH) Library runpath: [/tmp/foreign]").is_err());
         assert!(needed_libraries("0x1 (NEEDED) malformed").is_err());
+    }
+    #[test]
+    fn compiled_binary_requires_one_target_in_legacy_and_nested_rpm_layouts() {
+        let target = "x86_64-unknown-linux-gnu";
+        for layout in [
+            "tuigreet-source",
+            "mios-tuigreet-0.9.1-build/tuigreet-source",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let top = directory.path();
+            let build = top.join("BUILD");
+            fs::create_dir(&build).unwrap();
+            let other = build.join("other/target/aarch64-unknown-linux-gnu/release/tuigreet");
+            fs::create_dir_all(other.parent().unwrap()).unwrap();
+            fs::write(&other, b"another target").unwrap();
+            assert!(compiled_binary(target, top)
+                .unwrap_err()
+                .contains("exactly one compiled greeter"));
+            let binary = build
+                .join(layout)
+                .join("target")
+                .join(target)
+                .join("release/tuigreet");
+            fs::create_dir_all(binary.parent().unwrap()).unwrap();
+            fs::write(&binary, b"selected target").unwrap();
+            assert_eq!(compiled_binary(target, top).unwrap(), binary);
+            let duplicate = build
+                .join("another-source/target")
+                .join(target)
+                .join("release/tuigreet");
+            fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
+            fs::write(&duplicate, b"duplicate target").unwrap();
+            assert!(compiled_binary(target, top)
+                .unwrap_err()
+                .contains("exactly one compiled greeter"));
+            assert_eq!(fs::read(&binary).unwrap(), b"selected target");
+            assert_eq!(fs::read(&duplicate).unwrap(), b"duplicate target");
+            assert_eq!(fs::read(&other).unwrap(), b"another target");
+        }
+    }
+    #[test]
+    #[cfg(unix)]
+    fn compiled_binary_refuses_file_and_directory_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let top = directory.path();
+        let outside = top.join("outside/target/x86_64-unknown-linux-gnu/release/tuigreet");
+        fs::create_dir_all(outside.parent().unwrap()).unwrap();
+        fs::write(&outside, b"linked target").unwrap();
+        let link = top.join("BUILD/file/target/x86_64-unknown-linux-gnu/release/tuigreet");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        std::os::unix::fs::symlink(top.join("outside"), top.join("BUILD/directory")).unwrap();
+        assert!(compiled_binary("x86_64-unknown-linux-gnu", top)
+            .unwrap_err()
+            .contains("exactly one compiled greeter"));
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::symlink_metadata(top.join("BUILD/directory"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(outside).unwrap(), b"linked target");
+    }
+    #[test]
+    #[ignore = "requires Native MiOS-DEV with rpmbuild, cc and readelf"]
+    fn rpm_completion_retains_binary_and_checks_until_gnu_audit() {
+        assert!(
+            Path::new("/run/.containerenv").is_file(),
+            "run RPM retention validation inside the Native builder container"
+        );
+        let directory = tempfile::Builder::new()
+            .prefix("mios-tuigreet-rpm-retention-")
+            .tempdir()
+            .unwrap();
+        let top = directory.path();
+        for name in ["SOURCES", "SPECS", "BUILD", "RPMS", "SRPMS"] {
+            fs::create_dir(top.join(name)).unwrap();
+        }
+        let p = policy(&document()).unwrap();
+        let target = p.targets.get(std::env::consts::ARCH).unwrap();
+        let spec_path = top.join("SPECS/mios-greeter-audit-fixture.spec");
+        // A real RPM lifecycle and GNU ELF, without downloading or rebuilding
+        // the upstream dependency tree. The production build_rpm invocation
+        // must retain BUILD and execute %check before the real ELF audit.
+        fs::write(
+            &spec_path,
+            format!(
+                r#"Name: mios-greeter-audit-fixture
+Version: 1
+Release: 1
+Summary: Native RPM retention acceptance fixture
+License: MIT
+%global debug_package %{{nil}}
+%description
+Private fixture for the post-RPM GNU audit lifecycle.
+%prep
+%setup -q -T -c -n greeter-audit-fixture
+%build
+mkdir -p target/{target}/release
+printf '%s\n' 'int main(void) {{ return 0; }}' > main.c
+cc main.c -o target/{target}/release/tuigreet
+%check
+target/{target}/release/tuigreet
+printf 'checked\n' > audit-check-ran
+%install
+install -Dm0755 target/{target}/release/tuigreet %{{buildroot}}/usr/libexec/mios-greeter-audit-fixture
+%files
+/usr/libexec/mios-greeter-audit-fixture
+"#
+            ),
+        )
+        .unwrap();
+        let unrelated = top.join("unrelated-output");
+        fs::write(&unrelated, b"preserve existing output").unwrap();
+        build_rpm(top, &spec_path).unwrap();
+        let result = audit(&p, target, top).unwrap();
+        assert!(hash(result["binary_sha256"].as_str().unwrap(), 64));
+        assert_eq!(
+            result["interpreter"],
+            p.interpreters[std::env::consts::ARCH]
+        );
+        let checks = walkdir::WalkDir::new(top.join("BUILD"))
+            .into_iter()
+            .map(Result::unwrap)
+            .filter(|entry| entry.file_type().is_file() && entry.file_name() == "audit-check-ran")
+            .collect::<Vec<_>>();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(fs::read(checks[0].path()).unwrap(), b"checked\n");
+        for name in ["RPMS", "SRPMS"] {
+            let count = walkdir::WalkDir::new(top.join(name))
+                .into_iter()
+                .map(Result::unwrap)
+                .filter(|entry| {
+                    entry.file_type().is_file()
+                        && entry.path().extension().is_some_and(|ext| ext == "rpm")
+                })
+                .count();
+            assert_eq!(count, 1);
+        }
+        assert_eq!(fs::read(unrelated).unwrap(), b"preserve existing output");
     }
     #[test]
     fn vendor_catalogue_refuses_unlocked_crates_or_replaced_checksums() {
