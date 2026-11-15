@@ -47,8 +47,11 @@ if ($Distro -notin $registered) {
   elseif ($Distro.StartsWith('podman-') -and $Distro.Substring(7) -in $registered) { $Distro = $Distro.Substring(7) }
   else { throw 'The requested MiOS distro is not registered' }
 }
-$LinuxUser = (& wsl.exe -d $Distro -u root -- python3 -c 'import pwd;print(pwd.getpwuid(1000).pw_name)').Trim()
-if ($LASTEXITCODE -ne 0 -or -not $LinuxUser) { throw 'Could not resolve the MiOS UID 1000 account' }
+# The MiOS login is the SSOT identity, the vendor + host [identity].username, never a uid literal. It must be an
+# existing account that is neither root nor a system uid; the guard prints the refusal on stderr.
+$identityProbe = 'import sys,pwd; sys.path.insert(0,''/usr/lib/mios''); import mios_toml as m; n=str((m.base_view().get(''identity'') or {}).get(''username'') or '''').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith((''nologin'', ''false'')) else sys.exit(''MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)'' % n)'
+$LinuxUser = ((& wsl.exe -d $Distro -u root --exec python3 -c $identityProbe) -join '').Trim()
+if ($LASTEXITCODE -ne 0 -or -not $LinuxUser) { throw 'Cannot resolve the MiOS login from the vendor/host [identity].username (see the message above)' }
 $resolve = 'import sys;sys.path.insert(0,"/usr/lib/mios");import mios_toml;print(mios_toml.load_merged()["mcp"]["python"])'
 $python = (& wsl.exe -d $Distro -u $LinuxUser -- python3 -c $resolve).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $python.StartsWith('/')) { throw 'Could not resolve the native MCP SDK path' }

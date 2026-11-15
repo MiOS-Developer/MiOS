@@ -158,8 +158,11 @@ if ((Test-Path -LiteralPath $wslConfig) -and (Get-Content -Raw -LiteralPath $wsl
     }
 }
 if (-not $LinuxUser) {
-    $LinuxUser = (& wsl.exe -d $Distro -u root -- python3 -c 'import pwd; print(pwd.getpwuid(1000).pw_name)').Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $LinuxUser) { throw 'No UID 1000 MiOS user; pass an unprivileged -LinuxUser explicitly' }
+    # The MiOS login is the SSOT identity, the vendor + host [identity].username, never a uid literal. It must be
+    # an existing account that is neither root nor a system uid; the guard prints the refusal on stderr.
+    $identityProbe = 'import sys,pwd; sys.path.insert(0,''/usr/lib/mios''); import mios_toml as m; n=str((m.base_view().get(''identity'') or {}).get(''username'') or '''').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith((''nologin'', ''false'')) else sys.exit(''MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)'' % n)'
+    $LinuxUser = ((& wsl.exe -d $Distro -u root --exec python3 -c $identityProbe) -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $LinuxUser) { throw 'Cannot resolve the MiOS login from the vendor/host [identity].username (see the message above); pass an unprivileged -LinuxUser explicitly' }
 }
 $resolve = 'import sys,json; sys.path.insert(0,"/usr/lib/mios"); import mios_toml; d=mios_toml.load_merged(); print(json.dumps({"apps":d["apps"],"font":d["theme"]["font"],"theme":d["theme"],"terminal":d["terminal"],"colors":mios_toml.colors(d),"keybindings":d["keybindings"],"mcp":d["mcp"],"agent_cli":d["agent_cli"],"ports":d["ports"],"os_control":d["os_control"],"nativeWindows":d["build"]["native"]["windows"],"nativeToolchain":d["build"]["toolchain"],"windowsCrossPackages":d["packages"]["windows-cross-build"]["pkgs"],"clinkPackage":d["bootstrap"]["prereqs"]["clink_pkg"],"runtimePackages":d["packages"]["mcp"]["pkgs"],"runtimeProbes":d["packages"]["mcp"]["verify_probes"]}))'
 $configJson = & wsl.exe -d $Distro -u $LinuxUser -- python3 -c $resolve
