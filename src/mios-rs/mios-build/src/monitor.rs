@@ -4,7 +4,7 @@
 use chrono::{DateTime, Local};
 use regex::Regex;
 use serde::Deserialize;
-use std::fs::{self, File, Metadata};
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -263,7 +263,7 @@ fn copy_tail(path: &Path, lines: Lines, out: &mut dyn Write) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn identity(metadata: &Metadata) -> (u64, u64) {
+fn identity(metadata: &fs::Metadata) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt;
     (metadata.dev(), metadata.ino())
 }

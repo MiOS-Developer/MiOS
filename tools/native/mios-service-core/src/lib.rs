@@ -372,19 +372,19 @@ pub mod socket {
         let Ok(meta) = fs::symlink_metadata(path) else {
             return false;
         };
-        if meta.file_type().is_symlink() {
-            return false;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            let Ok(caller) = fs::metadata("/proc/self") else {
-                return false;
-            };
-            if meta.uid() != caller.uid() {
-                return false;
-            }
-        }
+        !meta.file_type().is_symlink() && owned_by_caller(&meta)
+    }
+
+    /// UNIX: the path's owner is this process's uid (read from /proc/self).
+    #[cfg(unix)]
+    fn owned_by_caller(meta: &fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata("/proc/self").is_ok_and(|caller| meta.uid() == caller.uid())
+    }
+
+    /// Other platforms have no uid; the symlink refusal above is the whole check.
+    #[cfg(not(unix))]
+    fn owned_by_caller(_meta: &fs::Metadata) -> bool {
         true
     }
 
