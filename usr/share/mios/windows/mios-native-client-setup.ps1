@@ -11,10 +11,51 @@ param(
     [switch]$SkipAgentInstall,
     [switch]$RuntimeOnly,
     [switch]$RepairRuntime,
-    [switch]$EmitConfig
+    [switch]$EmitConfig,
+    # Machine: the all-users install (default, unchanged). User: one operator's layout, never elevated.
+    [ValidateSet('User', 'Machine')][string]$Scope = 'Machine',
+    # User scope only: the layout's profile body, the one file that receives the native hook.
+    [string]$ProfilePath
 )
 $ErrorActionPreference = 'Stop'
 if ($RepairRuntime) { $RuntimeOnly = $true }
+# User scope has no all-users default: both locations come from the caller's layout.
+function Assert-MiosScopeArguments([string]$Scope, [bool]$HasBinDirectory, [string]$ProfilePath) {
+    if ($Scope -ne 'User') { return }
+    if (-not $HasBinDirectory) { throw '-Scope User requires -BinDirectory (there is no all-users default)' }
+    if (-not $ProfilePath) { throw "-Scope User requires -ProfilePath (the layout's profile body)" }
+}
+# A machine-only action (all-users registry or shortcuts, a machine-scope install, a Windows capability, an elevated
+# task) runs only with -Scope Machine. -Scope User reports it on one line and continues without requesting elevation.
+function Test-MiosMachineAction([string]$Scope, [string]$Name) {
+    if ($Scope -eq 'Machine') { return $true }
+    # The install reports each deferral; the runtime projection each verb runs stays quiet.
+    if (-not $RuntimeOnly) { Write-Host "deferred: needs an elevated machine stage: $Name" }
+    return $false
+}
+# The profile that receives the native hook: -ProfilePath for User scope, never the running engine's $PROFILE.
+function Resolve-MiosNativeProfilePath([string]$Scope, [string]$ProfilePath) {
+    if ($Scope -eq 'User') { return $ProfilePath }
+    if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') { return 'M:\MiOS\powershell\profile.ps1' }
+    return [string]$PROFILE.CurrentUserAllHosts
+}
+function Get-MiosScopedVariable([string]$Name, [string]$Target) { return [Environment]::GetEnvironmentVariable($Name, $Target) }
+function Set-MiosScopedVariable([string]$Name, [string]$Value, [string]$Target) { [Environment]::SetEnvironmentVariable($Name, $Value, $Target) }
+# PATH and MIOS_NATIVE_BIN for the scope's own target (User or Machine), each written only when its value changes.
+function Set-MiosNativeEnvironment([string]$Scope, [string]$BinDirectory) {
+    $target = if ($Scope -eq 'User') { 'User' } else { 'Machine' }
+    $scopePath = [string](Get-MiosScopedVariable 'Path' $target)
+    if (-not (($scopePath -split ';') -contains $BinDirectory)) {
+        $nextPath = if ($scopePath) { "$($scopePath.TrimEnd(';'));$BinDirectory" } else { $BinDirectory }
+        Set-MiosScopedVariable 'Path' $nextPath $target
+    }
+    if (-not (($env:Path -split ';') -contains $BinDirectory)) { $env:Path += ";$BinDirectory" }
+    if ([string](Get-MiosScopedVariable 'MIOS_NATIVE_BIN' $target) -ne $BinDirectory) {
+        Set-MiosScopedVariable 'MIOS_NATIVE_BIN' $BinDirectory $target
+    }
+    $env:MIOS_NATIVE_BIN = $BinDirectory
+}
+Assert-MiosScopeArguments $Scope $PSBoundParameters.ContainsKey('BinDirectory') $ProfilePath
 function Test-MiosGuestDefaultRoute([string[]]$Json) { return @(($Json -join "`n") | ConvertFrom-Json).Count -gt 0 }
 function Set-MiosTerminalTransparency([Collections.IDictionary]$Appearance, [Collections.IDictionary]$Theme) {
     foreach ($key in @('opacity','unfocused_opacity')) {
@@ -242,7 +283,8 @@ if ($legacyHub -and (Test-Path -LiteralPath $legacyHub) -and (Test-Path -Literal
     Write-MiosFile (Join-Path (Split-Path -Parent $legacyHub) 'mios-ai.ps1') ([IO.File]::ReadAllText($aiSource))
 }
 # Upgrade the owned block in already installed profiles, including RuntimeOnly.
-$existingProfile = if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' } else { [string]$PROFILE.CurrentUserAllHosts }
+$existingProfile = Resolve-MiosNativeProfilePath $Scope $ProfilePath
+if ($Scope -eq 'User' -and -not (Test-Path -LiteralPath $existingProfile)) { throw "-ProfilePath $existingProfile does not exist; the layout's profile body is written before the client setup" }
 if (Test-Path -LiteralPath $existingProfile) {
     Set-MiosNativeProfile $existingProfile $BinDirectory
     $existingText = [IO.File]::ReadAllText($existingProfile)
@@ -287,10 +329,11 @@ $consoleTargets = @(
     'HKCU:\Console\%SystemRoot%_System32_cmd.exe',
     'HKCU:\Console\MiOS',
     'HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe',
-    'HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe',
-    'Registry::HKEY_USERS\.DEFAULT\Console',
-    'Registry::HKEY_USERS\.DEFAULT\Console\%SystemRoot%_System32_cmd.exe'
+    'HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe'
 )
+if (Test-MiosMachineAction $Scope 'default-profile console colors (HKEY_USERS\.DEFAULT)') {
+    $consoleTargets += @('Registry::HKEY_USERS\.DEFAULT\Console', 'Registry::HKEY_USERS\.DEFAULT\Console\%SystemRoot%_System32_cmd.exe')
+}
 $ansiConsoleKeys = @(
     'ansi_0_black', 'ansi_4_blue', 'ansi_2_green', 'ansi_6_cyan',
     'ansi_1_red', 'ansi_5_magenta', 'ansi_3_yellow', 'ansi_7_white',
@@ -340,8 +383,11 @@ $binding = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'native-bindin
 $verb = if ($Arguments.Count) { $Arguments[0] } else { 'terminal' }
 [string[]]$rest = @()
 if ($Arguments.Count -gt 1) { $rest = $Arguments[1..($Arguments.Count-1)] }
-if ($verb -eq 'repair') { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RepairRuntime -BinDirectory $PSScriptRoot; exit 0 }
-if ($verb -notin @('mcp','ssh')) { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RuntimeOnly -BinDirectory $PSScriptRoot }
+# Runtime projections keep the scope the install recorded, so a User layout never attempts a machine write.
+$scopeArgs = @{}
+if ($binding.scope -eq 'User') { $scopeArgs = @{ Scope = 'User'; ProfilePath = [string]$binding.profilePath } }
+if ($verb -eq 'repair') { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RepairRuntime -BinDirectory $PSScriptRoot @scopeArgs; exit 0 }
+if ($verb -notin @('mcp','ssh')) { & (Join-Path $PSScriptRoot 'mios-native-client-setup.ps1') -RuntimeOnly -BinDirectory $PSScriptRoot @scopeArgs }
 $userBinding = Join-Path $env:LOCALAPPDATA 'MiOS\native-binding.json'
 if (Test-Path -LiteralPath $userBinding) { $binding = Get-Content -Raw -LiteralPath $userBinding | ConvertFrom-Json }
 $remote = @()
@@ -445,8 +491,10 @@ $nativeDirectory = Join-Path $SourceRoot "tools\native\target\$($windowsBuild['t
     & $nativeManager native-runtime-check --root $SourceRoot --platform windows --bin-dir $BinDirectory
     if ($LASTEXITCODE -ne 0) { throw 'Installed Windows native catalog failed SSOT artifact verification' }
 }
-Save-MiosJson (Join-Path $BinDirectory 'native-binding.json') @{distro=$Distro; linuxUser=$LinuxUser; windowsHub=$hub; engine=$engine; mcpPython=$mcpPython;terminalDirectory=$config['terminal']['start_directory']}
-& (Join-Path $BinDirectory 'mios-oscontrol-server.ps1') -Install
+Save-MiosJson (Join-Path $BinDirectory 'native-binding.json') @{distro=$Distro; linuxUser=$LinuxUser; windowsHub=$hub; engine=$engine; mcpPython=$mcpPython;terminalDirectory=$config['terminal']['start_directory']; scope=$Scope; profilePath=$ProfilePath}
+if (Test-MiosMachineAction $Scope 'OS-control broker task (mios-oscontrol-server.ps1 -Install)') {
+    & (Join-Path $BinDirectory 'mios-oscontrol-server.ps1') -Install
+}
 $devEntry = @'
 # AI-hint: Resolve the installed MiOS image through its native CMD dispatcher.
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
@@ -458,16 +506,14 @@ exit $LASTEXITCODE
 if ($hub) {
     Write-MiosFile (Join-Path (Split-Path -Parent $hub) 'mios-dev.ps1') ($devEntry.Replace('__CMD__',(Join-Path $BinDirectory 'mios.cmd').Replace("'","''")).Replace('__BINDING__',$installedBinding.Replace("'","''")) + "`n")
 }
-$machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-if (-not (($machinePath -split ';') -contains $BinDirectory)) {
-    [Environment]::SetEnvironmentVariable('Path', "$machinePath;$BinDirectory", 'Machine')
-}
-if (-not (($env:Path -split ';') -contains $BinDirectory)) { $env:Path += ";$BinDirectory" }
-[Environment]::SetEnvironmentVariable('MIOS_NATIVE_BIN', $BinDirectory, 'Machine')
-$env:MIOS_NATIVE_BIN = $BinDirectory
+Set-MiosNativeEnvironment $Scope $BinDirectory
 if (-not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) {
-    Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0' | Out-Null
+    if (Test-MiosMachineAction $Scope 'OpenSSH.Client Windows capability') {
+        Add-WindowsCapability -Online -Name 'OpenSSH.Client~~~~0.0.1.0' | Out-Null
+    }
 }
+# The CMD prompt is an all-users install: clink at machine scope with all-users autorun.
+if (Test-MiosMachineAction $Scope 'CMD prompt (clink machine install and all-users autorun)') {
 $clink = @((Join-Path ${env:ProgramFiles(x86)} 'clink\clink_x64.exe'),(Join-Path $env:ProgramFiles 'clink\clink_x64.exe')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 if (-not $clink) {
     & winget.exe install --id $config['clinkPackage'] --exact --scope machine --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
@@ -543,12 +589,16 @@ Write-MiosFile (Join-Path $clinkDirectory 'themes\mios-ssot.clinkprompt') ($cmdT
 if ($LASTEXITCODE -ne 0) { throw 'Could not enable native CMD startup' }
 & $clink config prompt use mios-ssot | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not enable native MiOS CMD prompt' }
+}
 
 # Upgrade only the owned dashboard and startup hook, retaining other functions and edits.
-$profilePath = if (Test-Path -LiteralPath 'M:\MiOS\powershell\profile.ps1') { 'M:\MiOS\powershell\profile.ps1' } else { [string]$PROFILE.CurrentUserAllHosts }
+$profilePath = Resolve-MiosNativeProfilePath $Scope $ProfilePath
 Set-MiosNativeProfile $profilePath $BinDirectory
 Write-MiosFile (Join-Path $BinDirectory 'mios-agent-cli-setup.ps1') ([IO.File]::ReadAllText((Join-Path $SourceRoot 'usr\share\mios\windows\mios-agent-cli-setup.ps1')))
-if (-not $SkipAgentInstall) { & (Join-Path $BinDirectory 'mios-agent-cli-setup.ps1') -Distro $Distro -LinuxUser $LinuxUser }
+# The agent CLI setup installs its runtime at machine scope and edits the Machine PATH.
+if (-not $SkipAgentInstall -and (Test-MiosMachineAction $Scope 'agent CLIs (mios-agent-cli-setup.ps1: machine-scope runtime and Machine PATH)')) {
+    & (Join-Path $BinDirectory 'mios-agent-cli-setup.ps1') -Distro $Distro -LinuxUser $LinuxUser
+}
 }
 
 if (-not $SkipClients) {
@@ -696,6 +746,11 @@ if ($LASTEXITCODE -ne 0) { throw "Native host tmux projection failed (exit $LAST
 $shell = New-Object -ComObject WScript.Shell
 $desktopRoots = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'))
 $programsRoots = @((Join-Path ([Environment]::GetFolderPath('CommonStartMenu')) 'Programs'), (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'))
+# The first root of each list receives the canonical shortcut; a User layout owns only its own folders.
+if (-not (Test-MiosMachineAction $Scope 'all-users desktop and Start menu shortcuts')) {
+    $desktopRoots = @([Environment]::GetFolderPath('Desktop'))
+    $programsRoots = @(Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs')
+}
 Set-MiosUnifiedShortcuts $shell $config $BinDirectory $desktopRoots $programsRoots
 if (-not $RuntimeOnly) {
     Write-Host "Installed CMD entrypoint: $(Join-Path $BinDirectory 'mios.cmd')"
