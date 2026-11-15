@@ -2088,6 +2088,7 @@
             <div class="checkbox-row"><input type="checkbox" id="f-net-cockpit" data-key="network.allow_cockpit"><label for="f-net-cockpit">allow_cockpit (9090/tcp)</label></div>
             <div class="checkbox-row"><input type="checkbox" id="f-net-ssh" data-key="network.allow_ssh"><label for="f-net-ssh">allow_ssh (2222/tcp)</label></div>
             <div class="checkbox-row"><input type="checkbox" id="f-net-libvirt" data-key="network.allow_libvirt_bridge"><label for="f-net-libvirt">allow_libvirt_bridge (VM networking)</label></div>
+            <div class="checkbox-row"><input type="checkbox" id="f-net-vpn-killswitch" data-key="network.vpn.killswitch"><label for="f-net-vpn-killswitch">vpn.killswitch: enable the VPN kill switch from the next boot (drops all non-local egress outside the tunnel, even while it is down; an admin setting in /etc takes precedence when on)</label></div>
           </fieldset>
 
           <fieldset>
@@ -6679,6 +6680,9 @@ firewalld_default_zone = "drop"
 allow_cockpit          = true
 allow_ssh              = true
 allow_libvirt_bridge   = true
+
+[network.vpn]
+killswitch = false
 
 [ai]
 endpoint     = "http://localhost:8640/v1"

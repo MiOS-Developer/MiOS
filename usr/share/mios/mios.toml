@@ -2511,6 +2511,16 @@ allow_ssh              = true
 allow_cockpit          = true   # opens 9090/tcp
 allow_libvirt_bridge   = true   # for VM networking
 
+# [network.vpn] -- mios-vpn-killswitch.service, the nftables VPN kill switch.
+# killswitch is an opt-in. When it is true, from the next boot every egress that is
+# neither local nor leaving through `interface` is dropped, even while that tunnel is
+# down: the guard fails closed. false, the default, never arms it, so a host without
+# the tunnel keeps its egress. Tighten-only: the operator's mios.html tier can enable
+# it, never disable a vendor/host true. `interface` is read from vendor/host only.
+[network.vpn]
+killswitch = false
+interface  = "wg0"
+
 # Declarative nftables container micro-segmentation matrix (task_423)
 # A rule names its port with port_key = "<[ports] key>", which mios-firewall-isolate resolves
 # through the layered SSOT exactly as install.env renders it, or with a literal port.
@@ -3063,15 +3073,18 @@ retry_backoff_s     = 300   # a failed surface backs off, doubling to retry_back
 retry_backoff_max_s = 86400
 
 # [security.operator_tier] -- the ONLY keys root code (mios-credential apply,
-# mios-tailscale-sync) takes from the operator's user tier, a file the operator uid and
-# the Portal's root helper write. Every other key -- usernames, surface lists, paths,
-# units, hosts, ports, public_host -- comes from the vendor + host tiers. `values` must
+# mios-tailscale-sync, mios-vpn-killswitch) takes from the operator's user tier, a
+# file the operator uid and the Portal's root helper write. Every other key --
+# usernames, surface lists, paths, units, hosts, ports, public_host, the kill
+# switch's interface -- comes from the vendor + host tiers. `values` must
 # be strings without control characters, and one that is not fails the whole run closed
 # (nothing falls back to the vendor default); `toggles` must be booleans (a refused one
 # keeps the vendor/host value) and '*' matches only a table the vendor/host tiers declare.
+# network.vpn.killswitch is tighten-only: the operator can enable, never disable a
+# vendor/host true (mios-vpn-killswitch ORs the vendor/host value with this toggle).
 [security.operator_tier]
 values  = ["identity.default_password", "portal.password", "ttyd.auth_pass"]
-toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled"]
+toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled", "network.vpn.killswitch"]
 
 [security.nohc_allowlist]
 # SSOT Allowlist for legitimate exceptions to the ports/IPs hardcode check (task_126).

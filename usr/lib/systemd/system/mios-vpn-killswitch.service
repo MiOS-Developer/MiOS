@@ -1,5 +1,5 @@
 # AI-hint: Systemd service for enforcing declarative nftables VPN killswitch and split-tunnel boundaries.
-# AI-related: /usr/libexec/mios/net/vpn_killswitch.py, network-pre.target, network.target, multi-user.target
+# AI-related: /usr/libexec/mios/net/vpn_killswitch.py, /usr/share/mios/mios.toml, network-pre.target, network.target, multi-user.target
 
 [Unit]
 Description=MiOS Declarative nftables VPN Kill-Switch and Split-Tunnel Guard
@@ -10,7 +10,13 @@ Before=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/libexec/mios/net/vpn_killswitch.py --interface wg0
+# Arms when the vendor/host tiers, or the operator's mios.html tier (enable-only), set
+# [network.vpn].killswitch = true (exit 0). false or undeclared skips the unit (exit 1);
+# an unreadable SSOT or a non-boolean value fails it (exit 255), so the guard never arms
+# or skips silently.
+ExecCondition=/usr/libexec/mios/net/vpn_killswitch.py --condition
+# The tunnel it lets egress leave through is [network.vpn].interface.
+ExecStart=/usr/libexec/mios/net/vpn_killswitch.py
 ExecStop=/usr/libexec/mios/net/vpn_killswitch.py --flush
 StandardOutput=journal
 StandardError=journal
