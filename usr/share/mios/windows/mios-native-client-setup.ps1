@@ -202,6 +202,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not project the native Oh My Posh theme'
 $null = $promptJson | ConvertFrom-Json
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $changed = [Collections.Generic.List[string]]::new()
+$skippedClients = [Collections.Generic.List[string]]::new()
 function Write-MiosFile([string]$Path, [string]$Text) {
     if ((Test-Path -LiteralPath $Path) -and [IO.File]::ReadAllText($Path) -ceq $Text) { return }
     [IO.Directory]::CreateDirectory((Split-Path -Parent $Path)) | Out-Null
@@ -211,9 +212,40 @@ function Write-MiosFile([string]$Path, [string]$Text) {
     [IO.File]::Move($pending, $Path, $true)
     $changed.Add($Path)
 }
+# Another application's config is read, never guessed at: a file that holds no settings (absent, empty,
+# blank or `null`) reads as empty, and one that is not the expected JSON is refused and left unchanged.
+function Read-MiosJsonValue([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $text = Get-Content -Raw -LiteralPath $Path
+    if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+    try { return ,($text | ConvertFrom-Json -AsHashtable -NoEnumerate) }
+    catch { throw [IO.InvalidDataException]::new("$Path is not valid JSON; left unchanged") }
+}
 function Read-MiosJson([string]$Path) {
-    if (Test-Path -LiteralPath $Path) { return (Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json -AsHashtable) }
-    return @{}
+    $value = Read-MiosJsonValue $Path
+    if ($null -eq $value) { return @{} }
+    if ($value -isnot [Collections.IDictionary]) { throw [IO.InvalidDataException]::new("$Path does not hold a JSON object; left unchanged") }
+    return $value
+}
+function Read-MiosJsonList([string]$Path) {
+    $value = Read-MiosJsonValue $Path
+    if ($null -eq $value) { return ,@() }
+    if ($value -isnot [Collections.IList]) { throw [IO.InvalidDataException]::new("$Path does not hold a JSON array; left unchanged") }
+    return ,@($value)
+}
+# The object under $Key, created when the key is absent or null; any other value belongs to the client and refuses.
+function Get-MiosJsonSection($Object, [string]$Key, [string]$Path) {
+    if ($null -eq $Object[$Key]) { $Object[$Key] = @{} }
+    elseif ($Object[$Key] -isnot [Collections.IDictionary]) { throw [IO.InvalidDataException]::new("${Path}: $Key is not a JSON object; left unchanged") }
+    return $Object[$Key]
+}
+# One client's unreadable config never stops the setup: that client is skipped with a warning and the rest go on.
+function Invoke-MiosClientConfig([string]$Client, [scriptblock]$Update) {
+    try { & $Update }
+    catch [IO.InvalidDataException] {
+        Write-Warning "MiOS client setup: skipped $Client -- $($_.Exception.Message)"
+        $skippedClients.Add($Client)
+    }
 }
 function Save-MiosJson([string]$Path, $Value) {
     Write-MiosFile $Path (((Convert-MiosOrdered $Value) | ConvertTo-Json -Depth 100) + "`n")
@@ -616,10 +648,12 @@ if (-not $SkipClients) {
         (Join-Path $env:USERPROFILE '.gemini\antigravity-cli\mcp_config.json'),
         (Join-Path $env:USERPROFILE '.cursor\mcp.json')
     )) {
-        $object = Read-MiosJson $path
-        if (-not $object.Contains('mcpServers')) { $object['mcpServers'] = @{} }
-        $object['mcpServers']['mios-control'] = $mcpEntry
-        Save-MiosJson $path $object
+        Invoke-MiosClientConfig $path {
+            $object = Read-MiosJson $path
+            $servers = Get-MiosJsonSection $object 'mcpServers' $path
+            $servers['mios-control'] = $mcpEntry
+            Save-MiosJson $path $object
+        }
     }
     $codexPath = Join-Path $env:USERPROFILE '.codex\config.toml'
     $codex = if (Test-Path -LiteralPath $codexPath) { Get-Content -Raw -LiteralPath $codexPath } else { '' }
@@ -629,57 +663,64 @@ if (-not $SkipClients) {
     Write-MiosFile $codexPath $codex
 
     $copilot = Join-Path $env:USERPROFILE '.copilot\mcp-config.json'
-    $object = Read-MiosJson $copilot
-    if (-not $object.Contains('mcpServers')) { $object['mcpServers'] = @{} }
-    $object['mcpServers']['mios-control'] = @{type='local';command=$wsl;args=$argsMcp;tools=@('*')}
-    Save-MiosJson $copilot $object
+    Invoke-MiosClientConfig $copilot {
+        $object = Read-MiosJson $copilot
+        $servers = Get-MiosJsonSection $object 'mcpServers' $copilot
+        $servers['mios-control'] = @{type='local';command=$wsl;args=$argsMcp;tools=@('*')}
+        Save-MiosJson $copilot $object
+    }
     $opencode = Join-Path $env:USERPROFILE '.config\opencode\opencode.json'
-    $object = Read-MiosJson $opencode
-    if (-not $object.Contains('mcp')) { $object['mcp'] = @{} }
-    $ocCommand = Join-Path (Join-Path $env:ProgramData $config['agent_cli']['windows_directory']) 'npm\opencode.cmd'
-    $v2 = (Test-Path -LiteralPath $ocCommand) -and ((& $ocCommand --version) -match '^2\.')
-    if ($v2) {
-        if (-not $object['mcp'].Contains('servers')) { $object['mcp']['servers'] = @{} }
-        $object['mcp'].Remove('mios-control')
-        $object['mcp']['servers']['mios-control'] = @{type='local';command=@($wsl)+$argsMcp}
-    } else { $object['mcp']['mios-control'] = @{type='local';command=@($wsl)+$argsMcp;enabled=$true} }
-    # Resolve through the same guest SSOT and Rust provider projector as Linux.
-    $projection = ($object | ConvertTo-Json -Depth 40 -Compress) | & $wsl -d $Distro -u $LinuxUser -- /usr/bin/mios-ai-config --root / --opencode-stdin
-    if ($LASTEXITCODE -ne 0) { throw 'Native local OpenCode projection failed' }
-    $object = ($projection -join "`n") | ConvertFrom-Json -AsHashtable
-    Save-MiosJson $opencode $object
+    Invoke-MiosClientConfig $opencode {
+        $object = Read-MiosJson $opencode
+        $mcp = Get-MiosJsonSection $object 'mcp' $opencode
+        $ocCommand = Join-Path (Join-Path $env:ProgramData $config['agent_cli']['windows_directory']) 'npm\opencode.cmd'
+        $v2 = (Test-Path -LiteralPath $ocCommand) -and ((& $ocCommand --version) -match '^2\.')
+        if ($v2) {
+            $servers = Get-MiosJsonSection $mcp 'servers' "$opencode (mcp)"
+            $mcp.Remove('mios-control')
+            $servers['mios-control'] = @{type='local';command=@($wsl)+$argsMcp}
+        } else { $mcp['mios-control'] = @{type='local';command=@($wsl)+$argsMcp;enabled=$true} }
+        # Resolve through the same guest SSOT and Rust provider projector as Linux; its failure stays fatal.
+        $projection = ($object | ConvertTo-Json -Depth 40 -Compress) | & $wsl -d $Distro -u $LinuxUser -- /usr/bin/mios-ai-config --root / --opencode-stdin
+        if ($LASTEXITCODE -ne 0) { throw 'Native local OpenCode projection failed' }
+        $object = ($projection -join "`n") | ConvertFrom-Json -AsHashtable
+        Save-MiosJson $opencode $object
+    }
 
     if (-not $RuntimeOnly) {
     $profileRoot = Join-Path $SourceRoot 'usr\share\mios\keybindings'
     $bindings = @(Get-Content -Raw (Join-Path $profileRoot 'vscode-keybindings.json') | ConvertFrom-Json -AsHashtable)
     foreach ($directory in @((Join-Path $env:APPDATA 'Code\User'), (Join-Path $env:APPDATA 'Code - Insiders\User'))) {
         if ($directory -like '*Insiders*' -and -not (Test-Path -LiteralPath $directory)) { continue }
-        $keyPath = Join-Path $directory 'keybindings.json'
-        $prior = if (Test-Path -LiteralPath $keyPath) { @(Get-Content -Raw -LiteralPath $keyPath | ConvertFrom-Json -AsHashtable) } else { @() }
-        $keys = @($bindings | ForEach-Object { $_['key'] })
-        $merged = @($prior | Where-Object { $_['key'] -notin $keys }) + $bindings
-        # Editor shortcuts launch Windows shims; terminal input still passes through to tmux.
-        foreach ($row in $merged) {
-            if ($row['key'] -in $keys -and $row['command'] -eq 'runCommands') {
-                foreach ($action in $row['args']['commands']) {
-                    if ($action -is [Collections.IDictionary] -and $action['command'] -eq 'workbench.action.terminal.sendSequence') {
-                        $text = $action['args']['text']
-                        $action['args']['text'] = $text.Replace('/usr/libexec/mios/mios-ai-terminal', 'mios.cmd ai-terminal').Replace('mios ai', 'mios.cmd ai').Replace('mios mon', 'mios.cmd mon').Replace('mios agents --watch', 'mios.cmd agents --watch')
+        # Both files are read and checked before either is written, so a refusal leaves the editor untouched.
+        Invoke-MiosClientConfig $directory {
+            $keyPath = Join-Path $directory 'keybindings.json'
+            $settingsPath = Join-Path $directory 'settings.json'
+            $prior = Read-MiosJsonList $keyPath
+            $settings = Read-MiosJson $settingsPath
+            $terminalEnv = Get-MiosJsonSection $settings 'terminal.integrated.env.windows' $settingsPath
+            $keys = @($bindings | ForEach-Object { $_['key'] })
+            $merged = @($prior | Where-Object { $_['key'] -notin $keys }) + $bindings
+            # Editor shortcuts launch Windows shims; terminal input still passes through to tmux.
+            foreach ($row in $merged) {
+                if ($row['key'] -in $keys -and $row['command'] -eq 'runCommands') {
+                    foreach ($action in $row['args']['commands']) {
+                        if ($action -is [Collections.IDictionary] -and $action['command'] -eq 'workbench.action.terminal.sendSequence') {
+                            $text = $action['args']['text']
+                            $action['args']['text'] = $text.Replace('/usr/libexec/mios/mios-ai-terminal', 'mios.cmd ai-terminal').Replace('mios ai', 'mios.cmd ai').Replace('mios mon', 'mios.cmd mon').Replace('mios agents --watch', 'mios.cmd agents --watch')
+                        }
                     }
                 }
             }
+            Save-MiosJson $keyPath $merged
+            $settings['terminal.integrated.allowChords'] = $config['keybindings']['vscode_allow_chords']
+            $settings['terminal.integrated.allowMnemonics'] = $config['keybindings']['vscode_allow_mnemonics']
+            $settings['terminal.integrated.commandsToSkipShell'] = @($config['keybindings']['vscode_passthrough_commands'] | ForEach-Object { "-$_" })
+            $settings['terminal.integrated.fontFamily'] = $config['font']['family']
+            $settings['terminal.integrated.fontSize'] = $config['font']['size']
+            $terminalEnv['PATH'] = '${env:PATH};' + $BinDirectory
+            Save-MiosJson $settingsPath $settings
         }
-        Save-MiosJson $keyPath $merged
-        $settingsPath = Join-Path $directory 'settings.json'
-        $settings = Read-MiosJson $settingsPath
-        $settings['terminal.integrated.allowChords'] = $config['keybindings']['vscode_allow_chords']
-        $settings['terminal.integrated.allowMnemonics'] = $config['keybindings']['vscode_allow_mnemonics']
-        $settings['terminal.integrated.commandsToSkipShell'] = @($config['keybindings']['vscode_passthrough_commands'] | ForEach-Object { "-$_" })
-        $settings['terminal.integrated.fontFamily'] = $config['font']['family']
-        $settings['terminal.integrated.fontSize'] = $config['font']['size']
-        if (-not $settings.Contains('terminal.integrated.env.windows')) { $settings['terminal.integrated.env.windows'] = @{} }
-        $settings['terminal.integrated.env.windows']['PATH'] = '${env:PATH};' + $BinDirectory
-        Save-MiosJson $settingsPath $settings
     }
 }
 }
@@ -693,53 +734,61 @@ $terminalPaths = @(
 )
 foreach ($path in $terminalPaths) {
     if (-not (Test-Path -LiteralPath $path)) { continue }
-    $terminal = Read-MiosJson $path
-    Set-MiosTerminalStartup $terminal $config
-    if (-not $terminal.Contains('compatibility')) { $terminal['compatibility'] = @{} }
-    $terminal['compatibility']['enableUnfocusedAcrylic'] = $true
-    $palette = $config['colors']
-    $scheme = @{name=$config['theme']['terminal']['scheme_name']; background=$palette['bg']; foreground=$palette['fg']; cursorColor=$palette['cursor']; selectionBackground=$palette['muted']}
-    $colors = @('black','red','green','yellow','blue','magenta','cyan','white')
-    for ($index = 0; $index -lt $colors.Count; $index++) {
-        $color = $colors[$index]
-        $field = if ($color -eq 'magenta') { 'purple' } else { $color }
-        $scheme[$field] = $palette["ansi_${index}_$color"]
-        $scheme['bright' + (Get-Culture).TextInfo.ToTitleCase($field)] = $palette["ansi_$($index+8)_bright_$color"]
-    }
-    foreach ($key in $scheme.Keys) { if ($key -ne 'name' -and $scheme[$key] -notmatch '^#[0-9a-fA-F]{6}$') { throw "SSOT terminal palette color $key is invalid" } }
-    $terminal['schemes'] = @($terminal['schemes'] | Where-Object { $_['name'] -ne $scheme['name'] }) + @($scheme)
-    $terminal['actions'] = @($terminal['actions'] | Where-Object { -not ($_['command'] -is [Collections.IDictionary] -and $_['command']['action'] -eq 'globalSummon' -and $_['command']['name'] -like 'MiOS*') }) + @(@{keys=$config['theme']['terminal']['summon_keys'];command=@{action='globalSummon';name=$config['theme']['terminal']['summon_window_name'];dropdownDuration=0}})
-    if (-not $terminal.Contains('profiles')) { $terminal['profiles'] = @{list=@()} }
-    $profile = @{name='MiOS-CMD'; commandline='cmd.exe'; font=@{face=$config['font']['family']; size=$config['font']['size']}; colorScheme=$config['theme']['terminal']['scheme_name']; padding=$config['theme']['padding']; scrollbarState=$config['theme']['scrollbar_state']}
-    $terminal['profiles']['list'] = @($terminal['profiles']['list'] | Where-Object { $_['name'] -ne 'MiOS-CMD' }) + @($profile)
-    if (-not $terminal['profiles'].Contains('defaults')) { $terminal['profiles']['defaults'] = @{} }
-    $terminal['profiles']['defaults']['colorScheme'] = $scheme['name']
-    $terminal['profiles']['defaults']['font'] = @{face=$config['font']['family'];size=$config['font']['size']}
-    $terminal['profiles']['defaults']['padding'] = $config['theme']['padding']
-    $terminal['profiles']['defaults']['scrollbarState'] = $config['theme']['scrollbar_state']
-    Set-MiosTerminalTransparency $terminal['profiles']['defaults'] $config['theme']
-    foreach ($item in $terminal['profiles']['list']) {
-        $item['font'] = @{face=$config['font']['family']; size=$config['font']['size']}
-        $item['colorScheme'] = $config['theme']['terminal']['scheme_name']
-        $item['padding'] = $config['theme']['padding']
-        $item['scrollbarState'] = $config['theme']['scrollbar_state']
-        $item['cursorShape'] = $config['theme']['cursor_shape']
-        Set-MiosTerminalTransparency $item $config['theme']
-        $item['suppressApplicationTitle'] = $config['theme']['suppress_app_title']
-        if ($item['name'] -eq $config['theme']['terminal']['dev_profile_name']) {
-            $enginePath = if ($RuntimeOnly) { $binding.engine } else { $engine }
-            $item['commandline'] = "`"$enginePath`" -NoLogo -NoProfile -File `"$(Join-Path $BinDirectory 'mios-native-entry.ps1')`" terminal"
-            $item['startingDirectory'] = '%USERPROFILE%'
+    # A Windows Terminal settings file it cannot read is left as it is; that terminal is skipped.
+    Invoke-MiosClientConfig $path {
+        $terminal = Read-MiosJson $path
+        Set-MiosTerminalStartup $terminal $config
+        $compatibility = Get-MiosJsonSection $terminal 'compatibility' $path
+        $compatibility['enableUnfocusedAcrylic'] = $true
+        $palette = $config['colors']
+        $scheme = @{name=$config['theme']['terminal']['scheme_name']; background=$palette['bg']; foreground=$palette['fg']; cursorColor=$palette['cursor']; selectionBackground=$palette['muted']}
+        $colors = @('black','red','green','yellow','blue','magenta','cyan','white')
+        for ($index = 0; $index -lt $colors.Count; $index++) {
+            $color = $colors[$index]
+            $field = if ($color -eq 'magenta') { 'purple' } else { $color }
+            $scheme[$field] = $palette["ansi_${index}_$color"]
+            $scheme['bright' + (Get-Culture).TextInfo.ToTitleCase($field)] = $palette["ansi_$($index+8)_bright_$color"]
         }
-        if ($item['name'] -in @($config['theme']['terminal']['profile_name'], 'MiOS-CMD')) {
-            $item['commandline'] = "`"$(Join-Path $BinDirectory 'mios-launch.exe')`" --host-terminal"
-            $item['startingDirectory'] = '%USERPROFILE%'
+        foreach ($key in $scheme.Keys) { if ($key -ne 'name' -and $scheme[$key] -notmatch '^#[0-9a-fA-F]{6}$') { throw "SSOT terminal palette color $key is invalid" } }
+        # A settings file without schemes or actions has none to keep.
+        $terminal['schemes'] = @($terminal['schemes'] | Where-Object { $null -ne $_ -and $_['name'] -ne $scheme['name'] }) + @($scheme)
+        $terminal['actions'] = @($terminal['actions'] | Where-Object { $null -ne $_ -and -not ($_['command'] -is [Collections.IDictionary] -and $_['command']['action'] -eq 'globalSummon' -and $_['command']['name'] -like 'MiOS*') }) + @(@{keys=$config['theme']['terminal']['summon_keys'];command=@{action='globalSummon';name=$config['theme']['terminal']['summon_window_name'];dropdownDuration=0}})
+        $profiles = Get-MiosJsonSection $terminal 'profiles' $path
+        if ($null -eq $profiles['list']) { $profiles['list'] = @() }
+        $profile = @{name='MiOS-CMD'; commandline='cmd.exe'; font=@{face=$config['font']['family']; size=$config['font']['size']}; colorScheme=$config['theme']['terminal']['scheme_name']; padding=$config['theme']['padding']; scrollbarState=$config['theme']['scrollbar_state']}
+        $profiles['list'] = @($profiles['list'] | Where-Object { $_['name'] -ne 'MiOS-CMD' }) + @($profile)
+        $defaults = Get-MiosJsonSection $profiles 'defaults' "$path (profiles)"
+        $defaults['colorScheme'] = $scheme['name']
+        $defaults['font'] = @{face=$config['font']['family'];size=$config['font']['size']}
+        $defaults['padding'] = $config['theme']['padding']
+        $defaults['scrollbarState'] = $config['theme']['scrollbar_state']
+        Set-MiosTerminalTransparency $defaults $config['theme']
+        foreach ($item in $profiles['list']) {
+            $item['font'] = @{face=$config['font']['family']; size=$config['font']['size']}
+            $item['colorScheme'] = $config['theme']['terminal']['scheme_name']
+            $item['padding'] = $config['theme']['padding']
+            $item['scrollbarState'] = $config['theme']['scrollbar_state']
+            $item['cursorShape'] = $config['theme']['cursor_shape']
+            Set-MiosTerminalTransparency $item $config['theme']
+            $item['suppressApplicationTitle'] = $config['theme']['suppress_app_title']
+            if ($item['name'] -eq $config['theme']['terminal']['dev_profile_name']) {
+                $enginePath = if ($RuntimeOnly) { $binding.engine } else { $engine }
+                $item['commandline'] = "`"$enginePath`" -NoLogo -NoProfile -File `"$(Join-Path $BinDirectory 'mios-native-entry.ps1')`" terminal"
+                $item['startingDirectory'] = '%USERPROFILE%'
+            }
+            if ($item['name'] -in @($config['theme']['terminal']['profile_name'], 'MiOS-CMD')) {
+                $item['commandline'] = "`"$(Join-Path $BinDirectory 'mios-launch.exe')`" --host-terminal"
+                $item['startingDirectory'] = '%USERPROFILE%'
+            }
+            if ($item['source'] -eq 'Windows.Terminal.Wsl' -and $item['name'] -notin $registered) { $item['hidden'] = $true }
         }
-        if ($item['source'] -eq 'Windows.Terminal.Wsl' -and $item['name'] -notin $registered) { $item['hidden'] = $true }
+        $default = @($profiles['list'] | Where-Object { $_['name'] -eq $config['theme']['terminal']['hub_target_profile'] })[0]
+        if ($default) { $terminal['defaultProfile'] = if ($default['guid']) { $default['guid'] } else { $default['name'] } }
+        Save-MiosJson $path $terminal
     }
-    $default = @($terminal['profiles']['list'] | Where-Object { $_['name'] -eq $config['theme']['terminal']['hub_target_profile'] })[0]
-    if ($default) { $terminal['defaultProfile'] = if ($default['guid']) { $default['guid'] } else { $default['name'] } }
-    Save-MiosJson $path $terminal
+}
+if ($skippedClients.Count) {
+    Write-Warning ("MiOS client setup: {0} client config(s) skipped and left unchanged: {1}" -f $skippedClients.Count, ($skippedClients -join '; '))
 }
 # Installation, build-time staging and each runtime projection share the Rust renderer.
 & (Join-Path $BinDirectory 'mios-launch.exe') --stage-host-terminal
