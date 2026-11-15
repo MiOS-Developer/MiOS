@@ -6,6 +6,7 @@
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -51,6 +52,42 @@ fn absolute_directory(path: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+/// Creates the single directory `path` owner-only (0700).
+#[cfg(unix)]
+fn create_private_dir(path: &Path) -> Result<(), String> {
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(path)
+        .map_err(|e| e.to_string())
+}
+/// Whether an existing build directory is owned by the calling user and closed to group and other.
+#[cfg(unix)]
+fn private_and_caller_owned(m: &fs::Metadata) -> Result<bool, String> {
+    Ok(m.uid() == rustix::process::getuid().as_raw() && m.mode() & 0o077 == 0)
+}
+/// Marks the staged binary 0755.
+#[cfg(unix)]
+fn make_executable(file: &File) -> Result<(), String> {
+    file.set_permissions(fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())
+}
+// Off Unix there are no owner-only modes, uid owners or exec bits, so the build fails before it
+// creates, trusts or stages anything that relies on them.
+#[cfg(not(unix))]
+fn create_private_dir(path: &Path) -> Result<(), String> {
+    Err(format!(
+        "{}: creating an owner-only (0700) directory needs a Unix host",
+        path.display()
+    ))
+}
+#[cfg(not(unix))]
+fn private_and_caller_owned(_m: &fs::Metadata) -> Result<bool, String> {
+    Err("checking that a build directory is private (mode 0700) and caller-owned (uid) needs a Unix host".into())
+}
+#[cfg(not(unix))]
+fn make_executable(_file: &File) -> Result<(), String> {
+    Err("marking the staged binary executable (mode 0755) needs a Unix host".into())
+}
 fn directories(path: &Path) -> Result<(), String> {
     absolute_directory(path)?;
     let mut part = PathBuf::from("/");
@@ -60,10 +97,7 @@ fn directories(path: &Path) -> Result<(), String> {
             Ok(m) if m.is_dir() && !m.file_type().is_symlink() => (),
             Ok(_) => return Err(format!("unsafe directory {}", part.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                fs::DirBuilder::new()
-                    .mode(0o700)
-                    .create(&part)
-                    .map_err(|e| e.to_string())?;
+                create_private_dir(&part)?;
             }
             Err(e) => return Err(e.to_string()),
         }
@@ -76,8 +110,7 @@ fn fresh_build_directory(path: &Path) -> Result<(), String> {
         Ok(m) => {
             if !m.is_dir()
                 || m.file_type().is_symlink()
-                || m.uid() != rustix::process::getuid().as_raw()
-                || m.mode() & 0o077 != 0
+                || !private_and_caller_owned(&m)?
                 || fs::read_dir(path)
                     .map_err(|e| e.to_string())?
                     .next()
@@ -90,10 +123,7 @@ fn fresh_build_directory(path: &Path) -> Result<(), String> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             absolute_directory(path.parent().ok_or("build directory has no parent")?)?;
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(path)
-                .map_err(|e| e.to_string())?;
+            create_private_dir(path)?;
         }
         Err(e) => return Err(e.to_string()),
     }
@@ -187,9 +217,7 @@ fn stage(binary: &Path, target: &Path, mut receipt: serde_json::Value) -> Result
     regular_destination(&receipt_path)?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     let hash = digest_copy(binary, Some(tmp.as_file_mut()))?;
-    tmp.as_file()
-        .set_permissions(fs::Permissions::from_mode(0o755))
-        .map_err(|e| e.to_string())?;
+    make_executable(tmp.as_file())?;
     tmp.as_file().sync_all().map_err(|e| e.to_string())?;
     receipt["binary_sha256"] = serde_json::json!(hash);
     receipt["binary_path"] = serde_json::json!(target);
@@ -385,6 +413,7 @@ mod tests {
         }
         assert!(normal_relative(Path::new("usr/libexec/mios/mios-tmux")));
     }
+    #[cfg(unix)]
     #[test]
     fn existing_build_tree_must_be_private_and_empty() {
         let tmp = tempfile::tempdir().unwrap();

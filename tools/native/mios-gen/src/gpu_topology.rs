@@ -457,11 +457,17 @@ pub fn nested_render(
 
 impl RenderChoice {
     /// st_rdev of the chosen render node (what the linux-dmabuf main device is rewritten to).
+    #[cfg(unix)]
     pub fn rdev(&self) -> Option<u64> {
         use std::os::unix::fs::MetadataExt;
         fs::metadata(self.gpu.as_ref()?.render.as_ref()?)
             .ok()
             .map(|m| m.rdev())
+    }
+    /// Device numbers (st_rdev) exist only on Unix: there is no render node to name, as for an unreadable node.
+    #[cfg(not(unix))]
+    pub fn rdev(&self) -> Option<u64> {
+        None
     }
     /// Environment for the nested compositor and its clients (set, then removed keys).
     pub fn env(&self) -> (Vec<(&'static str, String)>, Vec<&'static str>) {
@@ -521,13 +527,7 @@ impl RenderChoice {
 /// Kernel log messages from /dev/kmsg (record text only). Reading needs CAP_SYSLOG under dmesg_restrict; a missing or
 /// unreadable log yields an empty list, never an error. Reads until the end of the ring buffer, never blocks.
 pub fn kmsg(path: &Path) -> Vec<String> {
-    use std::os::unix::fs::OpenOptionsExt;
-    const O_NONBLOCK: i32 = 0o4000;
-    let Ok(mut f) = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(O_NONBLOCK)
-        .open(path)
-    else {
+    let Ok(mut f) = open_kmsg(path) else {
         return vec![];
     };
     let regular = f.metadata().is_ok_and(|m| m.is_file());
@@ -560,6 +560,31 @@ pub fn kmsg(path: &Path) -> Vec<String> {
         }
     }
     out
+}
+
+/// The log opens non-blocking (O_NONBLOCK): at the end of the ring buffer a read returns WouldBlock instead of waiting.
+#[cfg(unix)]
+fn open_kmsg(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    const O_NONBLOCK: i32 = 0o4000;
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(path)
+}
+/// Off Unix there is no kernel ring buffer and no O_NONBLOCK to read one without waiting: a saved log (a regular file)
+/// is read as on Unix, and anything else is refused, which kmsg reports as an unreadable (empty) log.
+#[cfg(not(unix))]
+fn open_kmsg(path: &Path) -> std::io::Result<fs::File> {
+    let f = fs::File::open(path)?;
+    if f.metadata()?.is_file() {
+        Ok(f)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "reading the live kernel log (/dev/kmsg) needs a Unix host",
+        ))
+    }
 }
 
 fn record_text(line: &str) -> &str {
@@ -1020,7 +1045,9 @@ struct LightDevice {
     gid: u32,
 }
 
-/// Metadata collected from stat(2) and sysfs; no external facts/bypass mode is exposed.
+/// Metadata collected from stat(2) and sysfs; no external facts/bypass mode is exposed. Only the Unix
+/// light_render_device collects it, so it and its validator are compiled where that stat is.
+#[cfg(unix)]
 #[derive(Clone)]
 struct LightRenderIdentity {
     path: PathBuf,
@@ -1033,6 +1060,7 @@ struct LightRenderIdentity {
     gid: u32,
 }
 
+#[cfg(unix)]
 fn validate_light_render(
     gpu: &Gpu,
     drivers: &[String],
@@ -1344,10 +1372,13 @@ fn light_cuda_device(
 fn light_cuda_device(
     _root: &Path,
     _data: &Value,
-    _cfg: &LightSettings,
+    cfg: &LightSettings,
     _gpu: &PciGpu,
 ) -> Result<(String, u32), String> {
-    Err("CUDA projection requires Linux device metadata".into())
+    Err(format!(
+        "CUDA projection reads Linux device metadata (the NVIDIA driver's GPU information under {} and the device node's identity), which needs a Unix host",
+        cfg.cuda_information.display()
+    ))
 }
 
 #[derive(Debug, Clone)]

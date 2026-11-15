@@ -2,6 +2,31 @@
 // AI-doc: usr/share/doc/mios/manual/tools.md
 // AI-related: tools/native/mios-gen/src/main.rs, usr/share/mios/mios.toml, automation/98-drift-checks.sh, automation/35-render-ports.sh
 
+/// An atomic replacement keeps the old file's permissions; a new file is 0644.
+#[cfg(unix)]
+fn keep_perms(tmp: &std::fs::File, old: Option<std::fs::Permissions>) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    tmp.set_permissions(old.unwrap_or_else(|| std::fs::Permissions::from_mode(0o644)))
+}
+/// Windows permissions are the read-only attribute alone: the old file's carries over, and a new file keeps the temp
+/// file's own (there is no 0644 to express).
+#[cfg(not(unix))]
+fn keep_perms(tmp: &std::fs::File, old: Option<std::fs::Permissions>) -> std::io::Result<()> {
+    old.map_or(Ok(()), |p| tmp.set_permissions(p))
+}
+
+/// fsync the directory so an atomic replacement's rename is itself durable.
+#[cfg(unix)]
+fn sync_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
+}
+/// std cannot open a directory as a File on Windows (CreateFileW refuses it without backup semantics), so there is
+/// no directory fsync there: the file's own data was fsynced before the rename.
+#[cfg(not(unix))]
+fn sync_dir(_dir: &std::path::Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 pub mod render_desktop {
     use std::collections::BTreeMap;
     use std::fs;
@@ -1136,13 +1161,9 @@ $script:MIOS_WIN_REPO_DIR    = if ($env:MIOS_WIN_REPO_DIR) { $env:MIOS_WIN_REPO_
             .tempfile_in(dir)?;
         tmp.write_all(content)?;
         tmp.as_file().sync_all()?;
-        let perms = perms.unwrap_or_else(|| {
-            use std::os::unix::fs::PermissionsExt;
-            fs::Permissions::from_mode(0o644)
-        });
-        tmp.as_file().set_permissions(perms)?;
+        super::keep_perms(tmp.as_file(), perms)?;
         tmp.persist(target).map_err(|e| e.error)?;
-        fs::File::open(dir)?.sync_all()
+        super::sync_dir(dir)
     }
 
     pub fn run_render_globals(root: &Path, check: bool) -> Result<(String, usize), (String, i32)> {
@@ -2793,7 +2814,7 @@ pub mod render_ports {
 /// Native Lua projection for current Hyprland; legacy hyprlang remains available for older images.
 /// Boot/session coupling uses only administrator-owned projection layers.
 pub mod desktop_boot {
-    use std::{fs, os::unix::fs::MetadataExt, path::Path, process::Command};
+    use std::{fs, path::Path, process::Command};
     use toml::Value;
 
     pub fn enabled(data: &Value) -> Result<bool, String> {
@@ -2903,9 +2924,7 @@ pub mod desktop_boot {
                 .to_string(),
             );
         }
-        if fs::metadata("/proc/self").map_err(|e| e.to_string())?.uid() != 0 {
-            return Err("Changing the GPU boot profile requires root".into());
-        }
+        require_root()?;
         let run = |program: &str, args: &[&str]| -> Result<(), String> {
             let result = Command::new(program)
                 .args(args)
@@ -2940,6 +2959,21 @@ pub mod desktop_boot {
             run("/usr/bin/systemctl", &["reboot"])?;
         }
         Ok(format!("GRUB selected {entry}; reboot required: {reboot}"))
+    }
+
+    /// GRUB's saved_entry/next_entry are root-owned: only uid 0 changes the boot profile.
+    #[cfg(unix)]
+    fn require_root() -> Result<(), String> {
+        use std::os::unix::fs::MetadataExt;
+        if fs::metadata("/proc/self").map_err(|e| e.to_string())?.uid() != 0 {
+            return Err("Changing the GPU boot profile requires root".into());
+        }
+        Ok(())
+    }
+    /// There is no uid 0 (and no GRUB environment block to write as it) off Unix: the change is refused.
+    #[cfg(not(unix))]
+    fn require_root() -> Result<(), String> {
+        Err("Changing the GPU boot profile writes GRUB's environment block as uid 0, which needs a Unix host".into())
     }
 
     #[cfg(test)]
@@ -2978,10 +3012,9 @@ pub mod desktop_boot {
 }
 
 pub mod render_hyprland {
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-    };
+    #[cfg(target_os = "linux")]
+    use std::path::PathBuf;
+    use std::{fs, path::Path};
     use toml::Value;
 
     /// Lua string literal. JSON escaping is not Lua: `\u00XX` is a Lua 5.3+ escape that
@@ -7165,6 +7198,8 @@ report("again")
         Ok(name.into())
     }
 
+    /// Only the Linux session() orders DRM cards, so the ordering is compiled where that session is.
+    #[cfg(target_os = "linux")]
     fn order_session_cards(
         profile: &str,
         cards: &[(PathBuf, String)],
@@ -7618,13 +7653,9 @@ report("again")
             .tempfile_in(dir)?;
         tmp.write_all(content.as_bytes())?;
         tmp.as_file().sync_all()?;
-        let perms = mode.unwrap_or_else(|| {
-            use std::os::unix::fs::PermissionsExt;
-            fs::Permissions::from_mode(0o644)
-        });
-        tmp.as_file().set_permissions(perms)?;
+        super::keep_perms(tmp.as_file(), mode)?;
         tmp.persist(target).map_err(|e| e.error)?;
-        fs::File::open(dir)?.sync_all()
+        super::sync_dir(dir)
     }
 
     pub fn run(root: &Path, check: bool, runtime: bool) -> Result<(String, i32), (String, i32)> {

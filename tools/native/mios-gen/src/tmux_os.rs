@@ -6,6 +6,7 @@
 
 use mios_resolver::terminal_tuis::{self, Mode, Tui};
 use mios_unit_gen::tmux_os as policy;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
@@ -104,8 +105,29 @@ fn message(client: &str, msg: &str) -> Result<(), String> {
     tmux(&["display-message", "-c", client, "-l", msg]).map(|_| ())
 }
 
+/// Replaces this process with `cmd`; like `CommandExt::exec`, it returns only on failure.
+#[cfg(unix)]
+fn replace_process(cmd: &mut Command) -> std::io::Error {
+    cmd.exec()
+}
+
+/// Off Unix there is no exec that replaces the running process, so the client is never started.
+#[cfg(not(unix))]
+fn replace_process(cmd: &mut Command) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "replacing this process with {} (exec) needs a Unix host",
+            cmd.get_program().to_string_lossy()
+        ),
+    )
+}
+
 fn exec_tmux(args: &[String]) -> String {
-    format!("exec tmux: {}", Command::new("tmux").args(args).exec())
+    format!(
+        "exec tmux: {}",
+        replace_process(Command::new("tmux").args(args))
+    )
 }
 
 fn helper(args: &str) -> String {
@@ -679,7 +701,7 @@ fn float(merged: &Value, a: &Args) -> Result<String, String> {
                 .unwrap_or_else(|| "linux".into());
             cmd.env("TERM", term);
         }
-        return Err(format!("exec tmux attach: {}", cmd.exec()));
+        return Err(format!("exec tmux attach: {}", replace_process(&mut cmd)));
     }
     let client = need_client(a)?;
     let pane = pane_env()?;

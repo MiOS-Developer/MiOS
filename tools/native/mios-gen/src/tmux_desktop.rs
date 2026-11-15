@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -298,6 +299,36 @@ fn geometry(action: &str, width: u32, height: u32, s: &Settings) -> Result<Rect,
     Rect { x, y, w: rw, h: rh }.bounded(width, height, s.min_w, s.min_h)
 }
 
+/// Whether `meta` is owned by the calling user.
+#[cfg(unix)]
+fn caller_owned(meta: &fs::Metadata) -> Result<bool, String> {
+    Ok(meta.uid() == rustix::process::getuid().as_raw())
+}
+/// Whether `meta` is a Unix domain socket.
+#[cfg(unix)]
+fn unix_socket(meta: &fs::Metadata) -> Result<bool, String> {
+    Ok(meta.file_type().is_socket())
+}
+/// The (device, inode) pair that identifies the file behind `meta`.
+#[cfg(unix)]
+fn file_identity(meta: &fs::Metadata) -> Result<(u64, u64), String> {
+    Ok((meta.dev(), meta.ino()))
+}
+// Off Unix there is no uid owner, Unix socket or (device, inode) identity to verify, so every
+// desktop action that depends on one fails before it touches a server, client or pane.
+#[cfg(not(unix))]
+fn caller_owned(_meta: &fs::Metadata) -> Result<bool, String> {
+    Err("checking that a desktop process or socket belongs to the calling user (uid) needs a Unix host".into())
+}
+#[cfg(not(unix))]
+fn unix_socket(_meta: &fs::Metadata) -> Result<bool, String> {
+    Err("verifying the desktop socket as a Unix domain socket needs a Unix host".into())
+}
+#[cfg(not(unix))]
+fn file_identity(_meta: &fs::Metadata) -> Result<(u64, u64), String> {
+    Err("verifying the desktop socket (device, inode) identity needs a Unix host".into())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct Process {
     pid: u32,
@@ -305,7 +336,7 @@ struct Process {
 }
 fn process(pid: u32) -> Result<Process, String> {
     let meta = fs::metadata(format!("/proc/{pid}")).map_err(|_| "pane process has exited")?;
-    if meta.uid() != rustix::process::getuid().as_raw() {
+    if !caller_owned(&meta)? {
         return Err("pane process belongs to another user".into());
     }
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|e| e.to_string())?;
@@ -335,7 +366,7 @@ struct Server {
 impl Server {
     fn socket_metadata(path: &Path) -> Result<fs::Metadata, String> {
         let meta = fs::symlink_metadata(path).map_err(|e| format!("desktop socket: {e}"))?;
-        if !meta.file_type().is_socket() || meta.uid() != rustix::process::getuid().as_raw() {
+        if !unix_socket(&meta)? || !caller_owned(&meta)? {
             return Err("desktop socket must be a caller-owned Unix socket, not a symlink".into());
         }
         Ok(meta)
@@ -343,16 +374,17 @@ impl Server {
     fn open(a: &Args, s: &Settings) -> Result<Self, String> {
         let meta = Self::socket_metadata(&a.socket)?;
         let socket = fs::canonicalize(&a.socket).map_err(|e| e.to_string())?;
+        let (dev, ino) = file_identity(&meta)?;
         let dummy = Identity {
-            socket_dev: meta.dev(),
-            socket_ino: meta.ino(),
+            socket_dev: dev,
+            socket_ino: ino,
             server: Process { pid: 0, start: 0 },
         };
         let mut server = Self {
             binary: s.binary.clone(),
             socket,
-            dev: meta.dev(),
-            ino: meta.ino(),
+            dev,
+            ino,
             identity: dummy,
             command_timeout: s.command_timeout,
         };
@@ -368,7 +400,7 @@ impl Server {
     }
     fn cmd(&self, args: &[&str]) -> Result<String, String> {
         let meta = Self::socket_metadata(&self.socket)?;
-        if (meta.dev(), meta.ino()) != (self.dev, self.ino) {
+        if file_identity(&meta)? != (self.dev, self.ino) {
             return Err("desktop socket was replaced".into());
         }
         if self.identity.server.pid != 0

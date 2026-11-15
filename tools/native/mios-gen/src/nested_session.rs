@@ -4,17 +4,34 @@ use crate::nested_devices::{self as devices, Device};
 use serde_json::{json, Value as Json};
 use std::{
     env, fs,
-    io::{BufRead, BufReader, Read, Write},
-    os::unix::{
-        fs::{symlink, MetadataExt, PermissionsExt},
-        net::{UnixListener, UnixStream},
-    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
+#[cfg(unix)]
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::{
+        fs::{symlink, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
+    },
+};
 use toml::Value;
+
+/// Symbolic links (the session runtime link and the user fragment links) are made with the Unix call; a Windows link
+/// needs a privilege and a file-or-directory kind, so off Unix this fails naming the link.
+#[cfg(not(unix))]
+fn symlink<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "linking {} to {} needs a Unix host",
+            link.as_ref().display(),
+            original.as_ref().display()
+        ),
+    ))
+}
 
 /// Launch targets. pip/window/side-by-side embed the session in a parent window; output fills an attached parent
 /// output (a second local user); remote fills the parent's remote display output (served by the existing RDP/VNC
@@ -218,6 +235,7 @@ end
     out+=&format!("\n-- Native nested output and child processes; no user-manager imports or unit starts.\nhl.on('hyprland.start',function()\n for _,m in ipairs(hl.get_monitors()) do hl.monitor({{output=m.name,mode='{width}x{height}@60',position='0x0',scale=1}}) end\n hl.exec_cmd({})\nend)\n",serde_json::to_string(&terminal).unwrap());
     Ok(out)
 }
+#[cfg(unix)]
 fn ipc(rt: &Path, sig: &str, cmd: &str) -> Result<String, String> {
     let mut s = UnixStream::connect(rt.join("hypr").join(sig).join(".socket.sock"))
         .map_err(|e| e.to_string())?;
@@ -227,6 +245,14 @@ fn ipc(rt: &Path, sig: &str, cmd: &str) -> Result<String, String> {
     let mut out = String::new();
     s.read_to_string(&mut out).map_err(|e| e.to_string())?;
     Ok(out)
+}
+/// Hyprland's request socket is a Unix socket: off Unix every request fails naming it.
+#[cfg(not(unix))]
+fn ipc(rt: &Path, sig: &str, _cmd: &str) -> Result<String, String> {
+    Err(format!(
+        "Hyprland IPC {} is a Unix socket and needs a Unix host",
+        rt.join("hypr").join(sig).join(".socket.sock").display()
+    ))
 }
 /// A Lua eval that must succeed: Hyprland answers "ok", anything else is its error text.
 fn eval(rt: &Path, sig: &str, code: &str) -> Result<(), String> {
@@ -240,16 +266,31 @@ fn eval(rt: &Path, sig: &str, code: &str) -> Result<(), String> {
 fn lua_str(s: &str) -> String {
     serde_json::to_string(s).unwrap()
 }
+/// The parent's event socket: a Unix stream socket. No other host has one, so there the type is uninhabited.
+#[cfg(unix)]
+type EventStream = UnixStream;
+#[cfg(not(unix))]
+type EventStream = std::convert::Infallible;
 // A window-list snapshot is not a close request: temporary IPC failures,
 // workspace changes or compositor reconfiguration must not kill a desktop.
 // Subscribe after proving the new parent's identity, so old events from a
 // recycled address cannot become a close request for this launch.
 #[derive(Default)]
 struct ParentEvents {
-    stream: Option<UnixStream>,
+    stream: Option<EventStream>,
     pending: Vec<u8>,
 }
+/// What the parent's event socket has now (it is non-blocking).
+#[cfg(unix)]
+fn read_events(stream: &mut EventStream, buf: &mut [u8]) -> std::io::Result<usize> {
+    stream.read(buf)
+}
+#[cfg(not(unix))]
+fn read_events(stream: &mut EventStream, _buf: &mut [u8]) -> std::io::Result<usize> {
+    match *stream {}
+}
 impl ParentEvents {
+    #[cfg(unix)]
     fn connect(rt: &Path, sig: &str) -> Self {
         let stream = UnixStream::connect(rt.join("hypr").join(sig).join(".socket2.sock"))
             .ok()
@@ -258,6 +299,12 @@ impl ParentEvents {
             stream,
             pending: Vec::new(),
         }
+    }
+    /// Off Unix there is no event socket to subscribe to: the watcher is the one a failed connect leaves on Unix (no
+    /// stream, so it never reports a close and the session ends with its compositor).
+    #[cfg(not(unix))]
+    fn connect(_rt: &Path, _sig: &str) -> Self {
+        Self::default()
     }
     fn feed(&mut self, bytes: &[u8], address: &str) -> bool {
         self.pending.extend_from_slice(bytes);
@@ -281,7 +328,7 @@ impl ParentEvents {
             let Some(stream) = self.stream.as_mut() else {
                 return false;
             };
-            match stream.read(&mut buf) {
+            match read_events(stream, &mut buf) {
                 Ok(0) => {
                     self.stream = None;
                     return false;
@@ -801,6 +848,106 @@ fn list_devices_with_host(
     Ok(Json::Array(out))
 }
 
+/// Start the linux-dmabuf feedback proxy at `sock` in front of the parent's `display`, announcing render node `rdev`.
+#[cfg(unix)]
+fn render_proxy(sock: &Path, display: &Path, rdev: u64) -> Result<(), String> {
+    let listener =
+        UnixListener::bind(sock).map_err(|e| format!("render proxy {}: {e}", sock.display()))?;
+    let rw = std::sync::Arc::new(crate::wl_device_proxy::Rewrite {
+        rdev,
+        linear_only: true,
+        devices_rewritten: Default::default(),
+        tables_filtered: Default::default(),
+    });
+    crate::wl_device_proxy::serve(listener, display.to_path_buf(), rw);
+    Ok(())
+}
+
+/// The proxy passes Wayland fds (SCM_RIGHTS) over Unix sockets: off Unix it cannot start.
+#[cfg(not(unix))]
+fn render_proxy(sock: &Path, _display: &Path, _rdev: u64) -> Result<(), String> {
+    Err(format!(
+        "render proxy {}: the linux-dmabuf feedback proxy passes fds over Unix sockets and needs a Unix host",
+        sock.display()
+    ))
+}
+
+/// The owner uid of `path` (tmux names its socket directory tmux-<uid>).
+#[cfg(unix)]
+fn owner_uid(path: &Path) -> Result<u32, String> {
+    Ok(fs::metadata(path).map_err(|e| e.to_string())?.uid())
+}
+
+/// File owner uids are Unix metadata.
+#[cfg(not(unix))]
+fn owner_uid(path: &Path) -> Result<u32, String> {
+    Err(format!(
+        "{}: the tmux socket directory is named by the owner's Unix uid, which needs a Unix host",
+        path.display()
+    ))
+}
+
+/// The continuing launcher's control socket: a Unix socket whose peers are authenticated by SO_PEERCRED. No other host
+/// has one, so there the type is uninhabited.
+#[cfg(unix)]
+type ControlListener = UnixListener;
+#[cfg(not(unix))]
+type ControlListener = std::convert::Infallible;
+
+/// Bind the control socket non-blocking and 0600; a session whose socket cannot be bound runs on without it (warned).
+#[cfg(unix)]
+fn bind_control(path: &Path) -> Option<ControlListener> {
+    match UnixListener::bind(path) {
+        Ok(l) => {
+            let _ = l.set_nonblocking(true);
+            let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+            Some(l)
+        }
+        Err(e) => {
+            eprintln!(
+                "warning: cannot bind control socket {}: {e}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+/// Off Unix the socket cannot be bound: the same warning and outcome as a failed bind on Unix.
+#[cfg(not(unix))]
+fn bind_control(path: &Path) -> Option<ControlListener> {
+    eprintln!(
+        "warning: cannot bind control socket {}: a Unix socket authenticated by peer credentials needs a Unix host",
+        path.display()
+    );
+    None
+}
+
+/// Serve one pending control connection, if any.
+#[cfg(unix)]
+fn serve_control(
+    l: &ControlListener,
+    claim: &mut devices::Claim,
+    registry: &Path,
+    parent: &Path,
+    owned: &Path,
+) {
+    if let Ok((stream, _)) = l.accept() {
+        let _ = handle_control_connection(stream, claim, registry, parent, owned);
+    }
+}
+
+#[cfg(not(unix))]
+fn serve_control(
+    l: &ControlListener,
+    _claim: &mut devices::Claim,
+    _registry: &Path,
+    _parent: &Path,
+    _owned: &Path,
+) {
+    match *l {}
+}
+
 pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let n = &data["desktop"]["nested"];
@@ -903,7 +1050,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     let (runtime, link) = session_runtime(&parent, me);
     fs::create_dir(&runtime).map_err(|e| e.to_string())?;
     let mut owned = OwnedDir(runtime, None);
-    fs::set_permissions(&owned.0, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+    devices::set_mode(&owned.0, 0o700).map_err(|e| e.to_string())?;
     if let Some(l) = link {
         symlink(&owned.0, &l).map_err(|e| format!("nested runtime link {}: {e}", l.display()))?;
         owned.1 = Some(l);
@@ -971,10 +1118,10 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     let (tmp, x11) = if private_tmp(n, &plan.seat)? {
         let t = owned.0.join("tmp");
         fs::create_dir(&t).map_err(|e| e.to_string())?;
-        fs::set_permissions(&t, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        devices::set_mode(&t, 0o700).map_err(|e| e.to_string())?;
         let x = t.join(".X11-unix");
         fs::create_dir(&x).map_err(|e| e.to_string())?;
-        fs::set_permissions(&x, fs::Permissions::from_mode(0o1777)).map_err(|e| e.to_string())?;
+        devices::set_mode(&x, 0o1777).map_err(|e| e.to_string())?;
         sandbox.extend([
             "--bind".into(),
             t.to_string_lossy().into_owned(),
@@ -984,7 +1131,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     } else {
         let x = owned.0.join("x11");
         fs::create_dir(&x).map_err(|e| e.to_string())?;
-        fs::set_permissions(&x, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
+        devices::set_mode(&x, 0o700).map_err(|e| e.to_string())?;
         sandbox.extend(["--ro-bind", "/dev/null", LEGACY_PAD].map(String::from));
         sandbox.extend([
             "--bind".into(),
@@ -1014,15 +1161,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     let parent_display = match render.rdev() {
         Some(rdev) => {
             let sock = owned.0.join("parent-wayland");
-            let listener = std::os::unix::net::UnixListener::bind(&sock)
-                .map_err(|e| format!("render proxy {}: {e}", sock.display()))?;
-            let rw = std::sync::Arc::new(crate::wl_device_proxy::Rewrite {
-                rdev,
-                linear_only: true,
-                devices_rewritten: Default::default(),
-                tables_filtered: Default::default(),
-            });
-            crate::wl_device_proxy::serve(listener, display.clone(), rw);
+            render_proxy(&sock, &display, rdev)?;
             sock
         }
         None => display.clone(),
@@ -1284,11 +1423,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
         }
         let device_json: Vec<Json> = assigned.iter().map(Device::to_json).collect();
         let controllers = assigned.iter().any(|d| d.kind == "controller");
-        let tmux_socket = tmux_root.join(format!(
-            "tmux-{}/{}",
-            fs::metadata(&owned.0).map_err(|e| e.to_string())?.uid(),
-            socket_name
-        ));
+        let tmux_socket = tmux_root.join(format!("tmux-{}/{}", owner_uid(&owned.0)?, socket_name));
         let mut render_json = render.to_json();
         render_json["parent_proxy"] = json!((parent_display != display).then_some(&parent_display));
         let mut x11_display = None;
@@ -1331,21 +1466,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
             descriptor["room_window"] = json!(room_window);
         }
         let control_socket_path = owned.0.join("control.sock");
-        let control_listener = match UnixListener::bind(&control_socket_path) {
-            Ok(l) => {
-                let _ = l.set_nonblocking(true);
-                let _ =
-                    fs::set_permissions(&control_socket_path, fs::Permissions::from_mode(0o600));
-                Some(l)
-            }
-            Err(e) => {
-                eprintln!(
-                    "warning: cannot bind control socket {}: {e}",
-                    control_socket_path.display()
-                );
-                None
-            }
-        };
+        let control_listener = bind_control(&control_socket_path);
         descriptor["control_socket"] = json!(control_socket_path);
         descriptor["control_protocol_version"] = json!(1);
         fs::write(owned.0.join("session.json"), format!("{descriptor}\n"))
@@ -1355,10 +1476,7 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
         let mut parent_events = ParentEvents::connect(&parent, &signature);
         loop {
             if let Some(ref l) = control_listener {
-                if let Ok((stream, _)) = l.accept() {
-                    let _ =
-                        handle_control_connection(stream, &mut claim, &registry, &parent, &owned.0);
-                }
+                serve_control(l, &mut claim, &registry, &parent, &owned.0);
             }
             if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
                 return if status.success() {
@@ -1405,10 +1523,15 @@ pub fn run(root: &Path, dry_run: bool, o: &Options) -> Result<(), String> {
     result
 }
 
+// The controller return protocol runs over Unix sockets authenticated by SO_PEERCRED and trusts records by owner uid
+// and mode (nested_devices::read_return_json), so it is Unix only; off Unix return_controller fails naming it.
 // Fixed private IPC envelope bounds; these are not controller tuning values.
+#[cfg(unix)]
 const RETURN_FRAME_BYTES: u64 = 4096;
+#[cfg(unix)]
 const RETURN_IO_TIMEOUT: Duration = Duration::from_millis(500);
 
+#[cfg(unix)]
 fn return_nonce() -> Result<String, String> {
     let mut bytes = [0u8; 16];
     fs::File::open("/dev/urandom")
@@ -1417,6 +1540,7 @@ fn return_nonce() -> Result<String, String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+#[cfg(unix)]
 fn return_peer(stream: &UnixStream) -> Result<(u32, u64), String> {
     let peer = rustix::net::sockopt::socket_peercred(stream)
         .map_err(|error| format!("control peer credentials unavailable: {error}"))?;
@@ -1428,6 +1552,7 @@ fn return_peer(stream: &UnixStream) -> Result<(u32, u64), String> {
     Ok((pid, start))
 }
 
+#[cfg(unix)]
 fn read_control_frame(stream: &mut UnixStream, timeout: Duration) -> Result<Json, String> {
     stream
         .set_nonblocking(false)
@@ -1448,12 +1573,14 @@ fn read_control_frame(stream: &mut UnixStream, timeout: Duration) -> Result<Json
     serde_json::from_str(&line).map_err(|error| format!("invalid control frame: {error}"))
 }
 
+#[cfg(unix)]
 fn return_same_path(left: &str, right: &Path) -> bool {
     let left = Path::new(left);
     left == right
         || matches!((fs::canonicalize(left), fs::canonicalize(right)), (Ok(a), Ok(b)) if a == b)
 }
 
+#[cfg(unix)]
 fn child_return_exchange(
     owned: &Path,
     entry: &Json,
@@ -1499,12 +1626,14 @@ fn child_return_exchange(
     Ok((response, peer))
 }
 
+#[cfg(unix)]
 fn manifest_identity(record: &Json) -> Option<(u32, u64)> {
     let pid = u32::try_from(record["bridge_pid"].as_u64()?).ok()?;
     let start = record["bridge_start"].as_u64()?;
     (devices::start_time(pid) == Some(start)).then_some((pid, start))
 }
 
+#[cfg(unix)]
 fn return_time_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1514,6 +1643,7 @@ fn return_time_ms() -> u64 {
 
 // Parent registry reconciliation and device discovery have independent scan phases.
 // Older protocol-1 parents did not advertise a cadence; retain their bounded wait.
+#[cfg(unix)]
 fn return_parent_wait(record: &Json) -> Result<Duration, String> {
     match record.get("controller_scan_ms") {
         None => Ok(Duration::from_secs(2)),
@@ -1525,6 +1655,7 @@ fn return_parent_wait(record: &Json) -> Result<Duration, String> {
 }
 
 /// Handle a connection on the continuing launcher's control socket.
+#[cfg(unix)]
 pub fn handle_control_connection(
     mut stream: UnixStream,
     claim: &mut devices::Claim,
@@ -1698,6 +1829,7 @@ pub fn handle_control_connection(
 }
 
 /// Request a controller return from a live nested session's continuing launcher.
+#[cfg(unix)]
 pub fn return_controller(parent: &Path, registry: &Path, o: &Options) -> Result<Json, String> {
     let seat = o
         .seat
@@ -1806,6 +1938,12 @@ pub fn return_controller(parent: &Path, registry: &Path, o: &Options) -> Result<
             .to_owned());
     }
     Ok(resp)
+}
+
+/// The launcher's control socket is a Unix socket authenticated by peer credentials: off Unix no return can be asked.
+#[cfg(not(unix))]
+pub fn return_controller(_parent: &Path, _registry: &Path, _o: &Options) -> Result<Json, String> {
+    Err("returning a controller needs a Unix host: the session control socket is a Unix socket authenticated by peer credentials".into())
 }
 #[cfg(test)]
 mod tests {

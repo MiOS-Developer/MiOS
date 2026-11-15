@@ -6,10 +6,15 @@
 // AI-related: tools/native/mios-gen/src/nested_session.rs, tools/native/mios-gen/src/gpu_topology.rs,
 //   usr/share/doc/mios/desktop-gpu-routing.md, linux-dmabuf-v1.xml (zwp_linux_dmabuf_feedback_v1)
 
+// Unix only, item by item: the proxy forwards fds (SCM_RIGHTS) over AF_UNIX sockets and builds memfd format tables.
+// Its one caller, nested_session's render proxy, returns an error naming the feature on other hosts, so every item
+// here (the wire helpers included) is reachable only from Unix code and is gated rather than left as dead code.
+#[cfg(unix)]
 use rustix::net::{
     recvmsg, sendmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, SendAncillaryBuffer,
     SendAncillaryMessage, SendFlags,
 };
+#[cfg(unix)]
 use std::{
     collections::{HashMap, VecDeque},
     io::{self, IoSlice, IoSliceMut, Write},
@@ -30,8 +35,10 @@ use std::{
     thread,
 };
 
+#[cfg(unix)]
 const LINEAR: u64 = 0;
 
+#[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Kind {
     Registry,
@@ -41,6 +48,7 @@ enum Kind {
     Feedback,
 }
 
+#[cfg(unix)]
 #[derive(Default)]
 struct Objects {
     kinds: HashMap<u32, Kind>,
@@ -48,6 +56,7 @@ struct Objects {
     remap: HashMap<u32, Vec<Option<u16>>>,
 }
 
+#[cfg(unix)]
 pub struct Rewrite {
     /// st_rdev of the render node the nested compositor must open.
     pub rdev: u64,
@@ -57,16 +66,19 @@ pub struct Rewrite {
     pub tables_filtered: AtomicU64,
 }
 
+#[cfg(unix)]
 fn u32_at(b: &[u8], o: usize) -> Option<u32> {
     b.get(o..o + 4)
         .map(|s| u32::from_ne_bytes(s.try_into().unwrap()))
 }
 
+#[cfg(unix)]
 fn pad4(n: usize) -> usize {
     (n + 3) & !3
 }
 
 /// The string argument at `o`: (text without NUL, offset after it).
+#[cfg(unix)]
 fn string_at(b: &[u8], o: usize) -> Option<(&str, usize)> {
     let len = u32_at(b, o)? as usize;
     let s = b.get(o + 4..o + 4 + len)?;
@@ -76,6 +88,7 @@ fn string_at(b: &[u8], o: usize) -> Option<(&str, usize)> {
 
 /// Track the objects whose events carry fds or get rewritten. Requests: wl_display.get_registry, wl_registry.bind,
 /// wl_seat.get_keyboard, zwp_linux_dmabuf_v1.get_default_feedback / get_surface_feedback.
+#[cfg(unix)]
 fn note_request(objs: &mut Objects, id: u32, op: u16, args: &[u8]) {
     let kind = objs.kinds.get(&id).copied();
     let new = |o| u32_at(args, o);
@@ -110,6 +123,7 @@ fn note_request(objs: &mut Objects, id: u32, op: u16, args: &[u8]) {
     }
 }
 
+#[cfg(unix)]
 fn message(id: u32, op: u16, args: &[u8]) -> Vec<u8> {
     let mut m = Vec::with_capacity(8 + args.len());
     m.extend_from_slice(&id.to_ne_bytes());
@@ -118,6 +132,7 @@ fn message(id: u32, op: u16, args: &[u8]) -> Vec<u8> {
     m
 }
 
+#[cfg(unix)]
 fn array_arg(data: &[u8]) -> Vec<u8> {
     let mut a = (data.len() as u32).to_ne_bytes().to_vec();
     a.extend_from_slice(data);
@@ -126,6 +141,7 @@ fn array_arg(data: &[u8]) -> Vec<u8> {
 }
 
 /// The format table keeping only LINEAR entries: (new table fd, new size, old index -> new index).
+#[cfg(unix)]
 fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16>>)> {
     let file = std::fs::File::from(fd.try_clone().ok()?);
     let mut table = vec![0u8; size as usize];
@@ -172,6 +188,7 @@ fn filter_table(fd: &OwnedFd, size: u32) -> Option<(OwnedFd, u32, Vec<Option<u16
 }
 
 /// Rewrite one event; `fds` is the queue of fds received from the parent, in order.
+#[cfg(unix)]
 fn rewrite_event(
     objs: &mut Objects,
     rw: &Rewrite,
@@ -233,6 +250,7 @@ fn rewrite_event(
     message(id, op, args)
 }
 
+#[cfg(unix)]
 fn recv(sock: &UnixStream, buf: &mut [u8], fds: &mut VecDeque<OwnedFd>) -> io::Result<usize> {
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(64))];
     let mut cmsg = RecvAncillaryBuffer::new(&mut space);
@@ -258,6 +276,7 @@ fn recv(sock: &UnixStream, buf: &mut [u8], fds: &mut VecDeque<OwnedFd>) -> io::R
 }
 
 /// Send `data` with `fds` attached to its first byte (libwayland sends at most 28 fds per message batch).
+#[cfg(unix)]
 fn send(sock: &UnixStream, data: &[u8], fds: Vec<OwnedFd>) -> io::Result<()> {
     let mut off = 0;
     let mut fds = Some(fds).filter(|f| !f.is_empty());
@@ -291,9 +310,11 @@ fn send(sock: &UnixStream, data: &[u8], fds: Vec<OwnedFd>) -> io::Result<()> {
 }
 
 /// Object id, opcode and argument byte range within the pending buffer.
+#[cfg(unix)]
 type PendingMessage = (u32, u16, std::ops::Range<usize>);
 
 /// Complete messages at the front of `pending` and the bytes consumed.
+#[cfg(unix)]
 fn split(pending: &[u8]) -> Result<(Vec<PendingMessage>, usize), String> {
     let mut msgs = Vec::new();
     let mut o = 0;
@@ -315,6 +336,7 @@ fn split(pending: &[u8]) -> Result<(Vec<PendingMessage>, usize), String> {
     Ok((msgs, o))
 }
 
+#[cfg(unix)]
 fn pump_requests(from: &UnixStream, to: &UnixStream, objs: &Mutex<Objects>) -> Result<(), String> {
     let mut buf = vec![0u8; 1 << 16];
     let mut pending = Vec::new();
@@ -338,6 +360,7 @@ fn pump_requests(from: &UnixStream, to: &UnixStream, objs: &Mutex<Objects>) -> R
     }
 }
 
+#[cfg(unix)]
 fn pump_events(
     from: &UnixStream,
     to: &UnixStream,
@@ -377,6 +400,7 @@ fn pump_events(
     }
 }
 
+#[cfg(unix)]
 fn connection(client: UnixStream, server: UnixStream, rw: Arc<Rewrite>) -> io::Result<()> {
     let objs = Arc::new(Mutex::new(Objects::default()));
     let (c2, s2, o2) = (client.try_clone()?, server.try_clone()?, objs.clone());
@@ -398,6 +422,7 @@ fn connection(client: UnixStream, server: UnixStream, rw: Arc<Rewrite>) -> io::R
 }
 
 /// Serve `listener`: every connection is paired with a new connection to `upstream` (the parent's socket).
+#[cfg(unix)]
 pub fn serve(
     listener: UnixListener,
     upstream: PathBuf,

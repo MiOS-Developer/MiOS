@@ -10,7 +10,6 @@ use serde_json::{json, Value as Json};
 use std::{
     fs,
     io::Write,
-    os::unix::fs::{FileTypeExt, MetadataExt},
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
@@ -18,6 +17,7 @@ use std::{
 use toml::Value;
 
 /// evdev input major number (Documentation/admin-guide/devices.txt).
+#[cfg(unix)]
 const INPUT_MAJOR: u64 = 13;
 const EV_KEY: usize = 0x01;
 const EV_REL: usize = 0x02;
@@ -241,6 +241,48 @@ pub fn host() -> Host<'static> {
     }
 }
 
+/// A real node must be a character device with the evdev input major.
+#[cfg(unix)]
+fn input_char_device(spec: &str, path: &Path, meta: &fs::Metadata) -> Result<(), String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let major = (meta.rdev() >> 8 & 0xfff) | (meta.rdev() >> 32 & !0xfff);
+    if !meta.file_type().is_char_device() || major != INPUT_MAJOR {
+        return Err(format!(
+            "device {spec:?}: {} is not an input character device",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Character devices and device numbers are Unix file metadata: no other host can prove a node is evdev input.
+#[cfg(not(unix))]
+fn input_char_device(spec: &str, path: &Path, _meta: &fs::Metadata) -> Result<(), String> {
+    Err(format!(
+        "device {spec:?}: {}: checking for an evdev input character device needs a Unix host",
+        path.display()
+    ))
+}
+
+/// Set Unix permission bits on `path`.
+#[cfg(unix)]
+pub(crate) fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+/// Unix permission bits exist only on a Unix host.
+#[cfg(not(unix))]
+pub(crate) fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!(
+            "setting Unix permissions {mode:#o} on {} needs a Unix host",
+            path.display()
+        ),
+    ))
+}
+
 /// Resolve one spec: a /dev/input path (by-id/by-path links followed), `name:<exact evdev name>` or `virtual-pad`.
 pub fn resolve_one(host: &Host, spec: &str, seat: &str, policy: &Policy) -> Result<Device, String> {
     let wait = |name: &str, ms: u64| -> Result<String, String> {
@@ -299,13 +341,7 @@ pub fn resolve_one(host: &Host, spec: &str, seat: &str, policy: &Policy) -> Resu
     let meta =
         fs::metadata(&path).map_err(|e| format!("device {spec:?}: {}: {e}", path.display()))?;
     if host.check_node {
-        let major = (meta.rdev() >> 8 & 0xfff) | (meta.rdev() >> 32 & !0xfff);
-        if !meta.file_type().is_char_device() || major != INPUT_MAJOR {
-            return Err(format!(
-                "device {spec:?}: {} is not an input character device",
-                path.display()
-            ));
-        }
+        input_char_device(spec, &path, &meta)?;
     }
     fs::File::open(&path).map_err(|e| {
         format!(
@@ -493,12 +529,17 @@ fn lock(dir: &Path) -> Result<Lock, String> {
     }
 }
 
+// The controller return protocol (these records, the Claim methods that commit them and nested_session's control
+// socket) is Unix only: records are opened O_NOFOLLOW and trusted by owner uid and mode bits, and its only callers
+// are the Unix control socket handlers, so it is gated on Unix rather than compiled as dead code elsewhere.
 // These are fixed private-record integrity bounds, not input tuning controls.
+#[cfg(unix)]
 const RETURN_RECORD_MAX_BYTES: u64 = 1024 * 1024;
 
+#[cfg(unix)]
 pub(crate) fn read_return_json(path: &Path) -> Result<Json, String> {
     use std::io::Read;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let file = fs::OpenOptions::new()
         .read(true)
         .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
@@ -525,6 +566,7 @@ pub(crate) fn read_return_json(path: &Path) -> Result<Json, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("invalid {}: {e}", path.display()))
 }
 
+#[cfg(unix)]
 fn write_return_json(path: &Path, value: &Json) -> Result<(), String> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
@@ -577,7 +619,7 @@ impl Claim {
     ) -> Result<Claim, String> {
         fs::create_dir_all(dir)
             .map_err(|e| format!("nested-session registry {}: {e}", dir.display()))?;
-        let _ = fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+        let _ = set_mode(dir, 0o700);
         let _lock = lock(dir)?;
         for (p, other) in live_sessions(dir, true) {
             if !seat.is_empty() && other["seat"].as_str() == Some(seat) {
@@ -639,16 +681,20 @@ impl Claim {
             .map_err(|e| format!("nested-session registry {}: {e}", self.path.display()))
     }
 
+    // Read only by nested_session's control socket handler (the Unix return protocol).
+    #[cfg(unix)]
     pub fn entry(&self) -> &Json {
         &self.entry
     }
 
+    #[cfg(unix)]
     pub fn seat(&self) -> &str {
         self.entry["seat"].as_str().unwrap_or("")
     }
 
     /// Commit both private records while holding the registry lock. The registry
     /// remains the authoritative commit point; compensate both records on error.
+    #[cfg(unix)]
     fn replace_return_records(&mut self, entry: Json, descriptor: Json) -> Result<(), String> {
         let disk = read_return_json(&self.path)?;
         if disk != self.entry {
@@ -676,6 +722,7 @@ impl Claim {
         Ok(())
     }
 
+    #[cfg(unix)]
     pub fn return_controller(&mut self, dir: &Path, device_path: &Path) -> Result<Device, String> {
         let _lock = lock(dir)?;
         let devices = self.entry["devices"]
@@ -746,6 +793,7 @@ impl Claim {
     }
 
     /// Restore the same launcher's lease after a failed child/parent handoff.
+    #[cfg(unix)]
     pub fn restore_return(&mut self, dir: &Path, original: &Json) -> Result<(), String> {
         let _lock = lock(dir)?;
         for field in ["seat", "launcher_pid", "launcher_start"] {
@@ -803,6 +851,7 @@ impl Claim {
     }
 
     /// Return the first controller assigned to this claim.
+    #[cfg(unix)]
     #[allow(dead_code)]
     pub fn return_first_controller(&mut self, dir: &Path) -> Result<Device, String> {
         let target = {

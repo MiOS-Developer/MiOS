@@ -21,12 +21,8 @@ use ratatui::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, IsTerminal, Read, Write},
-    os::unix::{
-        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-        process::CommandExt,
-    },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
@@ -36,11 +32,22 @@ use std::{
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+// Native dialogues prove privacy with owner uids, mode bits, inodes and a
+// fresh process group; off Unix every such check fails closed to Inline.
+#[cfg(unix)]
+use std::{
+    fs::OpenOptions,
+    os::unix::{
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+        process::CommandExt,
+    },
+};
 use tempfile::{Builder, NamedTempFile};
 
 const PREFIX: &str = "mios-mons-dialog-";
 const HARD_MAX_BYTES: usize = 1024 * 1024;
 // Linux open(2) flags, used only through the safe standard-library interface.
+#[cfg(unix)]
 const PRIVATE_OPEN_FLAGS: i32 = 0x20000 | 0x800; // O_NOFOLLOW | O_NONBLOCK
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, ValueEnum)]
@@ -246,10 +253,20 @@ fn now_ms() -> Result<u64, String> {
         .try_into()
         .map_err(|_| "Clock out of range".into())
 }
+#[cfg(unix)]
 fn own_uid() -> Result<u32, String> {
     fs::metadata("/proc/self")
         .map(|m| m.uid())
         .map_err(|e| e.to_string())
+}
+/// True when a directory is not ours alone: a foreign owner or any group/other bit.
+#[cfg(unix)]
+fn exposed_dir(meta: &fs::Metadata) -> Result<bool, String> {
+    Ok(meta.uid() != own_uid()? || meta.permissions().mode() & 0o077 != 0)
+}
+#[cfg(not(unix))]
+fn exposed_dir(_meta: &fs::Metadata) -> Result<bool, String> {
+    Err("Native dialogues need a Unix host: the private runtime directory check reads its owner uid and mode bits".into())
 }
 fn runtime_dir() -> Result<PathBuf, String> {
     let path =
@@ -257,8 +274,7 @@ fn runtime_dir() -> Result<PathBuf, String> {
     let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
     if !path.is_absolute()
         || !meta.is_dir()
-        || meta.uid() != own_uid()?
-        || meta.permissions().mode() & 0o077 != 0
+        || exposed_dir(&meta)?
         || fs::canonicalize(&path).map_err(|e| e.to_string())? != path
     {
         return Err("Runtime directory is not private and canonical".into());
@@ -277,6 +293,12 @@ fn private_file_at(path: &Path, write: bool, runtime: &Path) -> Result<File, Str
     {
         return Err("Not a dialogue runtime file".into());
     }
+    open_private(path, write)
+}
+/// Opens without following a link or blocking on a FIFO, then proves the open
+/// file is the same singly linked, owner-only regular file that was named.
+#[cfg(unix)]
+fn open_private(path: &Path, write: bool) -> Result<File, String> {
     let before = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     let file = OpenOptions::new()
         .read(true)
@@ -296,6 +318,10 @@ fn private_file_at(path: &Path, write: bool, runtime: &Path) -> Result<File, Str
     }
     Ok(file)
 }
+#[cfg(not(unix))]
+fn open_private(_path: &Path, _write: bool) -> Result<File, String> {
+    Err("Native dialogue files need a Unix host: they open with O_NOFOLLOW and O_NONBLOCK and are verified by owner uid, link count, mode and inode".into())
+}
 fn bounded_read(file: &mut File, limit: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     file.take(limit.saturating_add(1) as u64)
@@ -311,22 +337,35 @@ fn temporary(dir: &Path) -> Result<NamedTempFile, String> {
         .prefix(PREFIX)
         .tempfile_in(dir)
         .map_err(|e| e.to_string())?;
-    file.as_file()
-        .set_permissions(fs::Permissions::from_mode(0o600))
-        .map_err(|e| e.to_string())?;
+    owner_only(file.as_file())?;
     Ok(file)
+}
+#[cfg(unix)]
+fn owner_only(file: &File) -> Result<(), String> {
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|e| e.to_string())
+}
+#[cfg(not(unix))]
+fn owner_only(_file: &File) -> Result<(), String> {
+    Err("Native dialogue files need a Unix host: they are restricted to mode 0600".into())
 }
 fn helper_exe() -> Result<PathBuf, String> {
     let exe = fs::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let m = fs::metadata(&exe).map_err(|e| e.to_string())?;
-    if !m.is_file()
-        || (m.uid() != 0 && m.uid() != own_uid()?)
-        || m.permissions().mode() & 0o022 != 0
-    {
+    if !m.is_file() || untrusted_helper(&m)? {
         return Err("Helper executable is not trusted".into());
     }
     Ok(exe)
+}
+/// True when the helper is owned by neither root nor us, or is group/other writable.
+#[cfg(unix)]
+fn untrusted_helper(m: &fs::Metadata) -> Result<bool, String> {
+    Ok((m.uid() != 0 && m.uid() != own_uid()?) || m.permissions().mode() & 0o022 != 0)
+}
+#[cfg(not(unix))]
+fn untrusted_helper(_m: &fs::Metadata) -> Result<bool, String> {
+    Err("Native dialogues need a Unix host: the helper executable is trusted by its owner uid and mode bits".into())
 }
 fn validate_request(request: &DialogRequest, limit: usize) -> Result<(), String> {
     if request.choices.is_empty()
@@ -500,6 +539,15 @@ fn popup_height(target: &crate::input::DialogTarget, request: &DialogRequest) ->
         .clamp(8, target.height.saturating_sub(2).clamp(8, 30))
 }
 
+/// OwnedChild::cancel signals exactly this fresh process group, never another.
+#[cfg(unix)]
+fn spawn_in_own_group(command: &mut Command) -> Result<Child, String> {
+    command.process_group(0).spawn().map_err(|e| e.to_string())
+}
+#[cfg(not(unix))]
+fn spawn_in_own_group(_command: &mut Command) -> Result<Child, String> {
+    Err("Native dialogues need a Unix host: tmux runs in its own process group so cancellation reaches only it".into())
+}
 struct OwnedChild(Child);
 impl OwnedChild {
     fn cancel(&mut self) {
@@ -601,14 +649,13 @@ fn run_dialog(
         settings.popup_policy.as_ref(),
     )?;
     let stderr = temporary(&dir)?;
-    let child = Command::new("tmux")
+    let mut command = Command::new("tmux");
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(stderr.reopen().map_err(|e| e.to_string())?)
-        .process_group(0)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .stderr(stderr.reopen().map_err(|e| e.to_string())?);
+    let child = spawn_in_own_group(&mut command)?;
     let mut child = OwnedChild(child);
     let _ = events.send(DialogEvent::Opened);
     let mut next_verify = Instant::now() + Duration::from_millis(settings.query_ms.max(100));

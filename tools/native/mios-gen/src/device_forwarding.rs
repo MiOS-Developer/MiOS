@@ -508,6 +508,28 @@ pub fn report(data: &Value, probe: &Probe) -> Result<Json, String> {
     }))
 }
 
+/// Create (or truncate) the 0600 temporary targets file.
+#[cfg(unix)]
+fn create_private(tmp: &Path) -> Result<fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(tmp)
+        .map_err(|e| format!("{}: {e}", tmp.display()))
+}
+
+/// The targets file is private by Unix mode (0600); no other host can create it that way.
+#[cfg(not(unix))]
+fn create_private(tmp: &Path) -> Result<fs::File, String> {
+    Err(format!(
+        "{}: creating the private (mode 0600) session targets file needs a Unix host",
+        tmp.display()
+    ))
+}
+
 /// Atomic rewrite of the per-session target file (0600).
 pub fn select(data: &Value, runtime: &Path, session: &str, target: &str) -> Result<Json, String> {
     let df = data
@@ -532,14 +554,7 @@ pub fn select(data: &Value, runtime: &Path, session: &str, target: &str) -> Resu
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = path.with_extension("json.tmp");
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)
-            .map_err(|e| format!("{}: {e}", tmp.display()))?;
+        let mut f = create_private(&tmp)?;
         f.write_all(
             serde_json::to_string_pretty(&doc)
                 .map_err(|e| e.to_string())?

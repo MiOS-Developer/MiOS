@@ -16,18 +16,27 @@
 // AI-related: usr/share/mios/mios.toml,
 // usr/share/mios/quickshell/DockExpanded.qml, usr/share/mios/quickshell/DockConfig.qml, tools/native/mios-gen/src/nested_devices.rs,
 // usr/share/doc/mios/guides/hud.md, tests/test-dock-hud.py
+#[cfg(unix)]
 use mios_service_core::wayland_fd::{recv_fds, send_fds};
 use serde_json::{json, Value as Json};
-use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::fd::{AsRawFd, OwnedFd};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -82,6 +91,7 @@ impl Instance {
             wayland,
         })
     }
+    #[cfg(unix)]
     fn ipc(&self, cmd: &str) -> Result<String, String> {
         let mut st = UnixStream::connect(
             self.runtime
@@ -96,6 +106,14 @@ impl Instance {
         let mut out = String::new();
         st.read_to_string(&mut out).map_err(|e| e.to_string())?;
         Ok(out)
+    }
+    /// Hyprland's IPC is a Unix-domain socket under $XDG_RUNTIME_DIR/hypr: there is none to reach off Unix.
+    #[cfg(not(unix))]
+    fn ipc(&self, cmd: &str) -> Result<String, String> {
+        Err(format!(
+            "{}: Hyprland IPC ({cmd:?}) is a Unix-domain socket and needs a Unix host",
+            self.signature
+        ))
     }
     fn json(&self, what: &str) -> Result<Json, String> {
         serde_json::from_str(&self.ipc(&format!("j/{what}"))?).map_err(|e| format!("{what}: {e}"))
@@ -438,7 +456,8 @@ pub fn move_window(
             }
             let mut cmd = Command::new(&argv[0]);
             cmd.args(&argv[1..]).env("WAYLAND_DISPLAY", &wayland).env("HYPRLAND_INSTANCE_SIGNATURE", &tgt.signature).env_remove("DISPLAY")
-                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+                .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            own_process_group(&mut cmd)?;
             cmd.spawn().map_err(|e| format!("relaunch {}: {e}", argv[0]))?;
             let deadline = Instant::now() + Duration::from_millis(n(&data, "desktop.dock.targets.relaunch_timeout_ms", 15000) as u64);
             loop {
@@ -459,6 +478,21 @@ pub fn move_window(
     }
 }
 
+/// The relaunched app leads a process group of its own (setpgid 0), apart from the dock that started it.
+#[cfg(unix)]
+fn own_process_group(cmd: &mut Command) -> Result<(), String> {
+    cmd.process_group(0);
+    Ok(())
+}
+/// Process groups (setpgid) are a Unix process-model feature: a relaunch is refused rather than started without one.
+#[cfg(not(unix))]
+fn own_process_group(_cmd: &mut Command) -> Result<(), String> {
+    Err(
+        "relaunch: starting the app in a process group of its own (setpgid) needs a Unix host"
+            .into(),
+    )
+}
+
 // ---- osk: the keyboard nested in the expanded dock -----------------------------------------------------------------
 /// Geometry and identity the keyboard's layer surface is rewritten to (logical px of the output).
 #[derive(Clone, Debug, PartialEq)]
@@ -470,8 +504,11 @@ pub struct OskRect {
     pub namespace: String,
 }
 
+// The Wayland wire codec below serves only the Unix proxy (pump), so it is compiled where that proxy is.
+#[cfg(unix)]
 const ANCHOR_BOTTOM: u32 = 2;
 
+#[cfg(unix)]
 #[derive(Default)]
 pub struct Tracker {
     registries: HashSet<u32>,
@@ -480,14 +517,17 @@ pub struct Tracker {
     pub rewritten: u64,
 }
 
+#[cfg(unix)]
 fn rd(b: &[u8], at: usize) -> u32 {
     u32::from_le_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]])
 }
+#[cfg(unix)]
 fn header(obj: u32, op: u16, len: usize) -> Vec<u8> {
     let mut v = obj.to_le_bytes().to_vec();
     v.extend_from_slice(&(((len as u32) << 16) | op as u32).to_le_bytes());
     v
 }
+#[cfg(unix)]
 fn wl_string(sv: &str) -> Vec<u8> {
     let mut v = ((sv.len() + 1) as u32).to_le_bytes().to_vec();
     v.extend_from_slice(sv.as_bytes());
@@ -498,6 +538,7 @@ fn wl_string(sv: &str) -> Vec<u8> {
     v
 }
 /// Reads a wl string argument at `at`; returns (text, bytes consumed).
+#[cfg(unix)]
 fn read_string(b: &[u8], at: usize) -> Option<(String, usize)> {
     let len = rd(b, at) as usize;
     let padded = (len + 3) & !3;
@@ -509,6 +550,7 @@ fn read_string(b: &[u8], at: usize) -> Option<(String, usize)> {
         4 + padded,
     ))
 }
+#[cfg(unix)]
 fn msg(obj: u32, op: u16, args: &[u32]) -> Vec<u8> {
     let mut v = header(obj, op, 8 + 4 * args.len());
     for a in args {
@@ -518,6 +560,7 @@ fn msg(obj: u32, op: u16, args: &[u32]) -> Vec<u8> {
 }
 /// The layer-surface requests that put the keyboard inside the dock: size, bottom anchor (centred), the edge it ignores
 /// other zones from (-1: margins count from the output edge), the bottom margin over the dock bar, no keyboard focus.
+#[cfg(unix)]
 fn placement(id: u32, r: &OskRect) -> Vec<u8> {
     let mut v = msg(id, 0, &[r.width, r.height]);
     v.extend(msg(id, 1, &[ANCHOR_BOTTOM]));
@@ -527,6 +570,7 @@ fn placement(id: u32, r: &OskRect) -> Vec<u8> {
 }
 
 /// Rewrites one client->compositor message (wl wire format, whole message in `m`). Returns the bytes to send.
+#[cfg(unix)]
 pub fn rewrite_request(t: &mut Tracker, r: &OskRect, m: &[u8]) -> Vec<u8> {
     let obj = rd(m, 0);
     let op = (rd(m, 4) & 0xffff) as u16;
@@ -570,6 +614,7 @@ pub fn rewrite_request(t: &mut Tracker, r: &OskRect, m: &[u8]) -> Vec<u8> {
     m.to_vec()
 }
 /// Watches compositor->client events for wl_display.delete_id, so a recycled object id is never rewritten.
+#[cfg(unix)]
 pub fn observe_event(t: &mut Tracker, m: &[u8]) {
     if rd(m, 0) == 1 && (rd(m, 4) & 0xffff) == 1 && m.len() >= 12 {
         let id = rd(m, 8);
@@ -581,6 +626,7 @@ pub fn observe_event(t: &mut Tracker, m: &[u8]) {
 
 /// One direction of a proxied connection: whole messages are parsed (and requests rewritten), fds ride with the next
 /// non-empty chunk (libwayland queues fds apart from the bytes, so order is all that matters).
+#[cfg(unix)]
 fn pump(from: UnixStream, to: UnixStream, tracker: Arc<Mutex<Tracker>>, rect: Option<OskRect>) {
     let mut buf = vec![0u8; 65536];
     let mut pending: Vec<u8> = Vec::new();
@@ -620,6 +666,7 @@ fn pump(from: UnixStream, to: UnixStream, tracker: Arc<Mutex<Tracker>>, rect: Op
     let _ = to.shutdown(std::net::Shutdown::Both);
 }
 
+#[cfg(unix)]
 static STOP: AtomicBool = AtomicBool::new(false);
 
 pub struct OskOptions {
@@ -662,11 +709,6 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
     };
     let me = Instance::current()?;
     let name = format!("mios-dock-osk-{}", std::process::id());
-    let sock = me.runtime.join(&name);
-    let _ = fs::remove_file(&sock);
-    let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
-    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-    mios_service_core::process::register_stop_signals(&STOP);
     let mut cmd = if o.private_bus {
         // A private session bus for the keyboard's sm.puri.OSK0 name: never the operator's bus (test sessions).
         let mut c = Command::new("dbus-run-session");
@@ -685,6 +727,24 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
     if o.force_show {
         cmd.env("POS_DEBUG", "force-show");
     }
+    serve_osk(&me, &name, cmd, &argv, rect)
+}
+
+/// Serves the keyboard's private Wayland socket `name` and proxies each of its connections to the compositor
+/// (rewriting its layer surface) until the keyboard exits or the dock stops this process.
+#[cfg(unix)]
+fn serve_osk(
+    me: &Instance,
+    name: &str,
+    mut cmd: Command,
+    argv: &[String],
+    rect: OskRect,
+) -> Result<(), String> {
+    let sock = me.runtime.join(name);
+    let _ = fs::remove_file(&sock);
+    let listener = UnixListener::bind(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    mios_service_core::process::register_stop_signals(&STOP);
     mios_service_core::process::set_pdeathsig(&mut cmd, 15);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
     let mut status = None;
@@ -732,8 +792,25 @@ pub fn osk(root: &Path, o: &OskOptions) -> Result<(), String> {
         None => Ok(()),
     }
 }
+/// The proxy is a Unix-domain listener whose messages carry fds (SCM_RIGHTS), and the keyboard is a Wayland client:
+/// neither exists off Unix, so the keyboard is never started.
+#[cfg(not(unix))]
+fn serve_osk(
+    me: &Instance,
+    _name: &str,
+    _cmd: Command,
+    argv: &[String],
+    _rect: OskRect,
+) -> Result<(), String> {
+    Err(format!(
+        "dock osk: nesting {} in the dock proxies its Wayland connection to {} over a Unix-domain socket with fd passing (SCM_RIGHTS), which needs a Unix host",
+        argv[0],
+        me.wayland.display()
+    ))
+}
 
 /// Expose the tracker counters for status lines (tests).
+#[cfg(unix)]
 pub fn _tracker_counts(t: &Tracker) -> HashMap<&'static str, usize> {
     HashMap::from([
         ("layer_shells", t.layer_shells.len()),

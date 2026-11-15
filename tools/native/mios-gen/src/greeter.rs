@@ -9,6 +9,7 @@
 
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use toml::Value;
@@ -217,8 +218,7 @@ impl Greeter {
         let mut degraded = Vec::new();
         if self.kind == "glass" {
             let launcher = on(&self.launcher);
-            let exec_ok = fs::metadata(&launcher)
-                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+            let exec_ok = fs::metadata(&launcher).is_ok_and(|m| m.is_file() && exec_bit(&m));
             if !exec_ok {
                 degraded.push(format!(
                     "launcher {} is not an executable file",
@@ -626,9 +626,7 @@ pub fn display_plan(
         return Ok(vt("the profile's GPU has no DRM card this boot".into()));
     };
     let on = |p: &str| sysroot.join(p.trim_start_matches('/'));
-    let exec = |p: &str| {
-        fs::metadata(on(p)).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-    };
+    let exec = |p: &str| fs::metadata(on(p)).is_ok_and(|m| m.is_file() && exec_bit(&m));
     if !exec(&g.launcher) {
         return Ok(vt(format!("launcher {} is not executable", g.launcher)));
     }
@@ -692,7 +690,6 @@ pub fn runtime(
     profile: Option<&str>,
     dry_run: bool,
 ) -> Result<String, String> {
-    use std::os::unix::process::CommandExt;
     let doc = mios_resolver::resolve_projection(root).map_err(|e| e.to_string())?;
     let cmdline = fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?;
     // GPU hand-off: the boot profile's GPU is with a VM, so its fallback profile is the login default.
@@ -766,8 +763,23 @@ pub fn runtime(
         .env("MIOS_GREETER_BOOT_SESSION", &g.default_session);
     Err(format!(
         "Failed to start boot-selected greeter: {}",
-        command.exec()
+        exec_greeter(&mut command)
     ))
+}
+
+/// Replace this process with the greeter (execve, so greetd's session is the greeter itself); returns only on failure.
+#[cfg(unix)]
+fn exec_greeter(command: &mut std::process::Command) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    command.exec()
+}
+/// execve has no Windows counterpart (a child process is not a replacement), so the greeter is never started.
+#[cfg(not(unix))]
+fn exec_greeter(_command: &mut std::process::Command) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "replacing this process with the greeter (execve) needs a Unix host",
+    )
 }
 
 /// `hyprland-greeter --hosted -- ARGV`: the terminal client of the hosted text greeter. Reports "ready" to the
@@ -833,20 +845,54 @@ pub fn write_atomic(target: &Path, data: &str) -> Result<(), String> {
         .map_err(|e| format!("temp file in {}: {e}", dir.display()))?;
     tmp.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
     tmp.as_file().sync_all().map_err(|e| e.to_string())?;
-    let mode = old
-        .as_ref()
-        .map_or(0o644, |m| m.permissions().mode() & 0o7777);
-    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
-    if let Some(m) = &old {
-        std::os::unix::fs::chown(tmp.path(), Some(m.uid()), Some(m.gid()))
-            .map_err(|e| format!("chown {}: {e}", tmp.path().display()))?;
-    }
+    keep_mode_owner(tmp.path(), old.as_ref())?;
     tmp.persist(target)
         .map_err(|e| format!("rename onto {}: {}", target.display(), e.error))?;
+    sync_dir(dir)?;
+    Ok(())
+}
+
+/// The replacement keeps the old file's mode and owner (a new file is 0644, owned by the caller).
+#[cfg(unix)]
+fn keep_mode_owner(tmp: &Path, old: Option<&fs::Metadata>) -> Result<(), String> {
+    let mode = old.map_or(0o644, |m| m.permissions().mode() & 0o7777);
+    fs::set_permissions(tmp, fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
+    if let Some(m) = old {
+        std::os::unix::fs::chown(tmp, Some(m.uid()), Some(m.gid()))
+            .map_err(|e| format!("chown {}: {e}", tmp.display()))?;
+    }
+    Ok(())
+}
+/// Windows files carry no Unix mode or uid/gid to keep: the replacement keeps the temp file's own attributes.
+#[cfg(not(unix))]
+fn keep_mode_owner(_tmp: &Path, _old: Option<&fs::Metadata>) -> Result<(), String> {
+    Ok(())
+}
+
+/// fsync the directory so the rename itself is durable.
+#[cfg(unix)]
+fn sync_dir(dir: &Path) -> Result<(), String> {
     fs::File::open(dir)
         .and_then(|d| d.sync_all())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+/// std cannot open a directory as a File on Windows (CreateFileW refuses it without backup semantics), so there is
+/// no directory fsync there: the file's own data was fsynced before the rename.
+#[cfg(not(unix))]
+fn sync_dir(_dir: &Path) -> Result<(), String> {
     Ok(())
+}
+
+/// Any execute bit (user, group or other) is set.
+#[cfg(unix)]
+fn exec_bit(m: &fs::Metadata) -> bool {
+    m.permissions().mode() & 0o111 != 0
+}
+/// Windows has no execute bits, so no file is proven executable: "glass" degrades to tuigreet and the hosted greeter
+/// to the VT, with the reason, rather than pointing greetd at a launcher nobody checked.
+#[cfg(not(unix))]
+fn exec_bit(_m: &fs::Metadata) -> bool {
+    false
 }
 
 pub enum Mode {

@@ -21,7 +21,10 @@ tempfile = { workspace = true }
 mios-resolver = { path = "../mios-resolver" }
 mios-service-core = { path = "../mios-service-core" }
 mios-unit-gen = { path = "../mios-unit-gen" }
+
 # recvmsg/sendmsg with SCM_RIGHTS and memfd for the nested-session render proxy (wl_device_proxy.rs), safe API.
+# Unix-only: every rustix use in this crate is #[cfg(unix)], so Windows builds do not pull it in.
+[target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs", "net", "process"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

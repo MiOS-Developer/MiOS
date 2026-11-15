@@ -10,6 +10,7 @@
 
 use std::cmp::Ordering;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -940,7 +941,7 @@ fn run_cmd(program: &str, args: &[&str]) -> Result<String, String> {
 
 fn build_fonts(dir: &Path, t: &Theme) -> Result<FontNames, String> {
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    set_mode(dir, 0o755).map_err(|e| e.to_string())?;
     let mut names = Vec::new();
     for f in font_specs(t) {
         let tmp = dir.join(format!(".{}.mios-tmp", f.file));
@@ -963,7 +964,7 @@ fn build_fonts(dir: &Path, t: &Theme) -> Result<FontNames, String> {
         )?;
         let bytes = fs::read(&tmp).map_err(|e| format!("{tmp_s}: {e}"))?;
         names.push(pf2_name(&bytes).map_err(|e| format!("{tmp_s}: {e}"))?);
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644)).map_err(|e| e.to_string())?;
+        set_mode(&tmp, 0o644).map_err(|e| e.to_string())?;
         fs::rename(&tmp, dir.join(f.file)).map_err(|e| format!("{}: {e}", f.file))?;
     }
     Ok(font_names(names))
@@ -1109,10 +1110,16 @@ fn booted_profile() -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(unix)]
 fn is_root() -> bool {
     fs::metadata("/proc/self")
         .map(|m| m.uid() == 0)
         .unwrap_or(false)
+}
+/// There is no uid 0 off Unix: nobody is root, so writes are refused.
+#[cfg(not(unix))]
+fn is_root() -> bool {
+    false
 }
 
 fn write(path: &Path, text: &str, mode: u32) -> Result<(), String> {
@@ -1120,12 +1127,45 @@ fn write(path: &Path, text: &str, mode: u32) -> Result<(), String> {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     crate::greeter::write_atomic(path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
-        .map_err(|e| format!("{}: {e}", path.display()))
+    set_mode(path, mode).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+#[cfg(unix)]
 fn executable(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+}
+/// Windows has no execute bits: nothing is proven executable.
+#[cfg(not(unix))]
+fn executable(_path: &Path) -> bool {
+    false
+}
+
+/// Set the Unix permission bits of `path` (GRUB scripts 0755, theme files 0644, the archive 0700).
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+/// Windows files have no Unix permission bits to set: the write fails instead of leaving a script unexecutable.
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, mode: u32) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        format!("setting Unix mode {mode:o} needs a Unix host"),
+    ))
+}
+
+/// The Unix permission bits of `path`.
+#[cfg(unix)]
+fn file_mode(path: &Path) -> std::io::Result<u32> {
+    Ok(fs::metadata(path)?.permissions().mode())
+}
+/// Windows files have no Unix permission bits to read.
+#[cfg(not(unix))]
+fn file_mode(_path: &Path) -> std::io::Result<u32> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "reading a Unix file mode needs a Unix host",
+    ))
 }
 
 /// `mios-gen render-grub`: print, check, stage (everything but the live grub.cfg swap) or apply.
@@ -1145,6 +1185,11 @@ pub fn run(
     let live = sysroot == Path::new("/");
     let at = |p: &str| sysroot.join(p.trim_start_matches('/'));
     let writes = matches!(mode, Mode::Stage | Mode::Apply);
+    // --check verifies, and --stage/--apply set, the execute bits that show or hide GRUB scripts: Unix file modes.
+    #[cfg(not(unix))]
+    if !matches!(mode, Mode::Print) {
+        return Err("render-grub --check/--stage/--apply read and set Unix file modes on the GRUB tree, which needs a Unix host".into());
+    }
     if writes && !is_root() {
         return Err("render-grub --stage/--apply requires root".into());
     }
@@ -1416,17 +1461,13 @@ pub fn run(
             }
             let fw = at(FIRMWARE);
             if fw.exists() {
-                let m = fs::metadata(&fw)
-                    .map_err(|e| e.to_string())?
-                    .permissions()
-                    .mode();
+                let m = file_mode(&fw).map_err(|e| e.to_string())?;
                 let want = if g.hide_firmware_entry {
                     m & !0o111
                 } else {
                     m | 0o755
                 };
-                fs::set_permissions(&fw, fs::Permissions::from_mode(want & 0o7777))
-                    .map_err(|e| e.to_string())?;
+                set_mode(&fw, want & 0o7777).map_err(|e| e.to_string())?;
             }
             if new_default != old_default {
                 write(&default_path, &new_default, 0o644)?;
@@ -1440,8 +1481,7 @@ pub fn run(
             if !archive.is_empty() || at(OLD_MENU_DIR).exists() {
                 fs::create_dir_all(&archive_dir)
                     .map_err(|e| format!("{}: {e}", archive_dir.display()))?;
-                fs::set_permissions(&archive_dir, fs::Permissions::from_mode(0o700))
-                    .map_err(|e| e.to_string())?;
+                set_mode(&archive_dir, 0o700).map_err(|e| e.to_string())?;
             }
             for name in &archive {
                 let dest = archive_dir.join(name);

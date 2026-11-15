@@ -73,20 +73,22 @@ fn local(root: &Path, relative: &str) -> Result<PathBuf, String> {
 }
 
 fn executable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path)
-            .map(|m| m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    path.is_file() && exec_bits(path)
+}
+
+/// UNIX: any execute bit is set on the regular file.
+#[cfg(unix)]
+fn exec_bits(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+/// Other platforms have no execute bit; a regular file counts as executable.
+#[cfg(not(unix))]
+fn exec_bits(_path: &Path) -> bool {
+    true
 }
 
 fn on_path(name: &str) -> Option<PathBuf> {

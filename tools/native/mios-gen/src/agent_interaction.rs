@@ -10,7 +10,9 @@
 //! Agent CLI interaction-settings projection.
 
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 
@@ -277,6 +279,7 @@ pub fn merged_text(
     }
 }
 
+#[cfg(unix)]
 fn write_atomic(target: &Path, text: &str) -> Result<(), String> {
     let dir = target
         .parent()
@@ -300,6 +303,16 @@ fn write_atomic(target: &Path, text: &str) -> Result<(), String> {
     tmp.persist(target)
         .map_err(|e| format!("{}: {e}", target.display()))?;
     Ok(())
+}
+
+/// Off Unix there are no owner-only modes to create or keep, so a client file that can hold
+/// credentials is not written at all.
+#[cfg(not(unix))]
+fn write_atomic(target: &Path, _text: &str) -> Result<(), String> {
+    Err(format!(
+        "{}: writing agent client settings with owner-only modes (0700 directory, 0600 or the kept file mode) needs a Unix host",
+        target.display()
+    ))
 }
 
 /// Projects every declared client into `home`, or only validates the table when `home` is None.
@@ -372,6 +385,7 @@ pub fn run(
     project(&clients(&ssot)?, home, check)
 }
 
+// Tests that write client files are #[cfg(unix)]: writing needs Unix owner-only modes (write_atomic).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +414,7 @@ format = "toml"
 alternate_screen = "always"
 "#;
 
+    #[cfg(unix)]
     #[test]
     fn projects_into_fresh_home_with_private_modes() {
         let home = tempfile::tempdir().unwrap();
@@ -431,6 +446,7 @@ alternate_screen = "always"
         assert_eq!(dmode, 0o700);
     }
 
+    #[cfg(unix)]
     #[test]
     fn keeps_unrelated_keys_order_comments_and_mode() {
         let home = tempfile::tempdir().unwrap();
@@ -475,6 +491,7 @@ alternate_screen = "always"
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn idempotent_second_run_writes_nothing() {
         let home = tempfile::tempdir().unwrap();
@@ -497,6 +514,7 @@ alternate_screen = "always"
         assert!(!home.path().join(".gemini").exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn negative_malformed_client_file_is_left_untouched() {
         let home = tempfile::tempdir().unwrap();
@@ -523,6 +541,7 @@ alternate_screen = "always"
         assert!(clients(&ssot(fmt)).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn negative_symlinked_client_file_is_skipped() {
         let home = tempfile::tempdir().unwrap();
@@ -557,6 +576,7 @@ alternate_screen = "always"
 web_search = "disabled"
 "#;
 
+    #[cfg(unix)]
     #[test]
     fn provider_capabilities_preserve_identity_mcp_and_other_providers() {
         let home = tempfile::tempdir().unwrap();
@@ -605,6 +625,7 @@ web_search = "disabled"
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn layered_operator_provider_opt_in_is_preserved() {
         let mut config = ssot(SCOPED);
@@ -620,6 +641,7 @@ web_search = "disabled"
         assert_eq!(value["web_search"].as_str(), Some("live"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn nested_json_provider_selector_is_generic() {
         let config = SCOPED

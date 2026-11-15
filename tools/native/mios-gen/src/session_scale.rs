@@ -2,8 +2,11 @@
 // AI-related: tools/native/mios-gen/src/display_scale.rs, tools/native/mios-gen/src/nested_session.rs (mios_nested_zoom), usr/share/mios/mios.toml [desktop.scaling], [keybindings.global] session-scale bindings
 // AI-functions: run, step_scale, user_tier_with_scale, nested_target
 use serde_json::Value as Json;
+#[cfg(unix)]
 use std::fs::{File, OpenOptions};
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -200,6 +203,7 @@ pub fn user_tier_with_scale(
 }
 
 /// Atomic private write of the user tier under its lock; refuses when it changed since `before` was read.
+#[cfg(unix)]
 fn save_user_tier(path: &Path, before: &str, after: &str) -> Result<(), String> {
     if before == after {
         return Ok(());
@@ -249,6 +253,18 @@ fn save_user_tier(path: &Path, before: &str, after: &str) -> Result<(), String> 
     File::open(dir)
         .and_then(|d| d.sync_all())
         .map_err(|e| e.to_string())
+}
+
+/// Off Unix the user tier cannot be written owner-only (0600) under its lock, so nothing is saved.
+#[cfg(not(unix))]
+fn save_user_tier(path: &Path, before: &str, after: &str) -> Result<(), String> {
+    if before == after {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: saving the user tier owner-only (0600) under its lock needs a Unix host; nothing saved",
+        path.display()
+    ))
 }
 
 pub fn run(root: &Path, dir: Dir) -> Result<String, String> {

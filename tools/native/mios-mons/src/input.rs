@@ -197,10 +197,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
-    os::unix::{
-        fs::{MetadataExt, OpenOptionsExt},
-        process::CommandExt,
-    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -209,6 +205,13 @@ use std::{
         Arc,
     },
     time::{Duration, Instant},
+};
+// Query confinement, non-blocking descriptor reads and seat ownership are Unix
+// facts; off Unix each one fails closed and the keyboard hints stay active.
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{MetadataExt, OpenOptionsExt},
+    process::CommandExt,
 };
 
 #[derive(Clone, Debug)]
@@ -483,8 +486,8 @@ impl Query<'_> {
             .args(args)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
-            .stdout(Stdio::from(output.try_clone().ok()?))
-            .process_group(0);
+            .stdout(Stdio::from(output.try_clone().ok()?));
+        own_process_group(&mut command).ok()?;
         if let Some(runtime) = runtime {
             command.env("XDG_RUNTIME_DIR", runtime);
         }
@@ -530,11 +533,10 @@ impl Query<'_> {
             return None;
         }
         let mut bytes = Vec::new();
-        let file = File::options()
-            .read(true)
-            .custom_flags(0x800)
-            .open(path)
-            .ok()?;
+        let mut options = File::options();
+        options.read(true);
+        nonblocking_read(&mut options).ok()?;
+        let file = options.open(path).ok()?;
         if !file.metadata().ok()?.is_file() {
             return None;
         }
@@ -546,6 +548,27 @@ impl Query<'_> {
         }
         serde_json::from_slice(&bytes).ok()
     }
+}
+
+// A query child leads a fresh process group, the only group kill_group signals.
+#[cfg(unix)]
+fn own_process_group(command: &mut Command) -> Result<(), &'static str> {
+    command.process_group(0);
+    Ok(())
+}
+#[cfg(not(unix))]
+fn own_process_group(_command: &mut Command) -> Result<(), &'static str> {
+    Err("Inputd: controller queries need a Unix host: each runs in a fresh process group so a timeout kills only it and its descendants.")
+}
+// O_NONBLOCK: a FIFO planted at a descriptor or registry path cannot stall the worker.
+#[cfg(unix)]
+fn nonblocking_read(options: &mut fs::OpenOptions) -> Result<(), &'static str> {
+    options.custom_flags(0x800);
+    Ok(())
+}
+#[cfg(not(unix))]
+fn nonblocking_read(_options: &mut fs::OpenOptions) -> Result<(), &'static str> {
+    Err("Inputd: nested-session descriptor reads need a Unix host: they open with O_NONBLOCK.")
 }
 
 // The child's fresh process group confines cancellation to this query and its
@@ -596,13 +619,13 @@ fn own_seat(id: &Identity, query: &Query<'_>) -> Option<Option<Seat>> {
     let parent = PathBuf::from(entry["parent_runtime"].as_str()?);
     let runtime = fs::canonicalize(&id.runtime).ok()?;
     let seat = entry["seat"].as_str()?;
-    let uid = fs::metadata("/proc/self").ok()?.uid();
+    let uid = owner_uid(Path::new("/proc/self")).ok()?;
     if !parent.is_absolute()
         || !registry.is_absolute()
         || !registry.starts_with(&parent)
-        || fs::metadata(&registry).ok()?.uid() != uid
-        || fs::metadata(&descriptor_path).ok()?.uid() != uid
-        || fs::metadata(&runtime).ok()?.uid() != uid
+        || owner_uid(&registry).ok()? != uid
+        || owner_uid(&descriptor_path).ok()? != uid
+        || owner_uid(&runtime).ok()? != uid
         || entry["state"] != "running"
         || descriptor["seat"].as_str()? != seat
         || id.seat.as_ref().is_some_and(|s| s != seat)
@@ -620,6 +643,17 @@ fn own_seat(id: &Identity, query: &Query<'_>) -> Option<Option<Seat>> {
         return None;
     }
     Some(Some(Seat { parent, entry }))
+}
+/// The nested-seat evidence is trusted only when every file in it is ours.
+#[cfg(unix)]
+fn owner_uid(path: &Path) -> Result<u32, &'static str> {
+    fs::metadata(path)
+        .map(|meta| meta.uid())
+        .map_err(|_| "Inputd: nested-session file metadata unavailable.")
+}
+#[cfg(not(unix))]
+fn owner_uid(_path: &Path) -> Result<u32, &'static str> {
+    Err("Inputd: nested-seat ownership needs a Unix host: it compares file owner uids.")
 }
 
 fn proc_stat(pid: u32) -> Option<(u32, u64)> {
