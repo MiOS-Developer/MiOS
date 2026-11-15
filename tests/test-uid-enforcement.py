@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Unit and regression test suite for test-uid-enforcement functionality.
-# AI-functions: test_generate_sysusers_remediation, test_audit_user_environment_mock_valid, test_audit_user_environment_mock_system_uid, test_subuid_subgid_parsing, TestUidEnforcement, TestIdentityGuard
+# AI-functions: test_generate_sysusers_remediation, test_audit_user_environment_mock_valid, test_audit_user_environment_mock_system_uid, test_subuid_subgid_parsing, TestUidEnforcement, TestIdentityGuard, TestRootExtractOwner
 
 """
 Unit Test Suite for MiOS UID 1000 Enforcement & Systemd User Session Boundary.
@@ -135,6 +135,52 @@ class TestUidEnforcement(unittest.TestCase):
         security_groups = ["mios-hermes", "mios-ai", "mios-sys"]
         for grp in security_groups:
             self.assertIn(f"m mios {grp}", content_50)
+
+class TestRootExtractOwner(unittest.TestCase):
+    """A tar extract that runs as root never keeps the archive's numeric owner (uid 1000) on a system path."""
+
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    # The Bibata cursor extracts into /usr/share/icons; upstream ships its files as uid 1000.
+    SITES = {"automation/57-gnome.sh": 2, "usr/libexec/mios/mios-cursor-ensure": 1}
+
+    def extracts(self, rel):
+        import re
+        import shlex
+        with open(os.path.join(self.ROOT, rel), encoding="utf-8") as fh:
+            for line in fh:
+                code = line.split(" #", 1)[0]
+                if code.lstrip().startswith("#"):
+                    continue
+                for match in re.finditer(r"\btar\s+([^;|&]*)", code):
+                    words = shlex.split(match.group(1))
+                    if "--extract" in words or any(re.fullmatch(r"-[A-Za-z]*x[A-Za-z]*", w) for w in words):
+                        yield words
+
+    def test_root_extracts_drop_the_archive_owner(self):
+        for rel, count in self.SITES.items():
+            commands = list(self.extracts(rel))
+            self.assertEqual(len(commands), count, f"{rel}: expected {count} tar extracts, found {commands}")
+            for words in commands:
+                self.assertIn("--no-same-owner", words, f"{rel}: tar {' '.join(words)} keeps the archive owner as root")
+
+    @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() == 0, "tar keeps the archive owner only when run as root")
+    def test_no_same_owner_is_what_drops_uid_1000(self):
+        import io
+        import subprocess
+        import tarfile
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = os.path.join(tmp, "theme.tar")
+            with tarfile.open(archive, "w") as tar:
+                for name, kind in (("Theme", tarfile.DIRTYPE), ("Theme/cursors", tarfile.DIRTYPE), ("Theme/cursors/left_ptr", tarfile.REGTYPE)):
+                    info = tarfile.TarInfo(name)
+                    info.type, info.uid, info.gid, info.mode = kind, 1000, 1000, 0o755
+                    tar.addfile(info, io.BytesIO(b"") if kind == tarfile.REGTYPE else None)
+            for flags, owner in (([], 1000), (["--no-same-owner"], 0)):
+                dest = tempfile.mkdtemp(dir=tmp)
+                subprocess.run(["tar", "-xf", archive, "-C", dest, *flags], check=True)
+                for sub in ("Theme", "Theme/cursors", "Theme/cursors/left_ptr"):
+                    self.assertEqual(os.stat(os.path.join(dest, sub)).st_uid, owner, f"tar {flags}: {sub}")
 
 if __name__ == "__main__":
     unittest.main()

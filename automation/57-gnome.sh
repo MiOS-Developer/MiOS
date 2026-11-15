@@ -39,9 +39,10 @@ _bibata_sum_default="https://github.com/ful1e5/Bibata_Cursor/releases/download/v
 BIBATA_SUM_URL="${MIOS_URL_BIBATA_SUM:-$_bibata_sum_default}"
 BIBATA_SUM_URL="${BIBATA_SUM_URL//"{}"/${BIBATA_VER}}"
 
+# The upstream tarball's files are uid 1000; as root, plain tar would keep that owner on /usr.
 if [ -f "/usr/share/mios/vendored/cursors/bibata.tar.xz" ]; then
     mios_log "Found offline vendored bibata.tar.xz, extracting"
-    if tar -xf "/usr/share/mios/vendored/cursors/bibata.tar.xz" -C /usr/share/icons/; then
+    if tar -xf "/usr/share/mios/vendored/cursors/bibata.tar.xz" -C /usr/share/icons/ --no-same-owner; then
         BIBATA_OK=1
     fi
 else
@@ -58,7 +59,7 @@ else
         else
             mios_warn "Bibata sha256 sidecar unavailable"
         fi
-        if tar -xf /tmp/bibata.tar.xz -C /usr/share/icons/; then
+        if tar -xf /tmp/bibata.tar.xz -C /usr/share/icons/ --no-same-owner; then
             sbom_dir="/usr/share/mios/artifacts/sbom"
             mkdir -p "$sbom_dir"
             sha=""
