@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AI-hint: Unit and regression test suite for test-uid-enforcement functionality.
-# AI-functions: test_generate_sysusers_remediation, test_audit_user_environment_mock_valid, test_audit_user_environment_mock_system_uid, test_subuid_subgid_parsing, TestUidEnforcement, TestIdentityGuard, TestRootExtractOwner
+# AI-functions: test_generate_sysusers_remediation, test_audit_user_environment_mock_valid, test_audit_user_environment_mock_system_uid, test_subuid_subgid_parsing, TestUidEnforcement, TestIdentityGuard, TestRootExtractOwner, TestMiosAccountPrivilege
 
 """
 Unit Test Suite for MiOS UID 1000 Enforcement & Systemd User Session Boundary.
@@ -181,6 +181,60 @@ class TestRootExtractOwner(unittest.TestCase):
                 subprocess.run(["tar", "-xf", archive, "-C", dest, *flags], check=True)
                 for sub in ("Theme", "Theme/cursors", "Theme/cursors/left_ptr"):
                     self.assertEqual(os.stat(os.path.join(dest, sub)).st_uid, owner, f"tar {flags}: {sub}")
+
+class TestMiosAccountPrivilege(unittest.TestCase):
+    """The mios service account has no root: no sudoers rule and no wheel membership. The SSOT login keeps its own
+    grant (00-mios-dev, and the wheel membership 11-user.sh renders for it), and the agent's grant is its own file."""
+
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    def sudoers_rules(self):
+        for rel in (os.path.join("etc", "sudoers.d"), os.path.join("usr", "lib", "sudoers.d")):
+            directory = os.path.join(self.ROOT, rel)
+            for name in sorted(os.listdir(directory)):
+                with open(os.path.join(directory, name), encoding="utf-8") as fh:
+                    for number, line in enumerate(fh, 1):
+                        text = line.strip()
+                        if text and not text.startswith(("#", "Defaults", "Cmnd_Alias")):
+                            yield f"{rel}/{name}:{number}", text.split()[0], text
+
+    def sysusers_directives(self):
+        directory = os.path.join(self.ROOT, "usr", "lib", "sysusers.d")
+        for name in sorted(os.listdir(directory)):
+            if name.endswith(".conf"):
+                with open(os.path.join(directory, name), encoding="utf-8") as fh:
+                    for number, line in enumerate(fh, 1):
+                        text = line.strip()
+                        if text and not text.startswith("#"):
+                            yield f"{name}:{number}", " ".join(text.split())
+
+    def test_mios_has_no_sudoers_rule(self):
+        hits = [where for where, who, _ in self.sudoers_rules() if who == "mios"]
+        self.assertEqual(hits, [], "the mios service account must not have a sudoers rule")
+
+    def test_mios_is_not_in_wheel(self):
+        hits = [where for where, text in self.sysusers_directives() if text.split()[:3] == ["m", "mios", "wheel"]]
+        self.assertEqual(hits, [], "the mios service account must not be a wheel member")
+
+    def test_sysusers_directives_are_declared_once(self):
+        first, repeats = {}, []
+        for where, text in self.sysusers_directives():
+            if text in first:
+                repeats.append(f"{where} repeats {first[text]}: {text}")
+            else:
+                first[text] = where
+        self.assertEqual(repeats, [])
+
+    def test_login_keeps_its_grant_and_wheel(self):
+        self.assertIn(("user", "user ALL=(ALL) NOPASSWD: ALL"), [(who, text) for _, who, text in self.sudoers_rules()])
+        with open(os.path.join(self.ROOT, "automation", "11-user.sh"), encoding="utf-8") as fh:
+            self.assertIn("m ${C_USER} wheel", fh.read())
+
+    def test_agent_grant_is_its_own_and_unchanged(self):
+        with open(os.path.join(self.ROOT, "etc", "sudoers.d", "10-mios-hermes"), encoding="utf-8") as fh:
+            lines = [line.strip() for line in fh if line.strip() and not line.strip().startswith("#")]
+        self.assertEqual(lines, ["Defaults:mios-hermes !requiretty", "mios-hermes ALL=(ALL) NOPASSWD: ALL",
+                                 "Defaults:mios-ai !requiretty", "mios-ai ALL=(ALL) NOPASSWD: ALL"])
 
 if __name__ == "__main__":
     unittest.main()

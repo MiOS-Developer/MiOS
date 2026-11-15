@@ -1,2 +1,1 @@
 user ALL=(ALL) NOPASSWD: ALL
-mios     ALL=(ALL) NOPASSWD: ALL
