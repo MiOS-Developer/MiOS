@@ -4590,9 +4590,11 @@ function New-Shortcut([string]$Path,[string]$Target,[string]$ArgList="",[string]
 
 function Install-MiosWindowsTools {
     $_hostSrc = $null
+    # This helper is bootstrap-owned. A legacy overlay in the system checkout
+    # must not shadow the updated bootstrap source; retain a legacy-only fallback.
     foreach ($_c in @(
-        (Join-Path $MiosRepoDir 'src\install-host-tools.ps1'),
-        (Join-Path $MiosBootstrapShadow 'src\install-host-tools.ps1')
+        (Join-Path $MiosBootstrapShadow 'src\install-host-tools.ps1'),
+        (Join-Path $MiosRepoDir 'src\install-host-tools.ps1')
     )) {
         if (Test-Path -LiteralPath $_c) { $_hostSrc = $_c; break }
     }
@@ -4600,6 +4602,7 @@ function Install-MiosWindowsTools {
         Log-Fail "src/install-host-tools.ps1 not found in repo. Re-run irm | iex to refresh."
         return
     }
+    Write-Log ("Host tools source: {0}" -f $_hostSrc)
     # Dot-source REDEFINES Install-MiosWindowsTools with the on-disk body
     # then re-invokes it. The redefinition is idempotent.
     . $_hostSrc

@@ -3,7 +3,7 @@ Describe 'MiOS full install build lifecycle' {
     BeforeAll {
         $source = Join-Path $PSScriptRoot '..\..\build-mios.ps1'
         $ast = [Management.Automation.Language.Parser]::ParseFile($source,[ref]$null,[ref]$null)
-        foreach ($name in @('Resolve-MiosBuilderDistribution','Ensure-MiosBuilder','Install-MiosNativeCatalog','Invoke-MiosNativeImageBuild','Install-MiosNativeWindowsArtifact','Update-MiosCheckout','Invoke-WslBuild')) {
+        foreach ($name in @('Install-MiosWindowsTools','Resolve-MiosBuilderDistribution','Ensure-MiosBuilder','Install-MiosNativeCatalog','Invoke-MiosNativeImageBuild','Install-MiosNativeWindowsArtifact','Update-MiosCheckout','Invoke-WslBuild')) {
             $fn = $ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$false)
             if (-not $fn) { throw "Production function missing: $name" }
             . ([scriptblock]::Create($fn.Extent.Text))
@@ -26,6 +26,40 @@ Describe 'MiOS full install build lifecycle' {
         Mock New-BuilderDistro { throw 'Existing builder must survive' }
         Mock podman { throw 'Existing WSL builder must be reused directly' }
     }
+    It 'loads current bootstrap host tools instead of a stale system-root overlay' {
+        $MiosRepoDir = Join-Path $TestDrive 'system checkout'
+        $MiosBootstrapShadow = Join-Path $TestDrive 'bootstrap checkout'
+        foreach ($root in @($MiosRepoDir, $MiosBootstrapShadow)) {
+            New-Item -ItemType Directory -Path (Join-Path $root 'src') -Force | Out-Null
+        }
+        $legacy = Join-Path $MiosRepoDir 'src/install-host-tools.ps1'
+        $owner = Join-Path $MiosBootstrapShadow 'src/install-host-tools.ps1'
+        Set-Content -LiteralPath $legacy -Value 'function Install-MiosWindowsTools { "legacy" }'
+        Set-Content -LiteralPath $owner -Value 'function Install-MiosWindowsTools { "bootstrap" }'
+        $before = (Get-FileHash -LiteralPath $legacy).Hash
+        Mock Write-Log {}
+        Install-MiosWindowsTools | Should -Be 'bootstrap'
+        (Get-FileHash -LiteralPath $legacy).Hash | Should -Be $before
+        Should -Invoke Write-Log -Times 1 -Exactly -ParameterFilter { $Message -eq ("Host tools source: {0}" -f $owner) }
+    }
+    It 'retains a legacy-only host-tools layout when no bootstrap helper exists' {
+        $MiosRepoDir = Join-Path $TestDrive 'legacy checkout'
+        $MiosBootstrapShadow = Join-Path $TestDrive 'absent bootstrap'
+        New-Item -ItemType Directory -Path (Join-Path $MiosRepoDir 'src') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $MiosRepoDir 'src/install-host-tools.ps1') -Value 'function Install-MiosWindowsTools { "legacy-only" }'
+        Install-MiosWindowsTools | Should -Be 'legacy-only'
+    }
+    It 'propagates bootstrap host-tool failures instead of executing a stale fallback' {
+        $MiosRepoDir = Join-Path $TestDrive 'stale checkout'
+        $MiosBootstrapShadow = Join-Path $TestDrive 'authoritative checkout'
+        foreach ($root in @($MiosRepoDir, $MiosBootstrapShadow)) {
+            New-Item -ItemType Directory -Path (Join-Path $root 'src') -Force | Out-Null
+        }
+        Set-Content -LiteralPath (Join-Path $MiosRepoDir 'src/install-host-tools.ps1') -Value 'function Install-MiosWindowsTools { "stale fallback" }'
+        Set-Content -LiteralPath (Join-Path $MiosBootstrapShadow 'src/install-host-tools.ps1') -Value 'function Install-MiosWindowsTools { throw "fixture authoritative failure" }'
+        { Install-MiosWindowsTools } | Should -Throw '*fixture authoritative failure*'
+    }
+
     It 'reuses the prefixed WSL builder without touching Podman metadata' {
         Mock wsl.exe { param([Parameter(ValueFromRemainingArguments=$true)]$Arguments)
             $script:NativeInvocations.Add(@($Arguments))
