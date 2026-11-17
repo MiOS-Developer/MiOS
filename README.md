@@ -1,6 +1,8 @@
 <!-- AI-hint: Repository entry point for the MiOS system FHS overlay, its SSOT, image build pipeline, local AI interface, deployment shapes, and documented scope. AI-related: /usr/share/mios/mios.toml, /usr/libexec/mios/mios-build-driver, /usr/share/mios/ai/system.md, mios-bootstrap, MiOS-DEV. -->
 # MiOS
 
+[![Packaged with KitOps](https://img.shields.io/badge/Packaged%20with-KitOps-FFAF52?labelColor=363636)](https://kitops.org)
+
 MiOS (pronounced **MyOS**, “My Operating System”) is an Apache-2.0 research project. Its deliverable is a rebuildable Linux operating system blueprint: a Fedora bootc/OCI image, a local agent runtime, and the source and checks needed to regenerate that image. The [architectural thesis](usr/share/doc/mios/manual/thesis.md) defines four linked pillars: an immutable image, one local AI front door, a repository that mirrors the target root filesystem, and configuration projected from one source of truth.
 
 This is the **system repository**. Its `usr/`, `etc/`, `var/`, and other FHS paths describe the filesystem baked into the image. [mios-bootstrap](https://github.com/mios-dev/mios-bootstrap) owns the interactive installer and operator-editable layer. MiOS-DEV is the build environment; Windows provisioning hands the build to MiOS-DEV.
