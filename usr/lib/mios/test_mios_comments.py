@@ -16,6 +16,14 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import unittest
+import subprocess
+import pathlib
+import io
+import contextlib
+import importlib.util
+import importlib.machinery
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mios_comments as mc  # noqa: E402
@@ -182,6 +190,213 @@ def test_landing_ratio(p: mc.Policy) -> None:
     # A default-constructed Policy must carry the contract shape too.
     check("landing-ratio-default", mc.Policy().landing_min_word_ratio, 0.90)
 
+class SourceFixture(unittest.TestCase):
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="mios-source-scope-")
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.git("init", "--quiet")
+        self.write("good.sh", "echo clean\n", tracked=True)
+
+    def git(self, *args):
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        return subprocess.run(["git", *args], cwd=self.root, env=env, check=True,
+                              capture_output=True).stdout
+
+    def write(self, rel, text, *, tracked=False):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        if tracked:
+            self.git("add", "--", rel)
+        return path
+
+    def names(self):
+        return {rel for rel, _ in mc.iter_tracked_files(str(self.root))}
+
+
+class TestTrackedSourceScope(SourceFixture):
+
+    def test_index_excludes_untracked_runtime(self):
+        self.write("runtime/private.sh", "echo runtime\n")
+        with mock.patch.object(mc.os, "walk", side_effect=AssertionError("root walk")):
+            self.assertEqual(self.names(), {"good.sh"})
+
+    def test_working_bytes_not_index_blob(self):
+        self.write("good.sh", "echo changed\n")
+        files = dict(mc.iter_tracked_files(str(self.root)))
+        self.assertEqual(pathlib.Path(files["good.sh"]).read_text(), "echo changed\n")
+
+    def test_git_overrides_cleared_and_index_unchanged(self):
+        index = self.root / ".git/index"
+        before = (index.read_bytes(), index.stat().st_mtime_ns)
+        override = {"GIT_DIR": "/missing", "GIT_WORK_TREE": "/missing",
+                    "GIT_INDEX_FILE": "/missing", "GIT_COMMON_DIR": "/missing",
+                    "GIT_OBJECT_DIRECTORY": "/missing", "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": "core.worktree", "GIT_CONFIG_VALUE_0": "/missing"}
+        with mock.patch.dict(os.environ, override):
+            with mock.patch.object(mc.subprocess, "run", wraps=subprocess.run) as run:
+                self.assertEqual(self.names(), {"good.sh"})
+            call = run.call_args
+            self.assertIn("core.fsmonitor=false", call.args[0])
+            self.assertEqual(call.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
+            self.assertNotIn("GIT_INDEX_FILE", call.kwargs["env"])
+        self.assertEqual((index.read_bytes(), index.stat().st_mtime_ns), before)
+
+    def test_symlink_file_and_ancestor_are_not_followed(self):
+        path = self.write("source/inner.sh", "echo old\n", tracked=True)
+        target = self.write("runtime/inner.sh", "echo private\n")
+        path.unlink()
+        path.parent.rmdir()
+        path.parent.symlink_to(target.parent, target_is_directory=True)
+        link = self.write("link.sh", "echo old\n", tracked=True)
+        link.unlink()
+        link.symlink_to(target)
+        self.assertEqual(self.names(), {"good.sh"})
+
+    def test_deleted_entry_is_skipped(self):
+        self.write("gone.sh", "echo old\n", tracked=True).unlink()
+        self.assertEqual(self.names(), {"good.sh"})
+
+    def test_special_working_file_fails_without_reading(self):
+        path = self.write("pipe.sh", "echo old\n", tracked=True)
+        path.unlink()
+        os.mkfifo(path)
+        with self.assertRaises(RuntimeError):
+            self.names()
+
+    def test_invalid_index_paths_are_rejected(self):
+        for rel in ("../escape.sh", "/absolute.sh", "a//b.sh", "a/./b.sh", "a\\b.sh", ""):
+            with self.subTest(rel=rel), mock.patch.object(mc, "tracked_file_modes", return_value={rel: "100644"}):
+                with self.assertRaises(RuntimeError):
+                    self.names()
+
+    def test_root_without_git_never_walks(self):
+        with tempfile.TemporaryDirectory(prefix="mios-source-empty-") as directory:
+            with mock.patch.object(mc, "_is_filesystem_root", return_value=True):
+                with mock.patch.object(mc.os, "walk", side_effect=AssertionError("root walk")):
+                    with self.assertRaises(RuntimeError):
+                        mc.tracked_file_modes(directory)
+
+    def test_root_empty_index_fails(self):
+        self.git("rm", "--cached", "--", "good.sh")
+        with mock.patch.object(mc, "_is_filesystem_root", return_value=True):
+            with self.assertRaises(RuntimeError):
+                mc.tracked_file_modes(str(self.root))
+
+    def test_broken_index_fails(self):
+        (self.root / ".git/index").write_bytes(b"invalid index")
+        with self.assertRaises(RuntimeError):
+            self.names()
+
+    def test_unmerged_index_fails(self):
+        result = subprocess.CompletedProcess([], 0, b"100644 " + b"0" * 40 + b" 2\tgood.sh\0", b"")
+        with mock.patch.object(mc.subprocess, "run", return_value=result):
+            with self.assertRaises(RuntimeError):
+                self.names()
+
+    def test_standalone_discovery_error_propagates(self):
+        def denied(root, *, onerror):
+            onerror(PermissionError("source denied"))
+            yield
+        with tempfile.TemporaryDirectory(prefix="mios-source-denied-") as directory:
+            with mock.patch.object(mc.os, "walk", side_effect=denied):
+                with self.assertRaises(PermissionError):
+                    mc.tracked_file_modes(directory)
+
+
+class TestVersionRootScope(SourceFixture):
+
+    def setUp(self):
+        super().setUp()
+        path = pathlib.Path(__file__).parents[2] / "libexec/mios/mios-version-lint"
+        loader = importlib.machinery.SourceFileLoader("mios_version_scope_fixture", str(path))
+        self.lint = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+        loader.exec_module(self.lint)
+        self.pin = ("fetch=https://example.invalid/project/releases/download/v"
+                    + ".".join(("9", "8", "7")) + "/payload\n")
+
+    def run_lint(self, *, filesystem=True, soft="0", root=None, exempt=()):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(self.lint, "_is_filesystem_root", return_value=filesystem):
+            with mock.patch.object(self.lint, "load_allowlist", return_value=(set(), list(exempt))):
+                with mock.patch.object(sys, "argv", ["mios-version-lint", str(root or self.root)]):
+                    with mock.patch.dict(os.environ, {"MIOS_VERSION_LINT_SOFT": soft}):
+                        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                            code = self.lint.main()
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_filesystem_root_uses_index_never_walk(self):
+        self.write("runtime/private.sh", self.pin)
+        with mock.patch.object(self.lint.os, "walk", side_effect=AssertionError("root walk")):
+            self.assertEqual(self.run_lint()[0], 0)
+
+    def test_tracked_working_pin_is_reported(self):
+        self.write("good.sh", self.pin)
+        code, _, stderr = self.run_lint()
+        self.assertEqual(code, 1)
+        self.assertIn("good.sh:1: URL version literal", stderr)
+
+    def test_ordinary_source_keeps_untracked_scanning(self):
+        self.write("untracked.sh", self.pin)
+        self.assertEqual(self.run_lint(filesystem=False)[0], 1)
+
+    def test_ordinary_nested_checkout_is_excluded(self):
+        self.write("nested/.git", "gitdir: elsewhere\n")
+        self.write("nested/pinned.sh", self.pin)
+        self.assertEqual(self.run_lint(filesystem=False)[0], 0)
+
+    def test_image_extension_case_is_preserved(self):
+        self.write("source.ImAgE", self.pin, tracked=True)
+        self.assertEqual(self.run_lint()[0], 1)
+
+    def test_exemptions_still_apply(self):
+        self.write("good.sh", self.pin)
+        self.assertEqual(self.run_lint(exempt=("*.sh",))[0], 0)
+
+    def test_read_error_is_fatal_even_soft(self):
+        for soft in ("0", "1"):
+            with self.subTest(soft=soft), mock.patch("builtins.open", side_effect=PermissionError("source denied")):
+                code, stdout, stderr = self.run_lint(filesystem=False, soft=soft)
+            self.assertEqual(code, 2)
+            self.assertIn("ERROR: source inspection failed", stderr)
+            self.assertNotIn("SOFT mode enabled", stdout)
+
+    def test_discovery_error_is_fatal_even_soft(self):
+        for soft in ("0", "1"):
+            with self.subTest(soft=soft), mock.patch.object(self.lint, "source_files", side_effect=OSError("discovery denied")):
+                self.assertEqual(self.run_lint(soft=soft)[0], 2)
+
+    def test_broken_git_is_fatal_even_soft(self):
+        (self.root / ".git/index").write_bytes(b"invalid index")
+        for soft in ("0", "1"):
+            with self.subTest(soft=soft):
+                self.assertEqual(self.run_lint(soft=soft)[0], 2)
+
+    def test_missing_helper_does_not_fall_back_to_walk(self):
+        real_import = __import__
+        def without_helper(name, *args, **kwargs):
+            if name == "mios_comments":
+                raise ImportError("missing helper")
+            return real_import(name, *args, **kwargs)
+        with mock.patch("builtins.__import__", side_effect=without_helper):
+            with mock.patch.object(self.lint.os, "walk", side_effect=AssertionError("root walk")):
+                self.assertEqual(self.run_lint()[0], 2)
+
+    def test_no_candidate_root_is_an_error(self):
+        (self.root / "good.sh").unlink()
+        self.assertEqual(self.run_lint()[0], 2)
+
+    def test_missing_ordinary_directory_is_an_error(self):
+        self.assertEqual(self.run_lint(filesystem=False, root=self.root / "absent")[0], 2)
+
+    def test_existing_violation_soft_policy_in_owned_fixture(self):
+        self.write("good.sh", self.pin)
+        code, stdout, _ = self.run_lint(soft="1")
+        self.assertEqual(code, 0)
+        self.assertIn("SOFT mode enabled", stdout)
 def main() -> int:
     p = policy()
     test_classifier(p)
@@ -191,10 +406,13 @@ def main() -> int:
     test_lexer()
     test_html_endings()
     test_landing_ratio(p)
+    suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
+                               for case in (TestTrackedSourceScope, TestVersionRootScope))
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
     print(f"[test_mios_comments] {PASSED} passed, {len(FAILED)} failed")
     for f in FAILED:
         print(f"  FAIL {f}")
-    return 1 if FAILED else 0
+    return 1 if FAILED or not result.wasSuccessful() else 0
 
 if __name__ == "__main__":
     sys.exit(main())

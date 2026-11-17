@@ -7,6 +7,7 @@ import ast
 import hashlib
 import io
 import os
+import stat
 import sys
 import re
 import subprocess
@@ -16,7 +17,7 @@ from importlib.machinery import SourceFileLoader
 from typing import Iterable
 
 __all__ = ["Block", "Verdict", "Policy", "RefIndex", "lex", "classify", "load_ai_tag",
-           "SCAN_EXT", "iter_source_files", "tracked_file_modes"]
+           "SCAN_EXT", "iter_source_files", "iter_tracked_files", "tracked_file_modes"]
 
 # Extensions the corpus covers. One definition, so the gate and the CLI cannot
 # disagree about what was counted.
@@ -34,25 +35,36 @@ def _is_libexec_verb(root: str, rel: str) -> bool:
     except OSError:
         return False
 
+def _is_filesystem_root(root: str) -> bool:
+    resolved = os.path.realpath(root)
+    return os.path.dirname(resolved) == resolved
+
+
+def _walk_error(error):
+    raise error
+
+
 def tracked_file_modes(root: str) -> dict[str, str]:
     """Read index modes so link placeholders and real links have one census."""
     git_entry = os.path.join(root, ".git")
     if not os.path.lexists(git_entry):
-        # Standalone source fixtures have no Git index. Never follow their links.
+        if _is_filesystem_root(root):
+            raise RuntimeError("filesystem-root source scan requires a Git index")
         modes = {}
-        for dp, dn, fns in os.walk(root):
+        for dp, dn, fns in os.walk(root, onerror=_walk_error):
             dn[:] = [d for d in dn if d not in _SKIP_DIRS and not d.startswith(".")]
             for fn in fns:
                 full = os.path.join(dp, fn)
                 rel = os.path.relpath(full, root).replace(os.sep, "/")
                 modes[rel] = "120000" if os.path.islink(full) else "100644"
         return modes
-
-    # It has a .git entry, so it is a git checkout. Read its index with sanitized environment.
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         out = subprocess.run(
-            ["git", "-c", "core.ignorecase=false", "ls-files", "--stage", "-z"],
+            ["git", "-c", "core.ignorecase=false", "-c", "core.fsmonitor=false",
+             "ls-files", "--stage", "--full-name", "-z", "--"],
             cwd=root, capture_output=True, check=True, env=env,
         )
     except (OSError, subprocess.CalledProcessError):
@@ -66,20 +78,47 @@ def tracked_file_modes(root: str) -> dict[str, str]:
         if stage != "0":
             raise RuntimeError(f"unmerged source index entry: {rel}")
         modes[rel] = mode
+    if _is_filesystem_root(root) and not modes:
+        raise RuntimeError("filesystem-root source index is empty")
     return modes
 
-def iter_source_files(root: str):
+
+def iter_tracked_files(root: str):
+    """Yield regular working sources without following links or linked parents."""
     modes = tracked_file_modes(root)
+    base = os.path.realpath(root)
     for rel in sorted(modes):
+        parts = rel.split("/")
+        if (os.path.isabs(rel) or "\\" in rel or "\0" in rel
+                or any(p in ("", ".", "..") for p in parts)):
+            raise RuntimeError("invalid tracked source path")
+        if modes[rel] in ("120000", "160000"):
+            continue
         if modes[rel] not in ("100644", "100755"):
+            raise RuntimeError("invalid tracked source mode")
+        full = base
+        for index, part in enumerate(parts):
+            full = os.path.join(full, part)
+            try:
+                mode = os.lstat(full).st_mode
+            except FileNotFoundError:
+                break
+            if stat.S_ISLNK(mode):
+                break
+            if index < len(parts) - 1:
+                if not stat.S_ISDIR(mode):
+                    raise RuntimeError("tracked source parent is not a directory")
+            elif not stat.S_ISREG(mode):
+                raise RuntimeError("tracked source is not a regular file")
+            else:
+                yield rel, full
+
+
+def iter_source_files(root: str):
+    for rel, full in iter_tracked_files(root):
+        if set(rel.split("/")) & _SKIP_DIRS:
             continue
-        parts = set(rel.split("/"))
-        if parts & _SKIP_DIRS:
-            continue
-        if not (rel.endswith(SCAN_EXT) or _is_libexec_verb(root, rel)):
-            continue
-        full = os.path.join(root, rel.replace("/", os.sep))
-        if os.path.isfile(full) and not os.path.islink(full):
+        if rel.endswith(SCAN_EXT) or _is_libexec_verb(root, rel):
             yield rel, full
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
