@@ -791,8 +791,9 @@ if ($skippedClients.Count) {
     Write-Warning ("MiOS client setup: {0} client config(s) skipped and left unchanged: {1}" -f $skippedClients.Count, ($skippedClients -join '; '))
 }
 # Installation, build-time staging and each runtime projection share the Rust renderer.
-& (Join-Path $BinDirectory 'mios-launch.exe') --stage-host-terminal
-if ($LASTEXITCODE -ne 0) { throw "Native host tmux projection failed (exit $LASTEXITCODE)" }
+# The launcher is a GUI process; staging must finish before installation continues.
+$projectionProcess = Start-Process -FilePath (Join-Path $BinDirectory 'mios-launch.exe') -ArgumentList '--stage-host-terminal' -NoNewWindow -Wait -PassThru
+if ($projectionProcess.ExitCode -ne 0) { throw "Native host tmux projection failed (exit $($projectionProcess.ExitCode))" }
 # Reconcile the same entrypoints on install and each native runtime projection.
 # Preserve the icon and hotkey while replacing the retired hub launcher route.
 $shell = New-Object -ComObject WScript.Shell

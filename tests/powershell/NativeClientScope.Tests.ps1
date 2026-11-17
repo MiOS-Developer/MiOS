@@ -105,3 +105,86 @@ Describe 'Native client setup scopes' {
         @([regex]::Matches($script:setupText, "mios-native-client-setup\.ps1'\) -(RepairRuntime|RuntimeOnly) -BinDirectory \`$PSScriptRoot @scopeArgs")).Count | Should -Be 2
     }
 }
+Describe 'Native terminal projection process status' {
+    BeforeAll {
+# Only extracted staging code runs. Files and processes are in-memory fixtures;
+# a legacy direct invocation targets a nonexistent file beneath the scratch root.
+function Invoke-MiosTerminalProjectionProbe {
+    param([string]$Body, [string]$FixtureBin, [int]$NativeCode, [int]$StaleCode,
+          [bool]$FunctionMode = $true, [bool]$Present = $true)
+    $calls = New-Object System.Collections.Generic.List[object]
+    function Get-MiosInstalledLayout { [pscustomobject]@{ NativeBin = $FixtureBin } }
+    function Test-Path {
+        param([string]$LiteralPath, [string]$PathType)
+        return $Present -and ($LiteralPath -in @((Join-Path $FixtureBin 'mios-launch.exe'), (Join-Path $FixtureBin 'native-binding.json')))
+    }
+    function Start-Process {
+        param([string]$FilePath, [string[]]$ArgumentList, [switch]$NoNewWindow, [switch]$Wait, [switch]$PassThru)
+        $calls.Add([pscustomobject]@{ FilePath=$FilePath; Arguments=@($ArgumentList); Wait=[bool]$Wait; PassThru=[bool]$PassThru; NoNewWindow=[bool]$NoNewWindow })
+        if ($PassThru) { [pscustomobject]@{ ExitCode = $NativeCode } }
+    }
+    $savedBin = $env:MIOS_NATIVE_BIN
+    $savedExit = Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    $hadExit = $null -ne $savedExit; $savedExitValue = if ($hadExit) { $savedExit.Value } else { $null }
+    $env:MIOS_NATIVE_BIN = $FixtureBin; $global:LASTEXITCODE = $StaleCode
+    $BinDirectory = $FixtureBin; $accepted = $false; $message = $null; $value = $null
+    try {
+        if ($FunctionMode) { . ([scriptblock]::Create($Body)); $value = Install-MiOSTmuxProfile -Required }
+        else { $value = . ([scriptblock]::Create($Body)) }
+        $accepted = $true
+    } catch { $message = $_.Exception.Message }
+    finally {
+        $env:MIOS_NATIVE_BIN = $savedBin
+        if ($hadExit) { $global:LASTEXITCODE = $savedExitValue } else { Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
+    }
+    [pscustomobject]@{ Accepted=$accepted; Message=$message; Calls=@($calls.ToArray()); Value=$value }
+}
+        function Get-MiosTerminalProjectionCode([string]$Surface) {
+            if ($Surface -eq 'client setup') {
+                $nodes = @($script:setupAst.EndBlock.Statements)
+                $sites = @($nodes | Where-Object { $_ -isnot [Management.Automation.Language.FunctionDefinitionAst] -and $_.Extent.Text.Contains('--stage-host-terminal') })
+                if ($sites.Count -ne 1) { throw 'Expected exactly one production client staging site' }
+                $index = [array]::IndexOf($nodes, $sites[0])
+                if ($nodes[$index + 1] -isnot [Management.Automation.Language.IfStatementAst]) { throw 'Production staging exit guard missing' }
+                return ($sites[0].Extent.Text + "`n" + $nodes[$index + 1].Extent.Text)
+            }
+            $path = Join-Path (Join-Path $PSScriptRoot '../..') $Surface
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { throw 'Invalid production installer source' }
+            $fn = $ast.Find({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Install-MiOSTmuxProfile' }, $true)
+            if (-not $fn) { throw 'Production tmux staging function missing' }
+            return $fn.Extent.Text
+        }
+    }
+    It '<Surface> waits for its own GUI process and ignores a stale native failure' -ForEach @(
+        @{ Surface='Get-MiOS.ps1'; FunctionMode=$true }, @{ Surface='build-mios.ps1'; FunctionMode=$true }, @{ Surface='client setup'; FunctionMode=$false }
+    ) {
+        $bin = Join-Path $TestDrive 'projection-bin'
+        $r = Invoke-MiosTerminalProjectionProbe -Body (Get-MiosTerminalProjectionCode $Surface) -FixtureBin $bin -NativeCode 0 -StaleCode -1978335189 -FunctionMode $FunctionMode
+        $r.Accepted | Should -BeTrue
+        $r.Calls.Count | Should -Be 1
+        $r.Calls[0].FilePath | Should -BeExactly (Join-Path $bin 'mios-launch.exe')
+        ($r.Calls[0].Arguments -join '|') | Should -BeExactly '--stage-host-terminal'
+        $r.Calls[0].Wait | Should -BeTrue
+        $r.Calls[0].PassThru | Should -BeTrue
+        $r.Calls[0].NoNewWindow | Should -BeTrue
+    }
+    It '<Surface> propagates a real GUI failure even when LASTEXITCODE is zero' -ForEach @(
+        @{ Surface='Get-MiOS.ps1'; FunctionMode=$true }, @{ Surface='build-mios.ps1'; FunctionMode=$true }, @{ Surface='client setup'; FunctionMode=$false }
+    ) {
+        $r = Invoke-MiosTerminalProjectionProbe -Body (Get-MiosTerminalProjectionCode $Surface) -FixtureBin (Join-Path $TestDrive 'projection-bin') -NativeCode 7 -StaleCode 0 -FunctionMode $FunctionMode
+        $r.Accepted | Should -BeFalse
+        $r.Message | Should -Match '\(exit 7\)'
+        $r.Calls.Count | Should -Be 1
+        $r.Calls[0].Wait | Should -BeTrue
+    }
+    It '<Surface> still refuses a missing required native renderer without starting a process' -ForEach @(
+        @{ Surface='Get-MiOS.ps1' }, @{ Surface='build-mios.ps1' }
+    ) {
+        $r = Invoke-MiosTerminalProjectionProbe -Body (Get-MiosTerminalProjectionCode $Surface) -FixtureBin (Join-Path $TestDrive 'projection-bin') -NativeCode 0 -StaleCode 0 -Present $false
+        $r.Accepted | Should -BeFalse
+        $r.Message | Should -Match 'missing.*incomplete'
+        $r.Calls.Count | Should -Be 0
+    }
+}

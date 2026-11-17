@@ -4615,8 +4615,10 @@ function Install-MiOSTmuxProfile {
         if (-not $nativeRoot) { continue }
         $launcher = Join-Path $nativeRoot 'mios-launch.exe'
         if ((Test-Path -LiteralPath $launcher -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $nativeRoot 'native-binding.json') -PathType Leaf)) {
-            & $launcher --stage-host-terminal
-            if ($LASTEXITCODE -ne 0) { throw "Native layered SSOT tmux projection failed (exit $LASTEXITCODE)" }
+            # GUI launchers are asynchronous under irm|iex; do not reuse a stale native exit code.
+            # Wait for this projection and consume this process's own status.
+            $projectionProcess = Start-Process -FilePath $launcher -ArgumentList '--stage-host-terminal' -NoNewWindow -Wait -PassThru
+            if ($projectionProcess.ExitCode -ne 0) { throw "Native layered SSOT tmux projection failed (exit $($projectionProcess.ExitCode))" }
             return (Join-Path $env:LOCALAPPDATA 'MiOS\terminal\mios-host.tmux.conf')
         }
     }
