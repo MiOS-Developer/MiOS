@@ -2,8 +2,8 @@
 // AI-related: usr/libexec/mios/mios-hardcode-lint, automation/98-drift-checks.sh, usr/share/mios/mios.toml
 
 use std::fs;
-use std::path::Path;
-use std::process::ExitCode;
+use std::path::{Component, Path, PathBuf};
+use std::process::{Command, ExitCode};
 
 use regex::Regex;
 use walkdir::WalkDir;
@@ -614,7 +614,143 @@ fn check_ports_ips_py(
     out
 }
 
-fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
+// A deployed source checkout can be the filesystem root. Never recurse through
+// its runtime mounts: the Git index is the source census, not the live disk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourceScope {
+    SourceTree,
+    DeployedRoot,
+}
+
+fn source_scope(root: &Path) -> Result<SourceScope, String> {
+    let canonical = fs::canonicalize(root)
+        .map_err(|e| format!("cannot resolve source root {}: {e}", root.display()))?;
+    Ok(if canonical.parent().is_none() {
+        SourceScope::DeployedRoot
+    } else {
+        SourceScope::SourceTree
+    })
+}
+
+fn source_git(root: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(root)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0");
+    for name in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ] {
+        command.env_remove(name);
+    }
+    command
+}
+
+fn tracked_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let root =
+        fs::canonicalize(root).map_err(|e| format!("cannot resolve deployed source root: {e}"))?;
+    if !root.join(".git").exists() {
+        return Err(format!(
+            "refusing filesystem-root traversal: no Git checkout at {}",
+            root.display()
+        ));
+    }
+    let output = source_git(&root)
+        .args(["ls-files", "--cached", "--full-name", "-z", "--"])
+        .output()
+        .map_err(|e| format!("cannot enumerate tracked source in {}: {e}", root.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "tracked source census failed in {} ({}): {}",
+            root.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let listing = String::from_utf8(output.stdout)
+        .map_err(|e| format!("tracked source paths are not UTF-8: {e}"))?;
+    if listing.is_empty() {
+        return Err("tracked source census is empty; refusing filesystem-root traversal".into());
+    }
+    let mut files = Vec::new();
+    'candidate: for name in listing.split('\0').filter(|name| !name.is_empty()) {
+        let relative = Path::new(name);
+        let mut path = root.clone();
+        let mut regular = false;
+        for component in relative.components() {
+            let Component::Normal(part) = component else {
+                return Err("tracked source census contains a non-relative path".into());
+            };
+            path.push(part);
+            match fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    if metadata.file_type().is_symlink() {
+                        continue 'candidate;
+                    }
+                    regular = metadata.is_file();
+                }
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) =>
+                {
+                    continue 'candidate
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "cannot inspect tracked source {}: {e}",
+                        path.display()
+                    ))
+                }
+            }
+        }
+        if regular {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files.dedup();
+    Ok(files)
+}
+
+fn source_files(root: &Path, scope: SourceScope) -> Result<Vec<PathBuf>, String> {
+    if scope == SourceScope::DeployedRoot {
+        return tracked_source_files(root);
+    }
+    // Ordinary source trees include untracked files, but discovery/read errors
+    // must never turn an incomplete scan into a pass (even in advisory mode).
+    WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.file_type().is_dir() {
+                let name = entry.file_name().to_string_lossy();
+                if name == ".git" || name == "__pycache__" || name == "node_modules" {
+                    return false;
+                }
+            }
+            true
+        })
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_type().is_file() => Some(Ok(entry.into_path())),
+            Ok(_) => None,
+            Err(error) => Some(Err(format!("source discovery failed: {error}"))),
+        })
+        .collect()
+}
+
+fn read_source_file(path: &Path) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|error| format!("cannot read source {}: {error}", path.display()))
+}
+
+type Violation = (String, usize, String);
+type ScanOutput = (Vec<Violation>, usize);
+
+fn scan(roots: &[String]) -> Result<ScanOutput, String> {
     let mut violations = Vec::new();
     let mut scanned = 0;
 
@@ -633,33 +769,21 @@ fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
         Regex::new(r#"echo\s+["'][a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+["']\s*\|\s*chpasswd"#).unwrap();
 
     for root in roots {
-        let walker = WalkDir::new(root).into_iter().filter_entry(|entry| {
-            if entry.file_type().is_dir() {
-                let name = entry.file_name().to_string_lossy();
-                if name == ".git" || name == "__pycache__" || name == "node_modules" {
-                    return false;
-                }
-            }
-            true
-        });
-
-        for entry in walker.filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let p = entry.path();
+        let root = Path::new(root);
+        for path in source_files(root, source_scope(root)?)? {
+            let p = path.as_path();
             let rel = p.to_string_lossy().replace('\\', "/");
             if EXEMPT.iter().any(|x| rel.contains(x)) {
                 continue;
             }
-            let fn_str = entry.file_name().to_string_lossy();
+            let Some(file_name) = p.file_name() else {
+                continue;
+            };
+            let fn_str = file_name.to_string_lossy();
             if !CODE_EXT.iter().any(|ext| fn_str.ends_with(ext)) {
                 continue;
             }
-            let raw = match fs::read(p) {
-                Ok(bytes) => bytes,
-                Err(_) => continue,
-            };
+            let raw = read_source_file(p)?;
             if raw.is_empty() {
                 continue;
             }
@@ -809,7 +933,7 @@ fn scan(roots: &[String]) -> (Vec<(String, usize, String)>, usize) {
         }
     }
 
-    (violations, scanned)
+    Ok((violations, scanned))
 }
 
 fn main() -> ExitCode {
@@ -842,7 +966,13 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let (violations, scanned) = scan(&roots);
+    let (violations, scanned) = match scan(&roots) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("[mios-hardcode-lint] FAIL: source discovery: {error}");
+            return ExitCode::from(1);
+        }
+    };
 
     if scanned == 0 {
         eprintln!(
@@ -882,6 +1012,234 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct SourceFixture(PathBuf);
+
+    impl SourceFixture {
+        fn new(git: bool) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "mios-hardcode-root-scope-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("fixture path must be new, never overwritten");
+            let fixture = Self(path);
+            if git {
+                fixture.git(&["init", "--quiet"]);
+            }
+            fixture
+        }
+
+        fn git(&self, args: &[&str]) {
+            let out = source_git(&self.0).args(args).output().unwrap();
+            assert!(
+                out.status.success(),
+                "git fixture failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        fn file(&self, name: &str, text: &str) -> PathBuf {
+            let path = self.0.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, text).unwrap();
+            path
+        }
+
+        fn deployed_files(&self) -> Vec<PathBuf> {
+            source_files(&self.0, SourceScope::DeployedRoot).unwrap()
+        }
+    }
+
+    impl Drop for SourceFixture {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).expect("remove only this newly created owned fixture");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn filesystem_root_aliases_select_tracked_scope() {
+        for root in ["/", "//", "///", "/."] {
+            assert_eq!(
+                source_scope(Path::new(root)).unwrap(),
+                SourceScope::DeployedRoot
+            );
+        }
+    }
+
+    #[test]
+    fn normal_directories_and_files_retain_tree_scope() {
+        let root = SourceFixture::new(false);
+        let file = root.file("source.py", "print('safe')\n");
+        assert_eq!(source_scope(&root.0).unwrap(), SourceScope::SourceTree);
+        assert_eq!(source_scope(&file).unwrap(), SourceScope::SourceTree);
+        assert_eq!(
+            source_files(&file, SourceScope::SourceTree).unwrap(),
+            vec![file]
+        );
+    }
+
+    #[test]
+    fn deployed_scope_uses_only_index_and_never_enters_untracked_runtime_tree() {
+        let root = SourceFixture::new(true);
+        let tracked = root.file("src/tracked script.sh", "#!/bin/sh\necho safe\n");
+        root.git(&["add", "--", "src/tracked script.sh"]);
+        let outside = root.file("mnt/host/runtime.py", "service = 'localhost:12345'\n");
+        let before = fs::read(root.0.join(".git/index")).unwrap();
+        assert_eq!(
+            root.deployed_files(),
+            vec![fs::canonicalize(tracked).unwrap()]
+        );
+        assert_eq!(fs::read(root.0.join(".git/index")).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "service = 'localhost:12345'\n"
+        );
+    }
+
+    #[test]
+    fn tracked_working_edits_are_linted_without_rewriting_file_or_index() {
+        let root = SourceFixture::new(true);
+        let path = root.file("source.py", "print('safe')\n");
+        root.git(&["add", "--", "source.py"]);
+        let changed = "service = 'localhost:12345'\n";
+        fs::write(&path, changed).unwrap();
+        let before_index = fs::read(root.0.join(".git/index")).unwrap();
+        let roots: Vec<String> = root
+            .deployed_files()
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let (violations, scanned) = scan(&roots).unwrap();
+        assert_eq!(scanned, 1);
+        assert!(violations
+            .iter()
+            .any(|v| v.2.starts_with("HARDCODED-PORT/IP:")));
+        assert_eq!(fs::read_to_string(path).unwrap(), changed);
+        assert_eq!(fs::read(root.0.join(".git/index")).unwrap(), before_index);
+    }
+
+    #[test]
+    fn tracked_header_violations_still_fail_real_scanner() {
+        let root = SourceFixture::new(true);
+        root.file("source.sh", "# misplaced header\n#!/bin/sh\necho safe\n");
+        root.git(&["add", "--", "source.sh"]);
+        let roots: Vec<String> = root
+            .deployed_files()
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let (violations, scanned) = scan(&roots).unwrap();
+        assert_eq!(scanned, 1);
+        assert!(violations.iter().any(|v| v.2.starts_with("HEADER:")));
+    }
+
+    #[test]
+    fn deployed_scope_without_git_refuses_instead_of_walking() {
+        let root = SourceFixture::new(false);
+        root.file("untracked.py", "print('safe')\n");
+        assert!(source_files(&root.0, SourceScope::DeployedRoot)
+            .unwrap_err()
+            .contains("no Git checkout"));
+    }
+
+    #[test]
+    fn deployed_scope_with_broken_git_refuses_instead_of_walking() {
+        let root = SourceFixture::new(false);
+        root.file(".git", "invalid git metadata\n");
+        root.file("untracked.py", "print('safe')\n");
+        assert!(source_files(&root.0, SourceScope::DeployedRoot)
+            .unwrap_err()
+            .contains("tracked source census failed"));
+    }
+
+    #[test]
+    fn empty_git_index_refuses_untracked_runtime_fallback() {
+        let root = SourceFixture::new(true);
+        root.file("runtime.py", "print('safe')\n");
+        assert!(source_files(&root.0, SourceScope::DeployedRoot)
+            .unwrap_err()
+            .contains("census is empty"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nul_delimited_git_names_preserve_spaces_and_newlines() {
+        let root = SourceFixture::new(true);
+        let name = "src/space and\nnewline.sh";
+        let path = root.file(name, "#!/bin/sh\necho safe\n");
+        root.git(&["add", "--", name]);
+        assert_eq!(root.deployed_files(), vec![fs::canonicalize(path).unwrap()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deployed_scope_never_follows_tracked_file_symlink() {
+        let root = SourceFixture::new(true);
+        let outside = SourceFixture::new(false);
+        let path = root.file("source.py", "print('safe')\n");
+        let target = outside.file("outside.py", "service = 'localhost:12345'\n");
+        root.git(&["add", "--", "source.py"]);
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(root.deployed_files().is_empty());
+        assert_eq!(
+            fs::read_to_string(target).unwrap(),
+            "service = 'localhost:12345'\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deployed_scope_never_follows_tracked_directory_replaced_by_symlink() {
+        let root = SourceFixture::new(true);
+        let outside = SourceFixture::new(false);
+        root.file("src/source.py", "print('safe')\n");
+        outside.file("source.py", "service = 'localhost:12345'\n");
+        root.git(&["add", "--", "src/source.py"]);
+        fs::rename(root.0.join("src"), root.0.join("saved-source")).unwrap();
+        std::os::unix::fs::symlink(&outside.0, root.0.join("src")).unwrap();
+        assert!(root.deployed_files().is_empty());
+    }
+
+    #[test]
+    fn deleted_tracked_files_do_not_fall_back_to_runtime_walk() {
+        let root = SourceFixture::new(true);
+        let deleted = root.file("deleted.py", "print('safe')\n");
+        let kept = root.file("kept.py", "print('safe')\n");
+        root.git(&["add", "--", "deleted.py", "kept.py"]);
+        fs::remove_file(deleted).unwrap();
+        root.file("runtime.py", "service = 'localhost:12345'\n");
+        assert_eq!(root.deployed_files(), vec![fs::canonicalize(kept).unwrap()]);
+    }
+
+    #[test]
+    fn ordinary_tree_still_lints_untracked_sources_and_prunes_legacy_exempt_dirs() {
+        let root = SourceFixture::new(false);
+        root.file("source.py", "service = 'localhost:12345'\n");
+        root.file("node_modules/ignored.py", "service = 'localhost:12345'\n");
+        root.file("__pycache__/ignored.py", "service = 'localhost:12345'\n");
+        let (violations, scanned) = scan(&[root.0.to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(scanned, 1);
+        assert!(violations
+            .iter()
+            .any(|v| v.2.starts_with("HARDCODED-PORT/IP:")));
+    }
+
+    #[test]
+    fn source_discovery_errors_are_not_swallowed() {
+        let root = SourceFixture::new(false);
+        assert!(source_files(&root.0.join("missing"), SourceScope::SourceTree).is_err());
+    }
+
+    #[test]
+    fn source_read_errors_are_not_swallowed() {
+        let root = SourceFixture::new(false);
+        assert!(read_source_file(&root.0.join("missing.py")).is_err());
+    }
 
     #[test]
     fn test_header_risk_ps1() {
