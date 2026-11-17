@@ -188,3 +188,109 @@ function Invoke-MiosTerminalProjectionProbe {
         $r.Calls.Count | Should -Be 0
     }
 }
+
+Describe 'Native wallpaper installer scopes' {
+    BeforeAll {
+        # Extract the production wallpaper stage, not a duplicate implementation.
+        function Get-MiosWallpaperStageCode([string]$Text) {
+            $m = [regex]::Matches($Text, '(?ms)^    # -- mios-wallpaperd[^\n]*\n(?<Body>.*?)^\s*# Register MiOS-Autostart ')
+            if ($m.Count -ne 1) { throw 'Missing or ambiguous production wallpaper stage' }
+            return $m[0].Groups['Body'].Value
+        }
+        # No real service, artifact, process, WSL, registry or filesystem operations run.
+        function Invoke-MiosWallpaperScopeProbe {
+            param([string]$Body, [string]$FixtureRoot, [bool]$Elevated, [bool]$Exists = $true,
+                  [int]$CreateExit = 0, [switch]$ArtifactFail, [switch]$StartFail)
+            $state = @{ Artifact=0; ServiceArgument=''; Binary=''; Destination=''; Queries=0; Created=0; Started=0; Warnings=@(); Error=$null }
+            $adminVar = Get-Variable -Name IsAdmin -Scope Script -ErrorAction SilentlyContinue
+            $hadAdmin = $null -ne $adminVar; $oldAdmin = if ($hadAdmin) { $adminVar.Value } else { $null }
+            $lastVar = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+            $hadLast = $null -ne $lastVar; $oldLast = if ($hadLast) { $lastVar.Value } else { $null }
+            $MiosBinDir = Join-Path $FixtureRoot 'User install bin'
+            $MiosRepoDir = Join-Path $FixtureRoot 'system checkout'
+            $DevDistro = 'fixture-MiOS-DEV'
+            function Install-MiosNativeWindowsArtifact {
+                param($Root, $Machine, $Binary, $Destination, $ServiceName)
+                $state.Artifact++; $state.ServiceArgument=$ServiceName; $state.Binary=$Binary; $state.Destination=$Destination
+                if ($ArtifactFail) { throw 'fixture native artifact failure' }
+                if ($ServiceName -and -not $Elevated) { throw 'fixture machine-service stop denied' }
+                return $Destination
+            }
+            function Get-Service {
+                [CmdletBinding()] param([string]$Name)
+                $state.Queries++
+                if (-not $Elevated) { throw 'fixture User scope queried a machine service' }
+                if ($Name -ne 'MiOS-Wallpaper-Service') { throw 'fixture wrong service queried' }
+                if ($Exists) { return [pscustomobject]@{ Status='Running' } }
+            }
+            function Start-Service {
+                [CmdletBinding()] param([string]$Name)
+                $state.Started++
+                if (-not $Elevated -or $Name -ne 'MiOS-Wallpaper-Service') { throw 'fixture User scope started a machine service' }
+                if ($StartFail) { throw 'fixture service start failure' }
+            }
+            function sc.exe {
+                param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
+                $state.Created++
+                if (-not $Elevated -or $Arguments[0] -ne 'create' -or $Arguments[1] -ne 'MiOS-Wallpaper-Service') { throw 'fixture invalid machine service registration' }
+                if (($Arguments -join '|') -notlike ('*'+$state.Destination+'*')) { throw 'fixture unverified service destination' }
+                $global:LASTEXITCODE=$CreateExit
+            }
+            function Log-Ok { param($Message) }
+            function Log-Warn { param($Message) $state.Warnings += $Message }
+            try { $script:IsAdmin=$Elevated; $global:LASTEXITCODE=0; & ([scriptblock]::Create($Body)) }
+            catch { $state.Error=$_.Exception.Message }
+            finally {
+                if ($hadAdmin) { Set-Variable -Name IsAdmin -Scope Script -Value $oldAdmin } else { Remove-Variable -Name IsAdmin -Scope Script -ErrorAction SilentlyContinue }
+                if ($hadLast) { Set-Variable -Name LASTEXITCODE -Scope Global -Value $oldLast } else { Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
+            }
+            return [pscustomobject]$state
+        }
+        $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot '../../build-mios.ps1')).Replace("`r`n", "`n")
+        $script:wallpaperStageCode = Get-MiosWallpaperStageCode $text
+    }
+    It 'stages the verified User binary without stopping, querying, creating or starting the machine service' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $false
+        $r.Error | Should -BeNullOrEmpty
+        $r.Artifact | Should -Be 1
+        $r.ServiceArgument | Should -BeNullOrEmpty
+        $r.Binary | Should -Be 'mios-wallpaperd'
+        $r.Destination | Should -Be (Join-Path (Join-Path $TestDrive 'User install bin') 'mios-wallpaperd.exe')
+        ($r.Queries + $r.Created + $r.Started) | Should -Be 0
+        ($r.Warnings -join ' ') | Should -Match 'User scope:.*service setup deferred.*existing machine service unchanged'
+    }
+    It 'does not swallow a User artifact build or verification failure' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $false -ArtifactFail
+        $r.Error | Should -Be 'fixture native artifact failure'
+        ($r.Queries + $r.Created + $r.Started) | Should -Be 0
+    }
+    It 'retains the named Machine service handoff and starts an existing service' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $true
+        $r.Error | Should -BeNullOrEmpty
+        $r.ServiceArgument | Should -Be 'MiOS-Wallpaper-Service'
+        $r.Queries | Should -Be 1
+        $r.Created | Should -Be 0
+        $r.Started | Should -Be 1
+    }
+    It 'registers a missing Machine service only after its artifact was verified' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $true -Exists $false
+        $r.Error | Should -BeNullOrEmpty
+        $r.Artifact | Should -Be 1
+        $r.Created | Should -Be 1
+        $r.Started | Should -Be 1
+    }
+    It 'propagates a Machine service registration failure without starting it' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $true -Exists $false -CreateExit 5
+        $r.Error | Should -Be 'Could not register the verified MiOS wallpaper service'
+        $r.Started | Should -Be 0
+    }
+    It 'propagates a Machine service start failure' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $true -StartFail
+        $r.Error | Should -Be 'fixture service start failure'
+    }
+    It 'propagates a Machine artifact or stop failure without registering or starting a service' {
+        $r = Invoke-MiosWallpaperScopeProbe -Body $script:wallpaperStageCode -FixtureRoot $TestDrive -Elevated $true -ArtifactFail
+        $r.Error | Should -Be 'fixture native artifact failure'
+        ($r.Queries + $r.Created + $r.Started) | Should -Be 0
+    }
+}

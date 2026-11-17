@@ -6001,13 +6001,19 @@ $endMark
     # -- mios-wallpaperd (Rust native living wallpaper + gui-watch daemon, task_3425) --
     $wallpaperd_exe = Join-Path $MiosBinDir 'mios-wallpaperd.exe'
     $svcName = 'MiOS-Wallpaper-Service'
-    $null = Install-MiosNativeWindowsArtifact -Root $MiosRepoDir -Machine $DevDistro -Binary 'mios-wallpaperd' -Destination $wallpaperd_exe -ServiceName $svcName
+    # User installs stage their verified binary without controlling a machine service.
+    $wallpaperServiceName = if ($script:IsAdmin) { $svcName } else { '' }
+    $null = Install-MiosNativeWindowsArtifact -Root $MiosRepoDir -Machine $DevDistro -Binary 'mios-wallpaperd' -Destination $wallpaperd_exe -ServiceName $wallpaperServiceName
     Log-Ok "SSOT Windows wallpaper release verified and installed: $wallpaperd_exe"
-    if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
-        & sc.exe create $svcName binPath= "`"$wallpaperd_exe`"" start= auto displayname= 'MiOS Wallpaper Service' | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'Could not register the verified MiOS wallpaper service' }
+    if ($script:IsAdmin) {
+        if (-not (Get-Service -Name $svcName -ErrorAction SilentlyContinue)) {
+            & sc.exe create $svcName binPath= "`"$wallpaperd_exe`"" start= auto displayname= 'MiOS Wallpaper Service' | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not register the verified MiOS wallpaper service' }
+        }
+        Start-Service -Name $svcName -ErrorAction Stop
+    } else {
+        Log-Warn 'User scope: MiOS wallpaper service setup deferred (requires elevation); verified per-user binary retained; existing machine service unchanged'
     }
-    Start-Service -Name $svcName -ErrorAction Stop
 
             # Register MiOS-Autostart (AtLogon trigger, RunLevel Highest, hidden).
             # NOTE: aa5f216e replaced the enclosing mios-gui-watch `if ($_gwSrc) { try {`
