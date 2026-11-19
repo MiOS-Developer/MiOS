@@ -47,7 +47,7 @@ are all in scope. Design ahead of hardware is legitimate here; presenting a
 | Tracked size | 698 MB | Two vendored assets are most of it. |
 | Shell / Python / PowerShell / Rust | 69k / 356k / 37k / 323k lines | Law 14 makes Rust the native tier; PowerShell currently outweighs it 0.1x. |
 | Drift checks | 246 | Falsifiability audited per check, not assumed. |
-| Units reproducing from SSOT | 55 faithful of 286 | 52 registered as drifting: the largest hole in part 1 of the thesis. |
+| Units reproducing from SSOT | 56 faithful of 286 | 52 registered as drifting: the largest hole in part 1 of the thesis. |
 <!-- ROADMAP_METRICS_END -->
 
 ### The four open campaigns
