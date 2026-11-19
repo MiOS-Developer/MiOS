@@ -70,6 +70,8 @@ COPY --from=rust-builder /out/usr/ /usr/
 ARG MIOS_IDENTITY_USERNAME
 ARG MIOS_IDENTITY_HOSTNAME
 # desk-038 F2: Operator credential hash is passed via --secret id=mios_user_password_hash, never ARG.
+# GitHub API token for the bake (optional): --secret id=mios_github_token; scurl
+# reads /run/secrets/mios_github_token. Absent, API calls run unauthenticated.
 ARG MIOS_DESKTOP_FLATPAKS=
 ARG MIOS_AI_MODEL
 ARG MIOS_AI_EMBED_MODEL
@@ -97,6 +99,7 @@ RUN --mount=type=bind,from=ctx,source=/ctx,target=/ctx,ro \
     --mount=type=cache,dst=/var/cache/dnf5,sharing=locked \
     --mount=type=cache,dst=/var/cache/dnf,sharing=locked \
     --mount=type=secret,id=mios_user_password_hash,required=false \
+    --mount=type=secret,id=mios_github_token,required=false \
     set -ex; \
     if [ -f /run/secrets/mios_user_password_hash ]; then \
         MIOS_USER_PASSWORD_HASH="$(cat /run/secrets/mios_user_password_hash)"; \
