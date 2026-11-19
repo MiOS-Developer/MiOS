@@ -18,6 +18,40 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+/// The fake tailscale's body. `--socket=PATH` is recorded and dropped; `nc HOST
+/// PORT` records its arguments and pipes stdin/stdout to 127.0.0.1:PORT, where
+/// the signer under test listens (unless `nc.fail` exists: it fails; or
+/// `nc.hang`: it accepts and never answers).
+const FAKE_TAILSCALE: &str = r#"case "$1" in
+  --socket=*) printf '%s\n' "${1#--socket=}" > "$ts/socket-arg"; shift ;;
+esac
+case "$1" in
+  ip) [ "$2" = -4 ] && echo 127.0.0.1 ;;
+  status) [ "$2" = --json ] && cat "$ts/status.json" ;;
+  whois) [ "$2" = --json ] && [ "$3" = 127.0.0.1 ] && cat "$ts/whois.json" ;;
+  nc) printf '%s %s\n' "$2" "$3" > "$ts/nc-args"
+      [ -e "$ts/nc.fail" ] && exit 1
+      [ -e "$ts/nc.hang" ] && exec sleep 60
+      exec python3 -I -c '
+import os, socket, sys, threading
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
+def up():
+    while True:
+        d = os.read(0, 65536)
+        if not d:
+            break
+        s.sendall(d)
+threading.Thread(target=up, daemon=True).start()
+while True:
+    d = s.recv(65536)
+    if not d:
+        break
+    os.write(1, d)
+' "$3" ;;
+  *) exit 2 ;;
+esac
+"#;
+
 /// A MiOS root whose vendor tier is the real SSOT and whose host tier enables
 /// the CA with a key under the fixture, plus a fake tailscale on PATH.
 struct Fixture {
@@ -55,10 +89,7 @@ impl Fixture {
         let fake = bin.join("tailscale");
         std::fs::write(
             &fake,
-            format!(
-                "#!/bin/sh\nts='{}'\ncase \"$1\" in\n  ip) [ \"$2\" = -4 ] && echo 127.0.0.1 ;;\n  status) [ \"$2\" = --json ] && cat \"$ts/status.json\" ;;\n  whois) [ \"$2\" = --json ] && [ \"$3\" = 127.0.0.1 ] && cat \"$ts/whois.json\" ;;\n  *) exit 2 ;;\nesac\n",
-                dir.path().display()
-            ),
+            format!("#!/bin/sh\nts='{}'\n{FAKE_TAILSCALE}", dir.path().display()),
         )
         .unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -70,6 +101,18 @@ impl Fixture {
         let f = Fixture { dir, port };
         f.status("mios.tail0.ts.net.");
         f
+    }
+
+    /// Replace the host tier's extra [ssh.ca] lines (key_file stays).
+    fn host(&self, host_ca: &str) {
+        std::fs::write(
+            self.dir.path().join("root/etc/mios/mios.toml"),
+            format!(
+                "[ssh.ca]\nkey_file = \"{}\"\n{host_ca}\n",
+                self.key_file().display()
+            ),
+        )
+        .unwrap();
     }
 
     fn key_file(&self) -> PathBuf {
@@ -111,8 +154,13 @@ impl Fixture {
     /// Run to completion; a command still running after 20 s fails the test
     /// (a `serve` that should have exited but listens instead).
     fn run(&self, sub: &str) -> std::process::Output {
+        self.run_with(sub, &[])
+    }
+
+    fn run_with(&self, sub: &str, args: &[&str]) -> std::process::Output {
         let mut child = self
             .command(sub)
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -562,4 +610,250 @@ fn serve_stays_down_unless_enabled_on_the_signer() {
     let out = f.run("serve");
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("mios-ssh-ca init"));
+}
+
+/// A cloud node's client state directory and the fake daemon socket it names.
+fn client_dir(f: &Fixture) -> (PathBuf, PathBuf) {
+    let dir = f.dir.path().join("client");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    (dir, f.dir.path().join("tailscaled.sock"))
+}
+
+fn request(f: &Fixture, dir: &Path, sock: &Path, extra: &[&str]) -> std::process::Output {
+    let mut args = vec![
+        "--dir",
+        dir.to_str().unwrap(),
+        "--socket",
+        sock.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    f.run_with("request", &args)
+}
+
+fn stderr(o: &std::process::Output) -> String {
+    String::from_utf8_lossy(&o.stderr).to_string()
+}
+
+fn fingerprint(path: &Path) -> String {
+    let o = Command::new("ssh-keygen")
+        .arg("-l")
+        .arg("-f")
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout)
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn a_cloud_node_installs_and_renews_its_agent_certificate() {
+    let f = Fixture::new(ENABLED);
+    assert!(f.run("init").status.success());
+    let server = f.serve();
+    f.whois("mios-cloud-1", OWNER, &[]);
+    let (dir, sock) = client_dir(&f);
+
+    let out = request(&f, &dir, &sock, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        out.stdout.is_empty(),
+        "request wrote to stdout, which is ssh's channel inside ProxyCommand"
+    );
+    // It went over `tailscale --socket=<sock> nc <signer> <[ports].ssh_ca>`.
+    let nc = std::fs::read_to_string(f.dir.path().join("nc-args")).unwrap();
+    assert_eq!(nc.trim(), format!("mios {}", f.port));
+    assert_eq!(
+        std::fs::read_to_string(f.dir.path().join("socket-arg"))
+            .unwrap()
+            .trim(),
+        sock.to_str().unwrap()
+    );
+
+    let key = dir.join("id_ed25519");
+    let cert = dir.join("id_ed25519-cert.pub");
+    assert_eq!(
+        std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let key_bytes = std::fs::read(&key).unwrap();
+    let listing = inspect(f.dir.path(), std::fs::read_to_string(&cert).unwrap().trim());
+    assert_eq!(block(&listing, "Principals:"), vec!["agent"]);
+    assert_eq!(block(&listing, "Key ID:"), vec!["\"mios-cloud-1-1\""]);
+    // The certificate is for this node's own key.
+    let own = Command::new("ssh-keygen")
+        .arg("-y")
+        .arg("-f")
+        .arg(&key)
+        .output()
+        .unwrap();
+    let pubf = f.dir.path().join("own.pub");
+    std::fs::write(&pubf, &own.stdout).unwrap();
+    assert_eq!(
+        block(&listing, "Public key:")[0]
+            .split_whitespace()
+            .nth(1)
+            .unwrap(),
+        fingerprint(&pubf)
+    );
+
+    // The ssh_config it writes logs in as agent with this certificate, through tailscale nc.
+    let cfg = std::fs::read_to_string(dir.join("ssh_config")).unwrap();
+    assert!(cfg.contains("\nHost mios mios-*\n"), "{cfg}");
+    assert!(
+        cfg.contains("    User agent\n") && cfg.contains("    Port 8100\n"),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains(&format!("    CertificateFile {}\n", cert.display())),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains(&format!(
+            "    ProxyCommand tailscale --socket={} nc %h %p\n",
+            sock.display()
+        )),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains(&format!(
+            "Match host mios,mios-* exec \"env MIOS_PORTS_SSH_CA={} {BIN} --root {} request --dir {} --socket {} --quiet >&2; true\"\nHost mios mios-*\n",
+            f.port,
+            f.dir.path().join("root").display(),
+            dir.display(),
+            sock.display()
+        )),
+        "{cfg}"
+    );
+
+    // Still valid for longer than renew_before_s: nothing is asked, nothing changes.
+    let before = std::fs::read(&cert).unwrap();
+    let out = request(&f, &dir, &sock, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(stderr(&out).contains("not renewed"), "{}", stderr(&out));
+    assert_eq!(std::fs::read(&cert).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(f.dir.path().join("state/serial"))
+            .unwrap()
+            .trim(),
+        "1"
+    );
+    // --quiet says nothing while it is valid (ssh runs it before every login).
+    let out = request(&f, &dir, &sock, &["--quiet"]);
+    assert!(
+        out.status.success() && out.stderr.is_empty(),
+        "{}",
+        stderr(&out)
+    );
+
+    // Inside renew_before_s it renews: a new serial on the same key.
+    f.host(&format!("{ENABLED}\nrenew_before_s = 30000"));
+    let out = request(&f, &dir, &sock, &[]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let renewed = std::fs::read_to_string(&cert).unwrap();
+    assert_eq!(
+        block(&inspect(f.dir.path(), renewed.trim()), "Serial:"),
+        vec!["2"]
+    );
+    assert_eq!(
+        std::fs::read(&key).unwrap(),
+        key_bytes,
+        "renewal replaced the node's key"
+    );
+
+    // Pinned to the CA the signer really uses, it still installs.
+    let ca = String::from_utf8(f.run("pubkey").stdout).unwrap();
+    f.host(&format!("{ENABLED}\npublic_key = \"{}\"", ca.trim()));
+    let out = request(&f, &dir, &sock, &["--force"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        server
+            .log()
+            .contains("issued mios-cloud-1-3 to mios-cloud-1"),
+        "{}",
+        server.log()
+    );
+}
+
+#[test]
+fn a_cloud_node_installs_nothing_it_should_not_trust() {
+    let f = Fixture::new(ENABLED);
+    assert!(f.run("init").status.success());
+    let _server = f.serve();
+    let (dir, sock) = client_dir(&f);
+    let cert = dir.join("id_ed25519-cert.pub");
+
+    // The signer refuses this node: the error object reaches the operator, no certificate.
+    f.whois("mios-blade-1", OWNER, &[]);
+    let out = request(&f, &dir, &sock, &[]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("403 hostname_not_allowed"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!cert.exists());
+
+    // An allowed node gets one.
+    f.whois("mios-cloud-1", OWNER, &[]);
+    assert!(request(&f, &dir, &sock, &[]).status.success());
+    let good = std::fs::read(&cert).unwrap();
+
+    // Pinned to a different CA, the signer's certificate is refused and the
+    // installed one is kept.
+    let other = keygen(f.dir.path(), "other-ca");
+    f.host(&format!("{ENABLED}\npublic_key = \"{other}\""));
+    let out = request(&f, &dir, &sock, &["--force"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("not signed by [ssh.ca].public_key"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(std::fs::read(&cert).unwrap(), good);
+    // ...and a certificate from that other CA does not count as installed, so
+    // every run asks again rather than trusting it.
+    let out = request(&f, &dir, &sock, &[]);
+    assert!(!out.status.success(), "{}", stderr(&out));
+
+    // A signer that cannot be reached fails promptly and keeps the certificate.
+    f.host(ENABLED);
+    std::fs::write(f.dir.path().join("nc.fail"), "").unwrap();
+    let started = Instant::now();
+    let out = request(&f, &dir, &sock, &["--force"]);
+    assert!(!out.status.success());
+    assert!(
+        stderr(&out).contains("closed without a reply") || stderr(&out).contains("no reply"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(std::fs::read(&cert).unwrap(), good);
+
+    // A signer that accepts and never answers is given read_timeout_s, not forever.
+    std::fs::remove_file(f.dir.path().join("nc.fail")).unwrap();
+    std::fs::write(f.dir.path().join("nc.hang"), "").unwrap();
+    f.host(&format!("{ENABLED}\nread_timeout_s = 2"));
+    let started = Instant::now();
+    let out = request(&f, &dir, &sock, &["--force"]);
+    assert!(!out.status.success());
+    assert!(stderr(&out).contains("no reply"), "{}", stderr(&out));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(std::fs::read(&cert).unwrap(), good);
+
+    // Nothing but the expected files is left in the client directory.
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["id_ed25519", "id_ed25519-cert.pub", "ssh_config"]);
 }

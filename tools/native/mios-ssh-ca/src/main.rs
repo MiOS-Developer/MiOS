@@ -1,8 +1,10 @@
 // AI-hint: MiOS user SSH CA signer: init the CA key, print its public key, and serve tailnet-only certificate issuance to verified cloud nodes.
 // AI-related: tools/native/mios-ssh-ca/src/lib.rs, usr/share/mios/mios.toml [ssh.ca], usr/lib/systemd/system/mios-ssh-ca.service, usr/lib/mios/mios_credentials.py
-// AI-functions: main, run, init, pubkey, serve, handle, issue, accepted_key, sign, respond, DeadlineReader
+// AI-functions: main, run, init, generate_key, pubkey, serve, handle, issue, accepted_key, sign, respond, DeadlineReader
 
 #![forbid(unsafe_code)]
+
+mod request;
 
 use mios_ssh_ca::{
     authorize, load_config, next_serial, parse_request_body, parse_self, parse_whois, read_body,
@@ -15,7 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const USAGE: &str = "usage: mios-ssh-ca [--root DIR] <init|pubkey|serve>";
+const USAGE: &str =
+    "usage: mios-ssh-ca [--root DIR] <init|pubkey|serve|request --dir DIR [--socket PATH] [--force] [--quiet]>";
 
 fn main() -> ExitCode {
     match run() {
@@ -37,14 +40,22 @@ fn run() -> Result<(), String> {
         root = Some(PathBuf::from(args.remove(1)));
         args.remove(0);
     }
-    let [command] = args.as_slice() else {
+    let Some((command, rest)) = args.split_first() else {
         return Err(USAGE.into());
     };
+    if command != "request" && !rest.is_empty() {
+        return Err(USAGE.into());
+    }
     let cfg = load_config(root.as_deref())?;
     match command.as_str() {
         "init" => init(&cfg),
         "pubkey" => pubkey(&cfg),
         "serve" => serve(&cfg),
+        "request" => request::run(
+            &cfg,
+            root.as_deref(),
+            &request::Options::parse(rest).ok_or(USAGE)?,
+        ),
         _ => Err(USAGE.into()),
     }
 }
@@ -58,16 +69,26 @@ fn keygen_timeout(cfg: &Config) -> Duration {
 /// (or anything else at that path) is never overwritten.
 fn init(cfg: &Config) -> Result<(), String> {
     let key = &cfg.key_file;
-    if key.symlink_metadata().is_ok() {
+    let comment = format!("mios-user-ca@{}", cfg.signer);
+    if generate_key(key, &comment, keygen_timeout(cfg))? {
+        println!("mios-ssh-ca: created {}", key.display());
+    } else {
         println!("mios-ssh-ca: {} exists; left untouched", key.display());
-        return Ok(());
     }
-    let dir = key.parent().filter(|d| d.is_dir()).ok_or_else(|| {
-        format!(
-            "{} has no directory (declared in tmpfiles.d)",
-            key.display()
-        )
-    })?;
+    Ok(())
+}
+
+/// Generate an ed25519 key at `key` unless something is already there. It is
+/// made beside the target and hard-linked into place, which fails rather than
+/// replaces. Returns whether a key was created.
+pub(crate) fn generate_key(key: &Path, comment: &str, timeout: Duration) -> Result<bool, String> {
+    if key.symlink_metadata().is_ok() {
+        return Ok(false);
+    }
+    let dir = key
+        .parent()
+        .filter(|d| d.is_dir())
+        .ok_or_else(|| format!("{} has no directory", key.display()))?;
     let tmp = tempfile::Builder::new()
         .prefix(".mios-ssh-ca-")
         .tempdir_in(dir)
@@ -75,21 +96,13 @@ fn init(cfg: &Config) -> Result<(), String> {
     let fresh = tmp.path().join("key");
     run_bounded(
         Command::new("ssh-keygen")
-            .args(["-q", "-t", "ed25519", "-N", "", "-C"])
-            .arg(format!("mios-user-ca@{}", cfg.signer))
-            .arg("-f")
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f"])
             .arg(&fresh),
-        keygen_timeout(cfg),
+        timeout,
     )?;
     match std::fs::hard_link(&fresh, key) {
-        Ok(()) => {
-            println!("mios-ssh-ca: created {}", key.display());
-            Ok(())
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            println!("mios-ssh-ca: {} exists; left untouched", key.display());
-            Ok(())
-        }
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
         Err(e) => Err(format!("{}: {e}", key.display())),
     }
 }
