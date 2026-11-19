@@ -1062,6 +1062,161 @@ class TestSshKeys(unittest.TestCase):
         self.assertIn("ssh", mc.enabled_surfaces({"security": {"credential_apply": {"surfaces": ["shadow", "ssh"]}}}))
 
 
+class TestSshCa(unittest.TestCase):
+    """`mios-credential apply ssh_ca`: [ssh.ca].ca_file (sshd's TrustedUserCAKeys) holds exactly
+    the vendor/host [ssh.ca].public_key while [ssh.ca].enabled, and is removed otherwise. The
+    operator tier can never plant or swap the CA: it is a system-wide trust anchor."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ssh-keygen"):
+            raise unittest.SkipTest("ssh-keygen absent")
+        cls.ca, cls.other = _fixture_pubkeys(2)
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="mios-ssh-ca-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+        self.ca_file = os.path.join(self.d, "mios-user-ca.pub")
+
+    def _table(self, enabled=True, key=None):
+        return (f"[ssh.ca]\nenabled = {str(enabled).lower()}\npublic_key = {json.dumps(key if key is not None else self.ca)}\n"
+                f"ca_file = {json.dumps(self.ca_file)}\n")
+
+    def _view(self, vendor="", host="", op=""):
+        fx = _OpFixture(host_frag=f'[identity]\nusername = "{OP_USER}"\n' + host,
+                        op_toml=f'[identity]\ndefault_password = "{OP_PASS}"\n' + op, vendor_extra=vendor)
+        self.addCleanup(fx.cleanup)
+        return fx.view()[0]
+
+    def _anchor(self):
+        try:
+            with open(self.ca_file, encoding="utf-8") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return None
+
+    def test_the_vendor_or_host_key_becomes_the_anchor(self):
+        for tier in ("vendor", "host"):
+            with self.subTest(tier=tier):
+                data = self._view(**{tier: self._table()})
+                self.assertEqual(mc._apply_ssh_ca(data), "changed")
+                self.assertEqual(self._anchor(), self.ca + "\n")
+                self.assertEqual(stat.S_IMODE(os.stat(self.ca_file).st_mode), 0o644)
+                self.assertEqual(mc._apply_ssh_ca(data), "unchanged")
+                self.assertEqual(mc._apply_ssh_ca(data, check=True), "unchanged")
+                os.unlink(self.ca_file)
+
+    def test_disabled_or_empty_removes_the_anchor(self):
+        for table in (self._table(enabled=False), self._table(key="")):
+            with self.subTest(table=table):
+                with open(self.ca_file, "w", encoding="utf-8") as fh:
+                    fh.write(self.other + "\n")
+                data = self._view(vendor=table)
+                self.assertEqual(mc._apply_ssh_ca(data, check=True), "drift")
+                self.assertEqual(self._anchor(), self.other + "\n")
+                self.assertEqual(mc._apply_ssh_ca(data), "changed (no CA trusted)")
+                self.assertIsNone(self._anchor())
+                self.assertEqual(mc._apply_ssh_ca(data), "unchanged")
+
+    def test_the_operator_tier_cannot_plant_or_swap_the_ca(self):
+        planted = f"[ssh.ca]\nenabled = true\npublic_key = {json.dumps(self.other)}\n"
+        data = self._view(vendor=self._table(enabled=False), op=planted)
+        self.assertEqual(mc._apply_ssh_ca(data), "unchanged")
+        self.assertIsNone(self._anchor(), "the operator tier turned a CA on")
+        data = self._view(vendor=self._table(), op=planted)
+        self.assertEqual(mc._apply_ssh_ca(data), "changed")
+        self.assertEqual(self._anchor(), self.ca + "\n", "the operator tier swapped the CA")
+
+    def _real_certificate(self):
+        """A genuine user certificate line (ssh-keygen -l accepts it): only the type check refuses it."""
+        for name in ("ca", "user"):
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", os.path.join(self.d, name)],
+                           check=True, capture_output=True)
+        subprocess.run(["ssh-keygen", "-q", "-s", os.path.join(self.d, "ca"), "-I", "t", "-n", "agent",
+                        os.path.join(self.d, "user.pub")], check=True, capture_output=True)
+        with open(os.path.join(self.d, "user-cert.pub"), encoding="utf-8") as fh:
+            cert = fh.read().strip()
+        self.assertEqual(subprocess.run(["ssh-keygen", "-l", "-f", "-"], input=cert + "\n", text=True,
+                                        capture_output=True).returncode, 0, "fixture is not a readable cert")
+        return cert
+
+    def test_a_certificate_garbage_or_a_second_line_refuses_and_writes_nothing(self):
+        cert = self._real_certificate()
+        for bad in (cert, "ssh-ed25519 not-a-key", f"{self.ca}\n{self.other}"):
+            with self.subTest(bad=bad[:40]):
+                data = self._view(vendor=self._table(key=bad))
+                with self.assertRaises(mc.CredentialError):
+                    mc._apply_ssh_ca(data)
+                self.assertIsNone(self._anchor())
+
+    def test_a_ca_file_that_is_not_a_regular_file_is_left_alone(self):
+        target = os.path.join(self.d, "elsewhere")
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write("untouched\n")
+        os.symlink(target, self.ca_file)
+        state = mc._apply_ssh_ca(self._view(vendor=self._table()))
+        self.assertTrue(state.startswith("failed ("), state)
+        with open(target, encoding="utf-8") as fh:
+            self.assertEqual(fh.read(), "untouched\n")
+
+    def test_the_vendor_ssot_wires_the_surface_and_trusts_no_ca(self):
+        import tomllib
+        with open(os.path.join(ROOT, "usr", "share", "mios", "mios.toml"), "rb") as fh:
+            doc = tomllib.load(fh)
+        self.assertIn("ssh_ca", doc["security"]["credential_apply"]["surfaces"])
+        ca = doc["ssh"]["ca"]
+        self.assertEqual((ca["enabled"], ca["public_key"]), (False, ""), "the public image would trust a CA")
+        tier = doc["security"]["operator_tier"]
+        self.assertFalse([k for k in tier.get("values", []) + tier.get("lines", []) if k.startswith("ssh.")])
+
+
+class TestSshdPolicy(unittest.TestCase):
+    """The vendor sshd drop-ins are one policy (operator decision 2026-11-19: hardened, TCP
+    forwarding kept) and the build routes Fedora's sshd to them. sshd keeps the FIRST value per
+    keyword, so a keyword in two drop-ins would make file order decide the policy."""
+
+    DIR = os.path.join(ROOT, "usr", "lib", "ssh", "sshd_config.d")
+    WANT = {"permitrootlogin": "no", "passwordauthentication": "no", "kbdinteractiveauthentication": "no",
+            "authenticationmethods": "publickey", "x11forwarding": "no", "allowagentforwarding": "no",
+            "allowtcpforwarding": "yes", "maxauthtries": "3"}
+
+    def _directives(self):
+        seen = {}
+        for name in sorted(os.listdir(self.DIR)):
+            with open(os.path.join(self.DIR, name), encoding="utf-8") as fh:
+                for line in fh:
+                    parts = line.split(None, 1)
+                    if parts and not parts[0].startswith("#"):
+                        seen.setdefault(parts[0].lower(), []).append((name, parts[1].strip()))
+        return seen
+
+    def test_no_keyword_is_set_in_two_drop_ins(self):
+        twice = {k: v for k, v in self._directives().items() if len(v) > 1}
+        self.assertEqual(twice, {})
+
+    def test_the_policy_is_the_decided_one(self):
+        got = {k: v[0][1].lower() for k, v in self._directives().items()}
+        self.assertEqual({k: got.get(k) for k in self.WANT}, self.WANT)
+
+    def test_the_build_routes_sshd_to_the_vendor_drop_ins_and_renders_ca_trust_from_ssot(self):
+        with open(os.path.join(ROOT, "automation", "46-sshd-port.sh"), encoding="utf-8") as fh:
+            step = fh.read()
+        self.assertIn("Include /usr/lib/ssh/sshd_config.d/*.conf", step)
+        self.assertIn("/etc/ssh/sshd_config.d/05-mios-vendor.conf", step)
+        for var in ("MIOS_SSH_CA_CA_FILE", "MIOS_SSH_CA_PRINCIPALS_DIR", "MIOS_SSH_USER"):
+            self.assertIn("${" + var + ":?", step, f"{var} is not required by the build step")
+
+    def test_the_ssh_user_exists_unprivileged(self):
+        import tomllib
+        with open(os.path.join(ROOT, "usr", "share", "mios", "mios.toml"), "rb") as fh:
+            login = tomllib.load(fh)["ssh"]["user"]
+        rows = []
+        for name in sorted(os.listdir(os.path.join(ROOT, "usr", "lib", "sysusers.d"))):
+            with open(os.path.join(ROOT, "usr", "lib", "sysusers.d", name), encoding="utf-8") as fh:
+                rows += [ln.split() for ln in fh if ln.split()[:2] in (["u", login], ["m", login])]
+        self.assertEqual([r[0] for r in rows], ["u"], f"[ssh].user {login} must be declared once and join no group")
+
+
 class TestRestrictedView(unittest.TestCase):
     """Critical C1/C2: root code takes from the operator tier ONLY [security.operator_tier]."""
 

@@ -10168,6 +10168,14 @@ ssh.host  MIOS_SSH_HOST
 ssh.user  MIOS_SSH_USER
 ssh.port  MIOS_SSH_PORT
 ssh.identity_file  MIOS_SSH_IDENTITY_FILE
+ssh.ca.enabled  MIOS_SSH_CA_ENABLED
+ssh.ca.signer  MIOS_SSH_CA_SIGNER
+ssh.ca.public_key  MIOS_SSH_CA_PUBLIC_KEY
+ssh.ca.ca_file  MIOS_SSH_CA_CA_FILE
+ssh.ca.principals_dir  MIOS_SSH_CA_PRINCIPALS_DIR
+ssh.ca.validity_s  MIOS_SSH_CA_VALIDITY_S
+ssh.ca.hostname_glob  MIOS_SSH_CA_HOSTNAME_GLOB
+ssh.ca.trusted_tags  MIOS_SSH_CA_TRUSTED_TAGS
 ssh.windows.root  MIOS_SSH_WINDOWS_ROOT
 ssh.windows.release_api  MIOS_SSH_WINDOWS_RELEASE_API
 ssh.windows.asset  MIOS_SSH_WINDOWS_ASSET

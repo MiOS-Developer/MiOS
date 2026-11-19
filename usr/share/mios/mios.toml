@@ -3070,9 +3070,10 @@ paths = [
 
 # [security.credential_apply] -- what `apply --all` reconciles: shadow and forge take only an
 # operator-set value, ttyd its own login, and none returns to a default. ssh keeps one managed
-# block of the login's authorized_keys equal to the operator tier's [auth].existing_ssh_key.
+# block of the login's authorized_keys equal to the operator tier's [auth].existing_ssh_key;
+# ssh_ca keeps [ssh.ca].ca_file equal to the vendor/host [ssh.ca].public_key (or removes it).
 [security.credential_apply]
-surfaces = ["portal", "forge", "code_server", "ttyd", "owui", "shadow", "ssh"]
+surfaces = ["portal", "forge", "code_server", "ttyd", "owui", "shadow", "ssh", "ssh_ca"]
 retry_backoff_s     = 300   # a failed surface backs off, doubling to retry_backoff_max_s
 retry_backoff_max_s = 86400
 
@@ -17186,6 +17187,25 @@ host          = "mios-*"
 user          = "agent"
 port          = 2222
 identity_file = "~/.ssh/agent_ssh_key"
+
+# The MiOS user CA. One Blade (signer: the singleton that holds the CA key until the
+# mesh-coordinator role exists in SSOT, task_929..935) signs short-lived certificates
+# for cloud nodes it has verified on the tailnet. Every Blade's sshd trusts public_key
+# for the [ssh].user login ONLY (an AuthorizedPrincipalsFile per login; no other login
+# has one, so a CA certificate opens nothing else). public_key is the CA's one-line
+# public key: vendor/host tiers only, never the operator tier, because it is a
+# system-wide trust anchor. Empty = no CA is trusted and ca_file is removed. A cert is
+# issued only to a node whose tailnet name matches hostname_glob AND that is owned
+# by the signer's own tailnet user or carries one of trusted_tags; it lasts validity_s.
+[ssh.ca]
+enabled        = false
+signer         = "mios"
+public_key     = ""
+ca_file        = "/etc/ssh/mios-user-ca.pub"
+principals_dir = "/usr/lib/ssh/mios-principals"
+validity_s     = 28800
+hostname_glob  = "mios-cloud*"
+trusted_tags   = ["tag:mios"]
 
 
 # Windows uses the same [ports].ssh value as the Linux service.

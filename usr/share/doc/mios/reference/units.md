@@ -57,7 +57,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-copy-build-log.service` | `usr/lib/systemd/system` | MiOS' Build Log Copy Service |
 | `mios-cpu-isolate.service` | `usr/lib/systemd/system` | MiOS' CPU Core Isolation Engine |
 | `mios-cpu-node.container` | `usr/share/containers/systemd` | MiOS' CPU inference node (always-on / gaming-immune last-resort lane) |
-| `mios-credential-apply.service` | `usr/lib/systemd/system` | MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login, SSH keys) |
+| `mios-credential-apply.service` | `usr/lib/systemd/system` | MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login, SSH keys, SSH CA) |
 | `mios-credential-apply.timer` | `usr/lib/systemd/system` | MiOS' operator credential reconcile schedule |
 | `mios-cron-director.service` | `usr/lib/systemd/system` | MiOS' cron-director (LLM-gated recurring-task scheduler) |
 | `mios-daemon.service` | `usr/lib/systemd/system` | MiOS' consolidated micro-LLM daemon (log classify + refusal detect + cron gate) |

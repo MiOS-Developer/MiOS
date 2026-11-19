@@ -315,7 +315,7 @@ def bake_password_hash(env: dict | None = None) -> str:
 # code takes from that tier only [security.operator_tier] (mios_toml.operator_view).
 
 SURFACES = ("portal", "forge", "code_server", "ttyd", "owui", "shadow")
-KEY_SURFACES = ("ssh",)               # public-key material, not a password: _apply_ssh_keys
+KEY_SURFACES = ("ssh", "ssh_ca")      # public-key material, not a password: _apply_ssh_keys/_ssh_ca
 RANDOM_OPT_IN = "__random__"          # explicit opt-in to a generated value (owui only)
 _RANDOM_OK = ("owui",)
 _SURFACE_ENV = {"forge": "MIOS_FORGE_ADMIN_PASSWORD", "owui": "MIOS_OWUI_ADMIN_PASSWORD",
@@ -1219,6 +1219,70 @@ def _apply_ssh_keys(data: dict, taken, *, check: bool = False, account=None) -> 
     return states.get(code, f"failed (writing authorized_keys as the login exited {code})")
 
 
+def _ssh_ca_key(data: dict) -> str:
+    """[ssh.ca].public_key while [ssh.ca].enabled, else "": the MiOS user CA every Blade's sshd
+    trusts for the [ssh].user login only. A system-wide trust anchor, so it comes from the
+    vendor/host tiers alone (operator_view never takes it from the operator tier). One plain
+    public key; a certificate, a second line or anything ssh-keygen cannot read refuses."""
+    ca = _sect(data, "ssh.ca")
+    if ca.get("enabled") is not True:
+        return ""
+    key = _s(ca.get("public_key")).strip()
+    if not key:
+        return ""
+    if any(ord(c) < 32 or ord(c) == 127 for c in key) or key.split()[0].endswith("-cert-v01@openssh.com"):
+        raise CredentialError("[ssh.ca].public_key must be one plain SSH public key on one line")
+    keygen = shutil.which("ssh-keygen")
+    if not keygen:
+        raise CredentialError("ssh-keygen is required to validate [ssh.ca].public_key")
+    res = subprocess.run([keygen, "-l", "-f", "-"], input=key + "\n", capture_output=True,
+                         text=True, timeout=30, check=False)
+    if res.returncode != 0:
+        raise CredentialError("[ssh.ca].public_key is not an SSH public key")
+    return key
+
+
+def _apply_ssh_ca(data: dict, *, check: bool = False) -> str:
+    """[ssh.ca].ca_file (sshd's TrustedUserCAKeys) holds exactly the CA key, 0644 root; with no
+    key (disabled or empty) it is removed, so no CA is trusted. A ca_file that is not a regular
+    file is left alone and reported."""
+    import stat  # noqa: PLC0415
+
+    key = _ssh_ca_key(data)
+    path = _s(_sect(data, "ssh.ca").get("ca_file"))
+    if not os.path.isabs(path) or os.path.basename(path) in ("", ".", ".."):
+        raise CredentialError("[ssh.ca].ca_file must be an absolute file path")
+    want = key + "\n" if key else ""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        st = None
+    if st is not None and not stat.S_ISREG(st.st_mode):
+        return "failed ([ssh.ca].ca_file is not a regular file; nothing was changed)"
+    current = None
+    if st is not None:
+        with open(path, encoding="utf-8") as fh:
+            current = fh.read()
+    if not want:
+        if current is None:
+            return "unchanged"
+        if check:
+            return "drift"
+        os.unlink(path)
+        return "changed (no CA trusted)"
+    if current == want:
+        return "unchanged"
+    if check:
+        return "drift"
+    tmp = path + ".mios-credential.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        os.fchmod(fh.fileno(), 0o644)
+        fh.write(want)
+    os.replace(tmp, path)
+    return "changed"
+
+
 _APPLY = {"portal": _apply_portal, "forge": _apply_forge, "code_server": _apply_code_server,
           "ttyd": _apply_ttyd, "owui": _apply_owui, "shadow": _apply_shadow}
 _RESTART_KEYS = {"portal": ("agent_pipe",), "code_server": ("code_server",),
@@ -1697,7 +1761,8 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
             continue
         if surface in KEY_SURFACES:
             try:
-                state = _apply_ssh_keys(data, taken, check=check)
+                state = (_apply_ssh_keys(data, taken, check=check) if surface == "ssh"
+                         else _apply_ssh_ca(data, check=check))
             except CredentialError as exc:
                 state = f"failed ({exc})"
             except (OSError, subprocess.SubprocessError) as exc:

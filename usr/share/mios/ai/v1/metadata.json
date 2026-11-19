@@ -1494,7 +1494,7 @@
     },
     {
       "path": "automation/46-sshd-port.sh",
-      "hint": "Configures the host's admin sshd to bind to the SSOT port defined in mios.toml by creating a drop-in config in /etc/ss...",
+      "hint": "Wires the admin sshd from SSOT: the [ports].ssh port, an include of the vendor drop-ins, and [ssh.ca] user-CA trust for [ssh].user.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
@@ -21909,7 +21909,7 @@
     },
     {
       "path": "usr/lib/ssh/sshd_config.d/10-mios.conf",
-      "hint": "Configures SSH daemon security policies for MiOS, enforcing public-key authentication and disabling password logins to secure remote access.",
+      "hint": "MiOS sshd defaults that are not security policy (locale passthrough); the policy is 50-mios-hardened.conf, and no keyword appears in both.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -21918,7 +21918,7 @@
     },
     {
       "path": "usr/lib/ssh/sshd_config.d/50-mios-hardened.conf",
-      "hint": "Hardens SSH daemon by disabling root login, password auth, and forwarding while enforcing public key authentication and strict session limits to secure remote access to the MiOS system.",
+      "hint": "MiOS sshd security policy: key-only logins, no root, no passwords, no X11 or agent forwarding, TCP forwarding kept for Remote-SSH editors and ssh -L tunnels.",
       "related": [],
       "functions": [],
       "doc": null,
