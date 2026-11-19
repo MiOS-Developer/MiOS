@@ -77,6 +77,7 @@ open_ports = [
   "forge_ssh",
   "llm_heavy",
   "cpu_node",
+  "ssh_ca",
 ]
 
 
@@ -221,7 +222,7 @@ WantedBy = "timers.target"
 
 [units."mios-credential-apply.service".Unit]
 comment = "# AI-hint: Oneshot that merges the Portal's queued credential saves into the operator tier and re-applies the one mios.html login to the Portal, Forgejo, code-server, Open WebUI and the Linux login (ttyd gets its own), at boot and from its timer.\n# AI-related: /usr/libexec/mios/mios-credential, /usr/lib/mios/mios_credentials.py, mios-credential-apply.timer, mios-agent-pipe.service, mios-agents.service, mios-ttyd-bash.service, mios-forge.service"
-Description = "'MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login)"
+Description = "'MiOS' operator credential reconciler (mios.html -> Portal, Forge, code-server, ttyd, Open WebUI, Linux login, SSH keys, SSH CA)"
 Documentation = "file:///usr/libexec/mios/mios-credential"
 After = "local-fs.target"
 Before = "mios-agent-pipe.service mios-agents.service mios-ttyd-bash.service mios-ttyd-powershell.service"
@@ -251,6 +252,43 @@ OnUnitActiveSec = "60s"
 
 [units."mios-credential-apply.timer".Install]
 WantedBy = "timers.target"
+
+[units."mios-ssh-ca.service".Unit]
+comment = "# AI-hint: Serves the MiOS user SSH CA ([ssh.ca]) on this node's tailnet IPv4 at [ports].ssh_ca: POST /v1/ssh/certificates signs a short-lived [ssh].user certificate for a node the tailnet names hostname_glob and that is the signer's own or carries a trusted tag. Exits 0 unless [ssh.ca].enabled and this node is [ssh.ca].signer.\n# AI-related: /usr/libexec/mios/mios-ssh-ca, /usr/share/mios/mios.toml, /usr/lib/mios/mios_credentials.py, mios-credential-apply.service, tailscaled.service"
+Description = "'MiOS' user SSH CA signer (tailnet-only [ssh].user certificates for verified cloud nodes)"
+Documentation = "file:///usr/libexec/mios/mios-ssh-ca"
+After = ["tailscaled.service", "network-online.target", "systemd-tmpfiles-setup.service"]
+Wants = ["network-online.target"]
+ConditionPathExists = "/usr/bin/tailscale"
+
+[units."mios-ssh-ca.service".Service]
+Type = "simple"
+comment1 = "# The program reads [ssh.ca], [ssh].user and [ports].ssh_ca from the vendor and host tiers\n# itself, so the unit restates none of them. A disabled CA or a node that is not the signer\n# exits 0 (the unit stays inactive); a missing key or a tailnet that is not up yet fails\n# and is retried."
+ExecStart = "/usr/libexec/mios/mios-ssh-ca serve"
+Restart = "on-failure"
+RestartSec = "30s"
+MemoryMax = "128M"
+UMask = "0077"
+NoNewPrivileges = "yes"
+PrivateTmp = "yes"
+ProtectSystem = "strict"
+ProtectHome = "yes"
+PrivateDevices = "yes"
+ProtectKernelTunables = "yes"
+ProtectKernelModules = "yes"
+ProtectControlGroups = "yes"
+comment2 = "# AF_UNIX: the tailscale CLI reaches tailscaled over its LocalAPI socket (ip, status, whois)."
+RestrictAddressFamilies = "AF_INET AF_INET6 AF_UNIX"
+RestrictNamespaces = "yes"
+RestrictRealtime = "yes"
+LockPersonality = "yes"
+comment3 = "# Root with no capabilities: the CA key and the serial are root-owned 0600 under a 0700\n# directory, so ownership alone opens them."
+CapabilityBoundingSet = ""
+comment4 = "# /var/lib/mios/ssh-ca ([ssh.ca].key_file's directory, tmpfiles 50-mios.conf): the key\n# (read) and the certificate serial (written)."
+ReadWritePaths = "/var/lib/mios/ssh-ca"
+
+[units."mios-ssh-ca.service".Install]
+WantedBy = "multi-user.target"
 
 [units."mios-agent-share.service".Unit]
 comment = "# AI-hint: Serves the read-only inter-agent share ([paths].srv_agent_share_dir) on loopback as a throwaway non-root uid that refuses every symlink; the tailnet reaches it only through the [tailscale.serve.routes.agent_share] proxy.\n# AI-related: /usr/libexec/mios/mios-tailscale-sync, /usr/libexec/mios/test_mios_tailscale_sync.py, /usr/share/mios/mios.toml, mios-tailscale-sync.service"
@@ -617,6 +655,7 @@ ExecStart = '''/bin/bash -c '\
         "${MIOS_PORTS_LLM_LIGHT:-8500}" \
         "${MIOS_PORTS_PGVECTOR:-8600}" \
         "${MIOS_PORTS_COCKPIT_LINK:-8120}" \
+        "${MIOS_PORTS_SSH_CA:-8130}" \
         "${MIOS_PORTS_ADGUARD_UI:-8050}" \
         "${MIOS_PORTS_SSH:-8100}" \
         "${MIOS_PORTS_FORGE_SSH:-8410}" \
@@ -2339,7 +2378,7 @@ compat_dirs = []
 
 [build.native.categories.services]
 # Service-facing programs; systemd Type= independently defines their lifecycle.
-binaries = ["mios-agent-relay"]
+binaries = ["mios-agent-relay", "mios-ssh-ca"]
 install_dir = "/usr/libexec/mios"
 expose_bin = false
 compat_dirs = []
@@ -10843,6 +10882,7 @@ forge_ssh          = 8410    # Forgejo git+ssh (vacated 2222 for host admin sshd
 cockpit            = 8110     # host Cockpit web console
 cockpit_internal   = 9090     # Cockpit internal container listening port (upstream standard 9090; host maps 8110->9090)
 cockpit_link       = 8120    # mios-cockpit-link Podman Desktop discovery shim
+ssh_ca             = 8130    # mios-ssh-ca: the user SSH CA signer (POST /v1/ssh/certificates); binds ONLY this node's tailnet IPv4 and serves only on the [ssh.ca].signer node.
 searxng            = 8800     # local privacy-respecting metasearch -- the ONE SearXNG key and listener: mios-searxng is a host-network mios-webtools member, so granian binds 127.0.0.1 on this port directly via GRANIAN_HOST/GRANIAN_PORT (no port mapping, no internal key)
 crawl4ai           = 8810    # local crawl engine -- the crawl4ai FastAPI (crawl4ai over Chrome CDP + Camoufox fallback), the crawl4ai member of the mios-webtools pod. LOOPBACK only (127.0.0.1), NOT a published/LAN port.
 crawl4ai_internal  = 11235   # crawl4ai container internal listening port (upstream default 11235)
@@ -10920,9 +10960,9 @@ doc     = "Network edge / resolver. DNS is protocol-pinned at 53 and never float
 [ports.categories.admin]
 base    = 8100
 stride  = 10
-members = ["ssh", "cockpit", "cockpit_link"]
+members = ["ssh", "cockpit", "cockpit_link", "ssh_ca"]
 pinned  = { cockpit_internal = 9090 }
-doc     = "Host administration surfaces (operator SSH, Cockpit console + discovery shim)."
+doc     = "Host administration surfaces (operator SSH, Cockpit console + discovery shim, the user SSH CA signer)."
 
 [ports.categories.webui]
 base    = 8200
@@ -11058,6 +11098,7 @@ bootstrap_repo     = "https://github.com/mios-developer/mios-bootstrap.git"
 # API, not a page. agent_share is the loopback upstream of the tailnet /share/
 # route and tailnet_https the listener `tailscale serve` opens on the node's
 # MagicDNS name: both are addressed through [tailscale.serve.routes.*].
+# ssh_ca is the user SSH CA signer: a POST-only certificate API, not a page.
 non_addressable = [
   "adguard_dns", "adguard_ui", "agent_pipe", "agent_share", "ai_legacy", "arbiter", "ceph_dashboard",
   "cockpit_internal", "crawl4ai", "crawl4ai_internal", "field_live_chat", "firecrawl_internal",
@@ -11068,7 +11109,7 @@ non_addressable = [
   "forge_ssh", "guacamole_web", "guacd", "headscale", "hermes_dashboard", "llm_igpu", "rpc_igpu",
   "k3s_api", "mcp", "model_router", "opencode_gateway", "oscontrol",
   "otelcol_otlp", "piper", "prefilter", "pxe_hub_api", "radosgw", "rdp", "redis",
-  "ssh", "tailnet_https", "ttyd_bash", "ttyd_powershell", "whisper",
+  "ssh", "ssh_ca", "tailnet_https", "ttyd_bash", "ttyd_powershell", "whisper",
 ]
 
 # ----------------------------------------------------------------------------
@@ -16736,6 +16777,7 @@ mios-hermes-browser-worker     = ["service-plane"]
 k3s                            = ["service-plane"]
 mios-account-sync              = ["service-plane"]
 mios-agent-share               = ["service-plane"]   # the inter-agent share: work-side, a seat offloads it
+mios-ssh-ca                    = ["service-plane"]   # the user SSH CA signer: the CA key lives on a blade, never a seat
 mios-agents                    = ["service-plane"]
 mios-cron-director             = ["service-plane"]
 mios-daemon                    = ["service-plane"]
@@ -17197,15 +17239,25 @@ identity_file = "~/.ssh/agent_ssh_key"
 # system-wide trust anchor. Empty = no CA is trusted and ca_file is removed. A cert is
 # issued only to a node whose tailnet name matches hostname_glob AND that is owned
 # by the signer's own tailnet user or carries one of trusted_tags; it lasts validity_s.
+# The signer is tools/native/mios-ssh-ca (mios-ssh-ca.service): `init` creates key_file
+# (root 0600; never overwritten), `pubkey` prints the line to paste into public_key, and
+# `serve` answers POST /v1/ssh/certificates on [ports].ssh_ca at this node's tailnet IPv4
+# only, and only while enabled on the node named signer. The certificate serial is kept
+# beside key_file. The last three keys bound one request (head bytes, body bytes, and the
+# whole request's read time). The signer reads the vendor and host tiers only.
 [ssh.ca]
-enabled        = false
-signer         = "mios"
-public_key     = ""
-ca_file        = "/etc/ssh/mios-user-ca.pub"
-principals_dir = "/usr/lib/ssh/mios-principals"
-validity_s     = 28800
-hostname_glob  = "mios-cloud*"
-trusted_tags   = ["tag:mios"]
+enabled          = false
+signer           = "mios"
+public_key       = ""
+ca_file          = "/etc/ssh/mios-user-ca.pub"
+principals_dir   = "/usr/lib/ssh/mios-principals"
+validity_s       = 28800
+hostname_glob    = "mios-cloud*"
+trusted_tags     = ["tag:mios"]
+key_file         = "/var/lib/mios/ssh-ca/mios-user-ca"
+max_header_bytes = 8192
+max_body_bytes   = 16384
+read_timeout_s   = 10
 
 
 # Windows uses the same [ports].ssh value as the Linux service.
@@ -19180,10 +19232,12 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # test-flatpak-bake resolves the default browser the way a session does: gio (glib2) and xdg-mime
 # (xdg-utils) over isolated XDG dirs whose association caches update-desktop-database
 # (desktop-file-utils) builds.
+# mios-ssh-ca's integration test signs real certificates with ssh-keygen (openssh).
 packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
             "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
-            "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils"]
+            "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils",
+            "openssh"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.
@@ -20113,7 +20167,7 @@ scope = [
   "usr/libexec/mios/ux/diff_auditor.py", "usr/libexec/mios/ux/focus_audio.py",
   "usr/libexec/mios/ux/gnome_extension.py", "usr/libexec/mios/ux/font_scaler.py",
 ]
-crates = ["mios-agent-relay", "mios-service-core"]
+crates = ["mios-agent-relay", "mios-service-core", "mios-ssh-ca"]
 
 [rust.categories.probe]
 binary = "mios-probe"

@@ -1,0 +1,14 @@
+# AI-hint: Cargo manifest for mios-ssh-ca -- the MiOS user SSH CA signer (init, pubkey, tailnet-only certificate issuance).
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml [ssh.ca], usr/lib/systemd/system/mios-ssh-ca.service
+
+[package]
+name = "mios-ssh-ca"
+version.workspace = true
+edition.workspace = true
+description = "MiOS user SSH CA signer: short-lived agent certificates for verified tailnet cloud nodes"
+
+[dependencies]
+mios-resolver = { path = "../mios-resolver" }
+serde_json.workspace = true
+tempfile.workspace = true
+toml.workspace = true

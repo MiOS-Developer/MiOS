@@ -1,0 +1,44 @@
+# AI-hint: Serves the MiOS user SSH CA ([ssh.ca]) on this node's tailnet IPv4 at [ports].ssh_ca: POST /v1/ssh/certificates signs a short-lived [ssh].user certificate for a node the tailnet names hostname_glob and that is the signer's own or carries a trusted tag. Exits 0 unless [ssh.ca].enabled and this node is [ssh.ca].signer.
+# AI-related: /usr/libexec/mios/mios-ssh-ca, /usr/share/mios/mios.toml, /usr/lib/mios/mios_credentials.py, mios-credential-apply.service, tailscaled.service
+[Unit]
+Description='MiOS' user SSH CA signer (tailnet-only [ssh].user certificates for verified cloud nodes)
+Documentation=file:///usr/libexec/mios/mios-ssh-ca
+After=tailscaled.service
+After=network-online.target
+After=systemd-tmpfiles-setup.service
+Wants=network-online.target
+ConditionPathExists=/usr/bin/tailscale
+
+[Service]
+Type=simple
+# The program reads [ssh.ca], [ssh].user and [ports].ssh_ca from the vendor and host tiers
+# itself, so the unit restates none of them. A disabled CA or a node that is not the signer
+# exits 0 (the unit stays inactive); a missing key or a tailnet that is not up yet fails
+# and is retried.
+ExecStart=/usr/libexec/mios/mios-ssh-ca serve
+Restart=on-failure
+RestartSec=30s
+MemoryMax=128M
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# AF_UNIX: the tailscale CLI reaches tailscaled over its LocalAPI socket (ip, status, whois).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# Root with no capabilities: the CA key and the serial are root-owned 0600 under a 0700
+# directory, so ownership alone opens them.
+CapabilityBoundingSet=
+# /var/lib/mios/ssh-ca ([ssh.ca].key_file's directory, tmpfiles 50-mios.conf): the key
+# (read) and the certificate serial (written).
+ReadWritePaths=/var/lib/mios/ssh-ca
+
+[Install]
+WantedBy=multi-user.target
