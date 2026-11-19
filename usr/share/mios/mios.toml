@@ -8554,6 +8554,19 @@ advertise_exit_node = true
 shields_up          = true
 socks5_server       = "127.0.0.1:1055"
 
+# A cloud session cannot hold a pre-auth key (a setup script reads no secrets), so
+# its node mints a one-use ephemeral key through the egress proxy at enrollment.
+[deployment.cloud.overlay.tailscale.auth_key_mint]
+enabled = true
+
+# `bootstrap.sh tailnet`: the cloud host's own tailnet node, which runs the
+# overlay's [tailscale] with the upstream client. apt fills {id} and {codename}
+# from /etc/os-release; the list names /usr/share/keyrings/tailscale-archive-keyring.gpg.
+[deployment.cloud.tailnet]
+apt_keyring = "https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg"
+apt_list    = "https://pkgs.tailscale.com/stable/{id}/{codename}.tailscale-keyring.list"
+dnf_repo    = "https://pkgs.tailscale.com/stable/fedora/tailscale.repo"
+
 # `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
 # podman container booting its own systemd. The boot disk holds the image and a
 # nested build; Ubuntu LTS ships the guest agent that runs the startup script.
@@ -11806,6 +11819,28 @@ advertise_exit_node = false
 shields_up = false
 auth_key_file = ""
 socks5_server = ""
+
+# A logged-out node with no pre-auth key (no auth_key_file, no key in the
+# environment) mints one for that single enrollment from <api>/tailnet/<tailnet>/keys
+# when enabled. The request carries no credential unless token_file names a 0600
+# file the sync's uid owns: a cloud session's egress proxy adds the API token it
+# holds for the API host, so the token never enters the machine. The key is
+# single-use, ephemeral (the node is removed once it has been offline a while)
+# and preauthorized, and expires after expiry_s; it goes to a private 0600 file
+# for `tailscale up` and is removed after it, never to a command line or a log.
+# tags = [] mints an untagged key owned by the token's user.
+[tailscale.auth_key_mint]
+enabled       = false
+api           = "https://api.tailscale.com/api/v2"
+tailnet       = "-"
+ephemeral     = true
+preauthorized = true
+reusable      = false
+expiry_s      = 300
+tags          = []
+description   = "mios-cloud"
+token_file    = ""
+timeout_s     = 20
 
 # Exit nodes as a standby failover. Each mios-tailscale-sync run pings `probe`
 # directly through the lowest-metric default route; while that loses at most

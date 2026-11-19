@@ -3,7 +3,7 @@
   "total_files_scanned": 4359,
   "total_metadata_entries": 3485,
   "total_hints": 3479,
-  "total_functions_indexed": 2233,
+  "total_functions_indexed": 2238,
   "total_related_links": 7049,
   "entries": [
     {
@@ -99,6 +99,8 @@
         "up",
         "enter",
         "overlay",
+        "install_tailscale",
+        "tailnet",
         "gce_up",
         "claude_code",
         "codex"
@@ -30149,6 +30151,9 @@
         "select_exit_node",
         "_node_flags",
         "build_set_cmd",
+        "_mint_token",
+        "_api_message",
+        "mint_auth_key",
         "_auth_key_source",
         "build_up_cmd",
         "enroll",

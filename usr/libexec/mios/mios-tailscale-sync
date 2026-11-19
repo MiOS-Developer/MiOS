@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Enrolls a logged-out node, syncs Tailscale to SSOT [tailscale]/[headscale], keeps an exit node only while it beats the uplink, applies the [tailscale.serve.routes.*] proxies it owns and serves the read-only agent share (--share-serve).
 # AI-related: /usr/share/mios/mios.toml, /etc/mios/mios.toml, tailscaled.service, mios-headscale, mios-tailscale-sync.timer, test_mios_tailscale_sync.py
-# AI-functions: _load_data, _load_config, _health_config, _ts, find_tailscale, get_status, select_exit_node, _node_flags, build_set_cmd, _auth_key_source, build_up_cmd, enroll, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh, dns_name, render_routes, live_routes, plan_serve, serve_cmd, legacy_ttyd_handler, dropin_path, forge_dropin, sync_serve, share_serve
+# AI-functions: _load_data, _load_config, _health_config, _ts, find_tailscale, get_status, select_exit_node, _node_flags, build_set_cmd, _mint_token, _api_message, mint_auth_key, _auth_key_source, build_up_cmd, enroll, probe, direct_interface, exit_is_worse, _active_exit_ip, sync_mesh, dns_name, render_routes, live_routes, plan_serve, serve_cmd, legacy_ttyd_handler, dropin_path, forge_dropin, sync_serve, share_serve
 """'MiOS' Tailscale mesh client synchronization daemon/helper.
 
 Derives Tailscale connection settings from layered mios.toml SSOT:
@@ -21,14 +21,24 @@ Derives Tailscale connection settings from layered mios.toml SSOT:
   socks5_server = ""            # userspace-mode loopback listener (started by the caller)
   [tailscale.exit_node_health]  # probe, count, interval_s, max_extra_loss_pct,
                                 # max_extra_rtt_ms, cooldown_s, state
+  [tailscale.auth_key_mint]     # enabled, api, tailnet, ephemeral, preauthorized,
+                                # reusable, expiry_s, tags, description, token_file, timeout_s
 
 A node that is not logged in is enrolled with `tailscale up --reset
 --auth-key=file:<path>` and the same parameters when a pre-auth key is
 available: [tailscale].auth_key_file, else the MIOS_TAILSCALE_AUTHKEY or
-TS_AUTHKEY environment, which is written to a private 0600 file for the call
+TS_AUTHKEY environment, else (when [tailscale.auth_key_mint].enabled) a key
+minted for this one enrollment from the API's /tailnet/<tailnet>/keys. A key
+from the environment or the API is written to a private 0600 file for the call
 and removed after it. The key never reaches a command line or a log. Without a
 key the node is left logged out with the command to run. --socket=PATH
 addresses a tailscaled started on its own socket (the userspace devcontainer).
+
+The mint request carries no credential of its own unless token_file names a
+0600 file this uid owns: a cloud session's egress proxy adds the API token it
+holds for the API host, so that token never enters the machine. --mesh-only
+syncs the node alone (enrollment, flags, exit node) on vendor + host and leaves
+serve routes untouched: a host that runs none of the routed services.
 
 The SSOT is the operator view (mios_toml.operator_view): vendor + host in full,
 and from the operator's mios.html tier ONLY the [tailscale.serve] enable toggles
@@ -88,9 +98,13 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.join(
@@ -156,6 +170,7 @@ def _load_config(data: dict | None = None) -> dict:
         "advertise_exit_node": bool(ts.get("advertise_exit_node", False)),
         "shields_up": bool(ts.get("shields_up", False)),
         "auth_key_file": str(ts.get("auth_key_file", "") or ""),
+        "mint": ts.get("auth_key_mint") if isinstance(ts.get("auth_key_mint"), dict) else {},
         "health": _health_config(ts),
         "headscale_domain": str(metal_mesh.get("headscale_domain", "mesh.mios.local")),
     }
@@ -314,6 +329,80 @@ def _active_exit_ip(status: dict) -> str:
     return next((ip.split("/")[0] for ip in ips if ":" not in ip), "")
 
 
+def _mint_token(path: str) -> str | None:
+    """The API token in `path` (a regular file this uid owns, no group/other
+    access), or None with the reason logged by name, never by value."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        _log(f"[tailscale.auth_key_mint].token_file {path}: {exc.strerror}")
+        return None
+    with os.fdopen(fd, encoding="utf-8") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
+            _log(f"[tailscale.auth_key_mint].token_file {path} must be a 0600 file this uid owns")
+            return None
+        token = f.read().strip()
+    if not token or any(c in token for c in "\r\n\0"):
+        _log(f"[tailscale.auth_key_mint].token_file {path} does not hold one token")
+        return None
+    return token
+
+
+def _api_message(exc: urllib.error.HTTPError) -> str:
+    """The API's own short error message (its JSON "message"), control characters removed."""
+    try:
+        msg = json.loads(exc.read(4096).decode("utf-8", "replace")).get("message", "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(msg))[:200]
+
+
+def mint_auth_key(mint: dict) -> str:
+    """A one-use pre-auth key for this enrollment from the Tailscale API
+    ([tailscale.auth_key_mint]), or "" with the reason logged (never a key or token)."""
+    api = str(mint.get("api") or "").rstrip("/")
+    if not api.startswith("https://"):
+        _log("[tailscale.auth_key_mint].api must be an https:// URL; no key minted")
+        return ""
+    try:
+        expiry, timeout = int(mint.get("expiry_s")), float(mint.get("timeout_s"))
+    except (TypeError, ValueError):
+        expiry = timeout = 0
+    if expiry <= 0 or timeout <= 0:
+        _log("[tailscale.auth_key_mint].expiry_s and timeout_s must be positive; no key minted")
+        return ""
+    create = {flag: mint.get(flag) is True for flag in ("reusable", "ephemeral", "preauthorized")}
+    create["tags"] = _as_list(mint.get("tags"))
+    body = {"capabilities": {"devices": {"create": create}}, "expirySeconds": expiry}
+    if mint.get("description"):
+        body["description"] = str(mint["description"])
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if mint.get("token_file"):
+        token = _mint_token(str(mint["token_file"]))
+        if token is None:
+            return ""
+        headers["Authorization"] = f"Bearer {token}"
+    tailnet = urllib.parse.quote(str(mint.get("tailnet") or "-"), safe="")
+    req = urllib.request.Request(f"{api}/tailnet/{tailnet}/keys", method="POST",
+                                 data=json.dumps(body).encode("utf-8"), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            reply = json.loads(resp.read(65536).decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        _log(f"auth key mint refused: HTTP {exc.code} {_api_message(exc)}".rstrip())
+        return ""
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        _log(f"auth key mint failed: {type(exc).__name__}")
+        return ""
+    key = reply.get("key") if isinstance(reply, dict) else None
+    if not isinstance(key, str) or not key.startswith("tskey-") or any(c.isspace() for c in key):
+        _log("auth key mint answered without a usable key")
+        return ""
+    _log("minted a one-use auth key for this enrollment")
+    return key
+
+
 def _auth_key_source(cfg: dict) -> tuple[str, bool]:
     """(path of a file holding the pre-auth key, whether it is a temporary copy
     of the environment key to remove after use), or ("", False)."""
@@ -323,6 +412,8 @@ def _auth_key_source(cfg: dict) -> tuple[str, bool]:
             return path, False
         _log(f"[tailscale].auth_key_file {path} is not a readable file")
     key = (os.environ.get("MIOS_TAILSCALE_AUTHKEY") or os.environ.get("TS_AUTHKEY") or "").strip()
+    if not key and (cfg.get("mint") or {}).get("enabled") is True:
+        key = mint_auth_key(cfg["mint"])
     if not key:
         return "", False
     import tempfile
@@ -1105,6 +1196,14 @@ def main() -> int:
                 return 3
             root, prefix = root or ssot_root, prefix or ssot_prefix
         return share_serve(root, _arg("--bind"), _port(_arg("--port")), prefix)
+    if "--mesh-only" in sys.argv:
+        # The node alone, on vendor + host (the mesh takes nothing from the operator tier).
+        try:
+            base = mios_toml.derive_ports(mios_toml.base_view())
+        except mios_toml.LayerError as exc:
+            _log(f"SSOT unresolved -- nothing applied: {exc}")
+            return 3
+        return sync_mesh(dry_run="--dry-run" in sys.argv, data=base)
     try:
         data = _load_data()
     except mios_toml.LayerError as exc:

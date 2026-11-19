@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AI-hint: The one MiOS cloud-environment script: runs the devcontainer ([image].ref plus wiring) under podman or docker for Claude Code cloud, Codex cloud and Cloud Shell, creates a GCE VM, preflights disk, pulls and applies the [deployment.cloud] overlay.
 # AI-related: .devcontainer/Containerfile, .devcontainer/devcontainer.json, .devcontainer/artifact-builder/devcontainer.json, .devcontainer/cloud-shell/claude-code-cloud.sh, .devcontainer/cloud-shell/codex-cloud.sh, usr/share/mios/mios.toml
-# AI-functions: main, preflight, pull_image, status, up, enter, overlay, gce_up, claude_code, codex
+# AI-functions: main, preflight, pull_image, status, up, enter, overlay, install_tailscale, tailnet, gce_up, claude_code, codex
 #
 # Every environment runs the SAME image: .devcontainer/Containerfile is FROM
 # [image].ref and adds only container wiring, so building it is a pull of the
@@ -17,6 +17,7 @@
 #   bootstrap.sh pull [--background]   pull [image].ref
 #   bootstrap.sh overlay [--apply]     the [deployment.cloud] drop-in (print or write)
 #   bootstrap.sh install               Google / Oracle Cloud Shell launcher
+#   bootstrap.sh tailnet               this host's own tailnet node (userspace, mesh only)
 #   bootstrap.sh claude-code           Claude Code cloud setup (claude-code-cloud.sh)
 #   bootstrap.sh codex install|start|check   Codex cloud (codex-cloud.sh)
 #   bootstrap.sh gce-up | gce-down     a Compute Engine VM running the image (gcloud)
@@ -414,6 +415,67 @@ install_podman() {
     fi
 }
 
+# tailscale/tailscaled from the upstream repository for this host's distro
+# ([deployment.cloud.tailnet]; apt fills {id}/{codename} from /etc/os-release).
+install_tailscale() {
+    command -v tailscale >/dev/null 2>&1 && command -v tailscaled >/dev/null 2>&1 && return 0
+    [[ $EUID -eq 0 ]] || die "tailscale is missing and installing it needs root"
+    log "installing tailscale"
+    if command -v apt-get >/dev/null 2>&1; then
+        local id codename keyring list
+        id="$(. /etc/os-release && printf '%s' "${ID:-}")"
+        codename="$(. /etc/os-release && printf '%s' "${VERSION_CODENAME:-}")"
+        [[ "$id" =~ ^[a-z0-9.-]+$ && "$codename" =~ ^[a-z0-9.-]+$ ]] \
+            || die "/etc/os-release names no ID/VERSION_CODENAME for the tailscale apt repository"
+        keyring="$(need deployment.cloud.tailnet apt_keyring)"; list="$(need deployment.cloud.tailnet apt_list)"
+        keyring="${keyring//\{id\}/$id}"; keyring="${keyring//\{codename\}/$codename}"
+        list="${list//\{id\}/$id}"; list="${list//\{codename\}/$codename}"
+        curl -fsSL "$keyring" -o /usr/share/keyrings/tailscale-archive-keyring.gpg
+        curl -fsSL "$list" -o /etc/apt/sources.list.d/tailscale.list
+        apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q tailscale
+    elif command -v dnf >/dev/null 2>&1; then
+        local repo
+        repo="$(need deployment.cloud.tailnet dnf_repo)"
+        dnf config-manager addrepo --from-repofile="$repo" 2>/dev/null || dnf config-manager --add-repo "$repo"
+        dnf install -y tailscale
+    else
+        die "no apt-get or dnf to install tailscale"
+    fi
+}
+
+# The tailnet node of a host that cannot hold the image (a cloud session): a
+# userspace tailscaled on its own state directory and socket, enrolled and kept in
+# line by the image's own mios-tailscale-sync --mesh-only, which reads the vendor
+# SSOT plus the [deployment.cloud.overlay] drop-in as its host tier. Logged out,
+# it mints a one-use key ([tailscale.auth_key_mint]) through the egress proxy.
+# Idempotent: a running tailscaled is kept and its node only re-synced.
+tailnet() {
+    require_root_checkout
+    [[ $EUID -eq 0 ]] || die "tailnet runs tailscaled and needs root"
+    install_tailscale
+    local dir sock socks
+    dir="$STATE/tailscale"; sock="$dir/tailscaled.sock"
+    # A unix socket path holds at most 107 bytes; past that tailscaled cannot bind it.
+    (( ${#sock} <= 107 )) || die "$sock is longer than a unix socket path allows; shorten [deployment.cloud].state_directory"
+    install -d -m 0700 "$dir" "$dir/mios.d"
+    overlay > "$dir/mios.d/50-cloud.toml.new"
+    mv -f "$dir/mios.d/50-cloud.toml.new" "$dir/mios.d/50-cloud.toml"
+    socks="$(ssot deployment.cloud.overlay.tailscale socks5_server)"
+    if ! { [[ -f "$dir/tailscaled.pid" ]] && kill -0 "$(<"$dir/tailscaled.pid")" 2>/dev/null; }; then
+        rm -f "$sock"
+        setsid nohup tailscaled --tun=userspace-networking ${socks:+"--socks5-server=$socks"} \
+            --statedir="$dir" --socket="$sock" --port=0 >> "$dir/tailscaled.log" 2>&1 < /dev/null &
+        echo $! > "$dir/tailscaled.pid"
+        local _
+        for _ in $(seq 50); do [[ -S "$sock" ]] && break; sleep 0.2; done
+        [[ -S "$sock" ]] || die "tailscaled did not open $sock (log: $dir/tailscaled.log)"
+        log "tailscaled started (state $dir)"
+    fi
+    MIOS_VENDOR_TOML="$ROOT/usr/share/mios/mios.toml" MIOS_HOST_TOML="$dir/no-host.toml" \
+    MIOS_HOST_TOML_D="$dir/mios.d" \
+        python3 "$ROOT/usr/libexec/mios/mios-tailscale-sync" --mesh-only "--socket=$sock"
+}
+
 # Claude Code cloud (claude-code-cloud.sh): the setup script must finish in about
 # five minutes, so it only provisions and starts the pull; the first `mios-dev`
 # reports progress until the image is in, then brings the container up.
@@ -424,6 +486,8 @@ claude_code() {
     BUILDER="${MIOS_DEPLOYMENT_CLOUD_BUILDER:-$(need deployment.cloud builder)}"; select_config
     install -d -m 0755 "$STATE"
     printf '%s\n' "$ROOT" > "$STATE/source-root"
+    # A subshell: a node that cannot join (no API token saved yet) never stops the setup.
+    ( tailnet ) || log "tailnet not joined; every session start retries it (bootstrap.sh tailnet)"
     preflight
     pull_image --background
     write_wrapper /usr/local/bin/mios-dev
@@ -585,6 +649,7 @@ main() {
         pull)        require_root_checkout; select_runtime; pull_image "$@" ;;
         overlay)     require_root_checkout; overlay "$@" ;;
         install)     install_launcher ;;
+        tailnet)     tailnet ;;
         claude-code) claude_code ;;
         codex)       codex "$@" ;;
         gce-up)      gce_up ;;

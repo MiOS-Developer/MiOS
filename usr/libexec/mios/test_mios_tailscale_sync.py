@@ -288,6 +288,133 @@ def check_enrolls(script: str) -> str | None:
     return None
 
 
+# The API, faked inside the real script: urlopen records the request it was handed
+# (url, method, headers, JSON body) to $FAKE_DIR/mint.json and answers with a key,
+# or with HTTP 401 when FAKE_MINT=refuse. Nothing reaches the network.
+_MINTED = "tskey-auth-kMINTED0000-notarealkey"
+_MINT_FAKE = f"""
+import io as _io, json as _j, os as _o, urllib.error as _ue
+def _fake_urlopen(req, timeout=None):
+    rec = {{"url": req.full_url, "method": req.get_method(), "timeout": timeout,
+           "headers": {{k.lower(): v for k, v in req.header_items()}},
+           "body": _j.loads(req.data.decode("utf-8"))}}
+    with open(_o.path.join(_o.environ["FAKE_DIR"], "mint.json"), "w") as f:
+        _j.dump(rec, f)
+    if _o.environ.get("FAKE_MINT") == "refuse":
+        raise _ue.HTTPError(req.full_url, 401, "Unauthorized", {{}},
+                            _io.BytesIO(b'{{"message": "API token invalid"}}'))
+    return _io.BytesIO(_j.dumps({{"key": {_MINTED!r}, "id": "k0"}}).encode())
+m.urllib.request.urlopen = _fake_urlopen
+"""
+_MINT = """[tailscale.auth_key_mint]
+enabled = true
+api = "https://api.example.test/api/v2"
+tailnet = "-"
+ephemeral = true
+preauthorized = true
+reusable = false
+expiry_s = 300
+tags = []
+description = "mios-cloud"
+token_file = ""
+timeout_s = 20
+"""
+
+
+class TestAuthKeyMint(unittest.TestCase):
+    """WHEN a logged-out node has no pre-auth key and [tailscale.auth_key_mint] is
+    enabled THE SYSTEM SHALL mint a one-use ephemeral preauthorized key from the
+    API, carrying no credential of its own unless a private token_file names one,
+    and enroll with it from a removed 0600 file -- never on a command line."""
+
+    def _mint(self, toml: str, env: dict | None = None, operator: str = "",
+              state: str = "NeedsLogin") -> tuple[list[str], dict, dict]:
+        out: dict = {}
+        with tempfile.TemporaryDirectory() as d:
+            env = {k: v.replace("@D@", d) for k, v in (env or {}).items()}
+            toml = toml.replace("@D@", d)
+            for name, mode in (("token", 0o600), ("open-token", 0o644)):
+                path = os.path.join(d, name)
+                with open(path, "w") as f:
+                    f.write("tskey-api-UNITTEST-notarealtoken\n")
+                os.chmod(path, mode)
+            rec_holder: dict = {}
+            code = _MINT_FAKE + (
+                "import atexit as _a, shutil as _s\n"
+                f"_a.register(lambda: _o.path.exists(_o.path.join(_o.environ['FAKE_DIR'], 'mint.json')) and "
+                f"_s.copy(_o.path.join(_o.environ['FAKE_DIR'], 'mint.json'), {os.path.join(d, 'mint.json')!r}))\n")
+            calls = run_sync(_SCRIPT, toml, {}, state=state, out=out, extra_env=env,
+                             operator=operator, module_code=code)
+            rec_path = os.path.join(d, "mint.json")
+            if os.path.exists(rec_path):
+                with open(rec_path) as f:
+                    rec_holder = json.load(f)
+        return calls, out, rec_holder
+
+    def test_logged_out_node_enrolls_with_a_minted_one_use_key(self) -> None:
+        calls, out, rec = self._mint(_CLOUD + _MINT)
+        ups = [c for c in calls if c.startswith("up ")]
+        self.assertEqual(len(ups), 1, calls)
+        self.assertNotIn(_MINTED, ups[0])                 # never on the command line
+        self.assertEqual(out.get("seen_key"), _MINTED)    # tailscale read it from the file
+        tmp_key = ups[0].split("--auth-key=file:", 1)[1].split()[0]
+        self.assertFalse(os.path.exists(tmp_key), f"minted key left at {tmp_key}")
+        self.assertEqual(rec["method"], "POST")
+        self.assertEqual(rec["url"], "https://api.example.test/api/v2/tailnet/-/keys")
+        self.assertEqual(rec["body"], {
+            "capabilities": {"devices": {"create": {
+                "reusable": False, "ephemeral": True, "preauthorized": True, "tags": []}}},
+            "expirySeconds": 300, "description": "mios-cloud"})
+        self.assertNotIn("authorization", rec["headers"])  # the egress proxy adds the token
+
+    def test_disabled_mint_never_calls_the_api(self) -> None:
+        calls, _, rec = self._mint(_CLOUD + _MINT.replace("enabled = true", "enabled = false"))
+        self.assertEqual(rec, {})
+        self.assertEqual([c for c in calls if c.startswith("up ")], [])
+
+    def test_a_key_file_or_environment_key_is_used_before_minting(self) -> None:
+        calls, out, rec = self._mint(_CLOUD + _MINT, env={"MIOS_TAILSCALE_AUTHKEY": _KEY})
+        self.assertEqual(rec, {}, "minted although a key was supplied")
+        self.assertEqual(out.get("seen_key"), _KEY)
+
+    def test_a_running_node_never_mints(self) -> None:
+        calls, _, rec = self._mint(_CLOUD + _MINT, state="Running")
+        self.assertEqual(rec, {})
+        self.assertEqual([c for c in calls if c.startswith("up ")], [])
+
+    def test_a_refused_mint_leaves_the_node_logged_out(self) -> None:
+        calls, out, rec = self._mint(_CLOUD + _MINT, env={"FAKE_MINT": "refuse"})
+        self.assertEqual(rec.get("method"), "POST")       # it asked
+        self.assertEqual([c for c in calls if c.startswith("up ")], [], calls)
+        self.assertNotIn("seen_key", out)
+
+    def test_a_private_token_file_is_sent_as_bearer_and_an_open_one_refused(self) -> None:
+        _, out, rec = self._mint(_CLOUD + _MINT.replace('token_file = ""', 'token_file = "@D@/token"'))
+        self.assertEqual(rec["headers"].get("authorization"), "Bearer tskey-api-UNITTEST-notarealtoken")
+        self.assertEqual(out.get("seen_key"), _MINTED)
+        calls, out, rec = self._mint(_CLOUD + _MINT.replace('token_file = ""', 'token_file = "@D@/open-token"'))
+        self.assertEqual(rec, {}, "a group/world-readable token file was used")
+        self.assertEqual([c for c in calls if c.startswith("up ")], [])
+
+    def test_a_non_https_api_or_bad_expiry_mints_nothing(self) -> None:
+        for bad in (_MINT.replace("https://api.example.test", "http://api.example.test"),
+                    _MINT.replace("expiry_s = 300", "expiry_s = 0"),
+                    _MINT.replace("expiry_s = 300", 'expiry_s = "soon"')):
+            calls, _, rec = self._mint(_CLOUD + bad)
+            self.assertEqual(rec, {}, bad)
+            self.assertEqual([c for c in calls if c.startswith("up ")], [])
+
+    def test_the_operator_tier_cannot_enable_minting_or_retarget_the_api(self) -> None:
+        operator = ('[tailscale.auth_key_mint]\nenabled = true\n'
+                    'api = "https://attacker.example.test/api/v2"\ntoken_file = "/etc/shadow"\n')
+        calls, _, rec = self._mint(_CLOUD + _MINT.replace("enabled = true", "enabled = false"),
+                                   operator=operator)
+        self.assertEqual(rec, {}, "the operator tier turned minting on")
+        calls, _, rec = self._mint(_CLOUD + _MINT, operator=operator)
+        self.assertEqual(rec["url"], "https://api.example.test/api/v2/tailnet/-/keys")
+        self.assertNotIn("authorization", rec["headers"])
+
+
 class TestTailscaleSync(unittest.TestCase):
     def test_applies_ssot_with_first_preference(self) -> None:
         self.assertIsNone(check_applies(_SCRIPT))
@@ -743,6 +870,19 @@ class TestTailscaleServe(unittest.TestCase):
         self.assertTrue(os.path.exists(self._dropin()))
         self._run(_R_FORGE, live=live)                        # a conflict later retires it again
         self.assertFalse(os.path.exists(self._dropin()))
+
+    def test_mesh_only_never_touches_serve_routes(self):
+        self.assertNotEqual([c for c in self._run(_R_FORGE) if c.startswith("serve")], [])  # control
+        for f in ("serve-owned.json",):
+            try:
+                os.unlink(os.path.join(self.d, f))
+            except FileNotFoundError:
+                pass
+        import shutil
+        shutil.rmtree(self.quadlet, ignore_errors=True)
+        self.assertEqual(self._run(_R_FORGE, args=("--mesh-only",)), [])
+        self.assertFalse(os.path.exists(self._dropin()))
+        self.assertEqual(self._state(), {})
 
     def test_negative_public_host_cannot_inject_into_the_dropin(self):
         mod = load_sync(_SCRIPT)
