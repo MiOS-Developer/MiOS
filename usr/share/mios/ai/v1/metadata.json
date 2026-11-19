@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4357,
-  "total_metadata_entries": 3483,
-  "total_hints": 3477,
-  "total_functions_indexed": 2229,
-  "total_related_links": 7044,
+  "total_files_scanned": 4359,
+  "total_metadata_entries": 3485,
+  "total_hints": 3479,
+  "total_functions_indexed": 2233,
+  "total_related_links": 7049,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6587,6 +6587,30 @@
       "has_shebang": false
     },
     {
+      "path": "tests/powershell/NativeClientConfig.Tests.ps1",
+      "hint": "Execute the client setup's reads of other applications' configs: blank files read as empty, anything else unreadable is refused and left unchanged, and one refused client never stops the others.",
+      "related": [
+        "usr/share/mios/windows/mios-native-client-setup.ps1",
+        "tests/powershell/NativeClientScope.Tests.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tests/powershell/NativeClientScope.Tests.ps1",
+      "hint": "Execute the client setup's -Scope User|Machine split: User writes only its own variables and profile, never requests elevation, and defers every all-users action; Machine writes only changed values.",
+      "related": [
+        "usr/share/mios/windows/mios-native-client-setup.ps1",
+        "tests/powershell/NativeProfile.Tests.ps1"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "tests/powershell/NativeProfile.Tests.ps1",
       "hint": "Execute the native profile migrator against operator-owned content, stale generated dashboards, idempotence and malformed input.",
       "related": [
@@ -11252,7 +11276,10 @@
         "test_audit_user_environment_mock_valid",
         "test_audit_user_environment_mock_system_uid",
         "test_subuid_subgid_parsing",
-        "TestUidEnforcement"
+        "TestUidEnforcement",
+        "TestIdentityGuard",
+        "TestRootExtractOwner",
+        "TestMiosAccountPrivilege"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -21550,6 +21577,7 @@
         "identity_field",
         "sysrescue",
         "password_hash",
+        "bake_password_hash",
         "operator_load",
         "secrets_env_path",
         "surface_password",
@@ -23866,6 +23894,7 @@
       "hint": "Systemd service for enforcing declarative nftables VPN killswitch and split-tunnel boundaries.",
       "related": [
         "/usr/libexec/mios/net/vpn_killswitch.py",
+        "/usr/share/mios/mios.toml",
         "network-pre.target",
         "network.target",
         "multi-user.target"
@@ -27010,8 +27039,7 @@
       ],
       "functions": [
         "_log",
-        "_fail",
-        "_hash_password"
+        "_fail"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -30375,6 +30403,7 @@
       ],
       "functions": [
         "main",
+        "source_files",
         "scan_file",
         "load_allowlist"
       ],
