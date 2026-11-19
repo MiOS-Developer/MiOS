@@ -3,7 +3,7 @@
   "total_files_scanned": 4359,
   "total_metadata_entries": 3485,
   "total_hints": 3479,
-  "total_functions_indexed": 2238,
+  "total_functions_indexed": 2241,
   "total_related_links": 7049,
   "entries": [
     {
@@ -82,7 +82,7 @@
     },
     {
       "path": ".devcontainer/cloud-shell/bootstrap.sh",
-      "hint": "The one MiOS cloud-environment script: runs the devcontainer ([image].ref plus wiring) under podman or docker for Claude Code cloud, Codex cloud and Cloud Shell, creates a GCE VM, preflights disk, pulls and applies the [deployment.cloud] overlay.",
+      "hint": "The one MiOS cloud-environment script: runs the devcontainer ([image].ref plus wiring) under podman or docker for Claude Code cloud, Codex cloud and Cloud Shell, creates a GCE VM that boots the image, preflights disk, pulls and applies the [deployment.cloud] overlay.",
       "related": [
         ".devcontainer/Containerfile",
         ".devcontainer/devcontainer.json",
@@ -101,6 +101,8 @@
         "overlay",
         "install_tailscale",
         "tailnet",
+        "render_dropin",
+        "gce_ignition",
         "gce_up",
         "claude_code",
         "codex"
@@ -7355,7 +7357,7 @@
     },
     {
       "path": "tests/test-cloud-overlay.py",
-      "hint": "Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before.",
+      "hint": "Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before. gce-up's Fedora CoreOS node: its Ignition config bootc-switches the VM to [image].ref.",
       "related": [
         ".devcontainer/cloud-shell/bootstrap.sh",
         "usr/share/mios/mios.toml",
@@ -7368,7 +7370,8 @@
         "TestOverlayRender",
         "TestFirstbootPulls",
         "TestFlatpakInstall",
-        "TestCloudScripts"
+        "TestCloudScripts",
+        "TestGceNode"
       ],
       "doc": null,
       "comment_style": "hash",
