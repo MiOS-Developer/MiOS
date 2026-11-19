@@ -213,26 +213,28 @@
 .github/workflows/mios-ci.yml	293	295	3	26	c994d98176da	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	312	312	1	7	73ad13adbb04	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	328	339	12	97	b896b941f929	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:b896b941f929	97	1
-.github/workflows/mios-ci.yml	331	334	4	37	7c38b2805db7	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	339	339	1	3	ee573bae3b99	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	348	351	4	35	848f267d9499	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	329	332	4	46	b180f4dba38e	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	337	340	4	37	7c38b2805db7	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	345	345	1	3	ee573bae3b99	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	351	358	8	63	488fc6bcd3a7	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/workflows.md	mios-src:488fc6bcd3a7	63	1
-.github/workflows/mios-ci.yml	372	373	2	13	e3ed29c1c18f	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	354	357	4	35	848f267d9499	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	379	380	2	13	e3ed29c1c18f	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	381	422	42	399	feb6b6ba127c	MIGRATE	narrative-history	adr-candidate	0	usr/share/doc/mios/manual/workflows.md	mios-src:feb6b6ba127c	399	1
-.github/workflows/mios-ci.yml	399	400	2	14	13d188373c0c	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	429	429	1	3	fcb2821bceb3	STAY	inline-scoped		0				0
-.github/workflows/mios-ci.yml	458	460	3	27	65ae042547e9	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	406	407	2	14	13d188373c0c	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	436	436	1	3	fcb2821bceb3	STAY	inline-scoped		0				0
+.github/workflows/mios-ci.yml	465	467	3	27	65ae042547e9	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	469	484	16	152	6ec74752970a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:6ec74752970a	152	1
-.github/workflows/mios-ci.yml	475	477	3	36	d50346f409d2	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	484	484	1	9	16bd5cfb6a40	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	525	525	1	9	2560e4a1eba3	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	538	539	2	22	6bb139ae2e2f	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	558	560	3	42	3212f4420d42	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	482	484	3	36	d50346f409d2	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	491	491	1	9	16bd5cfb6a40	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	532	536	5	55	280cbc5ab5e5	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	552	553	2	22	6bb139ae2e2f	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	572	574	3	42	3212f4420d42	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	592	598	7	72	617b0a013ef0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:617b0a013ef0	72	1
-.github/workflows/mios-ci.yml	600	600	1	10	1b9ee0536773	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	614	614	1	10	1b9ee0536773	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	624	631	8	82	9565dcccef24	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:9565dcccef24	82	1
-.github/workflows/mios-ci.yml	629	630	2	22	aee286688ed0	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	632	635	4	46	b180f4dba38e	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	633	639	7	60	32d6ab8c2bce	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:32d6ab8c2bce	60	1
+.github/workflows/mios-ci.yml	650	651	2	22	aee286688ed0	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	666	671	6	53	c5329a266c25	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:c5329a266c25	53	1
 .github/workflows/url-probe.yml	1	1	1	25	f07956f16446	STAY	ai-header		0				0
 .github/workflows/url-probe.yml	15	18	4	47	37daa60d4113	STAY	midsize-why		0				0
@@ -1103,8 +1105,9 @@ automation/65-bake-hyprland.sh	49	50	2	21	6deb1942be5a	STAY	local-scoped		0				0
 automation/65-bake-hyprland.sh	62	62	1	12	78f46768340d	STAY	inline-scoped		0				0
 automation/65-bake-hyprland.sh	80	80	1	8	5398a34d468c	STAY	inline-scoped		0				0
 automation/65-bake-hyprland.sh	85	85	1	13	82170299f513	STAY	local-scoped		0				0
-automation/65-bake-hyprland.sh	106	106	1	19	ff54e850433c	STAY	local-scoped		0				0
-automation/65-bake-hyprland.sh	117	117	1	9	dcd76bb09250	STAY	local-scoped		0				0
+automation/65-bake-hyprland.sh	92	93	2	30	55ae27c65d19	STAY	midsize-why		0				0
+automation/65-bake-hyprland.sh	108	108	1	19	ff54e850433c	STAY	local-scoped		0				0
+automation/65-bake-hyprland.sh	119	119	1	9	dcd76bb09250	STAY	local-scoped		0				0
 automation/66-bake-quickshell.sh	1	5	5	39	80e0e8b153b9	MIGRATE_HEADER	overlong-hint		0				0
 automation/66-bake-quickshell.sh	1	4	4	26	912ff3bb34b1	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:912ff3bb34b1	26	1
 automation/66-bake-quickshell.sh	7	7	1	3	ee573bae3b99	STAY	local-scoped		0				0
@@ -1753,6 +1756,8 @@ automation/lib/globals.sh	5799	5803	5	48	65a16abc4014	DROP	generated-artifact		0
 automation/lib/masking.sh	1	3	3	25	2d032e14f403	STAY	ai-header		0				0
 automation/lib/masking.sh	1	3	3	36	fdb6be2b4488	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:fdb6be2b4488	36	1
 automation/lib/masking.sh	35	35	1	4	2de9c1c80742	STAY	inline-scoped		0				0
+automation/lib/masking.sh	49	52	4	47	8d27a6f96c57	STAY	midsize-why		0				0
+automation/lib/masking.sh	91	92	2	21	088972ac4849	STAY	local-scoped		0				0
 automation/lib/mios_var_closure.py	1	3	3	22	d9027310e167	STAY	ai-header		0				0
 automation/lib/mios_var_closure.py	1	4	4	29	fc97d85166bc	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:fc97d85166bc	29	1
 automation/lib/mios_var_closure.py	4	4	1	6	1cc7b896c3be	STAY	local-scoped		0				0
@@ -1788,6 +1793,9 @@ automation/lib/root-merge.sh	1	4	4	23	d56bec71dec1	STAY	ai-header		0				0
 automation/lib/root-merge.sh	6	9	4	32	9bf59ac81bfa	MIGRATE	midsize-narrative		0				0
 automation/lib/root-merge.sh	16	16	1	3	06b3d51cf7db	STAY	inline-scoped		0				0
 automation/lib/test_masking.sh	1	2	2	10	bc118908334b	STAY	ai-header		0				0
+automation/lib/test_masking.sh	53	54	2	24	fa3f6b07319f	STAY	local-scoped		0				0
+automation/lib/test_masking.sh	61	61	1	9	62456f7da66a	STAY	local-scoped		0				0
+automation/lib/test_masking.sh	72	72	1	9	62456f7da66a	STAY	local-scoped		0				0
 automation/lib/upstream-latest.sh	1	9	9	111	53ad108163b0	MIGRATE_HEADER	overlong-hint		0				0
 automation/lib/upstream-latest.sh	13	13	1	3	d1b57feeb82a	STAY	local-scoped		0				0
 automation/lib/upstream-latest.sh	19	19	1	12	9af90f9c3f05	STAY	local-scoped		0				0
@@ -1799,16 +1807,16 @@ automation/lib/upstream-latest.sh	67	68	2	12	88c7623f4916	STAY	local-scoped		0		
 automation/lib/upstream-latest.sh	78	80	3	36	2c171292e2f1	STAY	midsize-why		0				0
 automation/lib/upstream-latest.sh	98	98	1	10	d72587185b51	STAY	local-scoped		0				0
 automation/lib/upstream-latest.sh	100	100	1	1	edef82d3cf36	DROP	banner		0				0
-automation/lib/upstream-latest.sh	107	107	1	8	e5efc8253b0f	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	114	114	1	10	9edfeea366fb	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	124	124	1	11	a598bd6a0b3f	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	132	133	2	21	c23c90c9afc9	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	146	147	2	16	12e63dd2a658	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	163	165	3	29	b199201c303c	STAY	midsize-why		0				0
-automation/lib/upstream-latest.sh	178	178	1	9	5117de9487b0	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	186	186	1	1	24c7123696ae	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	188	189	2	21	032a920ad4b0	STAY	local-scoped		0				0
-automation/lib/upstream-latest.sh	213	214	2	23	6101c791642a	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	107	110	4	52	9be1a0ab5edc	STAY	midsize-why		0				0
+automation/lib/upstream-latest.sh	134	134	1	10	9edfeea366fb	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	144	144	1	11	a598bd6a0b3f	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	152	153	2	21	c23c90c9afc9	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	166	167	2	16	12e63dd2a658	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	183	186	4	44	3cc2f16a9760	STAY	midsize-why		0				0
+automation/lib/upstream-latest.sh	202	202	1	9	5117de9487b0	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	210	210	1	1	24c7123696ae	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	212	213	2	21	032a920ad4b0	STAY	local-scoped		0				0
+automation/lib/upstream-latest.sh	237	238	2	23	6101c791642a	STAY	local-scoped		0				0
 automation/lib/ws7-uki-fapolicyd-build.sh	1	3	3	26	0bd7b6df7d96	STAY	ai-header		0				0
 automation/lib/ws7-uki-fapolicyd-build.sh	1	4	4	46	4f4814ea7fe4	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:4f4814ea7fe4	46	1
 automation/lib/ws7-uki-fapolicyd-build.sh	27	27	1	1	37687105d22d	STAY	inline-scoped		0				0
@@ -15180,26 +15188,31 @@ tests/test-unattend.py	262	262	1	8	bdb56759e472	STAY	local-scoped		0				0
 tests/test-upstream-latest.sh	1	3	3	68	8bb87bcc8c01	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-upstream-latest.sh	8	8	1	12	f822fab319d1	STAY	local-scoped		0				0
 tests/test-upstream-latest.sh	26	26	1	18	2773d1791a96	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	37	37	1	12	a8a3a88a843d	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	50	50	1	11	10e2bd1d94f8	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	64	64	1	5	76b36c04f4bb	DROP	banner		0				0
-tests/test-upstream-latest.sh	65	65	1	7	9876bdf64075	DROP	banner		0				0
-tests/test-upstream-latest.sh	74	74	1	13	9153d028d0b0	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	83	83	1	12	a63cad92547f	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	97	97	1	7	4f9447f021be	STAY	inline-scoped		0				0
-tests/test-upstream-latest.sh	102	102	1	3	35ac649691fe	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	105	105	1	4	43ceed344c8d	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	112	112	1	9	3f04fe3e93c6	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	119	119	1	7	6db652611cdc	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	139	139	1	9	28aef84cf928	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	149	149	1	11	8d9eb109c906	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	161	161	1	9	b419385da0af	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	163	163	1	11	682290ad03c9	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	197	197	1	7	927d16cb7f6d	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	199	199	1	3	ee573bae3b99	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	216	217	2	24	e4cb91e03591	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	228	229	2	10	100a0d12e2d5	STAY	local-scoped		0				0
-tests/test-upstream-latest.sh	238	238	1	10	447c600c266b	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	36	36	1	16	393a0fe74b5a	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	39	39	1	12	a8a3a88a843d	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	52	55	4	44	f74dfca859f3	STAY	midsize-why		0				0
+tests/test-upstream-latest.sh	89	89	1	5	76b36c04f4bb	DROP	banner		0				0
+tests/test-upstream-latest.sh	90	90	1	7	9876bdf64075	DROP	banner		0				0
+tests/test-upstream-latest.sh	99	99	1	13	9153d028d0b0	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	108	108	1	12	a63cad92547f	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	122	122	1	7	4f9447f021be	STAY	inline-scoped		0				0
+tests/test-upstream-latest.sh	127	127	1	3	35ac649691fe	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	130	130	1	4	43ceed344c8d	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	137	137	1	9	3f04fe3e93c6	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	144	144	1	7	6db652611cdc	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	164	164	1	9	28aef84cf928	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	174	174	1	11	8d9eb109c906	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	186	186	1	9	b419385da0af	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	188	188	1	11	682290ad03c9	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	222	222	1	7	927d16cb7f6d	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	224	224	1	3	ee573bae3b99	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	241	242	2	24	e4cb91e03591	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	253	254	2	10	100a0d12e2d5	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	263	263	1	10	447c600c266b	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	273	274	2	23	b5696190be6c	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	290	290	1	7	90b4351bbad8	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	300	300	1	11	94abf4445c66	STAY	local-scoped		0				0
+tests/test-upstream-latest.sh	309	309	1	12	4733ef93b78e	STAY	local-scoped		0				0
 tests/test-usb-format.py	1	3	3	19	d5875f6078ff	STAY	ai-header		0				0
 tests/test-usb-format.py	4	4	1	9	735818eaafbb	STAY	local-scoped		0				0
 tests/test-usb-format.py	28	28	1	12	c66e74d57a42	STAY	local-scoped		0				0
@@ -15308,6 +15321,8 @@ tests/test-ux.py	2119	2121	3	4	e1b4611627ae	STAY	midsize-why		0				0
 tests/test-ux.py	2154	2154	1	17	2eeeab1c82ae	STAY	local-scoped		0				0
 tests/test-ux.py	2164	2164	1	11	7c5ab4a89f23	STAY	local-scoped		0				0
 tests/test-ux.py	2308	2308	1	14	b3f3cc5b211f	STAY	local-scoped		0				0
+tests/test-ux.py	2332	2335	4	37	d9ff17d3b06b	STAY	midsize-why		0				0
+tests/test-ux.py	2347	2348	2	26	36a5310e98a3	STAY	midsize-why		0				0
 tests/test-varlink-socket-activation.py	1	3	3	17	6b7a3a275d5d	STAY	ai-header		0				0
 tests/test-varlink-socket-activation.py	5	5	1	10	d1c5c2689794	STAY	local-scoped		0				0
 tests/test-varlink-socket-activation.py	22	22	1	8	e53c5455ad3e	STAY	local-scoped		0				0
@@ -39217,17 +39232,17 @@ usr/share/mios/tests/test-role-apply.sh	1	3	3	16	3f6f7c278903	STAY	ai-header		0	
 usr/share/mios/theme/mios-colors.sh	1	3	3	26	168c71ce4442	STAY	ai-header		0				0
 usr/share/mios/tmux/blink-mobile-keys.tmux.conf	1	2	2	21	daa9afc51117	STAY	ai-header		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	1	1	1	8	3e1061b372ed	STAY	ai-header		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	10	10	1	3	addbbe4c2944	DROP	banner		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	10	10	1	7	96b0e4c42ae6	DROP	banner		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	62	62	1	172	2a0f86467c77	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	63	63	1	187	241aeebf6f20	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	64	64	1	171	7d72af3d37d8	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	65	65	1	186	116d37d3f943	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	66	66	1	195	d6c205cbec4e	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	67	67	1	210	2092edd0c5f8	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	68	68	1	194	ac6895411a1a	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	69	69	1	209	3e08ddb3b7d6	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	70	70	1	114	9c58dfecf429	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	71	71	1	129	402673e25332	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	66	66	1	203	8c2381a4d323	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	67	67	1	218	caecf57a0c52	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	68	68	1	202	4554d369394a	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	69	69	1	217	793fd339c9cc	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	70	70	1	122	dc2183729a39	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	71	71	1	137	9b02d9973aa4	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	72	72	1	104	fb7e89bebb6a	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	73	73	1	119	fe86436587cd	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	74	74	1	26	6a580e00c0b6	STAY	inline-scoped		0				0
@@ -39245,14 +39260,14 @@ usr/share/mios/tmux/mios-keys.tmux.conf	91	91	1	6	3201a45b2ae2	STAY	inline-scope
 usr/share/mios/tmux/mios-keys.tmux.conf	93	93	1	6	7643276678f6	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	98	98	1	1	dc74aa7a415e	DROP	banner		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	99	99	1	1	dc74aa7a415e	DROP	banner		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	100	100	1	29	9fc002a5d424	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	100	100	1	33	0b8a95156e3c	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	101	101	1	21	7eeed62db197	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	102	102	1	1	dc74aa7a415e	DROP	banner		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	104	104	1	21	3d9a3ced5503	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	106	106	1	1	dc74aa7a415e	DROP	banner		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	107	107	1	2	5bcad36cc602	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	110	110	1	2	934f7387d44d	DROP	banner		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	111	111	1	14	d82a0b181f78	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	111	111	1	18	e516b3ea1538	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	112	112	1	21	87b18041cc2c	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	113	113	1	21	3d9a3ced5503	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	115	115	1	2	934f7387d44d	DROP	banner		0				0
@@ -39274,11 +39289,11 @@ usr/share/mios/tmux/mios-keys.tmux.conf	146	146	1	6	7643276678f6	STAY	inline-sco
 usr/share/mios/tmux/mios-keys.tmux.conf	152	152	1	2	5bcad36cc602	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	153	153	1	2	ffe1f8b26bd2	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	154	154	1	1	dc74aa7a415e	DROP	banner		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	165	165	1	14	d82a0b181f78	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	165	165	1	18	e516b3ea1538	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	167	167	1	8	e205138c2fbe	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	168	168	1	8	e2f91a7df4ee	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	169	169	1	15	f96afaca315f	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	170	170	1	15	0fc029539179	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	169	169	1	19	cbaf53d8d8d4	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	170	170	1	19	8d869fa9e449	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	180	180	1	4	ef6e45a5b839	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	181	181	1	21	7eeed62db197	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	182	182	1	21	87b18041cc2c	STAY	inline-scoped		0				0
@@ -39287,7 +39302,7 @@ usr/share/mios/tmux/mios-keys.tmux.conf	184	184	1	15	18f44aa3bc52	STAY	inline-sc
 usr/share/mios/tmux/mios-keys.tmux.conf	185	185	1	2	5df708f269eb	DROP	banner		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	186	186	1	35	8af4054288f9	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	188	188	1	13	ceb76de8420b	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	189	189	1	29	9fc002a5d424	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	189	189	1	33	0b8a95156e3c	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	190	190	1	14	d2299a534038	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	196	196	1	11	17688011a060	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	197	197	1	34	05dac03c3a4b	STAY	inline-scoped		0				0
@@ -39298,12 +39313,12 @@ usr/share/mios/tmux/mios-keys.tmux.conf	203	203	1	8	de062adc0c8c	DROP	banner		0	
 usr/share/mios/tmux/mios-keys.tmux.conf	205	205	1	13	dd5e48cbe9ce	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	207	207	1	7	8c4f5a84afda	STAY	local-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	218	218	1	10	0af4f811b4a2	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	219	219	1	12	0372382d45cd	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	220	220	1	33	2175a1652099	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	219	219	1	13	d8c2a3d842d5	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	220	220	1	32	00b4c490a6ac	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	221	221	1	22	c111f177f944	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	222	222	1	31	c16e155077cf	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	223	223	1	27	e31a558f3823	STAY	inline-scoped		0				0
-usr/share/mios/tmux/mios-keys.tmux.conf	224	224	1	12	084835a489b8	STAY	inline-scoped		0				0
+usr/share/mios/tmux/mios-keys.tmux.conf	224	224	1	29	ae743156e889	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-keys.tmux.conf	225	225	1	12	75c56f090c00	STAY	inline-scoped		0				0
 usr/share/mios/tmux/mios-theme.tmux.conf	1	6	6	40	63bc5d511314	STAY	ai-header		0				0
 usr/share/mios/tmux/mios-theme.tmux.conf	8	8	1	5	d0f73e2aeee5	DROP	banner		0				0
