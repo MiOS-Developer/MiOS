@@ -65,7 +65,8 @@ The spec's earlier names map as follows: Tier 1 is L1. Tier 2 is the L2 seat VM 
 10. **L2 MiOS VMs host nested MiOS containers** (Atlas Map 1b,
     <https://claude.ai/artifact/3NcyFYkcsskVpfp4KurUoA#nested>).
     - Each one is a full, equivalent MiOS image, run as a systemd container under podman
-      (`--systemd=always`), the shape the cloud `gce-up` path already uses.
+      (`--systemd=always`), the shape the devcontainer and cloud-session paths use. (The cloud
+      `gce-up` VM no longer does: it boots the image itself through `bootc switch`.)
     - Their count follows hardware pressure.
     - They share the VM's GPUs through CDI. That is how a single-dGPU host runs several MiOS images,
       since VFIO gives a whole dGPU to one VM. A multi-GPU host can instead give each MiOS VM its own
@@ -351,7 +352,7 @@ planted-defect control.
 | F2 | **MiOS-Field integration:** the version floor from SSOT in the launchers; the hypervisor Ventoy entry rendered from SSOT and mirrored to mios-bootstrap (Law 15) | the launchers, `[field.sysrescue]`, the SystemRescue GRUB entry |
 | F3 | **Admin plane:** L1 joins `wg-ipkvm` at boot; the TUI is reachable only there; IP-KVMs are declared per blade; no route between the meshes | `[management_mesh]`; the IP-KVM task, reopened |
 | F4 | **Early VFIO on L1:** the attended/headless mode key in `[metal]`, applied at boot; class selectors that follow it (attended excludes the iGPU, headless gives it to the seat); the initcpio hook, `modprobe.d` softdeps and kernel arguments, all rendered; a host without an iGPU fails the hardware floor | `[metal]`, `[metal.gpu]`; `mios-metal-vfio-gen` only echoes variables |
-| F5 | **L2 MiOS VMs:** `[blade.mediator]`; libvirt domains generated from SSOT; the seat on the seat GPU; the VM count from hardware pressure; nested MiOS containers sharing GPUs through CDI, with VRAM budgets from SSOT | the qcow2 artifact path; the `gce-up` systemd-container shape |
+| F5 | **L2 MiOS VMs:** `[blade.mediator]`; libvirt domains generated from SSOT; the seat on the seat GPU; the VM count from hardware pressure; nested MiOS containers sharing GPUs through CDI, with VRAM budgets from SSOT | the qcow2 artifact path; the devcontainer's systemd-container shape |
 | F6 | **GPU arbiter:** the section 4 state machine, native, tested with mocked sysfs and QMP; it drains every nested container before a hand-off | `[metal.gpu].arbitration` |
 | F7 | **Seat sessions:** Looking Glass across siblings; Sunshine on the seat GPU; consoles on the blade mesh only | the kvmfr and Looking Glass bakes, ttyd, Sunshine |
 | F8 | **`mios-xbox` and L3:** the Windows sibling; Quadlet placement and local moves; the single-live lease and its gate; core promotion | the MiOS-Xbox builders |

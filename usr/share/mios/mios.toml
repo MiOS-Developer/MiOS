@@ -8568,9 +8568,21 @@ apt_keyring = "https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg"
 apt_list    = "https://pkgs.tailscale.com/stable/{id}/{codename}.tailscale-keyring.list"
 dnf_repo    = "https://pkgs.tailscale.com/stable/fedora/tailscale.repo"
 
-# `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
-# podman container booting its own systemd. The boot disk holds the image and a
-# nested build; Ubuntu LTS ships the guest agent that runs the startup script.
+# `bootstrap.sh gce-up`: a Compute Engine VM that BOOTS [image].ref as its OS. It
+# starts from a Fedora CoreOS boot image; an Ignition config (user-data metadata)
+# installs a first-boot unit that runs `bootc switch` to [image].ref (or, on a
+# CoreOS without bootc, `rpm-ostree rebase ostree-unverified-registry:<ref>`) and
+# reboots into MiOS. The boot disk holds two deployments of the image plus /var.
+# Operator-side inputs (read on the machine running gce-up, never baked in):
+#   ssh_authorized_keys_file  one public key per line for the `ssh_user` login
+#   tailscale_auth_key_file   a ONE-USE, short-expiry pre-auth key; it lands at
+#                             node_auth_key_file (0600) and is removed once the
+#                             node runs on the tailnet. Ignition is instance
+#                             metadata, readable by project members until then.
+#   pull_secret               a Secret Manager secret holding a registry auth.json
+#                             for a private [image].ref; the node fetches it with
+#                             its service-account token into auth_file (0600),
+#                             so no credential is ever in metadata. "" = anonymous.
 [deployment.cloud.gce]
 project        = ""
 instance       = "mios"
@@ -8578,9 +8590,33 @@ zone           = "us-central1-a"
 machine_type   = "n2-standard-8"
 boot_disk_gb   = 250
 boot_disk_type = "pd-balanced"
-image_family   = "ubuntu-2404-lts-amd64"
-image_project  = "ubuntu-os-cloud"
-container      = "mios"
+image_family   = "fedora-coreos-stable"
+image_project  = "fedora-coreos-cloud"
+ignition_version = "3.4.0"
+ssh_user       = "core"
+ssh_authorized_keys_file = ""
+tailscale_auth_key_file  = ""
+node_auth_key_file       = "/etc/mios/secrets/tailscale-authkey"
+pull_secret    = ""
+auth_file      = "/etc/ostree/auth.json"
+rebase_stamp   = "/etc/mios-cloud/rebased"
+dropin         = "/etc/mios/mios.d/55-cloud-gce.toml"
+
+# The VM's host drop-in, written after [deployment.cloud.overlay] (50-cloud.toml).
+# A Compute Engine VM has a TUN device and no egress proxy, so its tailnet node runs
+# in kernel mode, enrolls from the copied one-use key and mints nothing. Shields stay
+# down so the node is reachable over the tailnet (sshd on [ssh].port); it offers no
+# exit node. The cloud overlay's socks5_server stays (an empty string never overrides
+# a lower tier) and is unused: only a userspace tailscaled opens it. gce-up adds
+# [tailscale].auth_key_file = node_auth_key_file when it was given a key.
+[deployment.cloud.gce.overlay.tailscale]
+mode                = "kernel"
+hostname            = "mios-cloud-gce"
+accept_dns          = true
+advertise_exit_node = false
+shields_up          = false
+[deployment.cloud.gce.overlay.tailscale.auth_key_mint]
+enabled = false
 
 [hwcaps]
 level = "v1"
