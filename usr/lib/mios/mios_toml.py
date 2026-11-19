@@ -279,8 +279,9 @@ def operator_view(getpw=None, euid=None, uid_min=None):
     A system caller (root, a service uid) merges the vendor + host tiers in full and
     takes from the operator tier -- a file a lower-privileged uid writes -- ONLY what
     vendor/host [security.operator_tier] allow: `values` (credential strings without
-    control characters) and `toggles` (booleans; '*' matches a table vendor/host
-    declare). Usernames, surface lists, paths, units, hosts, ports and public_host
+    control characters), `lines` (strings of newline-separated entries, such as SSH
+    public keys, each line without control characters) and `toggles` (booleans; '*'
+    matches a table vendor/host declare). Usernames, surface lists, paths, units, hosts, ports and public_host
     therefore never come from the operator tier. A `values` key the operator set but
     that is refused raises LayerError: the operator's credential is present but
     unusable, and the vendor/host default must never replace it (a refused toggle
@@ -299,16 +300,22 @@ def operator_view(getpw=None, euid=None, uid_min=None):
     values, toggles = policy.get("values"), policy.get("toggles")
     if not isinstance(values, list) or not isinstance(toggles, list):
         raise LayerError("[security.operator_tier] values/toggles are missing from the vendor/host tiers")
-    taken = [d for d in values if isinstance(_dotted_get(op, d), str) and _dotted_get(op, d)]
+    lines = policy.get("lines", [])
+    if not isinstance(lines, list):
+        raise LayerError("[security.operator_tier] lines must be a list of dotted keys")
+    taken = [d for d in values + lines if isinstance(_dotted_get(op, d), str) and _dotted_get(op, d)]
     if not system:
         deep_merge(base, op)
         return derive_ports(base), reason, frozenset(taken)
     taken, refused = [], []
-    for dotted in values:
+    for dotted in values + lines:
         v = _dotted_get(op, dotted)
         if v is None or v == "":
             continue
-        if not isinstance(v, str) or _CTRL.search(v):
+        # A `lines` key may hold newline-separated entries; every entry is still a plain line.
+        bad = (not isinstance(v, str) or any(_CTRL.search(part) for part in v.split("\n"))
+               if dotted in lines else not isinstance(v, str) or _CTRL.search(v))
+        if bad:
             why = "control characters" if isinstance(v, str) else f"a {type(v).__name__}, not a string"
             raise LayerError(f"{op_file}: the operator's {dotted} is refused ({why}) -- fix it in "
                              "mios.html; no surface falls back to the vendor/host default")

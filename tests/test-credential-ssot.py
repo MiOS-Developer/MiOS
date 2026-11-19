@@ -924,6 +924,144 @@ def _restricted_defect(data: dict):
     return None
 
 
+# ============================================================================ the ssh key surface
+SSH_LINES = 'lines = ["auth.existing_ssh_key"]\n'   # appended inside OPTIER's [security.operator_tier]
+
+
+def _fixture_pubkeys(n: int) -> list:
+    """n freshly generated ed25519 public keys (fixtures; the private halves are discarded)."""
+    d = tempfile.mkdtemp(prefix="mios-ssh-fixture-")
+    try:
+        keys = []
+        for i in range(n):
+            p = os.path.join(d, f"k{i}")
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", f"fixture-{i}", "-f", p],
+                           check=True, capture_output=True)
+            with open(p + ".pub", encoding="utf-8") as fh:
+                keys.append(fh.read().strip())
+        return keys
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+class TestSshKeys(unittest.TestCase):
+    """`mios-credential apply ssh`: the login's authorized_keys carries exactly the operator tier's
+    [auth].existing_ssh_key in one managed block; the login's own lines are never touched."""
+
+    @classmethod
+    def setUpClass(cls):
+        if not shutil.which("ssh-keygen"):
+            raise unittest.SkipTest("ssh-keygen absent")
+        cls.k1, cls.k2, cls.own = _fixture_pubkeys(3)
+
+    def _view(self, keys_text, vendor_keys=""):
+        op = f'[identity]\ndefault_password = "{OP_PASS}"\n'
+        if keys_text is not None:
+            op += f"[auth]\nexisting_ssh_key = {json.dumps(keys_text)}\n"
+        vendor = SSH_LINES + (f"[auth]\nexisting_ssh_key = {json.dumps(vendor_keys)}\n" if vendor_keys else "")
+        fx = _OpFixture(op_toml=op, vendor_extra=vendor)
+        self.addCleanup(fx.cleanup)
+        return fx.view()
+
+    def _home(self, parent=None):
+        home = tempfile.mkdtemp(prefix="mios-ssh-home-", dir=parent)
+        self.addCleanup(shutil.rmtree, home, True)
+        return home
+
+    def _apply(self, view, home, check=False, account=None):
+        data, _reason, taken = view
+        return mc._apply_ssh_keys(data, taken, check=check,
+                                  account=account or (home, os.geteuid(), os.getegid()))
+
+    @staticmethod
+    def _keys_file(home):
+        return os.path.join(home, ".ssh", "authorized_keys")
+
+    def _read(self, home):
+        with open(self._keys_file(home), encoding="utf-8") as fh:
+            return fh.read()
+
+    def test_operator_keys_are_authorized_and_the_logins_own_lines_kept(self):
+        view = self._view(f"{self.k1}\n# a comment\n\n{self.k2}\n")
+        home = self._home()
+        os.makedirs(os.path.join(home, ".ssh"), mode=0o700)
+        with open(self._keys_file(home), "w", encoding="utf-8") as fh:
+            fh.write(self.own + "\n")
+        self.assertEqual(self._apply(view, home), "changed")
+        got = self._read(home)
+        self.assertEqual(got, f"{self.own}\n\n{mc._SSH_BEGIN}\n{self.k1}\n{self.k2}\n{mc._SSH_END}\n")
+        self.assertEqual(stat.S_IMODE(os.stat(self._keys_file(home)).st_mode), 0o600)
+        self.assertEqual(self._apply(view, home), "unchanged")
+        self.assertEqual(self._apply(view, home, check=True), "unchanged")
+
+    def test_vendor_keys_are_never_authorized(self):
+        home = self._home()
+        self.assertEqual(self._apply(self._view(None, vendor_keys=self.k1), home), "unchanged")
+        self.assertFalse(os.path.exists(self._keys_file(home)))
+
+    def test_removing_a_key_in_mios_html_revokes_only_the_managed_block(self):
+        home = self._home()
+        os.makedirs(os.path.join(home, ".ssh"), mode=0o700)
+        with open(self._keys_file(home), "w", encoding="utf-8") as fh:
+            fh.write(self.own + "\n")
+        self.assertEqual(self._apply(self._view(self.k1), home), "changed")
+        self.assertEqual(self._apply(self._view(None), home), "changed")
+        self.assertEqual(self._read(home), self.own + "\n")
+
+    def test_check_reports_drift_and_writes_nothing(self):
+        home = self._home()
+        self.assertEqual(self._apply(self._view(self.k1), home, check=True), "drift")
+        self.assertFalse(os.path.exists(os.path.join(home, ".ssh")))
+
+    def test_a_line_that_is_not_a_key_refuses(self):
+        with self.assertRaises(mc.CredentialError) as cm:
+            self._apply(self._view(f"{self.k1}\nssh-ed25519 not-a-key"), self._home())
+        self.assertIn("line 2", str(cm.exception))
+
+    def test_control_characters_in_a_line_refuse_and_single_line_values_keep_their_rule(self):
+        for op_keys in (f"{self.k1}\r\n{self.k2}", f"{self.k1}\t"):
+            with self.assertRaises(mc.CredentialError):
+                self._view(op_keys)
+        fx = _OpFixture(op_toml='[identity]\ndefault_password = "a\\nb"\n', vendor_extra=SSH_LINES)
+        self.addCleanup(fx.cleanup)
+        with self.assertRaises(mc.CredentialError):
+            fx.view()
+
+    def test_an_unterminated_block_is_left_alone(self):
+        home = self._home()
+        os.makedirs(os.path.join(home, ".ssh"), mode=0o700)
+        broken = f"{self.own}\n{mc._SSH_BEGIN}\n{self.k2}\n"
+        with open(self._keys_file(home), "w", encoding="utf-8") as fh:
+            fh.write(broken)
+        self.assertTrue(self._apply(self._view(self.k1), home).startswith("failed (authorized_keys has a managed block"))
+        self.assertEqual(self._read(home), broken)
+
+    @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() == 0, "the privilege drop runs only as root")
+    def test_root_writes_as_the_login_so_a_planted_link_cannot_redirect_it(self):
+        nobody = 65534
+        home = self._home(parent="/tmp")
+        os.chown(home, nobody, nobody)        # under /tmp, so the login can reach it
+        root_dir = self._home()               # root-owned 0700: the link points into it
+        os.symlink(root_dir, os.path.join(home, ".ssh"))
+        account = (home, nobody, nobody)
+        state = self._apply(self._view(self.k1), home, account=account)
+        self.assertTrue(state.startswith("failed"), state)
+        self.assertFalse(os.path.exists(os.path.join(root_dir, "authorized_keys")))
+        os.unlink(os.path.join(home, ".ssh"))
+        self.assertEqual(self._apply(self._view(self.k1), home, account=account), "changed")
+        st = os.stat(self._keys_file(home))
+        self.assertEqual((st.st_uid, stat.S_IMODE(st.st_mode)), (nobody, 0o600))
+
+    def test_the_vendor_ssot_wires_the_surface(self):
+        with open(os.path.join(ROOT, "usr", "share", "mios", "mios.toml"), "rb") as fh:
+            import tomllib
+            doc = tomllib.load(fh)
+        self.assertIn("ssh", doc["security"]["credential_apply"]["surfaces"])
+        self.assertEqual(doc["security"]["operator_tier"]["lines"], ["auth.existing_ssh_key"])
+        self.assertEqual(doc["auth"]["existing_ssh_key"], "", "the vendor tier carries no key")
+        self.assertIn("ssh", mc.enabled_surfaces({"security": {"credential_apply": {"surfaces": ["shadow", "ssh"]}}}))
+
+
 class TestRestrictedView(unittest.TestCase):
     """Critical C1/C2: root code takes from the operator tier ONLY [security.operator_tier]."""
 

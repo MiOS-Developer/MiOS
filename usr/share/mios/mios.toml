@@ -2471,6 +2471,9 @@ language        = "en_US.UTF-8"
 [auth]
 ssh_key_type     = "ed25519"
 ssh_key_action   = "generate"
+# SSH public keys every MiOS machine authorizes for the [identity].username login, one per line
+# (authorized_keys format; options such as restrict,command="..." allowed). Set it in mios.html:
+# only the operator tier counts (`mios-credential apply ssh`), never this vendor default.
 existing_ssh_key = ""
 password_policy  = "plain"
 password         = ""           # "" = inherit [identity].default_password (the ONE stored secret); password_hash wins for /etc/shadow
@@ -3066,9 +3069,10 @@ paths = [
 ]
 
 # [security.credential_apply] -- what `apply --all` reconciles: shadow and forge take only an
-# operator-set value, ttyd its own login, and none returns to a default.
+# operator-set value, ttyd its own login, and none returns to a default. ssh keeps one managed
+# block of the login's authorized_keys equal to the operator tier's [auth].existing_ssh_key.
 [security.credential_apply]
-surfaces = ["portal", "forge", "code_server", "ttyd", "owui", "shadow"]
+surfaces = ["portal", "forge", "code_server", "ttyd", "owui", "shadow", "ssh"]
 retry_backoff_s     = 300   # a failed surface backs off, doubling to retry_backoff_max_s
 retry_backoff_max_s = 86400
 
@@ -3078,12 +3082,14 @@ retry_backoff_max_s = 86400
 # usernames, surface lists, paths, units, hosts, ports, public_host, the kill
 # switch's interface -- comes from the vendor + host tiers. `values` must
 # be strings without control characters, and one that is not fails the whole run closed
-# (nothing falls back to the vendor default); `toggles` must be booleans (a refused one
-# keeps the vendor/host value) and '*' matches only a table the vendor/host tiers declare.
-# network.vpn.killswitch is tighten-only: the operator can enable, never disable a
+# (nothing falls back to the vendor default); `lines` are strings of newline-separated
+# entries (SSH public keys), each line held to the same rule; `toggles` must be booleans (a
+# refused one keeps the vendor/host value) and '*' matches only a table the vendor/host tiers
+# declare. network.vpn.killswitch is tighten-only: the operator can enable, never disable a
 # vendor/host true (mios-vpn-killswitch ORs the vendor/host value with this toggle).
 [security.operator_tier]
 values  = ["identity.default_password", "portal.password", "ttyd.auth_pass"]
+lines   = ["auth.existing_ssh_key"]
 toggles = ["tailscale.serve.enabled", "tailscale.serve.routes.*.enabled", "network.vpn.killswitch"]
 
 [security.nohc_allowlist]

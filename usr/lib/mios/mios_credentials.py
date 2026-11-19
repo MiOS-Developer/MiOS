@@ -315,6 +315,7 @@ def bake_password_hash(env: dict | None = None) -> str:
 # code takes from that tier only [security.operator_tier] (mios_toml.operator_view).
 
 SURFACES = ("portal", "forge", "code_server", "ttyd", "owui", "shadow")
+KEY_SURFACES = ("ssh",)               # public-key material, not a password: _apply_ssh_keys
 RANDOM_OPT_IN = "__random__"          # explicit opt-in to a generated value (owui only)
 _RANDOM_OK = ("owui",)
 _SURFACE_ENV = {"forge": "MIOS_FORGE_ADMIN_PASSWORD", "owui": "MIOS_OWUI_ADMIN_PASSWORD",
@@ -1104,6 +1105,120 @@ def _apply_shadow(data, user, secret, ctx):
     return "changed" if res.returncode == 0 else f"failed (chpasswd exit {res.returncode})"
 
 
+SSH_KEYS_KEY = "auth.existing_ssh_key"
+_SSH_BEGIN = "# >>> mios-credential ssh: managed from [auth].existing_ssh_key (mios.html); edits here are replaced"
+_SSH_END = "# <<< mios-credential ssh"
+_SSH_UNCHANGED, _SSH_CHANGED, _SSH_DRIFT, _SSH_UNTERMINATED = 0, 10, 20, 30
+
+
+def _ssh_keys(data: dict, taken) -> list:
+    """The operator tier's SSH public keys, one per line ('#' and blank lines dropped). Keys
+    the vendor or host tiers carry never count: no Blade authorizes a key the operator did
+    not set (the vendor tier ships in the public image). A line that is not an
+    authorized_keys entry (options allowed) refuses the whole surface, naming the line."""
+    if SSH_KEYS_KEY not in taken:
+        return []
+    raw = _s(_sect(data, "auth").get("existing_ssh_key"))
+    keys = [ln.strip() for ln in raw.split("\n") if ln.strip() and not ln.strip().startswith("#")]
+    keygen = shutil.which("ssh-keygen")
+    if keys and not keygen:
+        raise CredentialError("ssh-keygen is required to validate [auth].existing_ssh_key")
+    for number, key in enumerate(keys, 1):
+        res = subprocess.run([keygen, "-l", "-f", "-"], input=key + "\n", capture_output=True,
+                             text=True, timeout=30, check=False)
+        if res.returncode != 0:
+            raise CredentialError(f"[auth].existing_ssh_key line {number} is not an SSH public key "
+                                  "(authorized_keys format); fix it in mios.html")
+    return keys
+
+
+def _ssh_merged(current: str, keys: list) -> str | None:
+    """`current` with the managed block replaced by `keys` (dropped when there are none), every
+    other line kept as it is. None: the block has no end marker, so nothing is guessed."""
+    out, inside = [], False
+    for line in current.splitlines():
+        if line == _SSH_BEGIN and not inside:
+            inside = True
+        elif line == _SSH_END and inside:
+            inside = False
+        elif not inside:
+            out.append(line)
+    if inside:
+        return None
+    while out and not out[-1].strip():
+        out.pop()
+    if keys:
+        out += ([""] if out else []) + [_SSH_BEGIN, *keys, _SSH_END]
+    return "\n".join(out) + "\n" if out else ""
+
+
+def _as_account(uid: int, gid: int, fn) -> int:
+    """fn() run holding only uid/gid: root forks and drops to the login before touching its
+    home, so a link the login planted can never redirect a root write. fn returns a small
+    status code; the child's exit code carries it (99: the child failed)."""
+    if os.geteuid() != 0 or uid == os.geteuid():
+        return fn()
+    pid = os.fork()
+    if pid == 0:
+        code = 99
+        try:
+            os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+            code = fn()
+        finally:
+            os._exit(code)
+    _pid, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status)
+
+
+def _apply_ssh_keys(data: dict, taken, *, check: bool = False, account=None) -> str:
+    """The SSOT login's ~/.ssh/authorized_keys carries exactly the operator tier's keys in one
+    managed block; lines outside it are the login's own and stay. Removing a key from mios.html
+    removes it here (revocation). `account` = (home, uid, gid), else vendor/host
+    [identity].username's. Logs never carry key material."""
+    keys = _ssh_keys(data, taken)
+    if account is None:
+        import pwd  # noqa: PLC0415
+
+        import mios_toml  # noqa: PLC0415
+        try:
+            username, home, uid = mios_toml.operator_account(data)
+        except mios_toml.LayerError as exc:
+            raise CredentialError(f"MiOS SSOT: {exc}") from None
+        account = (home, uid, pwd.getpwnam(username).pw_gid)
+    home, uid, gid = account
+    ssh_dir = os.path.join(home, ".ssh")
+    path = os.path.join(ssh_dir, "authorized_keys")
+
+    def reconcile() -> int:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                current = fh.read()
+        except FileNotFoundError:
+            current = ""
+        merged = _ssh_merged(current, keys)
+        if merged is None:
+            return _SSH_UNTERMINATED
+        if merged == current:
+            return _SSH_UNCHANGED
+        if check:
+            return _SSH_DRIFT
+        os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        tmp = path + ".mios-credential.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(merged)
+        os.replace(tmp, path)
+        return _SSH_CHANGED
+
+    code = _as_account(uid, gid, reconcile)
+    states = {_SSH_UNCHANGED: "unchanged", _SSH_CHANGED: "changed", _SSH_DRIFT: "drift",
+              _SSH_UNTERMINATED: "failed (authorized_keys has a managed block with no end marker; "
+                                 "fix it by hand, nothing was changed)"}
+    return states.get(code, f"failed (writing authorized_keys as the login exited {code})")
+
+
 _APPLY = {"portal": _apply_portal, "forge": _apply_forge, "code_server": _apply_code_server,
           "ttyd": _apply_ttyd, "owui": _apply_owui, "shadow": _apply_shadow}
 _RESTART_KEYS = {"portal": ("agent_pipe",), "code_server": ("code_server",),
@@ -1115,7 +1230,7 @@ def enabled_surfaces(data: dict) -> list:
     raw = _sect(data, "security.credential_apply").get("surfaces")
     if not isinstance(raw, list) or not raw:
         raise _missing("security.credential_apply.surfaces")
-    bad = [s for s in raw if s not in SURFACES]
+    bad = [s for s in raw if s not in SURFACES + KEY_SURFACES]
     if bad:
         raise CredentialError(f"[security.credential_apply].surfaces names unknown surface(s): {', '.join(map(str, bad))}")
     return [str(s) for s in raw]
@@ -1563,7 +1678,7 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
     max_s = int(_s(policy.get("retry_backoff_max_s")) or 0)
     ledger = Ledger(_paths(data, "var_credential_apply_dir"), readonly=check)
     downgraded = []
-    for surface in (s for s in surfaces if s in enabled and s not in _OWN_LOGIN):
+    for surface in (s for s in surfaces if s in enabled and s not in _OWN_LOGIN + KEY_SURFACES):
         try:
             got = surface_password(surface, data, env=env)
             fp = ledger.fingerprint(surface, surface_user(surface, data), got["value"])
@@ -1579,6 +1694,17 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
     for surface in surfaces:
         if surface not in enabled:
             log(f"{surface}: skipped (not in [security.credential_apply].surfaces)")
+            continue
+        if surface in KEY_SURFACES:
+            try:
+                state = _apply_ssh_keys(data, taken, check=check)
+            except CredentialError as exc:
+                state = f"failed ({exc})"
+            except (OSError, subprocess.SubprocessError) as exc:
+                state = f"failed ({type(exc).__name__})"
+            if state.startswith("failed") or (check and state == "drift"):
+                rc = 1
+            log(f"{surface}: {state}")
             continue
         try:
             got = surface_password(surface, data, env=env)
