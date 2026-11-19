@@ -261,6 +261,83 @@ class TestCredentialCli(unittest.TestCase):
             fx.cleanup()
 
 
+# ============================================================================ the image bake (D0)
+BAKE_VENDOR = VENDOR + '\n[security.operator_tier]\nvalues = ["identity.default_password"]\ntoggles = []\n'
+
+
+def _sha512(pw: str) -> str:
+    return subprocess.run(["openssl", "passwd", "-6", "-stdin"], input=pw + "\n",
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+class TestBakeHash(unittest.TestCase):
+    """`mios-credential bake-hash`: an image bakes only the operator's own credential."""
+
+    def _run(self, fx: Fixture, **env):
+        fx.env.update(env)
+        r = subprocess.run([sys.executable, CRED_CLI, "bake-hash"], env=fx.env,
+                           capture_output=True, text=True, timeout=60)
+        for plain in (V_PASS, U_PASS, "fixture-host-pass"):
+            self.assertNotIn(plain, r.stdout + r.stderr, "a plaintext password reached the output")
+        return r
+
+    def _refused(self, fx: Fixture, **env):
+        r = self._run(fx, **env)
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertEqual(r.stdout, "")
+        return r.stderr
+
+    def test_operator_tier_password_is_baked(self):
+        fx = Fixture(BAKE_VENDOR, HOST, USER)
+        try:
+            r = self._run(fx)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            h = r.stdout.strip()
+            salt = h.split("$")[2]
+            chk = subprocess.run(["openssl", "passwd", "-6", "-salt", salt, "-stdin"],
+                                 input=U_PASS + "\n", capture_output=True, text=True).stdout.strip()
+            self.assertEqual(h, chk, "the bake hash is not of the operator tier's password")
+        finally:
+            fx.cleanup()
+
+    def test_supplied_operator_hash_is_kept(self):
+        fx = Fixture(BAKE_VENDOR, HOST, USER)
+        try:
+            h = _sha512(U_PASS)
+            r = self._run(fx, MIOS_USER_PASSWORD_HASH=h)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, h))
+        finally:
+            fx.cleanup()
+
+    def test_no_operator_credential_refuses(self):
+        for host in (HOST, HOST + 'default_password = "fixture-host-pass"\n'):
+            fx = Fixture(BAKE_VENDOR, host, None)    # vendor (and host) only: no operator tier
+            try:
+                err = self._refused(fx)
+                # Refused for having no operator credential at all, not by the default-value check.
+                self.assertIn("no operator credential", err)
+                self.assertIn("mios.html", err)
+            finally:
+                fx.cleanup()
+
+    def test_default_passwords_refuse_in_the_operator_tier(self):
+        for pw in (V_PASS, "mios"):
+            fx = Fixture(BAKE_VENDOR, HOST, f'[identity]\ndefault_password = "{pw}"\n')
+            try:
+                self.assertIn("D0", self._refused(fx))
+            finally:
+                fx.cleanup()
+
+    def test_supplied_hashes_of_defaults_and_bad_hashes_refuse(self):
+        rounds = "$6$rounds=5000$fixturesalt$" + "a" * 86
+        for h in (_sha512(V_PASS), _sha512("mios"), "not-a-hash", rounds):
+            fx = Fixture(BAKE_VENDOR, HOST, USER)
+            try:
+                self._refused(fx, MIOS_PASSWORD_HASH=h)
+            finally:
+                fx.cleanup()
+
+
 # ============================================================================ unattend_gen.py
 def _load_unattend_gen():
     p = os.path.join(ROOT, "usr", "libexec", "mios", "win", "unattend_gen.py")
@@ -560,6 +637,18 @@ class TestNoLiteralCredentialDefaults(unittest.TestCase):
         jf = self._read(ROOT, "Justfile")
         self.assertNotIn("--build-arg MIOS_USER_PASSWORD_HASH", jf)
         self.assertIn("--secret id=mios_user_password_hash", jf)
+
+    def test_every_local_build_bakes_only_the_operator_credential(self):
+        """D0: the Justfile recipes and the `mios build` driver resolve through bake-hash and hand
+        the result to the bake as its secret; none falls back to a default or prompts for one."""
+        jf = self._read(ROOT, "Justfile")
+        self.assertNotIn("$_MIOS_CRED hash)", jf)
+        self.assertEqual(jf.count("$_MIOS_CRED bake-hash)"), jf.count("--secret id=mios_user_password_hash"))
+        drv = self._read(ROOT, "usr/libexec/mios/mios-build-driver")
+        for literal in ("_hash_password", ":-mios}", "default: 'mios'", "tee /etc/mios/secrets.env", "read -rsp"):
+            self.assertNotIn(literal, drv)
+        self.assertIn('"$_cred_cli" bake-hash', drv)
+        self.assertIn('--secret "id=mios_user_password_hash,src=', drv)
 
     def test_ai_firstboot_seed(self):
         s = self._read(ROOT, "usr/libexec/mios/mios-ai-firstboot")

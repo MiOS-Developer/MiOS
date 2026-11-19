@@ -179,12 +179,13 @@ drift-gate:
 
 
 
-# The operator credential is resolved on the BUILD HOST from its layered SSOT (this tree's vendor
-# usr/share/mios/mios.toml < /etc/mios/mios.toml + mios.d < ~/.config/mios/mios.toml + mios.d) and
-# passed as a sha512-crypt hash; an unresolved credential fails the build (no literal default).
+# The image password is the operator's own (D0), resolved on the BUILD HOST by `mios-credential
+# bake-hash`: a MIOS_USER_PASSWORD_HASH the caller exports, or [identity].default_password in the
+# operator's mios.html tier. A vendor/host default or the retired literal refuses, and so does a
+# missing credential: the build fails instead of baking a default. It reaches the bake as a secret.
 build: preflight flight-status
     _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
-    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_USER_PASSWORD_HASH="$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED bake-hash)" || { echo "[FAIL] no operator image password (D0): set your own password in mios.html; see the mios-credential error above" >&2; exit 3; }; \
     MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
     rm -rf .staged-portal && mkdir -p .staged-portal; \
     _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \
@@ -209,7 +210,7 @@ build-logged: artifact
     @echo "Unified log will be available at: ${LOG_FILE}" | tee -a "${LOG_FILE}"
     @echo "" | tee -a "${LOG_FILE}"
     @set -o pipefail; _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
-    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_USER_PASSWORD_HASH="$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED bake-hash)" || { echo "[FAIL] no operator image password (D0): set your own password in mios.html; see the mios-credential error above" >&2; exit 3; }; \
     MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
     rm -rf .staged-portal && mkdir -p .staged-portal; \
     _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \
@@ -231,7 +232,7 @@ build-logged: artifact
 
 build-verbose: artifact
     _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
-    MIOS_USER_PASSWORD_HASH="${MIOS_USER_PASSWORD_HASH:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED hash)}" || { echo "[FAIL] SSOT credential unresolved on the build host (vendor < /etc/mios < ~/.config/mios); see the mios-credential error above" >&2; exit 3; }; \
+    MIOS_USER_PASSWORD_HASH="$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED bake-hash)" || { echo "[FAIL] no operator image password (D0): set your own password in mios.html; see the mios-credential error above" >&2; exit 3; }; \
     MIOS_IDENTITY_USERNAME="${MIOS_IDENTITY_USERNAME:-$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED username)}" || { echo "[FAIL] SSOT [identity].username unresolved on the build host" >&2; exit 3; }; \
     rm -rf .staged-portal && mkdir -p .staged-portal; \
     _portal_run="$(find /var/lib/mios-build/artifacts/mios-portal -mindepth 1 -maxdepth 2 -name manifest.json -printf '%h\n' 2>/dev/null | sort | tail -n1 || true)"; \

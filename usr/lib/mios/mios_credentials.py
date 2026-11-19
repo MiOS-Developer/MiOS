@@ -1,6 +1,6 @@
 # AI-hint: The ONE fail-closed credential resolution over the layered mios.toml SSOT (vendor < host < user + mios.d) -- account names, passwords, service account and persistent AutoLogon for every MiOS image pipeline (Windows answer files/DISM/UUP/ISO via the JSON projection, Linux image/installer/firstboot via the CLI).
 # AI-related: usr/lib/mios/mios_toml.py, usr/libexec/mios/mios-credential, usr/libexec/mios/win/unattend_gen.py
-# AI-functions: CredentialError, resolve, windows_projection, identity_field, sysrescue, password_hash, operator_load, secrets_env_path, surface_password, surface_user, portal_login, Ledger, enabled_surfaces, scrub_leftovers, inbox_submit, ingest_inbox, apply_lock, publish_operator_toggles, apply, ttyd_argv
+# AI-functions: CredentialError, resolve, windows_projection, identity_field, sysrescue, password_hash, bake_password_hash, operator_load, secrets_env_path, surface_password, surface_user, portal_login, Ledger, enabled_surfaces, scrub_leftovers, inbox_submit, ingest_inbox, apply_lock, publish_operator_toggles, apply, ttyd_argv
 """Layered SSOT credential resolver. There is NO built-in credential default:
 a missing or empty key raises CredentialError naming the key.
 
@@ -235,16 +235,79 @@ def password_hash(data: dict, env: dict | None = None) -> str:
         if not h.startswith("$6$"):
             raise CredentialError("MiOS SSOT: [auth].password_hash is not a sha512-crypt ($6$) hash.")
         return h
-    pw = resolve(data)["default_password"]
+    return _sha512_crypt(resolve(data)["default_password"])
+
+
+def _sha512_crypt(pw: str, salt: str = "") -> str:
+    """openssl passwd -6 over pw (stdin, never argv); `salt` pins the salt for a comparison."""
     openssl = shutil.which("openssl")
     if not openssl:
         raise CredentialError("openssl is required to hash [identity].default_password (sha512-crypt).")
-    res = subprocess.run([openssl, "passwd", "-6", "-stdin"], input=pw + "\n",
-                         capture_output=True, text=True, timeout=30, check=False)
+    argv = [openssl, "passwd", "-6"] + (["-salt", salt] if salt else []) + ["-stdin"]
+    res = subprocess.run(argv, input=pw + "\n", capture_output=True, text=True, timeout=30, check=False)
     out = res.stdout.strip()
     if res.returncode != 0 or not out.startswith("$6$"):
         raise CredentialError("openssl passwd -6 failed to hash [identity].default_password.")
     return out
+
+
+# The literal every earlier installer path set as the account password. An image never bakes it.
+_RETIRED_PASSWORDS = ("mios",)
+
+
+def _hash_of(secret: str, setting: str) -> bool:
+    """True when the sha512-crypt hash `setting` is the hash of `secret`. A hash this cannot
+    verify raises: the bake cannot prove it is not a refused default, so it fails closed."""
+    import hmac  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    m = re.fullmatch(r"\$6\$([./0-9A-Za-z]{1,16})\$[./0-9A-Za-z]{86}", setting)
+    if not m:
+        raise CredentialError("the supplied image password hash is not a plain sha512-crypt hash "
+                              "($6$<salt>$<86 characters>, no rounds=); the image bake cannot verify "
+                              "it is not a refused default.")
+    return hmac.compare_digest(_sha512_crypt(secret, m.group(1)), setting)
+
+
+def bake_password_hash(env: dict | None = None) -> str:
+    """sha512-crypt for the image's /etc/shadow (the Containerfile secret mios_user_password_hash).
+
+    D0: an image carries the operator's own credential and nothing else. It is env
+    MIOS_USER_PASSWORD_HASH (alias MIOS_PASSWORD_HASH), or [identity].default_password set
+    in the operator's own tier (the file mios.html saves), read through operator_view. A
+    credential found only in the vendor or host tiers, one equal to a vendor/host default,
+    and the retired literal all refuse, as does a supplied hash of any of them. Errors name
+    the fix, never a value."""
+    import mios_toml  # noqa: PLC0415
+
+    env = os.environ if env is None else env
+    fix = "set your own password in mios.html ([identity].default_password in your operator tier)"
+    try:
+        base = mios_toml.base_view()
+    except mios_toml.LayerError as exc:
+        raise CredentialError(f"MiOS SSOT: vendor/host tiers unresolved: {exc}") from None
+    refused = {pw for pw in (_s(_sect(base, "identity").get("default_password")),
+                             _s(_sect(_vendor_tier(), "identity").get("default_password"))) if pw}
+    refused.update(_RETIRED_PASSWORDS)
+    for var in ("MIOS_USER_PASSWORD_HASH", "MIOS_PASSWORD_HASH"):
+        h = env.get(var, "")
+        if not h:
+            continue
+        if not h.startswith("$6$"):
+            raise CredentialError(f"{var} is set but is not a sha512-crypt ($6$) hash.")
+        if any(_hash_of(pw, h) for pw in sorted(refused)):
+            raise CredentialError(f"{var} is the hash of a vendor/host or retired default password, "
+                                  f"which an image never bakes (D0); {fix}.")
+        return h
+    data, _reason, taken = operator_load()
+    if "identity.default_password" not in taken:
+        raise CredentialError(f"MiOS image bake: no operator credential -- {fix}. The vendor/host "
+                              "default is refused (D0).")
+    pw = _s(_sect(data, "identity").get("default_password"))
+    if pw in refused:
+        raise CredentialError("MiOS image bake: the operator tier's password equals a vendor/host or "
+                              f"retired default, which an image never bakes (D0); {fix}.")
+    return _sha512_crypt(pw)
 
 
 # ------------------------------------------------------------------ the mios.html tier + surfaces

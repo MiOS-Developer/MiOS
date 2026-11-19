@@ -1507,6 +1507,36 @@ fn run_render_quadlets(_dirs: &[String]) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+/// The operator's own image password hash (D0), from the source tree's `mios-credential
+/// bake-hash` over that tree's vendor SSOT. Its refusal (no operator credential, a vendor/host
+/// default, the retired literal) stops the build before the engine runs; the hash goes only to
+/// the engine's environment for the build secret, never to a log.
+fn operator_image_hash(root: &std::path::Path) -> Result<String, String> {
+    let cli = root.join("usr/libexec/mios/mios-credential");
+    let output = std::process::Command::new("python3")
+        .arg(&cli)
+        .arg("bake-hash")
+        .env("MIOS_VENDOR_TOML", root.join("usr/share/mios/mios.toml"))
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|e| format!("{}: {e}", cli.display()))?;
+    if !output.status.success() {
+        return Err(
+            "no operator image password (D0): set your own password in mios.html; \
+                    the mios-credential error above names the fix"
+                .into(),
+        );
+    }
+    let hash = String::from_utf8(output.stdout)
+        .map_err(|_| "mios-credential bake-hash printed non-UTF-8 output".to_string())?
+        .trim()
+        .to_string();
+    if !hash.starts_with("$6$") || hash.contains(char::is_whitespace) {
+        return Err("mios-credential bake-hash did not print one sha512-crypt hash".into());
+    }
+    Ok(hash)
+}
+
 fn run_render_ports(toml_path: &str, out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Parse the TOML; do NOT scan lines. The line scan this replaced treated any
     // line containing '=' inside [ports] as a key/value pair, so a COMMENT
@@ -1719,11 +1749,13 @@ async fn main() {
                     }
                     mios_build::images::execute_images(&commands, |command| {
                         println!("[miosd] {} from {}", command.target, command.root.display());
-                        let status = std::process::Command::new(&command.engine)
-                            .current_dir(&command.root)
-                            .args(&command.args)
-                            .status()
-                            .map_err(|e| e.to_string())?;
+                        let mut engine = std::process::Command::new(&command.engine);
+                        engine.current_dir(&command.root).args(&command.args);
+                        if let Some(variable) = &command.credential_env {
+                            // The build secret's value: only the engine's environment carries it.
+                            engine.env(variable, operator_image_hash(&command.root)?);
+                        }
+                        let status = engine.status().map_err(|e| e.to_string())?;
                         if status.success() {
                             Ok(())
                         } else {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # AI-hint: Entry point for the MiOS-DEV build pipeline; executes the full multi-format build process (OCI, WSL, QEMU, etc.) and renders the interactive dashboard within a Windows-hosted terminal session.
 # AI-related: /etc/profile.d/mios-env.sh, /usr/libexec/mios/mios-build-driver, /etc/mios/install.env, /etc/mios/secrets.env, /etc/mios/mios.toml, /usr/libexec/mios/mios-configurator-launch, /usr/share/mios/mios.toml, /usr/share/mios/lib/userenv.sh, mios-env, mios-configurator-launch
-# AI-functions: _log, _fail, _hash_password
+# AI-functions: _log, _fail
 set -euo pipefail
 
 if command -v mios-dashboard >/dev/null 2>&1; then
@@ -202,7 +202,7 @@ if [[ ! -t 0 || "${MIOS_NONINTERACTIVE:-0}" == "1" || "${MIOS_AUTO:-0}" == "1" ]
     MIOS_SKIP_CONFIGURATOR="${MIOS_SKIP_CONFIGURATOR:-1}"
     export MIOS_NONINTERACTIVE MIOS_SKIP_CONFIGURATOR
     _log "unattended mode -- non-interactive stdin or MIOS_NONINTERACTIVE/MIOS_AUTO set"
-    _log "  configurator prompt skipped; password resolves from secrets.env / mios.toml -- ZERO prompts"
+    _log "  configurator prompt skipped; the image password is the operator's own mios.html credential -- ZERO prompts"
 fi
 
 if [[ "${MIOS_NO_PULL:-0}" == "1" ]]; then
@@ -320,70 +320,23 @@ unset _v
 export MIOS_IDENTITY_USERNAME MIOS_IDENTITY_HOSTNAME MIOS_AI_MODEL MIOS_AI_EMBED_MODEL \
        MIOS_AUTH_PASSWORD_POLICY
 
-_hash_password() {
-    local plain="$1"
-    if command -v mkpasswd >/dev/null 2>&1; then
-        mkpasswd -m sha-512 "$plain"
-    elif command -v openssl >/dev/null 2>&1; then
-        openssl passwd -6 "$plain"
-    elif python3 -c 'import passlib.hash' >/dev/null 2>&1; then
-        python3 -c 'import sys, passlib.hash; print(passlib.hash.sha512_crypt.hash(sys.argv[1]))' "$plain"
-    else
-        _fail "no password hasher available (mkpasswd / openssl / passlib) -- dev VM provisioning is broken; per feedback_mios_dev_equals_mios.md MiOS-DEV must have FULL parity with MiOS, including these tools. Fix the machine-os init source in build-mios.ps1, not the driver."
-    fi
-}
-
-case "${MIOS_AUTH_PASSWORD_POLICY}" in
-    none)
-        _log "MIOS_AUTH_PASSWORD_POLICY=none -- no password set"
-        MIOS_USER_PASSWORD_HASH=""
-        ;;
-    hashed)
-        if [[ -z "${MIOS_USER_PASSWORD_HASH:-}" ]]; then
-            _log "WARN: password_policy=hashed but MIOS_USER_PASSWORD_HASH is empty -- falling back to 'mios'"
-            MIOS_USER_PASSWORD_HASH=$(_hash_password mios)
-        fi
-        ;;
-    interactive|*)
-        if [[ -r /etc/mios/secrets.env ]] && grep -q '^MIOS_USER_PASSWORD_HASH=' /etc/mios/secrets.env; then
-            _log "password hash loaded from /etc/mios/secrets.env"
-            _line=$(grep -E '^MIOS_USER_PASSWORD_HASH=' /etc/mios/secrets.env | head -1)
-            _val="${_line#MIOS_USER_PASSWORD_HASH=}"
-            if [[ "$_val" == \"*\" || "$_val" == \'*\' ]]; then
-                _val="${_val:1:${#_val}-2}"
-            fi
-            MIOS_USER_PASSWORD_HASH="$_val"
-            unset _line _val
-        elif [[ "${MIOS_NONINTERACTIVE:-0}" == "1" ]]; then
-            _pw_plain="${MIOS_IDENTITY_DEFAULT_PASSWORD:-mios}"
-            _log "MIOS_NONINTERACTIVE=1 -- password from mios.toml [identity].default_password (vendor default 'mios' if unset)"
-            MIOS_USER_PASSWORD_HASH=$(_hash_password "$_pw_plain")
-            unset _pw_plain
-            sudo install -d -m 0755 /etc/mios
-            _q_hash=${MIOS_USER_PASSWORD_HASH//\'/\'\\\'\'}
-            printf "MIOS_USER_PASSWORD_HASH='%s'\n" "$_q_hash" |
-                sudo tee /etc/mios/secrets.env >/dev/null
-            sudo chmod 0600 /etc/mios/secrets.env
-            unset _q_hash
-        else
-            echo
-            echo "  password_policy=interactive and no /etc/mios/secrets.env yet"
-            echo "  This is the ONLY operator prompt"
-            echo "  /mios.toml"
-            read -rsp "  Set password for ${MIOS_IDENTITY_USERNAME} (default: 'mios'): " _pw_plain
-            echo
-            : "${_pw_plain:=mios}"
-            MIOS_USER_PASSWORD_HASH=$(_hash_password "$_pw_plain")
-            unset _pw_plain
-            sudo install -d -m 0755 /etc/mios
-            _q_hash=${MIOS_USER_PASSWORD_HASH//\'/\'\\\'\'}
-            printf "MIOS_USER_PASSWORD_HASH='%s'\n" "$_q_hash" |
-                sudo tee /etc/mios/secrets.env >/dev/null
-            sudo chmod 0600 /etc/mios/secrets.env
-            unset _q_hash
-        fi
-        ;;
-esac
+# D0: the image bakes the operator's own password and nothing else. `mios-credential bake-hash`
+# resolves it -- a MIOS_USER_PASSWORD_HASH the caller exports, or [identity].default_password in
+# the operator's mios.html tier -- and refuses a vendor/host default, the retired literal and a
+# missing credential. No prompt, no fallback, and nothing is written to /etc/mios/secrets.env.
+_cred_cli=""
+for cand in "${MIOS_REPO:-}/usr/libexec/mios/mios-credential" /usr/libexec/mios/mios-credential; do
+    if [[ -r "$cand" ]]; then _cred_cli="$cand"; break; fi
+done
+[[ -n "$_cred_cli" ]] || _fail "mios-credential not found -- cannot resolve the operator's image password (D0)"
+_cred_vendor=""
+if [[ -n "${MIOS_REPO:-}" && -r "$MIOS_REPO/usr/share/mios/mios.toml" ]]; then
+    _cred_vendor="$MIOS_REPO/usr/share/mios/mios.toml"
+fi
+MIOS_USER_PASSWORD_HASH="$(MIOS_VENDOR_TOML="$_cred_vendor" python3 "$_cred_cli" bake-hash)" \
+    || _fail "no operator password for the image (D0): set your own password in mios.html, then re-run mios build"
+unset _cred_cli _cred_vendor
+_log "image password: the operator's own credential (D0)"
 export MIOS_USER_PASSWORD_HASH
 
 sudo install -d -m 0755 /etc/mios
@@ -444,10 +397,16 @@ if ! command -v podman >/dev/null 2>&1 && _build_curl_fallback_enabled; then
 fi
 
 _log "starting podman build at $BUILD_CTX"
-_log "  podman build -t localhost/mios:latest -f Containerfile $BUILD_CTX"
+_log "  podman build --secret id=mios_user_password_hash -t localhost/mios:latest -f Containerfile $BUILD_CTX"
 
+# The hash reaches the bake only as the Containerfile's build secret, from a private 0600 file
+# (sudo drops the environment): never a build argument, a command line or a log line.
+_secret_dir="$(mktemp -d)"
+trap 'rm -rf "$_secret_dir"' EXIT
+( umask 077; printf '%s' "$MIOS_USER_PASSWORD_HASH" > "$_secret_dir/mios_user_password_hash" )
 if cd "$BUILD_CTX" && sudo podman build \
         --network=host \
+        --secret "id=mios_user_password_hash,src=$_secret_dir/mios_user_password_hash" \
         -t localhost/mios:latest \
         -f Containerfile \
         . 2>&1 | tee -a "$LOG_FILE"; then
@@ -455,6 +414,7 @@ if cd "$BUILD_CTX" && sudo podman build \
 else
     _fail "podman build failed -- see $LOG_FILE"
 fi
+rm -rf "$_secret_dir"
 
 if [[ "${MIOS_SKIP_BIB:-0}" == "1" ]]; then
     _log "MIOS_SKIP_BIB=1 -- skipping multi-format artifact build"

@@ -10,12 +10,22 @@ pub mod images {
     use serde::Serialize;
     use std::path::{Component, Path, PathBuf};
 
+    /// The Containerfile's image-password build secret (`RUN --mount=type=secret,id=...`) and
+    /// the variable the engine reads it from: the contract the Justfile recipes and
+    /// mios-build-driver share. D0: its value is the operator's own credential.
+    pub const PASSWORD_SECRET_ID: &str = "mios_user_password_hash";
+    pub const PASSWORD_SECRET_ENV: &str = "MIOS_USER_PASSWORD_HASH";
+
     #[derive(Debug, Serialize)]
     pub struct ImageCommand {
         pub target: String,
         pub engine: String,
         pub root: PathBuf,
         pub args: Vec<String>,
+        /// Set when the build mounts the image-password secret: the variable the engine reads
+        /// it from. The value is resolved at execution (never planned or printed).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub credential_env: Option<String>,
     }
 
     fn string_at<'a>(config: &'a toml::Value, key: &str) -> Result<&'a str, String> {
@@ -95,6 +105,11 @@ pub mod images {
             if !resolved.starts_with(&root) || !resolved.is_file() {
                 return Err(format!("invalid containerfile {file}"));
             }
+            // A Containerfile that mounts the image-password secret gets it on every build, so a
+            // bake never falls back to a default the build cannot see (D0).
+            let mounts_password = std::fs::read_to_string(&resolved)
+                .map_err(|e| format!("containerfile {file}: {e}"))?
+                .contains(&format!("id={PASSWORD_SECRET_ID}"));
             let tag_key = target
                 .get("tag_key")
                 .and_then(toml::Value::as_str)
@@ -130,6 +145,12 @@ pub mod images {
                     ]);
                 }
             }
+            if mounts_password {
+                args.extend([
+                    "--secret".into(),
+                    format!("id={PASSWORD_SECRET_ID},env={PASSWORD_SECRET_ENV}"),
+                ]);
+            }
             args.extend([
                 "-f".into(),
                 file.into(),
@@ -142,6 +163,7 @@ pub mod images {
                 engine: engine.into(),
                 root: root.clone(),
                 args,
+                credential_env: mounts_password.then(|| PASSWORD_SECRET_ENV.to_string()),
             });
             let probes = config
                 .get("packages")
@@ -175,6 +197,7 @@ pub mod images {
                 engine: engine.into(),
                 root: root.clone(),
                 args,
+                credential_env: None,
             });
             let native_directory = string_at(config, "build.native.categories.cli.install_dir")?;
             plan.push(ImageCommand {
@@ -191,6 +214,7 @@ pub mod images {
                     "--root".into(),
                     "/".into(),
                 ],
+                credential_env: None,
             });
         }
         if plan.is_empty() {
@@ -289,6 +313,35 @@ pub mod images {
             assert!(plan[0]
                 .args
                 .contains(&"REF=registry.example/operator-base:custom".into()));
+        }
+        #[test]
+        fn a_containerfile_that_mounts_the_password_secret_gets_it() {
+            let (dir, config) = fixture();
+            // The fixture's FROM-only Containerfile mounts nothing: no secret, nothing to resolve.
+            let plan = image_plan(dir.path(), &config, "all").unwrap();
+            assert!(!plan[0].args.contains(&"--secret".into()));
+            assert!(plan.iter().all(|c| c.credential_env.is_none()));
+            std::fs::write(
+                dir.path().join("Containerfile"),
+                "FROM scratch\nRUN --mount=type=secret,id=mios_user_password_hash,required=false true\n",
+            )
+            .unwrap();
+            let plan = image_plan(dir.path(), &config, "all").unwrap();
+            let at = plan[0].args.iter().position(|a| a == "--secret").unwrap();
+            assert_eq!(
+                plan[0].args[at + 1],
+                "id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH"
+            );
+            assert!(at < plan[0].args.iter().position(|a| a == "-f").unwrap());
+            assert_eq!(
+                plan[0].credential_env.as_deref(),
+                Some("MIOS_USER_PASSWORD_HASH")
+            );
+            // Only the build reads it; the runtime and artifact checks run the built image.
+            assert!(plan[1..].iter().all(|c| c.credential_env.is_none()));
+            // The printed plan names the variable, never a value.
+            let json = serde_json::to_string(&plan).unwrap();
+            assert!(json.contains("\"credential_env\":\"MIOS_USER_PASSWORD_HASH\""));
         }
         #[test]
         fn missing_dependencies_fail_and_prevent_later_targets() {
