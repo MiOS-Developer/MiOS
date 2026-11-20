@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4360,
-  "total_metadata_entries": 3485,
-  "total_hints": 3479,
-  "total_functions_indexed": 2238,
-  "total_related_links": 7050,
+  "total_files_scanned": 4365,
+  "total_metadata_entries": 3490,
+  "total_hints": 3484,
+  "total_functions_indexed": 2274,
+  "total_related_links": 7068,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -15051,6 +15051,98 @@
       "has_shebang": false
     },
     {
+      "path": "tools/native/mios-ssh-ca/Cargo.toml",
+      "hint": "Cargo manifest for mios-ssh-ca -- the MiOS user SSH CA signer (init, pubkey, tailnet-only certificate issuance).",
+      "related": [
+        "tools/native/Cargo.toml",
+        "usr/share/mios/mios.toml [ssh.ca]",
+        "usr/lib/systemd/system/mios-ssh-ca.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-ssh-ca/src/lib.rs",
+      "hint": "Policy, bounded HTTP parsing, SSOT config and ssh-keygen signing for the MiOS user SSH CA signer.",
+      "related": [
+        "tools/native/mios-ssh-ca/src/main.rs",
+        "usr/share/mios/mios.toml [ssh.ca]",
+        "usr/lib/systemd/system/mios-ssh-ca.service"
+      ],
+      "functions": [
+        "load_config",
+        "glob_match",
+        "first_label",
+        "valid_label",
+        "parse_whois",
+        "parse_self",
+        "authorize",
+        "read_head",
+        "read_body",
+        "parse_request_body",
+        "check_key_line",
+        "next_serial",
+        "run_bounded",
+        "Tailscale",
+        "ApiError"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-ssh-ca/src/main.rs",
+      "hint": "MiOS user SSH CA signer: init the CA key, print its public key, and serve tailnet-only certificate issuance to verified cloud nodes.",
+      "related": [
+        "tools/native/mios-ssh-ca/src/lib.rs",
+        "usr/share/mios/mios.toml [ssh.ca]",
+        "usr/lib/systemd/system/mios-ssh-ca.service",
+        "usr/lib/mios/mios_credentials.py"
+      ],
+      "functions": [
+        "main",
+        "run",
+        "init",
+        "pubkey",
+        "serve",
+        "handle",
+        "issue",
+        "accepted_key",
+        "sign",
+        "respond",
+        "DeadlineReader"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-ssh-ca/tests/serve.rs",
+      "hint": "End-to-end proof of mios-ssh-ca: init never overwrites, and `serve` (fake tailscale on PATH, real ssh-keygen, 127.0.0.1) issues agent-only 8 h permit-pty certificates to allowed nodes and refuses the rest.",
+      "related": [
+        "tools/native/mios-ssh-ca/src/main.rs",
+        "tools/native/mios-ssh-ca/src/lib.rs",
+        "usr/share/mios/mios.toml [ssh.ca]"
+      ],
+      "functions": [
+        "Fixture",
+        "Server",
+        "post",
+        "keygen",
+        "inspect",
+        "epoch_utc",
+        "init_never_overwrites_a_key",
+        "allowed_nodes_get_agent_certificates",
+        "disallowed_requests_are_refused",
+        "serve_stays_down_unless_enabled_on_the_signer"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "tools/native/mios-ssot-lint/Cargo.toml",
       "hint": "Cargo manifest for mios-ssot-lint -- the native Rust SSOT drift/lint tool (std-only, zero external deps).",
       "related": [],
@@ -23706,6 +23798,21 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-ssh-ca.service",
+      "hint": "Serves the MiOS user SSH CA ([ssh.ca]) on this node's tailnet IPv4 at [ports].ssh_ca: POST /v1/ssh/certificates signs a short-lived [ssh].user certificate for a node the tailnet names hostname_glob and that is the signer's own or carries a trusted tag. Exits 0 unless [ssh.ca].enabled and this node is [ssh.ca].signer.",
+      "related": [
+        "/usr/libexec/mios/mios-ssh-ca",
+        "/usr/share/mios/mios.toml",
+        "/usr/lib/mios/mios_credentials.py",
+        "mios-credential-apply.service",
+        "tailscaled.service"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },

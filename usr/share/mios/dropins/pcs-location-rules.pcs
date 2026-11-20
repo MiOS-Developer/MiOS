@@ -53,6 +53,7 @@ pcs constraint location mios-registry rule score=100 mios-cap-service-plane eq t
 pcs constraint location mios-searxng rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-self-heal rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-skills-miner rule score=100 mios-cap-service-plane eq true
+pcs constraint location mios-ssh-ca rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-sunshine rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-sys-env-refresh rule score=100 mios-cap-service-plane eq true
 pcs constraint location mios-thermald rule score=100 mios-cap-service-plane eq true
