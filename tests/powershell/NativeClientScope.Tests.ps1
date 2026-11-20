@@ -124,9 +124,14 @@ function Invoke-MiosTerminalProjectionProbe {
         if ($PassThru) { [pscustomobject]@{ ExitCode = $NativeCode } }
     }
     $savedBin = $env:MIOS_NATIVE_BIN
+    # The machine and per-user install roots are fixture paths too, so the probe
+    # never depends on the host's (or a non-Windows engine's absent) profile roots.
+    $savedProgramData = $env:ProgramData; $savedLocalAppData = $env:LOCALAPPDATA
+    $fixtureRoot = Split-Path -Parent $FixtureBin
     $savedExit = Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
     $hadExit = $null -ne $savedExit; $savedExitValue = if ($hadExit) { $savedExit.Value } else { $null }
     $env:MIOS_NATIVE_BIN = $FixtureBin; $global:LASTEXITCODE = $StaleCode
+    $env:ProgramData = Join-Path $fixtureRoot 'fixture-programdata'; $env:LOCALAPPDATA = Join-Path $fixtureRoot 'fixture-localappdata'
     $BinDirectory = $FixtureBin; $accepted = $false; $message = $null; $value = $null
     try {
         if ($FunctionMode) { . ([scriptblock]::Create($Body)); $value = Install-MiOSTmuxProfile -Required }
@@ -134,7 +139,7 @@ function Invoke-MiosTerminalProjectionProbe {
         $accepted = $true
     } catch { $message = $_.Exception.Message }
     finally {
-        $env:MIOS_NATIVE_BIN = $savedBin
+        $env:MIOS_NATIVE_BIN = $savedBin; $env:ProgramData = $savedProgramData; $env:LOCALAPPDATA = $savedLocalAppData
         if ($hadExit) { $global:LASTEXITCODE = $savedExitValue } else { Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
     }
     [pscustomobject]@{ Accepted=$accepted; Message=$message; Calls=@($calls.ToArray()); Value=$value }

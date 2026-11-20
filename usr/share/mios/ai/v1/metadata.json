@@ -1,9 +1,9 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4378,
+  "total_files_scanned": 4373,
   "total_metadata_entries": 3503,
   "total_hints": 3497,
-  "total_functions_indexed": 2294,
+  "total_functions_indexed": 2295,
   "total_related_links": 7109,
   "entries": [
     {
@@ -21803,6 +21803,7 @@
         "peer_name",
         "sync_rows",
         "set_table_header",
+        "ClientTable",
         "ClientView",
         "AgentView",
         "SystemSummary"

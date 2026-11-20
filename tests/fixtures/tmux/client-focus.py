@@ -48,7 +48,7 @@ class NativeFocus(unittest.TestCase):
         cls.jobs = []
         cls.server_pid = cls.server_identity = cls.socket_identity = None
         cls.directory = None
-        cls.addClassCleanup(cls.cleanup)
+        cls.addClassCleanup(cls._cleanup_fixtures)
         cls.menu_counter = 0
         cls.directory = Path(tempfile.mkdtemp(prefix="mios-focus-", dir="/tmp"))
         cls.directory.chmod(0o700)
@@ -347,7 +347,7 @@ class NativeFocus(unittest.TestCase):
                     self.assertEqual(self.finish_menu(child, data), "")
 
     @classmethod
-    def cleanup(cls):
+    def _cleanup_fixtures(cls):
         for job in cls.jobs:
             if job.poll() is None:
                 job.terminate()
