@@ -1623,10 +1623,11 @@ WantedBy = "multi-user.target"
 
 
 [units."mios-finetune-serve.service".Unit]
-comment = "# AI-hint: Systemd unit to host the fine-tuned refiner model as an OpenAI /v1-compatible endpoint on port 11438, allowing the agent-pipe to swap between the high-quality transformer-served adapter and the faster llama.cpp path.\n# AI-related: /usr/libexec/mios/mios-finetune-serve, network-online.target\n# 'MiOS' fine-tune serve -- serves the trained role adapter (base + LoRA) as an\n# OpenAI /v1 endpoint so the fine-tuned refiner can be adopted/A-B'd\n# in the agent-pipe. OPT-IN: NOT enabled by default (the transformers-served 2B is\n# correct but slower than the GGUF lane on the hot path; enable to evaluate)."
+comment = "# AI-hint: Systemd unit to host the fine-tuned refiner model as an OpenAI /v1-compatible endpoint on port 11438, allowing the agent-pipe to swap between the high-quality transformer-served adapter and the faster llama.cpp path.\n# AI-related: /usr/libexec/mios/mios-finetune-serve, network-online.target\n# 'MiOS' fine-tune serve -- serves the trained role adapter (base + LoRA) as an\n# OpenAI /v1 endpoint so the fine-tuned refiner can be adopted/A-B'd\n# in the agent-pipe. OPT-IN: NOT enabled by default (the transformers-served 2B is\n# correct but slower than the GGUF lane on the hot path; enable to evaluate).\n# The interpreter is the operator-built venv (usr/share/mios/finetune/requirements.txt), never\n# baked: without it the unit is skipped instead of failing 203/EXEC every RestartSec."
 Description = "'MiOS' fine-tune serve (base+adapter refiner backend)"
 After = "network-online.target"
 Wants = "network-online.target"
+ConditionPathExists = "/var/lib/mios/finetune/venv/bin/python"
 
 [units."mios-finetune-serve.service".Service]
 Type = "simple"
@@ -15655,7 +15656,7 @@ Wants = "network-online.target"
 [containers.mios-k3s.Container]
 ContainerName = "mios-k3s"
 EnvironmentFile = "-/etc/mios/secrets.env"
-Exec = "k3s server --disable=traefik --kubelet-arg=cgroup-driver=cgroupfs"
+Exec = "k3s server --disable=traefik --kubelet-arg=cgroup-driver=cgroupfs --https-listen-port=${MIOS_PORTS_K3S_API:-8450}"
 Group = "root"
 Image = "${MIOS_K3S_IMAGE:-docker.io/rancher/k3s:latest}"
 Pod = "mios-system.pod"
@@ -19207,6 +19208,9 @@ unit = [
     "tests/test-pgvector-major-upgrade.sh",
     "tests/test-mios-manual-harvest.sh",
     "tests/test-postcheck-kargs.sh",
+    "tests/test-postcheck-unit-execs.sh",
+    "tests/test-chrony-ptp-dropin.sh",
+    "tests/test-blade-port-wiring.py",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",

@@ -3076,21 +3076,33 @@ check_chrony_ptp_dropin() {
     tmp_ptp="${tmp_dir}/dev_ptp0"
     tmp_chrony_d="${tmp_dir}/chrony.d"
     touch "$tmp_ptp"
+    # A Hyper-V guest clock (WSL2) is the case the PHC refclock exists for; a
+    # bare-metal NIC PHC must get none (tests/test-chrony-ptp-dropin.sh).
+    mkdir -p "${tmp_dir}/sys_hv" "${tmp_dir}/sys_nic"
+    printf 'hyperv\n' > "${tmp_dir}/sys_hv/clock_name"
+    printf 'igc\n' > "${tmp_dir}/sys_nic/clock_name"
+
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_nic" CHRONY_D="${tmp_dir}/chrony.nic" bash "$dropin_script" >/dev/null 2>&1 || true
+    if [[ -f "${tmp_dir}/chrony.nic/10-ptp.conf" ]]; then
+        rm -rf "$tmp_dir"
+        _violation "mios-chrony-ptp-dropin made a bare-metal NIC PHC the preferred, trusted refclock"
+        return
+    fi
 
     local old_conf_hash="" new_conf_hash=""
     if [[ -f "$canon_conf" ]]; then
         old_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_hv" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
 
     if [[ ! -f "${tmp_chrony_d}/10-ptp.conf" ]]; then
         rm -rf "$tmp_dir"
-        _violation "mios-chrony-ptp-dropin failed to generate 10-ptp.conf when /dev/ptp0 exists"
+        _violation "mios-chrony-ptp-dropin failed to generate 10-ptp.conf for a Hyper-V /dev/ptp0"
         return
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_hv" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
 
     if [[ -f "$canon_conf" ]]; then
         new_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"

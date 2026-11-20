@@ -623,6 +623,11 @@ enum Commands {
         #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
+    /// Fail when a boot-reachable systemd unit names a program the image lacks
+    UnitExecCheck {
+        #[arg(long, default_value = "/")]
+        root: std::path::PathBuf,
+    },
     /// Check every installed SSOT native artifact without requiring Cargo
     NativeRuntimeCheck {
         #[arg(long, default_value = "/")]
@@ -2044,6 +2049,31 @@ async fn main() {
                 }
             }
         }
+        Commands::UnitExecCheck { root } => match mios_build::unit_exec::check(root) {
+            Ok(report) => {
+                for warning in &report.warnings {
+                    eprintln!("[miosd] unit-exec WARN {warning}");
+                }
+                for failure in &report.failures {
+                    eprintln!("[miosd] unit-exec FAIL {failure}");
+                }
+                if !report.failures.is_empty() {
+                    eprintln!(
+                        "[miosd] {} boot-reachable unit command(s) name a program the image does not carry",
+                        report.failures.len()
+                    );
+                    std::process::exit(1);
+                }
+                println!(
+                    "[miosd] {} enabled units, {} commands: every program is present",
+                    report.units, report.commands
+                );
+            }
+            Err(error) => {
+                eprintln!("[miosd] unit-exec-check: {error}");
+                std::process::exit(1);
+            }
+        },
         Commands::NativeRuntimeCheck {
             root,
             platform,

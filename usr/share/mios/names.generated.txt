@@ -5208,6 +5208,7 @@ units.mios-finetune-serve.service.Unit.comment  MIOS_UNITS_MIOS_FINETUNE_SERVE_S
 units.mios-finetune-serve.service.Unit.Description  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_DESCRIPTION
 units.mios-finetune-serve.service.Unit.After  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_AFTER
 units.mios-finetune-serve.service.Unit.Wants  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_WANTS
+units.mios-finetune-serve.service.Unit.ConditionPathExists  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_CONDITIONPATHEXISTS
 units.mios-finetune-serve.service.Service.Type  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_TYPE
 units.mios-finetune-serve.service.Service.User  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_USER
 units.mios-finetune-serve.service.Service.Group  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_GROUP

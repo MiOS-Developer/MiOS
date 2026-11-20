@@ -4,6 +4,7 @@
 
 mod api;
 mod config;
+mod select;
 mod tui;
 mod view;
 
@@ -28,6 +29,10 @@ COMMANDS:
                                Hold a control at PCT % for N s (default 30, max 600),
                                then release; never below the floor (>= 30 %)
     apply-roles                Assign header roles from [roles] in the config (idempotent)
+    select-controller [--hwmon-root DIR] [--env-out FILE]
+                               Pick the fan controller from the machine's hwmon names
+                               ([[controllers]]); exit 0 = drive (profile written to
+                               FILE), 1 = leave fans on firmware, 255 = bad config
     tui                        Live dashboard (q quits, r refreshes)
     config                     Print the resolved client configuration
     raw PATH                   GET an API path and print the JSON
@@ -94,6 +99,24 @@ fn run() -> Result<(), String> {
         }
         let c = api::Client::new(&cfg.client.socket, cfg.client.timeout_ms);
         return cmd_apply_roles(&c, &layers, &errors);
+    }
+    if cmd == "select-controller" {
+        let hwmon_root = take_flag_value(&mut args, "--hwmon-root")?
+            .unwrap_or_else(|| select::HWMON_ROOT.to_string());
+        let env_out =
+            take_flag_value(&mut args, "--env-out")?.unwrap_or_else(|| select::ENV_OUT.to_string());
+        let code = match config::load() {
+            Ok(cfg) => select::run(
+                &cfg,
+                std::path::Path::new(&hwmon_root),
+                std::path::Path::new(&env_out),
+            ),
+            Err(e) => {
+                eprintln!("mios-fanctl: {e}");
+                255
+            }
+        };
+        std::process::exit(code);
     }
     let mut cfg = config::load()?;
     if let Some(s) = socket {

@@ -97,4 +97,4 @@ chmod 755 /usr/libexec/mios/ceph-bootstrap.sh 2>/dev/null || true
 
 mios_ok "Ceph client + cephadm installed; K3s binary per tag ${K3S_TAG:-none}"
 mios_log "Ceph Dashboard:  https://<host>:8443"
-mios_log "K3s API server:  https://<host>:6443"
+mios_log "K3s API server:  https://<host>:${MIOS_PORTS_K3S_API:-unresolved}"

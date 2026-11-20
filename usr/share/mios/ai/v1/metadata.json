@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4359,
-  "total_metadata_entries": 3485,
-  "total_hints": 3479,
-  "total_functions_indexed": 2238,
-  "total_related_links": 7049,
+  "total_files_scanned": 4364,
+  "total_metadata_entries": 3490,
+  "total_hints": 3484,
+  "total_functions_indexed": 2243,
+  "total_related_links": 7068,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -4541,6 +4541,19 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/mios-build/src/unit_exec.rs",
+      "hint": "Image gate: every boot-reachable systemd unit (enable links, timer/socket/path triggers, Wants=/Requires= edges) must name Exec*= programs the image root carries; resolves symlinks inside the root only.",
+      "related": [
+        "automation/99-postcheck.sh",
+        "src/mios-rs/miosd/src/main.rs",
+        "tests/test-postcheck-unit-execs.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/mios-build/src/verification.rs",
       "hint": "SSOT-driven native toolchain and installed artifact verification shared by build, install and runtime callers; never certifies missing tools or foreign binaries.",
       "related": [
@@ -7194,6 +7207,22 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-blade-port-wiring.py",
+      "hint": "Asserts the cluster/remote daemons bind the SSOT [ports] value instead of their upstream defaults: k3s API (Quadlet and native unit) on [ports].k3s_api, guacd on [ports].guacd with mios-guacamole pointed at it, matchbox on [ports].pxe_hub_api. Each case is checked against the rendered unit the image ships.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-k3s.container",
+        "usr/lib/systemd/system/k3s.service",
+        "usr/share/containers/systemd/mios-guacd.container",
+        "usr/share/containers/systemd/mios-guacamole.container",
+        "usr/share/containers/systemd/mios-pxe-hub.container"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-blade-reachability.sh",
       "hint": "bash Proves `mios blade status` answers the one question a MiOS-Metal seat has -- is my blade there? On a seat every offload target is REMOTE, an...",
       "related": [],
@@ -7329,6 +7358,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-chrony-ptp-dropin.sh",
+      "hint": "bash Runs mios-chrony-ptp-dropin against fixture PTP clocks: a Hyper-V or KVM clock gets the PHC refclock drop-in; a bare-metal NIC PHC, an unnamed clock or no /dev/ptp0 gets none, and a drop-in an earlier boot wrote on bare metal is removed.",
+      "related": [
+        "usr/libexec/mios/mios-chrony-ptp-dropin",
+        "usr/lib/systemd/system/mios-chrony-ptp.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -10207,6 +10248,20 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-postcheck-unit-execs.sh",
+      "hint": "bash Runs the 99-postcheck unit-exec gate (miosd unit-exec-check) on fixture roots built from the shipped units: an enabled timer whose service has its program passes; the same root without the program (the PS5 Blade defect) fails naming it; the shipped opt-in mios-finetune-serve passes enabled only while its venv guard stands.",
+      "related": [
+        "automation/99-postcheck.sh",
+        "src/mios-rs/mios-build/src/unit_exec.rs",
+        "usr/lib/systemd/system/mios-tailscale-sync.service",
+        "usr/lib/systemd/system/mios-finetune-serve.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-power-sampler.py",
       "hint": "Tests for usr/libexec/mios/mios-power-sampler, the root CPU-package power sampler.",
       "related": [
@@ -12966,7 +13021,8 @@
         "load",
         "load_from",
         "merge",
-        "effective_floor"
+        "effective_floor",
+        "Controller"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -12991,6 +13047,23 @@
         "role_layers",
         "apply_role_layers",
         "check_override_pct"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/select.rs",
+      "hint": "Fan-controller selection for ventulusd: matches the machine's hwmon chip names (/sys/class/hwmon/*/name) against [[controllers]] in mios-fanctl.toml and either names the profile to drive, keeps the fans on firmware control, or reports that no supported controller exists. Run once per start as the unit's ExecCondition, so a missing controller is one log line and a skipped unit, never a per-tick error.",
+      "related": [
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf"
+      ],
+      "functions": [
+        "hwmon_names",
+        "select",
+        "run",
+        "write_env"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -24436,7 +24509,7 @@
     },
     {
       "path": "usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
-      "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, bare metal only.",
+      "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, controller selected from the machine's hwmon names, bare metal only.",
       "related": [
         "usr/lib/systemd/system/ventulusd.service",
         "usr/share/mios/fan-control/daemon.toml",
@@ -27184,11 +27257,13 @@
     },
     {
       "path": "usr/libexec/mios/mios-chrony-ptp-dropin",
-      "hint": "Generates /etc/chrony.d/10-ptp.conf on first boot if /dev/ptp0 exists (PTP hardware present).",
+      "hint": "Generates /etc/chrony.d/10-ptp.conf when /dev/ptp0 is a hypervisor clock (Hyper-V/WSL2 \"hyperv\", KVM \"KVM virtual PTP\"); on bare metal /dev/ptp0 is a free-running NIC PHC, so it writes nothing and removes a drop-in an earlier boot left.",
       "related": [
         "/etc/chrony.d/10-ptp.conf",
         "mios-chrony-ptp.service",
-        "/dev/ptp0"
+        "/dev/ptp0",
+        "/sys/class/ptp/ptp0/clock_name",
+        "tests/test-chrony-ptp-dropin.sh"
       ],
       "functions": [],
       "doc": null,
