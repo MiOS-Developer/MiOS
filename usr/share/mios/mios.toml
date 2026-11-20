@@ -8833,6 +8833,14 @@ verify_probes = ["tmux", "bash", "python3", "oh-my-posh", "btop", "fastfetch"]
 enable = true
 pkgs = ["nodejs", "npm", "python3.12", "git", "ripgrep", "curl", "tar", "gzip", "openssl", "libatomic"]
 
+# Build-only: node-gyp compiles the zcode workspace's native modules (node-pty)
+# from source during `mios-mcp-server --agent-cli --install`. The service base
+# (usr/share/mios/base/Containerfile) installs these for that one RUN step and
+# removes every package the step added, so none reaches the runtime layer.
+[packages.agent_cli_build]
+enable = true
+pkgs = ["make", "gcc-c++"]
+
 [packages.crowdsec]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
 pkgs = [
