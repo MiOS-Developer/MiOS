@@ -3176,6 +3176,8 @@ llamacpp.slot_dir  MIOS_LLAMACPP_SLOT_DIR
 llamacpp.models_dir  MIOS_LLAMACPP_MODELS_DIR
 llamacpp.config  MIOS_LLAMACPP_CONFIG
 llamacpp.cpu_node_threads  MIOS_LLAMACPP_CPU_NODE_THREADS
+llamacpp.cpu_node_model_file  MIOS_LLAMACPP_CPU_NODE_MODEL_FILE
+llamacpp.cpu_node_context  MIOS_LLAMACPP_CPU_NODE_CONTEXT
 llamacpp.cpu_node_memory_high  MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH
 llamacpp.cpu_node_memory_max  MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX
 llamacpp.light_threads  MIOS_LLAMACPP_LIGHT_THREADS

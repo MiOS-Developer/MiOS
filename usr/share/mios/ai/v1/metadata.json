@@ -7563,7 +7563,7 @@
     },
     {
       "path": "tests/test-cpu-node-memory.py",
-      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze.",
+      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file and context window are the SSOT cpu_node_model_file/cpu_node_context.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/containers/systemd/mios-cpu-node.container"
