@@ -134,8 +134,10 @@ Both fetch the repo (git, else GitHub zip) exactly once, then hand into
 
 `mios.git` is the authority for every surface both repos share. `mios.toml`
 `[bootstrap.sync].mirror_files` names them; `tools/sync-bootstrap.py --check` is
-the drift gate and `--apply` is what CI runs after a green build, so the mirror
-is mechanical rather than a habit someone remembers.
+the drift gate. No workflow runs `--apply`: a change to a mirrored surface lands in
+`mios.git` first and reaches bootstrap as a paired commit with the same message, and
+`--apply` is run by hand only when `mios.git` holds every bootstrap change, because it
+overwrites the bootstrap copy.
 
 Only listed files are touched. What the two repos legitimately own differently
 is enumerated in `not_mirrored` so the divergence reads as deliberate rather
