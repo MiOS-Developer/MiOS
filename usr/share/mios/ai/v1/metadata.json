@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4365,
-  "total_metadata_entries": 3491,
-  "total_hints": 3485,
+  "total_files_scanned": 4367,
+  "total_metadata_entries": 3493,
+  "total_hints": 3487,
   "total_functions_indexed": 2288,
-  "total_related_links": 7071,
+  "total_related_links": 7077,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6966,6 +6966,19 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-ai-tag-loader.py",
+      "hint": "Asserts mios_comments.load_ai_tag loads usr/libexec/mios/mios-ai-tag on an interpreter without the removed importlib load_module() API (Python 3.15+), which the image build's docs index stage depends on.",
+      "related": [
+        "usr/lib/mios/mios_comments.py",
+        "usr/libexec/mios/mios-ai-tag",
+        "usr/libexec/mios/mios-manual"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-ai.py",
       "hint": "Consolidated MiOS AI-stack unit tests: accelerator router, audit chain, GPU sched, model matrix, paged attention, prompt cache, self-heal, skills, spec decoding, synthetic QA, kernels, TTS, visual RAG, VRAM.",
       "related": [],
@@ -7147,6 +7160,19 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-bake-user-unit-check.sh",
+      "hint": "bash Runs the user-unit projection check exactly as 65-bake-hyprland.sh invokes it: the build's source tree passes the [unit_projection].max_undeclared_user ratchet, while an image root that also holds package-shipped user units fails it, so the bake must point the check at the source tree.",
+      "related": [
+        "automation/65-bake-hyprland.sh",
+        "tools/native/mios-unit-gen/src/main.rs",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
