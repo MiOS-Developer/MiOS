@@ -62,5 +62,28 @@ if [[ $test_attempt -ne 2 ]]; then
 fi
 echo "PASS: _dnf_retry_exec retried and succeeded on attempt 2"
 
+# 4. The repo phases take the Fedora release from the base image's os-release, never a literal:
+# a default of 44 pointed fedora-44 repos at a Fedora 45 base and broke 05-repos's distro-sync.
+_osr="$(mktemp -d)"
+printf 'NAME="MiOS"\nID=mios\nVERSION_ID="0.3.0"\nPLATFORM_ID="platform:f45"\n' > "${_osr}/mios"
+printf 'ID=fedora\nVERSION_ID=46\n' > "${_osr}/fedora"
+printf 'ID=rhel\nVERSION_ID=9.4\nPLATFORM_ID="platform:el9"\n' > "${_osr}/rhel"
+_got="$(mios_fedora_release "${_osr}/mios")" && [[ "$_got" == 45 ]] \
+    || { echo "FAIL: rebranded os-release resolved to '${_got:-}' not 45 (PLATFORM_ID)" >&2; exit 1; }
+_got="$(mios_fedora_release "${_osr}/fedora")" && [[ "$_got" == 46 ]] \
+    || { echo "FAIL: Fedora os-release resolved to '${_got:-}' not 46 (VERSION_ID)" >&2; exit 1; }
+if mios_fedora_release "${_osr}/rhel" >/dev/null 2>&1 || mios_fedora_release "${_osr}/absent" >/dev/null 2>&1; then
+    echo "FAIL: mios_fedora_release guessed a release for a non-Fedora or missing os-release" >&2; exit 1
+fi
+rm -rf -- "${_osr}"
+for _phase in 05-repos.sh 06-enable-external-repos.sh; do
+    if grep -nE 'FEDORA_VERSION:-[0-9]' "${ROOT_DIR}/automation/${_phase}"; then
+        echo "FAIL: ${_phase} defaults FEDORA_VERSION to a release literal" >&2; exit 1
+    fi
+    grep -q 'mios_fedora_release' "${ROOT_DIR}/automation/${_phase}" \
+        || { echo "FAIL: ${_phase} does not resolve the release from os-release" >&2; exit 1; }
+done
+echo "PASS: repo phases resolve the Fedora release from os-release (MiOS rebrand, Fedora, refusal)"
+
 echo "=== [test-dnf5-pipeline] All checks passed ==="
 exit 0
