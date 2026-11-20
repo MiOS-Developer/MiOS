@@ -13,6 +13,7 @@ import re
 import subprocess
 import tokenize
 from dataclasses import dataclass, field
+import importlib.util
 from importlib.machinery import SourceFileLoader
 from typing import Iterable
 
@@ -132,8 +133,14 @@ def load_ai_tag(root: str | None = None):
     path = os.path.join(base, "usr", "libexec", "mios", "mios-ai-tag")
     if not os.path.isfile(path):
         return None
+    # exec_module, not load_module: Python 3.15 removed SourceFileLoader.load_module, and
+    # the image's base (Fedora 45) ships 3.15, where every call returned None here.
     try:
-        return SourceFileLoader("mios_ai_tag", path).load_module()
+        loader = SourceFileLoader("mios_ai_tag", path)
+        spec = importlib.util.spec_from_loader("mios_ai_tag", loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
     except Exception:
         return None
 
