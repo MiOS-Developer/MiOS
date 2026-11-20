@@ -321,6 +321,8 @@ enable mios-pstore.service
 enable mios-registry.service
 enable mios-secret-init.service
 enable mios-self-heal.service
+# User SSH CA signer: exits 0 (inactive) unless [ssh.ca].enabled and this node is [ssh.ca].signer.
+enable mios-ssh-ca.service
 enable mios-sync-theme.service
 enable mios-thermald.service
 enable mios-ttyd-bash.service

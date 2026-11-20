@@ -10,6 +10,7 @@ This document is derived directly from `usr/share/mios/mios.toml`.
 | admin | ssh | 8100 |
 | admin | cockpit | 8110 |
 | admin | cockpit_link | 8120 |
+| admin | ssh_ca | 8130 |
 | admin | cockpit_internal (pinned) | 9090 |
 | agent | agent_pipe | 8700 |
 | agent | prefilter | 8710 |

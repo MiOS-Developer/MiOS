@@ -3609,6 +3609,7 @@ fn run_firewall_ports() -> Result<(), Box<dyn std::error::Error>> {
         ("ADGUARD_DNS", "udp"),
         ("SSH", "tcp"),
         ("COCKPIT", "tcp"),
+        ("SSH_CA", "tcp"),
     ];
 
     if std::path::Path::new("/usr/bin/firewall-offline-cmd").exists() {
