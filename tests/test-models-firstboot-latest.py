@@ -208,7 +208,11 @@ class FirstbootLatest(unittest.TestCase):
             self.assertNotIn(":Z", model[0])
             self.assertNotIn(":z", model[0])
         volumes = config["containers"]["mios-llm-light"]["Container"]["Volume"]
-        self.assertIn("/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro", volumes)
+        # /app/config.yaml is the backend's map, mounted read-only by the
+        # light-backend drop-in; a base mount on the same target would clash.
+        self.assertFalse(any(":/app/config.yaml" in v for v in volumes), volumes)
+        for backend in config["llamacpp"]["light_backends"].values():
+            self.assertTrue(backend["config"].startswith("/usr/share/mios/llamacpp/"), backend)
         self.assertTrue(any(v.endswith(":Z") and "/slots" in v for v in volumes))
 
     def test_real_curl_retries_interrupted_range_without_publishing_partial_readiness(self):

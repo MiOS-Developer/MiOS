@@ -16,6 +16,8 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 sha2 = { workspace = true }
 toml = { workspace = true }
 toml_edit = { workspace = true }
+# The light lane's llama-swap model maps (light_tiers.rs), as mios-template-compile reads YAML.
+serde_yaml = "0.9"
 walkdir = { workspace = true }
 tempfile = { workspace = true }
 mios-resolver = { path = "../mios-resolver" }
