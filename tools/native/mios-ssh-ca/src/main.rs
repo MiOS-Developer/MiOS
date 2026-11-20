@@ -138,7 +138,10 @@ fn serve(cfg: &Config) -> Result<(), String> {
     let ip = ts.ipv4()?;
     let listener = TcpListener::bind(SocketAddr::from((ip, cfg.port)))
         .map_err(|e| format!("bind {ip}:{}: {e}", cfg.port))?;
-    eprintln!("mios-ssh-ca: serving {ROUTE} on {ip}:{}", cfg.port);
+    let bound = listener
+        .local_addr()
+        .map_err(|e| format!("bind {ip}:{}: {e}", cfg.port))?;
+    eprintln!("mios-ssh-ca: serving {ROUTE} on {bound}");
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => handle(stream, cfg, &ts, self_user),

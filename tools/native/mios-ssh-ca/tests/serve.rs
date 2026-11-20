@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -22,7 +22,9 @@ fn repo_root() -> PathBuf {
 /// the CA with a key under the fixture, plus a fake tailscale on PATH.
 struct Fixture {
     dir: tempfile::TempDir,
-    port: u16,
+    /// 0 until `serve` reports the port it bound: the signer binds port 0 and
+    /// logs the real one, so parallel fixtures never race for a port.
+    port: std::cell::Cell<u16>,
 }
 
 impl Fixture {
@@ -62,12 +64,10 @@ impl Fixture {
         )
         .unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let f = Fixture { dir, port };
+        let f = Fixture {
+            dir,
+            port: std::cell::Cell::new(0),
+        };
         f.status("mios.tail0.ts.net.");
         f
     }
@@ -104,7 +104,7 @@ impl Fixture {
             std::env::var("PATH").unwrap_or_default()
         );
         c.env("PATH", path)
-            .env("MIOS_PORTS_SSH_CA", self.port.to_string());
+            .env("MIOS_PORTS_SSH_CA", self.port.get().to_string());
         c
     }
 
@@ -138,15 +138,26 @@ impl Fixture {
             .spawn()
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(20);
-        while TcpStream::connect(("127.0.0.1", self.port)).is_err() {
-            assert!(
-                Instant::now() < deadline,
-                "serve never listened: {}",
-                std::fs::read_to_string(&log).unwrap()
-            );
+        let marker = "serving /v1/ssh/certificates on 127.0.0.1:";
+        let port = loop {
+            let text = std::fs::read_to_string(&log).unwrap();
+            if let Some(port) = text
+                .lines()
+                .find_map(|l| l.split_once(marker))
+                .and_then(|(_, p)| p.trim().parse::<u16>().ok())
+            {
+                break port;
+            }
+            assert!(Instant::now() < deadline, "serve never listened: {text}");
             std::thread::sleep(Duration::from_millis(50));
-        }
+        };
+        assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
+        self.port.set(port);
         Server { child, log }
+    }
+
+    fn port(&self) -> u16 {
+        self.port.get()
     }
 }
 
@@ -341,7 +352,7 @@ fn allowed_nodes_get_agent_certificates() {
     // The signer's own user, untagged.
     f.whois("mios-cloud-1", OWNER, &[]);
     let before = now();
-    let (status, body) = post_key(f.port, &client);
+    let (status, body) = post_key(f.port(), &client);
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["principals"], json!(["agent"]));
     assert_eq!(body["key_id"], "mios-cloud-1-1");
@@ -390,7 +401,7 @@ fn allowed_nodes_get_agent_certificates() {
     // A foreign user's node carrying a trusted tag; the serial moves on.
     f.whois("mios-cloud-2", FOREIGN, &["tag:mios"]);
     let other = keygen(f.dir.path(), "cloud2");
-    let (status, body) = post_key(f.port, &other);
+    let (status, body) = post_key(f.port(), &other);
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["key_id"], "mios-cloud-2-2");
     assert_eq!(
@@ -443,35 +454,35 @@ fn disallowed_requests_are_refused() {
 
     // Wrong hostname, though owned by the signer's user.
     f.whois("mios-blade-1", OWNER, &[]);
-    let (s, b) = post_key(f.port, &client);
+    let (s, b) = post_key(f.port(), &client);
     refused(s, &b, 403, "hostname_not_allowed");
     assert_eq!(b["error"]["type"], "permission_error");
 
     // Right hostname, foreign owner, no tag; and a foreign owner with an untrusted tag.
     f.whois("mios-cloud-9", FOREIGN, &[]);
-    let (s, b) = post_key(f.port, &client);
+    let (s, b) = post_key(f.port(), &client);
     refused(s, &b, 403, "owner_not_trusted");
     f.whois("mios-cloud-9", FOREIGN, &["tag:other"]);
-    let (s, b) = post_key(f.port, &client);
+    let (s, b) = post_key(f.port(), &client);
     refused(s, &b, 403, "owner_not_trusted");
 
     // A peer the tailnet does not know.
     std::fs::remove_file(f.dir.path().join("whois.json")).unwrap();
-    let (s, b) = post_key(f.port, &client);
+    let (s, b) = post_key(f.port(), &client);
     refused(s, &b, 403, "unidentified_peer");
 
     // From here the caller is allowed: only the request itself is wrong.
     f.whois("mios-cloud-1", OWNER, &[]);
-    let (s, b) = post_key(f.port, &client);
+    let (s, b) = post_key(f.port(), &client);
     assert_eq!(s, 200, "{b}");
     let cert = b["certificate"].as_str().unwrap().to_string();
 
     // A certificate offered as the key, as sent and with its type relabelled
     // so only ssh-keygen can tell.
-    let (s, b) = post_key(f.port, &cert);
+    let (s, b) = post_key(f.port(), &cert);
     refused(s, &b, 400, "certificate_not_key");
     let disguised = format!("ssh-ed25519 {}", cert.split_whitespace().nth(1).unwrap());
-    let (s, b) = post_key(f.port, &disguised);
+    let (s, b) = post_key(f.port(), &disguised);
     assert_eq!(s, 400, "{b}");
     assert!(
         b["error"]["code"] == "invalid_public_key" || b["error"]["code"] == "certificate_not_key",
@@ -479,28 +490,28 @@ fn disallowed_requests_are_refused() {
     );
 
     // Not a key: base64 that ssh-keygen cannot read, and plain text.
-    let (s, b) = post_key(f.port, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFiYw==");
+    let (s, b) = post_key(f.port(), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGFiYw==");
     refused(s, &b, 400, "invalid_public_key");
-    let (s, b) = post_key(f.port, "not a key");
+    let (s, b) = post_key(f.port(), "not a key");
     refused(s, &b, 400, "invalid_public_key");
 
     // An oversized body is refused from its Content-Length, before it is read.
     let max = 16384;
     let big = format!("{{\"public_key\": \"{}\"}}", "A".repeat(max + 1));
-    let (s, b) = post(f.port, &big);
+    let (s, b) = post(f.port(), &big);
     refused(s, &b, 413, "body_too_large");
     // So is an oversized head.
     let head = format!(
         "POST /v1/ssh/certificates HTTP/1.1\r\nX-Pad: {}\r\n\r\n",
         "a".repeat(9000)
     );
-    let (s, b) = raw(f.port, head.as_bytes());
+    let (s, b) = raw(f.port(), head.as_bytes());
     refused(s, &b, 431, "header_too_large");
     // And a request on another route or method.
-    let (s, b) = raw(f.port, b"GET /v1/ssh/certificates HTTP/1.1\r\n\r\n");
+    let (s, b) = raw(f.port(), b"GET /v1/ssh/certificates HTTP/1.1\r\n\r\n");
     refused(s, &b, 405, "method_not_allowed");
     let (s, b) = raw(
-        f.port,
+        f.port(),
         b"POST /v1/models HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
     );
     refused(s, &b, 404, "not_found");
@@ -555,7 +566,7 @@ fn serve_stays_down_unless_enabled_on_the_signer() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(String::from_utf8_lossy(&out.stderr).contains("not the signer"));
-    assert!(TcpStream::connect(("127.0.0.1", f.port)).is_err());
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("serving /v1"));
 
     // The signer without a key fails, so systemd retries rather than serving nothing.
     let f = Fixture::new(ENABLED);
