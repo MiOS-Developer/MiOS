@@ -642,12 +642,16 @@ class TestGceNode(unittest.TestCase):
             _write(os.path.join(sbin, "bootc"), stub + ("exit 0\n" if bootc == "ok" else "exit 1\n"), 0o755)
         elif os.path.exists(os.path.join(sbin, "bootc")):
             os.unlink(os.path.join(sbin, "bootc"))
-        # Only the stubs and coreutils: no host bootc can leak in.
-        path = sbin + os.pathsep + "/usr/bin:/bin"
-        if bootc is None:
-            self.assertFalse(any(os.access(os.path.join(d, "bootc"), os.X_OK) for d in ("/usr/bin", "/bin")))
-        r = subprocess.run(["bash", "-c", rebase], capture_output=True, text=True,
-                           env={"PATH": path, "STUB_LOG": self.log})
+        # A private PATH: the stubs plus only the host tools the script runs, so a host
+        # bootc or rpm-ostree (a Fedora bootc CI container has both) can never leak in.
+        tools = os.path.join(self.tmp, "tools")
+        os.makedirs(tools, exist_ok=True)
+        for name in ("sh", "basename", "dirname", "install"):
+            link = os.path.join(tools, name)
+            if not os.path.lexists(link):
+                os.symlink(shutil.which(name), link)
+        r = subprocess.run([shutil.which("bash"), "-c", rebase], capture_output=True, text=True,
+                           env={"PATH": sbin + os.pathsep + tools, "STUB_LOG": self.log})
         with open(self.log, encoding="utf-8") as fh:
             return r, fh.read(), stamp
 
