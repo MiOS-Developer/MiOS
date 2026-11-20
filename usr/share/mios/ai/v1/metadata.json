@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4366,
-  "total_metadata_entries": 3492,
-  "total_hints": 3486,
+  "total_files_scanned": 4367,
+  "total_metadata_entries": 3493,
+  "total_hints": 3487,
   "total_functions_indexed": 2243,
-  "total_related_links": 7073,
+  "total_related_links": 7075,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7558,6 +7558,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-cpu-node-memory.py",
+      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-cpu-node.container"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },

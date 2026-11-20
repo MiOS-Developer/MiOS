@@ -3599,6 +3599,8 @@ $script:MIOS_PATHS_LIBEXEC_DIR = if ($env:MIOS_PATHS_LIBEXEC_DIR) { $env:MIOS_PA
 $script:MIOS_LIBEXEC_DIR = if ($env:MIOS_LIBEXEC_DIR) { $env:MIOS_LIBEXEC_DIR } else { "$($script:MIOS_PATHS_LIBEXEC_DIR)" }
 $script:MIOS_LLAMACPP_BAKE_MODELS = if ($env:MIOS_LLAMACPP_BAKE_MODELS) { $env:MIOS_LLAMACPP_BAKE_MODELS } else { 'granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf' }
 $script:MIOS_LLAMACPP_CONFIG = if ($env:MIOS_LLAMACPP_CONFIG) { $env:MIOS_LLAMACPP_CONFIG } else { '/usr/share/mios/llamacpp/mios-llm-light.yaml' }
+$script:MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH = if ($env:MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH) { $env:MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH } else { '50%' }
+$script:MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX = if ($env:MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX) { $env:MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX } else { '60%' }
 $script:MIOS_LLAMACPP_ENABLE = if ($env:MIOS_LLAMACPP_ENABLE) { $env:MIOS_LLAMACPP_ENABLE } else { 'true' }
 $script:MIOS_SERVICES_LLAMACPP_GID = if ($env:MIOS_SERVICES_LLAMACPP_GID) { $env:MIOS_SERVICES_LLAMACPP_GID } else { Resolve-MiosInput -Canonical 'MIOS_SERVICES_LLAMACPP_GID' -Aliases @('MIOS_LLAMACPP_GID') -Default (827) }
 $script:MIOS_LLAMACPP_GID = if ($env:MIOS_LLAMACPP_GID) { $env:MIOS_LLAMACPP_GID } else { "$($script:MIOS_SERVICES_LLAMACPP_GID)" }

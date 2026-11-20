@@ -33,6 +33,8 @@ WantedBy=multi-user.target default.target
 [Service]
 Delegate=yes
 EnvironmentFile=/etc/mios/install.env
+MemoryHigh=50%
+MemoryMax=60%
 Restart=on-failure
 RestartSec=10s
 TimeoutStartSec=1800s

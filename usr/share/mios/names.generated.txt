@@ -3176,6 +3176,8 @@ llamacpp.slot_dir  MIOS_LLAMACPP_SLOT_DIR
 llamacpp.models_dir  MIOS_LLAMACPP_MODELS_DIR
 llamacpp.config  MIOS_LLAMACPP_CONFIG
 llamacpp.cpu_node_threads  MIOS_LLAMACPP_CPU_NODE_THREADS
+llamacpp.cpu_node_memory_high  MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH
+llamacpp.cpu_node_memory_max  MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX
 llamacpp.light_threads  MIOS_LLAMACPP_LIGHT_THREADS
 llamacpp.heavy_model_file  MIOS_LLAMACPP_HEAVY_MODEL_FILE
 llamacpp.heavy_gpu_resource  MIOS_LLAMACPP_HEAVY_GPU_RESOURCE
@@ -9330,6 +9332,8 @@ containers.mios-cpu-node.Container.Volume  MIOS_CONTAINERS_MIOS_CPU_NODE_CONTAIN
 containers.mios-cpu-node.Install.WantedBy  MIOS_CONTAINERS_MIOS_CPU_NODE_INSTALL_WANTEDBY
 containers.mios-cpu-node.Service.Delegate  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_DELEGATE
 containers.mios-cpu-node.Service.EnvironmentFile  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_ENVIRONMENTFILE
+containers.mios-cpu-node.Service.MemoryHigh  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_MEMORYHIGH
+containers.mios-cpu-node.Service.MemoryMax  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_MEMORYMAX
 containers.mios-cpu-node.Service.Restart  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_RESTART
 containers.mios-cpu-node.Service.RestartSec  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_RESTARTSEC
 containers.mios-cpu-node.Service.TimeoutStartSec  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_TIMEOUTSTARTSEC

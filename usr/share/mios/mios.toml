@@ -7849,6 +7849,12 @@ config     = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 # to leave headroom on the box; SSOT-wired alongside ports.cpu_node
 # (was a DEAD ${MIOS_LLAMACPP_CPU_NODE_THREADS} placeholder, never in the render allowlist).
 cpu_node_threads = 14
+# cgroup memory bounds of the mios-cpu-node unit, as systemd percentages of
+# physical RAM so one value fits a 14G Blade and a 64G workstation. High throttles
+# and reclaims (the mmap'd GGUF page cache first); Max OOM-kills only the node,
+# which Restart= brings back, instead of starving the host into a freeze.
+cpu_node_memory_high = "50%"
+cpu_node_memory_max  = "60%"
 # Light-lane worker budget, inherited by every llama-server child. One worker
 # leaves headroom within the minimum four-CPU system allocation.
 # This is an explicit budget, not an automatic affinity clamp.
@@ -15427,6 +15433,8 @@ WantedBy = "multi-user.target default.target"
 [containers.mios-cpu-node.Service]
 Delegate = "yes"
 EnvironmentFile = "/etc/mios/install.env"
+MemoryHigh = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:-50%}"
+MemoryMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:-60%}"
 Restart = "on-failure"
 RestartSec = "10s"
 TimeoutStartSec = "1800s"
@@ -19215,6 +19223,7 @@ unit = [
     "tests/test-chrony-ptp-dropin.sh",
     "tests/test-blade-port-wiring.py",
     "tests/test-agents-entrypoint.py",
+    "tests/test-cpu-node-memory.py",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",
