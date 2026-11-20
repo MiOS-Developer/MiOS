@@ -37168,7 +37168,7 @@ usr/share/mios/mios.toml	9713	9713	1	11	1819d3d87795	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9714	9714	1	16	02943afd3e96	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9717	9717	1	7	772a91cb015d	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9719	9719	1	12	1dc68ad07a56	STAY	inline-scoped		0				0
-usr/share/mios/mios.toml	9721	9731	11	163	03d370fa413b	MIGRATE	narrative-history		0				0
+usr/share/mios/mios.toml	9721	9731	11	188	d0e447e89e84	MIGRATE	narrative-history		0				0
 usr/share/mios/mios.toml	9736	9736	1	11	d604cff8ba9e	STAY	local-scoped		0				0
 usr/share/mios/mios.toml	9741	9742	2	33	07b7b93b10b9	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	9745	9747	3	35	d0a7c7044b5f	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/mios.md	mios-src:d0a7c7044b5f	35	0
