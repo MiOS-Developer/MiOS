@@ -1,0 +1,43 @@
+{
+  "doc": "Verification archives a session left under .devloop/handoff as evidence. Each is published here with its sha256 and the handoff records that cite it; tests/test-m4-root-git-substrate.py allows a tracked tarball outside the vendored store only when this inventory or SKILLS/MANIFEST.json publishes it, the bytes match, and every record names it.",
+  "archives": [
+    {
+      "path": ".devloop/handoff/mios-console-native-verification.tar.gz",
+      "sha256": "bf445011a5aa54cf0976c140911b30405127f33ed080e78527be01bb356c10c3",
+      "records": [
+        ".devloop/handoff/mios-blade-main-integration.json"
+      ]
+    },
+    {
+      "path": ".devloop/handoff/mios-controller-return-native-verification.tar.gz",
+      "sha256": "c1bed9f458e0516270a90904dc618027926d28c7a96824bb4729ad4f91f9bd69",
+      "records": [
+        ".devloop/handoff/mios-controller-return-acceptance.json"
+      ]
+    },
+    {
+      "path": ".devloop/handoff/mios-menu-defect-controls-proof.tar.gz",
+      "sha256": "90f5e8957a2b40cdf23ba3cab7924a5f1c3bd4ef3a519df460cf80bfa8dd150d",
+      "records": [
+        ".devloop/handoff/mios-live-desktop-integration.json",
+        ".devloop/handoff/mios-tui-desktop-live-verification.json",
+        ".devloop/handoff/mios-tui-desktop.json"
+      ]
+    },
+    {
+      "path": ".devloop/handoff/mios-popup-native-verification.tar.gz",
+      "sha256": "1bc4a7a07bc737917375b7098d9b0deb77c2e389e5d350926ca014f397982d77",
+      "records": [
+        ".devloop/handoff/mios-popup-surfaces.json"
+      ]
+    },
+    {
+      "path": ".devloop/handoff/mios-tui-desktop-verification.tar.gz",
+      "sha256": "27e54242510b0f0797cc672af46167b3d87c94fef02a676636964ce915fd65d6",
+      "records": [
+        ".devloop/handoff/mios-tui-desktop-live-verification.json",
+        ".devloop/handoff/mios-tui-desktop.json"
+      ]
+    }
+  ]
+}
