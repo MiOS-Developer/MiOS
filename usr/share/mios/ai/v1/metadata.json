@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4364,
-  "total_metadata_entries": 3490,
-  "total_hints": 3484,
+  "total_files_scanned": 4366,
+  "total_metadata_entries": 3492,
+  "total_hints": 3486,
   "total_functions_indexed": 2243,
-  "total_related_links": 7068,
+  "total_related_links": 7073,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6933,6 +6933,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-agents-entrypoint.py",
+      "hint": "Asserts the mios-agents image runs code-server: its final ENTRYPOINT is code-server in exec form with an empty CMD, and mios-agents.service passes only code-server arguments after the image name, so podman never execs a flag (exit 127).",
+      "related": [
+        "usr/share/mios/agents/Containerfile",
+        "usr/lib/systemd/system/mios-agents.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-agy-agent-pipeline.py",
       "hint": "Unit tests for MiOS Antigravity CLI (AGY) agent, subagents, workflows, and CI/CD artifacting integration.",
       "related": [],
@@ -7208,7 +7220,7 @@
     },
     {
       "path": "tests/test-blade-port-wiring.py",
-      "hint": "Asserts the cluster/remote daemons bind the SSOT [ports] value instead of their upstream defaults: k3s API (Quadlet and native unit) on [ports].k3s_api, guacd on [ports].guacd with mios-guacamole pointed at it, matchbox on [ports].pxe_hub_api. Each case is checked against the rendered unit the image ships.",
+      "hint": "Asserts the cluster/remote daemons bind the SSOT [ports] value instead of their upstream defaults: k3s API (Quadlet and native unit) on [ports].k3s_api, guacd on [ports].guacd with mios-guacamole pointed at it, matchbox on [ports].pxe_hub_api, guacamole Tomcat on [ports].guacamole_web; image-entrypoint Exec= lines start with a flag so the port options are parsed. Each case is checked against the rendered unit the image ships.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/containers/systemd/mios-k3s.container",
@@ -40033,6 +40045,19 @@
       "functions": [],
       "doc": null,
       "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/guacamole/server.xml",
+      "hint": "Minimal Tomcat server.xml for mios-guacamole, mounted over the image's stock conf (Connector 8080, which collides with other host-network services). The HTTP port is the system property mios.guacamole.port, set by the Quadlet from [ports].guacamole_web through CATALINA_OPTS; the shutdown port is disabled.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-guacamole.container",
+        "tests/test-blade-port-wiring.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
       "has_shebang": false
     },
     {

@@ -15604,7 +15604,8 @@ Environment = [
   "POSTGRESQL_USERNAME=${MIOS_PGVECTOR_USER:-mios}",
   "POSTGRESQL_PASSWORD=${MIOS_PGVECTOR_PASS:-mios}",
   "GUACD_HOSTNAME=localhost",
-  "GUACD_PORT=${MIOS_PORTS_GUACD:-8560}"
+  "GUACD_PORT=${MIOS_PORTS_GUACD:-8560}",
+  "CATALINA_OPTS=-Dmios.guacamole.port=${MIOS_PORTS_GUACAMOLE_WEB:-8220}"
 ]
 EnvironmentFile = "/etc/mios/install.env"
 Group = "${MIOS_GUACAMOLE_GID:-810}"
@@ -15616,6 +15617,7 @@ Label = [
 ]
 Pod = "mios-system.pod"
 User = "${MIOS_GUACAMOLE_UID:-810}"
+Volume = "/usr/share/mios/guacamole/server.xml:/usr/local/tomcat/conf/server.xml:ro"
 
 [containers.mios-guacamole.Install]
 WantedBy = "multi-user.target default.target"
@@ -15633,7 +15635,8 @@ Wants = "network-online.target mios-pgvector.service"
 
 [containers.mios-guacd.Container]
 ContainerName = "mios-guacd"
-Exec = "guacd -b 0.0.0.0 -l ${MIOS_PORTS_GUACD:-8560} -f"
+Exec = "-l ${MIOS_PORTS_GUACD:-8560}"
+HealthCmd = "nc -z 127.0.0.1 ${MIOS_PORTS_GUACD:-8560} || exit 1"
 Group = "${MIOS_GUACD_GID:-811}"
 Image = "${MIOS_GUACD_IMAGE:-docker.io/guacamole/guacd:latest}"
 Pod = "mios-system.pod"
@@ -16066,7 +16069,7 @@ Wants = "network-online.target"
 
 [containers.mios-pxe-hub.Container]
 ContainerName = "mios-pxe-hub"
-Exec = "/usr/bin/matchbox -address 0.0.0.0:${MIOS_PORTS_PXE_HUB_API:-8585} -data-path /var/lib/matchbox/data -assets-path /var/lib/matchbox/assets"
+Exec = "-address 0.0.0.0:${MIOS_PORTS_PXE_HUB_API:-8585} -data-path /var/lib/matchbox/data -assets-path /var/lib/matchbox/assets"
 Group = "0"
 Image = "${MIOS_PXE_HUB_IMAGE:-quay.io/poseidon/matchbox:latest}"
 Pod = "mios-system.pod"
@@ -19211,6 +19214,7 @@ unit = [
     "tests/test-postcheck-unit-execs.sh",
     "tests/test-chrony-ptp-dropin.sh",
     "tests/test-blade-port-wiring.py",
+    "tests/test-agents-entrypoint.py",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",

@@ -9415,6 +9415,7 @@ containers.mios-guacamole.Container.Image  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAI
 containers.mios-guacamole.Container.Label  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_LABEL
 containers.mios-guacamole.Container.Pod  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_POD
 containers.mios-guacamole.Container.User  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_USER
+containers.mios-guacamole.Container.Volume  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_VOLUME
 containers.mios-guacamole.Install.WantedBy  MIOS_CONTAINERS_MIOS_GUACAMOLE_INSTALL_WANTEDBY
 containers.mios-guacamole.Service.Delegate  MIOS_CONTAINERS_MIOS_GUACAMOLE_SERVICE_DELEGATE
 containers.mios-guacamole.Service.Restart  MIOS_CONTAINERS_MIOS_GUACAMOLE_SERVICE_RESTART
@@ -9425,6 +9426,7 @@ containers.mios-guacamole.Unit.Description  MIOS_CONTAINERS_MIOS_GUACAMOLE_UNIT_
 containers.mios-guacamole.Unit.Wants  MIOS_CONTAINERS_MIOS_GUACAMOLE_UNIT_WANTS
 containers.mios-guacd.Container.ContainerName  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_CONTAINERNAME
 containers.mios-guacd.Container.Exec  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_EXEC
+containers.mios-guacd.Container.HealthCmd  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_HEALTHCMD
 containers.mios-guacd.Container.Group  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_GROUP
 containers.mios-guacd.Container.Image  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_IMAGE
 containers.mios-guacd.Container.Pod  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_POD
