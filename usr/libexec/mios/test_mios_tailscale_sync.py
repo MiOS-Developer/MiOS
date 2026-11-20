@@ -404,6 +404,28 @@ class TestAuthKeyMint(unittest.TestCase):
             self.assertEqual(rec, {}, bad)
             self.assertEqual([c for c in calls if c.startswith("up ")], [])
 
+    def test_an_enrollment_that_times_out_fails_cleanly(self) -> None:
+        """Found live: a proxy that refuses the control protocol's upgrade leaves `tailscale up`
+        hanging; the sync must report it and exit non-zero, not end in a traceback."""
+        out: dict = {}
+        code = _MINT_FAKE + (
+            "import subprocess as _sp\n"
+            "_real_run = m.subprocess.run\n"
+            "def _hang(cmd, *a, **k):\n"
+            "    if ' up ' in ' ' + ' '.join(cmd) + ' ':\n"
+            "        raise _sp.TimeoutExpired(cmd, k.get('timeout'))\n"
+            "    return _real_run(cmd, *a, **k)\n"
+            "m.subprocess.run = _hang\n"
+            "import sys as _s\n")
+        with tempfile.TemporaryDirectory() as d:
+            log = os.path.join(d, "run.log")
+            code += f"_s.stdout = open({log!r}, 'w', buffering=1)\n_s.stderr = _s.stdout\n"
+            run_sync(_SCRIPT, _CLOUD + _MINT, {}, state="NeedsLogin", out=out, module_code=code)
+            with open(log, encoding="utf-8") as fh:
+                text = fh.read()
+        self.assertIn("timed out after 120 s", text)
+        self.assertNotIn("Traceback", text)
+
     def test_the_operator_tier_cannot_enable_minting_or_retarget_the_api(self) -> None:
         operator = ('[tailscale.auth_key_mint]\nenabled = true\n'
                     'api = "https://attacker.example.test/api/v2"\ntoken_file = "/etc/shadow"\n')
