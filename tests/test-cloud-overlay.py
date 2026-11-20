@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # AI-hint: Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before. gce-up's Fedora CoreOS node: its Ignition config bootc-switches the VM to [image].ref.
 # AI-related: .devcontainer/cloud-shell/bootstrap.sh, usr/share/mios/mios.toml, usr/libexec/mios/mios-ai-firstboot, usr/libexec/mios/mios-models-firstboot, usr/libexec/mios/mios-bound-images-firstboot, usr/libexec/mios-flatpak-install
-# AI-functions: TestOverlayRender, TestFirstbootPulls, TestFlatpakInstall, TestCloudScripts, TestGceNode
+# AI-functions: TestOverlayRender, TestFirstbootPulls, TestFlatpakInstall, TestCloudScripts, TestSshCert, TestGceNode
 """Each consumer runs from a copy whose absolute state paths point into a temp
 dir, with network and package tools replaced by stubs that log their calls. The
 SSOT values come from the real resolver (usr/libexec/mios/mios-toml-get) reading
@@ -523,6 +523,106 @@ class TestCloudScripts(unittest.TestCase):
                 if rc:
                     self.assertIn(f"{want} GB needed", r.stderr)
                     self.assertIn(store, r.stderr)
+
+
+class TestSshCert(unittest.TestCase):
+    """`bootstrap.sh ssh-cert` hands the tailnet node's socket, a private state
+    dir and the cloud SSOT tiers to `mios-ssh-ca request`, then Includes the
+    ssh_config it wrote from [deployment.cloud.ssh].config_dropin. The client is
+    a stub from MIOS_NATIVE_BIN_DIR that records its argv and environment."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cloud-ssh-cert-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        t = self.tmp
+        self.fx = os.path.join(t, "MiOS")
+        for rel in (".devcontainer/cloud-shell/bootstrap.sh", "usr/libexec/mios/mios-toml-get",
+                    "usr/lib/mios/mios_toml.py"):
+            os.makedirs(os.path.dirname(os.path.join(self.fx, rel)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), os.path.join(self.fx, rel))
+        with open(SSOT, encoding="utf-8") as fh:
+            text = fh.read()
+        line = 'config_dropin = "/etc/ssh/ssh_config.d/50-mios-user-ca.conf"'
+        self.assertEqual(1, text.count(line))
+        self.dropin = os.path.join(t, "etc-ssh/ssh_config.d/50-mios-user-ca.conf")
+        _write(os.path.join(self.fx, "usr/share/mios/mios.toml"), text.replace(line, f'config_dropin = "{self.dropin}"'))
+        self.native = os.path.join(t, "native")
+        # The getter itself must not see MIOS_NATIVE_BIN_DIR, or it would dispatch to this wrapper.
+        _write(os.path.join(self.native, "mios-toml-get"),
+               f'#!/bin/sh\nunset MIOS_NATIVE_BIN_DIR\nexec python3 {self.fx}/usr/libexec/mios/mios-toml-get "$@"\n', 0o755)
+        self.calls = os.path.join(t, "calls.jsonl")
+        _write(os.path.join(self.native, "mios-ssh-ca"),
+               "#!/usr/bin/env python3\nimport json, os, sys\n"
+               f"open({self.calls!r}, 'a').write(json.dumps({{'argv': sys.argv[1:], 'env': "
+               "{k: v for k, v in os.environ.items() if k.startswith('MIOS_')}}) + '\\n')\n"
+               "d = sys.argv[sys.argv.index('--dir') + 1]\n"
+               "open(os.path.join(d, 'ssh_config'), 'w').write('Host mios\\n')\n"
+               "sys.exit(int(os.environ.get('STUB_RC', '0')))\n", 0o755)
+        for tool in ("ssh", "ssh-keygen"):
+            _write(os.path.join(t, "bin", tool), "#!/bin/sh\nexit 0\n", 0o755)
+        self.state = os.path.join(t, "state")
+        self.sock = os.path.join(self.state, "tailscale/tailscaled.sock")
+        self.env = dict(os.environ, PATH=os.path.join(t, "bin") + os.pathsep + os.environ["PATH"],
+                        MIOS_NATIVE_BIN_DIR=self.native, MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY=self.state)
+        for k in ("MIOS_TOML_ROOT", "MIOS_VENDOR_TOML", "MIOS_HOST_TOML", "MIOS_HOST_TOML_D"):
+            self.env.pop(k, None)
+
+    def run_mode(self, **extra):
+        return subprocess.run(["bash", os.path.join(self.fx, ".devcontainer/cloud-shell/bootstrap.sh"), "ssh-cert"],
+                              capture_output=True, text=True, env=dict(self.env, **extra))
+
+    def calls_made(self):
+        if not os.path.exists(self.calls):
+            return []
+        with open(self.calls, encoding="utf-8") as fh:
+            return [json.loads(l) for l in fh]
+
+    def make_socket(self):
+        import socket
+        os.makedirs(os.path.dirname(self.sock), exist_ok=True)
+        s = socket.socket(socket.AF_UNIX)
+        s.bind(self.sock)
+        self.addCleanup(s.close)
+
+    def test_without_a_tailnet_node_it_asks_for_none(self):
+        r = self.run_mode()
+        self.assertNotEqual(0, r.returncode)
+        self.assertIn("run bootstrap.sh tailnet first", r.stderr)
+        self.assertEqual([], self.calls_made())
+
+    def test_it_requests_over_the_node_socket_with_the_cloud_tiers(self):
+        self.make_socket()
+        os.makedirs(os.path.dirname(self.dropin))
+        r = self.run_mode()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        [call] = self.calls_made()
+        ssh_dir = os.path.join(self.state, "ssh")
+        self.assertEqual(["request", "--dir", ssh_dir, "--socket", self.sock], call["argv"])
+        self.assertEqual(os.path.join(self.fx, "usr/share/mios/mios.toml"), call["env"]["MIOS_VENDOR_TOML"])
+        self.assertEqual(os.path.join(self.state, "tailscale/mios.d"), call["env"]["MIOS_HOST_TOML_D"])
+        self.assertEqual(0o700, os.stat(ssh_dir).st_mode & 0o777)
+        with open(self.dropin, encoding="utf-8") as fh:
+            self.assertIn(f"\nInclude {ssh_dir}/ssh_config\n", fh.read())
+
+    def test_no_dropin_directory_means_no_system_file(self):
+        self.make_socket()
+        r = self.run_mode()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("use ssh -F", r.stderr)
+        self.assertFalse(os.path.exists(os.path.dirname(self.dropin)))
+
+    def test_a_refused_request_fails_and_includes_nothing(self):
+        self.make_socket()
+        os.makedirs(os.path.dirname(self.dropin))
+        r = self.run_mode(STUB_RC="1")
+        self.assertNotEqual(0, r.returncode)
+        self.assertFalse(os.path.exists(self.dropin))
+
+    def test_claude_code_setup_starts_it_in_the_background(self):
+        with open(BOOTSTRAP, encoding="utf-8") as fh:
+            body = fh.read().split("\nclaude_code() {", 1)[1].split("\n}\n", 1)[0]
+        tail = body.split("( tailnet )", 1)[1]
+        self.assertRegex(tail, r'setsid nohup bash "\$SELF" ssh-cert >> "\$STATE/ssh-cert\.log" 2>&1 < /dev/null &')
 
 
 
