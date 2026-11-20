@@ -833,10 +833,12 @@ automation/01-system-files-overlay.sh	14	19	6	68	42c6ce086cf8	MIGRATE	narrative-
 automation/01-system-files-overlay.sh	175	176	2	21	e2e732118539	STAY	local-scoped		0				0
 automation/02-materialize-build-ctx.sh	1	4	4	16	07b1c072fa29	STAY	ai-header		0				0
 automation/04-local-rpm-mirror.sh	1	3	3	25	768317372b07	STAY	ai-header		0				0
-automation/05-repos.sh	1	3	3	29	74c2385e2493	STAY	ai-header		0				0
+automation/05-repos.sh	1	3	3	37	927181f86c4f	STAY	ai-header		0				0
 automation/05-repos.sh	5	5	1	3	ee573bae3b99	STAY	local-scoped		0				0
-automation/05-repos.sh	38	40	3	36	78c4f1de2033	STAY	midsize-why		0				0
-automation/05-repos.sh	96	98	3	33	3d8ae070bf7e	STAY	midsize-why		0				0
+automation/05-repos.sh	28	30	3	35	1a3e7df79857	STAY	midsize-why		0				0
+automation/05-repos.sh	37	39	3	31	3eec2deb9da7	STAY	midsize-why		0				0
+automation/05-repos.sh	64	66	3	36	78c4f1de2033	STAY	midsize-why		0				0
+automation/05-repos.sh	122	124	3	33	3d8ae070bf7e	STAY	midsize-why		0				0
 automation/06-enable-external-repos.sh	1	4	4	22	d954fbd0914f	STAY	ai-header		0				0
 automation/06-enable-external-repos.sh	1	4	4	35	fd2da0114e6c	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:fd2da0114e6c	35	1
 automation/06-enable-external-repos.sh	7	7	1	3	19aef8dad626	STAY	local-scoped		0				0
@@ -5937,9 +5939,9 @@ src/mios-rs/miosd/src/main.rs	2756	2759	4	46	f68f86dc4e5b	MIGRATE	midsize-narrat
 src/mios-rs/miosd/src/main.rs	2772	2772	1	3	1282e1584a5d	STAY	inline-scoped		0				0
 src/mios-rs/miosd/src/main.rs	2782	2782	1	3	9072e79dea83	STAY	inline-scoped		0				0
 src/mios-rs/miosd/src/main.rs	2796	2796	1	6	7d9d21aa1121	STAY	inline-scoped		0				0
-src/mios-rs/miosd/src/main.rs	2801	2801	1	3	e21e753d044d	STAY	inline-scoped		0				0
+src/mios-rs/miosd/src/main.rs	2801	2801	1	3	43bf286ec41e	STAY	inline-scoped		0				0
 src/mios-rs/miosd/src/main.rs	2811	2811	1	6	5a571b9e6283	STAY	inline-scoped		0				0
-src/mios-rs/miosd/src/main.rs	2816	2816	1	3	e21e753d044d	STAY	inline-scoped		0				0
+src/mios-rs/miosd/src/main.rs	2816	2816	1	3	43bf286ec41e	STAY	inline-scoped		0				0
 src/mios-rs/miosd/src/main.rs	2842	2849	8	73	0f436d8ac3e2	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/src.md	mios-src:3b01a76f0ed3	73	0
 src/mios-rs/miosd/src/main.rs	2919	2919	1	13	c47836f96ebf	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/main.rs	2942	2942	1	13	502ee6db7099	STAY	local-scoped		0				0
@@ -5959,6 +5961,8 @@ src/mios-rs/miosd/src/main.rs	3515	3520	6	68	fc1c041d313b	MIGRATE	narrative-rati
 src/mios-rs/miosd/src/main.rs	3572	3573	2	23	9f3cc07fd20c	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/main.rs	3612	3617	6	56	f90502518c8e	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:53e065f25511	56	0
 src/mios-rs/miosd/src/main.rs	3677	3683	7	72	3c3f118fd328	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/src.md	mios-src:9dccae407645	72	0
+src/mios-rs/miosd/src/main.rs	3758	3760	3	25	d36c101a596d	STAY	midsize-why		0				0
+src/mios-rs/miosd/src/main.rs	3774	3774	1	1	e4d0cc6b6e79	DROP	commented-out-code		0				0
 src/mios-rs/miosd/src/placement.rs	1	22	22	237	aed19d596d94	STAY	ai-header		0				0
 src/mios-rs/miosd/src/placement.rs	37	37	1	14	126f9998a0f4	STAY	local-scoped		0				0
 src/mios-rs/miosd/src/placement.rs	39	39	1	13	dc7bae3e9772	STAY	local-scoped		0				0
@@ -37472,6 +37476,7 @@ usr/share/mios/mios.toml	11065	11065	1	9	97c41c7d97a6	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	11072	11076	5	23	067515c1b18e	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	11089	11101	13	133	63fd41072959	MIGRATE	narrative-rationale		0				0
 usr/share/mios/mios.toml	11115	11117	3	5	51d9a05537fa	STAY	midsize-why		0				0
+usr/share/mios/mios.toml	11122	11122	1	13	4677a2e18d9e	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	11127	11131	5	25	2de15dc956e4	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	11141	11142	2	13	f6dde6be85dc	STAY	local-scoped		0				0
 usr/share/mios/mios.toml	11143	11143	1	17	1b9e7b883024	STAY	inline-scoped		0				0

@@ -1197,7 +1197,7 @@
     },
     {
       "path": "automation/05-repos.sh",
-      "hint": "Configures Fedora 44 repository metadata, sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.",
+      "hint": "Configures the [versions].fedora repository metadata (checked against the base image's release), sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.",
       "related": [],
       "functions": [],
       "doc": null,
