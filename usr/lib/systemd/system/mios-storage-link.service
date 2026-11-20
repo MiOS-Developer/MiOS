@@ -1,0 +1,19 @@
+# AI-hint: Boot oneshot running `mios-probe storage`: flags a USB disk whose USB 3 link fell back to 480 Mb/s (bulk-only, USB 2.0 bus power) and fails when it carries root, swap or the journal ([hardware.storage_link]).
+# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/storage.rs, local-fs.target, swap.target
+[Unit]
+Description='MiOS' USB storage link check
+After=local-fs.target
+After=swap.target
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mios-probe storage --root / --no-color
+RemainAfterExit=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

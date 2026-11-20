@@ -163,6 +163,8 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-pstore.service` | `usr/lib/systemd/system` | MiOS Persistent Kernel Crash Buffer Extractor |
 | `mios-pxe-hub.container` | `usr/share/containers/systemd` | MiOS' PXE Boot Hub |
 | `mios-radosgw.container` | `usr/share/containers/systemd` | MiOS' Ceph RADOS Gateway (S3 Object Storage) |
+| `mios-ras-check.service` | `usr/lib/systemd/system` | MiOS' hardware error check |
+| `mios-ras-check.timer` | `usr/lib/systemd/system` | MiOS' hardware error check schedule |
 | `mios-rdp-firewall.service` | `usr/lib/systemd/system` | MiOS RDP firewall: open [ports].rdp on the tailnet zone only ([remote.rdp]) |
 | `mios-rdp-native-failed.service` | `usr/lib/systemd/user` | MiOS native RDP server crash-looped: hand [ports].rdp back to xrdp (until reboot or mios-rdp switch native) |
 | `mios-rdp-native.service` | `usr/lib/systemd/user` | MiOS native RDP server (IronRDP, EGFX AVC420 H.264 via Cisco OpenH264) into the live Hyprland session |
@@ -186,6 +188,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-ssh-ca.service` | `usr/lib/systemd/system` | MiOS' user SSH CA signer (tailnet-only [ssh].user certificates for verified cloud nodes) |
 | `mios-status-agents.service` | `usr/lib/systemd/user` | MiOS agent relay observation for the Portal status view |
 | `mios-steam-bridge.service` | `usr/lib/systemd/user` | MiOS Steam Notification Bridge |
+| `mios-storage-link.service` | `usr/lib/systemd/system` | MiOS' USB storage link check |
 | `mios-suggestion-refresh.service` | `usr/lib/systemd/system` | MiOS' starter-chip refresh (revolving suggestions) |
 | `mios-suggestion-refresh.timer` | `usr/lib/systemd/system` | MiOS' starter-chip refresh cadence |
 | `mios-swarm-pack-firstboot.service` | `usr/lib/systemd/system` | MiOS' swarm small-model pack arming (gpu_profile=swarm only) |
@@ -238,5 +241,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (230 unit(s)) -->
+<!-- derived from tracked unit files (233 unit(s)) -->
 <!-- /MIOS-GEN:units -->

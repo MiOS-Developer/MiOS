@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4377,
-  "total_metadata_entries": 3503,
-  "total_hints": 3497,
+  "total_files_scanned": 4383,
+  "total_metadata_entries": 3509,
+  "total_hints": 3503,
   "total_functions_indexed": 2294,
-  "total_related_links": 7109,
+  "total_related_links": 7129,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -5376,6 +5376,33 @@
         "usr/share/mios/mios.toml",
         "Justfile",
         "usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/mios-probe/src/ras.rs",
+      "hint": "mios-probe ras -- counts this boot's hardware errors (EDAC memory-controller ce_count/ue_count and the kernel's \"Machine check events logged\" notices), warns at [hardware.ras].corrected_warn_per_boot and fails on any uncorrected error, pointing at rasdaemon's per-event record.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/system/mios-ras-check.service",
+        "usr/lib/systemd/system/mios-ras-check.timer",
+        "rasdaemon.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "src/mios-rs/mios-probe/src/storage.rs",
+      "hint": "mios-probe storage -- flags a USB-attached disk whose USB 3 link fell back to 480 Mb/s while its controller has a SuperSpeed bus, names its bridge, driver (uas or usb-storage) and the root/swap/journal roles it carries, and fails when a degraded link carries one of [hardware.storage_link].critical_roles.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/systemd/system/mios-storage-link.service",
+        "src/mios-rs/mios-probe/src/main.rs"
       ],
       "functions": [],
       "doc": null,
@@ -23884,6 +23911,32 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/systemd/system/mios-ras-check.service",
+      "hint": "Oneshot running `mios-probe ras`: counts this boot's corrected hardware errors (kernel MCE notices, EDAC ce_count) against [hardware.ras].corrected_warn_per_boot and fails on any uncorrected EDAC error; rasdaemon keeps the per-event record.",
+      "related": [
+        "/usr/bin/mios-probe",
+        "src/mios-rs/mios-probe/src/ras.rs",
+        "mios-ras-check.timer",
+        "rasdaemon.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-ras-check.timer",
+      "hint": "Re-runs mios-ras-check hourly so corrected machine-check errors surface while the boot that logged them is still up.",
+      "related": [
+        "mios-ras-check.service",
+        "timers.target"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/systemd/system/mios-registry.service",
       "hint": "Systemd service unit running the local OCI distribution registry on loopback for image staging (task_454).",
       "related": [],
@@ -23990,6 +24043,20 @@
         "/usr/lib/mios/mios_credentials.py",
         "mios-credential-apply.service",
         "tailscaled.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-storage-link.service",
+      "hint": "Boot oneshot running `mios-probe storage`: flags a USB disk whose USB 3 link fell back to 480 Mb/s (bulk-only, USB 2.0 bus power) and fails when it carries root, swap or the journal ([hardware.storage_link]).",
+      "related": [
+        "/usr/bin/mios-probe",
+        "src/mios-rs/mios-probe/src/storage.rs",
+        "local-fs.target",
+        "swap.target"
       ],
       "functions": [],
       "doc": null,
@@ -24380,6 +24447,19 @@
       "hint": "Configures polkit.service restart limits and retry intervals to ensure service stability and availability within MiOS containerized environments.",
       "related": [
         "polkit.service"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/rasdaemon.service.d/10-mios.conf",
+      "hint": "Keeps rasdaemon to hosts with their own machine-check and EDAC sources: a container or WSL has none, so the daemon would only fail to open tracefs there.",
+      "related": [
+        "rasdaemon.service",
+        "mios-ras-check.service",
+        "usr/lib/systemd/system-preset/90-mios.preset"
       ],
       "functions": [],
       "doc": null,
