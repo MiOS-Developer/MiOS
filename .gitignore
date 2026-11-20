@@ -592,6 +592,7 @@ usr/libexec/*
 /usr/libexec/mios/mios-render-quadlets
 /usr/libexec/mios/mios-resolver
 /usr/libexec/mios/mios-size-ceiling
+/usr/libexec/mios/mios-ssh-ca
 /usr/libexec/mios/mios-ssot-lint
 /usr/libexec/mios/mios-task
 /usr/libexec/mios/mios-template-compile

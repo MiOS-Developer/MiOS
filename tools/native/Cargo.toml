@@ -25,6 +25,7 @@ members = [
     "mios-service-core",
     "mios-shot",
     "mios-size-ceiling",
+    "mios-ssh-ca",
     "mios-ssot-lint",
     "mios-ssot-walk",
     "mios-task",
