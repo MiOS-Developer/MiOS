@@ -397,6 +397,25 @@ class TestVersionRootScope(SourceFixture):
         code, stdout, _ = self.run_lint(soft="1")
         self.assertEqual(code, 0)
         self.assertIn("SOFT mode enabled", stdout)
+class TestAiTagLoader(unittest.TestCase):
+    """load_ai_tag must not depend on SourceFileLoader.load_module, which Python 3.15 removed."""
+
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+
+    def test_loads_without_load_module(self):
+        # Simulate 3.15 on any interpreter: the loader has no load_module at all.
+        with mock.patch.object(importlib.machinery.SourceFileLoader, "load_module", create=True,
+                               new=property(lambda self: (_ for _ in ()).throw(AttributeError("load_module")))):
+            module = mc.load_ai_tag(self.ROOT)
+        self.assertIsNotNone(module, "load_ai_tag returned None once load_module is gone")
+        self.assertTrue(hasattr(module, "__file__") and module.__file__.endswith("mios-ai-tag"))
+        self.assertIs(sys.modules.get("mios_ai_tag"), module)
+
+    def test_missing_tool_is_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(mc.load_ai_tag(tmp))
+
+
 def main() -> int:
     p = policy()
     test_classifier(p)
@@ -407,7 +426,7 @@ def main() -> int:
     test_html_endings()
     test_landing_ratio(p)
     suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
-                               for case in (TestTrackedSourceScope, TestVersionRootScope))
+                               for case in (TestTrackedSourceScope, TestVersionRootScope, TestAiTagLoader))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     print(f"[test_mios_comments] {PASSED} passed, {len(FAILED)} failed")
     for f in FAILED:
