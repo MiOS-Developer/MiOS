@@ -11,7 +11,7 @@ PHASE="$ROOT/automation/65-bake-hyprland.sh"
 log() { printf '[test-bake-user-unit-check] %s\n' "$*"; }
 die() { printf '[test-bake-user-unit-check] ERROR: %s\n' "$*" >&2; exit 1; }
 
-GEN="${MIOS_UNIT_GEN_BIN:-}"
+GEN="${UNIT_GEN_BIN:-}"
 if [[ -z "$GEN" ]]; then
     for c in "$ROOT"/tools/native/target/*/debug/mios-unit-gen "$ROOT"/tools/native/target/debug/mios-unit-gen; do
         [[ -x "$c" ]] && { GEN="$c"; break; }
