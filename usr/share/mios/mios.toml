@@ -9743,21 +9743,21 @@ remote = "same"                             # every output, local or remote/mobi
 # the spec's own patches -- a patch that no longer applies fails the build naming it -- and tags the Release with
 # release_tag (2.fc44 -> 2.mios2.fc44: the patched package upgrades the stock one and `rpm -q hyprland` shows it).
 # Bump release_tag whenever the series changes. A patched compositor takes effect at the next compositor start.
-#   hyprland-screenshare-no-monitor.patch: a toplevel capture (hyprland-toplevel-export: Quickshell ScreencopyView,
-#   xdg-desktop-portal-hyprland window share) of a window without a live monitor -- a pinned window whose output was
-#   removed keeps an expired m_monitor -- SEGVs in Screenshare::CScreenshareSession::init (nullptr->m_scale); a capture
-#   of a closed/unmapped window returned without creating the client's frame. Both now answer the frame with `failed`;
-#   an ext-image-copy-capture window source without a monitor gets `stopped`, a session init() refuses is never kept,
-#   and a window session survives its window moving to no monitor.
+#   hyprland-screenshare-no-monitor.patch: a hyprland-toplevel-export capture (Quickshell ScreencopyView, the dock
+#   preview) of a handle whose window has closed returned without creating the client's frame, so the client's next
+#   request on that frame id was a protocol error that disconnected it (the whole shell, when the shell previewed). It
+#   now gets a frame that fails. The rest of the 0.56.2 series is upstream in 0.57.2: a window without a live monitor
+#   (a pinned window whose output was removed) is refused by newSession, init() stops a session with no monitor
+#   instead of dereferencing it, the monitor-changed listener survives no monitor, and an inactive session is never kept.
 [desktop.hyprland.compositor]
 patches = ["usr/share/mios/hyprland/patches/hyprland-screenshare-no-monitor.patch"]
-release_tag = "mios2"
+release_tag = "mios3"
 
 # ABI held to the deployed Hyprland release; upgrade this pair together.
 [desktop.hyprland.hyprglass]
 enabled = true
 version = "0.9.0"
-hyprland_version = "0.56.2"
+hyprland_version = "0.57.2"
 # Compositor repository: a plugin's hyprpm.toml maps Hyprland release commits to plugin commits; the build
 # resolves the installed release's tag here and takes the latest plugin commit made for it (mios-gen build-hyprland-plugin).
 hyprland_repository = "https://github.com/hyprwm/Hyprland.git"
@@ -10262,9 +10262,9 @@ toggle_key = "SUPER + F12"
 # The existing MiOS patch stack targets this compositor ABI. Upstream HEAD changed its
 # render interfaces; review and rebase the stack before advancing this explicit hold.
 [desktop.hyprland.hypr3d.compatibility]
-hyprland_version = "0.56.2"
-revision = "9301dcf6d0625daf632d5be04f2a3cefabec1769"
-reason = "Reviewed MiOS Hypr3D patch stack for the installed Hyprland 0.56.2 SDK; newer upstream render interfaces require a patch-stack rebase."
+hyprland_version = "0.57.2"
+revision = "1e9559cc039947fa632477dcea11e10f823a5ccc"
+reason = "MiOS Hypr3D patch stack moved to Hyprland 0.57.2 (the release Fedora 45 ships): all 15 patches apply at this upstream revision."
 
 [desktop.hyprland.hypr3d.config]
 # One glass look (MiOS rule): the room's glass is the [desktop.hyprland.hyprglass.presets] entry the desktop draws

@@ -18378,11 +18378,14 @@ tools/native/mios-gen/src/hypr3d_spawn.rs	1084	1084	1	7	2a90c599f92a	STAY	inline
 tools/native/mios-gen/src/hyprland_build.rs	1	15	15	194	d632d6f5a2b9	MIGRATE_HEADER	overlong-hint		0				0
 tools/native/mios-gen/src/hyprland_build.rs	46	46	1	9	718b155a831c	STAY	local-scoped		0				0
 tools/native/mios-gen/src/hyprland_build.rs	93	93	1	15	9eeff092610e	STAY	local-scoped		0				0
-tools/native/mios-gen/src/hyprland_build.rs	121	122	2	42	5f3d5363a339	STAY	midsize-why		0				0
-tools/native/mios-gen/src/hyprland_build.rs	133	133	1	14	4aa150ccde96	STAY	local-scoped		0				0
-tools/native/mios-gen/src/hyprland_build.rs	266	266	1	14	c5d2b9a47ef4	STAY	local-scoped		0				0
-tools/native/mios-gen/src/hyprland_build.rs	351	352	2	24	0414eb29c541	STAY	local-scoped		0				0
-tools/native/mios-gen/src/hyprland_build.rs	422	422	1	35	ce20c323f3f6	STAY	inline-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	121	125	5	105	2cf4a48ab862	MIGRATE	narrative-rationale		0				0
+tools/native/mios-gen/src/hyprland_build.rs	147	147	1	12	b445bdceea27	STAY	local-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	159	159	1	14	4aa150ccde96	STAY	local-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	287	287	1	14	c5d2b9a47ef4	STAY	local-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	372	373	2	24	0414eb29c541	STAY	local-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	443	443	1	35	ce20c323f3f6	STAY	inline-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	472	472	1	19	6c4076d164ac	STAY	local-scoped		0				0
+tools/native/mios-gen/src/hyprland_build.rs	488	488	1	15	b2a37c5e8dad	STAY	local-scoped		0				0
 tools/native/mios-gen/src/image.rs	1	3	3	32	1f74cc5d0f26	STAY	ai-header		0				0
 tools/native/mios-gen/src/image.rs	17	17	1	8	07fbae56fa89	STAY	local-scoped		0				0
 tools/native/mios-gen/src/image.rs	26	26	1	5	7d6d90685d05	STAY	local-scoped		0				0
@@ -37233,7 +37236,7 @@ usr/share/mios/mios.toml	9733	9733	1	11	1819d3d87795	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9734	9734	1	16	02943afd3e96	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9737	9737	1	7	772a91cb015d	STAY	inline-scoped		0				0
 usr/share/mios/mios.toml	9739	9739	1	12	1dc68ad07a56	STAY	inline-scoped		0				0
-usr/share/mios/mios.toml	9741	9751	11	163	03d370fa413b	MIGRATE	narrative-history		0				0
+usr/share/mios/mios.toml	9741	9751	11	188	d0e447e89e84	MIGRATE	narrative-history		0				0
 usr/share/mios/mios.toml	9756	9756	1	11	d604cff8ba9e	STAY	local-scoped		0				0
 usr/share/mios/mios.toml	9761	9762	2	33	07b7b93b10b9	STAY	midsize-why		0				0
 usr/share/mios/mios.toml	9765	9767	3	35	d0a7c7044b5f	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/mios.md	mios-src:d0a7c7044b5f	35	0
