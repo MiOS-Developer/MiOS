@@ -166,7 +166,11 @@ mios_record_resolved() {
 mios_fetch_gh_release_asset() {
     local url="$1" tag="$2" asset="$3" dest="$4" label="$5" repo json sha
     repo="$(mios_gh_repo "$url")" || { mios_err "${label}: not a github.com repo: ${url}"; return 1; }
-    json="$(mios_gh_release_json "$repo" "$tag" 2>/dev/null)" || json=""
+    # An unreachable or rate-limited API is not "no digest": say which, so the cause is not misread upstream.
+    json="$(mios_gh_release_json "$repo" "$tag" 2>/dev/null)" || {
+        mios_warn "${label}: GitHub release metadata for ${repo}@${tag} unavailable (API unreachable or rate-limited; the build reads a token from GH_TOKEN or the gh_token build secret); not downloading ${asset}"
+        return 2
+    }
     sha="$(mios_gh_asset_sha256 "$json" "$asset")" || {
         mios_warn "${label}: GitHub publishes no digest for ${asset}@${tag}; not downloading it"
         return 2

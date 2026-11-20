@@ -195,6 +195,7 @@ build: preflight flight-status
     export MIOS_USER_PASSWORD_HASH; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
         --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        ${GH_TOKEN:+--secret id=gh_token,env=GH_TOKEN} \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
@@ -220,6 +221,7 @@ build-logged: artifact
     export MIOS_USER_PASSWORD_HASH; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
         --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        ${GH_TOKEN:+--secret id=gh_token,env=GH_TOKEN} \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
@@ -242,6 +244,7 @@ build-verbose: artifact
     export MIOS_USER_PASSWORD_HASH; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
         --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        ${GH_TOKEN:+--secret id=gh_token,env=GH_TOKEN} \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \

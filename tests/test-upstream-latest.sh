@@ -53,7 +53,7 @@ cat > "$T/bin/curl" <<EOF
 out=""; url=""; prev=""
 for a in "\$@"; do
     case "\$prev" in -o|--output) out="\$a" ;; esac
-    case "\$a" in https://*|http://*) url="\$a" ;; --output=*) out="\${a#--output=}" ;; esac
+    case "\$a" in https://*|http://*) url="\$a" ;; --output=*) out="\${a#--output=}" ;; Authorization:*) echo "\$a" >> "$T/auth.log" ;; esac
     prev="\$a"
 done
 echo "\$url" >> "$T/curl.log"
@@ -243,5 +243,34 @@ printf 'evil\n' > "$T/http/github.com/coder/code-server/releases/download/v4.142
 mkdir -p "$T/csbad"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csbad" ) >/dev/null 2>"$T/err"; rc=$?; set -e
 [[ $rc -eq 3 && -z "$(ls -A "$T/csbad")" ]] && grep -q INTEGRITY "$T/err" || fail "code-server tamper not aborted (rc=$rc)"
 pass "code-server: tampered RPM aborts (exit 3)"
+
+# --- GitHub REST: authenticated by the gh_token build secret; an unreachable API is not "no digest" ---
+unset GH_TOKEN GITHUB_TOKEN GHCR_TOKEN
+printf 'satty-bin\n' > "$T/satty"
+asset Satty-org/Satty v0.22.0 satty-x86_64-unknown-linux-gnu.tar.gz "$T/satty"
+printf 'tok-from-secret\n' > "$T/gh_token"
+rm -f "$T/auth.log"
+GH_TOKEN_FILE="$T/gh_token" mios_gh_release_json Satty-org/Satty v0.22.0 >/dev/null || fail "release json via secret"
+grep -qx 'Authorization: token tok-from-secret' "$T/auth.log" || fail "gh_token build secret not sent to api.github.com"
+rm -f "$T/auth.log"
+GH_TOKEN_FILE="$T/absent" mios_gh_release_json Satty-org/Satty v0.22.0 >/dev/null
+[[ ! -s "$T/auth.log" ]] || fail "Authorization sent with no token"
+GH_TOKEN_FILE="$T/gh_token" scurl -fsSL "https://example.invalid/x" >/dev/null 2>&1 || true
+[[ ! -s "$T/auth.log" ]] || fail "token sent to a non-GitHub host"
+pass "scurl: gh_token build secret authenticates GitHub hosts only"
+got="$(GH_TOKEN_FILE="$T/gh_token" mios_fetch_gh_release_asset https://github.com/Satty-org/Satty v0.22.0 \
+        satty-x86_64-unknown-linux-gnu.tar.gz "$T/out/satty.tgz" "satty v0.22.0" 2>"$T/err")" || fail "satty fetch: $(cat "$T/err")"
+[[ "$got" == "$(sha "$T/satty")" && -f "$T/out/satty.tgz" ]] || fail "satty digest: $got"
+pass "satty: v0.22.0 asset proven by GitHub's published digest"
+mv "$T/http/api.github.com/repos/Satty-org/Satty/releases/tags/v0.22.0" "$T/satty.json"
+set +e; ( mios_fetch_gh_release_asset https://github.com/Satty-org/Satty v0.22.0 \
+        satty-x86_64-unknown-linux-gnu.tar.gz "$T/out/satty-api" "satty v0.22.0" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 2 && ! -e "$T/out/satty-api" ]] && grep -q 'release metadata for Satty-org/Satty@v0.22.0 unavailable' "$T/err" \
+    && ! grep -q 'publishes no digest' "$T/err" || fail "unreachable API misreported (rc=$rc): $(cat "$T/err")"
+jq '.assets[0].digest = null' "$T/satty.json" > "$T/http/api.github.com/repos/Satty-org/Satty/releases/tags/v0.22.0"
+set +e; ( mios_fetch_gh_release_asset https://github.com/Satty-org/Satty v0.22.0 \
+        satty-x86_64-unknown-linux-gnu.tar.gz "$T/out/satty-nodigest" "satty v0.22.0" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 2 && ! -e "$T/out/satty-nodigest" ]] && grep -q 'publishes no digest' "$T/err" || fail "no-digest release fetched (rc=$rc)"
+pass "satty: unreachable API and a digest-less release are told apart; neither downloads"
 
 echo "PASS test-upstream-latest: all consumers resolve latest, record it, and abort on integrity failure"

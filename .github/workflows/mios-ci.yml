@@ -326,6 +326,8 @@ jobs:
           mios_ci_verify_portal . .staged-portal
 
       - name: Build the OCI image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # Build arguments come from /etc/mios/install.env when a self-hosted
@@ -349,8 +351,9 @@ jobs:
           # honours it for layer timestamps unaided. Passing --timestamp as well
           # sets the same thing twice, and podman refuses the pair outright,
           # exiting 125 before the Containerfile is read.
-          sudo TMPDIR=/mnt/tmp SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" podman build \
+          sudo --preserve-env=GH_TOKEN TMPDIR=/mnt/tmp SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" podman build \
               "${BUILD_ARGS[@]}" \
+              --secret id=gh_token,env=GH_TOKEN \
               --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
               --device /dev/fuse \
               --cap-add all \
@@ -522,13 +525,17 @@ jobs:
           mios_ci_verify_portal . .staged-portal
 
       - name: Smoke build
-        # The Containerfile's final layer runs bootc container lint.
+        # The Containerfile's final layer runs bootc container lint. The job token reaches the bake only as the
+        # gh_token build secret: anonymous GitHub API reads share the runner's per-IP quota and fail.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
           [[ -n "$BASE_IMAGE" ]] || { echo "::error::SSOT image.base is empty" >&2; exit 1; }
-          sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+          sudo --preserve-env=GH_TOKEN TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+              --secret id=gh_token,env=GH_TOKEN \
               --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t mios:smoke -f Containerfile .
 
@@ -615,13 +622,16 @@ jobs:
           mios_ci_verify_portal . .staged-portal
 
       - name: Bake the image the disk is made from
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
           LOCAL_TAG="$(./usr/libexec/mios/mios-toml-get --vendor image local_tag)"
           [[ -n "$BASE_IMAGE" && -n "$LOCAL_TAG" ]] || { echo "::error::SSOT image.base or image.local_tag is empty" >&2; exit 1; }
-          sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+          sudo --preserve-env=GH_TOKEN TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+              --secret id=gh_token,env=GH_TOKEN \
               --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t "$LOCAL_TAG" -f Containerfile .
 

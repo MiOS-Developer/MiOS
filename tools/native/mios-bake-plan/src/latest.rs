@@ -158,12 +158,84 @@ pub fn parse_tag_name(json: &str) -> Option<String> {
 /// cannot be reached (the caller then falls back and says so).
 fn forge_latest_release(url: &str) -> Option<String> {
     let api = release_api(url)?;
-    let body = run(
-        "curl",
-        &["-fsSL", "--retry", "3", "--connect-timeout", "20", &api],
-    )
+    let token = github_token(&|k| std::env::var(k).ok(), &|p| {
+        std::fs::read_to_string(p).ok()
+    });
+    let body = match api_auth_header(&api, token.as_deref()) {
+        Some(header) => run_stdin(
+            "curl",
+            &[
+                "-fsSL",
+                "--retry",
+                "3",
+                "--connect-timeout",
+                "20",
+                "-H",
+                "@-",
+                &api,
+            ],
+            &header,
+        ),
+        None => run(
+            "curl",
+            &["-fsSL", "--retry", "3", "--connect-timeout", "20", &api],
+        ),
+    }
     .ok()?;
     parse_tag_name(&body)
+}
+
+/// The GitHub token for authenticated REST reads (anonymous reads share a small per-IP quota, so on a CI
+/// runner they fail): GH_TOKEN / GITHUB_TOKEN, else the image build's `--secret id=gh_token` file
+/// (GH_TOKEN_FILE overrides its path). Never an ARG or ENV, so it reaches no layer.
+pub fn github_token(
+    env: &dyn Fn(&str) -> Option<String>,
+    read: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let nonempty = |v: Option<String>| v.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+    nonempty(env("GH_TOKEN"))
+        .or_else(|| nonempty(env("GITHUB_TOKEN")))
+        .or_else(|| {
+            let path =
+                nonempty(env("GH_TOKEN_FILE")).unwrap_or_else(|| "/run/secrets/gh_token".into());
+            nonempty(read(&path))
+        })
+}
+
+/// The Authorization header line for `url`, only for the GitHub REST API: a token is never sent elsewhere.
+pub fn api_auth_header(url: &str, token: Option<&str>) -> Option<String> {
+    token
+        .filter(|_| url.starts_with("https://api.github.com/"))
+        .map(|t| format!("Authorization: Bearer {t}\n"))
+}
+
+/// `run` with `input` on stdin (curl `-H @-`: the header stays out of argv and the process list).
+fn run_stdin(cmd: &str, args: &[&str], input: &str) -> Result<String, String> {
+    use std::io::Write;
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run {cmd}: {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(input.as_bytes())
+        .map_err(|e| format!("{cmd}: {e}"))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("{cmd}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "{cmd} {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// org.opencontainers.image.source from `skopeo inspect` JSON.
@@ -427,6 +499,58 @@ pub fn dispatch(args: &[String], root: &Path) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_token_prefers_env_then_the_build_secret() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| (*v).to_string())
+            }
+        };
+        let secret = |p: &str| (p == "/run/secrets/gh_token").then(|| "tok-secret\n".to_string());
+        assert_eq!(
+            github_token(&env(&[("GH_TOKEN", "a"), ("GITHUB_TOKEN", "b")]), &secret).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            github_token(&env(&[("GITHUB_TOKEN", "b")]), &secret).as_deref(),
+            Some("b")
+        );
+        assert_eq!(
+            github_token(&env(&[("GH_TOKEN", " ")]), &secret).as_deref(),
+            Some("tok-secret")
+        );
+        let other = |p: &str| (p == "/x/tok").then(|| "tok-x".to_string());
+        assert_eq!(
+            github_token(&env(&[("GH_TOKEN_FILE", "/x/tok")]), &other).as_deref(),
+            Some("tok-x")
+        );
+        assert_eq!(github_token(&env(&[]), &|_| None), None);
+    }
+
+    #[test]
+    fn the_token_goes_only_to_the_github_api() {
+        let api = "https://api.github.com/repos/Satty-org/Satty/releases/latest";
+        assert_eq!(
+            api_auth_header(api, Some("t")).as_deref(),
+            Some("Authorization: Bearer t\n")
+        );
+        assert_eq!(api_auth_header(api, None), None);
+        assert_eq!(
+            api_auth_header(
+                "https://codeberg.org/api/v1/repos/o/r/releases/latest",
+                Some("t")
+            ),
+            None
+        );
+        assert_eq!(
+            api_auth_header("https://api.github.com.evil.example/x", Some("t")),
+            None
+        );
+    }
     use std::path::PathBuf;
 
     /// The policy the image actually ships: these tests exercise the SSOT's

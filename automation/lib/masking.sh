@@ -72,8 +72,14 @@ scurl() {
     done
 
     if [[ "$url" =~ github\.com|ghcr\.io ]]; then
-        if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" || -n "${GHCR_TOKEN:-}" ]]; then
-            local token="${GH_TOKEN:-${GITHUB_TOKEN:-${GHCR_TOKEN:-}}}"
+        local token="${GH_TOKEN:-${GITHUB_TOKEN:-${GHCR_TOKEN:-}}}"
+        # Inside the image build the token is a BuildKit secret file (`--secret id=gh_token`), never an
+        # ARG or ENV: read at call time, so it is in no layer and no exported environment.
+        local token_file="${GH_TOKEN_FILE:-/run/secrets/gh_token}"
+        if [[ -z "$token" && -r "$token_file" ]]; then
+            token="$(tr -d '[:space:]' < "$token_file")"
+        fi
+        if [[ -n "$token" ]]; then
             args+=("-H" "Authorization: token $token")
             add_mask "$token"
         fi
