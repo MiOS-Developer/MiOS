@@ -2365,6 +2365,39 @@ class wcg_TestWmConfigGen(unittest.TestCase):
             self.assertIn("UNDECLARED pipewire.service", bad.stderr)
             self.assertIn("CEILING", bad.stderr)
 
+    def test_bake_keybindings_render_gets_every_table_it_reads(self):
+        """65-bake-hyprland.sh: the keybinding render runs on the SSOT the step exports and reproduces the tracked projection.
+
+        The step once exported [keybindings] alone; the renderer also reads [theme.tmux.console], so the bake failed
+        with 'GoldenMaster([theme.tmux.console] is missing from SSOT)'."""
+        import glob
+        import shlex
+        import subprocess
+        with open(os.path.join(wcg__ROOT, "automation", "65-bake-hyprland.sh"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        dump = [l for l in lines if "mios-keybindings-build.json" in l and l.startswith("python3 -c ")]
+        self.assertEqual(len(dump), 1, dump)
+        code = shlex.split(dump[0])[2].replace('"/usr/lib/mios"', repr(os.path.join(wcg__ROOT, "usr/lib/mios")))
+        cands = [os.environ.get("MIOS_UNIT_GEN", ""), "/usr/libexec/mios/mios-unit-gen",
+                 *glob.glob(os.path.join(wcg__ROOT, "tools/native/target/*/release/mios-unit-gen")),
+                 os.path.join(wcg__ROOT, "tools/native/target/release/mios-unit-gen")]
+        gen = next((c for c in cands if c and os.access(c, os.X_OK)), None)
+        if gen is None:
+            return
+        with tempfile.TemporaryDirectory(prefix="mios-test-keybind-") as tmp:
+            export = os.path.join(tmp, "kb.json")
+            env = {**os.environ, "MIOS_VENDOR_TOML": wcg__VENDOR, "MIOS_TOML_ROOT": wcg__ROOT}
+            subprocess.run([sys.executable, "-c", code.replace("/tmp/mios-keybindings-build.json", export)],
+                           check=True, env=env)
+            out = subprocess.run([gen, "keybindings", "--from-json", export, "--emit-json"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            rendered = json.loads(out.stdout)
+        self.assertTrue(rendered)
+        for rel, body in rendered.items():
+            with open(os.path.join(wcg__ROOT, rel), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), body, rel)
+
 def wcg_main() -> int:
     suite = unittest.TestLoader().loadTestsFromTestCase(wcg_TestWmConfigGen)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
