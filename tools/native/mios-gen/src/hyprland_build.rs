@@ -118,18 +118,44 @@ pub fn package_spec(data: &Value) -> Result<String, String> {
 
 pub const FIRST_PATCH: usize = 1000;
 
-/// Adds the series to the SRPM spec: PatchN tags after the spec's last Patch tag, `%patch -P N -p1` after the spec's
-/// own conditional patching in %prep (right after the %autosetup block), and the release tag on the main Release.
+/// Adds the series to the SRPM spec: PatchN tags after the spec's last Patch tag (a spec with none: after the main
+/// package's last Source tag), `%patch -P N -p1` after the spec's own conditional patching in %prep (right after the
+/// %autosetup block), and the release tag on the main Release. An %autosetup without -N applies every declared patch
+/// itself, at its own strip level; with no patches of its own the spec gets -N, so the series is applied exactly once,
+/// explicitly. A spec that lets %autosetup apply its own patches is refused: the series could not be ordered after them.
 pub fn rewrite_spec(spec: &str, names: &[String], tag: &str) -> Result<String, String> {
     let lines: Vec<&str> = spec.lines().collect();
-    let last_patch = lines
+    let release = lines
         .iter()
-        .rposition(|l| l.starts_with("Patch"))
-        .ok_or("spec has no Patch tag to follow")?;
+        .position(|l| l.starts_with("Release:"))
+        .ok_or("spec has no Release")?;
+    if !lines[release].contains("%{?dist}") {
+        return Err("spec Release has no %{?dist} to tag".into());
+    }
     let setup = lines
         .iter()
         .position(|l| l.trim_start().starts_with("%autosetup"))
         .ok_or("spec has no %autosetup in %prep")?;
+    let autosetup_applies = !lines[setup].split_whitespace().any(|w| w == "-N");
+    let own_patch = lines.iter().rposition(|l| l.starts_with("Patch"));
+    if autosetup_applies && own_patch.is_some() {
+        return Err(
+            "spec's %autosetup applies its own patches (no -N): the series cannot follow them"
+                .into(),
+        );
+    }
+    // The main package's preamble ends at its first %package or %description.
+    let preamble_end = lines
+        .iter()
+        .position(|l| l.starts_with("%package") || l.starts_with("%description"))
+        .unwrap_or(lines.len());
+    let last_patch = match own_patch {
+        Some(i) => i,
+        None => lines[..preamble_end]
+            .iter()
+            .rposition(|l| l.starts_with("Source"))
+            .ok_or("spec has no Patch or Source tag to follow")?,
+    };
     // the spec's own patch block right after %autosetup: an %if ... %endif (or nothing)
     let mut apply_at = setup + 1;
     if lines
@@ -142,17 +168,12 @@ pub fn rewrite_spec(spec: &str, names: &[String], tag: &str) -> Result<String, S
             .map(|i| apply_at + i + 1)
             .ok_or("unterminated %if after %autosetup")?;
     }
-    let release = lines
-        .iter()
-        .position(|l| l.starts_with("Release:"))
-        .ok_or("spec has no Release")?;
-    if !lines[release].contains("%{?dist}") {
-        return Err("spec Release has no %{?dist} to tag".into());
-    }
     let mut out = Vec::new();
     for (i, l) in lines.iter().enumerate() {
         if i == release {
             out.push(l.replacen("%{?dist}", &format!(".{tag}%{{?dist}}"), 1));
+        } else if i == setup && autosetup_applies {
+            out.push(l.replacen("%autosetup", "%autosetup -N", 1));
         } else {
             out.push((*l).to_owned());
         }
@@ -446,6 +467,38 @@ mod tests {
         let l: Vec<&str> = out.lines().collect();
         let setup = l.iter().position(|x| x.starts_with("%autosetup")).unwrap();
         assert_eq!(l[setup + 2], "%patch -P 1000 -p1");
+    }
+
+    /// The shape of the Fedora 45 (0.57.2) SRPM: no Patch tags and an %autosetup that would apply patches itself.
+    const SPEC_057: &str = "Name: hyprland\nRelease:        %{hyprland_release}%{?dist}\nSource0: h.tar.gz\n# Subpackage sources\nSource41: i.tar.gz\n\nBuildRequires:  cmake\n%description\nx\n%package -n hyprlock\nRelease:        1.%{?dist}\nSource99: not-the-main-preamble\n%prep\n%autosetup -n Hyprland-%{hyprland_version}\n\ntar -xzf x\n";
+
+    #[test]
+    fn spec_without_patches_gets_the_series_after_its_sources_once() {
+        let out = rewrite_spec(SPEC_057, &["a.patch".into(), "b.patch".into()], "mios3").unwrap();
+        let l: Vec<&str> = out.lines().collect();
+        assert_eq!(l[1], "Release:        %{hyprland_release}.mios3%{?dist}");
+        let src = l.iter().position(|x| x.starts_with("Source41")).unwrap();
+        assert_eq!(l[src + 1], "Patch1000:      a.patch");
+        assert_eq!(l[src + 2], "Patch1001:      b.patch");
+        assert!(
+            !out.contains("Source99: not-the-main-preamble\nPatch"),
+            "{out}"
+        );
+        let setup = l.iter().position(|x| x.starts_with("%autosetup")).unwrap();
+        // -N: %autosetup must not apply the series a second time at its own strip level
+        assert_eq!(l[setup], "%autosetup -N -n Hyprland-%{hyprland_version}");
+        assert!(l[setup + 1].starts_with("# MiOS"));
+        assert_eq!(l[setup + 2], "%patch -P 1000 -p1");
+        assert_eq!(l[setup + 3], "%patch -P 1001 -p1");
+        assert_eq!(out.matches("%patch -P 1000").count(), 1);
+    }
+
+    #[test]
+    fn autosetup_applying_its_own_patches_is_refused() {
+        let spec = "Release: 1%{?dist}\nSource0: s\nPatch0: p\n%prep\n%autosetup -n X\n";
+        assert!(rewrite_spec(spec, &["a.patch".into()], "m")
+            .unwrap_err()
+            .contains("-N"));
     }
 
     #[test]

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4365,
-  "total_metadata_entries": 3491,
-  "total_hints": 3485,
-  "total_functions_indexed": 2288,
-  "total_related_links": 7072,
+  "total_files_scanned": 4377,
+  "total_metadata_entries": 3503,
+  "total_hints": 3497,
+  "total_functions_indexed": 2294,
+  "total_related_links": 7110,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1200,7 +1200,7 @@
     },
     {
       "path": "automation/05-repos.sh",
-      "hint": "Configures Fedora 44 repository metadata, sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.",
+      "hint": "Configures the [versions].fedora repository metadata (checked against the base image's release), sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.",
       "related": [],
       "functions": [],
       "doc": null,
@@ -4544,6 +4544,19 @@
       "has_shebang": false
     },
     {
+      "path": "src/mios-rs/mios-build/src/unit_exec.rs",
+      "hint": "Image gate: every boot-reachable systemd unit (enable links, timer/socket/path triggers, Wants=/Requires= edges) must name Exec*= programs the image root carries; resolves symlinks inside the root only.",
+      "related": [
+        "automation/99-postcheck.sh",
+        "src/mios-rs/miosd/src/main.rs",
+        "tests/test-postcheck-unit-execs.sh"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
       "path": "src/mios-rs/mios-build/src/verification.rs",
       "hint": "SSOT-driven native toolchain and installed artifact verification shared by build, install and runtime callers; never certifies missing tools or foreign binaries.",
       "related": [
@@ -6923,6 +6936,18 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-agents-entrypoint.py",
+      "hint": "Asserts the mios-agents image runs code-server: its final ENTRYPOINT is code-server in exec form with an empty CMD, and mios-agents.service passes only code-server arguments after the image name, so podman never execs a flag (exit 127).",
+      "related": [
+        "usr/share/mios/agents/Containerfile",
+        "usr/lib/systemd/system/mios-agents.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-agy-agent-pipeline.py",
       "hint": "Unit tests for MiOS Antigravity CLI (AGY) agent, subagents, workflows, and CI/CD artifacting integration.",
       "related": [],
@@ -6962,6 +6987,19 @@
         "TestAiMetadataNativeParity"
       ],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-ai-tag-loader.py",
+      "hint": "Asserts mios_comments.load_ai_tag loads usr/libexec/mios/mios-ai-tag on an interpreter without the removed importlib load_module() API (Python 3.15+), which the image build's docs index stage depends on.",
+      "related": [
+        "usr/lib/mios/mios_comments.py",
+        "usr/libexec/mios/mios-ai-tag",
+        "usr/libexec/mios/mios-manual"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7151,6 +7189,19 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-bake-user-unit-check.sh",
+      "hint": "bash Runs the user-unit projection check exactly as 65-bake-hyprland.sh invokes it: the build's source tree passes the [unit_projection].max_undeclared_user ratchet, while an image root that also holds package-shipped user units fails it, so the bake must point the check at the source tree.",
+      "related": [
+        "automation/65-bake-hyprland.sh",
+        "tools/native/mios-unit-gen/src/main.rs",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-baremetal-install.py",
       "hint": "Tests for the bare-metal install shim -- argument forwarding to the native mios-install and its failure when absent.",
       "related": [
@@ -7193,6 +7244,22 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch74-blade-pre-enrollment.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-blade-port-wiring.py",
+      "hint": "Asserts the cluster/remote daemons bind the SSOT [ports] value instead of their upstream defaults: k3s API (Quadlet and native unit) on [ports].k3s_api, guacd on [ports].guacd with mios-guacamole pointed at it, matchbox on [ports].pxe_hub_api, guacamole Tomcat on [ports].guacamole_web; image-entrypoint Exec= lines start with a flag so the port options are parsed. Each case is checked against the rendered unit the image ships.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-k3s.container",
+        "usr/lib/systemd/system/k3s.service",
+        "usr/share/containers/systemd/mios-guacd.container",
+        "usr/share/containers/systemd/mios-guacamole.container",
+        "usr/share/containers/systemd/mios-pxe-hub.container"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7332,6 +7399,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch66-v5-authority-inversion-and-cephfs-tiering.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-chrony-ptp-dropin.sh",
+      "hint": "bash Runs mios-chrony-ptp-dropin against fixture PTP clocks: a Hyper-V or KVM clock gets the PHC refclock drop-in; a bare-metal NIC PHC, an unnamed clock or no /dev/ptp0 gets none, and a drop-in an earlier boot wrote on bare metal is removed.",
+      "related": [
+        "usr/libexec/mios/mios-chrony-ptp-dropin",
+        "usr/lib/systemd/system/mios-chrony-ptp.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7509,6 +7588,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/ch22-cpu-topology-and-performance-pinning.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-cpu-node-memory.py",
+      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file and context window are the SSOT cpu_node_model_file/cpu_node_context.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-cpu-node.container"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -8759,6 +8850,18 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-journald-kmsg.py",
+      "hint": "Asserts journald keeps the kernel log and syncs within seconds on bare-metal and VM hosts, and that only a WSL2 kernel gets ReadKMsg=no (through the mios-wsl-journald generator's runtime drop-in), by merging the shipped and generated journald.conf.d drop-ins in systemd's order.",
+      "related": [
+        "usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
+        "usr/lib/systemd/system-generators/mios-wsl-journald"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -10205,6 +10308,20 @@
       "path": "tests/test-postcheck-kargs.sh",
       "hint": "bash Runs the 99-postcheck kargs.d gate against fixture roots: the shipped kargs.d passes; a missing dir, an empty dir, malformed TOML and a non-string kargs array each fail.",
       "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-postcheck-unit-execs.sh",
+      "hint": "bash Runs the 99-postcheck unit-exec gate (miosd unit-exec-check) on fixture roots built from the shipped units: an enabled timer whose service has its program passes; the same root without the program (the PS5 Blade defect) fails naming it; the shipped opt-in mios-finetune-serve passes enabled only while its venv guard stands.",
+      "related": [
+        "automation/99-postcheck.sh",
+        "src/mios-rs/mios-build/src/unit_exec.rs",
+        "usr/lib/systemd/system/mios-tailscale-sync.service",
+        "usr/lib/systemd/system/mios-finetune-serve.service"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
@@ -12970,7 +13087,8 @@
         "load",
         "load_from",
         "merge",
-        "effective_floor"
+        "effective_floor",
+        "Controller"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -12995,6 +13113,23 @@
         "role_layers",
         "apply_role_layers",
         "check_override_pct"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-fanctl/src/select.rs",
+      "hint": "Fan-controller selection for ventulusd: matches the machine's hwmon chip names (/sys/class/hwmon/*/name) against [[controllers]] in mios-fanctl.toml and either names the profile to drive, keeps the fans on firmware control, or reports that no supported controller exists. Run once per start as the unit's ExecCondition, so a missing controller is one log line and a skipped unit, never a per-tick error.",
+      "related": [
+        "/usr/share/mios/fan-control/mios-fanctl.toml",
+        "/usr/lib/systemd/system/ventulusd.service.d/10-mios.conf"
+      ],
+      "functions": [
+        "hwmon_names",
+        "select",
+        "run",
+        "write_env"
       ],
       "doc": null,
       "comment_style": "slash",
@@ -22066,8 +22201,11 @@
     },
     {
       "path": "usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
-      "hint": "Configures systemd-journald to disable Audit, ReadKMsg, and ForwardToSyslog to ensure stability and compatibility on WSL2 environments where these features cause crashes or startup races.",
-      "related": [],
+      "hint": "Configures systemd-journald for every MiOS host: no audit stream, no syslog-socket race, and a short sync interval so a host that hangs keeps its last seconds on disk. The kernel log is stored (ReadKMsg default); WSL2, whose kernel refuses /dev/kmsg, turns it off at runtime via the mios-wsl-journald generator.",
+      "related": [
+        "/usr/lib/systemd/system-generators/mios-wsl-journald",
+        "tests/test-journald-kmsg.sh"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -22103,6 +22241,20 @@
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system-generators/mios-wsl-journald",
+      "hint": "systemd generator: on a WSL2 kernel only, writes a runtime journald drop-in with ReadKMsg=no (journald crashes on EPERM from /dev/kmsg there). Bare-metal and VM hosts keep the kernel log in their journal.",
+      "related": [
+        "/usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
+        "tests/test-journald-kmsg.sh"
+      ],
+      "functions": [
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "usr/lib/systemd/system-preset/89-mios-fan-control.preset",
@@ -24572,7 +24724,7 @@
     },
     {
       "path": "usr/lib/systemd/system/ventulusd.service.d/10-mios.conf",
-      "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, bare metal only.",
+      "hint": "MiOS policy for the upstream ventulusd fan daemon: vendor config + profile from /usr/share/mios/fan-control, socket reachable by root and wheel only (POSIX ACL), pump roles applied by mios-fanctl after READY, controller selected from the machine's hwmon names, bare metal only.",
       "related": [
         "usr/lib/systemd/system/ventulusd.service",
         "usr/share/mios/fan-control/daemon.toml",
@@ -27320,11 +27472,13 @@
     },
     {
       "path": "usr/libexec/mios/mios-chrony-ptp-dropin",
-      "hint": "Generates /etc/chrony.d/10-ptp.conf on first boot if /dev/ptp0 exists (PTP hardware present).",
+      "hint": "Generates /etc/chrony.d/10-ptp.conf when /dev/ptp0 is a hypervisor clock (Hyper-V/WSL2 \"hyperv\", KVM \"KVM virtual PTP\"); on bare metal /dev/ptp0 is a free-running NIC PHC, so it writes nothing and removes a drop-in an earlier boot left.",
       "related": [
         "/etc/chrony.d/10-ptp.conf",
         "mios-chrony-ptp.service",
-        "/dev/ptp0"
+        "/dev/ptp0",
+        "/sys/class/ptp/ptp0/clock_name",
+        "tests/test-chrony-ptp-dropin.sh"
       ],
       "functions": [],
       "doc": null,
@@ -40094,6 +40248,19 @@
       "functions": [],
       "doc": null,
       "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/guacamole/server.xml",
+      "hint": "Minimal Tomcat server.xml for mios-guacamole, mounted over the image's stock conf (Connector 8080, which collides with other host-network services). The HTTP port is the system property mios.guacamole.port, set by the Quadlet from [ports].guacamole_web through CATALINA_OPTS; the shutdown port is disabled.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/containers/systemd/mios-guacamole.container",
+        "tests/test-blade-port-wiring.py"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
       "has_shebang": false
     },
     {

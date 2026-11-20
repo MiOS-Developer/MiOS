@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=universal
-# AI-hint: Configures Fedora 44 repository metadata, sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.
+# AI-hint: Configures the [versions].fedora repository metadata (checked against the base image's release), sets `install_weak_deps=False` in DNF, and enforces priority 98 for base repos to ensure stable package resolution on ucore.
 set -euo pipefail
 # shellcheck source=/dev/null
 for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mios/log.sh; do [ -r "$_mlog" ] && . "$_mlog" && break; done
@@ -25,10 +25,40 @@ if [[ -d /etc/yum.repos.d ]]; then
     done
 fi
 
-_fver="${FEDORA_VERSION:-44}"
+# The release comes from mios.toml [versions].fedora (globals.sh projects it),
+# never a literal: the repos must match the base image, and a fallback number
+# silently pulls packages from another release once the base moves on.
+_fver="${MIOS_VERSIONS_FEDORA:-}"
+if [[ ! "$_fver" =~ ^[0-9]+$ ]]; then
+    mios_err "mios.toml [versions].fedora is not a release number: [${_fver}]"
+    exit 1
+fi
+
+# The base image's own release. By this stage 01-system-files-overlay has
+# already replaced /usr/lib/os-release with MiOS's own, whose PLATFORM_ID is a
+# projection of [versions].fedora -- comparing against it would compare the
+# SSOT with itself. The base's RPM database is not overlaid: the package that
+# provides system-release carries the base's release as its version.
+_base_fver="$(rpm -q --whatprovides system-release --qf '%{VERSION}\n' 2>/dev/null | grep -m1 -E '^[0-9]+$' || true)"
+if [[ -z "$_base_fver" ]]; then
+    # No RPM answer: only an unmodified Fedora os-release is evidence.
+    for _osr in /etc/os-release /usr/lib/os-release; do
+        [[ -r "$_osr" ]] || continue
+        if grep -Eq '^ID="?fedora"?$' "$_osr"; then
+            _base_fver="$(sed -n 's/^VERSION_ID="\{0,1\}\([0-9][0-9]*\)"\{0,1\}$/\1/p' "$_osr")"
+        fi
+        break
+    done
+fi
+if [[ -z "$_base_fver" ]]; then
+    mios_warn "neither the RPM database nor a Fedora os-release names the base's release; using [versions].fedora=${_fver} unchecked"
+elif [[ "$_base_fver" != "$_fver" ]]; then
+    mios_err "the base image is Fedora ${_base_fver} but mios.toml [versions].fedora is ${_fver}; set it to ${_base_fver}"
+    exit 1
+fi
 
 mios_log "Import Fedora ${_fver} GPG key"
-GPG_KEY_PATH="/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64"
+GPG_KEY_PATH="/usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64"
 if [[ ! -f "$GPG_KEY_PATH" ]]; then
     $DNF_BIN "${DNF_SETOPT[@]}" install -y --skip-unavailable fedora-gpg-keys \
         || warn "[01-repos] fedora-gpg-keys import failed; continuing"
