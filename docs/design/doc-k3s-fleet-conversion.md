@@ -47,25 +47,43 @@ This table is by service family. The exhaustive per-unit list must be generated,
 
 ## 2. Cluster shape
 
-**Control plane.** k3s embedded etcd, **3 servers on 3 different Blades** (odd; quorum floor(n/2)+1; first server `--cluster-init`, others join with the shared token). [vendor: docs.k3s.io/datastore/ha-embedded] Agents join with `--server`. Rules:
+Operator decisions folded in (relayed by the coordinator): one server now and more later; **mios-ps5 and the X570/MiOS-DEV are deliberately cluster members** to exercise failure handling; **tailnet-only** mesh; **cloud nodes are first-class**; the control plane stays on **Tailscale SaaS** (headscale stays off).
 
-| Blades online | Behaviour |
-|---|---|
-| 1 | One server, no HA. Start it with `--cluster-init` (embedded etcd) rather than sqlite so a second and third Blade can join later. Whether a running sqlite server converts in place is **unverified**. |
-| 2 | **One server + one agent. Do not run two servers**: two etcd members need both for quorum, so you gain no fault tolerance and add a failure mode. [inference from quorum rule] If the server Blade dies the agent's running pods keep running; nothing is rescheduled and the API is down until it returns. |
-| 3-6 | Three servers (the three best-storage Blades), the rest agents. Losing one server keeps the API. Losing two loses quorum: running pods keep running, no scheduling or changes. [inference; the k3s page does not spell out 1-of-3] |
+**Control plane and quorum.** k3s embedded etcd needs an **odd** number of servers, 3 or more, first server `--cluster-init`, quorum floor(n/2)+1. [vendor: docs.k3s.io/datastore/ha-embedded] Consequences for the path the operator described:
 
-**Who can be a server.** etcd needs fast fsync: the tested k3s baseline is 50 IOPS and under 5 ms latency; docs say SD/eMMC cannot cope. [vendor: docs.k3s.io/reference/resource-profiling, /installation/requirements] [reported] The PS5 root, swap and container storage are a bus-powered USB NVMe at USB 2.0 with four freezes. **The PS5 is an agent only, never a server and never a Ceph OSD, until its storage is fixed**; its single-node cluster state should not be preserved. Storage quality is a first-class label (`mios.dev/storage=ssd|usb|net`), like RAM.
+| Servers | Fault tolerance | Notes |
+|---|---|---|
+| 1 (now) | none | Start it with `--cluster-init` so it can grow (sqlite-to-etcd in-place conversion is **unverified**; if it is not supported, the first server is rebuilt once). If it dies, running pods keep running; nothing reschedules and the API is down. Snapshots (default every 12 h, keep 5) must be copied to another Blade. |
+| 2 | **none, and worse than 1**: both must be up to write, so there are two failure points | Not a target state. The "second, more powerful Blade" joins as a **server only as a transient step toward 3**, or as an agent. |
+| 3 | one server may fail | The first state with real control-plane fault tolerance. |
+| 5 | two may fail | Optional with 6 Blades. |
 
-**Nodes that are not members.** [reported] Cloud sessions cannot join the tailnet (the egress proxy refuses Tailscale's HTTP upgrade), so **cloud nodes cannot be k3s members today**; this design assumes none. The X570's MiOS-DEV runs in WSL2 and k3s is off there by design (`ConditionVirtualization=!wsl`, [tree]). Recommendation: **not a node by default**. If the operator wants its GPU, add it as a tainted agent (no stateful workloads, no etcd) and lift `!wsl` only for the agent role; WSL2 networking and Windows sleep make it a flaky member. WSL specifics are undocumented in the k3s pages I read.
+**Roles per node until storage is proven.** Eligibility to be an etcd server is a *measured gate*, not a label: p99 WAL fsync under 10 ms and the k3s baseline of 50 IOPS under 5 ms latency [vendor: docs.k3s.io/reference/resource-profiling; etcd FAQ via search summary]. A node that fails the gate is an **agent**.
 
-**Network.** Three options, the first recommended:
-1. `--node-ip <tailscale0 IPv4> --flannel-iface tailscale0` with the default vxlan backend over the existing host `tailscaled`. One mesh, no second WireGuard layer; pod MTU must be reduced to fit the tailscale MTU. Default CIDRs 10.42/16 and 10.43/16 do not overlap tailnet 100.64/10. [inference; the k3s multicloud page documents `wireguard-native` with `--node-external-ip`, not this combination]
-2. `--flannel-backend=wireguard-native` with `--node-external-ip`/`--flannel-external-ip` (the form in `doc-mios-metal-blade.md` §2.a): WireGuard inside WireGuard.
-3. `--vpn-auth=name=tailscale,...`: experimental in k3s, runs its own Tailscale instance next to the host's.
-LAN-adjacent Blades could use the LAN first (`[blade.discovery].order` is LAN, then tailnet). Whether k3s should follow that order is Q4.
+| Node | Role now | Server later |
+|---|---|---|
+| mios-ps5 [reported: USB 2.0 NVMe, four freezes, 13.9 GB, CPU only] | **Agent** (member from day one). It may run the single server only for an explicit trial **on a datastore placed off the USB device**, with the snapshot copy above; if it freezes, that is the exercise, and rollback is "agent again" | Only after its storage passes the gate |
+| X570 / MiOS-DEV (WSL2) | **Agent** member (lifting `ConditionVirtualization=!wsl` for the agent role, see below) | Server candidate if the fsync gate passes on its virtual disk; Windows sleep and reboot make it a poor sole server |
+| "More powerful Blade" (when it rejoins) | **First server** if it passes the gate; otherwise it joins as an agent and the gate decides | Yes |
+| Cloud nodes | Agent (latency, section 2 below) | No, until a low-latency placement exists |
 
-**Relation to the other lanes.** Ceph stays a Blade-plane service (`36-ceph-k3s.sh`, [ports].ceph_dashboard); k3s consumes it only through ceph-csi when Ceph is real (task_933). Pacemaker keeps VMs (ADR-0017: containers to k3s, VMs to Pacemaker); this design moves no VM. `[ports].k3s_api=8450` stays the single API port; the PS5's 6443 is drift to remove.
+**Path to 3+ servers:** (1) one server on the best-gated node; (2) the 2nd and 3rd qualifying nodes join as servers *together in one change window* (never settle at 2); (3) each promotion is a failure drill (kill the old server, confirm the API survives) before the next step. The PS5 and X570 become servers only if and when they pass the gate; until then they harden failure handling as agents, which still exercises node loss, eviction and re-placement.
+
+**X570 / MiOS-DEV under WSL2: caveats** (all [inference] or general WSL2 knowledge; the k3s pages I read say nothing about WSL2, and none of this was tested here):
+- Needs systemd in the distro and cgroup v2; the WSL2 kernel must provide WireGuard and the netfilter pieces flannel and kube-proxy use.
+- SELinux is not available: `selinux: true` in `usr/lib/rancher/k3s/config.yaml` must be false for this node.
+- The WSL2 VM stops when idle or when Windows sleeps/hibernates, which looks to the cluster like a node loss; the clock can jump on resume.
+- Memory is capped by the Windows-side WSL config, not by the host's RAM; set it from SSOT.
+- Storage is an ext4 VHDX behind the Windows file cache: fsync durability and latency are unlike bare NVMe, hence the gate.
+- Networking: the node's tailnet identity must be one Tailscale instance (the Windows client or the distro's `tailscaled`, not both advertising it).
+- GPU access is via the WSL GPU device, not the Blade's CDI/VFIO path; GPU lanes stay out of k3s there (section 3.3).
+- MiOS-DEV is also the build host (`podman machine`, all builds run inside it): k3s workloads must be capped so they cannot starve builds.
+
+**Cloud nodes are first-class, not excluded.** Per the operator: a cloud host is either a **Blade** (hardware that hosts nested MiOS images and nodes) or an **individual full MiOS image** (container, VM, ISO, flashed USB) hosted on a Blade. The design therefore classifies nodes by capability (storage grade, RAM, latency, GPU), never by origin. **Current constraint, an environment blocker and not a design exclusion:** [reported] cloud *sessions* cannot join the tailnet because the egress proxy refuses Tailscale's HTTP upgrade, whereas a cloud VM that has its own network (for example the FCOS node from PR #72, [reported], not read) can join. Until a node can reach the tailnet it is not a member. High cloud-to-home latency makes a cloud node an **agent**, because etcd over WAN is unsupported (doc-mios-metal-blade.md §2.a).
+
+**Network (decided: tailnet only).** Node IPs are the node's tailnet IPv4; `--node-ip <tailscale0 IPv4>` and `--flannel-iface tailscale0` with `--flannel-backend=wireguard-native` [vendor: docs.k3s.io/networking/distributed-multicloud documents wireguard-native with `--node-external-ip`/`--flannel-external-ip`; this exact combination is **unverified**]. It runs WireGuard inside the tailnet's WireGuard: budget the MTU (tailscale0 is 1280 by default, so pod MTU is lower) and CPU on the PS5. The default CIDRs 10.42/16 and 10.43/16 do not overlap tailnet 100.64/10. `--vpn-auth` stays off (experimental, and a second Tailscale instance per node).
+
+**Relation to the other lanes.** Ceph stays a Blade-plane service (`36-ceph-k3s.sh`, `[ports].ceph_dashboard`); k3s consumes it through ceph-csi only when Ceph is real (task_933). Pacemaker keeps VMs (ADR-0017); no VM moves. `[ports].k3s_api=8450` stays the one API port; the PS5's 6443 is drift to remove.
 
 ## 3. Failover by service class
 
@@ -76,8 +94,8 @@ Deployment, `replicas >= 2` (1 on a 1-2 Blade fleet), `topologySpreadConstraints
 
 ### 3.2 Stateful
 Each service records **`data = "replicate" | "pin"`** in SSOT (the coordinator's "replicate-or-pin").
-- **pgvector**: start as **pin** (one StatefulSet replica on a labelled Blade, local PV, the existing nightly `pg_dump` timer, task_3236, as the safety net). Failover then means *manual or scripted restore elsewhere*, not automatic. Upgrade to **replicate** with PostgreSQL-level replication (an operator such as CloudNativePG: not researched here, [vendor-unverified]) with local PVs, so replication happens above the disk and needs no distributed block storage.
-- **forge**: pin plus backup first; same upgrade path.
+- **pgvector** (operator decision: pin plus backups first): **pin** to one node (StatefulSet, one replica, local PV, label-selected) with the nightly `pg_dump` timer (task_3236) **writing to a different Blade**. Failover then means *scripted restore on another node*, not automatic. Replicate once 3 good nodes exist, via **replicate** with PostgreSQL-level replication (an operator such as CloudNativePG: not researched here, [vendor-unverified]) with local PVs, so replication happens above the disk and needs no distributed block storage.
+- **forge**: same decision: pin to one node, scheduled backups to another Blade, replicate once 3 good nodes exist.
 - **Model stores**: GGUFs are baked into the image (Law 12) at `/usr/share/mios/llamacpp/models`, so every Blade already has them; pods mount them `hostPath` read-only. Nothing to replicate; scheduling just requires the node holds the model.
 - **Storage layer choice.** *Not* Longhorn: it duplicates the Ceph plane and its documented per-node footprint (4 vCPU / 4 GiB, minimum 3 nodes; longhorn.io best practices v1.13.0) does not fit a 13.9 GB Blade. *Rook-Ceph* hosts Ceph inside k3s, which contradicts the Blade owning storage. Recommended: **local-path (bundled) now; ceph-csi RBD against the Blade-owned Ceph when task_933 delivers a real multi-MON Ceph with OSDs on SSD**.
 
@@ -99,9 +117,26 @@ Goal: `https://<name>.<tailnet>.ts.net` works from every tailnet device regardle
 | **B. Tailscale Kubernetes operator** | In-cluster controller creating proxies per Service/Ingress. HA mode: a `ProxyGroup` (type ingress) runs replicas that all advertise one Tailscale Service per exposed k8s Service/Ingress, opted in by the `tailscale.com/proxy-group` annotation; tags default `tag:k8s`, overridable with `tailscale.com/tags`; needs operator >= 1.84; OAuth client with Services, Devices Core and Auth Keys write scopes. [vendor-unverified; https://tailscale.com/docs/kubernetes-operator/concepts/proxygroup] | The natural bridge: k8s Service -> Tailscale Service. Non-HA mode makes one tailnet device per exposed object (many devices, name tied to a proxy pod). |
 | **C. Per-node `tailscale serve`** (what `mios-tailscale-sync` does today) | Publishes a route on one node's name. | Name is the node's, so it dies with the node. Correct for B-class (Blade-bound) services only. Serve's port/name limits **not verified**. |
 
-**Recommendation:** B (HA ProxyGroup) publishing A (Tailscale Services) for every K-class service; C only for B-class services; exactly one publisher per name (a gate). Collapse the name count where possible with one front door (`portal`, path-routed) to stay under the Services cap.
+**Decision (operator): stay on Tailscale SaaS and use B publishing A.** K-class services are exposed through ProxyGroup HA Ingress/Services; C is only for B-class services; exactly one publisher per name (a gate).
 
-**Headscale caveat.** [vendor: github.com/juanfont/headscale CHANGELOG, fetched] Latest release 0.29.7 (2026-10-30). Its features page lists tags, grants and serve; I found no doc or changelog entry for Tailscale Services; third-party notes say unsupported. 0.30.0 (unreleased in the changelog I read) adds OAuth client credentials and the v2 API, described as letting the Kubernetes operator drive Headscale. **So A and B require Tailscale SaaS today** (which is what the Blades use, [reported]); a headscale tailnet would fall back to C plus AdGuard records (names for a VIP the cluster owns) and lose automatic failover of the name.
+**Names collapse to at most 10 Tailscale Services**, grouped behind function-named front doors with paths or ports underneath, so the catalogue fits the documented cap (an unverified figure, see section 10). Proposed shape, to be reconciled with the 23-name catalogue once it is readable:
+
+| Front door (`svc:`) | Carries (path or port under it) |
+|---|---|
+| `mios` | portal, agent-pipe `/v1`, MCP/A2A, hermes gateway, dashboard (path-routed) |
+| `mios-chat` | open-webui |
+| `mios-search` | searxng, crawl4ai, firecrawl |
+| `mios-speech` | whisper, piper |
+| `mios-forge` | forgejo HTTP, plus TCP 8410 for git+ssh |
+| `mios-code` | code-server |
+| `mios-data` | pgvector (TCP, pinned; auth at the database) |
+| `mios-obs` | otelcol UI |
+| `mios-share` | agent-share |
+| `mios-infer` | per-lane `/v1` endpoints (light, cpu, heavy) |
+
+That is 10; any addition needs a grouping, not a new name. Authentication stays at the application, because a tailnet grant is network access, not login.
+
+**Headscale (stays off).** [vendor: github.com/juanfont/headscale CHANGELOG, fetched] Latest release 0.29.7 (2026-10-30). Its features page lists tags, grants and serve; I found no doc or changelog entry for Tailscale Services; third-party notes say unsupported. 0.30.0 (unreleased in the changelog I read) adds OAuth client credentials and the v2 API, described as letting the Kubernetes operator drive Headscale. **So A and B require Tailscale SaaS**, which the operator confirmed. Headscale remains a possible future fallback only (per-node serve plus AdGuard records, no automatic name failover).
 
 **ACL and tags.** [vendor-unverified] Service hosts must be tagged; the existing trust tag is `tag:mios` ([tree] `trusted_tags`). Proposal: host Blades keep `tag:mios`; proxies get `tag:mios-svc` owned by the operator's OAuth client via `tagOwners`; a grant gives `autogroup:member` (or named groups) access to `svc:*`, with `auth_probe_paths`-style authentication staying at the application (Portal `require_auth`), since a tailnet grant is network access, not login. Exact `tagOwners`/`autoApprovers` syntax must be taken from the live policy before building.
 
@@ -120,7 +155,7 @@ Goal: `https://<name>.<tailnet>.ts.net` works from every tailnet device regardle
 
 ## 6. Migration and rollback
 
-Prerequisites (before any move): PR #70 green; operator approves ADR-0031; PS5 storage fixed or the PS5 excluded from servers; `k3s_api` port drift fixed; one k3s launch path chosen; token-looking values in committed manifests rotated.
+Prerequisites (before any move): PR #70 green; operator approves ADR-0031; PS5 and X570 join as agents (server only after the fsync gate); `k3s_api` port drift fixed; one k3s launch path chosen; `!wsl` lifted for the agent role; token-looking values in committed manifests rotated.
 
 | Phase | Move | Rollback |
 |---|---|---|
@@ -140,17 +175,16 @@ Every K-class service runs on k3s and answers at `https://<name>.<tailnet>.ts.ne
 ## 8. Proposed tasks
 A: `mios-gen k3s` projection and template (Law 8/14/16). B: package venv services as images. C: cluster bring-up and membership SSOT (`[k3s.cluster]`). D: tailnet naming (operator, ProxyGroup, ACL). E: stateful strategy and ceph-csi. F: retire `generate-k3s-manifests.*` and scrub committed manifests. Added to `tasks.jsonl` as pending.
 
-## 9. Open questions for the operator
-1. **Tailnet control plane:** stay on Tailscale SaaS (A and B work there) or move to headscale (no Services; operator waits for 0.30.0)?
-2. **Services cap:** a 10-service cap (if your plan has it) vs the 23-name catalogue: collapse names behind a front door, or upgrade the plan? Which names get a dedicated VIP?
-3. **ADR-0016 §15.2:** narrow it to "three servers on three Blades; localhost_hosts does not create etcd members"?
-4. **Mesh interface for k3s:** tailnet-only (simple) or LAN-first like `[blade.discovery]`?
-5. **Which Blades are the three servers**, given the PS5 cannot be one?
-6. **X570/MiOS-DEV:** excluded, or a tainted agent (lifting `!wsl` for the agent role)?
-7. **pgvector and forge:** pin with backups first, or go straight to PostgreSQL replication?
-8. **Disk budget** for two image stores (podman bound images + k3s containerd) on small Blades?
-9. **Ratchets:** the two new files are not paid for by a fold (section 10); waive for this design commit, or require a fold?
-10. **Cloud nodes:** accept that they are out until Tailscale's HTTP upgrade works through the egress proxy?
+## 9. Decisions and open questions
+
+Decided by the operator (relayed by the coordinator): (1) Tailscale SaaS, ProxyGroup HA, headscale off; (2) at most 10 front-door names; (4) tailnet-only mesh with wireguard-native; (5) one server now, grow as a more powerful Blade rejoins, PS5 and X570 included as members; (6) X570/MiOS-DEV in, `!wsl` lifted; (7) pgvector and forge pinned with backups to another Blade first; (9) the +2-file ratchet cost is **not** offset in this PR (standing drain policy, AGENTS.md); (10) cloud nodes are first-class; (11) push approved, PR stays a draft.
+
+Still open:
+- **Q3 ADR-0016 §15.2:** narrow it so etcd members sit on different Blades and `localhost_hosts` creates none? (Not yet asked.)
+- **Q8 disk budget** for two image stores (podman bound images plus k3s containerd) on small Blades. (Not yet asked.)
+- **Q12 first server:** which node is the single server now, and is the PS5-as-server trial wanted (with the datastore off USB)? The gate decides eligibility; the operator picks the trial.
+- **Q13 fsync gate thresholds:** accept p99 WAL fsync under 10 ms as the server-eligibility rule?
+- **Q14 service front doors:** is the 10-door grouping in section 4 right?
 
 ## 10. Unverified
-Every tailscale.com page (403): Services limits and naming, operator versions and `tagOwners`, `tailscale serve` limits. Headscale 0.30.0 status. Rook and CloudNativePG. k3s sqlite-to-etcd conversion and 1-of-3 behaviour. WSL2 specifics. The 23-name catalogue branch. All live-Blade measurements (reported, not re-measured). `k3s-node-selectors.yaml` and manual ch23 (not read). k3s version at time of writing: v1.37.2+k3s1 (GitHub release 3 Nov), docs pages dated 2026-11-19.
+Every tailscale.com page (403, including the 10-service cap): Services limits and naming, operator versions and `tagOwners`, `tailscale serve` limits. Headscale 0.30.0 status. Rook and CloudNativePG. k3s sqlite-to-etcd conversion and 1-of-3 behaviour. WSL2 specifics (section 2 caveats are inference and untested); PR #72's FCOS node (not read). The 23-name catalogue branch. All live-Blade measurements (reported, not re-measured). `k3s-node-selectors.yaml` and manual ch23 (not read). k3s version at time of writing: v1.37.2+k3s1 (GitHub release 3 Nov), docs pages dated 2026-11-19.
