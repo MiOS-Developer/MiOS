@@ -56,6 +56,17 @@ class CpuNodeMemory(unittest.TestCase):
         self.assertLess(high, top, "MemoryHigh must throttle before MemoryMax kills")
         self.assertLessEqual(top, 75, "the node may not claim most of the box")
 
+    def test_bounds_fit_the_node_on_the_smallest_blade(self):
+        # Measured on the 14G PS5 Blade: 8B GGUF at 32k context = 8.6G, 62% of
+        # RAM. A High at or under that throttles the node permanently; a Max
+        # under it OOM-loops it. Re-measure before shrinking the model or ctx.
+        smallest_blade_footprint_pct = 62
+        self.assertGreater(pct(self.cfg["cpu_node_memory_high"]), smallest_blade_footprint_pct)
+        self.assertGreater(pct(self.cfg["cpu_node_memory_max"]), smallest_blade_footprint_pct)
+
+    def test_swap_spill_is_bounded_from_ssot(self):
+        self.assertEqual(service_value(self.text, "MemorySwapMax"), [self.cfg["cpu_node_memory_swap_max"]])
+
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False, verbosity=2).result.wasSuccessful() else 1)

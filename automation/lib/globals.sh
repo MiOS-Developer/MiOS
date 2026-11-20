@@ -3800,8 +3800,9 @@ _mios_input MIOS_PATHS_LIBEXEC_DIR MIOS_LIBEXEC_DIR || { return 1 2>/dev/null ||
 : "${MIOS_LLAMACPP_BAKE_MODELS:=granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf}"
 : "${MIOS_LLAMACPP_CONFIG:=/usr/share/mios/llamacpp/mios-llm-light.yaml}"
 : "${MIOS_LLAMACPP_CPU_NODE_CONTEXT:=32768}"
-: "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:=50%}"
-: "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:=60%}"
+: "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:=65%}"
+: "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:=75%}"
+: "${MIOS_LLAMACPP_CPU_NODE_MEMORY_SWAP_MAX:=512M}"
 : "${MIOS_LLAMACPP_CPU_NODE_MODEL_FILE:=granite-4.1-8b.gguf}"
 : "${MIOS_LLAMACPP_ENABLE:=true}"
 _mios_input MIOS_SERVICES_LLAMACPP_GID MIOS_LLAMACPP_GID || { return 1 2>/dev/null || exit 1; }

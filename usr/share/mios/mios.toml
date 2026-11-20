@@ -3787,7 +3787,8 @@ swarm_max_cpu_nodes  = 2      # max CPU/iGPU slow-lane nodes backfilled into one
 # endpoint_concurrency RAISED 2->4 (dGPU co-load): backstop
 # ceiling for concurrent calls to one daemon; VRAM-aware admission (admit_* +
 # VRAM_COLOAD_*) is the real per-turn governor on the dGPU. The CPU lane stays
-# protected by its own MemoryMax + the _cap_cpu_lane_model micro-only guard.
+# protected by its cgroup bound ([llamacpp].cpu_node_memory_high/_max, rendered
+# into mios-cpu-node) + the _cap_cpu_lane_model micro-only guard.
 endpoint_concurrency = 4      # was 2; backstop, VRAM-admission governs dGPU co-load
 # VRAM-aware co-load: admit another concurrent model onto a
 # dGPU endpoint only when measured free VRAM fits it + reserve. SHARED-4090 guard:
@@ -7859,8 +7860,14 @@ cpu_node_context    = 32768
 # physical RAM so one value fits a 14G Blade and a 64G workstation. High throttles
 # and reclaims (the mmap'd GGUF page cache first); Max OOM-kills only the node,
 # which Restart= brings back, instead of starving the host into a freeze.
-cpu_node_memory_high = "50%"
-cpu_node_memory_max  = "60%"
+# Sized against the smallest Blade: on the 14G PS5 the 8B node at 32k context
+# measured 8.6G (62%: 5.1G anon + 3.4G mmap'd GGUF), so High sits just above it
+# and reclaims the file cache before Max is reached. Lowering either below the
+# node's footprint makes it thrash or OOM-loop on that box.
+cpu_node_memory_high = "65%"
+cpu_node_memory_max  = "75%"
+# Swap the node may use before Max applies; a small spill, never a swap storm.
+cpu_node_memory_swap_max = "512M"
 # Light-lane worker budget, inherited by every llama-server child. One worker
 # leaves headroom within the minimum four-CPU system allocation.
 # This is an explicit budget, not an automatic affinity clamp.
@@ -15439,8 +15446,9 @@ WantedBy = "multi-user.target default.target"
 [containers.mios-cpu-node.Service]
 Delegate = "yes"
 EnvironmentFile = "/etc/mios/install.env"
-MemoryHigh = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:-50%}"
-MemoryMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:-60%}"
+MemoryHigh = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:-65%}"
+MemoryMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:-75%}"
+MemorySwapMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_SWAP_MAX:-512M}"
 Restart = "on-failure"
 RestartSec = "10s"
 TimeoutStartSec = "1800s"
