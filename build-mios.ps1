@@ -4882,10 +4882,10 @@ function Set-MiosLanFirewallRules {
 
     # Rule names carry the "MiOS - " prefix this function owns: one per exposed service. A MiOS rule for a service
     # that left [firewall.windows].expose (or every MiOS rule, when the scope is empty) is removed.
-    $wanted = @{}
+    $wanted = [ordered]@{}
     if ($scoped) { foreach ($svc in $plan.Ports.Keys) { $wanted["MiOS - $svc ($($plan.Ports[$svc])/tcp)"] = $svc } }
-    foreach ($old in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue)) {
-        if (-not $wanted.ContainsKey([string]$old.DisplayName)) {
+    foreach ($old in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue | Where-Object { $_ })) {
+        if (-not $wanted.Contains([string]$old.DisplayName)) {
             Remove-NetFirewallRule -DisplayName ([string]$old.DisplayName) -ErrorAction SilentlyContinue
             Write-Log "firewall: removed '$($old.DisplayName)' (not in mios.toml [firewall.windows].expose)"
         }
@@ -4894,7 +4894,7 @@ function Set-MiosLanFirewallRules {
 
     $profileText = $plan.Profiles -join ','
     $applied = New-Object System.Collections.Generic.List[string]
-    foreach ($name in $wanted.Keys) {
+    foreach ($name in @($wanted.Keys)) {
         $svc = $wanted[$name]; $port = [int]$plan.Ports[$svc]
         try {
             $existing = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue
