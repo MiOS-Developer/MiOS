@@ -6118,18 +6118,19 @@ function Get-MiosVendorBoundedList {
 function Get-MiosWslServicePortPlan {
     # MiOS-DEV's service ports, from SSOT only: each [firewall.windows].expose key resolved through [ports].<key>, shifted
     # by [ports].stack_id * 10000. [firewall].open_ports is the guest firewalld list (it carries pgvector) and is never read
-    # here. A key without a valid [ports] value opens nothing and is reported as refused.
+    # here. Port numbers and stack_id come from the system SSOT alone, so the user-writable layer cannot point an exposed
+    # key at another listener. A key without a valid [ports] value opens nothing and is reported as refused.
     $plan = [pscustomobject]@{ Ports = [ordered]@{}; Refused = @() }
     $ports = [ordered]@{}
     $list = Get-MiosVendorBoundedList -Section 'firewall.windows' -Key 'expose'
     $plan.Refused += $list.Refused
-    $stack = Get-MiosTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    $stack = Get-MiosTomlValue -Section 'ports' -Key 'stack_id' -Default 0 -VendorOnly
     if ($stack -isnot [int] -or $stack -lt 0) { throw 'mios.toml [ports].stack_id must be a nonnegative integer.' }
     $seen = @{}
     foreach ($key in $list.Values) {
         if ($key -notmatch '^[a-z][a-z0-9_]*$') { $plan.Refused += "expose entry '$key' is not a [ports] key name"; continue }
         if ($ports.Contains($key)) { continue }
-        $base = Get-MiosTomlValue -Section 'ports' -Key $key -Default 0
+        $base = Get-MiosTomlValue -Section 'ports' -Key $key -Default 0 -VendorOnly
         if ($base -isnot [int] -or $base -lt 1 -or $base -gt 65535) { $plan.Refused += "$key has no valid [ports].$key value"; continue }
         $port = $base + ($stack * 10000)
         if ($port -gt 65535) { $plan.Refused += "$key resolves to $port with stack_id $stack, above 65535"; continue }
@@ -6313,7 +6314,10 @@ function Sync-MiosWslServicePortRules {
                 $ports = @($rule.LocalPorts | ForEach-Object { [string]$_ })
                 # Windows may read an address back as address/mask or a bare host: compare in the form written.
                 $addrs = @($rule.RemoteAddresses | ForEach-Object { ConvertTo-MiosCanonicalPrefix ([string]$_) } | Sort-Object)
-                $ruleProfiles = @(([string]$rule.Profiles) -split '[,\s]+' | Where-Object { $_ } | Sort-Object -Unique)
+                # Profiles may read back as names ('Domain, Private') or as the flag value (1 Domain, 2 Private, 4 Public).
+                $ruleProfiles = @(([string]$rule.Profiles) -split '[,\s]+' | Where-Object { $_ } | ForEach-Object {
+                    if ($_ -match '^[0-9]+$') { $bits = [int]$_; if ($bits -band 1) { 'Domain' }; if ($bits -band 2) { 'Private' }; if ($bits -band 4) { 'Public' } } else { $_ }
+                } | Sort-Object -Unique)
                 $drift = ([string]$rule.Protocol -notin @('TCP', '6')) -or ($ports.Count -ne 1 -or $ports[0] -ne $want.Port) -or
                     (($addrs -join ',') -ne ($scope.Addresses -join ',')) -or (($ruleProfiles -join ',') -ne $profileText)
                 if ($drift) {

@@ -4757,24 +4757,102 @@ function Set-MiosWslConfig {
     }
 }
 
-function Get-MiosLanExposurePlan {
-    # The Windows-host exposure of MiOS-DEV, from mios.toml [firewall.windows] only: expose ([ports] keys, resolved by
-    # Get-MiosSsotPort), profiles and remote_addresses. No port literal stands in for a key that does not resolve, and an
-    # unscoped remote list (empty, Any, 0.0.0.0/0, ::/0) opens nothing.
-    $plan = [pscustomobject]@{ Ports = [ordered]@{}; Profiles = @(); RemoteAddresses = @(); Refused = @() }
-    $expose = @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'expose' -Default @())
-    foreach ($svc in $expose) {
-        $port = Get-MiosSsotPort -Key $svc
-        if ($port) { $plan.Ports[$svc] = $port } else { $plan.Refused += "$svc has no valid [ports].$svc value" }
+function ConvertTo-MiosNetworkPrefix {
+    # The network address of IP/PrefixLength in CIDR form (192.168.1.37/24 -> 192.168.1.0/24).
+    param([Parameter(Mandatory)][Net.IPAddress]$Address, [Parameter(Mandatory)][int]$PrefixLength)
+    $bytes = $Address.GetAddressBytes()
+    if ($PrefixLength -lt 1 -or $PrefixLength -gt ($bytes.Length * 8)) { throw 'Invalid prefix length.' }
+    for ($b = 0; $b -lt $bytes.Length; $b++) {
+        $keep = [math]::Min(8, [math]::Max(0, $PrefixLength - ($b * 8)))
+        $bytes[$b] = $bytes[$b] -band [byte]((0xFF -shl (8 - $keep)) -band 0xFF)
     }
-    foreach ($p in @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'profiles' -Default @())) {
+    return ([Net.IPAddress]::new($bytes)).ToString() + '/' + $PrefixLength
+}
+
+function Test-MiosPrefixWithin {
+    # True when CIDR Inner lies wholly inside CIDR Outer (same family, at least as long a prefix, same network bits).
+    param([Parameter(Mandatory)][string]$Inner, [Parameter(Mandatory)][string]$Outer)
+    if ($Inner -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $iIp = [Net.IPAddress]::Parse($Matches[1]); $iLen = [int]$Matches[2]
+    if ($Outer -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $oIp = [Net.IPAddress]::Parse($Matches[1]); $oLen = [int]$Matches[2]
+    if ($iIp.AddressFamily -ne $oIp.AddressFamily -or $iLen -lt $oLen) { return $false }
+    return ((ConvertTo-MiosNetworkPrefix -Address $iIp -PrefixLength $oLen) -eq (ConvertTo-MiosNetworkPrefix -Address $oIp -PrefixLength $oLen))
+}
+
+function Get-MiosVendorTomlValue {
+    # A value from the system SSOT layers alone (the usr\share\mios\mios.toml tiers), never the operator or host layer:
+    # the bound an elevated step applies to what the user-writable layer asks for. $Default when no vendor layer has it.
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][AllowEmptyString()]$Default)
+    $missing = [guid]::NewGuid().ToString('N')
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
+        $v = Get-MiosTomlValue -Section $Section -Key $Key -Default $missing -SourcePath $layer.Path
+        if ($v -isnot [string] -or $v -ne $missing) {
+            if ($Default -is [int] -and $v -isnot [int]) { $n = 0; if ([int]::TryParse([string]$v, [ref]$n)) { return $n }; continue }
+            if ($Default -is [array] -and $v -isnot [array]) {
+                $t = ([string]$v).Trim()
+                if ($t -match '^\[(.*)\]$') { return @($Matches[1] -split ',' | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ }) }
+                continue
+            }
+            return $v
+        }
+    }
+    return $Default
+}
+
+function Get-MiosLanExposurePlan {
+    # The Windows-host exposure of MiOS-DEV, from mios.toml [firewall.windows] bounded by the system SSOT: expose and
+    # profiles keep only operator entries the vendor list also has, and a remote entry is LocalSubnet or a parsed
+    # address/CIDR (prefix 1 or longer) that the vendor scope also allows -- never a keyword, range, Any or /0. Port
+    # numbers and stack_id come from the system SSOT alone, so the user-writable layer cannot point a key elsewhere.
+    $plan = [pscustomobject]@{ Ports = [ordered]@{}; Profiles = @(); RemoteAddresses = @(); Refused = @() }
+    $bound = {
+        param([string]$Key)
+        $vendor = @(Get-MiosVendorTomlValue -Section 'firewall.windows' -Key $Key -Default @())
+        $effective = @(Get-MiosTomlValue -Section 'firewall.windows' -Key $Key -Default @())
+        $kept = @(); $out = @()
+        foreach ($item in $effective) {
+            $item = ([string]$item).Trim()
+            if (@($vendor | Where-Object { $_ -ieq $item }).Count) { if (-not @($kept | Where-Object { $_ -ieq $item }).Count) { $kept += $item } }
+            else { $out += $item }
+        }
+        return [pscustomobject]@{ Vendor = $vendor; Kept = $kept; Outside = $out }
+    }
+    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0; $plan.Refused += 'mios.toml [ports].stack_id is not a nonnegative integer; using 0' }
+    $expose = & $bound 'expose'
+    foreach ($svc in $expose.Outside) { $plan.Refused += "operator [firewall.windows].expose entry '$svc' is outside the system SSOT" }
+    foreach ($svc in $expose.Kept) {
+        $base = Get-MiosVendorTomlValue -Section 'ports' -Key $svc -Default 0
+        $port = if ($base -is [int] -and $base -ge 1) { $base + ($stack * 10000) } else { 0 }
+        if ($port -ge 1 -and $port -le 65535) { $plan.Ports[$svc] = $port } else { $plan.Refused += "$svc has no valid [ports].$svc value" }
+    }
+    $profiles = & $bound 'profiles'
+    foreach ($p in $profiles.Outside) { $plan.Refused += "operator [firewall.windows].profiles entry '$p' is outside the system SSOT" }
+    foreach ($p in $profiles.Kept) {
         $name = @('Domain', 'Private', 'Public') | Where-Object { $_ -ieq $p }
         if ($name) { $plan.Profiles += $name } else { $plan.Refused += "profile '$p' is not Domain, Private or Public" }
     }
+    $parse = {
+        param([string]$Entry)
+        if ($Entry -ieq 'LocalSubnet') { return 'LocalSubnet' }
+        $ipText = $Entry; $len = $null
+        if ($Entry -match '^([^/]+)/([0-9]{1,3})$') { $ipText = $Matches[1]; $len = [int]$Matches[2] }
+        $ip = $null
+        if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { return $null }
+        $bits = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+        if ($null -eq $len) { $len = $bits }
+        if ($len -lt 1 -or $len -gt $bits -or $ip.Equals([Net.IPAddress]::Any) -or $ip.Equals([Net.IPAddress]::IPv6Any)) { return $null }
+        return ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+    }
+    $vendorScope = @(@(Get-MiosVendorTomlValue -Section 'firewall.windows' -Key 'remote_addresses' -Default @()) | ForEach-Object { & $parse ([string]$_).Trim() } | Where-Object { $_ })
     foreach ($r in @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'remote_addresses' -Default @())) {
         $r = ([string]$r).Trim()
-        if ($r -in @('', '*', 'Any', '0.0.0.0', '0.0.0.0/0', '::', '::/0') -or $r -match '/0$') { $plan.Refused += "remote address '$r' is unscoped"; continue }
-        $plan.RemoteAddresses += $r
+        $canon = & $parse $r
+        if (-not $canon) { $plan.Refused += "remote address '$r' is not LocalSubnet or a scoped address/CIDR"; continue }
+        $inside = if ($canon -eq 'LocalSubnet') { $vendorScope -contains 'LocalSubnet' } else {
+            @($vendorScope | Where-Object { $_ -ne 'LocalSubnet' -and (Test-MiosPrefixWithin -Inner $canon -Outer $_) }).Count -gt 0 }
+        if (-not $inside) { $plan.Refused += "remote address '$r' is outside the system SSOT scope"; continue }
+        if ($plan.RemoteAddresses -notcontains $r) { $plan.RemoteAddresses += $r }
     }
     return $plan
 }
@@ -4877,6 +4955,26 @@ function Set-MiosLanPortProxy {
         return
     }
     Write-Log "portproxy: WSL VM ip = $_wslIp"
+
+    # A 0.0.0.0 forward of a MiOS [ports] value that is no longer exposed (one an earlier run added) is removed; forwards
+    # of ports MiOS does not own are left alone.
+    $wanted = @($plan.Ports.Values | ForEach-Object { [string]$_ })
+    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0 }
+    $owned = @{}
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
+        $body = [regex]::Match([string]$layer.Text, '(?ms)^\[ports\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)').Groups['body'].Value
+        foreach ($m in [regex]::Matches($body, '(?m)^[ \t]*[a-z][a-z0-9_]*[ \t]*=[ \t]*([0-9]{1,5})\b')) { $owned[[string]([int]$m.Groups[1].Value + ($stack * 10000))] = $true }
+    }
+    foreach ($line in @(& netsh interface portproxy show v4tov4 2>$null)) {
+        if ([string]$line -notmatch '^\s*0\.0\.0\.0\s+([0-9]+)\s+\S+\s+([0-9]+)\s*$') { continue }
+        $listen = $Matches[1]
+        if ($owned.ContainsKey($listen) -and $wanted -notcontains $listen) {
+            & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$listen 2>&1 | Out-Null
+            Write-Log "portproxy: removed 0.0.0.0:$listen (not in mios.toml [firewall.windows].expose)"
+        }
+    }
 
     # Only [firewall.windows].expose ports are forwarded; the Windows Defender rules Set-MiosLanFirewallRules scopes to
     # remote_addresses decide who reaches them.
