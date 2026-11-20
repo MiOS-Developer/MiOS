@@ -1182,6 +1182,7 @@ keybindings.tmux.desktop.source.version  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_VE
 keybindings.tmux.desktop.source.url  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_URL
 keybindings.tmux.desktop.source.sha256  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_SHA256
 keybindings.tmux.desktop.source.patch  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_PATCH
+keybindings.tmux.desktop.source.admit  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_ADMIT
 keybindings.tmux.desktop.source.configure_args  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_CONFIGURE_ARGS
 keybindings.tmux.desktop.source.make_jobs  MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_MAKE_JOBS
 keybindings.tmux.desktop.labels.apps  MIOS_KEYBINDINGS_TMUX_DESKTOP_LABELS_APPS
@@ -6413,6 +6414,8 @@ desktop.greeter.tuigreet_source.allowed_needed  MIOS_DESKTOP_GREETER_TUIGREET_SO
 desktop.greeter.tuigreet_source.files  MIOS_DESKTOP_GREETER_TUIGREET_SOURCE_FILES
 packages.tuigreet-build.enable  MIOS_PACKAGES_TUIGREET_BUILD_ENABLE
 packages.tuigreet-build.pkgs  MIOS_PACKAGES_TUIGREET_BUILD_PKGS
+packages.tmux-desktop-build.enable  MIOS_PACKAGES_TMUX_DESKTOP_BUILD_ENABLE
+packages.tmux-desktop-build.pkgs  MIOS_PACKAGES_TMUX_DESKTOP_BUILD_PKGS
 theme.cursor_windows.base_size  MIOS_THEME_CURSOR_WINDOWS_BASE_SIZE
 theme.cursor_windows.channel  MIOS_THEME_CURSOR_WINDOWS_CHANNEL
 theme.cursor_windows.asset  MIOS_THEME_CURSOR_WINDOWS_ASSET

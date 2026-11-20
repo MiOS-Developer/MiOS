@@ -4780,6 +4780,10 @@ version = "3.7c"
 url = "https://github.com/tmux/tmux/releases/download/3.7c/tmux-3.7c.tar.gz"
 sha256 = "7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf"
 patch = "tools/patches/tmux-desktop.patch"
+# Where `mios-gen build-tmux-desktop` may build: the podman-MiOS-DEV container (by its actual name),
+# the OCI image bake (buildah's working container; automation/59-tools.sh) and CI's drift-gate job,
+# which installs the same binary so the relay's float-pane placement test runs against what ships.
+admit = ["podman-MiOS-DEV", "image-bake", "drift-gate"]
 configure_args = ["--prefix=/usr", "--libexecdir=/usr/libexec/mios", "--enable-sixel", "--disable-systemd", "--disable-utempter", "--disable-utf8proc", "--disable-jemalloc"]
 make_jobs = 2
 
@@ -13089,6 +13093,12 @@ files = [
 enable = true
 pkgs = ["rpm-build", "gcc", "glibc-devel", "binutils", "curl", "git", "tar", "gzip"]
 
+# Build-only inputs of [keybindings.tmux.desktop.source]: the image bake removes them again,
+# leaving only the patched binary and its runtime libraries (libevent, ncurses-libs via tmux).
+[packages.tmux-desktop-build]
+enable = true
+pkgs = ["gcc", "make", "libevent-devel", "ncurses-devel", "bison", "pkgconf-pkg-config", "patch", "binutils", "curl", "tar", "gzip"]
+
 [theme.cursor_windows]
 base_size           = 24
 # Windows build of [theme.cursor_linux].theme from its repo, resolved latest at build; the build records version and sha256.
@@ -19256,7 +19266,7 @@ Pester = "6.0.1"
 # .devcontainer/Containerfile is FROM [image].ref, the full MiOS image.
 image = "ghcr.io/mios-developer/machine-os:6.2"
 # [packages.<set>] lists installed first; devcontainer is MiOS's development userspace.
-package_sets = ["devcontainer"]
+package_sets = ["devcontainer", "tmux-desktop-build"]  # the second builds the shipped mios-tmux for the relay tests
 # Repo-config RPMs installed before any package. Fedora does not package
 # PowerShell; Microsoft's repository does, floating, as it documents for Fedora.
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]

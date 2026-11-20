@@ -2487,6 +2487,16 @@ fn workspace_desktop_place(
     request: &Value,
     tmux: &dyn Fn(&[&str]) -> Result<String, String>,
 ) -> Result<Value, String> {
+    workspace_desktop_place_in(Path::new("/"), request, tmux)
+}
+
+/// Placement against the layered SSOT rooted at `policy_root`: the host root in
+/// production, a test's own tree so the host's installed state cannot decide it.
+fn workspace_desktop_place_in(
+    policy_root: &Path,
+    request: &Value,
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+) -> Result<Value, String> {
     let head = string(request, "head")?;
     let pane = string(request, "pane")?;
     let numeric_id = |id: &str, prefix: char| {
@@ -2589,7 +2599,7 @@ fn workspace_desktop_place(
         width: cell(canvas[5])?,
         height: cell(canvas[6])?,
     };
-    let doc = mios_resolver::resolve_merged(Some(Path::new("/")), false)
+    let doc = mios_resolver::resolve_merged(Some(policy_root), false)
         .map_err(|_| "desktop placement policy unavailable")?;
     let at = |name: &str| {
         name.split('.')
@@ -6027,7 +6037,40 @@ mod desktop_worker_placement_tests {
         }
         let _cleanup = Cleanup(socket.clone());
         let tmux = |args: &[&str]| workspace_tmux(&socket, args);
-        let head = tmux(&[
+        // As in production: the policy is this tree's SSOT, and the desktop server is the
+        // shipped [keybindings.tmux.desktop].binary (the float-pane backend, installed by
+        // automation/lib/tmux-desktop.sh); its clients stay the PATH tmux.
+        let policy_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let workspace_desktop_place =
+            |request: &Value, tmux: &dyn Fn(&[&str]) -> Result<String, String>| {
+                workspace_desktop_place_in(&policy_root, request, tmux)
+            };
+        let desktop = mios_resolver::resolve_merged(Some(&policy_root), false).unwrap();
+        let binary = desktop["keybindings"]["tmux"]["desktop"]["binary"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            Path::new(&binary).is_file(),
+            "{binary} is missing: install it with automation/lib/tmux-desktop.sh"
+        );
+        // The first command starts the server, so it runs the desktop binary.
+        let server = |args: &[&str]| -> Result<String, String> {
+            let out = Command::new(&binary)
+                .env("LC_ALL", "C.UTF-8")
+                .env("LANG", "C.UTF-8")
+                .args(["-u", "-S", &socket])
+                .args(args)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+            }
+            Ok(String::from_utf8_lossy(&out.stdout)
+                .trim_end_matches('\n')
+                .to_owned())
+        };
+        let head = server(&[
             "new-session",
             "-d",
             "-P",

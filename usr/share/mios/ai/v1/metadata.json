@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4377,
-  "total_metadata_entries": 3503,
-  "total_hints": 3497,
-  "total_functions_indexed": 2294,
-  "total_related_links": 7109,
+  "total_files_scanned": 4378,
+  "total_metadata_entries": 3504,
+  "total_hints": 3498,
+  "total_functions_indexed": 2295,
+  "total_related_links": 7113,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -2356,6 +2356,22 @@
       "hint": "Unit tests for automation/lib/masking.sh and scurl wrapper.",
       "related": [],
       "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "automation/lib/tmux-desktop.sh",
+      "hint": "Fetch the pinned [keybindings.tmux.desktop.source] tarball, build the patched MiOS desktop tmux through `mios-gen build-tmux-desktop` (which verifies the digest, the patch and an admitted build context), and install the binary with its build receipt under an install root. The image bake (59-tools.sh) and CI's drift-gate job both run it.",
+      "related": [
+        "usr/share/mios/mios.toml [keybindings.tmux.desktop.source]",
+        "tools/native/mios-gen/src/tmux_desktop_build.rs",
+        "automation/59-tools.sh",
+        ".github/workflows/mios-ci.yml"
+      ],
+      "functions": [
+        "main"
+      ],
       "doc": null,
       "comment_style": "hash",
       "has_shebang": true
