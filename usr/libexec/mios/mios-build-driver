@@ -404,9 +404,23 @@ _log "  podman build --secret id=mios_user_password_hash -t localhost/mios:lates
 _secret_dir="$(mktemp -d)"
 trap 'rm -rf "$_secret_dir"' EXIT
 ( umask 077; printf '%s' "$MIOS_USER_PASSWORD_HASH" > "$_secret_dir/mios_user_password_hash" )
+# A caller's GitHub token reaches the bake the same way, as the optional mios_github_token secret
+# (scurl authenticates api.github.com with it). Without one the bake's API calls stay anonymous and
+# share the build host's 60-requests-per-hour limit.
+_gh_secret=()
+_gh_tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+if [[ -n "$_gh_tok" ]]; then
+    ( umask 077; printf '%s' "$_gh_tok" > "$_secret_dir/mios_github_token" )
+    _gh_secret=(--secret "id=mios_github_token,src=$_secret_dir/mios_github_token")
+    _log "GitHub API calls in the bake are authenticated (mios_github_token build secret)"
+else
+    _log "no GITHUB_TOKEN or GH_TOKEN: the bake's GitHub API calls are unauthenticated (60 requests/hour)"
+fi
+unset _gh_tok
 if cd "$BUILD_CTX" && sudo podman build \
         --network=host \
         --secret "id=mios_user_password_hash,src=$_secret_dir/mios_user_password_hash" \
+        "${_gh_secret[@]}" \
         -t localhost/mios:latest \
         -f Containerfile \
         . 2>&1 | tee -a "$LOG_FILE"; then
