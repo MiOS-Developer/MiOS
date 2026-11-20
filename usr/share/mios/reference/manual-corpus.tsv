@@ -943,8 +943,9 @@ automation/35-render-ports.sh	18	20	3	36	d6a40eed58ac	STAY	midsize-why		0				0
 automation/35-render-ports.sh	23	28	6	70	d8ec2062e5d6	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/automation.md	mios-src:d8ec2062e5d6	70	1
 automation/36-ceph-k3s.sh	1	4	4	23	3b581ca73f2e	STAY	ai-header		0				0
 automation/36-ceph-k3s.sh	1	4	4	42	7087454e58a6	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:7087454e58a6	42	1
-automation/36-ceph-k3s.sh	17	17	1	8	4d9fc6031dbb	STAY	local-scoped		0				0
-automation/36-ceph-k3s.sh	44	44	1	2	f4d1a19b5269	DROP	banner		0				0
+automation/36-ceph-k3s.sh	6	6	1	3	ee573bae3b99	STAY	local-scoped		0				0
+automation/36-ceph-k3s.sh	18	18	1	8	4d9fc6031dbb	STAY	local-scoped		0				0
+automation/36-ceph-k3s.sh	45	45	1	2	f4d1a19b5269	DROP	banner		0				0
 automation/37-k3s-selinux.sh	1	3	3	33	efaeaa1b27fd	STAY	ai-header		0				0
 automation/37-k3s-selinux.sh	27	29	3	37	1feed8460ad2	STAY	midsize-why		0				0
 automation/37-k3s-selinux.sh	49	54	6	73	dcb7ebbac1a4	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/automation.md	mios-src:dcb7ebbac1a4	73	1
