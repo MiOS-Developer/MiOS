@@ -3625,7 +3625,7 @@ echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward work
 sudo rm -f /etc/containers/systemd/mios-searxng.container.d/10-mios-dev-host-network.conf
 for svc_pair in \
     "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=0.0.0.0|Environment=GITEA__server__HTTP_ADDR=0.0.0.0" \
-    "mios-open-webui:Environment=PORT=3030" \
+    "mios-open-webui:" \
     "mios-code-server:" \
     "mios-cockpit-link:" \
     "mios-llm-light:Environment=HOME=/var/lib/mios/llamacpp|Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64" \
@@ -3715,40 +3715,19 @@ echo "[quadlet-overlay] sealed: $SENTINEL"
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_AUTOSTART__', $_autostartBash
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_OPTIN__',     $_optinBash
 
-    $_fwServicePorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
-        ssh              = 8222
-        forge_ssh        = 8301
-        cpu_node         = 8458
-        agent_pipe       = 8640
-        ttyd_bash        = 8681
-        ttyd_powershell  = 8682
-        adguard_dns      = 53
-        adguard_ui       = 8053
-        crawl4ai         = 8235
-        firecrawl        = 8302
-        opencode_gateway = 8633
-        llm_heavy        = 8520
-        prefilter        = 8641
-        arbiter          = 8650
-        daemon_agent     = 8644
-        model_router     = 8645
-        oscontrol        = 8453
-        mcp              = 8460
-    }
+    # The [ports] keys the dev VM's firewalld opens (SearXNG is the one [ports].searxng key below). Each port comes from
+    # the layered [ports] reader with no vendor literal; a key with no port is left out by name.
+    $_fwServicePorts = @(
+        'forge_http', 'open_webui', 'code_server', 'cockpit', 'llm_light', 'hermes', 'hermes_dashboard', 'guacamole_web',
+        'ceph_dashboard', 'rdp', 'ssh', 'forge_ssh', 'cpu_node', 'agent_pipe', 'ttyd_bash', 'ttyd_powershell', 'adguard_dns',
+        'adguard_ui', 'crawl4ai', 'firecrawl', 'opencode_gateway', 'llm_heavy', 'prefilter', 'arbiter', 'daemon_agent',
+        'model_router', 'oscontrol', 'mcp')
     $_fwPortList = [System.Collections.Generic.List[int]]::new()
     [void]$_fwPortList.Add(22)
-    foreach ($_k in $_fwServicePorts.Keys) {
-        [void]$_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
+    foreach ($_k in $_fwServicePorts) {
+        $_p = Get-MiosSsotPort -Key $_k
+        if ($_p) { [void]$_fwPortList.Add($_p) }
+        else { Log-Warn "dev VM firewalld: mios.toml [ports].$_k does not resolve from any layer; its port stays closed" }
     }
     # SearXNG: the one [ports].searxng key, with no vendor literal.
     $_searxngPort = Get-MiosSsotPort -Key 'searxng'
