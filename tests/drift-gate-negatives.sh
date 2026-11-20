@@ -89,6 +89,25 @@ test_version_ssot() {
     log "Check_version_ssot negative test passed"
 }
 
+test_platform_id_ssot() {
+    log "Testing check_version_ssot (os-release PLATFORM_ID)"
+    local osr="${ROOT}/usr/lib/os-release"
+    local bak="${osr}.platbak"
+    cp "$osr" "$bak"
+    sed -i -E 's/^PLATFORM_ID=.*/PLATFORM_ID="platform:f1"/' "$osr"
+    if _neg_gate check_version_ssot; then
+        mv -f "$bak" "$osr"
+        die "check_version_ssot passed with PLATFORM_ID off [versions].fedora"
+    fi
+    if ! grep -q 'os-release PLATFORM_ID = \[platform:f1\]' <<<"$_NEG_GATE_OUT"; then
+        mv -f "$bak" "$osr"
+        die "check_version_ssot failed without naming PLATFORM_ID"
+    fi
+    mv -f "$bak" "$osr"
+    _neg_gate check_version_ssot || die "check_version_ssot failed after restoring os-release"
+    log "PLATFORM_ID negative test passed"
+}
+
 test_resolver_equivalence() {
     log "Testing check_resolver_twin_equivalence"
     local userenv_file="${ROOT}/usr/lib/mios/userenv.sh"
@@ -6041,6 +6060,7 @@ _run_test test_leaked_fixtures
     _run_test test_fleet_safety
     _run_test test_ai_manifests_fresh
     _run_test test_version_ssot
+    _run_test test_platform_id_ssot
     _run_test test_check_no_silent_tool_skips
     _run_test test_check_negatives_are_effective
     _run_test test_pipefail_grep_lint

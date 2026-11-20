@@ -34,20 +34,24 @@ if [[ ! "$_fver" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-# The base image's own release, as miosd's fedora_release reads it:
-# PLATFORM_ID=platform:f<N>, else VERSION_ID when ID=fedora (Fedora 45 dropped
-# PLATFORM_ID). An unreadable os-release is reported, not fatal.
-_base_fver=""
-for _osr in /etc/os-release /usr/lib/os-release; do
-    [[ -r "$_osr" ]] || continue
-    _base_fver="$(sed -n 's/^PLATFORM_ID="\{0,1\}platform:f\([0-9][0-9]*\)"\{0,1\}$/\1/p' "$_osr")"
-    if [[ -z "$_base_fver" ]] && grep -Eq '^ID="?fedora"?$' "$_osr"; then
-        _base_fver="$(sed -n 's/^VERSION_ID="\{0,1\}\([0-9][0-9]*\)"\{0,1\}$/\1/p' "$_osr")"
-    fi
-    break
-done
+# The base image's own release. By this stage 01-system-files-overlay has
+# already replaced /usr/lib/os-release with MiOS's own, whose PLATFORM_ID is a
+# projection of [versions].fedora -- comparing against it would compare the
+# SSOT with itself. The base's RPM database is not overlaid: the package that
+# provides system-release carries the base's release as its version.
+_base_fver="$(rpm -q --whatprovides system-release --qf '%{VERSION}\n' 2>/dev/null | grep -m1 -E '^[0-9]+$' || true)"
 if [[ -z "$_base_fver" ]]; then
-    mios_warn "the base image's os-release names no Fedora release; using [versions].fedora=${_fver} unchecked"
+    # No RPM answer: only an unmodified Fedora os-release is evidence.
+    for _osr in /etc/os-release /usr/lib/os-release; do
+        [[ -r "$_osr" ]] || continue
+        if grep -Eq '^ID="?fedora"?$' "$_osr"; then
+            _base_fver="$(sed -n 's/^VERSION_ID="\{0,1\}\([0-9][0-9]*\)"\{0,1\}$/\1/p' "$_osr")"
+        fi
+        break
+    done
+fi
+if [[ -z "$_base_fver" ]]; then
+    mios_warn "neither the RPM database nor a Fedora os-release names the base's release; using [versions].fedora=${_fver} unchecked"
 elif [[ "$_base_fver" != "$_fver" ]]; then
     mios_err "the base image is Fedora ${_base_fver} but mios.toml [versions].fedora is ${_fver}; set it to ${_base_fver}"
     exit 1
