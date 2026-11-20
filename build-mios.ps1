@@ -2746,10 +2746,10 @@ set -uo pipefail
 SRC="${1:?source mios.git path required}"
 SENTINEL="/var/lib/mios/.quadlet-overlay-seeded"
 STAGE1_MARKER="/run/mios/quadlet-stage1"
-OVERLAY_STAGE="${MIOS_OVERLAY_STAGE:-}"
+OVERLAY_STAGE="${mios_overlay_stage:-}"
 case "$OVERLAY_STAGE" in
     checkout|realize) ;;
-    *) echo "[quadlet-overlay] ERROR: MIOS_OVERLAY_STAGE must be checkout or realize (got '$OVERLAY_STAGE')"; exit 2 ;;
+    *) echo "[quadlet-overlay] ERROR: mios_overlay_stage must be checkout or realize (got '$OVERLAY_STAGE')"; exit 2 ;;
 esac
 
 # The sentinel is the only gate, for both stages: realize writes it last, so a run that stopped anywhere repeats.
@@ -2866,7 +2866,7 @@ fi
 # bound-image store, the WSL boot/user/automount config), so each one git would refuse to overwrite is backed up, moved
 # aside and replaced by the checkout. os-release and the rpc_pipefs unit stay rpm-owned: `rpm -V` reports them and a
 # dnf update could rewrite them; MiOS-DEV is replaced through machine-os, never dnf-updated. Any other path refuses.
-MIOS_ROOT_OVERLAP=(etc/chrony.conf etc/wsl.conf usr/lib/os-release
+mios_root_overlap=(etc/chrony.conf etc/wsl.conf usr/lib/os-release
     usr/lib/systemd/system/var-lib-nfs-rpc_pipefs.mount usr/share/containers/storage.conf)
 
 # 0 when a container store under root $1 already holds images or layers: they would then mount under MiOS's
@@ -2919,13 +2919,13 @@ mios_root_checkout() {
     done < <(sudo git -C "$root" ls-tree -r -z --name-only "$ref")
     for p in "${conflicts[@]}"; do
         known=0
-        for k in "${MIOS_ROOT_OVERLAP[@]}"; do if [[ "$p" == "$k" ]]; then known=1; break; fi; done
+        for k in "${mios_root_overlap[@]}"; do if [[ "$p" == "$k" ]]; then known=1; break; fi; done
         (( known )) || unknown+=("$p")
     done
     if (( ${#unknown[@]} )); then
         echo "[overlay] ERROR: the checkout would overwrite files that are not on the known machine-os overlap list; nothing was moved:"
         printf '[overlay]   %s\n' "${unknown[@]}"
-        echo "[overlay] REMEDY: ${MIOS_DEV_MACHINE:-MiOS-DEV} holds files from an earlier incomplete overlay; re-provision it (podman machine rm ${MIOS_DEV_MACHINE:-MiOS-DEV}, then re-run the installer)"
+        echo "[overlay] REMEDY: ${mios_dev_machine:-MiOS-DEV} holds files from an earlier incomplete overlay; re-provision it (podman machine rm ${mios_dev_machine:-MiOS-DEV}, then re-run the installer)"
         return 4
     fi
     for p in "${conflicts[@]}"; do
@@ -3158,14 +3158,14 @@ else
     echo "[quadlet-overlay] /etc/wsl.conf: [boot] systemd=true already set"
 fi
 # The default login is the vendor/host [identity].username through MiOS's identity guard (no literal name).
-MIOS_LOGIN=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)") || MIOS_LOGIN=""
-if [ -n "$MIOS_LOGIN" ]; then
+mios_login=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)") || mios_login=""
+if [ -n "$mios_login" ]; then
     if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
-        printf '\n[user]\ndefault=%s\n' "$MIOS_LOGIN" | sudo tee -a /etc/wsl.conf >/dev/null
-        echo "[quadlet-overlay] /etc/wsl.conf: appended [user] default=$MIOS_LOGIN"
+        printf '\n[user]\ndefault=%s\n' "$mios_login" | sudo tee -a /etc/wsl.conf >/dev/null
+        echo "[quadlet-overlay] /etc/wsl.conf: appended [user] default=$mios_login"
     elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
-        sudo sed -i "/^\[user\]/a default=$MIOS_LOGIN" /etc/wsl.conf
-        echo "[quadlet-overlay] /etc/wsl.conf: inserted default=$MIOS_LOGIN under existing [user]"
+        sudo sed -i "/^\[user\]/a default=$mios_login" /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: inserted default=$mios_login under existing [user]"
     else
         # Fill only: an existing default is never rewritten here, so mios.git's tracked etc/wsl.conf stays clean (R5).
         echo "[quadlet-overlay] /etc/wsl.conf: [user] default already set; left as it is"
@@ -3793,7 +3793,7 @@ echo "[quadlet-overlay] sealed: $SENTINEL"
     $stagedWsl   = "/mnt/$stagedDrive" + ($stagedPath.Substring(2) -replace '\\','/')
 
     # Not $stage: PowerShell names are case-insensitive, so that would be the ValidateSet-bound $Stage parameter.
-    $seedCommand = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner' MIOS_DEV_MACHINE='$DevDistro' MIOS_OVERLAY_STAGE='$Stage'; " +
+    $seedCommand = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner' mios_dev_machine='$DevDistro' mios_overlay_stage='$Stage'; " +
                    "bash '$stagedWsl' '$miosRootWsl'"
     $seedLines = New-Object System.Collections.Generic.List[string]
     try {
@@ -6062,7 +6062,7 @@ $Script:MiOSBin  = $PSScriptRoot
 $Script:MiOSRoot = Split-Path -Parent $Script:MiOSBin
 
 # The native entry hands verbs it does not own back to this hub, so a hub reached from its own dispatch is a loop.
-if ($env:MIOS_HUB_ACTIVE) {
+if ($env:MiosHubActive) {
     Write-Host "  [!] mios verb '$($args -join ' ')' has no handler (the native entry returned it to the hub)." -ForegroundColor Yellow
     exit 64
 }
@@ -6089,10 +6089,10 @@ if ($args.Count -gt 0) {
         & $vScript @rest
     } elseif ($dispatcher -or (Test-Path -LiteralPath $nativeEntry)) {
         # Both of these may hand an unowned verb back to this hub; the guard turns that into one refusal.
-        $env:MIOS_HUB_ACTIVE = '1'
+        $env:MiosHubActive = '1'
         try {
             if ($dispatcher) { & $dispatcher $verb @rest } else { & $nativeEntry $verb @rest }
-        } finally { Remove-Item Env:MIOS_HUB_ACTIVE -ErrorAction SilentlyContinue }
+        } finally { Remove-Item Env:MiosHubActive -ErrorAction SilentlyContinue }
     } else {
         Write-Host "  [!] mios verb '$verb' not found ($vScript)." -ForegroundColor Yellow
     }
@@ -7842,14 +7842,14 @@ else
 fi
 # The default login is the vendor/host [identity].username through MiOS's identity guard (no literal name). Before
 # the overlay lays down /usr/lib/mios the guard cannot run; the realize stage sets the default login then.
-MIOS_LOGIN=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)" 2>/dev/null) || MIOS_LOGIN=""
-if [ -n "$MIOS_LOGIN" ]; then
+mios_login=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)" 2>/dev/null) || mios_login=""
+if [ -n "$mios_login" ]; then
     if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
-        printf '\n[user]\ndefault=%s\n' "$MIOS_LOGIN" >> /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf: appended [user].default=$MIOS_LOGIN"
+        printf '\n[user]\ndefault=%s\n' "$mios_login" >> /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: appended [user].default=$mios_login"
     elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
-        sed -i "/^\[user\]/a default=$MIOS_LOGIN" /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf: inserted default=$MIOS_LOGIN under existing [user]"
+        sed -i "/^\[user\]/a default=$mios_login" /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: inserted default=$mios_login under existing [user]"
     else
         # Fill only: an existing default is never rewritten here, so mios.git's tracked etc/wsl.conf stays clean (R5).
         echo "[mios-seed] /etc/wsl.conf: [user] default already set; left as it is"
