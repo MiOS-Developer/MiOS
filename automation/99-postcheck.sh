@@ -59,6 +59,18 @@ except Exception:
         mios_ok "User '${default_user}' in $shadow has expired password (lastchg=0 per ruling Q5)"
     fi
 }
+# Gate: every boot-reachable unit under root $1 (enabled links, timer/socket/path
+# triggers, Wants=/Requires= edges) can exec what it names. A unit that ships
+# enabled without its program fails 203/EXEC on every boot of every host that
+# carries it. tests/test-postcheck-unit-execs.sh sources this.
+mios_postcheck_unit_execs() {
+    local root="${1:-/}" miosd="" c
+    for c in "${MIOS_MIOSD_BIN:-}" "${root%/}/usr/libexec/mios/miosd" /usr/libexec/mios/miosd; do
+        if [[ -n "$c" && -x "$c" ]]; then miosd="$c"; break; fi
+    done
+    [[ -n "$miosd" ]] || die "Unit exec gate: native miosd is missing"
+    "$miosd" unit-exec-check --root "$root" || die "Unit exec gate: an enabled unit names a program the image does not carry"
+}
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 mios_step "'MiOS' build-time validation"
@@ -108,6 +120,9 @@ fi
 
 mios_log "Validate kargs.d files"
 mios_postcheck_kargs ""
+
+mios_log "Validate enabled units can exec their programs"
+mios_postcheck_unit_execs /
 
 mios_log "Verify critical system binaries"
 CRITICAL_TOOLS=(podman bootc cockpit-bridge rpm-ostree)

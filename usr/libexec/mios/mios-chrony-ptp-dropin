@@ -1,21 +1,45 @@
 #!/usr/bin/env bash
-# AI-hint: Generates /etc/chrony.d/10-ptp.conf on first boot if /dev/ptp0 exists (PTP hardware present).
-# AI-related: /etc/chrony.d/10-ptp.conf, mios-chrony-ptp.service, /dev/ptp0
+# AI-hint: Generates /etc/chrony.d/10-ptp.conf when /dev/ptp0 is a hypervisor clock (Hyper-V/WSL2 "hyperv", KVM "KVM virtual PTP"); on bare metal /dev/ptp0 is a free-running NIC PHC, so it writes nothing and removes a drop-in an earlier boot left.
+# AI-related: /etc/chrony.d/10-ptp.conf, mios-chrony-ptp.service, /dev/ptp0, /sys/class/ptp/ptp0/clock_name, tests/test-chrony-ptp-dropin.sh
 set -euo pipefail
 
 CHRONY_D="${CHRONY_D:-/etc/chrony.d}"
 PTP_DEV="${PTP_DEV:-/dev/ptp0}"
+PTP_SYSFS="${PTP_SYSFS:-/sys/class/ptp/$(basename "$PTP_DEV")}"
+DROPIN_FILE="${CHRONY_D}/10-ptp.conf"
+
+reload_sources() {
+    if command -v chronyc >/dev/null 2>&1; then
+        chronyc reload sources >/dev/null 2>&1 || true
+    fi
+}
 
 if [[ ! -e "$PTP_DEV" ]]; then
     exit 0
 fi
 
+# Only a hypervisor's PTP clock tracks the host's disciplined time. A NIC PHC
+# (igc, e1000e, r8169, ...) runs free until something like ptp4l steers it;
+# "prefer trust" on one pins chronyd to that drift and outvotes every NTP server.
+clock_name=""
+[[ -r "${PTP_SYSFS}/clock_name" ]] && clock_name="$(<"${PTP_SYSFS}/clock_name")"
+case "$clock_name" in
+    hyperv|"KVM virtual PTP") ;;
+    *)
+        echo "mios-chrony-ptp: ${PTP_DEV} is '${clock_name:-unknown}', not a hypervisor clock; NTP stays authoritative"
+        if [[ -f "$DROPIN_FILE" ]]; then
+            rm -f "$DROPIN_FILE"
+            reload_sources
+        fi
+        exit 0
+        ;;
+esac
+
 mkdir -p "$CHRONY_D"
-DROPIN_FILE="${CHRONY_D}/10-ptp.conf"
 TMP_FILE="${DROPIN_FILE}.tmp"
 
-cat <<'EOF' > "$TMP_FILE"
-refclock PHC /dev/ptp0 poll 3 dpoll -2 offset 0 minsamples 4 prefer trust
+cat <<EOF > "$TMP_FILE"
+refclock PHC ${PTP_DEV} poll 3 dpoll -2 offset 0 minsamples 4 prefer trust
 EOF
 
 if [[ -f "$DROPIN_FILE" ]] && cmp -s "$DROPIN_FILE" "$TMP_FILE"; then
@@ -25,7 +49,4 @@ fi
 
 mv "$TMP_FILE" "$DROPIN_FILE"
 chmod 0644 "$DROPIN_FILE"
-
-if command -v chronyc >/dev/null 2>&1; then
-    chronyc reload sources >/dev/null 2>&1 || true
-fi
+reload_sources

@@ -1,0 +1,24 @@
+#!/bin/bash
+# AI-hint: systemd generator: on a WSL2 kernel only, writes a runtime journald drop-in with ReadKMsg=no (journald crashes on EPERM from /dev/kmsg there). Bare-metal and VM hosts keep the kernel log in their journal.
+# AI-related: /usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf, tests/test-journald-kmsg.sh
+# AI-functions: main
+
+set -euo pipefail
+
+main() {
+    local osrelease="${OSRELEASE_FILE:-/proc/sys/kernel/osrelease}"
+    local dir="${JOURNALD_RUNTIME_DIR:-/run/systemd/journald.conf.d}"
+    local release=""
+    [[ -r "$osrelease" ]] && release="$(<"$osrelease")"
+    # WSL2 kernels identify as "...-microsoft-standard-WSL2".
+    case "${release,,}" in
+        *microsoft*|*wsl*) ;;
+        *) return 0 ;;
+    esac
+    mkdir -p "$dir"
+    printf '%s\n' '# Written by mios-wsl-journald: the WSL2 kernel refuses /dev/kmsg.' \
+        '[Journal]' 'ReadKMsg=no' > "$dir/90-mios-wsl.conf"
+}
+
+# A generator must never block boot.
+main "$@" || true
