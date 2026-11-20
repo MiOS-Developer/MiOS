@@ -183,6 +183,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-skills-miner.service` | `usr/lib/systemd/system` | MiOS' Phase C.2 Sequential Pattern Mining over tool_call history |
 | `mios-skills-miner.timer` | `usr/lib/systemd/system` | MiOS' Phase C.2 skill-miner cadence (sequential pattern mining) |
 | `mios-sriov-init.service` | `usr/lib/systemd/system` | MiOS' Universal SR-IOV Initialization |
+| `mios-ssh-ca.service` | `usr/lib/systemd/system` | MiOS' user SSH CA signer (tailnet-only [ssh].user certificates for verified cloud nodes) |
 | `mios-status-agents.service` | `usr/lib/systemd/user` | MiOS agent relay observation for the Portal status view |
 | `mios-steam-bridge.service` | `usr/lib/systemd/user` | MiOS Steam Notification Bridge |
 | `mios-suggestion-refresh.service` | `usr/lib/systemd/system` | MiOS' starter-chip refresh (revolving suggestions) |
@@ -237,5 +238,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (229 unit(s)) -->
+<!-- derived from tracked unit files (230 unit(s)) -->
 <!-- /MIOS-GEN:units -->
