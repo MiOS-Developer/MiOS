@@ -1,5 +1,5 @@
 diff --git a/src/GlassDecoration.cpp b/src/GlassDecoration.cpp
-index 434fdff..f677299 100644
+index 94759b8..3c7f573 100644
 --- a/src/GlassDecoration.cpp
 +++ b/src/GlassDecoration.cpp
 @@ -12,6 +12,7 @@
@@ -8,10 +8,10 @@ index 434fdff..f677299 100644
  #include <algorithm>
 +#include <cmath>
  #include <GLES3/gl32.h>
- #include <hyprland/src/desktop/view/Window.hpp>
- #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
-@@ -533,6 +534,12 @@ void CGlassDecoration::renderPass(PHLMONITOR monitor, const float& alpha, bool x
-     if (const auto workspace = window->m_workspace; workspace && !window->m_pinned)
+ #include <hyprland/src/desktop/view/window/Window.hpp>
+ #include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+@@ -541,6 +542,12 @@ void CGlassDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monito
+     if (const auto workspace = window->m_workspace; workspace && !(window->m_state & Desktop::View::WINDOW_STATE_PINNED))
          glassAlpha *= workspace->m_alpha->value();
  
 +    // MiOS: shape the pane's fade separately from the surface. With a gamma above 1 the pane stays
@@ -21,33 +21,33 @@ index 434fdff..f677299 100644
 +        glassAlpha = std::pow(std::clamp(glassAlpha, 0.0f, 1.0f), static_cast<float>(**gamma));
 +
      // A fullscreen window shows no edge, like Hyprland draws it no border.
-     m_lastFocusLightStrength = fsUnrounded ? 0.0f : focusLightFor(ctx);
+     m_lastFocusLightStrength = fsUnrounded ? 0.0f : focusLightFor(resolveContext);
      float focusLight         = 0.0f;
 diff --git a/src/PluginConfig.cpp b/src/PluginConfig.cpp
-index df2b23b..d71bdac 100644
+index b99e64f..9df9435 100644
 --- a/src/PluginConfig.cpp
 +++ b/src/PluginConfig.cpp
-@@ -104,6 +104,7 @@ void registerConfig(HANDLE handle) {
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::ENABLED, Config::INTEGER{1});
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::MANAGE_WINDOW_BLUR, Config::INTEGER{1});
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS, Config::INTEGER{1});
+@@ -72,6 +72,7 @@ void registerConfig(HANDLE handle) {
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::ENABLED, true);
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::MANAGE_WINDOW_BLUR, true);
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS, true);
 +    addConfigValue<Config::Values::Float>(handle, ConfigKeys::FADE_GAMMA, Config::FLOAT{1.0});
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::BLUR_FOLD, Config::INTEGER{1});
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::BLUR_FOLD, true);
      addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_THEME, Config::STRING{"dark"});
      addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_PRESET, Config::STRING{"default"});
-@@ -352,6 +353,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
-     config.enabled           = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::ENABLED);
-     config.manageWindowBlur  = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::MANAGE_WINDOW_BLUR);
-     config.skipOpaqueWindows = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS);
-+    config.fadeGamma         = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::FADE_GAMMA);
-     config.blurFold          = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::BLUR_FOLD);
-     config.xpMode            = getIntegerPtr(handle, "render:xp_mode");
-     config.animationsEnabled = getIntegerPtr(handle, "animations:enabled");
+@@ -318,6 +319,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
+     config.enabled           = getStaticPtr<Config::BOOL>(handle, ConfigKeys::ENABLED);
+     config.manageWindowBlur  = getStaticPtr<Config::BOOL>(handle, ConfigKeys::MANAGE_WINDOW_BLUR);
+     config.skipOpaqueWindows = getStaticPtr<Config::BOOL>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS);
++    config.fadeGamma         = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::FADE_GAMMA);
+     config.blurFold          = getStaticPtr<Config::BOOL>(handle, ConfigKeys::BLUR_FOLD);
+     config.xpMode            = getBoolPtr(handle, "render:xp_mode");
+     config.animationsEnabled = getBoolPtr(handle, "animations:enabled");
 diff --git a/src/PluginConfig.hpp b/src/PluginConfig.hpp
-index cadb2c2..6f72172 100644
+index 9039ce9..eb5188c 100644
 --- a/src/PluginConfig.hpp
 +++ b/src/PluginConfig.hpp
-@@ -78,6 +78,8 @@ inline constexpr auto DEFAULT_THEME       = "plugin:hyprglass:default_theme";
+@@ -93,6 +93,8 @@ inline constexpr auto DEFAULT_THEME       = "plugin:hyprglass:default_theme";
  inline constexpr auto DEFAULT_PRESET      = "plugin:hyprglass:default_preset";
  inline constexpr auto MANAGE_WINDOW_BLUR  = "plugin:hyprglass:manage_window_blur";
  inline constexpr auto SKIP_OPAQUE_WINDOWS = "plugin:hyprglass:skip_opaque_windows";
@@ -56,11 +56,11 @@ index cadb2c2..6f72172 100644
  inline constexpr auto BLUR_FOLD           = "plugin:hyprglass:blur_fold";
  
  // Performance diagnostics
-@@ -390,6 +392,7 @@ struct SPluginConfig {
+@@ -391,6 +393,7 @@ struct SPluginConfig {
      // Skip glass for windows CWindow::opaque() reports as opaque: nothing behind
      // them is visible, so sampling and blurring their background is wasted work.
-     Hyprlang::INT* const* skipOpaqueWindows = nullptr;
-+    Hyprlang::FLOAT* const* fadeGamma       = nullptr; // MiOS
+     Config::BOOL* const*    skipOpaqueWindows = nullptr;
++    Config::FLOAT* const*   fadeGamma         = nullptr; // MiOS
      // Derives a smaller blur pass count from the requested radius (GlassRenderer::
      // foldBlurPasses) instead of always running blur_iterations passes at full radius.
-     Hyprlang::INT* const* blurFold = nullptr;
+     Config::BOOL* const*    blurFold          = nullptr;

@@ -9532,23 +9532,28 @@ pub mod hyprglass_build {
         Ok(paths[0].clone())
     }
     // The upstream layer path masks content alpha but computes optical
-    // highlights against a square. Reuse the compositor's live SSOT radius.
+    // highlights against a square. Reuse the compositor's live SSOT radius,
+    // clamped to half the drawn layer box (`box`, render-space pixels).
     fn layer_geometry_source(source: &str) -> Result<String, String> {
         let include = "#include <hyprland/src/render/OpenGL.hpp>";
+        let drawn = "    const CBox box = *layerBox;\n";
         let old = "    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
         let replacement = r#"    float cornerRadius = 0.0f;
     const auto radiusOption = Config::mgr()->getConfigValue("decoration:rounding");
     if (radiusOption.dataptr && radiusOption.type && *radiusOption.type == typeid(Config::INTEGER)) {
         const auto radius = reinterpret_cast<Config::INTEGER* const*>(radiusOption.dataptr);
         cornerRadius = std::clamp(static_cast<float>(**radius) * monitor->m_scale, 0.0f,
-                                 static_cast<float>(std::min(transformBox.w, transformBox.h) * 0.5));
+                                 static_cast<float>(std::min(box.w, box.h) * 0.5));
     }
     // The one corner curve ([theme.shell] corner_power -> decoration:rounding_power): layers, windows and the tab alike.
     float roundingPower = 2.0f;
     const auto powerOption = Config::mgr()->getConfigValue("decoration:rounding_power");
     if (powerOption.dataptr && powerOption.type && *powerOption.type == typeid(Config::FLOAT))
         roundingPower = std::clamp(static_cast<float>(**reinterpret_cast<Config::FLOAT* const*>(powerOption.dataptr)), 2.0f, 10.0f);"#;
-        if source.matches(include).count() != 1 || source.matches(old).count() != 1 {
+        if source.matches(include).count() != 1
+            || source.matches(drawn).count() != 1
+            || source.matches(old).count() != 1
+        {
             return Err("MiOS layer geometry fix (render.rs layer_geometry_source) no longer matches upstream src/GlassLayerSurface.cpp; update its anchor".into());
         }
         Ok(source
@@ -9561,11 +9566,11 @@ pub mod hyprglass_build {
         use super::*;
         #[test]
         fn pinned_layer_fix_reads_live_radius_and_rejects_unreviewed_sources() {
-            let fixture = "#include <hyprland/src/render/OpenGL.hpp>\n    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
+            let fixture = "#include <hyprland/src/render/OpenGL.hpp>\n    const CBox box = *layerBox;\n    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
             let fixed = layer_geometry_source(fixture).unwrap();
             assert!(fixed.contains("getConfigValue(\"decoration:rounding\")"));
             assert!(fixed.contains("monitor->m_scale"));
-            assert!(fixed.contains("transformBox.h) * 0.5"));
+            assert!(fixed.contains("box.h) * 0.5"));
             assert!(
                 fixed.contains("getConfigValue(\"decoration:rounding_power\")"),
                 "layers follow the one corner curve"
@@ -9576,6 +9581,12 @@ pub mod hyprglass_build {
             )
             .is_err());
             assert!(layer_geometry_source(&(fixture.to_string() + fixture)).is_err());
+            // the clamp names the drawn box: a source without it is refused, not miscompiled
+            assert!(layer_geometry_source(&fixture.replace(
+                "const CBox box = *layerBox;",
+                "const CBox drawn = *layerBox;"
+            ))
+            .is_err());
         }
     }
 
