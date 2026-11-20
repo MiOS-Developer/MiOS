@@ -19261,6 +19261,7 @@ unit = [
     "tests/test-pgvector-major-upgrade.sh",
     "tests/test-mios-manual-harvest.sh",
     "tests/test-postcheck-kargs.sh",
+    "tests/test-bake-user-unit-check.sh",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4364,
-  "total_metadata_entries": 3490,
-  "total_hints": 3484,
+  "total_files_scanned": 4365,
+  "total_metadata_entries": 3491,
+  "total_hints": 3485,
   "total_functions_indexed": 2274,
-  "total_related_links": 7067,
+  "total_related_links": 7070,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7144,6 +7144,19 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-bake-user-unit-check.sh",
+      "hint": "bash Runs the user-unit projection check exactly as 65-bake-hyprland.sh invokes it: the build's source tree passes the [unit_projection].max_undeclared_user ratchet, while an image root that also holds package-shipped user units fails it, so the bake must point the check at the source tree.",
+      "related": [
+        "automation/65-bake-hyprland.sh",
+        "tools/native/mios-unit-gen/src/main.rs",
+        "usr/share/mios/mios.toml"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
