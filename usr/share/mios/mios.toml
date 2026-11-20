@@ -2135,7 +2135,7 @@ enabled = true
 repo_gpgcheck = false
 repo_type = "rpm"
 gpgcheck = true
-gpgkey = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64"
+gpgkey = "file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64"
 skip_if_unavailable = true
 priority = 95
 timeout = 10
@@ -2150,7 +2150,7 @@ enabled = true
 repo_gpgcheck = false
 repo_type = "rpm"
 gpgcheck = true
-gpgkey = "file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64"
+gpgkey = "file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64"
 skip_if_unavailable = true
 priority = 95
 timeout = 10
@@ -11129,7 +11129,7 @@ non_addressable = [
 placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FEDORA"]
 
 [versions]
-fedora                   = "44"
+fedora                   = "45"   # the base image's Fedora release; 05-repos.sh refuses a build where they differ
 k3s                      = "latest"
 forgejo                  = "17.0.1"
 ceph                     = "latest"
