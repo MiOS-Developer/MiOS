@@ -4,6 +4,9 @@
 Description='MiOS' fine-tune serve (base+adapter refiner backend)
 After=network-online.target
 Wants=network-online.target
+# The interpreter is the operator-built venv (usr/share/mios/finetune/requirements.txt), never
+# baked: without it the unit is skipped instead of failing 203/EXEC every RestartSec.
+ConditionPathExists=/var/lib/mios/finetune/venv/bin/python
 
 [Service]
 Type=simple

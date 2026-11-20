@@ -60,3 +60,9 @@ RUN git config --global user.name "MiOS Frontier" \
 ENV PATH=/mnt/mios-root/usr/share/mios/agents:/mnt/mios-root/usr/bin:/mnt/mios-root/usr/libexec/mios:/usr/local/bin:/home/coder/.local/bin:$PATH \
     MIOS_A2O_ENGINE=agy \
     MIOS_A2O_WORK=/mnt/mios-root
+
+# mios-agents.service passes only code-server flags (--bind-addr ... /home/coder).
+# Without an entrypoint podman execs the first flag itself (exit 127) instead of
+# the editor; the base image's CMD (/sbin/init) must not leak in either.
+ENTRYPOINT ["/usr/bin/code-server"]
+CMD []

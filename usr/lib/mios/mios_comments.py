@@ -133,13 +133,13 @@ def load_ai_tag(root: str | None = None):
     path = os.path.join(base, "usr", "libexec", "mios", "mios-ai-tag")
     if not os.path.isfile(path):
         return None
-    # exec_module, not load_module: Python 3.15 removed SourceFileLoader.load_module, and
-    # the image's base (Fedora 45) ships 3.15, where every call returned None here.
+    # exec_module, not load_module(): Python 3.15 removed load_module, and the
+    # image's interpreter returning None here made every docs index stage fail.
     try:
-        loader = SourceFileLoader("mios_ai_tag", path)
-        spec = importlib.util.spec_from_loader("mios_ai_tag", loader)
+        spec = importlib.util.spec_from_loader(
+            "mios_ai_tag", SourceFileLoader("mios_ai_tag", path))
         module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
+        spec.loader.exec_module(module)
         return module
     except Exception:
         return None

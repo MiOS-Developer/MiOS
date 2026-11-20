@@ -10,9 +10,10 @@ Wants=network-online.target
 
 [Container]
 ContainerName=mios-guacd
-Exec=guacd -b 0.0.0.0 -l 8560 -f
+Exec=-l 8560
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=811
+HealthCmd=nc -z 127.0.0.1 8560 || exit 1
 Image=docker.io/guacamole/guacd:latest
 Pod=mios-system.pod
 User=811

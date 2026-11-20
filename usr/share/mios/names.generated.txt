@@ -3176,6 +3176,11 @@ llamacpp.slot_dir  MIOS_LLAMACPP_SLOT_DIR
 llamacpp.models_dir  MIOS_LLAMACPP_MODELS_DIR
 llamacpp.config  MIOS_LLAMACPP_CONFIG
 llamacpp.cpu_node_threads  MIOS_LLAMACPP_CPU_NODE_THREADS
+llamacpp.cpu_node_model_file  MIOS_LLAMACPP_CPU_NODE_MODEL_FILE
+llamacpp.cpu_node_context  MIOS_LLAMACPP_CPU_NODE_CONTEXT
+llamacpp.cpu_node_memory_high  MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH
+llamacpp.cpu_node_memory_max  MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX
+llamacpp.cpu_node_memory_swap_max  MIOS_LLAMACPP_CPU_NODE_MEMORY_SWAP_MAX
 llamacpp.light_threads  MIOS_LLAMACPP_LIGHT_THREADS
 llamacpp.heavy_model_file  MIOS_LLAMACPP_HEAVY_MODEL_FILE
 llamacpp.heavy_gpu_resource  MIOS_LLAMACPP_HEAVY_GPU_RESOURCE
@@ -5243,6 +5248,7 @@ units.mios-finetune-serve.service.Unit.comment  MIOS_UNITS_MIOS_FINETUNE_SERVE_S
 units.mios-finetune-serve.service.Unit.Description  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_DESCRIPTION
 units.mios-finetune-serve.service.Unit.After  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_AFTER
 units.mios-finetune-serve.service.Unit.Wants  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_WANTS
+units.mios-finetune-serve.service.Unit.ConditionPathExists  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_UNIT_CONDITIONPATHEXISTS
 units.mios-finetune-serve.service.Service.Type  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_TYPE
 units.mios-finetune-serve.service.Service.User  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_USER
 units.mios-finetune-serve.service.Service.Group  MIOS_UNITS_MIOS_FINETUNE_SERVE_SERVICE_SERVICE_GROUP
@@ -9364,6 +9370,9 @@ containers.mios-cpu-node.Container.Volume  MIOS_CONTAINERS_MIOS_CPU_NODE_CONTAIN
 containers.mios-cpu-node.Install.WantedBy  MIOS_CONTAINERS_MIOS_CPU_NODE_INSTALL_WANTEDBY
 containers.mios-cpu-node.Service.Delegate  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_DELEGATE
 containers.mios-cpu-node.Service.EnvironmentFile  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_ENVIRONMENTFILE
+containers.mios-cpu-node.Service.MemoryHigh  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_MEMORYHIGH
+containers.mios-cpu-node.Service.MemoryMax  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_MEMORYMAX
+containers.mios-cpu-node.Service.MemorySwapMax  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_MEMORYSWAPMAX
 containers.mios-cpu-node.Service.Restart  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_RESTART
 containers.mios-cpu-node.Service.RestartSec  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_RESTARTSEC
 containers.mios-cpu-node.Service.TimeoutStartSec  MIOS_CONTAINERS_MIOS_CPU_NODE_SERVICE_TIMEOUTSTARTSEC
@@ -9449,6 +9458,7 @@ containers.mios-guacamole.Container.Image  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAI
 containers.mios-guacamole.Container.Label  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_LABEL
 containers.mios-guacamole.Container.Pod  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_POD
 containers.mios-guacamole.Container.User  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_USER
+containers.mios-guacamole.Container.Volume  MIOS_CONTAINERS_MIOS_GUACAMOLE_CONTAINER_VOLUME
 containers.mios-guacamole.Install.WantedBy  MIOS_CONTAINERS_MIOS_GUACAMOLE_INSTALL_WANTEDBY
 containers.mios-guacamole.Service.Delegate  MIOS_CONTAINERS_MIOS_GUACAMOLE_SERVICE_DELEGATE
 containers.mios-guacamole.Service.Restart  MIOS_CONTAINERS_MIOS_GUACAMOLE_SERVICE_RESTART
@@ -9459,6 +9469,7 @@ containers.mios-guacamole.Unit.Description  MIOS_CONTAINERS_MIOS_GUACAMOLE_UNIT_
 containers.mios-guacamole.Unit.Wants  MIOS_CONTAINERS_MIOS_GUACAMOLE_UNIT_WANTS
 containers.mios-guacd.Container.ContainerName  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_CONTAINERNAME
 containers.mios-guacd.Container.Exec  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_EXEC
+containers.mios-guacd.Container.HealthCmd  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_HEALTHCMD
 containers.mios-guacd.Container.Group  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_GROUP
 containers.mios-guacd.Container.Image  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_IMAGE
 containers.mios-guacd.Container.Pod  MIOS_CONTAINERS_MIOS_GUACD_CONTAINER_POD

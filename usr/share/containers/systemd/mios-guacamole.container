@@ -18,6 +18,7 @@ Environment=POSTGRESQL_USERNAME=mios
 Environment=POSTGRESQL_PASSWORD=mios
 Environment=GUACD_HOSTNAME=localhost
 Environment=GUACD_PORT=8560
+Environment=CATALINA_OPTS=-Dmios.guacamole.port=8220
 EnvironmentFile=/etc/mios/install.env
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=810
@@ -27,6 +28,7 @@ Label=org.opencontainers.image.documentation=https://guacamole.apache.org/doc/
 Label=io.podman_desktop.openInBrowser=http://localhost:8220/guacamole/
 Pod=mios-system.pod
 User=810
+Volume=/usr/share/mios/guacamole/server.xml:/usr/local/tomcat/conf/server.xml:ro
 
 [Install]
 WantedBy=multi-user.target default.target
