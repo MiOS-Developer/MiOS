@@ -46,18 +46,19 @@ Top to bottom, at the dock's own width:
 
 ### Window previews are capture-safe
 
-Hyprland 0.56.2 crashes (SEGV in `Screenshare::CScreenshareSession::init`) when any
-client captures a window without a live monitor. A pinned window whose output was
-removed, for example an RDP display that detached, keeps a dead monitor. Capturing a
-window that has just closed also disconnects the capturing client. Two layers guard
-against this:
+Hyprland 0.56.2 crashed (SEGV in `Screenshare::CScreenshareSession::init`) when any
+client captured a window without a live monitor. A pinned window whose output was
+removed, for example an RDP display that detached, keeps a dead monitor. Hyprland
+0.57.2 fixes that upstream. On both releases, capturing a window that has just closed
+disconnects the capturing client. Two layers guard against this:
 
 - `DockPreview.qml` captures only a window that Hyprland reports mapped and on a live
   monitor (`monitor >= 0`), and only while the preview is shown. Otherwise it shows
   the app icon.
 - The compositor fix is `hyprland-screenshare-no-monitor.patch` in the
   `[desktop.hyprland.compositor]` patch series (branch `mios-hyprland-capture-guard`).
-  A capture of a window that cannot be shared now gets `failed` instead of crashing.
+  A capture of a window that has closed now gets a frame that fails, so the client
+  stays connected.
 
 ### Moving windows: the per-target, per-app truth
 

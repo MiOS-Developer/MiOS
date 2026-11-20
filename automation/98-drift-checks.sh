@@ -1699,6 +1699,16 @@ check_version_ssot() {
         [[ -n "$_v" && "$_v" != "$ssot" ]] && bad+="    os-release PRETTY_NAME version = [$_v], expected [$ssot]"$'\n'
         _v="$(grep -m1 -E '^CPE_NAME=' "$osr" | sed -E 's|.*:mios:||; s/"[[:space:]]*$//')"
         [[ -n "$_v" && "$_v" != "$ssot" ]] && bad+="    os-release CPE_NAME version = [$_v], expected [$ssot]"$'\n'
+        # PLATFORM_ID names the Fedora release under MiOS (miosd fedora_release
+        # reads it on a booted host), so it follows [versions].fedora.
+        local fedora_ssot
+        fedora_ssot="$(awk '/^\[/{s=($0=="[versions]")} s && /^[[:space:]]*fedora[[:space:]]*=/{sub(/[^"]*"/,""); sub(/".*/,""); print; exit}' "$toml")"
+        _v="$(grep -m1 -E '^PLATFORM_ID=' "$osr" | sed -E 's/^[^=]+=//; s/^"//; s/"[[:space:]]*$//')"
+        if [[ -z "$fedora_ssot" ]]; then
+            bad+="    mios.toml [versions].fedora is empty/unparseable"$'\n'
+        elif [[ "$_v" != "platform:f${fedora_ssot}" ]]; then
+            bad+="    os-release PLATFORM_ID = [$_v], expected [platform:f${fedora_ssot}] ([versions].fedora)"$'\n'
+        fi
     fi
 
     local _cargo_ver
@@ -1722,7 +1732,7 @@ check_version_ssot() {
 
     if [[ -n "$bad" ]]; then
         printf '%s' "$bad" >&2
-        _violation "version drift from SSOT mios.toml [meta].mios_version=[$ssot] (Law 7 NO-HARDCODE / Law 8 SSOT-PROJECTION) -- VERSION file + Containerfile ARG default must match the SSOT"
+        _violation "version drift from SSOT mios.toml [meta].mios_version=[$ssot] / [versions].fedora (Law 7 NO-HARDCODE / Law 8 SSOT-PROJECTION) -- VERSION file, Containerfile ARG default and os-release must match the SSOT"
     else
         echo "[98-drift-checks]   VERSION + Containerfile ARG MIOS_VERSION == mios.toml [meta].mios_version"
     fi
@@ -3076,21 +3086,33 @@ check_chrony_ptp_dropin() {
     tmp_ptp="${tmp_dir}/dev_ptp0"
     tmp_chrony_d="${tmp_dir}/chrony.d"
     touch "$tmp_ptp"
+    # A Hyper-V guest clock (WSL2) is the case the PHC refclock exists for; a
+    # bare-metal NIC PHC must get none (tests/test-chrony-ptp-dropin.sh).
+    mkdir -p "${tmp_dir}/sys_hv" "${tmp_dir}/sys_nic"
+    printf 'hyperv\n' > "${tmp_dir}/sys_hv/clock_name"
+    printf 'igc\n' > "${tmp_dir}/sys_nic/clock_name"
+
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_nic" CHRONY_D="${tmp_dir}/chrony.nic" bash "$dropin_script" >/dev/null 2>&1 || true
+    if [[ -f "${tmp_dir}/chrony.nic/10-ptp.conf" ]]; then
+        rm -rf "$tmp_dir"
+        _violation "mios-chrony-ptp-dropin made a bare-metal NIC PHC the preferred, trusted refclock"
+        return
+    fi
 
     local old_conf_hash="" new_conf_hash=""
     if [[ -f "$canon_conf" ]]; then
         old_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_hv" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
 
     if [[ ! -f "${tmp_chrony_d}/10-ptp.conf" ]]; then
         rm -rf "$tmp_dir"
-        _violation "mios-chrony-ptp-dropin failed to generate 10-ptp.conf when /dev/ptp0 exists"
+        _violation "mios-chrony-ptp-dropin failed to generate 10-ptp.conf for a Hyper-V /dev/ptp0"
         return
     fi
 
-    PTP_DEV="$tmp_ptp" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
+    PTP_DEV="$tmp_ptp" PTP_SYSFS="${tmp_dir}/sys_hv" CHRONY_D="$tmp_chrony_d" bash "$dropin_script" >/dev/null 2>&1 || true
 
     if [[ -f "$canon_conf" ]]; then
         new_conf_hash="$(sha256sum "$canon_conf" | awk '{print $1}')"

@@ -8,6 +8,8 @@ After=network-online.target mios-k3s-init.service
 
 [Service]
 Type=notify
+# MIOS_PORTS_K3S_API ([ports].k3s_api) for the API listener below.
+EnvironmentFile=-/etc/mios/install.env
 EnvironmentFile=-/etc/default/%N
 EnvironmentFile=-/etc/sysconfig/%N
 EnvironmentFile=-/etc/systemd/system/k3s.service.env
@@ -28,7 +30,7 @@ ExecStartPre=-/sbin/modprobe overlay
 # automation/36-ceph-k3s.sh). /usr/local/bin -> /var/usrlocal/bin on
 # bootc/FCOS layouts and is mutable per-host; /usr/bin keeps the unit
 # pinned to the image's authoritative copy.
-ExecStart=/usr/bin/k3s server --disable traefik --write-kubeconfig-mode 644
+ExecStart=/usr/bin/k3s server --disable traefik --write-kubeconfig-mode 644 --https-listen-port=${MIOS_PORTS_K3S_API}
 
 [Install]
 WantedBy=multi-user.target

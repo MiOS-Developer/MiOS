@@ -1,6 +1,6 @@
 // AI-hint: Layered config for mios-fanctl: built-in defaults < vendor /usr/share/mios/fan-control/mios-fanctl.toml < admin /etc/mios/fan-control/mios-fanctl.toml < $MIOS_FANCTL_CONFIG.
 // AI-related: /usr/share/mios/fan-control/mios-fanctl.toml, /usr/share/mios/mios.toml [hardware.fan_control]
-// AI-functions: load, load_from, merge, effective_floor
+// AI-functions: load, load_from, merge, effective_floor, Controller
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -39,8 +39,22 @@ pub struct Config {
     /// Stable ventulusd header id -> role token (pump, cpu_fan, radiator_fan,
     /// chassis_fan, no_fan, unknown). Applied by `mios-fanctl apply-roles`.
     pub roles: BTreeMap<String, String>,
+    /// Fan controllers by hwmon chip name, first present wins
+    /// (`mios-fanctl select-controller`). A higher layer replaces the list.
+    pub controllers: Vec<Controller>,
     #[serde(skip)]
     pub sources: Vec<String>,
+}
+
+/// One supported fan controller: drive it with `profile`, or leave its fans on
+/// firmware control (`firmware = true`, with a `note` saying why).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Controller {
+    pub hwmon: String,
+    pub profile: String,
+    pub firmware: bool,
+    pub note: String,
 }
 
 impl Config {

@@ -19,3 +19,18 @@ default_profile = "mios-default"
 # pwm6 reads ~3300 RPM (AIO pump), pwm7 has no tach (W_PUMP+).
 "hwmon:nct6799:nct6775.656:pwm6:pwm6" = "pump"
 "hwmon:nct6799:nct6775.656:pwm7:pwm7" = "pump"
+
+# Fan controllers by hwmon chip name (/sys/class/hwmon/*/name), first present
+# wins. `mios-fanctl select-controller` runs as ventulusd's ExecCondition: a
+# driven controller writes OPENFAN_PROFILE to /run/mios/fan-control/selected.env
+# (/etc/mios/fan-control.env still overrides it); a firmware controller or no
+# listed controller skips the unit with one journal line. An admin layer that
+# sets [[controllers]] replaces this whole list.
+[[controllers]]
+hwmon = "nct6799"
+profile = "mios-default"
+
+[[controllers]]
+hwmon = "ps5_fan"
+firmware = true
+note = "PS5 Blade: the console firmware owns the fan curve; no MiOS profile has been measured against its headers"
