@@ -179,11 +179,12 @@ A: `mios-gen k3s` projection and template (Law 8/14/16). B: package venv service
 
 Decided by the operator (relayed by the coordinator): (1) Tailscale SaaS, ProxyGroup HA, headscale off; (2) at most 10 front-door names; (4) tailnet-only mesh with wireguard-native; (5) one server now, grow as a more powerful Blade rejoins, PS5 and X570 included as members; (6) X570/MiOS-DEV in, `!wsl` lifted; (7) pgvector and forge pinned with backups to another Blade first; (9) the +2-file ratchet cost is **not** offset in this PR (standing drain policy, AGENTS.md); (10) cloud nodes are first-class; (11) push approved, PR stays a draft.
 
+Also decided (question UI): **first server** = the best fsync-gated node, PS5 and X570 stay agents until they pass; **fsync gate** = p99 WAL fsync under 10 ms; **image stores** = air-gap tarballs for the infrastructure set plus the embedded registry mirror (Spegel), accepting two stores.
+
+Answered in free text, **not yet a decision**: ADR-0016 §15.2 (three servers as three logical hosts on one Blade). The operator wrote: "MiOS Images can be run as VMs as well too with Failover". Read here as: logical hosts and nested MiOS images may be VMs, and VMs fail over under Pacemaker (ADR-0017, containers to k3s, VMs to Pacemaker). That does not say whether etcd members may share a Blade. The design's constraint stays: **etcd members must sit in different failure domains**, meaning different physical Blades (VMs on one Blade share that Blade's fate), and a VM-hosted k3s server would itself be a Pacemaker-managed resource whose failover must finish well inside etcd's election timeout or it is treated as a lost member. Whether §15.2 is narrowed is therefore **still open** and is asked again on the PR.
+
 Still open:
-- **Q3 ADR-0016 §15.2:** narrow it so etcd members sit on different Blades and `localhost_hosts` creates none? (Not yet asked.)
-- **Q8 disk budget** for two image stores (podman bound images plus k3s containerd) on small Blades. (Not yet asked.)
-- **Q12 first server:** which node is the single server now, and is the PS5-as-server trial wanted (with the datastore off USB)? The gate decides eligibility; the operator picks the trial.
-- **Q13 fsync gate thresholds:** accept p99 WAL fsync under 10 ms as the server-eligibility rule?
+- **Q3 ADR-0016 §15.2** as above.
 - **Q14 service front doors:** is the 10-door grouping in section 4 right?
 
 ## 10. Unverified
