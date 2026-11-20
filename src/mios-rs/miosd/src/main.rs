@@ -623,6 +623,11 @@ enum Commands {
         #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
+    /// Fail when a boot-reachable systemd unit names a program the image lacks
+    UnitExecCheck {
+        #[arg(long, default_value = "/")]
+        root: std::path::PathBuf,
+    },
     /// Check every installed SSOT native artifact without requiring Cargo
     NativeRuntimeCheck {
         #[arg(long, default_value = "/")]
@@ -2044,6 +2049,31 @@ async fn main() {
                 }
             }
         }
+        Commands::UnitExecCheck { root } => match mios_build::unit_exec::check(root) {
+            Ok(report) => {
+                for warning in &report.warnings {
+                    eprintln!("[miosd] unit-exec WARN {warning}");
+                }
+                for failure in &report.failures {
+                    eprintln!("[miosd] unit-exec FAIL {failure}");
+                }
+                if !report.failures.is_empty() {
+                    eprintln!(
+                        "[miosd] {} boot-reachable unit command(s) name a program the image does not carry",
+                        report.failures.len()
+                    );
+                    std::process::exit(1);
+                }
+                println!(
+                    "[miosd] {} enabled units, {} commands: every program is present",
+                    report.units, report.commands
+                );
+            }
+            Err(error) => {
+                eprintln!("[miosd] unit-exec-check: {error}");
+                std::process::exit(1);
+            }
+        },
         Commands::NativeRuntimeCheck {
             root,
             platform,
@@ -2798,7 +2828,7 @@ enabled=1
 repo_gpgcheck=0
 type=rpm
 gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64
+gpgkey=file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64
 skip_if_unavailable=True
 priority=95
 timeout=10
@@ -2813,7 +2843,7 @@ enabled=1
 repo_gpgcheck=0
 type=rpm
 gpgcheck=1
-gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64
+gpgkey=file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-{ver}-x86_64
 skip_if_unavailable=True
 priority=95
 timeout=10
@@ -3749,4 +3779,43 @@ fn run_render_uki_cmdline(check: bool) -> Result<(), Box<dyn std::error::Error>>
 fn run_generate_quadlets(check: bool) -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::var("MIOS_ROOT").unwrap_or_else(|_| ".".to_string());
     native_generator::run(std::path::Path::new(&root), "pod-quadlets", check)
+}
+
+#[cfg(test)]
+mod render_repos_tests {
+    use super::run_render_repos;
+
+    /// Fedora 45 ships its keys in /usr/share/pki/rpm-gpg and leaves
+    /// /etc/pki/rpm-gpg empty; a repo pointing at the old path fails every
+    /// package with "cannot open file".
+    #[test]
+    fn online_repos_use_the_fedora_key_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("fedora-45.repo");
+        let missing = dir.path().join("no-vendored-rpms");
+        run_render_repos(
+            true,
+            "45",
+            Some(out.to_str().unwrap()),
+            missing.to_str().unwrap(),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        let key = "gpgkey=file:///usr/share/pki/rpm-gpg/RPM-GPG-KEY-fedora-45-x86_64";
+        assert_eq!(text.matches(key).count(), 2, "{text}");
+        assert!(!text.contains("/etc/pki/rpm-gpg"), "{text}");
+        assert!(text.contains("metalink?repo=fedora-45&"), "{text}");
+        assert!(
+            text.contains("metalink?repo=updates-released-f45&"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn an_empty_release_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("x.repo");
+        assert!(run_render_repos(true, " ", Some(out.to_str().unwrap()), "/nonexistent").is_err());
+        assert!(!out.exists());
+    }
 }

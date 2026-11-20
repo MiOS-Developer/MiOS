@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AI-hint: Minimal Tomcat server.xml for mios-guacamole, mounted over the image's stock conf (Connector 8080, which collides with other host-network services). The HTTP port is the system property mios.guacamole.port, set by the Quadlet from [ports].guacamole_web through CATALINA_OPTS; the shutdown port is disabled. -->
+<!-- AI-related: usr/share/mios/mios.toml, usr/share/containers/systemd/mios-guacamole.container, tests/test-blade-port-wiring.py -->
+<Server port="-1" shutdown="SHUTDOWN">
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
+  <Listener className="org.apache.catalina.core.AprLifecycleListener" />
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener" />
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener" />
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener" />
+  <Service name="Catalina">
+    <Connector port="${mios.guacamole.port}" protocol="HTTP/1.1"
+               connectionTimeout="20000" />
+    <Engine name="Catalina" defaultHost="localhost">
+      <Host name="localhost" appBase="webapps" unpackWARs="true" autoDeploy="true" />
+    </Engine>
+  </Service>
+</Server>

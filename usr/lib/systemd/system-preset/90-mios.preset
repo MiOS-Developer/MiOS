@@ -296,7 +296,7 @@ enable mios-cpu-isolate.service
 enable mios-credential-apply.service
 enable mios-daemon.service
 enable mios-endpoint.target
-enable mios-finetune-serve.service
+disable mios-finetune-serve.service
 enable mios-firewall.service
 enable mios-flatpak-install.service
 enable mios-gpu-amd.service

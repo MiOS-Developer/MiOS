@@ -110,8 +110,8 @@ The kernel console belongs to the firmware's boot VGA (the iGPU) unless `fbcon=`
    iGPU, so the console is never blank. Hyprland is not affected.
 
 **Boot display report.** `mios-boot-display-report.service` runs `mios-gen boot-display-report` once per boot. It
-is read-only and needs only CAP_SYSLOG to read `/dev/kmsg`. journald does not store kernel messages
-(`ReadKMsg=no`), so this service is the record. It logs one JSON line with:
+is read-only and needs only CAP_SYSLOG to read `/dev/kmsg`. On WSL2 journald does not store kernel messages
+(`ReadKMsg=no` there), so this service is the record; elsewhere it is a summary of them. It logs one JSON line with:
 
 * the DRM cards, their drivers and connectors
 * the fb registration order from the kernel log
