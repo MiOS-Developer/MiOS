@@ -8627,6 +8627,16 @@ apt_keyring = "https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg"
 apt_list    = "https://pkgs.tailscale.com/stable/{id}/{codename}.tailscale-keyring.list"
 dnf_repo    = "https://pkgs.tailscale.com/stable/fedora/tailscale.repo"
 
+# `bootstrap.sh ssh-cert`: this host's [ssh.ca] certificate login to the Blades. The
+# client is tools/native/mios-ssh-ca (the native catalog, else built from the checkout
+# for the host's own target); the package below supplies ssh and ssh-keygen.
+# config_dropin is the system ssh_config drop-in that Includes the generated
+# ssh_config, so a plain `ssh <[ssh.ca].signer>` logs in as [ssh].user.
+[deployment.cloud.ssh]
+apt_package   = "openssh-client"
+dnf_package   = "openssh-clients"
+config_dropin = "/etc/ssh/ssh_config.d/50-mios-user-ca.conf"
+
 # `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
 # podman container booting its own systemd. The boot disk holds the image and a
 # nested build; Ubuntu LTS ships the guest agent that runs the startup script.
@@ -17269,8 +17279,12 @@ identity_file = "~/.ssh/agent_ssh_key"
 # (root 0600; never overwritten), `pubkey` prints the line to paste into public_key, and
 # `serve` answers POST /v1/ssh/certificates on [ports].ssh_ca at this node's tailnet IPv4
 # only, and only while enabled on the node named signer. The certificate serial is kept
-# beside key_file. The last three keys bound one request (head bytes, body bytes, and the
-# whole request's read time). The signer reads the vendor and host tiers only.
+# beside key_file. max_header_bytes, max_body_bytes and read_timeout_s bound one request
+# (head bytes, body bytes, and the whole request's read time). The signer reads the vendor
+# and host tiers only. A cloud node runs `mios-ssh-ca request` (.devcontainer/cloud-shell/
+# bootstrap.sh ssh-cert): it keeps its own key, asks signer over `tailscale nc`, installs
+# the certificate only if it is for that key and [ssh].user alone (and signed by public_key
+# when that is set), and renews once less than renew_before_s remains.
 [ssh.ca]
 enabled          = false
 signer           = "mios"
@@ -17284,6 +17298,7 @@ key_file         = "/var/lib/mios/ssh-ca/mios-user-ca"
 max_header_bytes = 8192
 max_body_bytes   = 16384
 read_timeout_s   = 10
+renew_before_s   = 3600
 
 
 # Windows uses the same [ports].ssh value as the Linux service.
