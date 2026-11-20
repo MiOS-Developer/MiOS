@@ -12,7 +12,7 @@ Wants=network-online.target
 [Container]
 ContainerName=mios-k3s
 EnvironmentFile=-/etc/mios/secrets.env
-Exec=k3s server --disable=traefik --kubelet-arg=cgroup-driver=cgroupfs
+Exec=k3s server --disable=traefik --kubelet-arg=cgroup-driver=cgroupfs --https-listen-port=8450
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=root
 Image=docker.io/rancher/k3s:latest

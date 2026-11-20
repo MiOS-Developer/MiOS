@@ -89,9 +89,11 @@ while IFS= read -r _unit; do
     install -D -m 0644 "$_rendered" "/usr/lib/systemd/user/$_unit"
     rm -f -- "$_rendered"
 done < <(/usr/libexec/mios/mios-unit-gen --root / --user --list)
-# The coverage ratchet counts undeclared files in usr/lib/systemd/user, so it measures the MiOS source
-# tree: the image root also holds every distro package's user units, which [user_units.*] never declares.
-/usr/libexec/mios/mios-unit-gen --root "$_tg_root" --user --check
+# The coverage ratchet ([unit_projection].max_undeclared_user) counts the user
+# units MiOS ships, so it reads the build's source tree. The image root also
+# holds every package's user units (ssh-agent, wireplumber, xdg-desktop-portal,
+# ...), which no [user_units.*] declaration owns, and would fail it on each bake.
+/usr/libexec/mios/mios-unit-gen --root "$(cd "${SCRIPT_DIR}/.." && pwd)" --user --check
 /usr/libexec/mios/mios-gen render-console-theme --root /
 /usr/libexec/mios/mios-sync-theme --bridge-only
 /usr/libexec/mios/mios-dotfiles-render render rofi

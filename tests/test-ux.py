@@ -2340,10 +2340,15 @@ class wcg_TestWmConfigGen(unittest.TestCase):
             bake = fh.read()
         checks = [l for l in bake.splitlines() if "mios-unit-gen" in l and "--user" in l and "--check" in l]
         self.assertEqual(len(checks), 1, checks)
-        self.assertIn('--root "$_tg_root" ', checks[0])
+        # The check reads the source tree (SCRIPT_DIR/..), never the image root.
         self.assertNotRegex(checks[0], r"--root /(\s|$)")
-        self.assertIn('_tg_root="$(cd "${SCRIPT_DIR}/.." && pwd)"', bake)
-        self.assertLess(bake.index("_tg_root="), bake.index(checks[0]))
+        root_arg = re.search(r'--root (.+?) --user', checks[0]).group(1)
+        source_root = '"$(cd "${SCRIPT_DIR}/.." && pwd)"'
+        if root_arg == '"$_tg_root"':
+            self.assertIn('_tg_root=' + source_root, bake)
+            self.assertLess(bake.index("_tg_root="), bake.index(checks[0]))
+        else:
+            self.assertEqual(root_arg, source_root, checks[0])
         # Both sides against the real gate, when it is built: the source tree holds
         # the ceiling, one undeclared distro unit on top of it breaks it.
         cands = [os.environ.get("MIOS_UNIT_GEN", ""), "/usr/libexec/mios/mios-unit-gen",

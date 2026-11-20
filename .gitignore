@@ -777,6 +777,9 @@ usr/lib/systemd/*
 !/usr/lib/systemd/oomd.conf.d/**
 !/usr/lib/systemd/system/
 !/usr/lib/systemd/system-preset/
+!/usr/lib/systemd/system-generators/
+usr/lib/systemd/system-generators/*
+!/usr/lib/systemd/system-generators/mios-*
 !/usr/lib/systemd/user/
 !/usr/lib/systemd/user-preset/
 !/usr/lib/systemd/zram-generator.conf.d/

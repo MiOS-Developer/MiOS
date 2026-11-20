@@ -397,25 +397,6 @@ class TestVersionRootScope(SourceFixture):
         code, stdout, _ = self.run_lint(soft="1")
         self.assertEqual(code, 0)
         self.assertIn("SOFT mode enabled", stdout)
-class TestAiTagLoader(unittest.TestCase):
-    """load_ai_tag must not depend on SourceFileLoader.load_module, which Python 3.15 removed."""
-
-    ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-
-    def test_loads_without_load_module(self):
-        # Simulate 3.15 on any interpreter: the loader has no load_module at all.
-        with mock.patch.object(importlib.machinery.SourceFileLoader, "load_module", create=True,
-                               new=property(lambda self: (_ for _ in ()).throw(AttributeError("load_module")))):
-            module = mc.load_ai_tag(self.ROOT)
-        self.assertIsNotNone(module, "load_ai_tag returned None once load_module is gone")
-        self.assertTrue(hasattr(module, "__file__") and module.__file__.endswith("mios-ai-tag"))
-        self.assertIs(sys.modules.get("mios_ai_tag"), module)
-
-    def test_missing_tool_is_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(mc.load_ai_tag(tmp))
-
-
 def main() -> int:
     p = policy()
     test_classifier(p)
@@ -426,12 +407,37 @@ def main() -> int:
     test_html_endings()
     test_landing_ratio(p)
     suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(case)
-                               for case in (TestTrackedSourceScope, TestVersionRootScope, TestAiTagLoader))
+                               for case in (TestTrackedSourceScope, TestVersionRootScope, TestLoadAiTag))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     print(f"[test_mios_comments] {PASSED} passed, {len(FAILED)} failed")
     for f in FAILED:
         print(f"  FAIL {f}")
     return 1 if FAILED or not result.wasSuccessful() else 0
+
+class TestLoadAiTag(unittest.TestCase):
+    """mios-manual reads AI-hints through load_ai_tag. Python 3.15 (the image's
+    Fedora 45 base) removed SourceFileLoader.load_module; with it gone every call
+    returned None and the image's mios-gen sync failed at corpus.ledger."""
+
+    ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+    def test_loads_mios_ai_tag(self):
+        mod = mc.load_ai_tag(self.ROOT)
+        self.assertIsNotNone(mod)
+        self.assertTrue(hasattr(mod, "AI_HINT_TXT_RE"))
+
+    def test_loads_without_load_module(self):
+        def removed(*_a, **_k):
+            raise AttributeError("load_module was removed in Python 3.15")
+        with mock.patch.object(importlib.machinery.SourceFileLoader, "load_module", removed, create=True):
+            mod = mc.load_ai_tag(self.ROOT)
+        self.assertIsNotNone(mod, "load_ai_tag must not depend on SourceFileLoader.load_module")
+        self.assertTrue(hasattr(mod, "AI_HINT_TXT_RE"))
+
+    def test_missing_tool_is_none(self):
+        with tempfile.TemporaryDirectory() as empty:
+            self.assertIsNone(mc.load_ai_tag(empty))
+
 
 if __name__ == "__main__":
     sys.exit(main())
