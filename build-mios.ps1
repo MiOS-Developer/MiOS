@@ -22,6 +22,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
+# This script's own source: Phase 4's elevated exposure worker is compiled from fixed functions in it, never its top
+# level. `mios build` runs it as a script block, where $PSCommandPath is empty.
+$script:MiosBuildSource = if ($PSCommandPath) { [IO.File]::ReadAllText($PSCommandPath) } else { $MyInvocation.MyCommand.Definition }
 
 function Resolve-MiosBuilderDistribution([string]$Machine) {
     $registered = @(& wsl.exe --list --quiet 2>$null) |
@@ -4905,6 +4908,7 @@ function Set-MiosLanFirewallRules {
 function Set-MiosLanPortProxy {
     # Under mirrored networking Windows already exposes container ports on the host, so netsh portproxy is both
     # impossible (no distinct VM eth0) and unnecessary. The mode is the SSOT one every .wslconfig writer renders.
+    param([string]$WslAddress = '')   # the VM address resolved before elevation; empty asks WSL here
     if ((Resolve-MiosWslNetworkingMode) -eq 'mirrored') {
         Log-Ok "portproxy: skipped (mios.toml [wsl2].networking_mode=mirrored exposes container ports on the host directly)"
         return
@@ -4920,18 +4924,8 @@ function Set-MiosLanPortProxy {
     }
     else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
 
-    $_wslIp = $null
-    # [bootstrap].dev_distro names the podman machine; WSL registers it as podman-<machine>. Ask the registered
-    # distribution, as Ensure-MiosBuilder does, or the probe targets a distribution that does not exist.
-    $_wslDistro = try { Resolve-MiosBuilderDistribution $DevDistro } catch { $DevDistro }
-    try {
-        $_prevWslUtf8 = $env:WSL_UTF8
-        $env:WSL_UTF8 = '1'
-        $_raw = (& wsl.exe -d $_wslDistro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
-        $env:WSL_UTF8 = $_prevWslUtf8
-        $_m = [regex]::Match($_raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
-        if ($_m.Success) { $_wslIp = $_m.Groups[1].Value }
-    } catch {}
+    if ($WslAddress) { $_wslIp = $WslAddress; $_wslDistro = 'the operator-resolved address' }
+    else { $_vm = Resolve-MiosWslVmAddress; $_wslIp = $_vm.Address; $_wslDistro = $_vm.Distro }
     if (-not $_wslIp -or $_wslIp -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
         Log-Warn "portproxy: could not resolve a clean WSL VM IP of '$_wslDistro' (got: '$_wslIp') -- skipping forwarding"
         return
@@ -4941,14 +4935,7 @@ function Set-MiosLanPortProxy {
     # A 0.0.0.0 forward of a MiOS [ports] value that is no longer exposed (one an earlier run added) is removed; forwards
     # of ports MiOS does not own are left alone.
     $wanted = @($plan.Ports.Values | ForEach-Object { [string]$_ })
-    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
-    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0 }
-    $owned = @{}
-    foreach ($layer in @(Resolve-MiosTomlLayers)) {
-        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
-        $body = [regex]::Match([string]$layer.Text, '(?ms)^\[ports\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)').Groups['body'].Value
-        foreach ($m in [regex]::Matches($body, '(?m)^[ \t]*[a-z][a-z0-9_]*[ \t]*=[ \t]*([0-9]{1,5})\b')) { $owned[[string]([int]$m.Groups[1].Value + ($stack * 10000))] = $true }
-    }
+    $owned = Get-MiosVendorPortSet
     foreach ($line in @(& netsh interface portproxy show v4tov4 2>$null)) {
         if ([string]$line -notmatch '^\s*0\.0\.0\.0\s+([0-9]+)\s+\S+\s+([0-9]+)\s*$') { continue }
         $listen = $Matches[1]
@@ -4984,6 +4971,416 @@ function Set-MiosLanPortProxy {
             Start-Service -Name iphlpsvc -ErrorAction SilentlyContinue
         }
     } catch {}
+}
+
+function Resolve-MiosWslVmAddress {
+    # The NAT guest's eth0 IPv4 address from the registered builder distribution (WSL registers the podman machine as
+    # podman-<machine>). Only the unelevated build's own token sees its WSL distributions, so the elevated worker is
+    # handed this address and never asks WSL itself.
+    $distro = try { Resolve-MiosBuilderDistribution $DevDistro } catch { $DevDistro }
+    $address = $null
+    try {
+        $prevUtf8 = $env:WSL_UTF8
+        $env:WSL_UTF8 = '1'
+        $raw = (& wsl.exe -d $distro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
+        $env:WSL_UTF8 = $prevUtf8
+        $m = [regex]::Match($raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
+        if ($m.Success) { $address = $m.Groups[1].Value }
+    } catch {}
+    return [pscustomobject]@{ Distro = $distro; Address = $address }
+}
+
+function Get-MiosVendorPortSet {
+    # Every port the system SSOT assigns in [ports], shifted by [ports].stack_id * 10000, keyed as strings: the portproxy
+    # listeners MiOS owns, the only forwards it removes once they leave [firewall.windows].expose.
+    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0 }
+    $owned = @{}
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
+        $body = [regex]::Match([string]$layer.Text, '(?ms)^\[ports\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)').Groups['body'].Value
+        foreach ($m in [regex]::Matches($body, '(?m)^[ \t]*[a-z][a-z0-9_]*[ \t]*=[ \t]*([0-9]{1,5})\b')) { $owned[[string]([int]$m.Groups[1].Value + ($stack * 10000))] = $true }
+    }
+    return $owned
+}
+
+function Get-MiosLanExposureDrift {
+    # Read-only: each change Set-MiosLanFirewallRules and Set-MiosLanPortProxy would make on this host, one line per
+    # difference, measured against the same plan they apply. Defender rules and port forwards read back without
+    # elevation, so Invoke-MiosLanExposure asks for UAC only when this returns something. Windows reads scopes back in
+    # mask form and profiles in its own order; both are compared canonically.
+    param([string]$WslAddress = '')
+    $drift = New-Object System.Collections.Generic.List[string]
+    $plan = Get-MiosLanExposurePlan
+    $scoped = ($plan.RemoteAddresses.Count -gt 0 -and $plan.Profiles.Count -gt 0)
+    $wanted = [ordered]@{}
+    if ($scoped) { foreach ($svc in $plan.Ports.Keys) { $wanted["MiOS - $svc ($($plan.Ports[$svc])/tcp)"] = [string]$plan.Ports[$svc] } }
+    $canon = {
+        param($Items)
+        (@(@($Items) | Where-Object { $null -ne $_ } | ForEach-Object {
+            $t = ([string]$_).Trim()
+            if ($t -ieq 'LocalSubnet') { 'LocalSubnet' } else { ConvertTo-MiosCanonicalPrefix $t }
+        } | Sort-Object -Unique)) -join ','
+    }
+    $wantScope = & $canon $plan.RemoteAddresses
+    $wantProfiles = (@($plan.Profiles) | Sort-Object -Unique) -join ','
+    $present = @{}
+    foreach ($r in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue | Where-Object { $_ })) {
+        $name = [string]$r.DisplayName
+        $present[$name] = $true
+        if (-not $wanted.Contains($name)) { $drift.Add("remove Defender rule '$name'"); continue }
+        $pf = @($r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue)[0]
+        $af = @($r | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue)[0]
+        $profiles = (@(([string]$r.Profile) -split '[,\s]+' | Where-Object { $_ }) | Sort-Object -Unique) -join ','
+        $ports = (@($pf.LocalPort) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ }) -join ','
+        if ([string]$r.Enabled -ne 'True' -or [string]$r.Action -ne 'Allow' -or [string]$r.Direction -ne 'Inbound' -or
+            [string]$pf.Protocol -ne 'TCP' -or $ports -ne $wanted[$name] -or $profiles -ne $wantProfiles -or
+            (& $canon $af.RemoteAddress) -ne $wantScope) { $drift.Add("refresh Defender rule '$name'") }
+    }
+    foreach ($name in @($wanted.Keys)) { if (-not $present.ContainsKey($name)) { $drift.Add("create Defender rule '$name'") } }
+    # The port proxy follows Set-MiosLanPortProxy: nothing under mirrored networking, and nothing to measure without a
+    # VM address (it skips forwarding then too).
+    if ((Resolve-MiosWslNetworkingMode) -ne 'mirrored' -and $WslAddress) {
+        $forwards = @{}
+        foreach ($line in @(& netsh interface portproxy show v4tov4 2>$null)) {
+            if ([string]$line -match '^\s*0\.0\.0\.0\s+([0-9]+)\s+(\S+)\s+([0-9]+)\s*$') { $forwards[$Matches[1]] = "$($Matches[2]):$($Matches[3])" }
+        }
+        $want = @($plan.Ports.Values | ForEach-Object { [string]$_ })
+        foreach ($port in $want) { if ($forwards[$port] -ne "${WslAddress}:$port") { $drift.Add("forward 0.0.0.0:$port to ${WslAddress}:$port") } }
+        $owned = Get-MiosVendorPortSet
+        foreach ($listen in @($forwards.Keys)) { if ($owned.ContainsKey($listen) -and $want -notcontains $listen) { $drift.Add("remove forward 0.0.0.0:$listen") } }
+    }
+    return $drift.ToArray()
+}
+
+function Get-MiosLanExposureLayers {
+    # The resolved TOML layers, each cut down to the three sections the Phase-4 exposure reads -- [firewall.windows],
+    # [wsl2] and [ports] -- in the same order and under the same paths, so the elevated worker resolves exactly the plan
+    # this token does. Every other section stays here: credentials ([identity], [auth], ...) never cross to the worker.
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        $kept = New-Object System.Collections.Generic.List[string]
+        $on = $false
+        foreach ($line in ([string]$layer.Text -split "\r?\n")) {
+            if ($line -match '^\s*\[\[') { $on = $false; continue }
+            if ($line -match '^\s*\[\s*([A-Za-z0-9_][A-Za-z0-9_.\-]*)\s*\]\s*(#.*)?$') {
+                $on = ($Matches[1] -cmatch '^(firewall\.windows|wsl2|ports)$')
+                if ($on) { $kept.Add("[$($Matches[1])]") }
+                continue
+            }
+            if ($line -match '^\[') { $on = $false; continue }
+            if ($on) { $kept.Add($line) }
+        }
+        [pscustomobject]@{ Path = [string]$layer.Path; Text = ($kept -join "`n") }
+    }
+}
+
+function Test-MiosLanExposureLayerText {
+    # True when a layer holds nothing but what Get-MiosLanExposureLayers keeps: no array table, and no section header
+    # other than [firewall.windows], [wsl2] or [ports]. The elevated worker refuses any other layer.
+    param([AllowEmptyString()][string]$Text)
+    foreach ($line in ($Text -split "\r?\n")) {
+        if ($line -match '^\s*\[\[') { return $false }
+        if ($line -match '^\s*\[\s*([A-Za-z0-9_][A-Za-z0-9_.\-]*)\s*\]\s*(#.*)?$' -and $Matches[1] -cnotmatch '^(firewall\.windows|wsl2|ports)$') { return $false }
+        if ($line -match '^\[' -and $line -cnotmatch '^\[(firewall\.windows|wsl2|ports)\]\s*(#.*)?$') { return $false }
+    }
+    return $true
+}
+
+function Test-MiosWslNatAddress {
+    # True when IPv4 Address is a guest address inside a preferred prefix of this host's WSL virtual adapter
+    # (vEthernet (WSL ...)): the only place the elevated worker points MiOS-DEV's exposed ports at.
+    param([Parameter(Mandatory)][string]$Address)
+    $ip = $null
+    if ($Address -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [Net.IPAddress]::TryParse($Address, [ref]$ip)) { return $false }
+    foreach ($a in @(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { [string]$_.InterfaceAlias -like 'vEthernet (WSL*' })) {
+        $len = [int]$a.PrefixLength
+        if ($len -lt 8 -or $len -gt 30 -or [string]$a.IPAddress -eq $Address) { continue }
+        $net = ConvertTo-MiosNetworkPrefix -Address ([Net.IPAddress]::Parse([string]$a.IPAddress)) -PrefixLength $len
+        if (Test-MiosPrefixWithin -Inner "$Address/32" -Outer $net) { return $true }
+    }
+    return $false
+}
+
+function Invoke-MiosLanExposureRequest {
+    # The elevated side: check the request, then apply the Phase-4 exposure from exactly the layers it carries. Only
+    # [firewall.windows], [wsl2] and [ports] may arrive, and forwards may only point into this host's WSL network, so a
+    # request can never open more than the plan those sections resolve to.
+    param([Parameter(Mandatory)]$Request)
+    $names = @($Request.PSObject.Properties.Name)
+    if ($names.Count -ne 2 -or @($names | Where-Object { $_ -notin @('Layers', 'WslAddress') }).Count) { throw 'Invalid exposure request fields.' }
+    $address = [string]$Request.WslAddress
+    if ($address -and -not (Test-MiosWslNatAddress $address)) { throw "The WSL VM address '$address' is not on this host's WSL network." }
+    if (@($Request.Layers).Count -gt 16) { throw 'Too many exposure layers.' }
+    $layers = @()
+    foreach ($l in @($Request.Layers)) {
+        $fields = @($l.PSObject.Properties.Name)
+        if ($fields.Count -ne 2 -or @($fields | Where-Object { $_ -notin @('Path', 'Text') }).Count) { throw 'Invalid exposure layer fields.' }
+        $path = [string]$l.Path
+        $text = [string]$l.Text
+        if (-not $path -or $path.Length -gt 2048) { throw 'Invalid exposure layer path.' }
+        if (-not (Test-MiosLanExposureLayerText $text)) { throw "Exposure layer '$path' carries a section other than [firewall.windows], [wsl2] or [ports]." }
+        $layers += [pscustomobject]@{ Path = $path; Text = $text }
+    }
+    $script:_MiosTomlCache = @{ '_layers' = $layers }
+    Set-MiosLanFirewallRules
+    Set-MiosLanPortProxy -WslAddress $address
+}
+
+function ConvertTo-MiosLanExposureReply {
+    # The worker's one reply line. Its log lines travel as a plain array: ConvertTo-Json cannot serialize a generic List.
+    param([Parameter(Mandatory)][string]$Status, [string]$Detail = '', [AllowNull()]$Lines)
+    $reply = @{ Status = $Status; Lines = @(if ($null -ne $Lines) { $Lines.ToArray() }) }
+    if ($Detail) { $reply['Detail'] = $Detail }
+    return ($reply | ConvertTo-Json -Depth 4 -Compress)
+}
+
+function Invoke-MiosLanExposureWorker {
+    param([Parameter(Mandatory)][string]$PipeName, [Parameter(Mandatory)][int]$OriginProcessId)
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'The Windows host exposure worker requires UAC elevation.'
+    }
+    Initialize-MiosPipePeerApi
+    $pipe = New-Object IO.Pipes.NamedPipeClientStream('.', $PipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None)
+    try {
+        $pipe.Connect(180000)
+        [uint32]$peer = 0
+        if (-not [MiosBootstrapPipePeer]::GetNamedPipeServerProcessId($pipe.SafePipeHandle.DangerousGetHandle(), [ref]$peer) -or $peer -ne $OriginProcessId) { throw 'The exposure worker pipe has the wrong originating process.' }
+        $reader = New-Object IO.StreamReader($pipe, (New-Object Text.UTF8Encoding($false)), $false, 4096, $true)
+        $writer = New-Object IO.StreamWriter($pipe, (New-Object Text.UTF8Encoding($false)), 4096, $true)
+        $writer.AutoFlush = $true
+        try {
+            $line = Read-MiosPipeLine -Reader $reader
+            if (-not $line) { throw 'Empty exposure request.' }
+            $request = ConvertFrom-Json -InputObject $line -ErrorAction Stop
+            Invoke-MiosLanExposureRequest -Request $request
+            $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'applied' -Lines $script:MiosWorkerLines))
+        } catch {
+            $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'error' -Detail $_.Exception.Message -Lines $script:MiosWorkerLines))
+            throw
+        } finally { $writer.Dispose(); $reader.Dispose() }
+    } finally { $pipe.Dispose() }
+}
+
+function Get-MiosLanExposureWorkerScript {
+    # The elevated Phase-4 worker: only these fixed functions of this script, compiled from its source by the AST, the
+    # shape of Get-MiOS.ps1's machine worker. This script's top level never runs elevated; the worker's log lines
+    # return in its reply.
+    param([Parameter(Mandatory)][string]$Source)
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Cannot prepare the exposure worker from an invalid build-mios.ps1 source.' }
+    $names = @('Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosVendorTomlValue', 'Get-MiosSsotPort', 'ConvertTo-MiosNetworkPrefix',
+        'Test-MiosPrefixWithin', 'Resolve-MiosWslNetworkingMode', 'Get-MiosLanExposurePlan', 'Get-MiosVendorPortSet',
+        'Resolve-MiosBuilderDistribution', 'Resolve-MiosWslVmAddress', 'Set-MiosLanFirewallRules', 'Set-MiosLanPortProxy',
+        'Test-MiosWslNatAddress', 'Test-MiosLanExposureLayerText', 'Initialize-MiosPipePeerApi', 'Read-MiosPipeLine',
+        'Invoke-MiosLanExposureRequest', 'ConvertTo-MiosLanExposureReply', 'Invoke-MiosLanExposureWorker')
+    $functions = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $names }, $true))
+    foreach ($name in $names) { if (@($functions | Where-Object { $_.Name -eq $name }).Count -ne 1) { throw "Missing or duplicate exposure worker function: $name" } }
+    $shims = @'
+$script:MiosWorkerLines = New-Object System.Collections.Generic.List[object]
+function Write-Log { param([string]$M, [string]$L = 'INFO') $script:MiosWorkerLines.Add([pscustomobject]@{ L = $L; M = $M }) }
+function Log-Ok([string]$T) { Write-Log $T 'OK' }
+function Log-Info([string]$T) { Write-Log $T 'STEP' }
+function Log-Warn([string]$T) { Write-Log $T 'WARN' }
+'@
+    return "param([string]`$PipeName, [int]`$OriginProcessId)`r`n`$ErrorActionPreference = 'Stop'`r`n" + $shims + "`r`n" +
+        (($functions | ForEach-Object { $_.Extent.Text }) -join "`r`n") +
+        "`r`nInvoke-MiosLanExposureWorker -PipeName `$PipeName -OriginProcessId `$OriginProcessId`r`n"
+}
+
+function Invoke-MiosElevatedLanExposure {
+    # The unelevated side of the Phase-4 hand-off, in the shape of Get-MiOS.ps1's machine preparation: fixed functions
+    # compiled into a private, digest-checked worker that UAC starts, then one request and one reply over a pipe that
+    # only this account and Administrators can open, each end checking the other's process ID.
+    param([string]$WslAddress = '')
+    $layers = @(Get-MiosLanExposureLayers)
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $pipeName = 'MiOS-LanExposure-' + [guid]::NewGuid().ToString('N')
+    $security = New-Object IO.Pipes.PipeSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($s in @($sid, 'S-1-5-32-544')) {
+        $rights = if ($s -eq $sid) { 'FullControl' } else { 'ReadWrite' }
+        $security.AddAccessRule((New-Object IO.Pipes.PipeAccessRule((New-Object Security.Principal.SecurityIdentifier $s), $rights, 'Allow')))
+    }
+    $options = [IO.Pipes.PipeOptions]::Asynchronous
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $pipe = New-Object IO.Pipes.NamedPipeServerStream($pipeName, [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Byte, $options, 4096, 4096, $security)
+    } else {
+        $pipe = [IO.Pipes.NamedPipeServerStreamAcl]::Create($pipeName, [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Byte,
+            $options, 4096, 4096, $security, [IO.HandleInheritability]::None, [IO.Pipes.PipeAccessRights]0)
+    }
+    $workerPath = Join-Path $env:TEMP ('mios-lan-exposure-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        New-Item -ItemType File -Path $workerPath -ErrorAction Stop | Out-Null
+        Set-MiosPrivateUserTomlAcl $workerPath
+        $encoding = New-Object Text.UTF8Encoding($true)
+        [byte[]]$bytes = $encoding.GetPreamble() + $encoding.GetBytes((Get-MiosLanExposureWorkerScript $script:MiosBuildSource))
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') } finally { $sha.Dispose() }
+        [IO.File]::WriteAllBytes($workerPath, $bytes)
+        Initialize-MiosPipePeerApi
+        $connected = $pipe.BeginWaitForConnection($null, $null)
+        # UAC receives a verifier and a digest, never an unverified -File invocation: read once, hash those exact bytes,
+        # then run those same bytes.
+        $quotedPath = $workerPath.Replace("'", "''")
+        $launch = @"
+`$ErrorActionPreference = 'Stop'
+`$bytes = [IO.File]::ReadAllBytes('$quotedPath')
+`$sha = [Security.Cryptography.SHA256]::Create()
+try { `$actual = [BitConverter]::ToString(`$sha.ComputeHash(`$bytes)).Replace('-', '') } finally { `$sha.Dispose() }
+if (`$actual -cne '$digest') { throw 'The exposure worker source changed before UAC launch.' }
+`$source = [Text.Encoding]::UTF8.GetString(`$bytes).TrimStart([char]0xfeff)
+& ([scriptblock]::Create(`$source)) -PipeName '$pipeName' -OriginProcessId $PID
+"@
+        $encodedLaunch = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
+        $engine = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Write-Host '  [*] Approve UAC to apply the MiOS-DEV Windows firewall rules and port forwards from mios.toml [firewall.windows].' -ForegroundColor Cyan
+        Write-Log 'Windows host exposure: requesting UAC for the elevated exposure worker'
+        try {
+            $worker = Start-Process -FilePath $engine -Verb RunAs -PassThru -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -ErrorAction Stop `
+                -ArgumentList @('-NoProfile', '-EncodedCommand', $encodedLaunch)
+        } catch {
+            throw "LAN-EXPOSURE-ELEVATION-DECLINED: UAC did not start the exposure worker ($($_.Exception.Message)); the Windows host exposure is unchanged."
+        }
+        if (-not $connected.AsyncWaitHandle.WaitOne(180000)) { throw 'The elevated exposure worker did not connect.' }
+        $pipe.EndWaitForConnection($connected)
+        [uint32]$peer = 0
+        if (-not [MiosBootstrapPipePeer]::GetNamedPipeClientProcessId($pipe.SafePipeHandle.DangerousGetHandle(), [ref]$peer) -or $peer -ne $worker.Id) { throw 'The exposure pipe has the wrong elevated worker.' }
+        $writer = New-Object IO.StreamWriter($pipe, (New-Object Text.UTF8Encoding($false)), 4096, $true)
+        $reader = New-Object IO.StreamReader($pipe, (New-Object Text.UTF8Encoding($false)), $false, 4096, $true)
+        try {
+            $writer.AutoFlush = $true
+            $writer.WriteLine((@{ Layers = $layers; WslAddress = $WslAddress } | ConvertTo-Json -Depth 5 -Compress))
+            $reply = Read-MiosPipeLine -Reader $reader -Limit 1048576
+            if (-not $reply) { throw 'The elevated exposure worker exited without a result.' }
+            $result = ConvertFrom-Json -InputObject $reply -ErrorAction Stop
+            foreach ($l in @($result.Lines)) {
+                switch ([string]$l.L) {
+                    'OK'    { Log-Ok ([string]$l.M) }
+                    'STEP'  { Log-Info ([string]$l.M) }
+                    'WARN'  { Log-Warn ([string]$l.M) }
+                    default { Write-Log ([string]$l.M) ([string]$l.L) }
+                }
+            }
+            if ([string]$result.Status -ne 'applied') { throw ("Windows host exposure stopped: " + $result.Detail) }
+            $worker.WaitForExit()
+            if ($worker.ExitCode -ne 0) { throw 'The elevated exposure worker failed after applying.' }
+            return $result
+        } finally { $writer.Dispose(); $reader.Dispose() }
+    } finally { $pipe.Dispose(); Remove-Item -LiteralPath $workerPath -Force -ErrorAction SilentlyContinue }
+}
+
+function Invoke-MiosLanExposure {
+    # Phase 4's Windows-host exposure of MiOS-DEV (Defender rules; port forwards under NAT) from mios.toml
+    # [firewall.windows]. Reading both needs no elevation and writing does, so drift is measured here and UAC is asked
+    # only when the host differs: the writes run here when elevated, otherwise in a UAC-started worker. -Force skips the
+    # drift check.
+    param([switch]$Force)
+    if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        Log-Warn "Firewall: New-NetFirewallRule cmdlet not available; skipping LAN inbound rules"
+        return
+    }
+    $address = ''
+    if ((Resolve-MiosWslNetworkingMode) -ne 'mirrored') {
+        $vm = Resolve-MiosWslVmAddress
+        if ($vm.Address) { $address = [string]$vm.Address }
+        else { Log-Warn "portproxy: could not resolve a clean WSL VM IP of '$($vm.Distro)' -- port forwarding is not measured or applied" }
+    }
+    $drift = @(Get-MiosLanExposureDrift -WslAddress $address)
+    if (-not $drift.Count -and -not $Force) {
+        Log-Ok 'Windows host exposure: the Defender rules and port forwards already match mios.toml [firewall.windows]; no elevation needed'
+        return
+    }
+    foreach ($d in $drift) { Write-Log "Windows host exposure drift: $d" }
+    if ($script:IsAdmin) {
+        try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
+        try { Set-MiosLanPortProxy -WslAddress $address } catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
+        return
+    }
+    $null = Invoke-MiosElevatedLanExposure -WslAddress $address
+}
+
+function ConvertTo-MiosCanonicalPrefix {
+    # One rule address in the form this script writes (network/length), whatever form Windows reads it back in:
+    # a bare address (a host prefix), address/length, or IPv4 address/dotted-mask. Anything else is returned as written.
+    param([AllowEmptyString()][string]$Text)
+    $t = $Text.Trim()
+    $ipText = $t; $len = $null
+    if ($t -match '^([^/]+)/(.+)$') {
+        $ipText = $Matches[1]; $tail = $Matches[2]
+        if ($tail -match '^[0-9]{1,3}$') { $len = [int]$tail }
+        else {
+            $mask = $null
+            if (-not [Net.IPAddress]::TryParse($tail, [ref]$mask) -or $mask.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { return $t }
+            $bits = ''
+            foreach ($byte in $mask.GetAddressBytes()) { $bits += [Convert]::ToString($byte, 2).PadLeft(8, '0') }
+            if ($bits -notmatch '^1*0*$') { return $t }
+            $len = $bits.IndexOf('0'); if ($len -lt 0) { $len = 32 }
+        }
+    }
+    $ip = $null
+    if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { return $t }
+    $bitsMax = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+    if ($null -eq $len) { $len = $bitsMax }
+    if ($len -lt 1 -or $len -gt $bitsMax) { return $t }
+    return ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+}
+
+function Assert-MiosNoReparsePath {
+    param([Parameter(Mandatory)][string]$Path)
+    $p = [IO.Path]::GetFullPath($Path)
+    while ($p) {
+        $item = $null
+        try { $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop }
+        catch { if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) { throw } }
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'A TOML path passes through a reparse point; refusing to write.' }
+        $next = Split-Path -Parent $p
+        if ($next -eq $p) { break }
+        $p = $next
+    }
+}
+
+function Set-MiosPrivateUserTomlAcl {
+    param([Parameter(Mandatory)][string]$Path)
+    Assert-MiosNoReparsePath $Path
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($owner, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
+    }
+    $acl.SetOwner($owner)
+    # A fresh FileSecurity modifies owner/access only; do not ask Set-Acl to persist an audit section.
+    $info = New-Object IO.FileInfo $Path
+    try {
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $info.SetAccessControl($acl) }
+        else { [IO.FileSystemAclExtensions]::SetAccessControl($info, $acl) }
+    } catch { throw }
+}
+
+function Initialize-MiosPipePeerApi {
+    if (-not ('MiosBootstrapPipePeer' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class MiosBootstrapPipePeer {
+    [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeServerProcessId(IntPtr handle, out uint pid);
+    [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeClientProcessId(IntPtr handle, out uint pid);
+}
+'@ -ErrorAction Stop
+    }
+}
+
+function Read-MiosPipeLine {
+    param([Parameter(Mandatory)][IO.TextReader]$Reader, [int]$Limit = 8388608)
+    $line = New-Object Text.StringBuilder
+    while ($true) {
+        $next = $Reader.Read()
+        if ($next -lt 0) { throw 'The machine preparation pipe closed before a complete message.' }
+        if ($next -eq 10) { return $line.ToString().TrimEnd("`r") }
+        if ($line.Length -ge $Limit) { throw 'Machine preparation message exceeds its size limit.' }
+        [void]$line.Append([char]$next)
+    }
 }
 
 function Restore-PodmanPrefix {
@@ -8066,9 +8463,8 @@ exit 0
     Start-Phase 4
     try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (Phase-4 recheck): $($_.Exception.Message)" }
 
-    Set-Step "Adding Windows Firewall LAN inbound rules for MiOS service ports..."
-    try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
-    try { Set-MiosLanPortProxy }     catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
+    Set-Step "Applying the Windows host exposure of MiOS-DEV (firewall rules, port forwards)..."
+    try { Invoke-MiosLanExposure } catch { Log-Warn "Windows host exposure: $($_.Exception.Message)" }
 
     End-Phase 4
 
