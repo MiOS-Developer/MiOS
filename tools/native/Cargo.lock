@@ -2324,23 +2324,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mios-mons"
-version = "0.3.0"
-dependencies = [
- "clap",
- "crossterm 0.29.0",
- "mios-resolver",
- "ratatui 0.30.2",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "supports-color 3.0.2",
- "supports-unicode 3.0.0",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "mios-pip-gravity"
 version = "0.3.0"
 dependencies = [
@@ -2434,6 +2417,23 @@ version = "0.3.0"
 name = "mios-ssot-walk"
 version = "0.3.0"
 dependencies = [
+ "toml",
+]
+
+[[package]]
+name = "mios-mons"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "crossterm 0.29.0",
+ "mios-resolver",
+ "ratatui 0.30.2",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "supports-color 3.0.2",
+ "supports-unicode 3.0.0",
+ "tempfile",
  "toml",
 ]
 
