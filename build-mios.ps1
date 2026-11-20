@@ -4942,16 +4942,19 @@ function Set-MiosLanPortProxy {
     else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
 
     $_wslIp = $null
+    # [bootstrap].dev_distro names the podman machine; WSL registers it as podman-<machine>. Ask the registered
+    # distribution, as Ensure-MiosBuilder does, or the probe targets a distribution that does not exist.
+    $_wslDistro = try { Resolve-MiosBuilderDistribution $DevDistro } catch { $DevDistro }
     try {
         $_prevWslUtf8 = $env:WSL_UTF8
         $env:WSL_UTF8 = '1'
-        $_raw = (& wsl.exe -d $DevDistro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
+        $_raw = (& wsl.exe -d $_wslDistro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
         $env:WSL_UTF8 = $_prevWslUtf8
         $_m = [regex]::Match($_raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
         if ($_m.Success) { $_wslIp = $_m.Groups[1].Value }
     } catch {}
     if (-not $_wslIp -or $_wslIp -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
-        Log-Warn "portproxy: could not resolve a clean WSL VM IP (got: '$_wslIp') -- skipping forwarding"
+        Log-Warn "portproxy: could not resolve a clean WSL VM IP of '$_wslDistro' (got: '$_wslIp') -- skipping forwarding"
         return
     }
     Write-Log "portproxy: WSL VM ip = $_wslIp"
