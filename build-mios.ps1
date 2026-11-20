@@ -2883,7 +2883,7 @@ mios_root_checkout() {
     if (( ${#unknown[@]} )); then
         echo "[overlay] ERROR: the checkout would overwrite files that are not on the known machine-os overlap list; nothing was moved:"
         printf '[overlay]   %s\n' "${unknown[@]}"
-        echo "[overlay] REMEDY: ${MIOS_DEV_MACHINE:-MiOS-DEV} holds files from an earlier incomplete overlay; re-provision it (podman machine rm ${MIOS_DEV_MACHINE:-MiOS-DEV}, then re-run the installer)"
+        echo "[overlay] REMEDY: ${MIOS_BUILDER_DISTRO:-MiOS-DEV} holds files from an earlier incomplete overlay; re-provision it (podman machine rm ${MIOS_BUILDER_DISTRO:-MiOS-DEV}, then re-run the installer)"
         return 4
     fi
     for p in "${conflicts[@]}"; do
@@ -3751,7 +3751,7 @@ echo "[quadlet-overlay] sealed: $SENTINEL"
     $stagedWsl   = "/mnt/$stagedDrive" + ($stagedPath.Substring(2) -replace '\\','/')
 
     # Not $stage: PowerShell names are case-insensitive, so that would be the ValidateSet-bound $Stage parameter.
-    $seedCommand = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner' MIOS_DEV_MACHINE='$DevDistro' MIOS_OVERLAY_STAGE='$Stage'; " +
+    $seedCommand = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner' MIOS_BUILDER_DISTRO='$DevDistro' MIOS_OVERLAY_STAGE='$Stage'; " +
                    "bash '$stagedWsl' '$miosRootWsl'"
     $seedLines = New-Object System.Collections.Generic.List[string]
     try {
