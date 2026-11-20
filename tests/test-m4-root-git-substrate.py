@@ -2,7 +2,7 @@
 # AI-hint: Two-sided verification suite for Milestone M4: Singular Root-Git Substrate,
 # level-by-level .gitignore isolation, Windows host namespace protection, ADR-0030 file budget,
 # bare store .archive/, the SKILLS archive, and standing verification gates.
-# AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/, SKILLS/MANIFEST.json, usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
+# AI-related: .gitignore, usr/share/mios/mios.toml, tools/drift-checks.py, .archive/, SKILLS/MANIFEST.json, .devloop/handoff/mios-handoff-archives.json, usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh
 import hashlib
 import io
 import json
@@ -161,10 +161,44 @@ def archive_publication(root: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")).get("publication") or {}
 
 
+HANDOFF_ARCHIVES = ".devloop/handoff/mios-handoff-archives.json"
+
+
+def handoff_archives(root: Path) -> list:
+    """The handoff verification archives the handoff inventory publishes, [] when it is absent."""
+    path = root / HANDOFF_ARCHIVES
+    if not path.is_file():
+        return []
+    return json.loads(path.read_text(encoding="utf-8")).get("archives") or []
+
+
+def handoff_archive_drift(root: Path) -> list:
+    """Every published handoff archive that is untracked, differs from its sha256, or is not named by a record."""
+    tracked = set(_tracked(root, *TAR_PATHSPECS))
+    defects = []
+    for entry in handoff_archives(root):
+        path, want, records = entry.get("path", ""), entry.get("sha256", ""), entry.get("records") or []
+        if path not in tracked:
+            defects.append(f"{path}: published by {HANDOFF_ARCHIVES} but not a tracked tarball")
+            continue
+        got = hashlib.sha256((root / path).read_bytes()).hexdigest()
+        if got != want:
+            defects.append(f"{path}: sha256 {got}, {HANDOFF_ARCHIVES} records {want}")
+        if not records:
+            defects.append(f"{path}: {HANDOFF_ARCHIVES} names no record that cites it")
+        name = PurePosixPath(path).name
+        for record in records:
+            file = root / record
+            if not file.is_file() or name not in file.read_text(encoding="utf-8", errors="replace"):
+                defects.append(f"{path}: record {record} does not cite {name}")
+    return defects
+
+
 def undocumented_tar_bundles(root: Path) -> list:
-    """Tracked tarballs outside the vendored store that the inventory does not publish."""
-    documented = archive_publication(root).get("archive_path")
-    return [path for path in _tracked(root, *TAR_PATHSPECS) if path != documented]
+    """Tracked tarballs outside the vendored store that neither inventory publishes."""
+    documented = {archive_publication(root).get("archive_path")}
+    documented |= {entry.get("path") for entry in handoff_archives(root)}
+    return [path for path in _tracked(root, *TAR_PATHSPECS) if path not in documented]
 
 
 def archive_drift(root: Path) -> list:
@@ -584,6 +618,41 @@ class TestBareStoreLegacyArchive(unittest.TestCase):
         if allowed:
             # Allowed only while it is the generated packaging of its tracked tree.
             self.assertEqual(archive_drift(ROOT), [], f"{documented} has drifted from the tree it packages")
+
+    def test_02b_handoff_archives_match_their_inventory(self):
+        """Each published handoff archive is tracked, matches its recorded sha256, and is cited by its records."""
+        self.assertEqual(handoff_archive_drift(ROOT), [])
+
+    def test_02c_planted_handoff_archive_defects_fail(self):
+        """Negative controls: an unpublished tarball, a changed archive, a record that does not cite it,
+        and an entry without records each fail; the published fixture passes."""
+        with tempfile.TemporaryDirectory(prefix="mios-handoff-archives-") as temp:
+            root = Path(temp)
+            _git(root, "init", "-q")
+            (root / ".devloop/handoff").mkdir(parents=True)
+            archive = root / ".devloop/handoff/proof.tar.gz"
+            archive.write_bytes(b"proof")
+            (root / ".devloop/handoff/proof.json").write_text('{"archive": "proof.tar.gz"}\n', encoding="utf-8")
+            entry = {"path": ".devloop/handoff/proof.tar.gz", "sha256": hashlib.sha256(b"proof").hexdigest(),
+                     "records": [".devloop/handoff/proof.json"]}
+            inventory = root / HANDOFF_ARCHIVES
+
+            def publish(entries):
+                inventory.write_text(json.dumps({"archives": entries}), encoding="utf-8")
+
+            _git(root, "add", ".devloop/handoff/proof.tar.gz")
+            self.assertEqual(undocumented_tar_bundles(root), [".devloop/handoff/proof.tar.gz"])
+            publish([entry])
+            self.assertEqual(undocumented_tar_bundles(root), [])
+            self.assertEqual(handoff_archive_drift(root), [], "the published fixture must pass GREEN")
+            archive.write_bytes(b"changed")
+            self.assertTrue(any("sha256" in d for d in handoff_archive_drift(root)))
+            archive.write_bytes(b"proof")
+            publish([dict(entry, records=[])])
+            self.assertTrue(any("names no record" in d for d in handoff_archive_drift(root)))
+            (root / ".devloop/handoff/proof.json").write_text("{}\n", encoding="utf-8")
+            publish([entry])
+            self.assertTrue(any("does not cite" in d for d in handoff_archive_drift(root)))
 
     def test_03_documented_archive_matches_its_tree(self):
         """Drift check: the published archive is exactly its tracked directory, and its checksums hold."""
