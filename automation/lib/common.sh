@@ -113,25 +113,3 @@ record_version() {
         >> "$MIOS_VERSION_MANIFEST"
     log "Version: ${component} = ${version}${resolved_to:+}"
 }
-
-# mios_fedora_release [OS_RELEASE] -> the Fedora release this image is built on,
-# from os-release PLATFORM_ID=platform:f<N> (MiOS rebrands VERSION_ID, so that
-# field is read only when ID is fedora). Fails rather than guessing: a release
-# literal pinned the repos to Fedora 44 after the base image moved to 45.
-mios_fedora_release() {
-    local file="${1:-/etc/os-release}" platform id version
-    [[ -r "$file" ]] || { printf 'mios_fedora_release: %s is unreadable\n' "$file" >&2; return 1; }
-    platform="$(sed -n 's/^PLATFORM_ID=//p' "$file" | tr -d '"' | tail -n 1)"
-    if [[ "$platform" =~ ^platform:f([0-9]+)$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-        return 0
-    fi
-    id="$(sed -n 's/^ID=//p' "$file" | tr -d '"' | tail -n 1)"
-    version="$(sed -n 's/^VERSION_ID=//p' "$file" | tr -d '"' | tail -n 1)"
-    if [[ "$id" == fedora && "$version" =~ ^[0-9]+$ ]]; then
-        printf '%s\n' "$version"
-        return 0
-    fi
-    printf 'mios_fedora_release: %s names no Fedora release (PLATFORM_ID=platform:f<N>)\n' "$file" >&2
-    return 1
-}

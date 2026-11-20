@@ -842,16 +842,14 @@ automation/02-materialize-build-ctx.sh	1	4	4	16	07b1c072fa29	STAY	ai-header		0		
 automation/04-local-rpm-mirror.sh	1	3	3	25	768317372b07	STAY	ai-header		0				0
 automation/05-repos.sh	1	3	3	29	74c2385e2493	STAY	ai-header		0				0
 automation/05-repos.sh	5	5	1	3	ee573bae3b99	STAY	local-scoped		0				0
-automation/05-repos.sh	28	28	1	15	6bfbe59c0140	STAY	local-scoped		0				0
-automation/05-repos.sh	40	42	3	36	78c4f1de2033	STAY	midsize-why		0				0
-automation/05-repos.sh	98	100	3	33	3d8ae070bf7e	STAY	midsize-why		0				0
+automation/05-repos.sh	38	40	3	36	78c4f1de2033	STAY	midsize-why		0				0
+automation/05-repos.sh	96	98	3	33	3d8ae070bf7e	STAY	midsize-why		0				0
 automation/06-enable-external-repos.sh	1	4	4	22	d954fbd0914f	STAY	ai-header		0				0
 automation/06-enable-external-repos.sh	1	4	4	35	fd2da0114e6c	STAY	ai-header		0	usr/share/doc/mios/manual/automation.md	mios-src:fd2da0114e6c	35	1
 automation/06-enable-external-repos.sh	7	7	1	3	19aef8dad626	STAY	local-scoped		0				0
-automation/06-enable-external-repos.sh	47	47	1	15	6bfbe59c0140	STAY	local-scoped		0				0
-automation/06-enable-external-repos.sh	74	74	1	11	6483069cc080	STAY	local-scoped		0				0
-automation/06-enable-external-repos.sh	77	79	3	31	410e2ee184c8	STAY	midsize-why		0				0
-automation/06-enable-external-repos.sh	116	116	1	9	00d54e3ec3a1	STAY	local-scoped		0				0
+automation/06-enable-external-repos.sh	72	72	1	11	6483069cc080	STAY	local-scoped		0				0
+automation/06-enable-external-repos.sh	75	77	3	31	410e2ee184c8	STAY	midsize-why		0				0
+automation/06-enable-external-repos.sh	115	115	1	9	00d54e3ec3a1	STAY	local-scoped		0				0
 automation/07-kernel.sh	1	4	4	29	2ca3ff962969	STAY	ai-header		0				0
 automation/07-kernel.sh	12	12	1	3	9688333b2bbd	STAY	inline-scoped		0				0
 automation/07-kernel.sh	17	17	1	3	3f1d53e5e9e6	STAY	inline-scoped		0				0
@@ -1614,7 +1612,6 @@ automation/lib/common.sh	89	89	1	7	d2fa2d3030aa	STAY	inline-scoped		0				0
 automation/lib/common.sh	90	90	1	8	159c38fa6f76	STAY	inline-scoped		0				0
 automation/lib/common.sh	91	91	1	5	d57ae561beb8	STAY	inline-scoped		0				0
 automation/lib/common.sh	92	92	1	10	b34e1f7cb62c	STAY	inline-scoped		0				0
-automation/lib/common.sh	117	120	4	48	63284aa3e259	STAY	midsize-why		0				0
 automation/lib/generate-packages.sh	1	3	3	14	97b1b5fe7975	STAY	ai-header		0				0
 automation/lib/generate-packages.sh	1	4	4	78	ae74b5e69761	STAY	ai-header		0	usr/share/doc/mios/manual/lib.md	mios-src:ae74b5e69761	78	1
 automation/lib/globals.ps1	1	12	12	63	dbd4e70a057a	DROP	generated-artifact		0				0
@@ -9365,7 +9362,6 @@ tests/test-dnf5-pipeline.sh	35	35	1	8	40bac35eff2c	STAY	local-scoped		0				0
 tests/test-dnf5-pipeline.sh	37	37	1	3	ee573bae3b99	STAY	local-scoped		0				0
 tests/test-dnf5-pipeline.sh	39	39	1	3	ee573bae3b99	STAY	local-scoped		0				0
 tests/test-dnf5-pipeline.sh	48	48	1	6	3386cfc55959	STAY	local-scoped		0				0
-tests/test-dnf5-pipeline.sh	65	66	2	34	4666614dd158	STAY	midsize-why		0				0
 tests/test-dock-hud.py	1	9	9	113	309ea8aff228	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-dock-hud.py	38	38	1	9	fef8677d6a82	STAY	local-scoped		0				0
 tests/test-docklamp-adversarial.py	1	3	3	17	98df0b84e739	STAY	ai-header		0				0

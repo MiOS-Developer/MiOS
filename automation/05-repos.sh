@@ -25,9 +25,7 @@ if [[ -d /etc/yum.repos.d ]]; then
     done
 fi
 
-# The base image's own release, never a literal (the repos must match the rpmdb).
-_fver="${FEDORA_VERSION:-}"
-[[ -n "$_fver" ]] || _fver="$(mios_fedora_release)" || { mios_err "Cannot determine the Fedora release of the base image"; exit 1; }
+_fver="${FEDORA_VERSION:-44}"
 
 mios_log "Import Fedora ${_fver} GPG key"
 GPG_KEY_PATH="/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64"
