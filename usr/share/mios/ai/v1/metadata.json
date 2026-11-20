@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4372,
-  "total_metadata_entries": 3498,
-  "total_hints": 3492,
-  "total_functions_indexed": 2279,
-  "total_related_links": 7093,
+  "total_files_scanned": 4374,
+  "total_metadata_entries": 3500,
+  "total_hints": 3494,
+  "total_functions_indexed": 2280,
+  "total_related_links": 7099,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -8820,6 +8820,18 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-journald-kmsg.py",
+      "hint": "Asserts journald keeps the kernel log and syncs within seconds on bare-metal and VM hosts, and that only a WSL2 kernel gets ReadKMsg=no (through the mios-wsl-journald generator's runtime drop-in), by merging the shipped and generated journald.conf.d drop-ins in systemd's order.",
+      "related": [
+        "usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
+        "usr/lib/systemd/system-generators/mios-wsl-journald"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -22134,8 +22146,11 @@
     },
     {
       "path": "usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
-      "hint": "Configures systemd-journald to disable Audit, ReadKMsg, and ForwardToSyslog to ensure stability and compatibility on WSL2 environments where these features cause crashes or startup races.",
-      "related": [],
+      "hint": "Configures systemd-journald for every MiOS host: no audit stream, no syslog-socket race, and a short sync interval so a host that hangs keeps its last seconds on disk. The kernel log is stored (ReadKMsg default); WSL2, whose kernel refuses /dev/kmsg, turns it off at runtime via the mios-wsl-journald generator.",
+      "related": [
+        "/usr/lib/systemd/system-generators/mios-wsl-journald",
+        "tests/test-journald-kmsg.sh"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "hash",
@@ -22171,6 +22186,20 @@
       "doc": "usr/share/doc/mios/manual/ch28-dynamic-network-and-firewall-management.md",
       "comment_style": "hash",
       "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system-generators/mios-wsl-journald",
+      "hint": "systemd generator: on a WSL2 kernel only, writes a runtime journald drop-in with ReadKMsg=no (journald crashes on EPERM from /dev/kmsg there). Bare-metal and VM hosts keep the kernel log in their journal.",
+      "related": [
+        "/usr/lib/systemd/journald.conf.d/10-mios-noaudit.conf",
+        "tests/test-journald-kmsg.sh"
+      ],
+      "functions": [
+        "main"
+      ],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
     },
     {
       "path": "usr/lib/systemd/system-preset/89-mios-fan-control.preset",

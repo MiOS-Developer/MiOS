@@ -19292,6 +19292,7 @@ unit = [
     "tests/test-blade-port-wiring.py",
     "tests/test-agents-entrypoint.py",
     "tests/test-cpu-node-memory.py",
+    "tests/test-journald-kmsg.py",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",
@@ -20488,7 +20489,7 @@ WantedBy = "getty-pre.target"
 
 # Read-only boot display record: DRM cards/connectors, fb registration order from the kernel log, fbcon's console map
 # and whether tty1 reached the booted profile's GPU -- one JSON line per boot in the journal (the kernel log itself
-# is not stored: journald ReadKMsg=no). `journalctl -b -u mios-boot-display-report` reads it.
+# is not stored on WSL2: ReadKMsg=no there). `journalctl -b -u mios-boot-display-report` reads it.
 [units."mios-boot-display-report.service".Unit]
 comment = "# AI-hint: Oneshot, read-only: records this boot's fbcon / framebuffer / DRM driver order and the console-map verdict as one JSON line in the journal.\n# AI-related: tools/native/mios-gen/src/gpu_topology.rs (boot-display-report), usr/share/mios/mios.toml [desktop.hyprland.hardware_profiles], usr/share/doc/mios/desktop-gpu-routing.md"
 Description = "MiOS boot display report (fbcon, framebuffers, DRM order)"
