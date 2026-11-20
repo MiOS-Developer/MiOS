@@ -26,6 +26,12 @@ OLD = Path(os.environ.get('MIOS_INPUTD_OLD_BIN', '/nonexistent'))
 UINPUT = os.environ.get('MIOS_INPUTD_UINPUT_TEST') == '1'
 SOUTH, EAST, WEST, NORTH, LB, RB, LT, RT = 0x130, 0x131, 0x134, 0x133, 0x136, 0x137, 0x138, 0x139
 SELECT, START, GUIDE, L3, R3 = 0x13a, 0x13b, 0x13c, 0x13d, 0x13e
+# The vendor policy is the global controller contract (usr/share/doc/mios/keybinds.md): Start belongs to the app,
+# L3+R3 attaches/detaches the verified focused window and Select+Start zooms it; Guide+Select (mode_override_chord)
+# toggles cursor mode. With these switches off (a host tier) the earlier contract still holds: Start toggles cursor
+# mode and L3+R3 toggles the room. Both policies ship, so both are pinned here.
+LEGACY_POLICY = ('[keybindings.global.controller]\nglobal_capture_toggle = false\nwindow_zoom_chord = []\n'
+                 '[keybindings.global.controller.nav]\nstart_options = false\n')
 STICK = {c: dict(min=-32768, max=32767, value=0) for c in ('0', '1', '3', '4')}
 AXES = dict(STICK, **{'2': dict(min=0, max=255, value=0), '5': dict(min=0, max=255, value=0),
                       '16': dict(min=-1, max=1, value=0), '17': dict(min=-1, max=1, value=0)})
@@ -265,13 +271,17 @@ class Timing(Base):
         self.assertEqual(self.actions('desktop-2d', tap(L3)), ['key:CTRL+t'])
         self.assertEqual(self.actions('desktop-2d', tap(R3)), ['key:CTRL+0'])
         fast = [key(L3), key(R3), key(L3, 0), key(R3, 0)]
-        self.assertEqual(self.actions('desktop-2d', fast), ['mios:hyprland-3d-toggle'], 'the chord is the room toggle only')
+        self.assertEqual(self.actions('desktop-2d', fast), [],
+                         'the chord is the global attach/detach only: no single, no target, nothing committed')
         slow = [key(L3)] + wait(400) + [key(R3), key(R3, 0), key(L3, 0)]
         self.assertEqual(self.actions('desktop-2d', slow), [], 'a slow overlap fires no single click')
         self.assertEqual(self.actions('desktop-2d', ab(0, 30000) + tap(L3)), [], 'L3 while its stick is deflected')
         guide = [key(GUIDE), key(L3), key(R3), key(L3, 0), key(R3, 0), key(GUIDE, 0)]
         self.assertEqual(self.actions('desktop-2d', guide), [], 'Guide+L3+R3: neither lock nor the VM latch')
         self.assertEqual(self.actions('desktop-2d', [key(GUIDE), key(L3), key(L3, 0), key(GUIDE, 0)]), ['quickshell:lock'])
+        self.host_layer(LEGACY_POLICY)
+        self.assertEqual(self.actions('desktop-2d', fast), ['mios:hyprland-3d-toggle'], 'the chord is the room toggle only')
+        self.assertEqual(self.actions('desktop-2d', slow), [], 'a slow overlap fires no single click')
 
     def test_r26_guide_double_tap_is_the_drawer(self):
         self.assertEqual(self.actions('desktop-2d', tap(GUIDE, 100)), [], 'single tap waits for the configured second tap')
@@ -285,11 +295,19 @@ class Timing(Base):
         self.assertEqual(self.actions('app-capture', tap(GUIDE, 100)), [], 'a captured app gets the Guide tap replayed')
 
     def test_c11_cursor_mode_keeps_meanings_rt_clicks_ls_scrolls_both_ways(self):
-        out = self.replay('desktop-2d', tap(START, 10) + tap(SOUTH) + [key(RT)] + wait(700) + [key(RT, 0)] + ab(0, 32767) + wait(100))
-        self.assertEqual(out['output']['actions'], ['input:cursor on', 'key:ENTER'], 'RT is a click, never key:CTRL+TAB')
-        ptr = out['output']['pointer']
-        self.assertIn(dict(kind=1, code=0x110, value=1), ptr)
-        self.assertTrue(any(e['kind'] == 2 and e['code'] == 6 and e['value'] > 0 for e in ptr), 'REL_HWHEEL from the left stick X')
+        rest = tap(SOUTH) + [key(RT)] + wait(700) + [key(RT, 0)] + ab(0, 32767) + wait(100)
+        chord = json.loads(self.run_bin('map').stdout)['global']['controller']['mode_override_chord']
+        self.assertEqual(chord, ['BTN_MODE', 'BTN_SELECT'], 'the vendor cursor toggle is Guide+Select')
+        guide_select = [key(GUIDE), key(SELECT), key(SELECT, 0), key(GUIDE, 0)]
+        for policy, enter in (('vendor', guide_select), ('legacy', tap(START, 10))):
+            with self.subTest(policy=policy):
+                if policy == 'legacy':
+                    self.host_layer(LEGACY_POLICY)
+                out = self.replay('desktop-2d', enter + rest)
+                self.assertEqual(out['output']['actions'], ['input:cursor on', 'key:ENTER'], 'RT is a click, never key:CTRL+TAB')
+                ptr = out['output']['pointer']
+                self.assertIn(dict(kind=1, code=0x110, value=1), ptr)
+                self.assertTrue(any(e['kind'] == 2 and e['code'] == 6 and e['value'] > 0 for e in ptr), 'REL_HWHEEL from the left stick X')
         if OLD.is_file():
             old = self.replay('desktop-2d', tap(START, 10) + tap(SOUTH), binary=OLD)
             self.assertEqual(old['output']['actions'], ['input:cursor on'], 'pre-I2 cursor mode dropped South')

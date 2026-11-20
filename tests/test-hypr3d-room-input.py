@@ -17,6 +17,12 @@ BIN = Path(os.environ.get('MIOS_INPUTD_BIN', '/usr/libexec/mios/mios-inputd'))
 OLD = os.environ.get('MIOS_INPUTD_OLD', '')
 SSOT = Path(os.environ.get('MIOS_INPUTD_SSOT', ROOT / 'usr/share/mios/mios.toml'))
 EAST, NORTH, SELECT, GUIDE, L3, R3, SOUTH = 0x131, 0x133, 0x13a, 0x13c, 0x13d, 0x13e, 0x130
+# The vendor policy is the global controller contract (usr/share/doc/mios/keybinds.md): L3+R3 attaches/detaches the
+# verified focused window and Select+Start zooms it, so both chords' members resolve only on release. With these
+# switches off (a host tier) the earlier room contract still holds: L3+R3 is the room toggle and a Select hold fires
+# at capture_hold_ms. Both policies ship, so both are pinned here.
+LEGACY_POLICY = ('[keybindings.global.controller]\nglobal_capture_toggle = false\nwindow_zoom_chord = []\n'
+                 '[keybindings.global.controller.nav]\nstart_options = false\n')
 
 
 def key(code, value=1):
@@ -32,6 +38,11 @@ class RoomTable(unittest.TestCase):
         target.parent.mkdir(parents=True)
         cls.text = SSOT.read_text()
         target.write_text(cls.text)
+        cls.legacy_root = cls.root / 'legacy'
+        (cls.legacy_root / 'usr/share/mios').mkdir(parents=True)
+        (cls.legacy_root / 'etc/mios').mkdir(parents=True)
+        (cls.legacy_root / 'usr/share/mios/mios.toml').write_text(cls.text)
+        (cls.legacy_root / 'etc/mios/mios.toml').write_text(LEGACY_POLICY)
         cls.env = {k: v for k, v in os.environ.items() if not (k.startswith('MIOS_') and 'TOML' in k)}
         cls.env['HOME'] = str(cls.root / 'home')
         cls.env['XDG_CONFIG_HOME'] = str(cls.root / 'home/.config')
@@ -46,8 +57,9 @@ class RoomTable(unittest.TestCase):
         return subprocess.run([str(binary), '--root', str(root or self.root), *args], text=True, capture_output=True,
                               input=None if data is None else json.dumps(data), env=self.env, timeout=10)
 
-    def replay(self, context, events, tick=0, binary=BIN, axes=None):
-        r = self.run_bin(binary, 'replay', data=dict(context=context, events=events, axes=axes or {}, tick_ms=tick))
+    def replay(self, context, events, tick=0, binary=BIN, axes=None, root=None, script=()):
+        r = self.run_bin(binary, 'replay', root=root,
+                         data=dict(context=context, events=events, axes=axes or {}, tick_ms=tick, script=list(script)))
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)
 
@@ -78,8 +90,12 @@ class RoomTable(unittest.TestCase):
     def test_l3_sprint_r3_recenter_on_a_clean_release(self):
         self.assertEqual(self.replay('desktop-3d', [key(L3), key(L3, 0)])['output']['actions'], ['hypr:hypr3d:sprint'])
         self.assertEqual(self.replay('desktop-3d', [key(R3), key(R3, 0)])['output']['actions'], ['hypr:hypr3d:recenter'])
-        # L3 + R3 together (10 ms apart, inside the chord debounce) is the room toggle and never also a single
-        o = self.replay('desktop-3d', [key(L3), key(R3), key(L3, 0), key(R3, 0)])['output']['actions']
+        # L3 + R3 together never also fires a single. Vendor policy: the chord is the global attach/detach, which
+        # commits only against a verified window target (replay has none), so the room fires nothing.
+        chord = [key(L3), key(R3), key(L3, 0), key(R3, 0)]
+        self.assertEqual(self.replay('desktop-3d', chord)['output']['actions'], [])
+        # With the global switches off, the chord (10 ms apart, inside the debounce) is the room toggle.
+        o = self.replay('desktop-3d', chord, root=self.legacy_root)['output']['actions']
         self.assertEqual(o, ['mios:hyprland-3d-toggle'])
         # R3 is ignored while the right stick is deflected (R-23)
         axes = {str(c): dict(min=-32768, max=32767, value=0) for c in (0, 1, 3, 4)}
@@ -93,7 +109,15 @@ class RoomTable(unittest.TestCase):
         tap = self.replay('desktop-3d', [key(SELECT), key(SELECT, 0)])
         self.assertEqual(tap['output']['actions'], [], 'the view tap spawns no process')
         self.assertEqual(tap['pad']['sequences'][0], 1, 'tap = packet view slot 0')
-        hold = self.replay('desktop-3d', [key(SELECT)], tick=600)
+        hold_ms = self.controller['capture_hold_ms'] + 100
+        # Vendor policy: Select is a zoom-chord member, so its tap/hold is decided on release (Start may still join).
+        held = self.replay('desktop-3d', [key(SELECT)], script=[dict(tick_ms=hold_ms)])
+        self.assertEqual(held['output']['actions'], [], 'nothing fires while the zoom chord can still form')
+        hold = self.replay('desktop-3d', [key(SELECT)], script=[dict(tick_ms=hold_ms), key(SELECT, 0)])
+        self.assertEqual(hold['output']['actions'], ['quickshell:keymap-toggle'])
+        self.assertEqual(hold['pad']['sequences'][0], 0, 'a hold does not also cycle the view')
+        # With the global switches off, the hold fires at capture_hold_ms while Select is still down.
+        hold = self.replay('desktop-3d', [key(SELECT)], tick=600, root=self.legacy_root)
         self.assertEqual(hold['output']['actions'], ['quickshell:keymap-toggle'])
         self.assertEqual(hold['pad']['sequences'][0], 0, 'a hold does not also cycle the view')
 

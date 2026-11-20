@@ -19031,6 +19031,9 @@ mirror_files = [
   # Install defaults and the release number: one value set for both repos.
   ".env.mios",
   "VERSION",
+  # Get-MiOS.ps1's web-entry and failure-diagnostics regressions run in both repos' CI.
+  "tests/test_getmios_failure_diagnostics.ps1",
+  "tests/test_getmios_web_entry.ps1",
 ]
 
 # SSOT tables mirrored into bootstrap's root mios.toml.

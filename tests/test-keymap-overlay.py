@@ -105,7 +105,14 @@ def suite(script, tmp, tag, gen=None):
     km = keymap(script, text, tmp, f'{tag}-vendor', gen)
     out.append(('vendor: every bypass chord is listed and says it works over captured apps', all(has(km, c, 'over captured') for c in ['SUPER+CTRL+Space', 'SUPER+CTRL+Escape', 'SUPER+CTRL+F11', 'SUPER+CTRL+Print']), ''))
     out.append(('vendor: session scale (bypass_mod chords) listed as reaching the host over captured apps', has(km, 'SUPER+CTRL+equal', 'over captured'), ''))
-    out.append(('vendor: release chord label comes from toggle_chord', has(km, 'Pad L3 + R3', 'release capture'), ''))
+    # The vendor policy (global_capture_toggle, keybinds.md) makes toggle_chord the global attach/detach; the label
+    # says so, and the Select+Start zoom row and app-owned Start (no "Cursor mode" row) follow their switches.
+    out.append(('vendor: release chord label comes from toggle_chord', has(km, 'Pad L3 + R3', r'^Attach/detach .*release returns cursor'), ''))
+    out.append(('vendor: window_zoom_chord row listed and Start is no cursor-mode row', has(km, 'Pad Select + Start', '^Zoom focused') and not any(k['label'] == 'Cursor mode' for k in km), ''))
+    legacy = text.replace('global_capture_toggle = true', 'global_capture_toggle = false', 1).replace('start_options = true', 'start_options = false', 1)
+    assert legacy.count('global_capture_toggle = false') and legacy.count('start_options = false')
+    kml = keymap(script, legacy, tmp, f'{tag}-legacy', gen)
+    out.append(('global switches off: toggle_chord is the room tap and the release hold; Start is cursor mode', has(kml, 'Pad L3 + R3', r'room \(tap\).*release capture') and has(kml, 'Pad Start', '^Cursor mode$'), ''))
     out.append(('vendor: Guide system layer rows listed', has(km, 'Pad Guide + D-pad left', 'Focus left') and has(km, 'Pad Guide + East', 'Close'), ''))
     km2 = keymap(script, remap(text, 'keymap', 'SUPER+F1'), tmp, f'{tag}-remap', gen)
     lab = [k for k in km2 if re.search(r'Keybind map', k['label']) and 'over captured' not in k['label']]
