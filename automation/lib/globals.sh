@@ -2868,7 +2868,7 @@ _mios_input MIOS_NETWORK_FIREWALLD_DEFAULT_ZONE MIOS_FIREWALLD_ZONE || { return 
 : "${MIOS_FIREWALL_OPEN_PORTS:=forge_http,open_webui,code_server,hermes,searxng,cockpit,hermes_dashboard,llm_light,pgvector,cockpit_link,adguard_ui,ssh,forge_ssh,llm_heavy,cpu_node}"
 : "${MIOS_FIREWALL_WINDOWS_EXPOSE:=forge_http,open_webui,hermes,cockpit,llm_light,code_server,guacamole_web}"
 : "${MIOS_FIREWALL_WINDOWS_PROFILES:=Private,Domain}"
-: "${MIOS_FIREWALL_WINDOWS_REMOTE_ADDRESSES:=LocalSubnet,100.64.0.0/10}"
+: "${MIOS_FIREWALL_WINDOWS_REMOTE_ADDRESSES:=LocalSubnet,100.64.0.0/10,fd7a:115c:a1e0::/48}"
 _mios_input MIOS_PATHS_VAR_DIR MIOS_VAR_DIR || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PATHS_VAR_DIR:=/var/lib/mios}"
 [ -n "${MIOS_VAR_DIR+x}" ] || MIOS_VAR_DIR="${MIOS_PATHS_VAR_DIR:-}"

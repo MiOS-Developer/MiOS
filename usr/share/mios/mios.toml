@@ -88,7 +88,7 @@ open_ports = [
 [firewall.windows]
 expose           = ["forge_http", "open_webui", "hermes", "cockpit", "llm_light", "code_server", "guacamole_web"]
 profiles         = ["Private", "Domain"]
-remote_addresses = ["LocalSubnet", "100.64.0.0/10"]
+remote_addresses = ["LocalSubnet", "100.64.0.0/10", "fd7a:115c:a1e0::/48"]   # local subnet + the tailnet (IPv4 CGNAT and IPv6 ULA)
 
 
 
@@ -18943,6 +18943,9 @@ mirror_files = [
   "installation/mios-install.sh",
   "installation/mios-install.ps1",
   "installation/bin/7z.dll",
+  # Installer fixtures for the mirrored Get-MiOS.ps1; the same bytes run from either repo.
+  "tests/test_getmios_failure_diagnostics.ps1",
+  "tests/test_getmios_web_entry.ps1",
   # The one MiOS dev image; the same bytes build from either repo root.
   ".devcontainer/Containerfile",
   # Harness settings: the no-merge deny applies in every MiOS repo.

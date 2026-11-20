@@ -1,18 +1,26 @@
-# AI-hint: Recommended global .wslconfig for MiOS WSL2 host integration.
-# AI-related: usr/lib/wsl.conf, usr/lib/wsl-distribution.conf
-# Copy to %USERPROFILE%\.wslconfig on the Windows host.
+# AI-hint: Recommended global .wslconfig for MiOS WSL2 host integration, matching mios.toml [wsl2].
+# AI-related: usr/lib/wsl.conf, usr/lib/wsl-distribution.conf, usr/share/mios/mios.toml
+# Copy to %USERPROFILE%\.wslconfig on the Windows host. The installers render the
+# managed keys (networkingMode, localhostForwarding, firewall, guiApplications and
+# [experimental] hostAddressLoopback) from mios.toml [wsl2]; this file agrees with
+# the vendor defaults there.
 
 [wsl2]
 memory=16GB
 processors=8
+# mios.toml [wsl2].networking_mode. NAT is the default; mirrored needs Windows 11
+# 22H2+ and pairs with [wsl2.dev_vm].quadlet_network_mode = "bridge".
+networkingMode=NAT
 localhostForwarding=true
+# mios.toml [wsl2].firewall: Hyper-V firewall filtering stays on in every mode.
+firewall=true
+dnsTunneling=true
+autoProxy=true
 nestedVirtualization=true
 guiApplications=true
 sparseVhd=true
 
 [experimental]
 autoMemoryReclaim=gradual
-networkingMode=mirrored
-dnsTunneling=true
-hostAddressLoopback=true
-firewall=false
+# hostAddressLoopback=true is written here only under networkingMode=mirrored
+# (mios.toml [wsl2].host_address_loopback); NAT does not read it.

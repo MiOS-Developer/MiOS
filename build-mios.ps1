@@ -375,6 +375,49 @@ function Get-MiosSsotPort {
     return $null
 }
 
+function Resolve-MiosWslNetworkingMode {
+    # [wsl2].networking_mode from the layered SSOT, the only source of the .wslconfig networkingMode. NAT (the default)
+    # or mirrored, case-insensitive; anything else is NAT. Mirrored needs Windows 11 22H2 (build 22621): below it the
+    # result is NAT. NAT is never upgraded to mirrored, whatever the Windows build.
+    param([int]$WindowsBuild = [Environment]::OSVersion.Version.Build)
+    $raw = ([string](Get-MiosTomlValue -Section 'wsl2' -Key 'networking_mode' -Default 'NAT')).Trim()
+    if ($raw -ieq 'NAT') { return 'NAT' }
+    if ($raw -ine 'mirrored') {
+        Write-Host "  [!] WSL-NETWORKING-MODE-INVALID: mios.toml [wsl2].networking_mode '$raw' is neither NAT nor mirrored; using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    if ($WindowsBuild -lt 22621) {
+        Write-Host "  [!] WSL-MIRRORED-UNSUPPORTED: mios.toml [wsl2].networking_mode is mirrored but Windows build $WindowsBuild is below 22621 (Windows 11 22H2); using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    return 'mirrored'
+}
+
+function Get-MiosWslExperimentalLines {
+    # The .wslconfig [experimental] hostAddressLoopback line, managed from SSOT: written under mirrored networking (the
+    # only mode that reads it), removed under NAT. Every other line and section is kept as it was.
+    param([AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines, [Parameter(Mandatory)][string]$NetworkingMode,
+        [bool]$HostAddressLoopback = $true)
+    $mirrored = ($NetworkingMode -ieq 'mirrored')
+    $out = New-Object System.Collections.Generic.List[string]
+    $inside = $false; $placed = $false
+    foreach ($line in @($Lines)) {
+        if ($line -match '^\s*\[\s*experimental\s*\]\s*(?:[#;].*)?$') {
+            $inside = $true; $out.Add($line)
+            if ($mirrored -and -not $placed) { $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant()); $placed = $true }
+            continue
+        }
+        if ($line -match '^\s*\[') { $inside = $false }
+        if ($inside -and $line -match '^\s*hostAddressLoopback\s*=') { continue }
+        $out.Add($line)
+    }
+    if ($mirrored -and -not $placed) {
+        $out.Add('[experimental]')
+        $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant())
+    }
+    return , $out.ToArray()
+}
+
 function Resolve-MiosLoginCredential {
     # Related auth keys are resolved within each layer before the next layer.
     # A missing credential is an error, never a built-in account password.
@@ -1309,26 +1352,21 @@ function Repair-WslConfig {
     $bootSectionKeys = @('systemd', 'command', 'enabled', 'appendWindowsPath',
                          'default', 'options', 'mountFsTab',
                          'generateHosts', 'generateResolvConf', 'hostname')
-    $winBuild = [Environment]::OSVersion.Version.Build
-    $targetNetMode = if ($winBuild -ge 22621) { 'mirrored' } else { 'NAT' }
+    # networkingMode comes from SSOT [wsl2].networking_mode only (never upgraded to mirrored by Windows build), and
+    # filtering stays on: firewall=false bypasses the Hyper-V firewall policy altogether.
+    $targetNetMode = Resolve-MiosWslNetworkingMode
+    $loopback = [bool](Get-MiosTomlValue -Section 'wsl2' -Key 'host_address_loopback' -Default $true)
+    $fwall = Get-MiosTomlValue -Section 'wsl2' -Key 'firewall' -Default $true
+    if ($fwall -isnot [bool] -or -not $fwall) { throw 'mios.toml [wsl2].firewall=false disables the required inbound security policy; enable it before continuing.' }
 
-    if (-not (Test-Path $wslCfg)) {
-        $initLines = @(
-            "[wsl2]",
-            "networkingMode=$targetNetMode"
-        )
-        [System.IO.File]::WriteAllLines($wslCfg, $initLines, (New-Object System.Text.UTF8Encoding($false)))
-        Log-Ok ".wslconfig: initialized with [wsl2] networkingMode=$targetNetMode (BOM-free UTF-8)"
-        return
-    }
-
-    $lines = Get-Content $wslCfg
+    $exists = Test-Path -LiteralPath $wslCfg
+    $lines = if ($exists) { @(Get-Content -LiteralPath $wslCfg) } else { @() }
     $inWsl2 = $false
     $hasWsl2 = $false
     $hasNetMode = $false
+    $hasFirewall = $false
     $newLines = [System.Collections.Generic.List[string]]::new()
     $scrubbed = 0
-    $modified = 0
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i]
@@ -1339,10 +1377,9 @@ function Repair-WslConfig {
             continue
         }
         if ($line -match '^\s*\[') {
-            if ($inWsl2 -and -not $hasNetMode) {
-                $newLines.Add("networkingMode=$targetNetMode")
-                $hasNetMode = $true
-                $modified++
+            if ($inWsl2) {
+                if (-not $hasNetMode) { $newLines.Add("networkingMode=$targetNetMode"); $hasNetMode = $true }
+                if (-not $hasFirewall) { $newLines.Add('firewall=true'); $hasFirewall = $true }
             }
             $inWsl2 = $false
             $newLines.Add($line)
@@ -1358,18 +1395,19 @@ function Repair-WslConfig {
                     continue
                 }
                 if ($key -ieq 'networkingMode') {
+                    if ($hasNetMode) { continue }
                     $hasNetMode = $true
-                    if ($winBuild -lt 22621 -and $val -ieq 'mirrored') {
-                        Write-Log "wslconfig-repair: rewriting networkingMode=mirrored to NAT for Windows 10 (Build $winBuild)" "INFO"
-                        $newLines.Add("networkingMode=NAT")
-                        $modified++
-                        continue
-                    } elseif ($winBuild -ge 22621 -and $val -ieq 'NAT') {
-                        Write-Log "wslconfig-repair: upgrading networkingMode=NAT to mirrored for Windows 11 22H2+ (Build $winBuild)" "INFO"
-                        $newLines.Add("networkingMode=mirrored")
-                        $modified++
-                        continue
+                    if ($val -cne $targetNetMode) {
+                        Write-Log "wslconfig-repair: networkingMode=$val set to $targetNetMode from mios.toml [wsl2].networking_mode" "INFO"
                     }
+                    $newLines.Add("networkingMode=$targetNetMode")
+                    continue
+                }
+                if ($key -ieq 'firewall') {
+                    if ($hasFirewall) { continue }
+                    $hasFirewall = $true
+                    $newLines.Add('firewall=true')
+                    continue
                 }
                 # Preserve user-configured memory, processors, swap, etc.
             }
@@ -1377,18 +1415,22 @@ function Repair-WslConfig {
         $newLines.Add($line)
     }
 
-    if ($hasWsl2 -and -not $hasNetMode) {
-        $newLines.Add("networkingMode=$targetNetMode")
-        $modified++
+    if ($inWsl2) {
+        if (-not $hasNetMode) { $newLines.Add("networkingMode=$targetNetMode") }
+        if (-not $hasFirewall) { $newLines.Add('firewall=true') }
     } elseif (-not $hasWsl2) {
         $newLines.Add("[wsl2]")
         $newLines.Add("networkingMode=$targetNetMode")
-        $modified++
+        $newLines.Add('firewall=true')
     }
+    $final = Get-MiosWslExperimentalLines -Lines $newLines.ToArray() -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
+    if ($exists -and $scrubbed -eq 0 -and (($final -join "`n") -ceq ($lines -join "`n"))) { return }
 
-    [System.IO.File]::WriteAllLines($wslCfg, $newLines, (New-Object System.Text.UTF8Encoding($false)))
-    if ($scrubbed -gt 0 -or $modified -gt 0) {
-        Log-Ok ".wslconfig: repaired ($scrubbed misplaced keys dropped, $modified updates, BOM-free UTF-8)"
+    [System.IO.File]::WriteAllLines($wslCfg, $final, (New-Object System.Text.UTF8Encoding($false)))
+    if (-not $exists) {
+        Log-Ok ".wslconfig: initialized with [wsl2] networkingMode=$targetNetMode firewall=true (BOM-free UTF-8)"
+    } else {
+        Log-Ok ".wslconfig: repaired ($scrubbed misplaced keys dropped, networkingMode=$targetNetMode, firewall=true, BOM-free UTF-8)"
     }
 }
 
@@ -4611,28 +4653,35 @@ function Set-MiosWslConfig {
     $Cpus = Resolve-MiosCpuAllocation -AvailableCpus ([Environment]::ProcessorCount) -RequestedCpus $Cpus
 
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
-    $winBuild = [Environment]::OSVersion.Version.Build
-    $isWin11_22H2 = ($winBuild -ge 22621)
-    $targetNetMode = if ($isWin11_22H2) { "mirrored" } else { "NAT" }
+    # networkingMode from SSOT only: Resolve-MiosWslNetworkingMode never upgrades NAT to mirrored by Windows build.
+    $targetNetMode = Resolve-MiosWslNetworkingMode
+    $isMirrored = ($targetNetMode -eq 'mirrored')
+    $loopback = [bool](Get-MiosTomlValue -Section 'wsl2' -Key 'host_address_loopback' -Default $true)
+    $fwall = Get-MiosTomlValue -Section 'wsl2' -Key 'firewall' -Default $true
+    if ($fwall -isnot [bool] -or -not $fwall) { throw 'mios.toml [wsl2].firewall=false disables the required inbound security policy; enable it before continuing.' }
+    $wslFlag = { param([string]$Key) ([bool](Get-MiosTomlValue -Section 'wsl2' -Key $Key -Default $true)).ToString().ToLowerInvariant() }
 
     $defaultKeys = [ordered]@{
         memory              = "${RamGB}GB"
         processors          = "$Cpus"
         swap                = "4GB"
         networkingMode      = $targetNetMode
-        localhostForwarding = "true"
-        dnsTunneling        = "true"
-        autoProxy           = "true"
-        guiApplications     = "true"
     }
+    # localhostForwarding is a NAT-only setting; mirrored networking ignores it, so it is dropped there.
+    if (-not $isMirrored) { $defaultKeys['localhostForwarding'] = & $wslFlag 'localhost_forwarding' }
+    $defaultKeys['dnsTunneling']    = & $wslFlag 'dns_tunneling'
+    $defaultKeys['autoProxy']       = & $wslFlag 'auto_proxy'
+    $defaultKeys['guiApplications'] = & $wslFlag 'gui_applications'
+    $defaultKeys['firewall'] = $fwall.ToString().ToLowerInvariant()
 
-    $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
+    $cfgRaw = if (Test-Path $wslCfg) { [string](Get-Content $wslCfg -Raw) } else { "" }
 
     if ($cfgRaw -notmatch "\[wsl2\]") {
-        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-DEV`n"
-        foreach ($kv in $defaultKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
-        $finalContent = if ($cfgRaw.Trim()) { $cfgRaw.TrimEnd() + "`n`n" + $block.TrimStart() } else { $block }
-        [System.IO.File]::WriteAllText($wslCfg, $finalContent, (New-Object System.Text.UTF8Encoding($false)))
+        $block = @('[wsl2]', '# MiOS-managed -- host resources for MiOS-DEV')
+        foreach ($kv in $defaultKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)" }
+        $created = if ($cfgRaw.Trim()) { @($cfgRaw.TrimEnd() -split "\r?\n") + @('') + $block } else { $block }
+        $created = Get-MiosWslExperimentalLines -Lines $created -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
+        [System.IO.File]::WriteAllLines($wslCfg, $created, (New-Object System.Text.UTF8Encoding($false)))
         Log-Ok ".wslconfig: wrote [wsl2] -- ${RamGB}GB RAM, $Cpus CPUs, $targetNetMode"
         if (-not $NoShutdown) {
             try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
@@ -4640,7 +4689,7 @@ function Set-MiosWslConfig {
         return
     }
 
-    $deprecatedKeys = @('firewall')
+    $dropKeys = @(if ($isMirrored) { 'localhostForwarding' })
     $bootSectionKeys = @('systemd', 'command', 'enabled', 'appendWindowsPath',
                          'default', 'options', 'mountFsTab',
                          'generateHosts', 'generateResolvConf', 'hostname')
@@ -4658,7 +4707,7 @@ function Set-MiosWslConfig {
         if ($inWsl2 -and $line -match "^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*)$") {
             $key = $Matches[1]
             $val = $Matches[2].Trim()
-            if ($deprecatedKeys -contains $key -or $bootSectionKeys -contains $key) { continue }
+            if ($dropKeys -contains $key -or $bootSectionKeys -contains $key) { continue }
             if ($key -ieq 'processors') {
                 if ($val -notmatch '^([0-9]+)(\s*[#;].*)?$') {
                     throw 'Existing WSL processors value must be an integer.'
@@ -4674,7 +4723,7 @@ function Set-MiosWslConfig {
                     if ($key -ieq 'processors') { $effectiveCpus = $val }
                     continue
                 }
-                # Reconcile networkingMode based on Windows build
+                # networkingMode is the SSOT value, whatever the file held.
                 if ($key -ieq 'networkingMode') {
                     $patched.Add("networkingMode=$targetNetMode")
                     $null = $inserted.Add($key)
@@ -4699,12 +4748,35 @@ function Set-MiosWslConfig {
             $offset++
         }
     }
+    $final = Get-MiosWslExperimentalLines -Lines $patched.ToArray() -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
     # BOM-free UTF-8: a UTF-8 BOM makes WSL ignore [wsl2].
-    [System.IO.File]::WriteAllLines($wslCfg, $patched, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllLines($wslCfg, $final, (New-Object System.Text.UTF8Encoding($false)))
     Log-Ok ".wslconfig: merged [wsl2] -- $effectiveRam RAM, $effectiveCpus CPUs, $effectiveNetMode"
     if (-not $NoShutdown) {
         try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
     }
+}
+
+function Get-MiosLanExposurePlan {
+    # The Windows-host exposure of MiOS-DEV, from mios.toml [firewall.windows] only: expose ([ports] keys, resolved by
+    # Get-MiosSsotPort), profiles and remote_addresses. No port literal stands in for a key that does not resolve, and an
+    # unscoped remote list (empty, Any, 0.0.0.0/0, ::/0) opens nothing.
+    $plan = [pscustomobject]@{ Ports = [ordered]@{}; Profiles = @(); RemoteAddresses = @(); Refused = @() }
+    $expose = @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'expose' -Default @())
+    foreach ($svc in $expose) {
+        $port = Get-MiosSsotPort -Key $svc
+        if ($port) { $plan.Ports[$svc] = $port } else { $plan.Refused += "$svc has no valid [ports].$svc value" }
+    }
+    foreach ($p in @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'profiles' -Default @())) {
+        $name = @('Domain', 'Private', 'Public') | Where-Object { $_ -ieq $p }
+        if ($name) { $plan.Profiles += $name } else { $plan.Refused += "profile '$p' is not Domain, Private or Public" }
+    }
+    foreach ($r in @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'remote_addresses' -Default @())) {
+        $r = ([string]$r).Trim()
+        if ($r -in @('', '*', 'Any', '0.0.0.0', '0.0.0.0/0', '::', '::/0') -or $r -match '/0$') { $plan.Refused += "remote address '$r' is unscoped"; continue }
+        $plan.RemoteAddresses += $r
+    }
+    return $plan
 }
 
 function Set-MiosLanFirewallRules {
@@ -4714,23 +4786,11 @@ function Set-MiosLanFirewallRules {
         return
     }
 
-    $_defaultPorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
-    }
-
-    # Resolve per-service ports from [ports].<key>, falling back to vendor.
-    $_ports = [ordered]@{}
-    foreach ($k in $_defaultPorts.Keys) {
-        $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
+    $plan = Get-MiosLanExposurePlan
+    foreach ($r in $plan.Refused) { Log-Warn "Firewall: refused ($r)" }
+    $scoped = ($plan.RemoteAddresses.Count -gt 0 -and $plan.Profiles.Count -gt 0)
+    if (-not $scoped) {
+        Log-Warn "LAN-FIREWALL-UNSCOPED: mios.toml [firewall.windows] resolved to no remote address or no profile; no MiOS-DEV LAN rule is opened"
     }
     # SearXNG gets no LAN rule: its one listener is loopback-only (mios.toml
     # [ports].searxng), so direct LAN forwarding to it is unsupported. The rule
@@ -4742,39 +4802,38 @@ function Set-MiosLanFirewallRules {
     }
     else { Log-Warn "Firewall: mios.toml [ports].searxng does not resolve from any layer; no SearXNG LAN rule" }
 
-    # Which profiles + which services to expose (operator-editable).
-    $_profiles = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'profiles' -Default @('Private','Domain'))
-    $_expose   = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose'   -Default @($_ports.Keys))
-    if ($_profiles.Count -eq 0) { $_profiles = @('Private','Domain') }
-    if ($_expose.Count   -eq 0) { $_expose   = @($_ports.Keys) }
-
-    $applied = New-Object System.Collections.Generic.List[string]
-    foreach ($svc in $_expose) {
-        if (-not $_ports.Contains($svc)) {
-            Write-Log "firewall: skip '$svc' -- not in [ports] section"
-            continue
+    # Rule names carry the "MiOS - " prefix this function owns: one per exposed service. A MiOS rule for a service
+    # that left [firewall.windows].expose (or every MiOS rule, when the scope is empty) is removed.
+    $wanted = @{}
+    if ($scoped) { foreach ($svc in $plan.Ports.Keys) { $wanted["MiOS - $svc ($($plan.Ports[$svc])/tcp)"] = $svc } }
+    foreach ($old in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue)) {
+        if (-not $wanted.ContainsKey([string]$old.DisplayName)) {
+            Remove-NetFirewallRule -DisplayName ([string]$old.DisplayName) -ErrorAction SilentlyContinue
+            Write-Log "firewall: removed '$($old.DisplayName)' (not in mios.toml [firewall.windows].expose)"
         }
-        $port = [int]$_ports[$svc]
-        if ($port -lt 1 -or $port -gt 65535) { continue }
-        # Rule name carries the "MiOS - " prefix so Invoke-MiOSFullReap
-        # can sweep them on uninstall without touching other rules.
-        $name = "MiOS - $svc ($port/tcp)"
+    }
+    if (-not $scoped) { return }
+
+    $profileText = $plan.Profiles -join ','
+    $applied = New-Object System.Collections.Generic.List[string]
+    foreach ($name in $wanted.Keys) {
+        $svc = $wanted[$name]; $port = [int]$plan.Ports[$svc]
         try {
             $existing = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue
             if ($existing) {
-                # Idempotent re-run: refresh action / profile / port.
+                # Idempotent re-run: refresh action / profile / port / scope.
                 Set-NetFirewallRule -DisplayName $name `
                     -Enabled True -Action Allow -Direction Inbound `
-                    -Profile ($_profiles -join ',') -ErrorAction SilentlyContinue
+                    -Profile $profileText -RemoteAddress $plan.RemoteAddresses -ErrorAction Stop
                 $existing | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue |
                     Set-NetFirewallPortFilter -Protocol TCP -LocalPort $port -ErrorAction SilentlyContinue
-                Write-Log "firewall: refreshed '$name' on profiles $($_profiles -join ',')"
+                Write-Log "firewall: refreshed '$name' on profiles $profileText from $($plan.RemoteAddresses -join ',')"
             } else {
                 New-NetFirewallRule -DisplayName $name `
-                    -Description "MiOS LAN inbound (auto-generated by mios-bootstrap)" `
+                    -Description "MiOS LAN inbound (auto-generated by mios-bootstrap from mios.toml [firewall.windows])" `
                     -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port `
-                    -Profile ($_profiles -join ',') -ErrorAction Stop | Out-Null
-                Write-Log "firewall: created '$name' (TCP $port) on profiles $($_profiles -join ',')"
+                    -Profile $profileText -RemoteAddress $plan.RemoteAddresses -ErrorAction Stop | Out-Null
+                Write-Log "firewall: created '$name' (TCP $port) on profiles $profileText from $($plan.RemoteAddresses -join ',')"
             }
             $applied.Add("$svc/$port")
         } catch {
@@ -4782,39 +4841,18 @@ function Set-MiosLanFirewallRules {
         }
     }
     if ($applied.Count -gt 0) {
-        Log-Ok ("Windows Firewall: LAN inbound rules on $($_profiles -join '+') for " + ($applied -join ', '))
+        Log-Ok ("Windows Firewall: LAN inbound rules on $profileText from $($plan.RemoteAddresses -join ', ') for " + ($applied -join ', '))
     }
 }
 
 function Set-MiosLanPortProxy {
-    # Skip entirely under WSL2 mirrored networking: there is no distinct VM
-    # eth0 to resolve and Windows already exposes container ports on the host,
-    # so netsh portproxy is both impossible and unnecessary (the
-    # "could not resolve a clean WSL VM IP" warning came from mirrored mode --
-    # the .wslconfig the installer writes now uses networkingMode=mirrored).
-    try {
-        $_wslCfg = Join-Path $env:USERPROFILE '.wslconfig'
-        if ((Test-Path $_wslCfg) -and ((Get-Content -LiteralPath $_wslCfg -Raw -ErrorAction SilentlyContinue) -match '(?im)^\s*networkingMode\s*=\s*mirrored\b')) {
-            Log-Ok "portproxy: skipped (networkingMode=mirrored exposes container ports on the host directly)"
-            return
-        }
-    } catch {}
-    $_defaultPorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
+    # Under mirrored networking Windows already exposes container ports on the host, so netsh portproxy is both
+    # impossible (no distinct VM eth0) and unnecessary. The mode is the SSOT one every .wslconfig writer renders.
+    if ((Resolve-MiosWslNetworkingMode) -eq 'mirrored') {
+        Log-Ok "portproxy: skipped (mios.toml [wsl2].networking_mode=mirrored exposes container ports on the host directly)"
+        return
     }
-    $_ports = [ordered]@{}
-    foreach ($k in $_defaultPorts.Keys) {
-        $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
-    }
+    $plan = Get-MiosLanExposurePlan
     # SearXNG is not forwarded: its one listener is loopback-only (mios.toml
     # [ports].searxng), which the VM's eth0 IP never reaches, so direct LAN
     # forwarding to it is unsupported. The mapping an earlier run added is removed.
@@ -4824,8 +4862,6 @@ function Set-MiosLanPortProxy {
         Log-Info "portproxy: SearXNG is not forwarded -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
     }
     else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
-    $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_ports.Keys))
-    if ($_expose.Count -eq 0) { $_expose = @($_ports.Keys) }
 
     $_wslIp = $null
     try {
@@ -4842,10 +4878,10 @@ function Set-MiosLanPortProxy {
     }
     Write-Log "portproxy: WSL VM ip = $_wslIp"
 
-    foreach ($svc in $_expose) {
-        if (-not $_ports.Contains($svc)) { continue }
-        $port = [int]$_ports[$svc]
-        if ($port -lt 1 -or $port -gt 65535) { continue }
+    # Only [firewall.windows].expose ports are forwarded; the Windows Defender rules Set-MiosLanFirewallRules scopes to
+    # remote_addresses decide who reaches them.
+    foreach ($svc in $plan.Ports.Keys) {
+        $port = [int]$plan.Ports[$svc]
         # Drop any prior rule (idempotent re-run).
         & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
         $r = & netsh interface portproxy add v4tov4 `
@@ -7943,7 +7979,7 @@ exit 0
     Set-Step "wsl --shutdown so .wslconfig + /etc/wsl.conf take effect on next entry..."
     & wsl.exe --shutdown 2>&1 |
         ForEach-Object { Write-Log "wsl-shutdown-end-phase3: $_" }
-    Log-Ok "WSL2 utility VM shutdown -- next entry uses mirrored networking + mios as default user"
+    Log-Ok "WSL2 utility VM shutdown -- next entry uses the mios.toml [wsl2] networking mode + mios as default user"
 
     End-Phase 3
 

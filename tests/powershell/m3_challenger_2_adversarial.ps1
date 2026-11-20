@@ -88,6 +88,9 @@ try {
     
     # Mock Log-Ok
     function global:Log-Ok { param($msg) }
+    function global:Get-MiosTomlValue { param($Section, $Key, $Default) if ("$Section.$Key" -eq 'wsl2.networking_mode') { return $global:SimulatedNetMode }; return $Default }
+    function global:Get-MiosCpuMinimum { 4 }
+    function global:Resolve-MiosCpuAllocation { param($AvailableCpus, $RequestedCpus) $RequestedCpus }
 
     # Helper function to invoke Set-MiosWslConfig under a simulated Windows build
     function Invoke-SimulatedSetMiosWslConfig {
@@ -96,7 +99,8 @@ try {
             [int]$RamGB = 0,
             [int]$Cpus = 0,
             [switch]$Force,
-            [int]$SimulatedBuild = 0
+            [int]$SimulatedBuild = 0,
+            [string]$SsotMode = "NAT"
         )
         $origProfile = $env:USERPROFILE
         try {
@@ -105,8 +109,14 @@ try {
             if ($inner.StartsWith('{') -and $inner.EndsWith('}')) {
                 $inner = $inner.Substring(1, $inner.Length - 2)
             }
-            if ($SimulatedBuild -gt 0) {
-                $inner = $inner.Replace('[Environment]::OSVersion.Version.Build', "$SimulatedBuild")
+            # The Windows build now reaches the mode only through Resolve-MiosWslNetworkingMode, which reads the SSOT
+            # [wsl2].networking_mode ($SsotMode here) and never upgrades NAT; load it with the simulated build.
+            $global:SimulatedNetMode = $SsotMode
+            foreach ($helper in 'Resolve-MiosWslNetworkingMode', 'Get-MiosWslExperimentalLines') {
+                $hAst = $bAst.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq $helper }, $true)
+                $hText = $hAst.Extent.Text
+                if ($SimulatedBuild -gt 0) { $hText = $hText.Replace('[Environment]::OSVersion.Version.Build', "$SimulatedBuild") }
+                . ([scriptblock]::Create(($hText -replace '^function\s+', 'function global:')))
             }
             $sb = [scriptblock]::Create($inner)
             & $sb -RamGB $RamGB -Cpus $Cpus -Force:$Force -NoShutdown
@@ -185,29 +195,33 @@ try {
     Assert-Challenge -Suite "Suite 2" -Name "2.3 -Force overrides processors=16 with requested processors=4" -Condition ($content23 -match '(?m)^\s*processors\s*=\s*4\s*$' -and $content23 -notmatch '(?m)^\s*processors\s*=\s*16\s*$')
 
     # Test 2.4: Windows Build Detection Simulation
-    # Test 2.4a: Win11 22H2 (Build 22621) -> mirrored
+    # Test 2.4a: Win11 22H2 (Build 22621) keeps SSOT NAT as NAT (never an upgrade)
     $dir24a = Join-Path $tempBase "test_24a"
     $null = New-Item -ItemType Directory -Path $dir24a -Force
     $cfg24a = Join-Path $dir24a ".wslconfig"
     [System.IO.File]::WriteAllText($cfg24a, "[wsl2]`nnetworkingMode=NAT`n", (New-Object System.Text.UTF8Encoding($false)))
     Invoke-SimulatedSetMiosWslConfig -ConfigDir $dir24a -RamGB 8 -Cpus 4 -SimulatedBuild 22621
     $content24a = Get-Content $cfg24a -Raw
-    Assert-Challenge -Suite "Suite 2" -Name "2.4a Build 22621 (Win11 22H2) upgrades networkingMode to mirrored" -Condition ($content24a -match '(?m)^\s*networkingMode\s*=\s*mirrored\s*$')
+    Assert-Challenge -Suite "Suite 2" -Name "2.4a Build 22621 (Win11 22H2) keeps SSOT networkingMode=NAT" -Condition ($content24a -match '(?m)^\s*networkingMode\s*=\s*NAT\s*$')
 
-    # Test 2.4b: Win11 Canary/24H2 (Build 26100) -> mirrored
+    # Test 2.4b: Win11 24H2 (Build 26100) writes the SSOT mode: NAT by default, mirrored when SSOT says mirrored
     $dir24b = Join-Path $tempBase "test_24b"
     $null = New-Item -ItemType Directory -Path $dir24b -Force
     $cfg24b = Join-Path $dir24b ".wslconfig"
     Invoke-SimulatedSetMiosWslConfig -ConfigDir $dir24b -RamGB 8 -Cpus 4 -SimulatedBuild 26100
     $content24b = Get-Content $cfg24b -Raw
-    Assert-Challenge -Suite "Suite 2" -Name "2.4b Build 26100 (Win11 24H2) writes networkingMode=mirrored" -Condition ($content24b -match '(?m)^\s*networkingMode\s*=\s*mirrored\s*$')
+    Assert-Challenge -Suite "Suite 2" -Name "2.4b Build 26100 (Win11 24H2) writes SSOT networkingMode=NAT" -Condition ($content24b -match '(?m)^\s*networkingMode\s*=\s*NAT\s*$')
+    Remove-Item -LiteralPath $cfg24b -Force
+    Invoke-SimulatedSetMiosWslConfig -ConfigDir $dir24b -RamGB 8 -Cpus 4 -SimulatedBuild 26100 -SsotMode mirrored
+    $content24b2 = Get-Content $cfg24b -Raw
+    Assert-Challenge -Suite "Suite 2" -Name "2.4b2 Build 26100 with SSOT mirrored writes networkingMode=mirrored" -Condition ($content24b2 -match '(?m)^\s*networkingMode\s*=\s*mirrored\s*$')
 
     # Test 2.4c: Win10 22H2 (Build 19045) -> NAT
     $dir24c = Join-Path $tempBase "test_24c"
     $null = New-Item -ItemType Directory -Path $dir24c -Force
     $cfg24c = Join-Path $dir24c ".wslconfig"
     [System.IO.File]::WriteAllText($cfg24c, "[wsl2]`nnetworkingMode=mirrored`n", (New-Object System.Text.UTF8Encoding($false)))
-    Invoke-SimulatedSetMiosWslConfig -ConfigDir $dir24c -RamGB 8 -Cpus 4 -SimulatedBuild 19045
+    Invoke-SimulatedSetMiosWslConfig -ConfigDir $dir24c -RamGB 8 -Cpus 4 -SimulatedBuild 19045 -SsotMode mirrored
     $content24c = Get-Content $cfg24c -Raw
     Assert-Challenge -Suite "Suite 2" -Name "2.4c Build 19045 (Win10) downgrades invalid mirrored to networkingMode=NAT" -Condition ($content24c -match '(?m)^\s*networkingMode\s*=\s*NAT\s*$')
 
