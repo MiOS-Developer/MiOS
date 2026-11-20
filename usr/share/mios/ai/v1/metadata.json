@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4359,
+  "total_files_scanned": 4360,
   "total_metadata_entries": 3485,
   "total_hints": 3479,
   "total_functions_indexed": 2238,
-  "total_related_links": 7049,
+  "total_related_links": 7050,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -8983,6 +8983,7 @@
         "tools/drift-checks.py",
         ".archive/",
         "SKILLS/MANIFEST.json",
+        ".devloop/handoff/mios-handoff-archives.json",
         "usr/lib/greenboot/check/wanted.d/15-mios-root-git.sh"
       ],
       "functions": [],
