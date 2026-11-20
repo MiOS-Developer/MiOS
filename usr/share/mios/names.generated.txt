@@ -3502,6 +3502,9 @@ deployment.cloud.overlay.tailscale.auth_key_mint.enabled  MIOS_DEPLOYMENT_CLOUD_
 deployment.cloud.tailnet.apt_keyring  MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_KEYRING
 deployment.cloud.tailnet.apt_list  MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_LIST
 deployment.cloud.tailnet.dnf_repo  MIOS_DEPLOYMENT_CLOUD_TAILNET_DNF_REPO
+deployment.cloud.ssh.apt_package  MIOS_DEPLOYMENT_CLOUD_SSH_APT_PACKAGE
+deployment.cloud.ssh.dnf_package  MIOS_DEPLOYMENT_CLOUD_SSH_DNF_PACKAGE
+deployment.cloud.ssh.config_dropin  MIOS_DEPLOYMENT_CLOUD_SSH_CONFIG_DROPIN
 deployment.cloud.gce.project  MIOS_DEPLOYMENT_CLOUD_GCE_PROJECT
 deployment.cloud.gce.instance  MIOS_DEPLOYMENT_CLOUD_GCE_INSTANCE
 deployment.cloud.gce.zone  MIOS_DEPLOYMENT_CLOUD_GCE_ZONE
@@ -10217,6 +10220,7 @@ ssh.ca.key_file  MIOS_SSH_CA_KEY_FILE
 ssh.ca.max_header_bytes  MIOS_SSH_CA_MAX_HEADER_BYTES
 ssh.ca.max_body_bytes  MIOS_SSH_CA_MAX_BODY_BYTES
 ssh.ca.read_timeout_s  MIOS_SSH_CA_READ_TIMEOUT_S
+ssh.ca.renew_before_s  MIOS_SSH_CA_RENEW_BEFORE_S
 ssh.windows.root  MIOS_SSH_WINDOWS_ROOT
 ssh.windows.release_api  MIOS_SSH_WINDOWS_RELEASE_API
 ssh.windows.asset  MIOS_SSH_WINDOWS_ASSET

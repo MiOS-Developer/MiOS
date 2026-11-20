@@ -1267,6 +1267,9 @@ _mios_input MIOS_IDENTITY_USERNAME MIOS_USER MIOS_DEFAULT_USER || { return 1 2>/
 : "${MIOS_DEPLOYMENT_CLOUD_OVERLAY_TAILSCALE_SOCKS5_SERVER:=127.0.0.1:1055}"
 : "${MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S:=240}"
 : "${MIOS_DEPLOYMENT_CLOUD_SOURCE_REF:=main}"
+: "${MIOS_DEPLOYMENT_CLOUD_SSH_APT_PACKAGE:=openssh-client}"
+: "${MIOS_DEPLOYMENT_CLOUD_SSH_CONFIG_DROPIN:=/etc/ssh/ssh_config.d/50-mios-user-ca.conf}"
+: "${MIOS_DEPLOYMENT_CLOUD_SSH_DNF_PACKAGE:=openssh-clients}"
 [ -n "${MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_KEYRING+x}" ] || MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_KEYRING='https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg'
 [ -n "${MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_LIST+x}" ] || MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_LIST='https://pkgs.tailscale.com/stable/{id}/{codename}.tailscale-keyring.list'
 : "${MIOS_DEPLOYMENT_CLOUD_TAILNET_DNF_REPO:=https://pkgs.tailscale.com/stable/fedora/tailscale.repo}"
@@ -5189,6 +5192,7 @@ _mios_input MIOS_SERVICES_WHISPER_USER MIOS_WHISPER_USER || { return 1 2>/dev/nu
 [ -n "${MIOS_SSH_CA_PORT+x}" ] || MIOS_SSH_CA_PORT="${MIOS_PORTS_SSH_CA:-}"
 : "${MIOS_SSH_CA_PRINCIPALS_DIR:=/usr/lib/ssh/mios-principals}"
 : "${MIOS_SSH_CA_READ_TIMEOUT_S:=10}"
+: "${MIOS_SSH_CA_RENEW_BEFORE_S:=3600}"
 : "${MIOS_SSH_CA_SIGNER:=mios}"
 : "${MIOS_SSH_CA_TRUSTED_TAGS:=tag:mios}"
 : "${MIOS_SSH_CA_VALIDITY_S:=28800}"
