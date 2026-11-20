@@ -11129,7 +11129,7 @@ non_addressable = [
 placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FEDORA"]
 
 [versions]
-fedora                   = "44"
+fedora                   = "45"
 k3s                      = "latest"
 forgejo                  = "17.0.1"
 ceph                     = "latest"
@@ -19276,6 +19276,7 @@ unit = [
     "tests/test-pgvector-major-upgrade.sh",
     "tests/test-mios-manual-harvest.sh",
     "tests/test-postcheck-kargs.sh",
+    "tests/test-fedora-release.sh",
     "tests/test-offload-overlay.py",
     "tests/test-blade-reachability.sh",
     "tests/test-seat-auth-posture.sh",

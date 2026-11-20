@@ -25,7 +25,8 @@ if [[ -d /etc/yum.repos.d ]]; then
     done
 fi
 
-_fver="${FEDORA_VERSION:-44}"
+_fver="$(mios_fedora_release)" || exit 1
+export FEDORA_VERSION="$_fver"
 
 mios_log "Import Fedora ${_fver} GPG key"
 GPG_KEY_PATH="/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-${_fver}-x86_64"

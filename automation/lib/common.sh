@@ -103,6 +103,30 @@ export DNF_OPTS_STR="${DNF_OPTS[*]}"
 
 export MIOS_VERSION_MANIFEST="${MIOS_VERSION_MANIFEST:-/tmp/mios-build-versions.tsv}"
 
+# The Fedora release the build runs on, read from the base image's os-release
+# (PLATFORM_ID=platform:f<N>), never assumed. It must equal the SSOT pin
+# [versions].fedora: a base image that rebased onto a new release while the pin
+# stayed behind mixed two releases' repos into one transaction and failed the
+# bake at 05-repos. Prints N; returns 1 with the reason on stderr otherwise.
+mios_fedora_release() {
+    local osr="${OS_RELEASE_FILE:-/etc/os-release}" base="" want="${MIOS_VERSIONS_FEDORA:-}"
+    [[ -r "$osr" ]] && base="$(sed -n 's/^PLATFORM_ID="\{0,1\}platform:f\([0-9][0-9]*\)"\{0,1\}$/\1/p' "$osr" | head -n1)"
+    if [[ -z "$base" ]]; then
+        printf 'mios_fedora_release: %s names no Fedora release (PLATFORM_ID=platform:f<N>)\n' "$osr" >&2
+        return 1
+    fi
+    if [[ -z "$want" ]]; then
+        printf 'mios_fedora_release: [versions].fedora is not resolved (MIOS_VERSIONS_FEDORA empty)\n' >&2
+        return 1
+    fi
+    if [[ "$base" != "$want" ]]; then
+        printf 'mios_fedora_release: the base image is Fedora %s but [versions].fedora = %s; move the SSOT pin to %s (or pin the base image to a Fedora %s tag)\n' \
+            "$base" "$want" "$base" "$want" >&2
+        return 1
+    fi
+    printf '%s\n' "$base"
+}
+
 record_version() {
     local component="$1" version="$2" resolved_to="${3:-}"
     if [[ ! -f "$MIOS_VERSION_MANIFEST" ]]; then

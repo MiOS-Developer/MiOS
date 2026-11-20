@@ -44,7 +44,8 @@ enable_copr() {
 }
 
 REPO_DIR=/etc/yum.repos.d
-_fver="${FEDORA_VERSION:-44}"
+_fver="$(mios_fedora_release)" || exit 1
+export FEDORA_VERSION="$_fver"
 
 try_fetch() {
     local url="$1" out="$2" label="$3"
@@ -95,7 +96,6 @@ fi
 
 if [[ ! -f "${REPO_DIR}/ublue-os-packages.repo" ]]; then
     mios_log "Enabling ublue-os/packages COPR"
-    _fver="${FEDORA_VERSION:-44}"
     if try_fetch "${MIOS_URL_UBLUE_REPO:-https://copr.fedorainfracloud.org/coprs/ublue-os/packages/repo/fedora-${_fver}/ublue-os-packages-fedora-${_fver}.repo}" \
                  "${REPO_DIR}/ublue-os-packages.repo" "ublue-os/packages COPR"; then
         if ! grep -q '^priority=' "${REPO_DIR}/ublue-os-packages.repo"; then
@@ -133,7 +133,6 @@ fi
 
 if [[ ! -f "${REPO_DIR}/crowdsec.repo" ]]; then
     mios_log "Enabling CrowdSec repo"
-    _fver="${FEDORA_VERSION:-44}"
     try_fetch "${MIOS_URL_CROWDSEC_REPO:-https://packagecloud.io/crowdsec/crowdsec/config_file.repo?os=fedora&dist=${_fver}&source=script}" \
               "${REPO_DIR}/crowdsec.repo" "CrowdSec repo" || true
 else
