@@ -9488,6 +9488,29 @@ pub mod hyprglass_build {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("Missing plugin key {key}"))
     }
+    /// The compositor SRPM's bundled Lua source for the SSOT `lua_version`. A miss names the Lua the
+    /// SRPM does bundle, so a compositor move that bumps Lua says which pin to set.
+    fn lua_archive(sdk: &Path, version: &str) -> Result<PathBuf, String> {
+        let archive = sdk.join(format!("lua-{version}.tar.gz"));
+        if archive.is_file() {
+            return Ok(archive);
+        }
+        let mut bundled: Vec<String> = fs::read_dir(sdk)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter_map(|n| {
+                n.strip_prefix("lua-")
+                    .and_then(|v| v.strip_suffix(".tar.gz"))
+                    .map(str::to_string)
+            })
+            .collect();
+        bundled.sort();
+        Err(format!(
+            "[desktop.hyprland.hyprglass].lua_version = {version}, but the compositor SRPM bundles Lua {}; set lua_version to the Lua it bundles",
+            if bundled.is_empty() { "none".to_string() } else { bundled.join(", ") }
+        ))
+    }
     fn find(dir: &Path, prefix: &str, suffix: &str, directory: bool) -> Result<PathBuf, String> {
         let paths = fs::read_dir(dir)
             .map_err(|e| e.to_string())?
@@ -10011,11 +10034,13 @@ pub mod hyprglass_build {
                     .display()
             ));
         }
-        let lua_name = format!("lua-{}", value(h, "lua_version")?);
-        let archive = sdk.join(format!("{lua_name}.tar.gz"));
-        if !archive.is_file() {
-            return Err(format!("Matching {lua_name} missing from compositor SRPM"));
-        }
+        let archive = lua_archive(sdk, value(h, "lua_version")?)?;
+        let lua_name = archive
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".tar.gz"))
+            .ok_or("Invalid Lua archive name")?
+            .to_string();
         command(
             "tar",
             &[
@@ -10285,6 +10310,36 @@ pub mod hyprglass_build {
             "{plugin} {revision} built for Hyprland {installed}: {}\n",
             target.display()
         ))
+    }
+
+    #[cfg(test)]
+    mod lua_archive_tests {
+        use super::lua_archive;
+        use std::fs;
+
+        #[test]
+        fn the_pinned_lua_is_taken_from_the_srpm_sources() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
+            fs::write(dir.path().join("hyprland-0.57.2.tar.gz"), b"x").unwrap();
+            assert_eq!(
+                lua_archive(dir.path(), "5.5.1").unwrap(),
+                dir.path().join("lua-5.5.1.tar.gz")
+            );
+        }
+
+        #[test]
+        fn a_stale_pin_names_the_lua_the_srpm_bundles() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
+            let err = lua_archive(dir.path(), "5.5.0").unwrap_err();
+            assert!(err.contains("lua_version = 5.5.0"), "{err}");
+            assert!(err.contains("bundles Lua 5.5.1"), "{err}");
+            let empty = tempfile::tempdir().unwrap();
+            assert!(lua_archive(empty.path(), "5.5.1")
+                .unwrap_err()
+                .contains("bundles Lua none"));
+        }
     }
 }
 

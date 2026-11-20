@@ -9773,7 +9773,7 @@ source_repository = "https://github.com/hyprnux/hyprglass.git"
 # Upstream policy (operator 2026-10-16, "latest + fail loudly"): no source_revision pin; the build
 # takes source_repository default-branch HEAD, logs the resolved commit, and fails naming any
 # MiOS patch that no longer applies (mios-gen build-hyprland-plugin refuses a pin).
-lua_version = "5.5.0"
+lua_version = "5.5.1"   # the Lua the compositor SRPM bundles (hyprland-0.57.2 ships lua-5.5.1.tar.gz); the plugin build refuses any other
 build_jobs = 4
 path = "/usr/lib64/mios/hyprglass.so"
 patches = ["usr/share/mios/hyprland/patches/hyprglass-fade-gamma.patch",   # MiOS: fade_gamma option
