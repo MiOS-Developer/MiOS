@@ -26,6 +26,13 @@ pub struct Config {
     pub principal: String,
     pub port: u16,
     pub limits: Limits,
+    /// Client side: the CA a returned certificate must be signed by (empty = not pinned).
+    pub ca_public_key: String,
+    /// Client side: renew once less than this remains on the installed certificate.
+    pub renew_before_s: u64,
+    /// Client side: the Blades' sshd port ([ports].ssh) and [ssh].host pattern.
+    pub ssh_port: u16,
+    pub ssh_host: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,18 +93,14 @@ pub fn config_from(doc: &toml::Value, env_port: Option<String>) -> Result<Config
     if !key_file.is_absolute() {
         return Err("[ssh.ca].key_file must be an absolute path".into());
     }
-    let port = match env_port.filter(|v| !v.is_empty()) {
-        Some(raw) => raw
-            .parse::<u16>()
-            .map_err(|_| format!("MIOS_PORTS_SSH_CA={raw} is not a port"))?,
-        None => {
-            let base = req(doc, "ports", "ssh_ca")?
-                .as_integer()
-                .ok_or("[ports].ssh_ca must be an integer")?;
-            let port = base + mios_resolver::stack_offset_of(doc);
-            u16::try_from(port).map_err(|_| format!("[ports].ssh_ca resolves to {port}"))?
-        }
-    };
+    let port = port_of(doc, "ssh_ca", env_port)?;
+    let ssh_port = port_of(doc, "ssh", std::env::var("MIOS_PORTS_SSH").ok())?;
+    let ssh_host = req_str(doc, "ssh", "host")?;
+    let ca_public_key = req_str(doc, ca, "public_key")?.trim().to_string();
+    if !ca_public_key.is_empty() {
+        check_key_line(&ca_public_key)
+            .map_err(|e| format!("[ssh.ca].public_key: {}", e.message))?;
+    }
     let principal = req_str(doc, "ssh", "user")?;
     if !valid_label(&principal) {
         return Err("[ssh].user must be a plain login name".into());
@@ -120,7 +123,28 @@ pub fn config_from(doc: &toml::Value, env_port: Option<String>) -> Result<Config
             max_body_bytes: req_pos(doc, ca, "max_body_bytes")? as usize,
             read_timeout: Duration::from_secs(req_pos(doc, ca, "read_timeout_s")?),
         },
+        ca_public_key,
+        renew_before_s: req_pos(doc, ca, "renew_before_s")?,
+        ssh_port,
+        ssh_host,
     })
+}
+
+/// [ports].<key> plus the stack offset; the process environment's value wins.
+fn port_of(doc: &toml::Value, key: &str, env: Option<String>) -> Result<u16, String> {
+    if let Some(raw) = env.filter(|v| !v.is_empty()) {
+        return raw.parse::<u16>().map_err(|_| {
+            format!(
+                "MIOS_PORTS_{}={raw} is not a port",
+                key.to_ascii_uppercase()
+            )
+        });
+    }
+    let base = req(doc, "ports", key)?
+        .as_integer()
+        .ok_or_else(|| format!("[ports].{key} must be an integer"))?;
+    let port = base + mios_resolver::stack_offset_of(doc);
+    u16::try_from(port).map_err(|_| format!("[ports].{key} resolves to {port}"))
 }
 
 /// Vendor and host tiers only: the signer's policy is a system trust decision,
@@ -619,6 +643,287 @@ impl Tailscale {
     }
 }
 
+// ---- Client side (`mios-ssh-ca request`): the cloud node that asks the signer. ----
+
+/// What `ssh-keygen -L` (run with TZ=UTC) reports about one certificate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CertInfo {
+    pub user_cert: bool,
+    pub public_key_fp: String,
+    pub signing_ca_fp: String,
+    pub key_id: String,
+    pub serial: u64,
+    pub principals: Vec<String>,
+    pub valid_from: i64,
+    pub valid_to: i64,
+}
+
+/// "2026-11-19T21:05:07" (UTC) -> unix seconds.
+pub fn epoch_utc(stamp: &str) -> Result<i64, String> {
+    let n: Vec<i64> = stamp
+        .split(['-', 'T', ':'])
+        .map(|p| p.parse::<i64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| format!("not a timestamp: {stamp:?}"))?;
+    let [y, m, d, hh, mm, ss] = n[..] else {
+        return Err(format!("not a timestamp: {stamp:?}"));
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || hh > 23 || mm > 59 || ss > 60 {
+        return Err(format!("not a timestamp: {stamp:?}"));
+    }
+    let y = y - i64::from(m <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let days = era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    Ok(days * 86400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// The SHA256 fingerprint token in an `ssh-keygen -l` line or a -L field.
+pub fn fingerprint_token(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|t| t.starts_with("SHA256:"))
+        .map(str::to_string)
+}
+
+pub fn parse_cert_listing(text: &str) -> Result<CertInfo, String> {
+    let mut lines = text.lines().peekable();
+    let mut field = |name: &str| -> Option<(String, Vec<String>)> {
+        let mut found = None;
+        for line in lines.by_ref() {
+            if let Some(v) = line.trim_start().strip_prefix(name) {
+                found = Some(v.trim().to_string());
+                break;
+            }
+        }
+        let inline = found?;
+        let mut more = Vec::new();
+        while let Some(next) = lines.peek() {
+            if next.starts_with("                ") {
+                more.push(next.trim().to_string());
+                lines.next();
+            } else {
+                break;
+            }
+        }
+        Some((inline, more))
+    };
+    let missing = |f: &str| format!("ssh-keygen -L shows no {f}");
+    let (kind, _) = field("Type:").ok_or_else(|| missing("Type"))?;
+    let (public, _) = field("Public key:").ok_or_else(|| missing("Public key"))?;
+    let (ca, _) = field("Signing CA:").ok_or_else(|| missing("Signing CA"))?;
+    let (key_id, _) = field("Key ID:").ok_or_else(|| missing("Key ID"))?;
+    let (serial, _) = field("Serial:").ok_or_else(|| missing("Serial"))?;
+    let (valid, _) = field("Valid:").ok_or_else(|| missing("Valid"))?;
+    let (inline, listed) = field("Principals:").ok_or_else(|| missing("Principals"))?;
+    let principals = if inline.is_empty() {
+        listed
+    } else {
+        vec![inline]
+    };
+    let parts: Vec<&str> = valid.split_whitespace().collect();
+    let ["from", from, "to", to] = parts[..] else {
+        return Err(format!(
+            "certificate validity is not a bounded interval: {valid:?}"
+        ));
+    };
+    Ok(CertInfo {
+        user_cert: kind.ends_with(" user certificate"),
+        public_key_fp: fingerprint_token(&public)
+            .ok_or_else(|| missing("public key fingerprint"))?,
+        signing_ca_fp: fingerprint_token(&ca).ok_or_else(|| missing("CA fingerprint"))?,
+        key_id: key_id.trim_matches('"').to_string(),
+        serial: serial
+            .parse()
+            .map_err(|_| format!("bad serial {serial:?}"))?,
+        principals,
+        valid_from: epoch_utc(from)?,
+        valid_to: epoch_utc(to)?,
+    })
+}
+
+/// Is `info` a certificate this node may install: a user certificate for our
+/// own key, for exactly the [ssh].user principal, signed by the pinned CA
+/// when one is pinned, and not already expired.
+pub fn check_issued(
+    info: &CertInfo,
+    own_fp: &str,
+    principal: &str,
+    ca_fp: Option<&str>,
+    now: i64,
+) -> Result<(), String> {
+    if !info.user_cert {
+        return Err("the signer returned a host certificate".into());
+    }
+    if info.public_key_fp != own_fp {
+        return Err("the certificate is for a different public key".into());
+    }
+    if info.principals != [principal] {
+        return Err(format!(
+            "the certificate's principals are {:?}, not [{principal:?}]",
+            info.principals
+        ));
+    }
+    if let Some(ca) = ca_fp {
+        if info.signing_ca_fp != ca {
+            return Err("the certificate is not signed by [ssh.ca].public_key".into());
+        }
+    }
+    if info.valid_to <= now {
+        return Err("the certificate is already expired".into());
+    }
+    Ok(())
+}
+
+/// Renew when there is no usable certificate or less than `renew_before_s` remains.
+pub fn needs_renewal(valid_to: Option<i64>, now: i64, renew_before_s: u64) -> bool {
+    match valid_to {
+        Some(to) => to - now < renew_before_s as i64,
+        None => true,
+    }
+}
+
+/// The request line and headers for one POST; `host` is the signer's name.
+pub fn render_request(host: &str, body: &str) -> String {
+    format!(
+        "POST {ROUTE} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+/// (status, JSON body) of a response no larger than `max` bytes.
+pub fn parse_http_response(raw: &[u8], max: usize) -> Result<(u16, Value), String> {
+    if raw.len() > max {
+        return Err("the signer's reply exceeds the request limits".into());
+    }
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or("the signer's reply has no HTTP head")?;
+    let head =
+        std::str::from_utf8(&raw[..split]).map_err(|_| "the signer's reply head is not UTF-8")?;
+    let status = head
+        .strip_prefix("HTTP/1.")
+        .and_then(|r| r.get(2..5))
+        .and_then(|c| c.parse::<u16>().ok())
+        .ok_or("the signer's reply has no HTTP status")?;
+    let body = serde_json::from_slice(&raw[split + 4..])
+        .map_err(|_| "the signer's reply body is not JSON")?;
+    Ok((status, body))
+}
+
+/// A path ssh_config can carry unquoted (no whitespace, quotes, `%` or `#`).
+pub fn config_safe(path: &Path) -> Result<String, String> {
+    let text = path.to_str().ok_or("path is not UTF-8")?;
+    if !path.is_absolute()
+        || text.chars().any(|c| {
+            c.is_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '%' | '#' | '\\')
+        })
+    {
+        return Err(format!("{text:?} cannot be written into ssh_config"));
+    }
+    Ok(text.to_string())
+}
+
+/// The ssh_config that logs in to every Blade as [ssh].user with this node's
+/// certificate. The renewal runs from `Match ... exec`, which ssh evaluates
+/// while it reads its configuration, before it loads any identity: a
+/// ProxyCommand runs concurrently with identity loading (measured with
+/// OpenSSH 9.6), so a certificate it renews is read too late. The exec always
+/// succeeds; a failed renewal leaves the installed certificate to decide.
+/// ProxyCommand hands the connection to `tailscale nc`, so a userspace node
+/// with no TUN reaches the Blade.
+/// The process environment a renewal must see to resolve the SSOT (and the
+/// ports) exactly as the run that wrote ssh_config did: ssh runs it later with
+/// the login's own environment.
+pub const CARRIED_ENV: [&str; 7] = [
+    "MIOS_TOML_ROOT",
+    "MIOS_VENDOR_TOML",
+    "MIOS_VENDOR_TOML_D",
+    "MIOS_HOST_TOML",
+    "MIOS_HOST_TOML_D",
+    "MIOS_PORTS_SSH_CA",
+    "MIOS_PORTS_SSH",
+];
+
+/// `[env K=V ...] <binary> [--root R]`: how ssh_config re-invokes this program.
+pub fn renew_invocation(
+    binary: &Path,
+    root: Option<&Path>,
+    env: &[(String, String)],
+) -> Result<String, String> {
+    let mut parts = Vec::new();
+    if !env.is_empty() {
+        parts.push("env".to_string());
+        for (k, v) in env {
+            let plain_number = !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit());
+            let value = if plain_number {
+                v.clone()
+            } else {
+                config_safe(Path::new(v))?
+            };
+            if !CARRIED_ENV.contains(&k.as_str()) {
+                return Err(format!("{k} is not carried into ssh_config"));
+            }
+            parts.push(format!("{k}={value}"));
+        }
+    }
+    parts.push(config_safe(binary)?);
+    if let Some(r) = root {
+        parts.push(format!("--root {}", config_safe(r)?));
+    }
+    Ok(parts.join(" "))
+}
+
+pub fn render_ssh_config(
+    cfg: &Config,
+    renew: &str,
+    dir: &Path,
+    socket: Option<&Path>,
+) -> Result<String, String> {
+    let bin = renew;
+    let d = config_safe(dir)?;
+    let sock = socket.map(config_safe).transpose()?;
+    let sock_arg = sock
+        .as_deref()
+        .map(|s| format!(" --socket={s}"))
+        .unwrap_or_default();
+    let request_sock = sock
+        .as_deref()
+        .map(|s| format!(" --socket {s}"))
+        .unwrap_or_default();
+    let mut hosts = vec![cfg.signer.clone()];
+    if !cfg.ssh_host.is_empty() && cfg.ssh_host != cfg.signer {
+        hosts.push(cfg.ssh_host.clone());
+    }
+    for h in &hosts {
+        if h.is_empty()
+            || !h
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_' | b'*' | b'?'))
+        {
+            return Err(format!("{h:?} is not an ssh_config host pattern"));
+        }
+    }
+    Ok(format!(
+        "# Generated by mios-ssh-ca request: the [ssh.ca] certificate login to MiOS Blades.\n\
+         Match host {match_hosts} exec \"{bin} request --dir {d}{request_sock} --quiet >&2; true\"\n\
+         Host {hosts}\n\
+         \x20   User {user}\n\
+         \x20   Port {port}\n\
+         \x20   IdentityFile {d}/id_ed25519\n\
+         \x20   CertificateFile {d}/id_ed25519-cert.pub\n\
+         \x20   IdentitiesOnly yes\n\
+         \x20   UserKnownHostsFile {d}/known_hosts\n\
+         \x20   StrictHostKeyChecking accept-new\n\
+         \x20   ProxyCommand tailscale{sock_arg} nc %h %p\n",
+        match_hosts = hosts.join(","),
+        hosts = hosts.join(" "),
+        user = cfg.principal,
+        port = cfg.ssh_port,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,9 +1186,13 @@ mod tests {
             [ports]
             stack_id = 1
             ssh_ca = 8130
+            ssh = 8100
             [ssh]
             user = "agent"
+            host = "mios-*"
             [ssh.ca]
+            public_key = ""
+            renew_before_s = 3600
             enabled = true
             signer = "mios"
             key_file = "/var/lib/mios/ssh-ca/mios-user-ca"
@@ -913,6 +1222,178 @@ mod tests {
         assert_eq!(c.key_file, Path::new("/var/lib/mios/ssh-ca/mios-user-ca"));
     }
 
+    const LISTING: &str = "/tmp/x-cert.pub:
+        Type: ssh-ed25519-cert-v01@openssh.com user certificate
+        Public key: ED25519-CERT SHA256:ownkey
+        Signing CA: ED25519 SHA256:theca (using ssh-ed25519)
+        Key ID: \"mios-cloud-1-7\"
+        Serial: 7
+        Valid: from 2026-11-19T21:45:00 to 2026-11-20T05:46:02
+        Principals: 
+                agent
+        Critical Options: (none)
+        Extensions: 
+                permit-pty
+";
+
+    #[test]
+    fn epoch_is_utc_seconds() {
+        assert_eq!(epoch_utc("1970-01-01T00:00:00").unwrap(), 0);
+        assert_eq!(epoch_utc("2000-03-01T00:00:00").unwrap(), 951868800);
+        assert_eq!(
+            epoch_utc("2026-11-20T05:46:02").unwrap() - epoch_utc("2026-11-19T21:45:00").unwrap(),
+            28862
+        );
+        assert!(epoch_utc("forever").is_err());
+        assert!(epoch_utc("2026-13-01T00:00:00").is_err());
+    }
+
+    #[test]
+    fn listing_parses_every_field() {
+        let info = parse_cert_listing(LISTING).unwrap();
+        assert!(info.user_cert);
+        assert_eq!(info.public_key_fp, "SHA256:ownkey");
+        assert_eq!(info.signing_ca_fp, "SHA256:theca");
+        assert_eq!(info.key_id, "mios-cloud-1-7");
+        assert_eq!(info.serial, 7);
+        assert_eq!(info.principals, vec!["agent".to_string()]);
+        assert_eq!(info.valid_to - info.valid_from, 28862);
+        let forever = LISTING.replace("from 2026-11-19T21:45:00 to 2026-11-20T05:46:02", "forever");
+        assert!(parse_cert_listing(&forever).is_err());
+        let two = LISTING.replace(
+            "                agent\n",
+            "                agent\n                root\n",
+        );
+        assert_eq!(
+            parse_cert_listing(&two).unwrap().principals,
+            vec!["agent", "root"]
+        );
+        assert!(
+            !parse_cert_listing(&LISTING.replace("user certificate", "host certificate"))
+                .unwrap()
+                .user_cert
+        );
+    }
+
+    #[test]
+    fn only_our_agent_certificate_from_the_pinned_ca_installs() {
+        let info = parse_cert_listing(LISTING).unwrap();
+        let now = info.valid_from + 60;
+        assert_eq!(
+            check_issued(&info, "SHA256:ownkey", "agent", None, now),
+            Ok(())
+        );
+        assert_eq!(
+            check_issued(&info, "SHA256:ownkey", "agent", Some("SHA256:theca"), now),
+            Ok(())
+        );
+        assert!(
+            check_issued(&info, "SHA256:ownkey", "agent", Some("SHA256:other"), now)
+                .unwrap_err()
+                .contains("not signed")
+        );
+        assert!(check_issued(&info, "SHA256:another", "agent", None, now)
+            .unwrap_err()
+            .contains("different public key"));
+        assert!(check_issued(&info, "SHA256:ownkey", "root", None, now)
+            .unwrap_err()
+            .contains("principals"));
+        assert!(
+            check_issued(&info, "SHA256:ownkey", "agent", None, info.valid_to)
+                .unwrap_err()
+                .contains("expired")
+        );
+        let mut extra = info.clone();
+        extra.principals.push("root".into());
+        assert!(check_issued(&extra, "SHA256:ownkey", "agent", None, now).is_err());
+        let mut host = info;
+        host.user_cert = false;
+        assert!(check_issued(&host, "SHA256:ownkey", "agent", None, now).is_err());
+    }
+
+    #[test]
+    fn renewal_threshold() {
+        assert!(needs_renewal(None, 100, 3600));
+        assert!(!needs_renewal(Some(100 + 3601), 100, 3600));
+        assert!(needs_renewal(Some(100 + 3599), 100, 3600));
+        assert!(needs_renewal(Some(50), 100, 3600));
+    }
+
+    #[test]
+    fn reply_parsing_is_bounded() {
+        let ok = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}";
+        assert_eq!(parse_http_response(ok, 1024).unwrap().0, 200);
+        let refused = b"HTTP/1.1 403 Forbidden\r\n\r\n{\"error\":{\"code\":\"owner_not_trusted\"}}";
+        let (status, body) = parse_http_response(refused, 1024).unwrap();
+        assert_eq!(
+            (status, body["error"]["code"].as_str()),
+            (403, Some("owner_not_trusted"))
+        );
+        assert!(parse_http_response(ok, 10).is_err());
+        assert!(parse_http_response(b"garbage", 1024).is_err());
+        assert!(parse_http_response(b"HTTP/1.1 200 OK\r\n\r\nnot json", 1024).is_err());
+        let req = render_request("mios", "{}");
+        assert!(
+            req.starts_with(&format!("POST {ROUTE} HTTP/1.1\r\n"))
+                && req.ends_with("Content-Length: 2\r\nConnection: close\r\n\r\n{}")
+        );
+    }
+
+    #[test]
+    fn ssh_config_routes_every_blade_through_the_certificate() {
+        let c = config_from(&ssot(), None).unwrap();
+        let renew = "/opt/bin/mios-ssh-ca";
+        let text = render_ssh_config(
+            &c,
+            renew,
+            Path::new("/var/lib/mios-cloud/ssh"),
+            Some(Path::new("/var/lib/mios-cloud/tailscale/tailscaled.sock")),
+        )
+        .unwrap();
+        assert!(text.contains("\nHost mios mios-*\n"), "{text}");
+        assert!(text.contains("    User agent\n"));
+        assert!(text.contains("    Port 18100\n"), "{text}");
+        assert!(text.contains("    CertificateFile /var/lib/mios-cloud/ssh/id_ed25519-cert.pub\n"));
+        assert!(text.contains("    IdentitiesOnly yes\n"));
+        assert!(text.contains("\nMatch host mios,mios-* exec \"/opt/bin/mios-ssh-ca request --dir /var/lib/mios-cloud/ssh --socket /var/lib/mios-cloud/tailscale/tailscaled.sock --quiet >&2; true\"\nHost mios mios-*\n"), "{text}");
+        assert!(text.contains("    ProxyCommand tailscale --socket=/var/lib/mios-cloud/tailscale/tailscaled.sock nc %h %p\n"), "{text}");
+        assert!(render_ssh_config(&c, renew, Path::new("/tmp/a b"), None).is_err());
+        assert!(render_ssh_config(&c, renew, Path::new("relative"), None).is_err());
+        assert!(render_ssh_config(&c, renew, Path::new("/d"), Some(Path::new("/s%h"))).is_err());
+        let mut comma = c.clone();
+        comma.ssh_host = "mios-*,other".into();
+        assert!(render_ssh_config(&comma, renew, Path::new("/d"), None).is_err());
+    }
+
+    #[test]
+    fn renewal_resolves_the_ssot_like_the_run_that_wrote_it() {
+        let bin = Path::new("/opt/bin/mios-ssh-ca");
+        assert_eq!(
+            renew_invocation(bin, None, &[]).unwrap(),
+            "/opt/bin/mios-ssh-ca"
+        );
+        let env = vec![
+            (
+                "MIOS_VENDOR_TOML".to_string(),
+                "/src/MiOS/usr/share/mios/mios.toml".to_string(),
+            ),
+            (
+                "MIOS_HOST_TOML_D".to_string(),
+                "/state/tailscale/mios.d".to_string(),
+            ),
+            ("MIOS_PORTS_SSH_CA".to_string(), "8130".to_string()),
+        ];
+        assert_eq!(
+            renew_invocation(bin, Some(Path::new("/root")), &env).unwrap(),
+            "env MIOS_VENDOR_TOML=/src/MiOS/usr/share/mios/mios.toml MIOS_HOST_TOML_D=/state/tailscale/mios.d MIOS_PORTS_SSH_CA=8130 /opt/bin/mios-ssh-ca --root /root"
+        );
+        let quote = vec![("MIOS_HOST_TOML".to_string(), "/a'b".to_string())];
+        assert!(renew_invocation(bin, None, &quote).is_err());
+        let other = vec![("LD_PRELOAD".to_string(), "/x.so".to_string())];
+        assert!(renew_invocation(bin, None, &other).is_err());
+        assert!(renew_invocation(Path::new("/opt/bin/x'y"), None, &[]).is_err());
+    }
+
     #[test]
     fn config_reads_every_value_from_the_ssot() {
         let c = config_from(&ssot(), None).unwrap();
@@ -930,6 +1411,8 @@ mod tests {
             "max_body_bytes",
             "trusted_tags",
             "hostname_glob",
+            "renew_before_s",
+            "public_key",
         ] {
             let mut doc = ssot();
             doc["ssh"]["ca"].as_table_mut().unwrap().remove(key);
@@ -938,5 +1421,9 @@ mod tests {
         let mut doc = ssot();
         doc["ssh"]["ca"]["trusted_tags"] = toml::Value::Array(vec!["mios".into()]);
         assert!(config_from(&doc, None).is_err());
+        // A pinned CA must itself be a plain public key line.
+        let mut doc = ssot();
+        doc["ssh"]["ca"]["public_key"] = "ssh-ed25519-cert-v01@openssh.com AAAA".into();
+        assert!(config_from(&doc, None).unwrap_err().contains("public_key"));
     }
 }

@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4364,
-  "total_metadata_entries": 3490,
-  "total_hints": 3484,
-  "total_functions_indexed": 2274,
-  "total_related_links": 7067,
+  "total_files_scanned": 4365,
+  "total_metadata_entries": 3491,
+  "total_hints": 3485,
+  "total_functions_indexed": 2288,
+  "total_related_links": 7071,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -101,6 +101,9 @@
         "overlay",
         "install_tailscale",
         "tailnet",
+        "install_ssh_client",
+        "ssh_ca_bin",
+        "ssh_cert",
         "gce_up",
         "claude_code",
         "codex"
@@ -7368,7 +7371,8 @@
         "TestOverlayRender",
         "TestFirstbootPulls",
         "TestFlatpakInstall",
-        "TestCloudScripts"
+        "TestCloudScripts",
+        "TestSshCert"
       ],
       "doc": null,
       "comment_style": "hash",
@@ -15104,6 +15108,7 @@
         "main",
         "run",
         "init",
+        "generate_key",
         "pubkey",
         "serve",
         "handle",
@@ -15112,6 +15117,30 @@
         "sign",
         "respond",
         "DeadlineReader"
+      ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-ssh-ca/src/request.rs",
+      "hint": "Client half of the MiOS user SSH CA: a cloud node keeps its own ed25519 key, asks the [ssh.ca].signer over `tailscale nc` for an [ssh].user certificate, verifies it and installs it with an ssh_config that renews before each login.",
+      "related": [
+        "tools/native/mios-ssh-ca/src/main.rs",
+        "tools/native/mios-ssh-ca/src/lib.rs",
+        ".devcontainer/cloud-shell/bootstrap.sh",
+        "usr/share/mios/mios.toml [ssh.ca]"
+      ],
+      "functions": [
+        "Options",
+        "run",
+        "public_line",
+        "fingerprint",
+        "listing",
+        "installed_until",
+        "exchange",
+        "install_certificate",
+        "write_atomic"
       ],
       "doc": null,
       "comment_style": "slash",
