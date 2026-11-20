@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4377,
-  "total_metadata_entries": 3503,
-  "total_hints": 3497,
+  "total_files_scanned": 4379,
+  "total_metadata_entries": 3505,
+  "total_hints": 3499,
   "total_functions_indexed": 2294,
-  "total_related_links": 7109,
+  "total_related_links": 7121,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3038,6 +3038,23 @@
         "usr/share/mios/mios.toml",
         "docs/adr/",
         "AGY-TASKS.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "docs/design/doc-k3s-fleet-conversion.md",
+      "hint": "Design (docs only, nothing implemented) for converting every non-hardware MiOS service to k3s across 2-6 Blades with failover, and publishing each as a MagicDNS-named service on the tailnet. Companion to ADR-0031.",
+      "related": [
+        "usr/share/doc/mios/adr/0031-k3s-fleet-conversion-and-tailnet-service-names.md",
+        "usr/share/doc/mios/adr/0016-blade-node-topology.md",
+        "usr/share/doc/mios/adr/0017-blade-workload-mobility.md",
+        "usr/share/mios/mios.toml",
+        "docs/design/doc-mios-metal-blade.md",
+        "automation/36-ceph-k3s.sh",
+        "tools/generate-k3s-manifests.sh"
       ],
       "functions": [],
       "doc": null,
@@ -34576,6 +34593,21 @@
         "tests/drift-gate-negatives.sh",
         "/usr/share/doc/mios/adr/0010-ssot-as-system-dotfiles.md",
         "/usr/share/doc/mios/adr/0021-rust-static-binary-consolidation.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/doc/mios/adr/0031-k3s-fleet-conversion-and-tailnet-service-names.md",
+      "hint": "ADR-0031 (proposed) decides how non-hardware MiOS services move to k3s across 2-6 Blades with failover, and how each gets a tailnet MagicDNS name; the reasoning, inventory and open questions are in docs/design/doc-k3s-fleet-conversion.md.",
+      "related": [
+        "docs/design/doc-k3s-fleet-conversion.md",
+        "usr/share/doc/mios/adr/0016-blade-node-topology.md",
+        "usr/share/doc/mios/adr/0017-blade-workload-mobility.md",
+        "usr/share/mios/mios.toml",
+        "tools/generate-k3s-manifests.sh"
       ],
       "functions": [],
       "doc": null,
