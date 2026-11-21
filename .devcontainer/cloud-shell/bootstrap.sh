@@ -147,17 +147,24 @@ platform_hint() {
 
 # Free space in the container store against [deployment.cloud] (pull, plus a
 # nested build with --builder). An image already present needs no pull space.
+# The verdict is recorded in $STATE/preflight.failed (removed when it passes), so
+# `status` -- and the `mios-dev` wrapper -- can say why the image never arrived
+# long after the setup script that ran this has exited.
 preflight() {
-    local ref want store free
+    local ref want store free why
     ref="$(need image ref)"
     want=0
     image_present "$ref" || want="$(need deployment.cloud min_free_gb)"
     [[ "$BUILDER" == 1 ]] && want=$((want + $(need deployment.cloud build_free_gb)))
     store="$(store_path)" || die "$RT cannot report its storage path"
     free=$(( $(free_kb "$store") / 1048576 ))
+    install -d -m 0755 "$STATE"
     if (( free < want )); then
-        die "${free} GB free in ${store} (the ${RT} store), ${want} GB needed for ${ref}$([[ "$BUILDER" == 1 ]] && echo ' and a nested build') ([deployment.cloud].min_free_gb$([[ "$BUILDER" == 1 ]] && echo ' + build_free_gb')). $(platform_hint)"
+        why="${free} GB free in ${store} (the ${RT} store), ${want} GB needed for ${ref}$([[ "$BUILDER" == 1 ]] && echo ' and a nested build') ([deployment.cloud].min_free_gb$([[ "$BUILDER" == 1 ]] && echo ' + build_free_gb')). $(platform_hint)"
+        printf '%s\n' "$why" > "$STATE/preflight.failed"
+        die "$why"
     fi
+    rm -f "$STATE/preflight.failed"
     log "preflight: ${free} GB free in ${store}, ${want} GB needed"
 }
 
@@ -188,7 +195,8 @@ pull_image() {
 
 container_name() { basename "$(need image dev_local_tag)" | cut -d: -f1; }
 
-# 0 ready, 3 not yet (pulling or not started), 1 failed.
+# 0 ready, 3 not yet (pulling or not started), 1 failed (the pull, or the preflight
+# that stopped it: this host cannot hold the image until the recorded cause is gone).
 status() {
     local ref dev name started kb store
     ref="$(need image ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
@@ -202,6 +210,11 @@ status() {
         if [[ -f "$STATE/pull.rc" && "$(cat "$STATE/pull.rc")" != 0 ]]; then
             printf 'MiOS image %s: the pull failed (exit %s):\n' "$ref" "$(cat "$STATE/pull.rc")"
             tail -n 5 "$STATE/pull.log" 2>/dev/null
+            return 1
+        fi
+        if [[ -f "$STATE/preflight.failed" ]]; then
+            printf 'MiOS image %s is not pulled: the preflight failed: %s\nWhen that is fixed, run: bash %s up\n' \
+                "$ref" "$(cat "$STATE/preflight.failed")" "$SELF"
             return 1
         fi
         printf 'MiOS image %s is not pulled; run: bash %s up\n' "$ref" "$SELF"
@@ -402,6 +415,8 @@ enter() {
     exec "$RT" exec "${tty[@]}" -u "$(dc_user)" -w "$wd" "$name" "$@"
 }
 
+wrapper_path() { printf '%s\n' "${MIOS_DEPLOYMENT_CLOUD_WRAPPER:-$(need deployment.cloud wrapper)}"; }
+
 write_wrapper() {  # $1 = install path: a `mios-dev` that enters this checkout's container
     local tmp="$1.new.$$"
     install -d -m 0755 "$(dirname "$1")"
@@ -549,6 +564,11 @@ ssh_cert() {
 # Claude Code cloud (claude-code-cloud.sh): the setup script must finish in about
 # five minutes, so it only provisions and starts the pull; the first `mios-dev`
 # reports progress until the image is in, then brings the container up.
+# Degrades open: the wrapper is installed BEFORE anything that can fail, so a
+# session whose disk cannot hold the image (the preflight) still has a `mios-dev`
+# whose `status` names the cause. Measured: with the wrapper written last, a
+# failed preflight left no `mios-dev` at all and the session read as having no
+# MiOS and no container runtime.
 claude_code() {
     require_root_checkout
     install_podman
@@ -556,6 +576,7 @@ claude_code() {
     BUILDER="${MIOS_DEPLOYMENT_CLOUD_BUILDER:-$(need deployment.cloud builder)}"; select_config
     install -d -m 0755 "$STATE"
     printf '%s\n' "$ROOT" > "$STATE/source-root"
+    write_wrapper "$(wrapper_path)"
     # A subshell: a node that cannot join (no API token saved yet) never stops the setup.
     ( tailnet ) || log "tailnet not joined; every session start retries it (bootstrap.sh tailnet)"
     # The certificate may need a build of mios-ssh-ca: in the background, off the setup budget.
@@ -563,9 +584,12 @@ claude_code() {
         setsid nohup bash "$SELF" ssh-cert >> "$STATE/ssh-cert.log" 2>&1 < /dev/null &
         log "ssh-cert started in the background (log: $STATE/ssh-cert.log)"
     fi
-    preflight
-    pull_image --background
-    write_wrapper /usr/local/bin/mios-dev
+    # A subshell: a failed preflight is recorded for `status`, and the setup goes on.
+    if ( preflight ); then
+        pull_image --background
+    else
+        log "the MiOS image is not pulled on this host; the cause is kept for: mios-dev status"
+    fi
     status || true
 }
 
@@ -580,7 +604,7 @@ codex() {
             select_runtime; select_config
             install -d -m 0755 "$STATE"; printf '%s\n' "$ROOT" > "$STATE/source-root"
             up
-            write_wrapper /usr/local/bin/mios-dev
+            write_wrapper "$(wrapper_path)"
             codex check ;;
         start)
             select_runtime; select_config; up
