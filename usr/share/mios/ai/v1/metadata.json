@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4384,
-  "total_metadata_entries": 3514,
-  "total_hints": 3508,
+  "total_files_scanned": 4387,
+  "total_metadata_entries": 3517,
+  "total_hints": 3511,
   "total_functions_indexed": 2299,
-  "total_related_links": 7153,
+  "total_related_links": 7160,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6938,6 +6938,20 @@
       "has_shebang": true
     },
     {
+      "path": "tests/test-agent-browser-capability.py",
+      "hint": "Asserts the agent browser stays off a Blade unless it has the agent-browser capability: only the desktop archetype grants it, the worker browser requires it in [blade.requires] (its generated drop-in conditions on the marker), the primary stays seat_side with `mios-hermes-browser allowed` as its ExecCondition in the SSOT and the rendered unit, and mios-cdp-fetch reports a disabled host at once instead of polling a port nothing will open.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/mios/dropins/blade-agent-browser.conf",
+        "usr/libexec/mios/mios-hermes-browser",
+        "usr/libexec/mios/mios-cdp-fetch"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
       "path": "tests/test-agent-input-safety.py",
       "hint": "Regression controls for agent process inputs and bounded input normalization; never invokes a model.",
       "related": [
@@ -8378,6 +8392,19 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-hermes-browser-launch.py",
+      "hint": "Runs mios-hermes-browser start against a stub session-bus wrapper and asserts the argv it execs: flatpak run with --no-documents-portal (the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot succeed under NoNewPrivileges), the profile and runtime dirs shared, the app id, and headless CDP on 127.0.0.1.",
+      "related": [
+        "usr/libexec/mios/mios-hermes-browser",
+        "usr/lib/systemd/system/mios-hermes-browser.service",
+        "usr/lib/systemd/system/mios-hermes-browser-worker.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -40216,6 +40243,15 @@
     {
       "path": "usr/share/mios/dropins/bare-metal-only.conf",
       "hint": "Configures the MiOS service to execute exclusively on physical hardware by enforcing a ConditionVirtualization=no check, preventing deployment in VM or container environments.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/dropins/blade-agent-browser.conf",
+      "hint": "GENERATED systemd capability drop-in for MiOS (WS-BLADE). DO NOT EDIT -- regenerate via mios-unit-gen blade-dropins.",
       "related": [],
       "functions": [],
       "doc": null,

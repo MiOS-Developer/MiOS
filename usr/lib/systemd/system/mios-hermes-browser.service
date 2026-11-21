@@ -73,6 +73,9 @@ StateDirectoryMode=0700
 # then the service went inactive). `start` exec's ChromeDev in the foreground
 # so it IS the main process and stays up; the agent's pre-flight
 # `mios-hermes-browser ensure` then just sees CDP already up.
+# Not on a Blade: `allowed` exits 1 (skip) on a host with the service-plane
+# capability and without agent-browser ([blade.archetypes], FEATURES=).
+ExecCondition=/usr/libexec/mios/mios-hermes-browser allowed
 ExecStart=/usr/libexec/mios/mios-hermes-browser start
 # Disable the GTK accessibility D-Bus bridge (org.a11y.Bus) -- it's absent in
 # the transient dbus-run-session and Chrome's attempts to reach it spam the

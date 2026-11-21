@@ -190,8 +190,12 @@ services:
   mios-hermes-browser-worker:
     nodeSelector:
       mios.capability/service-plane: "true"
+      mios.capability/agent-browser: "true"
     tolerations:
       - key: "mios.capability/service-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "mios.capability/agent-browser"
         operator: "Exists"
         effect: "NoSchedule"
   mios-k3s:

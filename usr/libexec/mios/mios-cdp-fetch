@@ -47,8 +47,13 @@ def _ensure():
     except Exception:
         pass
     try:
-        subprocess.run(["mios-hermes-browser", "ensure"],
-                       timeout=40, capture_output=True)
+        r = subprocess.run(["mios-hermes-browser", "ensure"],
+                           timeout=40, capture_output=True, text=True)
+        if r.returncode == 3:
+            # This host does not run the agent browser (no agent-browser
+            # capability): say so instead of polling a port nothing will open.
+            sys.stderr.write(r.stderr)
+            return False
     except Exception:
         pass
     for _ in range(20):
