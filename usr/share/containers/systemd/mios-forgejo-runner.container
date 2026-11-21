@@ -21,7 +21,7 @@ EnvironmentFile=/etc/mios/forge/runner-token
 Exec=forgejo-runner daemon
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=0
-Image=code.forgejo.org/forgejo/runner:latest
+Image=code.forgejo.org/forgejo/runner:13
 Label=org.opencontainers.image.title=mios-forgejo-runner
 Label=org.opencontainers.image.documentation=https://forgejo.org/docs/latest/admin/actions/
 Label=io.podman_desktop.openInBrowser=http://localhost:8400/-/admin/actions/runners
