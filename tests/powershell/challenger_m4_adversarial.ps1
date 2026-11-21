@@ -472,6 +472,9 @@ Write-Host "`n--- Suite 5: Host .wslconfig Configuration (Set-MiosWslConfig) Rob
 $funcAst = $bAst.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Set-MiosWslConfig' }, $true)
 
 function global:Log-Ok { param($msg) }
+function global:Get-MiosTomlValue { param($Section, $Key, $Default) if ("$Section.$Key" -eq 'wsl2.networking_mode') { return $global:SimulatedNetMode }; return $Default }
+function global:Get-MiosCpuMinimum { 4 }
+function global:Resolve-MiosCpuAllocation { param($AvailableCpus, $RequestedCpus) $RequestedCpus }
 function global:Log-Warn { param($msg) }
 
 function Invoke-SimulatedSetMiosWslConfig {
@@ -480,7 +483,8 @@ function Invoke-SimulatedSetMiosWslConfig {
         [int]$RamGB = 0,
         [int]$Cpus = 0,
         [switch]$Force,
-        [int]$SimulatedBuild = 0
+        [int]$SimulatedBuild = 0,
+            [string]$SsotMode = "NAT"
     )
     $origProfile = $env:USERPROFILE
     try {
@@ -489,8 +493,14 @@ function Invoke-SimulatedSetMiosWslConfig {
         if ($inner.StartsWith('{') -and $inner.EndsWith('}')) {
             $inner = $inner.Substring(1, $inner.Length - 2)
         }
-        if ($SimulatedBuild -gt 0) {
-            $inner = $inner.Replace('[Environment]::OSVersion.Version.Build', "$SimulatedBuild")
+        # The Windows build now reaches the mode only through Resolve-MiosWslNetworkingMode, which reads the SSOT
+        # [wsl2].networking_mode ($SsotMode here) and never upgrades NAT; load it with the simulated build.
+        $global:SimulatedNetMode = $SsotMode
+        foreach ($helper in 'Resolve-MiosWslNetworkingMode', 'Get-MiosWslExperimentalLines') {
+            $hAst = $bAst.Find({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq $helper }, $true)
+            $hText = $hAst.Extent.Text
+            if ($SimulatedBuild -gt 0) { $hText = $hText.Replace('[Environment]::OSVersion.Version.Build', "$SimulatedBuild") }
+            . ([scriptblock]::Create(($hText -replace '^function\s+', 'function global:')))
         }
         $sb = [scriptblock]::Create($inner)
         & $sb -RamGB $RamGB -Cpus $Cpus -Force:$Force -NoShutdown
@@ -511,7 +521,7 @@ try {
     $freshContent = Get-Content $targetWslConfig -Raw
     Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.1a Sets specified memory=12GB" ($freshContent -match 'memory=12GB')
     Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.1b Sets specified processors=6" ($freshContent -match 'processors=6')
-    Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.1c Sets Win11 networkingMode=mirrored" ($freshContent -match 'networkingMode=mirrored')
+    Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.1c Keeps SSOT networkingMode=NAT on Win11" ($freshContent -match 'networkingMode=NAT')
     Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.1d Sets localhostForwarding=true" ($freshContent -match 'localhostForwarding=true')
 
     # Verify BOM-free UTF-8
@@ -559,7 +569,7 @@ localhostForwarding=true
     $cleanedContent = Get-Content $targetWslConfig -Raw
     Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.5a Scrubs misplaced systemd from [wsl2]" ($cleanedContent -notmatch 'systemd=')
     Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.5b Scrubs misplaced appendWindowsPath from [wsl2]" ($cleanedContent -notmatch 'appendWindowsPath=')
-    Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.5c Scrubs deprecated firewall from [wsl2]" ($cleanedContent -notmatch 'firewall=')
+    Assert-Challenge "Suite 5: Set-MiosWslConfig" "5.5c Rewrites firewall=false to the SSOT [wsl2].firewall=true" ($cleanedContent -match '(?m)^firewall=true\r?$' -and $cleanedContent -notmatch 'firewall=false')
 
 } finally {
     Remove-Item -Path $tempConfigDir -Recurse -Force -ErrorAction SilentlyContinue
