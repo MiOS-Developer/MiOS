@@ -9488,8 +9488,8 @@ pub mod hyprglass_build {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("Missing plugin key {key}"))
     }
-    /// The compositor SRPM's bundled Lua source for the SSOT `lua_version`. A miss names the Lua the
-    /// SRPM does bundle, so a compositor move that bumps Lua says which pin to set.
+    /// The compositor SRPM's source archive for the Lua its spec vendors (`srpm_lua`). A miss names the
+    /// Lua archives the SRPM does ship, so a spec that names one it lacks says what is there instead.
     fn lua_archive(sdk: &Path, version: &str) -> Result<PathBuf, String> {
         let archive = sdk.join(format!("lua-{version}.tar.gz"));
         if archive.is_file() {
@@ -9507,8 +9507,12 @@ pub mod hyprglass_build {
             .collect();
         bundled.sort();
         Err(format!(
-            "[desktop.hyprland.hyprglass].lua_version = {version}, but the compositor SRPM bundles Lua {}; set lua_version to the Lua it bundles",
-            if bundled.is_empty() { "none".to_string() } else { bundled.join(", ") }
+            "Compositor SRPM spec vendors lua-{version}.tar.gz, but the SRPM bundles Lua {}",
+            if bundled.is_empty() {
+                "none".to_string()
+            } else {
+                bundled.join(", ")
+            }
         ))
     }
     fn find(dir: &Path, prefix: &str, suffix: &str, directory: bool) -> Result<PathBuf, String> {
@@ -9933,12 +9937,118 @@ pub mod hyprglass_build {
         }
     }
 
+    /// The Lua version the compositor SRPM vendors: its `SourceN:` tag naming `lua-<version>.tar.gz`, with the spec's
+    /// own `%global`/`%define` macros expanded (`lua-%{lua_ver}.tar.gz`). No such tag, one whose macros do not resolve,
+    /// or two of them, is refused: plugins link the compositor's private static Lua, never the system one.
+    fn srpm_lua(spec: &str) -> Result<String, String> {
+        let define =
+            regex::Regex::new(r"^%(?:global|define)\s+(\w+)\s+(\S+)\s*$").expect("static regex");
+        let reference = regex::Regex::new(r"%\{\??(\w+)\}|%(\w+)").expect("static regex");
+        let archive =
+            regex::Regex::new(r"^lua-([0-9]+(?:\.[0-9]+)+)\.tar\.gz$").expect("static regex");
+        let macros: std::collections::HashMap<&str, &str> = spec
+            .lines()
+            .filter_map(|l| define.captures(l.trim()))
+            .map(|c| (c.get(1).unwrap().as_str(), c.get(2).unwrap().as_str()))
+            .collect();
+        let mut found = Vec::new();
+        for line in spec.lines() {
+            let Some((tag, url)) = line.split_once(':') else {
+                continue;
+            };
+            let Some(n) = tag.trim().strip_prefix("Source") else {
+                continue;
+            };
+            if !n.bytes().all(|c| c.is_ascii_digit()) {
+                continue;
+            }
+            let url = url.trim();
+            let name = url
+                .rsplit_once("#/")
+                .map(|(_, n)| n)
+                .unwrap_or_else(|| url.rsplit('/').next().unwrap_or(url));
+            let mut expanded = name.to_owned();
+            for _ in 0..8 {
+                let next = reference
+                    .replace_all(&expanded, |c: &regex::Captures| {
+                        let key = c.get(1).or_else(|| c.get(2)).unwrap().as_str();
+                        macros
+                            .get(key)
+                            .map_or_else(|| c[0].to_owned(), |v| (*v).to_owned())
+                    })
+                    .into_owned();
+                if next == expanded {
+                    break;
+                }
+                expanded = next;
+            }
+            if let Some(c) = archive.captures(&expanded) {
+                found.push((format!("Source{n}"), c[1].to_owned()));
+            } else if expanded.starts_with("lua-") && expanded.contains('%') {
+                return Err(format!(
+                    "Compositor SRPM Source{n} {name}: Lua archive macro does not resolve ({expanded})"
+                ));
+            }
+        }
+        match found.len() {
+            0 => Err("Compositor SRPM spec vendors no lua-<version>.tar.gz Source for the plugins' private static Lua".into()),
+            1 => Ok(found.remove(0).1),
+            _ => Err(format!(
+                "Compositor SRPM vendors more than one Lua: {}",
+                found
+                    .iter()
+                    .map(|(t, v)| format!("{t} lua-{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+    #[cfg(test)]
+    mod lua_tests {
+        use super::*;
+
+        /// The Lua lines of the 0.57.2 SRPM (ashbuk/Hyprland-Fedora hyprland-0.57.2-1, hyprland-copr.spec).
+        const SPEC_057: &str = "%global hyprland_version        0.57.2\n# Lua 5.5 (Hyprland requires >= 5.5, Fedora ships 5.4)\n%global lua_ver                 5.5.1\nName: hyprland\nSource0:        https://github.com/hyprwm/Hyprland/archive/refs/tags/v%{hyprland_version}.tar.gz#/%{name}-%{hyprland_version}.tar.gz\nSource22:       https://github.com/hyprwm/hyprlang/archive/refs/tags/v%{hyprlang_ver}.tar.gz#/hyprlang-%{hyprlang_ver}.tar.gz\nSource27:       https://www.lua.org/ftp/lua-%{lua_ver}.tar.gz\nBuildRequires:  readline-devel\n%prep\npushd lua-%{lua_ver}\n";
+
+        #[test]
+        fn the_057_srpm_vendors_lua_551() {
+            assert_eq!(srpm_lua(SPEC_057).unwrap(), "5.5.1");
+        }
+
+        #[test]
+        fn nested_and_literal_lua_sources_resolve() {
+            let nested = "%define lua_major 5.5\n%global lua_ver %{lua_major}.0\nSource3: https://x/lua-%lua_ver.tar.gz\n";
+            assert_eq!(srpm_lua(nested).unwrap(), "5.5.0");
+            assert_eq!(
+                srpm_lua("Source9: https://x/f#/lua-5.6.2.tar.gz\n").unwrap(),
+                "5.6.2"
+            );
+        }
+
+        #[test]
+        fn a_spec_without_vendored_lua_is_refused() {
+            let spec = "BuildRequires: pkgconfig(lua) >= 5.5\nSource0: https://x/hyprland-0.58.0.tar.gz\nSource1: https://x/luarocks-3.tar.gz\n";
+            assert!(srpm_lua(spec).unwrap_err().contains("vendors no lua-"));
+        }
+
+        #[test]
+        fn unresolved_or_ambiguous_lua_is_refused() {
+            assert!(srpm_lua("Source27: https://x/lua-%{lua_ver}.tar.gz\n")
+                .unwrap_err()
+                .contains("does not resolve"));
+            let two = "Source1: https://x/lua-5.5.0.tar.gz\nSource2: https://x/lua-5.5.1.tar.gz\n";
+            assert!(srpm_lua(two)
+                .unwrap_err()
+                .contains("Source1 lua-5.5.0, Source2 lua-5.5.1"));
+        }
+    }
+
     pub fn run(root: &Path, srpm: Option<&Path>) -> Result<String, String> {
         run_plugin(root, srpm, "hyprglass")
     }
 
     /// Build the compositor plugin [desktop.hyprland.<plugin>] against the installed SDK.
-    /// The ABI hold (hyprland_version, lua_version, build_jobs) is [desktop.hyprland.hyprglass]'s,
+    /// The ABI hold (hyprland_version, build_jobs) is [desktop.hyprland.hyprglass]'s; the Lua comes from the compositor SRPM,
     /// shared by every plugin loaded into the same compositor.
     pub fn run_plugin(root: &Path, srpm: Option<&Path>, plugin: &str) -> Result<String, String> {
         if !Path::new("/run/.containerenv").exists() {
@@ -10045,7 +10155,14 @@ pub mod hyprglass_build {
                     .display()
             ));
         }
-        let archive = lua_archive(sdk, value(h, "lua_version")?)?;
+        // The compositor links a private static Lua; build the same one. Its version is whatever the SRPM's own spec
+        // vendors (the SRPM is selected by the hyprland_version hold), never a second copy kept in SSOT.
+        let spec = fs::read_to_string(find(sdk, "", ".spec", false)?).map_err(|e| e.to_string())?;
+        let archive = lua_archive(sdk, &srpm_lua(&spec)?)?;
+        eprintln!(
+            "[build-hyprland-plugin] {plugin}: compositor SRPM vendors {}",
+            archive.display()
+        );
         let lua_name = archive
             .file_name()
             .and_then(|n| n.to_str())
@@ -10329,7 +10446,7 @@ pub mod hyprglass_build {
         use std::fs;
 
         #[test]
-        fn the_pinned_lua_is_taken_from_the_srpm_sources() {
+        fn the_spec_lua_is_taken_from_the_srpm_sources() {
             let dir = tempfile::tempdir().unwrap();
             fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
             fs::write(dir.path().join("hyprland-0.57.2.tar.gz"), b"x").unwrap();
@@ -10340,11 +10457,11 @@ pub mod hyprglass_build {
         }
 
         #[test]
-        fn a_stale_pin_names_the_lua_the_srpm_bundles() {
+        fn a_missing_archive_names_the_lua_the_srpm_bundles() {
             let dir = tempfile::tempdir().unwrap();
             fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
             let err = lua_archive(dir.path(), "5.5.0").unwrap_err();
-            assert!(err.contains("lua_version = 5.5.0"), "{err}");
+            assert!(err.contains("vendors lua-5.5.0.tar.gz"), "{err}");
             assert!(err.contains("bundles Lua 5.5.1"), "{err}");
             let empty = tempfile::tempdir().unwrap();
             assert!(lua_archive(empty.path(), "5.5.1")
