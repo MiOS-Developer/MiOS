@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use ironrdp_rdpeusb::io::UsbRetractReason;
 use ironrdp_server::{
-    DeviceAnnounce, DeviceFactory, DeviceText, RdpUsbDeviceAnnounceInfo, UsbDeviceHandle, UsbRedirDevice,
+    DeviceFactory, DeviceText, RdpUsbDeviceAnnounceInfo, UsbDeviceAnnounce, UsbDeviceHandle, UsbRedirDevice,
     UsbRequestCompletion,
 };
 use ironrdp_usb::control::{RequestType, SetupPacket};
@@ -36,7 +36,7 @@ use ironrdp_usb::transfer::{
     DataTransferRequest, IsoCompletion, IsochronousPacketCompletion, IsochronousTransferRequest, TransferCompletion,
     UsbError, UsbResult,
 };
-use ironrdp_usb::{InterfaceSelection, TransferType};
+use ironrdp_usb::{InterfaceSelection, TransferType, UsbSpeed};
 use serde_json::{Value, json};
 use tracing::{info, warn};
 
@@ -117,7 +117,7 @@ fn after<'a>(s: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// `USB\VID_1234&PID_ABCD&REV_0210` hardware IDs; `USB\Class_08&...` / `USB\DevClass_00` compat IDs.
-pub fn identity_from_announce(a: &DeviceAnnounce) -> Identity {
+pub fn identity_from_announce(a: &UsbDeviceAnnounce) -> Identity {
     identity_from_ids(&a.hw_ids, &a.compat_ids)
 }
 
@@ -273,6 +273,18 @@ pub fn probe_vhci(sys: &Path) -> VhciProbe {
         reason: if free.is_empty() { "no_free_high_speed_vhci_port".into() } else { "ok".into() },
         free_hs_ports: free,
         used_ports: used,
+    }
+}
+
+/// Announced bus speed -> its MS-RDPEUSB 2.2.11 `DeviceIsHighSpeed` value (FULL = 0, HIGH = 1), the
+/// speed this module reports and admits. The announce facade yields only Full or High (an unknown
+/// wire value already arrives as High); any other speed has no RDPEUSB encoding and maps to a value
+/// `vhci_speed` rejects, so admission refuses it.
+pub fn rdpeusb_speed(speed: UsbSpeed) -> u32 {
+    match speed {
+        UsbSpeed::Full => 0,
+        UsbSpeed::High => 1,
+        _ => u32::MAX,
     }
 }
 
@@ -1166,7 +1178,7 @@ impl UsbRedirDevice for Device {
     fn device_added(&mut self, info: RdpUsbDeviceAnnounceInfo) {
         let RdpUsbDeviceAnnounceInfo { announce, usb_handle } = info;
         let id = identity_from_announce(&announce);
-        let speed = announce.usb_device_caps.device_speed.to_u32();
+        let speed = rdpeusb_speed(announce.speed);
         {
             let mut a = self.shared.stats.usb_announced.lock().expect("usb announced");
             *a = if a.0 == self.serial { (a.0, a.1 + 1) } else { (self.serial, 1) };
@@ -1555,7 +1567,7 @@ mod tests {
         DeviceInfo, UsbClassCodes, UsbConfigInfo, UsbConnectionSpeed, UsbDeviceDescriptorInfo, UsbDeviceLocation, UsbInterfaceInfo,
         add_device_from_info,
     };
-    use ironrdp_rdpeusb::io::{IoControlCompletionResult, RequestId, TransferInCompletionResult, TransferOutCompletionResult};
+    use ironrdp_rdpeusb::io::{DeviceAnnounce, IoControlCompletionResult, RequestId, TransferInCompletionResult, TransferOutCompletionResult};
     use ironrdp_rdpeusb::pdu::caps::{Capability, RimExchangeCapabilityResponse};
     use ironrdp_rdpeusb::pdu::header::InterfaceId;
     use ironrdp_rdpeusb::pdu::notify::{ChannelCreated, Direction as NotifyDirection};
@@ -1597,9 +1609,11 @@ mod tests {
 
     impl UrbdrcDeviceServerBackend for Decide {
         fn add_device(&mut self, device: DeviceAnnounce) -> ironrdp_pdu::PduResult<()> {
-            let id = identity_from_announce(&device);
+            // The same conversion the upstream USB redirection server applies before device_added.
+            let announce = UsbDeviceAnnounce::from(device);
+            let id = identity_from_announce(&announce);
             let verdict = self.policy.check(&id);
-            let _ = self.verdicts.send((id, device.usb_device_caps.device_speed.to_u32(), verdict));
+            let _ = self.verdicts.send((id, rdpeusb_speed(announce.speed), verdict));
             Ok(())
         }
         fn device_text(&mut self, _t: DeviceText) {}
@@ -1646,6 +1660,24 @@ mod tests {
         assert_eq!(speed, 1, "high-speed announce");
         assert_eq!(vhci_speed(speed), Some(3));
         assert!(verdict.is_ok() && !retracted);
+    }
+
+    #[test]
+    fn urbdrc_full_speed_announce_keeps_the_rdpeusb_full_speed_value() {
+        let mut info = device_info(0x1234, 0xabcd, 0x08, false);
+        info.speed = UsbConnectionSpeed::Full;
+        let (_, speed, verdict, _) = urbdrc_add(policy(&["1234:abcd"], &["class:03"]), &info);
+        assert_eq!(speed, 0, "full-speed announce");
+        assert_eq!(vhci_speed(speed), Some(2));
+        assert!(verdict.is_ok());
+    }
+
+    #[test]
+    fn announced_speed_maps_to_the_rdpeusb_wire_value() {
+        assert_eq!((rdpeusb_speed(UsbSpeed::Full), rdpeusb_speed(UsbSpeed::High)), (0, 1));
+        for other in [UsbSpeed::Low, UsbSpeed::Super, UsbSpeed::SuperPlus] {
+            assert_eq!(vhci_speed(rdpeusb_speed(other)), None, "{other:?} has no RDPEUSB encoding and is refused");
+        }
     }
 
     #[test]
