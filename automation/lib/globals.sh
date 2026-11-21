@@ -3014,6 +3014,7 @@ _mios_input MIOS_PORTS_GUACD MIOS_PORT_GUACD MIOS_GUACD_PORT || { return 1 2>/de
 : "${MIOS_HARDWARE_RAS_CORRECTED_WARN_PER_BOOT:=1}"
 : "${MIOS_HARDWARE_STORAGE_LINK_CRITICAL_ROLES:=root,swap,journal}"
 [ -n "${MIOS_HARDWARE_STORAGE_LINK_NVME_BRIDGES+x}" ] || MIOS_HARDWARE_STORAGE_LINK_NVME_BRIDGES='{ id = "0bda:9210", name = "Realtek RTL9210", smartctl = "sntrealtek" },{ id = "174c:2362", name = "ASMedia ASM2362", smartctl = "sntasmedia" },{ id = "152d:0583", name = "JMicron JMS583", smartctl = "sntjmicron" }'
+: "${MIOS_HARDWARE_STORAGE_LINK_USB_STORAGE_AUTOSUSPEND:=false}"
 : "${MIOS_HEADSCALE_CONFIG_PATH:=/etc/headscale/config.yaml}"
 : "${MIOS_HEADSCALE_DB_PATH:=/var/lib/headscale/db.sqlite}"
 : "${MIOS_HEADSCALE_ENABLED:=false}"
