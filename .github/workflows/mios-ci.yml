@@ -156,6 +156,9 @@ jobs:
           export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           # Host fixture paths remain part of the existing daemon unit suites.
           cargo build --locked --manifest-path ./src/mios-rs/Cargo.toml -p mios-gate -p miosd
+          # The shipped desktop tmux ([keybindings.tmux.desktop]), from the same source and builder as
+          # the image bake, so the relay's float-pane placement test runs against what ships.
+          bash ./automation/lib/tmux-desktop.sh . /
 
       - name: Base images are the newest stable release
         # Every MiOS image shares [image].machine_os_repo; a newer stable tag fails here.

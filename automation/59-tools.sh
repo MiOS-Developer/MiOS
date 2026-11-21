@@ -164,4 +164,19 @@ for unit in nix-daemon.socket nix-daemon.service; do
     fi
 done
 
+mios_log "Bake the MiOS desktop tmux ([keybindings.tmux.desktop.source])"
+# The patched tmux backend (float-pane) the TTY desktop and the relay's worker placement need.
+# Its build-only inputs leave the layer again: only the binary, its receipt and runtime libraries stay.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/lib/packages.sh"
+_td_before="$(mktemp)"
+rpm -qa --qf '%{NAME}\n' | sort -u > "$_td_before"
+install_packages_strict "tmux-desktop-build"
+bash "${SCRIPT_DIR}/lib/tmux-desktop.sh" "${SCRIPT_DIR}/.." /
+mapfile -t _td_added < <(rpm -qa --qf '%{NAME}\n' | sort -u | comm -13 "$_td_before" -)
+if ((${#_td_added[@]})); then dnf -y remove --noautoremove "${_td_added[@]}"; fi
+rm -f -- "$_td_before"
+# The runtime libraries must outlive the build set's removal.
+"$(/usr/libexec/mios/mios-toml-get keybindings.tmux.desktop binary)" -V
+
 mios_ok "CLI tools and Nix subsystem configured; run 'mios'"

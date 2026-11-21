@@ -3584,6 +3584,7 @@ _mios_input MIOS_VERSIONS_K3S MIOS_VERSION_K3S || { return 1 2>/dev/null || exit
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SIDEBAR_ENABLED:=true}"
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SNAP_MARGIN:=2}"
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SOCKET_NAME:=mios-desktop}"
+: "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_ADMIT:=podman-MiOS-DEV,image-bake,drift-gate}"
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_CONFIGURE_ARGS:=--prefix=/usr,--libexecdir=/usr/libexec/mios,--enable-sixel,--disable-systemd,--disable-utempter,--disable-utf8proc,--disable-jemalloc}"
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_MAKE_JOBS:=2}"
 : "${MIOS_KEYBINDINGS_TMUX_DESKTOP_SOURCE_PATCH:=tools/patches/tmux-desktop.patch}"
