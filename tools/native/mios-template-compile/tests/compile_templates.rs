@@ -81,10 +81,26 @@ fn test_compile_templates_cli_e2e() {
         stdout,
         stderr
     );
+    // The expected count comes from the SSOT and the tree, not a literal that goes
+    // stale at every new template: each [templates.<type>] key whose file sits in
+    // usr/share/mios/templates/ (a pass needs every template file registered).
+    let ssot: toml::Value = toml::from_str(
+        &fs::read_to_string(root.join("usr/share/mios/mios.toml")).expect("read mios.toml"),
+    )
+    .expect("parse mios.toml");
+    let templates_dir = root.join("usr/share/mios/templates");
+    let expected_count = ssot["templates"]
+        .as_table()
+        .expect("mios.toml has a [templates] table")
+        .keys()
+        .filter(|name| templates_dir.join(name).is_file())
+        .count();
+    assert!(expected_count > 0, "no registered template files");
+    let expected = format!(
+        "[compile-templates] PASS: All {expected_count} templates compiled/validated successfully."
+    );
     assert!(
-        stdout.contains(
-            "[compile-templates] PASS: All 29 templates compiled/validated successfully."
-        ),
+        stdout.contains(&expected),
         "Expected success message not found in stdout: {}",
         stdout
     );
@@ -108,7 +124,7 @@ fn test_compile_templates_cli_e2e() {
     assert_eq!(json_val["status"], "clean");
     assert_eq!(json_val["subcommand"], "compile-templates");
     assert_eq!(json_val["violations"], 0);
-    assert_eq!(json_val["templates_count"], 29);
+    assert_eq!(json_val["templates_count"], expected_count);
 
     // 3. Negative control: mutate toml-config with syntax defect
     let toml_tmpl = root.join("usr/share/mios/templates/toml-config");
