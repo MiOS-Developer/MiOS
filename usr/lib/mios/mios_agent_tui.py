@@ -1,6 +1,6 @@
 # AI-hint: Shared fixed-table widgets for the unified MiOS Monitor; presentation never consumes or acknowledges relay messages.
 # AI-related: /usr/libexec/mios/mios-mon.py, /usr/libexec/mios/mios-mcp-server, /usr/lib/mios/agent-pipe/test_mios_agent_tui.py
-# AI-functions: clean, peer_name, sync_rows, set_table_header, ClientView, AgentView, SystemSummary
+# AI-functions: clean, peer_name, sync_rows, set_table_header, ClientTable, ClientView, AgentView, SystemSummary
 
 import asyncio
 import re
@@ -128,6 +128,20 @@ def set_table_header(table, show):
     table.refresh(layout=True)
 
 
+class ClientTable(DataTable):
+    """Row-cursor chooser table: a click anywhere on the highlighted row selects that row.
+
+    Newer Textual selects only when the clicked cell equals the cursor coordinate,
+    column included, so a click on another cell of the highlighted row was ignored.
+    """
+    async def _on_click(self, event):
+        meta = event.style.meta
+        if (self.cursor_type == "row" and meta.get("row") == self.cursor_row
+                and isinstance(meta.get("column"), int) and meta["column"] >= 0):
+            self.cursor_coordinate = Coordinate(self.cursor_row, meta["column"])
+        await super()._on_click(event)
+
+
 class ClientView(Vertical):
     """The same chooser is embedded in a head pane and in MiOS Monitor."""
     class Selected(Message):
@@ -201,7 +215,7 @@ class ClientView(Vertical):
 
     def compose(self):
         yield Static("Choose a head CLI.\nMCP connects visible workers.", id="client-intro", markup=False)
-        yield DataTable(id="client-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
+        yield ClientTable(id="client-table", cursor_type="row", zebra_stripes=True, show_row_labels=False)
         yield Input(placeholder="Client number / name", id="client-input")
         yield Static("Arrows + Enter, or type a client", id="client-status", markup=False)
 
@@ -254,7 +268,7 @@ class InventoryDetails(ModalScreen):
     InventoryDetails > Vertical { width: 90%; height: 80%; border: solid @MIOS:accent@; background: @MIOS:bg@; }
     InventoryDetails VerticalScroll { height: 1fr; padding: 1; }
     InventoryDetails Static { height: auto; }
-    InventoryDetails Button { height: 1; min-height: 1; border: none; }
+    InventoryDetails #close-inventory-detail { height: 1; min-height: 1; border: none; }
     """)
     def __init__(self, detail):
         super().__init__()
@@ -281,9 +295,10 @@ class AgentView(Vertical):
     AgentView #relay-count, AgentView #worker-count, AgentView #receipt,
     AgentView #agent-error { height: 1; }
     AgentView #inventory-scopes { height: 1; }
-    AgentView Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent;
+    /* IDs outrank Textual's Button.-style-default borders, which would consume the one-row height. */
+    AgentView #inventory-scopes Button { height: 1; min-width: 1; width: 1fr; border: none; padding: 0; background: transparent;
         text-wrap: nowrap; text-overflow: clip; }
-    AgentView Button.scope-selected { background: @MIOS:accent@; color: @MIOS:fg@; }
+    AgentView #inventory-scopes Button.scope-selected { background: @MIOS:accent@; color: @MIOS:fg@; }
     AgentView #agent-search { height: 1; border: none; padding: 0; background: transparent; }
     AgentView #peer-table { height: 1fr; min-height: 1; overflow-y: auto; overflow-x: hidden;
         scrollbar-size-vertical: 1; scrollbar-size-horizontal: 0; background: transparent; }

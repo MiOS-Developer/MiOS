@@ -189,7 +189,11 @@ hyprland_bake_checks() (
     python3 - "$ROOT/automation/65-bake-hyprland.sh" "$fixture/phase.sh" "$fixture/bin/mios-gen" <<'PYTEST'
 from pathlib import Path
 import sys
-source=Path(sys.argv[1]).read_text().split('/usr/libexec/mios/mios-gen render-hyprland --root /',1)[0]
+# Stop before the greeter rebuild: it needs the real SSOT tools and its own build, outside this
+# compositor/plugin source-lifetime test.
+text=Path(sys.argv[1]).read_text()
+assert '\n_tg_root=' in text, 'phase 65 no longer starts the greeter block with _tg_root='
+source=text.split('\n_tg_root=',1)[0]+'\n'
 # Theme renderers are outside this source-lifetime test and must not write /usr.
 theme_start=source.index('# Render each imperative generator')
 plugin_start=source.index('/usr/libexec/mios/mios-gen build-hyprglass')

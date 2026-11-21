@@ -30,6 +30,13 @@ OLD_SSOT = Path(os.environ.get('MIOS_INPUTD_OLD_SSOT', '/nonexistent'))
 UINPUT = os.environ.get('MIOS_INPUTD_UINPUT_TEST') == '1'
 SOUTH, EAST, WEST, NORTH, LB, RB, LT, RT = 0x130, 0x131, 0x134, 0x133, 0x136, 0x137, 0x138, 0x139
 SELECT, START, GUIDE, L3, R3 = 0x13a, 0x13b, 0x13c, 0x13d, 0x13e
+# The console shares the desktop's controller policy (docs/design/mios-global-bindings-final.md, "Shared Guide
+# layer (replaces R-08)"; usr/share/doc/mios/keybinds.md): North captures the verified pane, L3+R3 is the global
+# attach/detach (no VT switch), Start belongs to the app, and every desktop action is translated once at the console
+# emit boundary through nav.console_actions (a missing or "none" adapter is consumed). replay prints the shared
+# semantic action; native() applies the SSOT adapter table the emitter uses.
+LEGACY_POLICY = ('[keybindings.global.controller]\nglobal_capture_toggle = false\nwindow_zoom_chord = []\n'
+                 '[keybindings.global.controller.nav]\nstart_options = false\n')
 STICK = {c: dict(min=-32768, max=32767, value=0) for c in ('0', '1', '3', '4')}
 AXES = dict(STICK, **{'2': dict(min=0, max=255, value=0), '5': dict(min=0, max=255, value=0),
                       '16': dict(min=-1, max=1, value=0), '17': dict(min=-1, max=1, value=0)})
@@ -114,6 +121,19 @@ class Base(unittest.TestCase):
         if self.old_root is None:
             self.skipTest('negative control needs MIOS_INPUTD_OLD_BIN and MIOS_INPUTD_OLD_SSOT (the pre-I3 pair)')
 
+    def controller(self):
+        r = self.run_bin('map')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)['global']['controller']
+
+    def native(self, action):
+        """The console emit boundary: one semantic-to-native lookup; native verbs pass; missing = consumed."""
+        if action.split(':', 1)[0] in ('input', 'key', 'tmux', 'pointer'):
+            return action
+        table = self.controller()['nav']['console_actions']
+        self.assertTrue(table, 'the vendor console shares the desktop gestures through nav.console_actions')
+        return next((row['native'] for row in table.values() if row['action'] == action), 'none')
+
     def host_layer(self, text):
         path = self.root / 'etc/mios/mios.toml'
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,32 +144,45 @@ class Base(unittest.TestCase):
 class Grammar(Base):
     def test_c16_console_tmux_profile(self):
         vt = dict(tmux_client='/dev/pts/9')
+        double = self.controller()['guide_double_press_ms']
         self.assertEqual(self.actions('console', tap(SOUTH, 700), **vt), ['key:ENTER'], 'R-15: no Shift+Enter hold on a VT')
         self.assertEqual(self.actions('console', tap(WEST, 50), **vt), ['key:TAB'])
         self.assertEqual(self.actions('console', tap(WEST, 700), **vt), ['key:SHIFT+TAB'], 'O-6: West hold = BTab, as on the desktop')
-        self.assertEqual(self.actions('console', tap(NORTH), **vt), ['tmux:key z'], 'no window to capture: North zooms the pane')
-        self.assertEqual(self.actions('console', tap(LB), **vt), ['tmux:session-prev'])
+        self.assertEqual(self.actions('console', tap(NORTH), **vt), ['input:window on'], 'North captures the verified pane')
+        self.assertEqual(self.actions('console', tap(NORTH, 700), **vt), ['input:window on', 'input:window fullscreen'],
+                         'holding North adds fullscreen')
+        lb = self.actions('console', tap(LB), **vt)
+        self.assertEqual(len(lb), 1)
+        self.assertEqual(self.native(lb[0]), 'none', 'the unmodified ShaderGlass bumper is consumed on a VT')
         self.assertEqual(self.actions('console', tap(RT), **vt), ['tmux:key n'])
-        self.assertEqual(self.actions('console', tap(GUIDE), **vt), ['tmux:menu'])
+        self.assertEqual(self.actions('console', tap(GUIDE), **vt), [], 'a Guide tap waits for the double-press window')
+        self.assertEqual(self.actions('console', tap(GUIDE) + wait(double + 50), **vt), ['tmux:menu'])
         self.assertEqual(self.actions('console', tap(SELECT, 700), **vt), ['tmux:keymap'])
         self.assertEqual(self.actions('console', ab(1, -30000) + wait(800), **vt), ['tmux:page-up'] * 3)
-        self.assertEqual(self.actions('console', [key(L3), key(R3)] + wait(800) + [key(L3, 0), key(R3, 0)], **vt),
-                         ['mios:graphical-vt'], 'C-17: the toggle chord switches VT; its hold adds nothing')
+        held = [key(L3), key(R3)] + wait(800) + [key(L3, 0), key(R3, 0)]
+        self.assertEqual(self.actions('console', held, **vt), [],
+                         'uncaptured L3+R3 is the global attach/detach: no VT switch, no room action')
 
     def test_c18_console_plain_profile_projects_only_vt_keys(self):
         self.assertEqual(self.actions('console', tap(SOUTH)), ['key:ENTER'])
         self.assertEqual(self.actions('console', tap(EAST, 700)), ['key:CTRL+c'])
         self.assertEqual(self.actions('console', tap(WEST, 700)), ['key:SHIFT+TAB'])
-        self.assertEqual(self.actions('console', tap(LB)), ['key:SHIFT+TAB'], 'bumpers = BTab / Tab')
-        self.assertEqual(self.actions('console', tap(RB)), ['key:TAB'])
+        for bumper in (LB, RB):
+            with self.subTest(bumper=hex(bumper)):
+                out = self.actions('console', tap(bumper))
+                self.assertEqual(len(out), 1)
+                self.assertEqual(self.native(out[0]), 'none', 'the unmodified ShaderGlass bumpers are consumed on a VT')
         self.assertEqual(self.actions('console', tap(LT)), ['key:PAGEUP'], 'triggers = PageUp / PageDown')
         self.assertEqual(self.actions('console', tap(RT)), ['key:PAGEDOWN'])
         self.assertEqual(self.actions('console', ab(1, -30000) + wait(800)), ['key:UP'] * 3, 'the left stick is arrows, never PageUp')
         self.assertEqual(self.actions('console', ab(0, 30000) + wait(100)), ['key:RIGHT'])
-        self.assertEqual(self.actions('console', tap(START)), ['input:cursor on'], 'Start = cursor mode, as on the desktop')
-        for b in (NORTH, GUIDE, L3, SELECT):
+        self.assertEqual(self.actions('console', tap(START)), [], 'an unknown VT app has no pause/options: Start is consumed')
+        self.assertEqual(self.actions('console', tap(NORTH)), ['input:window on'],
+                         'North is the shared capture request; the ownership transaction, not the router, verifies a pane')
+        double = self.controller()['guide_double_press_ms']
+        for b in (GUIDE, L3, SELECT):
             with self.subTest(button=hex(b)):
-                self.assertEqual(self.actions('console', tap(b)), [], 'none on a bare VT')
+                self.assertEqual(self.actions('console', tap(b) + wait(double + 50)), [], 'none on a bare VT')
         allowed = {'key:ENTER', 'key:ESC', 'key:CTRL+c', 'key:TAB', 'key:SHIFT+TAB', 'key:UP', 'key:DOWN', 'key:LEFT',
                    'key:RIGHT', 'key:PAGEUP', 'key:PAGEDOWN', 'pointer:cursor', 'mios:graphical-vt', 'none'}
         nav = json.loads(self.run_bin('map').stdout)['global']['controller']['nav']['console_plain']
@@ -157,13 +190,25 @@ class Grammar(Base):
             for a in (v if isinstance(v, list) else [v]):
                 self.assertIn(a, allowed, inp)
 
-    def test_r08_guide_is_no_modifier_on_a_vt(self):
+    def test_r08_shared_guide_layer_adapts_once_on_a_vt(self):
         vt = dict(tmux_client='/dev/pts/9')
-        self.assertEqual(self.actions('console', [key(GUIDE)] + tap(LB) + [key(GUIDE, 0)], **vt), ['tmux:session-prev'])
-        # Negative: where a compositor runs, Guide+LB is the system layer.
-        self.assertEqual(self.actions('terminal', [key(GUIDE)] + tap(LB) + [key(GUIDE, 0)], **vt), ['hypr:workspace e-1'])
-        # Negative: on the desktop the toggle chord is still the room toggle.
-        self.assertEqual(self.actions('desktop-2d', [key(L3), key(R3)] + wait(50) + [key(L3, 0), key(R3, 0)]), ['mios:hyprland-3d-toggle'])
+        layer = self.controller()['system_layer']
+        guide_lb = [key(GUIDE)] + tap(LB) + [key(GUIDE, 0)]
+        # The VT shares the desktop's Guide layer; its emitter translates the action once to the native verb.
+        out = self.actions('console', guide_lb, **vt)
+        self.assertEqual(out, [layer['BTN_TL']])
+        self.assertEqual(self.native(out[0]), 'tmux:session-prev', 'Guide+LB = previous tmux session on a VT')
+        guide_east = self.actions('console', [key(GUIDE)] + tap(EAST) + [key(GUIDE, 0)], **vt)
+        self.assertEqual([self.native(a) for a in guide_east], ['tmux:desktop close'], 'Guide+East = native close confirmation')
+        guide_north = self.actions('console', [key(GUIDE)] + tap(NORTH) + [key(GUIDE, 0)], **vt)
+        self.assertEqual([self.native(a) for a in guide_north], ['none'], 'an unsupported browser action is consumed')
+        # Negative: where a compositor runs, Guide+LB is the same system-layer action, run as is.
+        self.assertEqual(self.actions('terminal', guide_lb, **vt), [layer['BTN_TL']])
+        # Negative: on the desktop the toggle chord is the room toggle only with the global switches off.
+        chord = [key(L3), key(R3)] + wait(50) + [key(L3, 0), key(R3, 0)]
+        self.assertEqual(self.actions('desktop-2d', chord), [])
+        self.host_layer(LEGACY_POLICY)
+        self.assertEqual(self.actions('desktop-2d', chord), ['mios:hyprland-3d-toggle'])
 
     def test_c23_console_rows_must_reach_a_vt(self):
         self.assertEqual(self.run_bin('check').returncode, 0, self.run_bin('check').stderr)
@@ -178,8 +223,11 @@ class Grammar(Base):
                 r = self.run_bin('check')
                 self.assertNotEqual(r.returncode, 0, body)
                 self.assertIn(why, r.stderr)
+        # With nav.console_actions set, console profiles reserve the shared capture inputs like the desktop does.
         self.host_layer('[keybindings.global.controller.nav.console_plain]\nBTN_NORTH = "key:ENTER"\n')
-        self.assertEqual(self.run_bin('check').returncode, 0, 'a VT may claim the contract inputs')
+        r = self.run_bin('check')
+        self.assertNotEqual(r.returncode, 0, 'a VT may not claim the shared capture inputs')
+        self.assertIn('shared capture contract', r.stderr)
         self.host_layer('[keybindings.global.controller.console]\nmouse = "always"\n')
         self.assertIn('auto, gpm, evdev or off', self.run_bin('check').stderr)
 

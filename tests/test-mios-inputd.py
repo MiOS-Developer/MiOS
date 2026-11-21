@@ -16,6 +16,12 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.environ.get('MIOS_INPUTD_BIN', '/usr/libexec/mios/mios-inputd'))
+# The vendor policy is the global controller contract (usr/share/doc/mios/keybinds.md): Start belongs to the app,
+# L3+R3 attaches/detaches the verified focused window and Select+Start zooms it; cursor mode is the
+# mode_override_chord. With these switches off (a host tier) the earlier contract still holds: Start toggles cursor
+# mode and L3+R3 toggles the room. Both policies ship, so both are pinned here.
+LEGACY_POLICY = ('[keybindings.global.controller]\nglobal_capture_toggle = false\nwindow_zoom_chord = []\n'
+                 '[keybindings.global.controller.nav]\nstart_options = false\n')
 
 
 class InputPolicy(unittest.TestCase):
@@ -34,6 +40,11 @@ class InputPolicy(unittest.TestCase):
         cls.data = tomllib.loads(cls.source)
         assert cls.data['keybindings']['global']['controller']['enabled']
         target.write_text(cls.source)
+        cls.legacy_root = cls.root / 'legacy'
+        (cls.legacy_root / 'usr/share/mios').mkdir(parents=True)
+        (cls.legacy_root / 'etc/mios').mkdir(parents=True)
+        (cls.legacy_root / 'usr/share/mios/mios.toml').write_text(cls.source)
+        (cls.legacy_root / 'etc/mios/mios.toml').write_text(LEGACY_POLICY)
         cls.env = dict(os.environ)
         for key in list(cls.env):
             if key.startswith('MIOS_') and ('TOML' in key or key == 'MIOS_TOML_ROOT'):
@@ -45,17 +56,27 @@ class InputPolicy(unittest.TestCase):
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def call(self, *args, data=None, valid=True):
-        result = subprocess.run([str(BIN), '--root', str(self.root), *args], input=None if data is None else json.dumps(data), text=True, capture_output=True, env=self.env, timeout=5)
+    def call(self, *args, data=None, valid=True, root=None):
+        result = subprocess.run([str(BIN), '--root', str(root or self.root), *args], input=None if data is None else json.dumps(data), text=True, capture_output=True, env=self.env, timeout=5)
         self.assertEqual(result.returncode == 0, valid, result.stdout + result.stderr)
         return json.loads(result.stdout) if valid else result
 
-    def replay(self, context, events, axes=None, tick=0):
-        return self.call('replay', data=dict(context=context, events=events, axes=axes or {}, tick_ms=tick))
+    def replay(self, context, events, axes=None, tick=0, root=None):
+        return self.call('replay', data=dict(context=context, events=events, axes=axes or {}, tick_ms=tick), root=root)
 
     @staticmethod
     def key(code, value=1):
         return dict(kind=1, code=code, value=value)
+
+    def cursor_gesture(self):
+        """The vendor cursor-mode toggle: the mode_override_chord pressed in order and released in reverse."""
+        controller = self.data['keybindings']['global']['controller']
+        self.assertTrue(controller['nav']['start_options'], 'vendor Start is the app pause/options button')
+        # Linux gamepad button codes (input-event-codes.h), BTN_SOUTH = 0x130 .. BTN_THUMBR = 0x13e.
+        names = ('SOUTH', 'EAST', 'C', 'NORTH', 'WEST', 'Z', 'TL', 'TR', 'TL2', 'TR2', 'SELECT', 'START', 'MODE', 'THUMBL', 'THUMBR')
+        evdev = {f'BTN_{n}': 0x130 + i for i, n in enumerate(names)}
+        codes = [evdev[name] for name in controller['mode_override_chord']]
+        return [self.key(c) for c in codes] + [self.key(c, 0) for c in reversed(codes)]
 
     def test_published_map_loads(self):
         self.assertTrue(self.call('check')['valid'])
@@ -86,7 +107,15 @@ class InputPolicy(unittest.TestCase):
         self.assertFalse([e for e in result['output']['app'] if e['kind']==1])
 
     def test_start_toggles_2d_cursor(self):
-        result = self.replay('desktop-2d', [self.key(0x13b)])
+        result = self.replay('desktop-2d', [self.key(0x13b)], root=self.legacy_root)
+        self.assertTrue(result['cursor'])
+        self.assertEqual(result['output']['actions'], ['input:cursor on'])
+        # Vendor policy: an unknown foreground app has no pause/options action, so Start is consumed.
+        result = self.replay('desktop-2d', [self.key(0x13b), self.key(0x13b, 0)])
+        self.assertFalse(result['cursor'])
+        self.assertEqual(result['output']['actions'], [])
+        self.assertEqual(result['output']['app'], [])
+        result = self.replay('desktop-2d', self.cursor_gesture())
         self.assertTrue(result['cursor'])
         self.assertEqual(result['output']['actions'], ['input:cursor on'])
 
@@ -99,7 +128,7 @@ class InputPolicy(unittest.TestCase):
             with self.subTest(direction=direction):
                 result = self.call('replay', data=dict(
                     context='desktop-2d', axes=axes,
-                    events=[self.key(0x13b), dict(kind=3, code=3, value=value)],
+                    events=self.cursor_gesture() + [dict(kind=3, code=3, value=value)],
                     script=[dict(tick_ms=100)]))
                 movement = sum(e['value'] for e in result['output']['pointer']
                                if e['kind'] == 2 and e['code'] == 0)
@@ -107,7 +136,7 @@ class InputPolicy(unittest.TestCase):
 
     def test_2d_pointer_stops_when_the_stick_returns_to_center(self):
         axes = {str(c): dict(min=-32768, max=32767, value=0) for c in (0, 1, 3, 4)}
-        start = [self.key(0x13b), dict(kind=3, code=3, value=32767)]
+        start = self.cursor_gesture() + [dict(kind=3, code=3, value=32767)]
         held = self.call('replay', data=dict(context='desktop-2d', axes=axes,
             events=start, script=[dict(tick_ms=100)]))
         centered = self.call('replay', data=dict(context='desktop-2d', axes=axes,
@@ -121,7 +150,9 @@ class InputPolicy(unittest.TestCase):
                          'Centered sticks must not retain cursor momentum')
 
     def test_terminal_cursor_mode_is_explicitly_available(self):
-        result=self.replay('terminal',[self.key(0x13b)])
+        result=self.replay('terminal',self.cursor_gesture())
+        self.assertTrue(result['cursor'])
+        result=self.replay('terminal',[self.key(0x13b)],root=self.legacy_root)
         self.assertTrue(result['cursor'])
 
     def test_host_layer_changes_policy_and_invalid_edits_fail(self):
@@ -160,7 +191,8 @@ class InputPolicy(unittest.TestCase):
             events += [self.key(code), self.key(code, 0)]
         for i, event in enumerate(events):
             daemon.process_event(event['kind'], event['code'], event['value'], 1.0 + i * .01)
-        result = self.replay('desktop-3d', events)
+        # The legacy daemon predates the global chords, so parity is with the switches off.
+        result = self.replay('desktop-3d', events, root=self.legacy_root)
         expected = [daemon.select_seq, daemon.start_seq, daemon.south_seq, daemon.fly_seq, daemon.west_seq, daemon.north_seq, daemon.rb_seq, daemon.lb_seq]
         self.assertEqual(result['pad']['sequences'], expected)
 
@@ -225,8 +257,14 @@ class InputPolicy(unittest.TestCase):
         # L3+R3 remains held while another button is pressed/released later.
         events=[self.key(0x13d),self.key(0x13e)]
         events += [self.key(0x131),self.key(0x131,0)] * 30
-        result=self.replay('desktop-2d',events)
+        result=self.replay('desktop-2d',events,root=self.legacy_root)
         self.assertEqual(result['output']['actions'].count('mios:hyprland-3d-toggle'),1)
+        # Vendor policy: the held global chord drains every other button until both members are up.
+        result=self.replay('desktop-2d',events)
+        self.assertEqual(result['output']['actions'],[])
+        self.assertEqual(result['output']['app'],[])
+        result=self.replay('desktop-2d',events+[self.key(0x13d,0),self.key(0x13e,0),self.key(0x131),self.key(0x131,0)])
+        self.assertEqual(len(result['output']['actions']),1,'East navigates again once the chord is released')
 
     def test_native_virtual_fixture(self):
         if os.environ.get('MIOS_INPUTD_UINPUT_TEST') != '1':
