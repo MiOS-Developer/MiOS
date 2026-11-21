@@ -761,6 +761,49 @@ struct LightSettings {
     cuda_information: PathBuf,
     lock: PathBuf,
     cache: PathBuf,
+    /// The model map this backend's lane mounts at /app/config.yaml.
+    config: String,
+    /// MemoryHigh, MemoryMax and MemorySwapMax for the lane, when bounded.
+    memory: Option<[String; 3]>,
+}
+
+/// A systemd memory value: a percentage of RAM, a byte size or infinity.
+fn memory_value(v: &str) -> bool {
+    if v == "infinity" {
+        return true;
+    }
+    if let Some(p) = v.strip_suffix('%') {
+        return p.parse::<u8>().is_ok_and(|n| (1..=100).contains(&n));
+    }
+    let digits = v.trim_end_matches(['K', 'M', 'G', 'T']);
+    v.len() - digits.len() <= 1 && !digits.is_empty() && digits.bytes().all(|c| c.is_ascii_digit())
+}
+
+fn light_memory(settings: &Value, backend: &str) -> Result<Option<[String; 3]>, String> {
+    let keys = ["memory_high", "memory_max", "memory_swap_max"];
+    let present: Vec<_> = keys
+        .iter()
+        .filter(|k| settings.get(**k).is_some())
+        .collect();
+    if present.is_empty() {
+        return Ok(None);
+    }
+    if present.len() != keys.len() {
+        return Err(format!(
+            "llamacpp.light_backends.{backend} must set memory_high, memory_max and memory_swap_max together"
+        ));
+    }
+    let mut out: [String; 3] = Default::default();
+    for (i, k) in keys.iter().enumerate() {
+        let v = light_string(settings, k)?;
+        if !memory_value(v) {
+            return Err(format!(
+                "llamacpp.light_backends.{backend}.{k} must be a percentage, a size or infinity"
+            ));
+        }
+        out[i] = v.to_owned();
+    }
+    Ok(Some(out))
 }
 
 fn light_string<'a>(table: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -893,6 +936,22 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
     if backend != "cpu" && drivers.is_empty() {
         return Err("GPU light backend must declare eligible bound drivers".into());
     }
+    let config = light_string(settings, "config")?;
+    let config_path = Path::new(config);
+    if !config_path.starts_with("/usr/share/mios/llamacpp")
+        || config_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        || config_path.extension().and_then(|e| e.to_str()) != Some("yaml")
+        || !config
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+    {
+        return Err(format!(
+            "llamacpp.light_backends.{backend}.config must be a .yaml model map under /usr/share/mios/llamacpp"
+        ));
+    }
+    let memory = light_memory(settings, backend)?;
     let runtime = llama
         .get("light_runtime")
         .ok_or("missing [llamacpp.light_runtime]")?;
@@ -960,6 +1019,8 @@ fn light_settings(data: &Value) -> Result<LightSettings, String> {
         cuda_information,
         lock,
         cache,
+        config: config.into(),
+        memory,
     })
 }
 
@@ -1450,7 +1511,7 @@ pub fn light_backend_plan(
     }
     groups.sort();
     groups.dedup();
-    let mut contents = format!("# AI-hint: Native light backend projection from layered mios.toml and verified kernel device metadata.\n[Container]\nImage={}\nAddDevice=\nGroupAdd=\n",cfg.image);
+    let mut contents = format!("# AI-hint: Native light backend projection from layered mios.toml and verified kernel device metadata.\n[Container]\nImage={}\nAddDevice=\nGroupAdd=\nVolume={}:/app/config.yaml:ro\n",cfg.image,cfg.config);
     for device in devices {
         contents.push_str(&format!("AddDevice={device}\n"));
     }
@@ -1465,6 +1526,11 @@ pub fn light_backend_plan(
         "Environment=XDG_CACHE_HOME={}\n",
         cfg.cache.display()
     ));
+    if let Some([high, max, swap]) = &cfg.memory {
+        contents.push_str(&format!(
+            "[Service]\nMemoryHigh={high}\nMemoryMax={max}\nMemorySwapMax={swap}\n"
+        ));
+    }
     Ok(LightBackendPlan {
         backend: cfg.backend,
         image: cfg.image,
@@ -1830,6 +1896,77 @@ mod tests {
             .unwrap(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn light_cpu_tier_mounts_its_own_map_and_bounds_the_lane() {
+        let root = tempfile::tempdir().unwrap();
+        let data = ssot();
+        let dri = root.path().join("absent-dri");
+        let sys = root.path().join("absent-sys");
+        let plan = light_backend_plan(
+            root.path(),
+            &data,
+            &Host {
+                dri: &dri,
+                sys: &sys,
+            },
+            "",
+        )
+        .unwrap();
+        assert!(plan.contents.contains(
+            "Volume=/usr/share/mios/llamacpp/mios-llm-light-cpu.yaml:/app/config.yaml:ro\n"
+        ));
+        let cpu = &data["llamacpp"]["light_backends"]["cpu"];
+        assert!(plan.contents.ends_with(&format!(
+            "[Service]\nMemoryHigh={}\nMemoryMax={}\nMemorySwapMax={}\n",
+            cpu["memory_high"].as_str().unwrap(),
+            cpu["memory_max"].as_str().unwrap(),
+            cpu["memory_swap_max"].as_str().unwrap()
+        )));
+    }
+
+    #[test]
+    fn gpu_backends_mount_the_full_map_unbounded() {
+        for backend in ["cuda", "vulkan"] {
+            let mut data = ssot();
+            data["llamacpp"]["light_backend"] = Value::String(backend.into());
+            let cfg = light_settings(&data).unwrap();
+            assert_eq!(cfg.config, "/usr/share/mios/llamacpp/mios-llm-light.yaml");
+            assert_eq!(cfg.memory, None, "{backend} lane bounded");
+        }
+    }
+
+    #[test]
+    fn light_memory_and_config_are_validated() {
+        let set = |k: &str, v: &str| {
+            let mut data = ssot();
+            data["llamacpp"]["light_backends"]["cpu"][k] = Value::String(v.into());
+            light_settings(&data)
+        };
+        for (k, v) in [
+            ("memory_high", "120%"),
+            ("memory_max", "lots"),
+            ("memory_swap_max", "1MG"),
+            ("config", "/etc/x.yaml"),
+            ("config", "/usr/share/mios/llamacpp/../x.yaml"),
+            ("config", "/usr/share/mios/llamacpp/x.conf"),
+        ] {
+            assert!(set(k, v).is_err(), "{k}={v} accepted");
+        }
+        for (k, v) in [
+            ("memory_high", "infinity"),
+            ("memory_max", "4G"),
+            ("memory_swap_max", "0"),
+        ] {
+            assert!(set(k, v).is_ok(), "{k}={v} rejected");
+        }
+        let mut data = ssot();
+        data["llamacpp"]["light_backends"]["cpu"]
+            .as_table_mut()
+            .unwrap()
+            .remove("memory_max");
+        assert!(light_settings(&data).unwrap_err().contains("together"));
     }
 
     #[test]
@@ -2735,9 +2872,10 @@ mod tests {
             "",
         )
         .unwrap();
+        // The [Service] memory bounds follow the [Container] environment.
         assert!(plan
             .contents
-            .ends_with("Environment=XDG_CACHE_HOME=/srv/mios-private/slots/cache\n"));
+            .contains("Environment=XDG_CACHE_HOME=/srv/mios-private/slots/cache\n"));
         assert!(!plan.contents.contains("/var/lib/mios/llamacpp/.cache"));
         data["llamacpp"]["slot_dir"] = Value::String("/".into());
         assert!(light_settings(&data).is_err());

@@ -55,7 +55,7 @@ def handback_defects(patch):
         missing.append("last-resort window on the room monitor")
     if "isSessionLocked()" not in code:
         missing.append("session-lock guard")
-    if "m_workspace->isVisible()" not in code:
+    if "m_workspace->visible()" not in code:
         missing.append("visible-workspace guard")
     if "noFocus()" not in code:
         missing.append("no_focus guard")

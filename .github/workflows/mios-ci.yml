@@ -156,6 +156,9 @@ jobs:
           export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
           # Host fixture paths remain part of the existing daemon unit suites.
           cargo build --locked --manifest-path ./src/mios-rs/Cargo.toml -p mios-gate -p miosd
+          # The shipped desktop tmux ([keybindings.tmux.desktop]), from the same source and builder as
+          # the image bake, so the relay's float-pane placement test runs against what ships.
+          bash ./automation/lib/tmux-desktop.sh . /
 
       - name: Base images are the newest stable release
         # Every MiOS image shares [image].machine_os_repo; a newer stable tag fails here.
@@ -326,6 +329,12 @@ jobs:
           mios_ci_verify_portal . .staged-portal
 
       - name: Build the OCI image
+        # GitHub API calls inside the bake (release digests, latest-release lookups)
+        # authenticate with this job's token as a build secret: a tmpfs file for the
+        # one RUN step, never a layer, build-arg or log line. Unauthenticated, the
+        # shared runner IP's 60 requests/hour run out mid-build.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           # Build arguments come from /etc/mios/install.env when a self-hosted
@@ -349,7 +358,8 @@ jobs:
           # honours it for layer timestamps unaided. Passing --timestamp as well
           # sets the same thing twice, and podman refuses the pair outright,
           # exiting 125 before the Containerfile is read.
-          sudo TMPDIR=/mnt/tmp SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" podman build \
+          sudo --preserve-env=GITHUB_TOKEN TMPDIR=/mnt/tmp SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" podman build \
+              --secret id=mios_github_token,env=GITHUB_TOKEN \
               "${BUILD_ARGS[@]}" \
               --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
               --device /dev/fuse \
@@ -523,11 +533,18 @@ jobs:
 
       - name: Smoke build
         # The Containerfile's final layer runs bootc container lint.
+        # GitHub API calls inside the bake (release digests, latest-release lookups)
+        # authenticate with this job's token as a build secret: a tmpfs file for the
+        # one RUN step, never a layer, build-arg or log line. Unauthenticated, the
+        # shared runner IP's 60 requests/hour run out mid-build.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
           [[ -n "$BASE_IMAGE" ]] || { echo "::error::SSOT image.base is empty" >&2; exit 1; }
-          sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+          sudo --preserve-env=GITHUB_TOKEN TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+              --secret id=mios_github_token,env=GITHUB_TOKEN \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
               --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t mios:smoke -f Containerfile .
@@ -615,12 +632,19 @@ jobs:
           mios_ci_verify_portal . .staged-portal
 
       - name: Bake the image the disk is made from
+        # GitHub API calls inside the bake (release digests, latest-release lookups)
+        # authenticate with this job's token as a build secret: a tmpfs file for the
+        # one RUN step, never a layer, build-arg or log line. Unauthenticated, the
+        # shared runner IP's 60 requests/hour run out mid-build.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
           LOCAL_TAG="$(./usr/libexec/mios/mios-toml-get --vendor image local_tag)"
           [[ -n "$BASE_IMAGE" && -n "$LOCAL_TAG" ]] || { echo "::error::SSOT image.base or image.local_tag is empty" >&2; exit 1; }
-          sudo TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+          sudo --preserve-env=GITHUB_TOKEN TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
+              --secret id=mios_github_token,env=GITHUB_TOKEN \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
               --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t "$LOCAL_TAG" -f Containerfile .

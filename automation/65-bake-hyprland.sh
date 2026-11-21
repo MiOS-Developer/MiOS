@@ -100,7 +100,8 @@ done < <(/usr/libexec/mios/mios-unit-gen --root / --user --list)
 install -D -m 0644 /usr/share/mios/rofi/config.rasi /etc/skel/.config/rofi/config.rasi
 python3 /usr/libexec/mios/mios-theme-render --gtk --qt --config-root /etc/skel/.config
 /usr/libexec/mios/mios-gen render-tmux-theme --write-fixture /
-python3 -c 'import json,sys; sys.path.insert(0,"/usr/lib/mios"); import mios_toml; json.dump({"keybindings":mios_toml.load_merged()["keybindings"]},open("/tmp/mios-keybindings-build.json","w"))'
+# The whole merged SSOT: the renderer reads [keybindings] and the tables it names ([theme.tmux.console], ...).
+python3 -c 'import json,sys; sys.path.insert(0,"/usr/lib/mios"); import mios_toml; json.dump(mios_toml.load_merged(),open("/tmp/mios-keybindings-build.json","w"))'
 /usr/libexec/mios/mios-unit-gen keybindings --from-json /tmp/mios-keybindings-build.json --emit-json | \
     python3 -c 'import json,sys,pathlib; d=json.load(sys.stdin); [(pathlib.Path("/")/p).parent.mkdir(parents=True,exist_ok=True) or (pathlib.Path("/")/p).write_text(v) for p,v in d.items()]'
 rm -f /tmp/mios-keybindings-build.json

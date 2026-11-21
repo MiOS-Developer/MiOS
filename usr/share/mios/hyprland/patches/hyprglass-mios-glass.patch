@@ -1,21 +1,21 @@
 diff --git a/Makefile b/Makefile
-index 9444e09..46a0fea 100644
+index 782817a..e81c88e 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -27,7 +27,7 @@ ifneq ($(shell $(CXX) --version 2>/dev/null | grep -c 'Free Software Foundation'
  endif
  
  TARGET = hyprglass.so
--SOURCES = src/main.cpp src/LoadGuard.cpp src/GlassDecoration.cpp src/GlassPassElement.cpp src/GlassRenderer.cpp src/GlassLayerSurface.cpp src/GlassLayerPassElement.cpp src/GlassLayerCompositeElement.cpp src/BackgroundDamageObserver.cpp src/PluginConfig.cpp src/ShaderManager.cpp src/Diagnostics.cpp src/GlassSubsurfaceState.cpp src/GlassSubsurfacePassElement.cpp src/GlassSubsurfaceCompositeElement.cpp src/ItemHints.cpp src/GlassSnapshotElement.cpp src/Frost.cpp src/Contour.cpp
-+SOURCES = src/main.cpp src/LoadGuard.cpp src/GlassDecoration.cpp src/GlassPassElement.cpp src/GlassRenderer.cpp src/GlassLayerSurface.cpp src/GlassLayerPassElement.cpp src/GlassLayerCompositeElement.cpp src/BackgroundDamageObserver.cpp src/PluginConfig.cpp src/ShaderManager.cpp src/Diagnostics.cpp src/GlassSubsurfaceState.cpp src/GlassSubsurfacePassElement.cpp src/GlassSubsurfaceCompositeElement.cpp src/ItemHints.cpp src/GlassSnapshotElement.cpp src/Frost.cpp src/Contour.cpp src/MiosGlass.cpp
+-SOURCES = src/main.cpp src/LoadGuard.cpp src/GlassDecoration.cpp src/GlassPassElement.cpp src/GlassRenderer.cpp src/GlassLayerSurface.cpp src/GlassLayerPassElement.cpp src/GlassLayerCompositeElement.cpp src/BackgroundDamageObserver.cpp src/PluginConfig.cpp src/ShaderManager.cpp src/Diagnostics.cpp src/GlassSubsurfaceState.cpp src/GlassSubsurfacePassElement.cpp src/GlassSubsurfaceCompositeElement.cpp src/ItemHints.cpp src/MemfdLoad.cpp src/GlassSnapshotElement.cpp src/Frost.cpp src/Contour.cpp src/GeometryEvents.cpp
++SOURCES = src/main.cpp src/LoadGuard.cpp src/GlassDecoration.cpp src/GlassPassElement.cpp src/GlassRenderer.cpp src/GlassLayerSurface.cpp src/GlassLayerPassElement.cpp src/GlassLayerCompositeElement.cpp src/BackgroundDamageObserver.cpp src/PluginConfig.cpp src/ShaderManager.cpp src/Diagnostics.cpp src/GlassSubsurfaceState.cpp src/GlassSubsurfacePassElement.cpp src/GlassSubsurfaceCompositeElement.cpp src/ItemHints.cpp src/MemfdLoad.cpp src/GlassSnapshotElement.cpp src/Frost.cpp src/Contour.cpp src/GeometryEvents.cpp src/MiosGlass.cpp
  OBJ = $(SOURCES:.cpp=.o)
  HEADERS = $(wildcard src/*.hpp)
  
 diff --git a/src/GlassDecoration.hpp b/src/GlassDecoration.hpp
-index 82a582a..f8981ef 100644
+index c03c1b7..d15ed11 100644
 --- a/src/GlassDecoration.hpp
 +++ b/src/GlassDecoration.hpp
-@@ -61,6 +61,8 @@ class CGlassDecoration : public IHyprWindowDecoration {
+@@ -66,6 +66,8 @@ class CGlassDecoration : public IHyprWindowDecoration {
      // GlassSubsurfaceState.cpp) apply exactly the same enable/disable rules and
      // theme/preset tags as the window's own glass, without duplicating them.
      [[nodiscard]] bool        isGlassEnabled() const { return resolveEnabled() == EEnabledResolution::Enabled; }
@@ -25,13 +25,13 @@ index 82a582a..f8981ef 100644
      [[nodiscard]] std::string presetName() const { return resolvePresetName(); }
  
 diff --git a/src/GlassRenderer.cpp b/src/GlassRenderer.cpp
-index 250cfa5..d52a94e 100644
+index 0a3a19e..55e2de4 100644
 --- a/src/GlassRenderer.cpp
 +++ b/src/GlassRenderer.cpp
-@@ -493,8 +493,10 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
-                        CBox& rawBox, CBox& transformedBox,
+@@ -479,8 +479,10 @@ void applyGlassEffect(Render::CRenderContext& ctx,
+                        const CBox& box,
                         float alpha, const std::array<float, 4>& radii, float roundingPower,
-                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
+                        const SSampleMap& sampleMap, const SResolveContext& resolveContext,
 -                       const SMaskInfo* mask, float focusLight, const SFrostInput* frost) {
 -    if (!sampleFramebuffer || !targetFramebuffer)
 +                       const SMaskInfo* mask, float focusLight, const SFrostInput* frost,
@@ -40,24 +40,24 @@ index 250cfa5..d52a94e 100644
 +    if ((!sampleFramebuffer && !edgePass) || !targetFramebuffer)
          return;
  
-     Diagnostics::CScopedStageTimer stageTimer(Diagnostics::EStage::ApplyGlassEffect);
-@@ -522,13 +524,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
-         Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
+     Diagnostics::CScopedStageTimer stageTimer(ctx, Diagnostics::EStage::ApplyGlassEffect);
+@@ -506,13 +508,13 @@ void applyGlassEffect(Render::CRenderContext& ctx,
  
-     Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox, transform);
+     // No transform: the pass is drawn unrotated, as Hyprland's own elements project their boxes.
+     Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(ctx, box);
 -    auto texture    = sampleFramebuffer->getTexture();
  
      glMatrix.transpose();
  
-     glBindFramebuffer(GL_FRAMEBUFFER, fbId(targetFramebuffer));
-     glActiveTexture(GL_TEXTURE0);
+     g_pHyprOpenGL->bindFramebuffer(GL_FRAMEBUFFER, fbId(targetFramebuffer));
+     g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0);
 -    texture->bind();
 +    if (sampleFramebuffer)
 +        sampleFramebuffer->getTexture()->bind();
  
      if (frosted) {
-         glActiveTexture(GL_TEXTURE0 + FROST_TEXTURE_UNIT);
-@@ -597,7 +599,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+         g_pHyprOpenGL->setActiveTexture(GL_TEXTURE0 + FROST_TEXTURE_UNIT);
+@@ -581,7 +583,7 @@ void applyGlassEffect(Render::CRenderContext& ctx,
          monitorScale, minDimensionPx);
      const float lensDistortionValue = resolvePresetFloat(resolveContext, &SPresetValues::lensDistortion, &SOverridableConfig::lensDistortion);
      // Epsilon guard matches the shader's own degenerate-size behaviour (bezelWidthPx == 0 would divide by zero).
@@ -66,17 +66,18 @@ index 250cfa5..d52a94e 100644
      glUniform1f(uniforms.lensMaxPx, lensDistortionValue * minDimensionPx * 0.006f);
  
      // inf * 0 at a square lens corner would give NaN offsets
-@@ -657,7 +659,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -642,7 +644,9 @@ void applyGlassEffect(Render::CRenderContext& ctx,
  
      uploadThemeUniforms(resolveContext, program);
  
--    const int64_t tintColorValue = resolvePresetInt(resolveContext, &SPresetValues::tintColor, &SOverridableConfig::tintColor);
-+    const int64_t tintColorValue = mios && mios->tintOverride >= 0 ? mios->tintOverride :
-+                                                                     resolvePresetInt(resolveContext, &SPresetValues::tintColor, &SOverridableConfig::tintColor);
+-    const int64_t tintColorValue = resolvePresetInt(resolveContext, &SPresetValues::tintColor, &SOverridableConfig::tintColor, GlobalDefaults::TINT_COLOR);
++    const int64_t tintColorValue = mios && mios->tintOverride >= 0 ?
++        mios->tintOverride :
++        resolvePresetInt(resolveContext, &SPresetValues::tintColor, &SOverridableConfig::tintColor, GlobalDefaults::TINT_COLOR);
      glUniform3f(uniforms.tintColor,
          static_cast<float>((tintColorValue >> 24) & 0xFF) / 255.0f,
          static_cast<float>((tintColorValue >> 16) & 0xFF) / 255.0f,
-@@ -724,6 +727,18 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
+@@ -708,6 +712,18 @@ void applyGlassEffect(Render::CRenderContext& ctx,
      glUniform4f(uniforms.radii, radii[0], radii[1], radii[2], radii[3]);
      shader->setUniformFloat(SHADER_ROUNDING_POWER, safeRoundingPower);
  
@@ -96,14 +97,14 @@ index 250cfa5..d52a94e 100644
  
      // Only finalDamage is copied to the screen, and elementDamage (which finalDamage is a
 diff --git a/src/GlassRenderer.hpp b/src/GlassRenderer.hpp
-index c4f098d..404f762 100644
+index ac21660..b4789f7 100644
 --- a/src/GlassRenderer.hpp
 +++ b/src/GlassRenderer.hpp
-@@ -202,10 +202,25 @@ struct SFrostInput {
+@@ -207,6 +207,20 @@ struct SFrostInput {
  // its fade). Only the active window's glass passes one above 0.
  //
  // frost: windows only, null when the glass is not frosted right now (see SFrostInput).
-+// MiOS (hyprglass-mios.patch): options of the edge pass and of shaped glass (the controls tab and its buttons,
++// MiOS (hyprglass-mios-glass.patch): options of the edge pass and of shaped glass (the controls tab and its buttons,
 +// drawn for hyprbars through mios_hyprglass_draw_shape_v1). Every other caller passes nullptr.
 +struct SMiosGlassOptions {
 +    bool                 edgePass  = false; // only the edge light, over the window's content (no backdrop read)
@@ -117,20 +118,23 @@ index c4f098d..404f762 100644
 +    int64_t              tintOverride = -1;          // RRGGBBAA replacing the preset tint (button colours); -1 = none
 +};
 +
- void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
-                        CBox& rawBox, CBox& transformedBox,
+ //
+ // box: the drawn quad in framebuffer pixels. The glass's up is the screen's up as the
+ // user sees it, whatever the monitor's transform.
+@@ -215,6 +229,7 @@ void applyGlassEffect(Render::CRenderContext& ctx,
+                        const CBox& box,
                         float alpha, const std::array<float, 4>& radii, float roundingPower,
-                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
+                        const SSampleMap& sampleMap, const SResolveContext& resolveContext,
 -                       const SMaskInfo* mask = nullptr, float focusLight = 0.0f, const SFrostInput* frost = nullptr);
 +                       const SMaskInfo* mask = nullptr, float focusLight = 0.0f, const SFrostInput* frost = nullptr,
 +                       const SMiosGlassOptions* mios = nullptr);
  
  } // namespace GlassRenderer
 diff --git a/src/Globals.hpp b/src/Globals.hpp
-index 10b2279..14d6c68 100644
+index 7bea61b..07ec01c 100644
 --- a/src/Globals.hpp
 +++ b/src/Globals.hpp
-@@ -21,6 +21,7 @@
+@@ -24,6 +24,7 @@
  #include <vector>
  
  class CGlassDecoration;
@@ -138,7 +142,7 @@ index 10b2279..14d6c68 100644
  class CGlassSubsurfaceState;
  
  struct SGlobalState {
-@@ -31,6 +32,9 @@ struct SGlobalState {
+@@ -34,6 +35,9 @@ struct SGlobalState {
      // These WPs wrap the UP<IHyprWindowDecoration> Hyprland owns: dereference with
      // .get() only, lock() asserts on a unique-owned pointer and terminates.
      std::vector<WP<CGlassDecoration>> decorations;
@@ -150,10 +154,10 @@ index 10b2279..14d6c68 100644
  
 diff --git a/src/MiosGlass.cpp b/src/MiosGlass.cpp
 new file mode 100644
-index 0000000..dc827b6
+index 0000000..3f74a57
 --- /dev/null
 +++ b/src/MiosGlass.cpp
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,244 @@
 +// MiOS: edge pass + shaped glass for hyprbars. See MiosGlass.hpp.
 +#include "MiosGlass.hpp"
 +#include "BuiltInPresets.hpp"
@@ -166,7 +170,8 @@ index 0000000..dc827b6
 +#include <algorithm>
 +#include <cmath>
 +#include <GLES3/gl32.h>
-+#include <hyprland/src/desktop/view/Window.hpp>
++#include <hyprland/src/desktop/view/window/Window.hpp>
++#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 +#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 +#include <hyprland/src/render/OpenGL.hpp>
 +#include <hyprland/src/render/Renderer.hpp>
@@ -190,8 +195,8 @@ index 0000000..dc827b6
 +    return config.edgePass && **config.edgePass > 0.0;
 +}
 +
-+void CGlassEdgeDecoration::draw(PHLMONITOR monitor, float const&) {
-+    if (!g_pGlobalState || !monitor || !edgePassOn() || RenderGuards::isForeignRender())
++void CGlassEdgeDecoration::draw(Render::CRenderContext& ctx, PHLMONITOR monitor, float const&, const Render::SWindowRenderPresentation&) {
++    if (!g_pGlobalState || !monitor || !edgePassOn() || RenderGuards::isForeignRender(ctx))
 +        return;
 +    const auto window = m_window.lock();
 +    if (!window)
@@ -201,10 +206,10 @@ index 0000000..dc827b6
 +    if (!glass || !glass->edgeEnabled())
 +        return;
 +    // into the window's own (possibly redirected: wobbly, motion) pass, over its content and under its popups
-+    g_pHyprRenderer->addPassElement(makeUnique<CGlassEdgePassElement>(m_self));
++    g_pHyprRenderer->currentPass(ctx).add(makeUnique<CGlassEdgePassElement>(m_self));
 +}
 +
-+void CGlassEdgeDecoration::renderPass(PHLMONITOR monitor) {
++void CGlassEdgeDecoration::renderPass(Render::CRenderContext& ctx, PHLMONITOR monitor) {
 +    if (!g_pGlobalState || !monitor || !edgePassOn())
 +        return;
 +    auto& shaderManager = g_pGlobalState->shaderManager;
@@ -212,7 +217,7 @@ index 0000000..dc827b6
 +    if (!shaderManager.isInitialized())
 +        return;
 +    const auto window = m_window.lock();
-+    const auto target = g_pHyprRenderer->m_renderData.currentFB;
++    const auto target = ctx.m_data.currentFB;
 +    if (!window || !target)
 +        return;
 +    auto* glass = glassDecorationFor(window);
@@ -224,18 +229,18 @@ index 0000000..dc827b6
 +    auto optBox = WindowGeometry::computeWindowBox(window, monitor);
 +    if (!optBox || optBox->w < 2 || optBox->h < 2)
 +        return;
-+    CBox windowBox    = *optBox;
-+    CBox transformBox = WindowGeometry::applyMonitorTransform(windowBox, monitor);
++    // render space: the pass is drawn unrotated, whatever the monitor's transform
++    const CBox windowBox = *optBox;
 +
 +    const auto&           config = g_pGlobalState->config;
-+    const SResolveContext ctx    = {glass->presetName(), glass->isThemeDark(), config, g_pGlobalState->customPresets};
++    const SResolveContext resolve = {glass->presetName(), glass->isThemeDark(), config, g_pGlobalState->customPresets};
 +    const float           scale  = monitor->m_scale > 0.0f ? monitor->m_scale : 1.0f;
-+    const float           radius = window->rounding() * scale;
++    const float           radius = window->presentation().rounding() * scale;
 +
 +    // the window's fade (open/close, workspace switch), not its active/inactive opacity: the edge sits over the
 +    // content at full strength whatever the content's own opacity
-+    float alpha = window->alphaTotalWithout(Desktop::View::WINDOW_ALPHA_ACTIVE);
-+    if (const auto workspace = window->m_workspace; workspace && !window->m_pinned)
++    float alpha = window->presentation().alpha().getTotalWithout(Desktop::View::WINDOW_ALPHA_ACTIVE);
++    if (const auto workspace = window->m_workspace; workspace && !(window->m_state & Desktop::View::WINDOW_STATE_PINNED))
 +        alpha *= workspace->m_alpha->value();
 +    if (alpha <= 0.002f)
 +        return;
@@ -246,8 +251,9 @@ index 0000000..dc827b6
 +    if (config.edgePassWidth && **config.edgePassWidth > 0.0)
 +        options.bezelPx = static_cast<float>(**config.edgePassWidth) * scale;
 +
-+    GlassRenderer::applyGlassEffect(nullptr, target, windowBox, transformBox, alpha, {radius, radius, radius, radius}, window->roundingPower(), Vector2D{},
-+                                    ctx, nullptr, 0.0f, nullptr, &options);
++    // no sample: the edge pass reads no backdrop, so the identity map is never sampled through
++    GlassRenderer::applyGlassEffect(ctx, nullptr, target, windowBox, alpha, {radius, radius, radius, radius}, window->presentation().roundingPower(),
++                                    GlassRenderer::SSampleMap{}, resolve, nullptr, 0.0f, nullptr, &options);
 +}
 +
 +eDecorationType CGlassEdgeDecoration::getDecorationType() {
@@ -282,17 +288,17 @@ index 0000000..dc827b6
 +    return m_window.lock();
 +}
 +
-+std::vector<UP<IPassElement>> CGlassEdgePassElement::draw() {
++std::vector<UP<IPassElement>> CGlassEdgePassElement::draw(Render::CRenderContext& ctx) {
 +    if (m_decoration.valid())
-+        m_decoration->renderPass(g_pHyprRenderer->m_renderData.pMonitor.lock());
++        m_decoration->renderPass(ctx, ctx.m_data.pMonitor.lock());
 +    return {};
 +}
 +
-+std::optional<CBox> CGlassEdgePassElement::boundingBox() {
++std::optional<CBox> CGlassEdgePassElement::boundingBox(Render::CRenderContext& ctx) {
 +    if (!m_decoration.valid())
 +        return std::nullopt;
 +    const auto window  = m_decoration->getOwner();
-+    const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
++    const auto monitor = ctx.m_data.pMonitor.lock();
 +    auto       box     = WindowGeometry::computeWindowBox(window, monitor);
 +    if (!box)
 +        return std::nullopt;
@@ -306,14 +312,18 @@ index 0000000..dc827b6
 +// ── Shaped glass for hyprbars ────────────────────────────────────────────────
 +
 +extern "C" __attribute__((visibility("default"))) int mios_hyprglass_draw_shape_v1(const SMiosGlassShapeV1* s) {
-+    if (!s || s->structSize < sizeof(SMiosGlassShapeV1) || !g_pGlobalState || !s->window || RenderGuards::isForeignRender())
++    if (!s || s->structSize < sizeof(SMiosGlassShapeV1) || !g_pGlobalState || !s->window)
++        return 0;
++    // the render the caller (one of hyprbars' pass elements) is drawing in
++    auto& rctx = g_pHyprRenderer->context();
++    if (!rctx.active() || RenderGuards::isForeignRender(rctx))
 +        return 0;
 +    auto& shaderManager = g_pGlobalState->shaderManager;
 +    shaderManager.initializeIfNeeded();
 +    if (!shaderManager.isInitialized())
 +        return 0;
-+    const auto monitor = g_pHyprRenderer->m_renderData.pMonitor.lock();
-+    const auto source  = g_pHyprRenderer->m_renderData.currentFB;
++    const auto monitor = rctx.m_data.pMonitor.lock();
++    const auto source  = rctx.m_data.currentFB;
 +    if (!monitor || !source || monitor->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
 +        return 0;
 +
@@ -336,16 +346,16 @@ index 0000000..dc827b6
 +    const float blurStrength  = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
 +    const int   downscale     = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 +
-+    auto&    sample = g_pGlobalState->miosShapeSamples[s->key];
-+    Vector2D paddingRatio;
++    auto&                     sample = g_pGlobalState->miosShapeSamples[s->key];
++    GlassRenderer::SSampleMap map;
 +    if (s->backdropFbo == 0)
-+        GlassRenderer::sampleBackground(sample, source, box, paddingRatio, downscale);
++        GlassRenderer::sampleBackground(rctx, sample, source, box, map, downscale);
 +    else {
 +        // the caller's padded copy of the backdrop: the same blit sampleBackground() does, from its framebuffer
 +        constexpr int PAD = GlassRenderer::SAMPLE_PADDING_PX;
 +        if (s->backdropPad < PAD)
 +            return 0;
-+        const auto map = GlassRenderer::sampleMapFor(box, downscale);
++        map = GlassRenderer::sampleMapFor(box, source->m_size, downscale);
 +        if (!sample)
 +            sample = g_pHyprRenderer->createFB("hyprglass-mios-shape");
 +        if (sample->m_size.x != map.width || sample->m_size.y != map.height || sample->m_drmFormat != source->m_drmFormat)
@@ -353,13 +363,15 @@ index 0000000..dc827b6
 +        auto* gl = dynamic_cast<Render::GL::CGLFramebuffer*>(sample.get());
 +        if (!gl)
 +            return 0;
-+        paddingRatio = Vector2D(static_cast<double>(PAD) / map.fullWidth, static_cast<double>(PAD) / map.fullHeight);
++        // the caller's copy holds the whole box PAD px inside the sample, wherever the box sits on the framebuffer
++        map.uvScale  = {box.w / map.fullWidth, box.h / map.fullHeight};
++        map.uvOffset = {static_cast<double>(PAD) / map.fullWidth, static_cast<double>(PAD) / map.fullHeight};
 +        const int off = s->backdropPad - PAD;
 +        g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
 +        if (glIsEnabled(GL_SCISSOR_TEST))
 +            glDisable(GL_SCISSOR_TEST);
-+        glBindFramebuffer(GL_READ_FRAMEBUFFER, s->backdropFbo);
-+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, gl->getFBID());
++        g_pHyprOpenGL->bindFramebuffer(GL_READ_FRAMEBUFFER, s->backdropFbo);
++        g_pHyprOpenGL->bindFramebuffer(GL_DRAW_FRAMEBUFFER, gl->getFBID());
 +        glBlitFramebuffer(off, off, off + map.fullWidth, off + map.fullHeight, 0, 0, map.width, map.height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 +    }
 +
@@ -370,7 +382,7 @@ index 0000000..dc827b6
 +        blurRadius        = folded.radius;
 +        blurIterations    = folded.iterations;
 +    }
-+    GlassRenderer::blurBackground(sample, blurRadius, blurIterations, source);
++    GlassRenderer::blurBackground(rctx, sample, blurRadius, blurIterations, source);
 +
 +    GlassRenderer::SMiosGlassOptions options;
 +    options.shapeMode    = s->shape == 1 ? 1 : 0;
@@ -381,9 +393,8 @@ index 0000000..dc827b6
 +    options.sampleYClamp = {s->yClamp[0], s->yClamp[1]};
 +    options.tintOverride = s->tint;
 +    const float power    = s->roundingPower > 0.0f ? s->roundingPower : 2.0f;
-+    CBox        drawBox  = box;
-+    GlassRenderer::applyGlassEffect(sample, source, drawBox, box, std::clamp(s->alpha, 0.0f, 1.0f), {s->radii[0], s->radii[1], s->radii[2], s->radii[3]}, power,
-+                                    paddingRatio, ctx, nullptr, 0.0f, nullptr, &options);
++    GlassRenderer::applyGlassEffect(rctx, sample, source, box, std::clamp(s->alpha, 0.0f, 1.0f), {s->radii[0], s->radii[1], s->radii[2], s->radii[3]}, power,
++                                    map, ctx, nullptr, 0.0f, nullptr, &options);
 +    return 1;
 +}
 +
@@ -393,7 +404,7 @@ index 0000000..dc827b6
 +}
 diff --git a/src/MiosGlass.hpp b/src/MiosGlass.hpp
 new file mode 100644
-index 0000000..7559385
+index 0000000..da0103f
 --- /dev/null
 +++ b/src/MiosGlass.hpp
 @@ -0,0 +1,91 @@
@@ -418,7 +429,7 @@ index 0000000..7559385
 +
 +#include <cstdint>
 +
-+#include <hyprland/src/desktop/view/Window.hpp>
++#include <hyprland/src/desktop/view/window/Window.hpp>
 +#include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 +#include <hyprland/src/render/pass/PassElement.hpp>
 +
@@ -454,7 +465,7 @@ index 0000000..7559385
 +
 +    [[nodiscard]] SDecorationPositioningInfo getPositioningInfo() override;
 +    void                                     onPositioningReply(const SDecorationPositioningReply& reply) override;
-+    void                                     draw(PHLMONITOR monitor, float const& alpha) override;
++    void                                     draw(Render::CRenderContext& ctx, PHLMONITOR monitor, float const& alpha, const Render::SWindowRenderPresentation&) override;
 +    [[nodiscard]] eDecorationType            getDecorationType() override;
 +    void                                     updateWindow(PHLWINDOW window) override;
 +    void                                     damageEntire() override;
@@ -464,9 +475,9 @@ index 0000000..7559385
 +
 +    [[nodiscard]] PHLWINDOW getOwner();
 +    [[nodiscard]] bool      ownsWindow(const PHLWINDOW& window) const { return m_window == window; }
-+    void                    renderPass(PHLMONITOR monitor);
++    void                    renderPass(Render::CRenderContext& ctx, PHLMONITOR monitor);
 +
-+    // Weak over the UP Hyprland owns: use .get()/-> only, never .lock().
++    // Weak over the SP Hyprland holds (added with addWindowDecoration), like CGlassDecoration::m_self.
 +    WP<CGlassEdgeDecoration> m_self;
 +
 +  private:
@@ -478,10 +489,10 @@ index 0000000..7559385
 +    explicit CGlassEdgePassElement(WP<CGlassEdgeDecoration> decoration) : m_decoration(decoration) {}
 +    ~CGlassEdgePassElement() override = default;
 +
-+    std::vector<UP<IPassElement>> draw() override;
-+    [[nodiscard]] bool                needsLiveBlur() override { return false; }
-+    [[nodiscard]] bool                needsPrecomputeBlur() override { return false; }
-+    [[nodiscard]] std::optional<CBox> boundingBox() override;
++    std::vector<UP<IPassElement>> draw(Render::CRenderContext& ctx) override;
++    [[nodiscard]] bool                needsLiveBlur(Render::CRenderContext&) override { return false; }
++    [[nodiscard]] bool                needsPrecomputeBlur(Render::CRenderContext&) override { return false; }
++    [[nodiscard]] std::optional<CBox> boundingBox(Render::CRenderContext& ctx) override;
 +    [[nodiscard]] const char*         passName() override { return "CGlassEdgePassElement"; }
 +    [[nodiscard]] ePassElementType    type() override { return EK_CUSTOM; }
 +
@@ -489,32 +500,32 @@ index 0000000..7559385
 +    WP<CGlassEdgeDecoration> m_decoration;
 +};
 diff --git a/src/PluginConfig.cpp b/src/PluginConfig.cpp
-index d71bdac..7d52a3f 100644
+index 9df9435..9562dea 100644
 --- a/src/PluginConfig.cpp
 +++ b/src/PluginConfig.cpp
-@@ -105,6 +105,8 @@ void registerConfig(HANDLE handle) {
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::MANAGE_WINDOW_BLUR, Config::INTEGER{1});
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS, Config::INTEGER{1});
+@@ -73,6 +73,8 @@ void registerConfig(HANDLE handle) {
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::MANAGE_WINDOW_BLUR, true);
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS, true);
      addConfigValue<Config::Values::Float>(handle, ConfigKeys::FADE_GAMMA, Config::FLOAT{1.0});
 +    addConfigValue<Config::Values::Float>(handle, ConfigKeys::EDGE_PASS, Config::FLOAT{1.0});
 +    addConfigValue<Config::Values::Float>(handle, ConfigKeys::EDGE_PASS_WIDTH, Config::FLOAT{28.0});
-     addConfigValue<Config::Values::Int>(handle, ConfigKeys::BLUR_FOLD, Config::INTEGER{1});
+     addConfigValue<Config::Values::Bool>(handle, ConfigKeys::BLUR_FOLD, true);
      addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_THEME, Config::STRING{"dark"});
      addConfigValue<Config::Values::String>(handle, ConfigKeys::DEFAULT_PRESET, Config::STRING{"default"});
-@@ -354,6 +356,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
-     config.manageWindowBlur  = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::MANAGE_WINDOW_BLUR);
-     config.skipOpaqueWindows = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS);
-     config.fadeGamma         = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::FADE_GAMMA);
-+    config.edgePass          = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::EDGE_PASS);
-+    config.edgePassWidth     = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::EDGE_PASS_WIDTH);
-     config.blurFold          = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::BLUR_FOLD);
-     config.xpMode            = getIntegerPtr(handle, "render:xp_mode");
-     config.animationsEnabled = getIntegerPtr(handle, "animations:enabled");
+@@ -320,6 +322,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
+     config.manageWindowBlur  = getStaticPtr<Config::BOOL>(handle, ConfigKeys::MANAGE_WINDOW_BLUR);
+     config.skipOpaqueWindows = getStaticPtr<Config::BOOL>(handle, ConfigKeys::SKIP_OPAQUE_WINDOWS);
+     config.fadeGamma         = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::FADE_GAMMA);
++    config.edgePass          = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::EDGE_PASS);
++    config.edgePassWidth     = getStaticPtr<Config::FLOAT>(handle, ConfigKeys::EDGE_PASS_WIDTH);
+     config.blurFold          = getStaticPtr<Config::BOOL>(handle, ConfigKeys::BLUR_FOLD);
+     config.xpMode            = getBoolPtr(handle, "render:xp_mode");
+     config.animationsEnabled = getBoolPtr(handle, "animations:enabled");
 diff --git a/src/PluginConfig.hpp b/src/PluginConfig.hpp
-index 6f72172..7fd58ea 100644
+index eb5188c..a221ce8 100644
 --- a/src/PluginConfig.hpp
 +++ b/src/PluginConfig.hpp
-@@ -80,6 +80,13 @@ inline constexpr auto MANAGE_WINDOW_BLUR  = "plugin:hyprglass:manage_window_blur
+@@ -95,6 +95,13 @@ inline constexpr auto MANAGE_WINDOW_BLUR  = "plugin:hyprglass:manage_window_blur
  inline constexpr auto SKIP_OPAQUE_WINDOWS = "plugin:hyprglass:skip_opaque_windows";
  // MiOS: exponent on the window fade alpha for the glass pane (1 = follow the fade linearly).
  inline constexpr auto FADE_GAMMA          = "plugin:hyprglass:fade_gamma";
@@ -528,20 +539,20 @@ index 6f72172..7fd58ea 100644
  inline constexpr auto BLUR_FOLD           = "plugin:hyprglass:blur_fold";
  
  // Performance diagnostics
-@@ -393,6 +400,8 @@ struct SPluginConfig {
+@@ -394,6 +401,8 @@ struct SPluginConfig {
      // them is visible, so sampling and blurring their background is wasted work.
-     Hyprlang::INT* const* skipOpaqueWindows = nullptr;
-     Hyprlang::FLOAT* const* fadeGamma       = nullptr; // MiOS
-+    Hyprlang::FLOAT* const* edgePass        = nullptr; // MiOS
-+    Hyprlang::FLOAT* const* edgePassWidth   = nullptr; // MiOS
+     Config::BOOL* const*    skipOpaqueWindows = nullptr;
+     Config::FLOAT* const*   fadeGamma         = nullptr; // MiOS
++    Config::FLOAT* const*   edgePass          = nullptr; // MiOS
++    Config::FLOAT* const*   edgePassWidth     = nullptr; // MiOS
      // Derives a smaller blur pass count from the requested radius (GlassRenderer::
      // foldBlurPasses) instead of always running blur_iterations passes at full radius.
-     Hyprlang::INT* const* blurFold = nullptr;
+     Config::BOOL* const*    blurFold          = nullptr;
 diff --git a/src/ShaderManager.cpp b/src/ShaderManager.cpp
-index d1ef665..2b4175f 100644
+index 68ed282..297c614 100644
 --- a/src/ShaderManager.cpp
 +++ b/src/ShaderManager.cpp
-@@ -78,6 +78,14 @@ bool CShaderManager::compileGlassProgram(SGlassProgram& glass, GlassFeatureMask
+@@ -79,6 +79,14 @@ bool CShaderManager::compileGlassProgram(SGlassProgram& glass, GlassFeatureMask
      glassUniforms.sampleUVScale       = glGetUniformLocation(program, "sampleUVScale");
      glassUniforms.glassBoxOffsetPx    = glGetUniformLocation(program, "glassBoxOffsetPx");
      glassUniforms.glassBoxSizePx      = glGetUniformLocation(program, "glassBoxSizePx");
@@ -557,10 +568,10 @@ index d1ef665..2b4175f 100644
      glassUniforms.glassUVOffset       = glGetUniformLocation(program, "glassUVOffset");
      glassUniforms.lensHeightPx          = glGetUniformLocation(program, "lensHeightPx");
 diff --git a/src/ShaderManager.hpp b/src/ShaderManager.hpp
-index ae09c87..2e3f533 100644
+index 4f22892..921ddf0 100644
 --- a/src/ShaderManager.hpp
 +++ b/src/ShaderManager.hpp
-@@ -60,6 +60,16 @@ struct SGlassUniforms {
+@@ -61,6 +61,16 @@ struct SGlassUniforms {
      // items), in box-local pixels, and its UV mapping (see Shaders.hpp).
      GLint glassBoxOffsetPx = -1;
      GLint glassBoxSizePx = -1;
@@ -578,10 +589,10 @@ index ae09c87..2e3f533 100644
      GLint glassUVOffset = -1;
  
 diff --git a/src/Shaders.hpp b/src/Shaders.hpp
-index 5f4a0ab..4e66acf 100644
+index 66ce430..ef3d254 100644
 --- a/src/Shaders.hpp
 +++ b/src/Shaders.hpp
-@@ -147,6 +147,16 @@ uniform float contourReferencePx; // the bezel is a fraction of this, not of the
+@@ -148,6 +148,16 @@ uniform float contourReferencePx; // the bezel is a fraction of this, not of the
  uniform float contourReachPx;     // where the field stops; the edge effects fade out before it
  #endif
  
@@ -598,7 +609,7 @@ index 5f4a0ab..4e66acf 100644
  in vec2 v_texcoord;
  layout(location = 0) out vec4 fragColor;
  
-@@ -165,6 +175,12 @@ vec2 toTexUV(vec2 wuv) {
+@@ -166,6 +176,12 @@ vec2 toTexUV(vec2 wuv) {
  }
  
  vec4 sampleBlurred(vec2 wuv) {
@@ -611,7 +622,7 @@ index 5f4a0ab..4e66acf 100644
      vec2 tuv = toTexUV(toSampleBoxUV(wuv));
  #ifdef HYPRGLASS_FEATURE_FROST
      tuv = clamp(tuv, 0.001, 0.999);
-@@ -216,7 +232,28 @@ float getRoundedBoxSDF(vec2 posPx, vec2 boxSizePx, vec4 cornerRadii) {
+@@ -217,7 +233,28 @@ float getRoundedBoxSDF(vec2 posPx, vec2 boxSizePx, vec4 cornerRadii) {
      return min(max(q.x, q.y), 0.0) + lpNorm(max(q, 0.0), roundingPower, invRoundingPower) - clampedR;
  }
  
@@ -640,11 +651,11 @@ index 5f4a0ab..4e66acf 100644
      vec2 boxLocalPx = uv * fullSize - glassBoxOffsetPx;
      return getRoundedBoxSDF(boxLocalPx, glassBoxSizePx, radii);
  }
-@@ -345,7 +382,23 @@ void main() {
-     vec4 surfacePixel = vec4(0.0);
-     float maskRamp = 1.0;
-     bool hasMask = (useMask == 1);
--    if (hasMask) {
+@@ -390,6 +427,25 @@ void main() {
+     float cornerAlpha  = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
+ #endif
+ 
++    // MiOS: the controls tab's own coverage and light/bend ramps (shapeMode 1, hyprbars), from the SDF above
 +    float tabLight = 1.0;
 +    float tabBend  = 1.0;
 +    if (shapeMode == 1) {
@@ -661,11 +672,12 @@ index 5f4a0ab..4e66acf 100644
 +            tabBend  = smoothstep(0.0, 0.2 * max(tabShape.z - tabShape.w, 1.0), tabShape.z - q.y);
 +        }
 +        if (cornerAlpha < 0.002) discard;
-+    } else if (hasMask) {
-         vec2 maskUV = uv * maskUVScale + maskUVOffset;
-         surfacePixel = texture(maskTex, clamp(maskUV, 0.001, 0.999));
- 
-@@ -415,9 +468,20 @@ void main() {
++    }
++
+     if (hasMask) {
+         // Layers and subsurface items: the glass box (glassBoxOffsetPx/SizePx) can be
+         // smaller than the drawn box/region — e.g. a capsule glass shape inside a
+@@ -416,9 +472,20 @@ void main() {
  #ifdef HYPRGLASS_FEATURE_CONTOUR
      float minDim = contourReferencePx;
  #else
@@ -687,7 +699,7 @@ index 5f4a0ab..4e66acf 100644
  
      // ========================================
      // EDGE PROXIMITY + DIRECTION
-@@ -438,12 +502,53 @@ void main() {
+@@ -439,12 +506,53 @@ void main() {
                            (1.0 - smoothstep(0.5 * contourReachPx, contourReachPx, -bevelSdf));
      vec2 inwardDir = -contourOutward;
  #else
@@ -745,7 +757,7 @@ index 5f4a0ab..4e66acf 100644
  #ifdef HYPRGLASS_FEATURE_LENS_EDGE
      // ========================================
      // LENS EDGE REFRACTION (see lensBendPx). Replaces the soft edge refraction
-@@ -475,7 +580,7 @@ void main() {
+@@ -476,7 +584,7 @@ void main() {
  
          lensCornerWeight = lensCornerFade(uv, bezelWidthPx);
  #endif
@@ -754,7 +766,7 @@ index 5f4a0ab..4e66acf 100644
          vec2  inwardStep = lensInward * invFullSize;
          offsetG = inwardStep * lensBendPx(lensNormal, lensSurfacePx, LENS_IOR, gain, bezelWidthPx);
          offsetR = offsetG;
-@@ -502,7 +607,7 @@ void main() {
+@@ -503,7 +611,7 @@ void main() {
          float tailWindow = 1.0 - smoothstep(1.5 * bezelWidthPx, 3.0 * bezelWidthPx, depth);
          lensFalloff = mix(edgeProximity * tailWindow, edgeProximity, refractionSpread);
      }
@@ -763,7 +775,7 @@ index 5f4a0ab..4e66acf 100644
      vec2 dir = inwardDir;
  #ifndef HYPRGLASS_FEATURE_CONTOUR
      // (a traced outline already pulls along each edge's own normal)
-@@ -532,7 +637,7 @@ void main() {
+@@ -533,7 +641,7 @@ void main() {
      vec2 domeUV = vec2(0.0);
  #ifndef HYPRGLASS_FEATURE_CONTOUR   // a dome needs one centre: a traced outline has one per card
      if (lensDistortion > 0.001) {
@@ -772,7 +784,7 @@ index 5f4a0ab..4e66acf 100644
          vec2 dGrad = vec2(
              -4.0 * c.x * (1.0 - c.y * c.y),
              -4.0 * c.y * (1.0 - c.x * c.x)
-@@ -553,9 +658,9 @@ void main() {
+@@ -554,9 +662,9 @@ void main() {
      vec2 uvB = uv + offsetB + domeUV;
  
  #ifdef HYPRGLASS_FEATURE_LENS_EDGE
@@ -784,7 +796,7 @@ index 5f4a0ab..4e66acf 100644
  #endif
          color.r = sampleBlurred(uvR).r;
          color.g = sampleBlurred(uvG).g;
-@@ -644,7 +749,7 @@ void main() {
+@@ -645,7 +753,7 @@ void main() {
      // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
      // ========================================
      if (bevelStrength > 0.001) {
@@ -793,7 +805,7 @@ index 5f4a0ab..4e66acf 100644
          float core = 0.25 * sizePx;
          float tail = sizePx;
          float ring = (1.0 - smoothstep(-core, 0.0, cornerSdf)) * smoothstep(-tail, -core, cornerSdf);
-@@ -664,8 +769,8 @@ void main() {
+@@ -665,8 +773,8 @@ void main() {
          }
  
          // the fresnel tint below reads the bevelled colour, so bevel the copy too
@@ -804,7 +816,7 @@ index 5f4a0ab..4e66acf 100644
          color = mix(mix(color, bevelLight, bevelLit), vec3(0.0), bevelDark);
          tintSource = mix(mix(tintSource, bevelLight, bevelLit), vec3(0.0), bevelDark);
      }
-@@ -674,7 +779,7 @@ void main() {
+@@ -675,7 +783,7 @@ void main() {
      // FRESNEL RIM GLOW (edge zone)
      // ========================================
      if (fresnelStrength > 0.001) {
@@ -813,7 +825,7 @@ index 5f4a0ab..4e66acf 100644
          vec3 fresnelLight = vec3(1.0);
          if (fresnelColorAlpha > 0.001) fresnelLight = mix(vec3(1.0), fresnelColor, fresnelColorAlpha);   // chosen colour, then the tint below
          if (fresnelTint > 0.001) {
-@@ -693,16 +798,16 @@ void main() {
+@@ -694,16 +802,16 @@ void main() {
          // the edge facing the light, like the top of a box at angle 0
          float specT = clamp(0.5 + 0.5 * dot(contourOutward, lightDir(specularAngle)), 0.0, 1.0);
  #else
@@ -834,7 +846,7 @@ index 5f4a0ab..4e66acf 100644
          color += vec3(1.0, 0.99, 0.97) * spec;
      }
  
-@@ -715,9 +820,9 @@ void main() {
+@@ -716,9 +824,9 @@ void main() {
          float bottomBias = pow(0.5 + 0.5 * contourOutward.y, 2.0);
  #else
          // max(): item fragments just above the glass box have glassUV.y < 0, where pow() is undefined
@@ -847,26 +859,26 @@ index 5f4a0ab..4e66acf 100644
      }
  
 diff --git a/src/main.cpp b/src/main.cpp
-index 0d963f3..8066b91 100644
+index 0e2019d..1f6e3cc 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -1,6 +1,7 @@
- #include "BackgroundDamageObserver.hpp"
+@@ -2,6 +2,7 @@
  #include "Diagnostics.hpp"
+ #include "GeometryEvents.hpp"
  #include "GlassDecoration.hpp"
 +#include "MiosGlass.hpp"
  #include "GlassLayerCompositeElement.hpp"
  #include "GlassLayerPassElement.hpp"
  #include "GlassLayerSurface.hpp"
-@@ -74,6 +75,15 @@ static void onNewWindow(PHLWINDOW window) {
+@@ -114,6 +115,15 @@ static void onNewWindow(PHLWINDOW window) {
      g_pGlobalState->decorations.emplace_back(decoration);
      decoration->m_self = decoration;
      HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(decoration));
 +
 +    // MiOS: the edge pass, drawn over the window's content (MiosGlass.hpp)
-+    if (std::ranges::none_of(window->m_windowDecorations,
++    if (std::ranges::none_of(window->presentation().decorations(),
 +                             [](const auto& decoration) { return decoration->getDisplayName() == "HyprGlassEdge"; })) {
-+        auto edge = makeUnique<CGlassEdgeDecoration>(window);
++        auto edge = makeShared<CGlassEdgeDecoration>(window);
 +        g_pGlobalState->edgeDecorations.emplace_back(edge);
 +        edge->m_self = edge;
 +        HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(edge));
@@ -874,7 +886,7 @@ index 0d963f3..8066b91 100644
  }
  
  static void onCloseWindow(PHLWINDOW window) {
-@@ -81,6 +91,10 @@ static void onCloseWindow(PHLWINDOW window) {
+@@ -121,6 +131,10 @@ static void onCloseWindow(PHLWINDOW window) {
          auto* deco = decoration.get();
          return !deco || deco->getOwner() == window;
      });
@@ -885,15 +897,15 @@ index 0d963f3..8066b91 100644
  }
  
  CGlassDecoration* glassDecorationFor(const PHLWINDOW& window) {
-@@ -1018,6 +1032,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
-     g_pGlobalState->dedupe.reset();
- 
-     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
-+    g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassEdgePassElement");
-     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
-     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerCompositeElement");
-     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassSubsurfacePassElement");
-@@ -1032,6 +1047,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
+@@ -1126,6 +1140,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
+     // Outside a render the context pass is empty: defence in depth only.
+     auto& pass = g_pHyprRenderer->context().m_pass;
+     pass.removeAllOfType("CGlassPassElement");
++    pass.removeAllOfType("CGlassEdgePassElement");
+     pass.removeAllOfType("CGlassLayerPassElement");
+     pass.removeAllOfType("CGlassLayerCompositeElement");
+     pass.removeAllOfType("CGlassSubsurfacePassElement");
+@@ -1140,6 +1155,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
              HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
      }
      g_pGlobalState->decorations.clear();

@@ -2273,6 +2273,7 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "serde_yaml",
  "sha2",
  "tempfile",
  "toml",
@@ -2321,6 +2322,23 @@ dependencies = [
  "mios-service-core",
  "serde_json",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mios-mons"
+version = "0.3.0"
+dependencies = [
+ "clap",
+ "crossterm 0.29.0",
+ "mios-resolver",
+ "ratatui 0.30.2",
+ "rustix 1.1.4",
+ "serde",
+ "serde_json",
+ "supports-color 3.0.2",
+ "supports-unicode 3.0.0",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -2417,23 +2435,6 @@ version = "0.3.0"
 name = "mios-ssot-walk"
 version = "0.3.0"
 dependencies = [
- "toml",
-]
-
-[[package]]
-name = "mios-mons"
-version = "0.3.0"
-dependencies = [
- "clap",
- "crossterm 0.29.0",
- "mios-resolver",
- "ratatui 0.30.2",
- "rustix 1.1.4",
- "serde",
- "serde_json",
- "supports-color 3.0.2",
- "supports-unicode 3.0.0",
- "tempfile",
  "toml",
 ]
 

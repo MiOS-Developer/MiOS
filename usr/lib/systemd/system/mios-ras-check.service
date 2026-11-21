@@ -1,0 +1,14 @@
+# AI-hint: Oneshot running `mios-probe ras`: counts this boot's corrected hardware errors (kernel MCE notices, EDAC ce_count) against [hardware.ras].corrected_warn_per_boot and fails on any uncorrected EDAC error; rasdaemon keeps the per-event record.
+# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/ras.rs, mios-ras-check.timer, rasdaemon.service
+[Unit]
+Description='MiOS' hardware error check
+After=rasdaemon.service
+ConditionVirtualization=!container
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/mios-probe ras --root / --no-color
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+NoNewPrivileges=yes

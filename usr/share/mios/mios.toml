@@ -129,7 +129,9 @@ strict_no_write = [
   "mios-embed-backfill.service",
   "mios-node.service",
   "mios-policy-arbiter.service",
+  "mios-ras-check.service",
   "mios-rdp-usb@.service",
+  "mios-storage-link.service",
 ]
 strict_no_write_user = []
 drift = [
@@ -204,6 +206,53 @@ Description = "Weekly Podman Cleanup"
 OnCalendar = "weekly"
 Persistent = "true"
 [units."mios-podman-gc.timer".Install]
+WantedBy = "timers.target"
+
+[units."mios-storage-link.service".Unit]
+comment = "# AI-hint: Boot oneshot running `mios-probe storage`: flags a USB disk whose USB 3 link fell back to 480 Mb/s (bulk-only, USB 2.0 bus power) and fails when it carries root, swap or the journal ([hardware.storage_link]).\n# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/storage.rs, local-fs.target, swap.target"
+Description = "'MiOS' USB storage link check"
+After = ["local-fs.target", "swap.target"]
+ConditionVirtualization = "!container"
+
+[units."mios-storage-link.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-probe storage --root / --no-color"
+RemainAfterExit = "yes"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+PrivateTmp = "yes"
+NoNewPrivileges = "yes"
+
+[units."mios-storage-link.service".Install]
+WantedBy = "multi-user.target"
+
+[units."rasdaemon.service.d/10-mios.conf".Unit]
+comment = "# AI-hint: Keeps rasdaemon to hosts with their own machine-check and EDAC sources: a container or WSL has none, so the daemon would only fail to open tracefs there.\n# AI-related: rasdaemon.service, mios-ras-check.service, usr/lib/systemd/system-preset/90-mios.preset"
+ConditionVirtualization = "!container"
+
+[units."mios-ras-check.service".Unit]
+comment = "# AI-hint: Oneshot running `mios-probe ras`: counts this boot's corrected hardware errors (kernel MCE notices, EDAC ce_count) against [hardware.ras].corrected_warn_per_boot and fails on any uncorrected EDAC error; rasdaemon keeps the per-event record.\n# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/ras.rs, mios-ras-check.timer, rasdaemon.service"
+Description = "'MiOS' hardware error check"
+After = "rasdaemon.service"
+ConditionVirtualization = "!container"
+
+[units."mios-ras-check.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-probe ras --root / --no-color"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+PrivateTmp = "yes"
+NoNewPrivileges = "yes"
+
+[units."mios-ras-check.timer".Unit]
+comment = "# AI-hint: Re-runs mios-ras-check hourly so corrected machine-check errors surface while the boot that logged them is still up.\n# AI-related: mios-ras-check.service, timers.target"
+Description = "'MiOS' hardware error check schedule"
+
+[units."mios-ras-check.timer".Timer]
+OnBootSec = "10min"
+OnUnitActiveSec = "1h"
+
+[units."mios-ras-check.timer".Install]
 WantedBy = "timers.target"
 
 [units."mios-tailscale-sync.service".Unit]
@@ -2616,6 +2665,28 @@ driver = "usbhid-ups"
 port   = "auto"
 desc   = "MiOS Uninterruptible Power Supply"
 
+# USB storage links, read by `mios-probe storage` (mios-storage-link.service at
+# boot). A disk on a 480 Mb/s link while its controller has a SuperSpeed bus
+# lost its USB 3 link (cable, port, enclosure or bridge firmware) and falls back
+# to bulk-only usb-storage; under an NVMe bridge it also drops to the USB 2.0
+# bus-power budget. That warns; it fails when the disk carries a critical role.
+[hardware.storage_link]
+critical_roles = ["root", "swap", "journal"]
+# USB-to-NVMe bridges by idVendor:idProduct, with the smartctl -d type that
+# reaches the SSD's NVMe SMART log through them.
+nvme_bridges = [
+  { id = "0bda:9210", name = "Realtek RTL9210", smartctl = "sntrealtek" },
+  { id = "174c:2362", name = "ASMedia ASM2362", smartctl = "sntasmedia" },
+  { id = "152d:0583", name = "JMicron JMS583",  smartctl = "sntjmicron" },
+]
+
+# Hardware error accounting, read by `mios-probe ras` (mios-ras-check.timer).
+# rasdaemon records every machine-check and EDAC event; the probe counts this
+# boot's corrected errors (kernel MCE notices, EDAC ce_count), warns at this
+# many, and fails on any uncorrected EDAC error.
+[hardware.ras]
+corrected_warn_per_boot = 1
+
 # Motherboard fan control: ventulusd (MIT, github.com/Plan-B-Development/ventulusd)
 # driven through the MiOS client mios-fanctl (CLI + ratatui TUI). The vendor
 # files in /usr/share/mios/fan-control/ (daemon.toml, mios-fanctl.toml,
@@ -4792,6 +4863,10 @@ version = "3.7c"
 url = "https://github.com/tmux/tmux/releases/download/3.7c/tmux-3.7c.tar.gz"
 sha256 = "7c60cae9a0e25288e2e24750aafc9e8800fc7fd4555e447e1b29ee4201cfb3bf"
 patch = "tools/patches/tmux-desktop.patch"
+# Where `mios-gen build-tmux-desktop` may build: the podman-MiOS-DEV container (by its actual name),
+# the OCI image bake (buildah's working container; automation/59-tools.sh) and CI's drift-gate job,
+# which installs the same binary so the relay's float-pane placement test runs against what ships.
+admit = ["podman-MiOS-DEV", "image-bake", "drift-gate"]
 configure_args = ["--prefix=/usr", "--libexecdir=/usr/libexec/mios", "--enable-sixel", "--disable-systemd", "--disable-utempter", "--disable-utf8proc", "--disable-jemalloc"]
 make_jobs = 2
 
@@ -7952,23 +8027,48 @@ dropin = "/etc/containers/systemd/mios-llm-light.container.d/30-mios-light-backe
 cuda_information_dir = "/proc/driver/nvidia/gpus"
 lock = "/run/mios/light-backend/lock"
 
+# Each backend names the model map its lane mounts at /app/config.yaml and,
+# optionally, the lane's cgroup memory bounds (systemd percentages of RAM or
+# sizes); mios-gen light-backend writes both into the lane's runtime drop-in.
 [llamacpp.light_backends.cpu]
 image_key = "llm_light_cpu"
 device = "none"
 gpu_layers = "0"
 drivers = []
+# CPU tier: weights live in RAM next to mios-cpu-node's resident 8B, so the
+# lane serves only its small models and forwards the 8B's names to that node
+# ([llamacpp.light_cpu_tier]; generated by mios-gen light-tiers). The bounds
+# are what mios-cpu-node's cpu_node_memory_max leaves the rest of the host;
+# the resident trio (lfm2-700m, embeddinggemma-300m, mios-micro-1.5b) fits.
+config = "/usr/share/mios/llamacpp/mios-llm-light-cpu.yaml"
+memory_high = "20%"
+memory_max = "25%"
+memory_swap_max = "256M"
 
 [llamacpp.light_backends.cuda]
 image_key = "llm_light"
 device = "CUDA0"
 gpu_layers = "all"
 drivers = ["nvidia"]
+config = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 
 [llamacpp.light_backends.vulkan]
 image_key = "llm_light_vulkan"
 device = "Vulkan0"
 gpu_layers = "all"
 drivers = ["amdgpu", "i915", "xe", "nvidia", "nouveau"]
+config = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
+
+# The CPU-tier model map, generated from [llamacpp].config by `mios-gen
+# light-tiers` (a sync step). On a CPU-only host the light lane and
+# mios-cpu-node would each load their own copy of the same 8B GGUF; here the
+# lane forwards peer_model and every alias of it to the node instead (a
+# llama-swap peer on [ports].cpu_node), drops the entries that load a 7B-class
+# GGUF into RAM, and keeps the rest unchanged.
+[llamacpp.light_cpu_tier]
+peer = "cpu-node"
+peer_model = "granite4.1:8b"
+drop = ["federated:32b", "qwen3-vl:4b"]
 
 [enhanced_session]
 enabled    = true
@@ -8649,9 +8749,21 @@ apt_package   = "openssh-client"
 dnf_package   = "openssh-clients"
 config_dropin = "/etc/ssh/ssh_config.d/50-mios-user-ca.conf"
 
-# `bootstrap.sh gce-up`: a Compute Engine VM that runs [image].ref as a privileged
-# podman container booting its own systemd. The boot disk holds the image and a
-# nested build; Ubuntu LTS ships the guest agent that runs the startup script.
+# `bootstrap.sh gce-up`: a Compute Engine VM that BOOTS [image].ref as its OS. It
+# starts from a Fedora CoreOS boot image; an Ignition config (user-data metadata)
+# installs a first-boot unit that runs `bootc switch` to [image].ref (or, on a
+# CoreOS without bootc, `rpm-ostree rebase ostree-unverified-registry:<ref>`) and
+# reboots into MiOS. The boot disk holds two deployments of the image plus /var.
+# Operator-side inputs (read on the machine running gce-up, never baked in):
+#   ssh_authorized_keys_file  one public key per line for the `ssh_user` login
+#   tailscale_auth_key_file   a ONE-USE, short-expiry pre-auth key; it lands at
+#                             node_auth_key_file (0600) and is removed once the
+#                             node runs on the tailnet. Ignition is instance
+#                             metadata, readable by project members until then.
+#   pull_secret               a Secret Manager secret holding a registry auth.json
+#                             for a private [image].ref; the node fetches it with
+#                             its service-account token into auth_file (0600),
+#                             so no credential is ever in metadata. "" = anonymous.
 [deployment.cloud.gce]
 project        = ""
 instance       = "mios"
@@ -8659,9 +8771,33 @@ zone           = "us-central1-a"
 machine_type   = "n2-standard-8"
 boot_disk_gb   = 250
 boot_disk_type = "pd-balanced"
-image_family   = "ubuntu-2404-lts-amd64"
-image_project  = "ubuntu-os-cloud"
-container      = "mios"
+image_family   = "fedora-coreos-stable"
+image_project  = "fedora-coreos-cloud"
+ignition_version = "3.4.0"
+ssh_user       = "core"
+ssh_authorized_keys_file = ""
+tailscale_auth_key_file  = ""
+node_auth_key_file       = "/etc/mios/secrets/tailscale-authkey"
+pull_secret    = ""
+auth_file      = "/etc/ostree/auth.json"
+rebase_stamp   = "/etc/mios-cloud/rebased"
+dropin         = "/etc/mios/mios.d/55-cloud-gce.toml"
+
+# The VM's host drop-in, written after [deployment.cloud.overlay] (50-cloud.toml).
+# A Compute Engine VM has a TUN device and no egress proxy, so its tailnet node runs
+# in kernel mode, enrolls from the copied one-use key and mints nothing. Shields stay
+# down so the node is reachable over the tailnet (sshd on [ssh].port); it offers no
+# exit node. The cloud overlay's socks5_server stays (an empty string never overrides
+# a lower tier) and is unused: only a userspace tailscaled opens it. gce-up adds
+# [tailscale].auth_key_file = node_auth_key_file when it was given a key.
+[deployment.cloud.gce.overlay.tailscale]
+mode                = "kernel"
+hostname            = "mios-cloud-gce"
+accept_dns          = true
+advertise_exit_node = false
+shields_up          = false
+[deployment.cloud.gce.overlay.tailscale.auth_key_mint]
+enabled = false
 
 [hwcaps]
 level = "v1"
@@ -8913,6 +9049,14 @@ verify_probes = ["tmux", "bash", "python3", "oh-my-posh", "btop", "fastfetch"]
 [packages.agent_cli]
 enable = true
 pkgs = ["nodejs", "npm", "python3.12", "git", "ripgrep", "curl", "tar", "gzip", "openssl", "libatomic"]
+
+# Build-only: node-gyp compiles the zcode workspace's native modules (node-pty)
+# from source during `mios-mcp-server --agent-cli --install`. The service base
+# (usr/share/mios/base/Containerfile) installs these for that one RUN step and
+# removes every package the step added, so none reaches the runtime layer.
+[packages.agent_cli_build]
+enable = true
+pkgs = ["make", "gcc-c++"]
 
 [packages.crowdsec]
 enable = true   # default ON; toggle via /configurator.html (configurator.packages.<section>.enable)
@@ -9777,7 +9921,7 @@ source_repository = "https://github.com/hyprnux/hyprglass.git"
 # Upstream policy (operator 2026-10-16, "latest + fail loudly"): no source_revision pin; the build
 # takes source_repository default-branch HEAD, logs the resolved commit, and fails naming any
 # MiOS patch that no longer applies (mios-gen build-hyprland-plugin refuses a pin).
-lua_version = "5.5.0"
+lua_version = "5.5.1"   # the Lua the compositor SRPM bundles (hyprland-0.57.2 ships lua-5.5.1.tar.gz); the plugin build refuses any other
 build_jobs = 4
 path = "/usr/lib64/mios/hyprglass.so"
 patches = ["usr/share/mios/hyprland/patches/hyprglass-fade-gamma.patch",   # MiOS: fade_gamma option
@@ -10705,6 +10849,9 @@ pkgs = [
     "fastfetch",
     "lm_sensors",
     "smartmontools",
+    # rasdaemon: records machine-check and EDAC events (ras-mc-ctl --errors)
+    # for mios-probe ras / mios-ras-check.timer.
+    "rasdaemon",
     "tuned",
     "tuned-ppd",
     "fuse",
@@ -13101,6 +13248,12 @@ files = [
 [packages.tuigreet-build]
 enable = true
 pkgs = ["rpm-build", "gcc", "glibc-devel", "binutils", "curl", "git", "tar", "gzip"]
+
+# Build-only inputs of [keybindings.tmux.desktop.source]: the image bake removes them again,
+# leaving only the patched binary and its runtime libraries (libevent, ncurses-libs via tmux).
+[packages.tmux-desktop-build]
+enable = true
+pkgs = ["gcc", "make", "libevent-devel", "ncurses-devel", "bison", "pkgconf-pkg-config", "patch", "binutils", "curl", "tar", "gzip"]
 
 [theme.cursor_windows]
 base_size           = 24
@@ -15913,7 +16066,8 @@ Pod = "mios-ai.pod"
 User = "${MIOS_SERVICES_LLAMACPP_UID:-827}"
 Volume = [
   "/usr/share/mios/llamacpp/models:/models:ro",
-  "/usr/share/mios/llamacpp/mios-llm-light.yaml:/app/config.yaml:ro",
+  # /app/config.yaml comes from the light-backend drop-in: the backend's
+  # [llamacpp.light_backends.<b>].config (a second Volume= here would clash).
   "${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}:${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}:Z"
 ]
 
@@ -19279,7 +19433,7 @@ Pester = "6.0.1"
 # .devcontainer/Containerfile is FROM [image].ref, the full MiOS image.
 image = "ghcr.io/mios-developer/machine-os:6.2"
 # [packages.<set>] lists installed first; devcontainer is MiOS's development userspace.
-package_sets = ["devcontainer"]
+package_sets = ["devcontainer", "tmux-desktop-build"]  # the second builds the shipped mios-tmux for the relay tests
 # Repo-config RPMs installed before any package. Fedora does not package
 # PowerShell; Microsoft's repository does, floating, as it documents for Fedora.
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
@@ -19598,6 +19752,7 @@ unit = [
     "tests/test-bake-portal.py",
     "tests/test-portal-probe.py",
     "tests/test-credential-ssot.py",
+    "tests/test-build-github-secret.py",
     "tests/test-windows-credential-pure-render.py",
     "tests/test-windows-login-credential.py",
     "tests/test-greeter.py",
@@ -20439,6 +20594,9 @@ calls = [{ script = "usr/libexec/mios/mios-dotfiles-render", args = ["render", "
 [[generation.sync.steps]]
 id = "wsl.reference"
 copy = ["etc/wsl.conf", "usr/lib/wsl.conf"]
+[[generation.sync.steps]]
+id = "llamacpp.light-tiers"
+calls = [{ tool = "mios-gen", args = ["light-tiers", "--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "quadlets.projection"
 calls = [{ tool = "mios-gen", args = ["pod-quadlets", "--root", "{root}"] }]

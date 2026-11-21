@@ -5004,11 +5004,93 @@ function Get-MiosVendorPortSet {
     return $owned
 }
 
+function Update-MiosLanPortProxyTarget {
+    # Body of the SYSTEM refresh task: re-points existing same-port 0.0.0.0 forwards on Ports to the VM address WSL
+    # records for the account (HKU Lxss NatIpAddress), which moves when WSL picks a new NAT subnet. Adds nothing,
+    # skips loopback targets, and takes only what Test-MiosWslNatAddress accepts. Exit 2 refused, 3 failed.
+    param(
+        [int[]]$Ports,
+        [string]$OperatorSid,
+        [string]$Netsh = "$env:SystemRoot\System32\netsh.exe",
+        [scriptblock]$Read = { param($Key, $Name) $v = Get-ItemProperty -LiteralPath $Key -Name $Name -ErrorAction SilentlyContinue; if ($v) { [string]$v.$Name } }
+    )
+    $ip = [string](& $Read "Registry::HKEY_USERS\$OperatorSid\Software\Microsoft\Windows\CurrentVersion\Lxss" 'NatIpAddress')
+    $result = { param($Status, $Changed, $Reason) [pscustomobject]@{ Status = $Status; Address = $ip; Changed = @($Changed); Reason = $Reason } }
+    if (-not $ip) { return (& $result 'no-address' @() 'WSL records no NAT VM address for this account') }
+    if (-not @(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { [string]$_.InterfaceAlias -like 'vEthernet (WSL*' }).Count) {
+        return (& $result 'no-network' @() 'this host has no WSL network yet')
+    }
+    if (-not (Test-MiosWslNatAddress $ip)) { return (& $result 'refused' @() "'$ip' is not a guest address on this host's WSL network") }
+    $wanted = @{}
+    foreach ($p in @($Ports)) { if ($p -ge 1 -and $p -le 65535) { $wanted[[string]$p] = $true } }
+    $changed = @(); $failed = @()
+    foreach ($line in @(& $Netsh interface portproxy show v4tov4 2>$null)) {
+        if ([string]$line -notmatch '^\s*0\.0\.0\.0\s+([0-9]+)\s+(\S+)\s+([0-9]+)\s*$') { continue }
+        $listen = $Matches[1]; $target = $Matches[2]; $connect = $Matches[3]
+        if (-not $wanted.ContainsKey($listen) -or $connect -ne $listen -or $target -eq $ip -or $target -like '127.*') { continue }
+        $null = & $Netsh interface portproxy set v4tov4 listenaddress=0.0.0.0 listenport=$listen connectaddress=$ip connectport=$listen 2>&1
+        if ($LASTEXITCODE -eq 0) { $changed += "$listen ($target -> $ip)" } else { $failed += $listen }
+    }
+    if ($failed.Count) { return (& $result 'failed' $changed "could not re-point $($failed -join ',')") }
+    if ($changed.Count) { return (& $result 'retargeted' $changed '') }
+    return (& $result 'current' @() '')
+}
+
+function Get-MiosLanPortProxyRefreshTask {
+    # The refresh task this build keeps for one account: plan ports (none under mirrored), command line and SDDL.
+    # Built from this script's function bodies with LF line ends, so the drift check and the worker agree on it.
+    param([Parameter(Mandatory)][string]$OperatorSid)
+    $ports = @()
+    if ((Resolve-MiosWslNetworkingMode) -ne 'mirrored') {
+        $ports = @((Get-MiosLanExposurePlan).Ports.Values | ForEach-Object { [int]$_ } | Where-Object { $_ -ge 1 -and $_ -le 65535 } | Sort-Object -Unique)
+    }
+    $script = (@('ConvertTo-MiosNetworkPrefix', 'Test-MiosPrefixWithin', 'Test-MiosWslNatAddress', 'Update-MiosLanPortProxyTarget') |
+        ForEach-Object { "function $_ {$((Get-Item "function:$_").ScriptBlock.ToString())}" }) -join "`n"
+    $script = ($script + "`n`$r = Update-MiosLanPortProxyTarget -Ports @($($ports -join ',')) -OperatorSid '$OperatorSid'`n" +
+        "exit (@{ refused = 2; failed = 3 })[[string]`$r.Status]`n").Replace("`r`n", "`n")
+    [pscustomobject]@{
+        Path = '\MiOS\'; Name = 'MiOS-DEV-PortProxy-Refresh'; Ports = $ports
+        Execute = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+        Argument = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+        # SYSTEM and Administrators own it; the account it serves may only read it, which is what lets that account's
+        # unelevated drift check see it at all (a standard account sees no task another account registered).
+        Sddl = "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;$OperatorSid)"
+    }
+}
+
+function Get-MiosTokenSid {
+    # The SID of the account this build runs as, whose WSL VM the refresh task serves when no worker is involved.
+    [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Register-MiosLanPortProxyRefresh {
+    # Update-MiosLanPortProxyTarget as a SYSTEM task every 5 minutes for the forwarded ports, removed when none are.
+    # The body rides in -EncodedCommand, so there is no script file to tamper with; the worker passes the origin's SID.
+    param([Parameter(Mandatory)][string]$OperatorSid)
+    if ($OperatorSid -notmatch '^S-1-5-21(-[0-9]+){4}$') { throw "portproxy refresh: '$OperatorSid' is not an account SID" }
+    $want = Get-MiosLanPortProxyRefreshTask -OperatorSid $OperatorSid
+    if (-not $want.Ports.Count) {
+        if (Get-ScheduledTask -TaskPath $want.Path -TaskName $want.Name -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskPath $want.Path -TaskName $want.Name -Confirm:$false -ErrorAction Stop
+            Write-Log "portproxy refresh: removed $($want.Path)$($want.Name) (no port is forwarded)"
+        }
+        return
+    }
+    $task = New-ScheduledTask -Action (New-ScheduledTaskAction -Execute $want.Execute -Argument $want.Argument) `
+        -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)) `
+        -Principal (New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest) `
+        -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)) `
+        -Description "MiOS (mios-bootstrap): re-points the 0.0.0.0 portproxy forwards of $($want.Ports -join ',') to the MiOS-DEV WSL VM address"
+    $task.SecurityDescriptor = $want.Sddl
+    Register-ScheduledTask -TaskPath $want.Path -TaskName $want.Name -InputObject $task -Force -ErrorAction Stop | Out-Null
+    Write-Log "portproxy refresh: $($want.Path)$($want.Name) keeps the forwards of $($want.Ports -join ',') on the MiOS-DEV VM address (every 5 minutes, as SYSTEM)"
+}
+
 function Get-MiosLanExposureDrift {
-    # Read-only: each change Set-MiosLanFirewallRules and Set-MiosLanPortProxy would make on this host, one line per
-    # difference, measured against the same plan they apply. Defender rules and port forwards read back without
-    # elevation, so Invoke-MiosLanExposure asks for UAC only when this returns something. Windows reads scopes back in
-    # mask form and profiles in its own order; both are compared canonically.
+    # Read-only: each change Set-MiosLanFirewallRules, Set-MiosLanPortProxy and Register-MiosLanPortProxyRefresh would
+    # make here, one line per difference, against the plan they apply. All three read back without elevation, so
+    # Invoke-MiosLanExposure asks for UAC only when this returns something. Windows reads scopes back in mask form and
+    # profiles in its own order; both are compared canonically.
     param([string]$WslAddress = '')
     $drift = New-Object System.Collections.Generic.List[string]
     $plan = Get-MiosLanExposurePlan
@@ -5050,6 +5132,16 @@ function Get-MiosLanExposureDrift {
         $owned = Get-MiosVendorPortSet
         foreach ($listen in @($forwards.Keys)) { if ($owned.ContainsKey($listen) -and $want -notcontains $listen) { $drift.Add("remove forward 0.0.0.0:$listen") } }
     }
+    # Refresh task: this build's exact command line while ports are forwarded, absent otherwise. Each registration
+    # grants its account read, so a task this token cannot see is registered again; removal needs a visible task.
+    $refresh = Get-MiosLanPortProxyRefreshTask -OperatorSid (Get-MiosTokenSid)
+    $task = Get-ScheduledTask -TaskPath $refresh.Path -TaskName $refresh.Name -ErrorAction SilentlyContinue
+    if ($refresh.Ports.Count) {
+        if (-not $task -or @($task.Actions).Count -ne 1 -or [string]$task.Actions[0].Execute -ne $refresh.Execute -or
+            [string]$task.Actions[0].Arguments -cne $refresh.Argument -or [string]$task.Principal.UserId -notin @('SYSTEM', 'S-1-5-18')) {
+            $drift.Add('register the portproxy refresh task')
+        }
+    } elseif ($task) { $drift.Add('remove the portproxy refresh task') }
     return $drift.ToArray()
 }
 
@@ -5105,7 +5197,7 @@ function Invoke-MiosLanExposureRequest {
     # The elevated side: check the request, then apply the Phase-4 exposure from exactly the layers it carries. Only
     # [firewall.windows], [wsl2] and [ports] may arrive, and forwards may only point into this host's WSL network, so a
     # request can never open more than the plan those sections resolve to.
-    param([Parameter(Mandatory)]$Request)
+    param([Parameter(Mandatory)]$Request, [string]$OperatorSid = '')   # the verified origin's owner, never a request field
     $names = @($Request.PSObject.Properties.Name)
     if ($names.Count -ne 2 -or @($names | Where-Object { $_ -notin @('Layers', 'WslAddress') }).Count) { throw 'Invalid exposure request fields.' }
     $address = [string]$Request.WslAddress
@@ -5124,6 +5216,8 @@ function Invoke-MiosLanExposureRequest {
     $script:_MiosTomlCache = @{ '_layers' = $layers }
     Set-MiosLanFirewallRules
     Set-MiosLanPortProxy -WslAddress $address
+    if (-not $OperatorSid) { Log-Warn 'portproxy refresh: the originating account is unknown; the forwards are not kept current between builds'; return }
+    try { Register-MiosLanPortProxyRefresh -OperatorSid $OperatorSid } catch { Log-Warn "portproxy refresh: $($_.Exception.Message)" }
 }
 
 function ConvertTo-MiosLanExposureReply {
@@ -5152,7 +5246,12 @@ function Invoke-MiosLanExposureWorker {
             $line = Read-MiosPipeLine -Reader $reader
             if (-not $line) { throw 'Empty exposure request.' }
             $request = ConvertFrom-Json -InputObject $line -ErrorAction Stop
-            Invoke-MiosLanExposureRequest -Request $request
+            $operatorSid = ''
+            try {
+                $owner = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $OriginProcessId" -ErrorAction Stop | Invoke-CimMethod -MethodName GetOwnerSid -ErrorAction Stop
+                if ($owner.ReturnValue -eq 0) { $operatorSid = [string]$owner.Sid }
+            } catch {}
+            Invoke-MiosLanExposureRequest -Request $request -OperatorSid $operatorSid
             $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'applied' -Lines $script:MiosWorkerLines))
         } catch {
             $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'error' -Detail $_.Exception.Message -Lines $script:MiosWorkerLines))
@@ -5172,6 +5271,7 @@ function Get-MiosLanExposureWorkerScript {
     $names = @('Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosVendorTomlValue', 'Get-MiosSsotPort', 'ConvertTo-MiosNetworkPrefix',
         'Test-MiosPrefixWithin', 'Resolve-MiosWslNetworkingMode', 'Get-MiosLanExposurePlan', 'Get-MiosVendorPortSet',
         'Resolve-MiosBuilderDistribution', 'Resolve-MiosWslVmAddress', 'Set-MiosLanFirewallRules', 'Set-MiosLanPortProxy',
+        'Update-MiosLanPortProxyTarget', 'Get-MiosLanPortProxyRefreshTask', 'Register-MiosLanPortProxyRefresh',
         'Test-MiosWslNatAddress', 'Test-MiosLanExposureLayerText', 'Initialize-MiosPipePeerApi', 'Read-MiosPipeLine',
         'Invoke-MiosLanExposureRequest', 'ConvertTo-MiosLanExposureReply', 'Invoke-MiosLanExposureWorker')
     $functions = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $names }, $true))
@@ -5288,13 +5388,14 @@ function Invoke-MiosLanExposure {
     }
     $drift = @(Get-MiosLanExposureDrift -WslAddress $address)
     if (-not $drift.Count -and -not $Force) {
-        Log-Ok 'Windows host exposure: the Defender rules and port forwards already match mios.toml [firewall.windows]; no elevation needed'
+        Log-Ok 'Windows host exposure: the Defender rules, port forwards and portproxy refresh task already match mios.toml [firewall.windows]; no elevation needed'
         return
     }
     foreach ($d in $drift) { Write-Log "Windows host exposure drift: $d" }
     if ($script:IsAdmin) {
         try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
         try { Set-MiosLanPortProxy -WslAddress $address } catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
+        try { Register-MiosLanPortProxyRefresh -OperatorSid (Get-MiosTokenSid) } catch { Log-Warn "portproxy refresh: $($_.Exception.Message)" }
         return
     }
     $null = Invoke-MiosElevatedLanExposure -WslAddress $address

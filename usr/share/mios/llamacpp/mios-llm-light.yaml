@@ -1,5 +1,10 @@
 # AI-hint: The mios-llm-light model map -- maps OpenAI /v1-compatible model tags to llama-server configs, enabling multi-model auto-swapping, KV-cache paging via slot-save-paths, and embeddings for the MiOS agent stack.
 # AI-doc: usr/share/doc/mios/manual/llamacpp.md
+# Source of the CPU-tier map mios-llm-light-cpu.yaml (mios-gen light-tiers).
+# Stream llama-swap's model swaps ("proxy") and one access line per request
+# ("http": client address, method, path, status) to the journal, so a model
+# load can be traced to the client that asked for it.
+logToStdout: "proxy,http"
 models:
   # ── chat / reasoning models (KV-pageable; --parallel 1 = one resident slot) ──
   # NOTE (fleet modernization): the light brain is now IBM Granite 4.1

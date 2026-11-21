@@ -3,7 +3,7 @@
 
 # MiOS Architecture Decision Records
 
-**30 ADRs** (20 accepted). The records live at [`usr/share/doc/mios/adr/`](usr/share/doc/mios/adr/) and are **baked into the image** -- a running MiOS carries its own *why*. This file is the root breadcrumb so an agent starting at either repo root reaches any decision in two hops; the format and status lifecycle are described in [the ADR README](usr/share/doc/mios/adr/README.md).
+**31 ADRs** (20 accepted). The records live at [`usr/share/doc/mios/adr/`](usr/share/doc/mios/adr/) and are **baked into the image** -- a running MiOS carries its own *why*. This file is the root breadcrumb so an agent starting at either repo root reaches any decision in two hops; the format and status lifecycle are described in [the ADR README](usr/share/doc/mios/adr/README.md).
 
 | # | Decision | Status | Date | Laws | SSOT keys |
 |---|---|---|---|---|---|
@@ -37,5 +37,6 @@
 | 0028 | [One canonical task list, tasks.jsonl, with TASKS.md as its rendered view and operator overrides](usr/share/doc/mios/adr/0028-one-canonical-task-list.md) | proposed | 2026-10-03 | 1, 7, 8, 14, 16 | `tasks.store` |
 | 0029 | [Agent succession and interop -- a coordinator lease over the MiOS-MCP relay, mapped to A2A, MCP tasks, OpenAI handoffs and OpenTelemetry GenAI](usr/share/doc/mios/adr/0029-agent-succession-and-interop.md) | proposed | 2026-10-09 | 7, 8, 9, 11, 14, 15 | `mcp.agents`, `agent_cli` |
 | 0030 | [500 tracked files per MiOS repo -- shrink-only domain budgets, projections as build outputs, folds into MiOS-MODULES](usr/share/doc/mios/adr/0030-source-file-budget.md) | proposed | 2026-10-09 | 8, 9, 12, 14, 16 | `legibility`, `legibility.file_budget`, `drift.generated_ceilings` |
+| 0031 | [Non-hardware services run on k3s across the Blades, named by Tailscale Services](usr/share/doc/mios/adr/0031-k3s-fleet-conversion-and-tailnet-service-names.md) | proposed | 2026-11-20 | 3, 6, 7, 8, 11, 12, 14, 16 | `blade.cluster`, `blade.placement`, `blade.planes`, `tailscale`, +1 |
 
-<!-- derived from the front-matter of 30 file(s) under usr/share/doc/mios/adr/ -->
+<!-- derived from the front-matter of 31 file(s) under usr/share/doc/mios/adr/ -->

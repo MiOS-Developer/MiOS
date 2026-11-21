@@ -2476,7 +2476,24 @@ fn workspace_process_start(pid: u32) -> Result<u64, String> {
 
 /// Place only a newly created, explicitly owned MCP float. A global upstream
 /// slot identifies its owner; its stable layout cell belongs to this window.
+/// 1 when the pane holds a desktop role (panel, chat, metrics) or is its
+/// window's workspace head; such a pane is never placed as a worker. The canvas
+/// is witnessed separately. MCP ownership and workspace membership are not
+/// roles: the shipped tmux config's composite @mios-managed-pane also counts
+/// @mios-mcp-owner, so every owned worker read 1 there and was refused.
+const WORKER_DESKTOP_ROLE: &str = "#{||:#{@mios-desktop-panel},#{||:#{@mios-desktop-chat},#{||:#{@mios-desktop-metrics},#{==:#{@mios-workspace-head},#{pane_id}}}}}";
+
 fn workspace_desktop_place(
+    request: &Value,
+    tmux: &dyn Fn(&[&str]) -> Result<String, String>,
+) -> Result<Value, String> {
+    workspace_desktop_place_in(Path::new("/"), request, tmux)
+}
+
+/// Placement against the layered SSOT rooted at `policy_root`: the host root in
+/// production, a test's own tree so the host's installed state cannot decide it.
+fn workspace_desktop_place_in(
+    policy_root: &Path,
     request: &Value,
     tmux: &dyn Fn(&[&str]) -> Result<String, String>,
 ) -> Result<Value, String> {
@@ -2526,8 +2543,10 @@ fn workspace_desktop_place(
             )
         })
         .transpose()?;
-    let witness_format = "#{session_id}|#{window_id}|#{pane_id}|#{pane_pid}|#{pane_tty}|#{pane_floating_flag}|#{@mios-mcp-owner}|#{@mcp_slot}|#{@mcp_owner}|#{@mcp_pane}|#{E:@mios-managed-pane}|#{@mios-desktop-canvas}";
-    let before = tmux(&["display-message", "-p", "-t", pane, witness_format])?;
+    let witness_format = format!(
+        "#{{session_id}}|#{{window_id}}|#{{pane_id}}|#{{pane_pid}}|#{{pane_tty}}|#{{pane_floating_flag}}|#{{@mios-mcp-owner}}|#{{@mcp_slot}}|#{{@mcp_owner}}|#{{@mcp_pane}}|{WORKER_DESKTOP_ROLE}|#{{@mios-desktop-canvas}}"
+    );
+    let before = tmux(&["display-message", "-p", "-t", pane, &witness_format])?;
     let fields: Vec<_> = before.split('|').collect();
     let tty_ok = |tty: &str| {
         tty.strip_prefix("/dev/pts/")
@@ -2544,7 +2563,7 @@ fn workspace_desktop_place(
         || fields[7] != slot.to_string()
         || fields[8] != "agent"
         || fields[9] != pane
-        || !fields[10].is_empty()
+        || fields[10] != "0"
         || fields[11] == "1"
         || workspace_process_start(pid)? != start
     {
@@ -2580,7 +2599,7 @@ fn workspace_desktop_place(
         width: cell(canvas[5])?,
         height: cell(canvas[6])?,
     };
-    let doc = mios_resolver::resolve_merged(Some(Path::new("/")), false)
+    let doc = mios_resolver::resolve_merged(Some(policy_root), false)
         .map_err(|_| "desktop placement policy unavailable")?;
     let at = |name: &str| {
         name.split('.')
@@ -2679,7 +2698,7 @@ fn workspace_desktop_place(
     let height = u32::from(height).max(minimum.1).min(available.1);
     let x = area.x + 1 + (available.0 - width) / 2;
     let y = area.y + 1 + (available.1 - height) / 2;
-    if tmux(&["display-message", "-p", "-t", pane, witness_format])? != before
+    if tmux(&["display-message", "-p", "-t", pane, &witness_format])? != before
         || workspace_process_start(pid)? != start
         || tmux(&["display-message", "-p", "-t", head, context_format])? != context_snapshot
         || tmux(&["display-message", "-p", "-t", canvas_pane, canvas_format])? != canvas_snapshot
@@ -2697,7 +2716,7 @@ fn workspace_desktop_place(
     let canvas_guard = pane_guard(canvas_pane, &eq(canvas_format, &canvas_snapshot));
     let guard = format!(
         "#{{&&:{},#{{&&:{},#{{&&:{head_guard},{canvas_guard}}}}}}}",
-        eq(witness_format, &before),
+        eq(&witness_format, &before),
         eq("#{@mios-mcp-placement-receipt}", "")
     );
     let receipt = json!({"schema":1,"pane":pane,"pid":pid,"start":start,"tty":fields[4],"owner":owner,"upstream_slot":slot,"placement_cell":placement_cell,"window":context[2],"session":context[1]});
@@ -2716,7 +2735,7 @@ fn workspace_desktop_place(
     {
         return Err("worker or desktop work area changed at placement".into());
     }
-    if tmux(&["display-message", "-p", "-t", pane, witness_format])? != before
+    if tmux(&["display-message", "-p", "-t", pane, &witness_format])? != before
         || workspace_process_start(pid)? != start
         || tmux(&["display-message", "-p", "-t", head, context_format])? != context_snapshot
         || tmux(&["display-message", "-p", "-t", canvas_pane, canvas_format])? != canvas_snapshot
@@ -5884,6 +5903,124 @@ mod desktop_worker_placement_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    /// The witness under the tmux config MiOS ships (usr/share/mios/tmux/mios-keys.tmux.conf,
+    /// sourced by /etc/tmux.conf): an owned worker is no desktop role, while every desktop
+    /// role and the workspace head are. Formats only, so any tmux evaluates them.
+    #[test]
+    fn worker_role_witness_admits_owned_workers_under_the_shipped_tmux_config() {
+        let temp = tempfile::Builder::new()
+            .prefix("mios-worker-role-")
+            .tempdir()
+            .unwrap();
+        fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let socket = temp.path().join("default").to_str().unwrap().to_owned();
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = workspace_tmux(&self.0, &["kill-server"]);
+            }
+        }
+        let _cleanup = Cleanup(socket.clone());
+        let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../usr/share/mios/tmux/mios-keys.tmux.conf");
+        assert!(shipped.is_file(), "{}", shipped.display());
+        let tmux = |args: &[&str]| workspace_tmux(&socket, args);
+        let head = tmux(&[
+            "-f",
+            shipped.to_str().unwrap(),
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-s",
+            "mios-role-proof",
+            "exec /usr/bin/sleep 120",
+        ])
+        .unwrap();
+        // The shipped config really defines the composite this witness used to read.
+        assert!(!tmux(&["show-options", "-gqv", "@mios-managed-pane"])
+            .unwrap()
+            .is_empty());
+        let split = |flag: &str| {
+            tmux(&[
+                "split-window",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id}",
+                "-t",
+                &head,
+                flag,
+                "exec /usr/bin/sleep 120",
+            ])
+            .unwrap()
+        };
+        let role =
+            |pane: &str| tmux(&["display-message", "-p", "-t", pane, WORKER_DESKTOP_ROLE]).unwrap();
+        let worker = split("-h");
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &worker,
+            "@mios-mcp-owner",
+            "mios-role-proof",
+        ])
+        .unwrap();
+        tmux(&[
+            "set-option",
+            "-p",
+            "-t",
+            &worker,
+            "@mios-workspace-worker",
+            &head,
+        ])
+        .unwrap();
+        // Before this rule, the composite marked every owned worker managed and refused it.
+        assert_eq!(
+            tmux(&[
+                "display-message",
+                "-p",
+                "-t",
+                &worker,
+                "#{E:@mios-managed-pane}"
+            ])
+            .unwrap(),
+            "1"
+        );
+        assert_eq!(
+            role(&worker),
+            "0",
+            "an owned workspace worker is a placeable worker"
+        );
+        tmux(&[
+            "set-option",
+            "-w",
+            "-t",
+            &head,
+            "@mios-workspace-head",
+            &head,
+        ])
+        .unwrap();
+        assert_eq!(role(&head), "1", "the workspace head is never placed");
+        assert_eq!(
+            role(&worker),
+            "0",
+            "a worker in a workspace window is not its head"
+        );
+        for option in [
+            "@mios-desktop-panel",
+            "@mios-desktop-chat",
+            "@mios-desktop-metrics",
+        ] {
+            let pane = split("-v");
+            assert_eq!(role(&pane), "0", "{option} unset");
+            tmux(&["set-option", "-p", "-t", &pane, option, "1"]).unwrap();
+            assert_eq!(role(&pane), "1", "{option} is a desktop role");
+        }
+    }
+
     #[test]
     fn actual_owned_floats_follow_phi_without_splitting_the_desktop_roles() {
         let temp = tempfile::Builder::new()
@@ -5900,7 +6037,40 @@ mod desktop_worker_placement_tests {
         }
         let _cleanup = Cleanup(socket.clone());
         let tmux = |args: &[&str]| workspace_tmux(&socket, args);
-        let head = tmux(&[
+        // As in production: the policy is this tree's SSOT, and the desktop server is the
+        // shipped [keybindings.tmux.desktop].binary (the float-pane backend, installed by
+        // automation/lib/tmux-desktop.sh); its clients stay the PATH tmux.
+        let policy_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let workspace_desktop_place =
+            |request: &Value, tmux: &dyn Fn(&[&str]) -> Result<String, String>| {
+                workspace_desktop_place_in(&policy_root, request, tmux)
+            };
+        let desktop = mios_resolver::resolve_merged(Some(&policy_root), false).unwrap();
+        let binary = desktop["keybindings"]["tmux"]["desktop"]["binary"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            Path::new(&binary).is_file(),
+            "{binary} is missing: install it with automation/lib/tmux-desktop.sh"
+        );
+        // The first command starts the server, so it runs the desktop binary.
+        let server = |args: &[&str]| -> Result<String, String> {
+            let out = Command::new(&binary)
+                .env("LC_ALL", "C.UTF-8")
+                .env("LANG", "C.UTF-8")
+                .args(["-u", "-S", &socket])
+                .args(args)
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() {
+                return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
+            }
+            Ok(String::from_utf8_lossy(&out.stdout)
+                .trim_end_matches('\n')
+                .to_owned())
+        };
+        let head = server(&[
             "new-session",
             "-d",
             "-P",

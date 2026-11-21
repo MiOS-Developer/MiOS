@@ -2328,6 +2328,81 @@ class wcg_TestWmConfigGen(unittest.TestCase):
                     self.assertEqual(wm_config_gen.check_fixture(wcg__ROOT), 1)
             self.assertIn("hyprland/hyprland.conf:", err.getvalue())
 
+    def test_bake_user_unit_ratchet_measures_source_tree(self):
+        """65-bake-hyprland.sh: the user-unit coverage ratchet measures the MiOS source tree, not the image root.
+
+        The image root also holds every distro package's user units, which [user_units.*]
+        never declares, so `--root / --user --check` fails the [unit_projection] ceiling."""
+        import glob
+        import shutil
+        import subprocess
+        with open(os.path.join(wcg__ROOT, "automation", "65-bake-hyprland.sh"), encoding="utf-8") as fh:
+            bake = fh.read()
+        checks = [l for l in bake.splitlines() if "mios-unit-gen" in l and "--user" in l and "--check" in l]
+        self.assertEqual(len(checks), 1, checks)
+        # The check reads the source tree (SCRIPT_DIR/..), never the image root.
+        self.assertNotRegex(checks[0], r"--root /(\s|$)")
+        root_arg = re.search(r'--root (.+?) --user', checks[0]).group(1)
+        source_root = '"$(cd "${SCRIPT_DIR}/.." && pwd)"'
+        if root_arg == '"$_tg_root"':
+            self.assertIn('_tg_root=' + source_root, bake)
+            self.assertLess(bake.index("_tg_root="), bake.index(checks[0]))
+        else:
+            self.assertEqual(root_arg, source_root, checks[0])
+        # Both sides against the real gate, when it is built: the source tree holds
+        # the ceiling, one undeclared distro unit on top of it breaks it.
+        cands = [os.environ.get("MIOS_UNIT_GEN", ""), "/usr/libexec/mios/mios-unit-gen",
+                 *glob.glob(os.path.join(wcg__ROOT, "tools/native/target/*/release/mios-unit-gen")),
+                 os.path.join(wcg__ROOT, "tools/native/target/release/mios-unit-gen")]
+        gen = next((c for c in cands if c and os.access(c, os.X_OK)), None)
+        if gen is None:
+            return
+        with tempfile.TemporaryDirectory(prefix="mios-test-userunits-") as tmp:
+            os.makedirs(os.path.join(tmp, "usr/share/mios"))
+            shutil.copy(os.path.join(wcg__ROOT, "usr/share/mios/mios.toml"), os.path.join(tmp, "usr/share/mios"))
+            shutil.copytree(os.path.join(wcg__ROOT, "usr/lib/systemd/user"), os.path.join(tmp, "usr/lib/systemd/user"))
+            ok = subprocess.run([gen, "--root", tmp, "--user", "--check"], capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            with open(os.path.join(tmp, "usr/lib/systemd/user/pipewire.service"), "w", encoding="utf-8") as fh:
+                fh.write("[Unit]\nDescription=distro-owned\n[Service]\nExecStart=/usr/bin/pipewire\n")
+            bad = subprocess.run([gen, "--root", tmp, "--user", "--check"], capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("UNDECLARED pipewire.service", bad.stderr)
+            self.assertIn("CEILING", bad.stderr)
+
+    def test_bake_keybindings_render_gets_every_table_it_reads(self):
+        """65-bake-hyprland.sh: the keybinding render runs on the SSOT the step exports and reproduces the tracked projection.
+
+        The step once exported [keybindings] alone; the renderer also reads [theme.tmux.console], so the bake failed
+        with 'GoldenMaster([theme.tmux.console] is missing from SSOT)'."""
+        import glob
+        import shlex
+        import subprocess
+        with open(os.path.join(wcg__ROOT, "automation", "65-bake-hyprland.sh"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        dump = [l for l in lines if "mios-keybindings-build.json" in l and l.startswith("python3 -c ")]
+        self.assertEqual(len(dump), 1, dump)
+        code = shlex.split(dump[0])[2].replace('"/usr/lib/mios"', repr(os.path.join(wcg__ROOT, "usr/lib/mios")))
+        cands = [os.environ.get("MIOS_UNIT_GEN", ""), "/usr/libexec/mios/mios-unit-gen",
+                 *glob.glob(os.path.join(wcg__ROOT, "tools/native/target/*/release/mios-unit-gen")),
+                 os.path.join(wcg__ROOT, "tools/native/target/release/mios-unit-gen")]
+        gen = next((c for c in cands if c and os.access(c, os.X_OK)), None)
+        if gen is None:
+            return
+        with tempfile.TemporaryDirectory(prefix="mios-test-keybind-") as tmp:
+            export = os.path.join(tmp, "kb.json")
+            env = {**os.environ, "MIOS_VENDOR_TOML": wcg__VENDOR, "MIOS_TOML_ROOT": wcg__ROOT}
+            subprocess.run([sys.executable, "-c", code.replace("/tmp/mios-keybindings-build.json", export)],
+                           check=True, env=env)
+            out = subprocess.run([gen, "keybindings", "--from-json", export, "--emit-json"],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            rendered = json.loads(out.stdout)
+        self.assertTrue(rendered)
+        for rel, body in rendered.items():
+            with open(os.path.join(wcg__ROOT, rel), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), body, rel)
+
 def wcg_main() -> int:
     suite = unittest.TestLoader().loadTestsFromTestCase(wcg_TestWmConfigGen)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

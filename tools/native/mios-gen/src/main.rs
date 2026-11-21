@@ -31,6 +31,7 @@ mod device_forwarding;
 mod global_bindings;
 mod image;
 mod indexes;
+mod light_tiers;
 mod mem_admit;
 mod metal_vs_hosted;
 mod nested_devices;
@@ -80,6 +81,14 @@ enum Commands {
         root: Option<PathBuf>,
         #[arg(long)]
         id: String,
+    },
+    /// Generate the CPU-tier light-lane model map from the source map and [llamacpp.light_cpu_tier].
+    LightTiers {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Fail when the committed map is stale instead of writing it.
+        #[arg(long)]
+        check: bool,
     },
     /// Plan or apply the light inference backend from validated GPU metadata.
     LightBackend {
@@ -2670,6 +2679,25 @@ fn main() -> ExitCode {
                 "read-only canonical CUDA admission",
                 gpu_topology::report_heavy_backend(&root)
                     .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1)),
+            )
+        }
+        Commands::LightTiers { root, check } => {
+            let r = resolve_root(root);
+            (
+                "light-tiers",
+                "usr/share/mios/llamacpp/mios-llm-light-cpu.yaml",
+                light_tiers::run(&r, check)
+                    .map(|changed| {
+                        println!(
+                            "[light-tiers] {}",
+                            if changed {
+                                "wrote the CPU-tier model map"
+                            } else {
+                                "CPU-tier model map is current"
+                            }
+                        )
+                    })
                     .map_err(|message| (message, 1)),
             )
         }

@@ -33,6 +33,8 @@ export GIT_CONFIG_NOSYSTEM=1 HOME="$T/home"; mkdir -p "$HOME"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$T/git/.insteadOf" GIT_CONFIG_VALUE_0="https://github.com/"
 export MIOS_ROOT="$T/root" MIOS_BAKE_PLAN="$PLAN" MIOS_SBOM_DIR="$T/sbom" MIOS_VERSION_MANIFEST="$T/versions.tsv"
 export MIOS_UL_RETRY_DELAY=0
+# Hermetic: a caller's GitHub token must not leak into the fake forge or the assertions.
+unset GH_TOKEN GITHUB_TOKEN GHCR_TOKEN
 
 # Temp SSOT: the live [build.float] shapes plus this lane's staged fragment.
 python3 - "$SSOT" "$T/root/usr/share/mios/mios.toml" <<'PY'
@@ -48,17 +50,40 @@ open(sys.argv[2], "w").write(
 PY
 
 # Fake forge over HTTPS: URL -> $T/http/<host>/<path>, '?' kept as '__Q__'.
+# <file>.status / .body / .headers override the HTTP answer for -w/-D callers,
+# and <file>.curlexit makes curl itself fail with that exit code. Every -H
+# header sent is logged to curl.headers as "<url> <header>".
 cat > "$T/bin/curl" <<EOF
 #!/usr/bin/env bash
-out=""; url=""; prev=""
+out=""; url=""; prev=""; wfmt=""; hdump=""; hdrs=()
 for a in "\$@"; do
-    case "\$prev" in -o|--output) out="\$a" ;; esac
+    case "\$prev" in
+        -o|--output) out="\$a" ;;
+        -w|--write-out) wfmt="\$a" ;;
+        -D|--dump-header) hdump="\$a" ;;
+        -H|--header) hdrs+=("\$a") ;;
+    esac
     case "\$a" in https://*|http://*) url="\$a" ;; --output=*) out="\${a#--output=}" ;; esac
     prev="\$a"
 done
 echo "\$url" >> "$T/curl.log"
+for h in "\${hdrs[@]}"; do echo "\$url \$h" >> "$T/curl.headers"; done
 f="$T/http/\${url#*://}"; f="\${f//\\?/__Q__}"
+if [[ -f "\$f.curlexit" ]]; then
+    echo "curl: (\$(cat "\$f.curlexit")) simulated transport failure" >&2
+    exit "\$(cat "\$f.curlexit")"
+fi
+if [[ -n "\$wfmt" ]]; then
+    code=200; body="\$f"
+    if [[ -f "\$f.status" ]]; then code="\$(cat "\$f.status")"; body="\$f.body"
+    elif [[ ! -f "\$f" ]]; then code=404; body=/dev/null; fi
+    { printf 'HTTP/2 %s\r\n' "\$code"; [[ -f "\$f.headers" ]] && cat "\$f.headers"; } > "\${hdump:-/dev/null}"
+    if [[ -n "\$out" ]]; then cat "\$body" > "\$out"; else cat "\$body"; fi
+    printf '%s' "\$code"
+    exit 0
+fi
 [[ -f "\$f" ]] || exit 22
+[[ -f "\$f.status" ]] && (( \$(cat "\$f.status") >= 400 )) && exit 22  # -f: an HTTP error is curl exit 22
 if [[ -n "\$out" ]]; then cp "\$f" "\$out"; else cat "\$f"; fi
 EOF
 printf '#!/bin/sh\nexit 1\n' > "$T/bin/go"
@@ -243,5 +268,55 @@ printf 'evil\n' > "$T/http/github.com/coder/code-server/releases/download/v4.142
 mkdir -p "$T/csbad"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csbad" ) >/dev/null 2>"$T/err"; rc=$?; set -e
 [[ $rc -eq 3 && -z "$(ls -A "$T/csbad")" ]] && grep -q INTEGRITY "$T/err" || fail "code-server tamper not aborted (rc=$rc)"
 pass "code-server: tampered RPM aborts (exit 3)"
+cp "$T/csrpm" "$T/http/github.com/coder/code-server/releases/download/v4.142.0/code-server-4.142.0-${arch}.rpm"
+
+# A rate-limited API is reported as such (status, GitHub's message, the limit
+# headers), never as a missing digest, and nothing is downloaded.
+_csj="$T/http/api.github.com/repos/coder/code-server/releases/tags/v4.142.0"
+printf '403' > "$_csj.status"
+printf '{"message":"API rate limit exceeded for 203.0.113.7."}' > "$_csj.body"
+printf 'x-ratelimit-limit: 60\r\nx-ratelimit-remaining: 0\r\nx-ratelimit-reset: 1795000000\r\n' > "$_csj.headers"
+: > "$T/curl.log"
+mkdir -p "$T/csrl"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csrl" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 1 && -z "$(ls -A "$T/csrl")" ]] || fail "code-server rate limit: rc=$rc $(cat "$T/err")"
+grep -qF 'HTTP 403 (API rate limit exceeded for 203.0.113.7.), unauthenticated, x-ratelimit-remaining 0, x-ratelimit-reset 1795000000' "$T/err" \
+    || fail "rate limit not reported with status and limit headers: $(cat "$T/err")"
+grep -q 'metadata unavailable from the GitHub API' "$T/err" || fail "rate limit not named as unavailable metadata: $(cat "$T/err")"
+! grep -q 'publishes no digest' "$T/err" || fail "rate limit misreported as a missing digest: $(cat "$T/err")"
+! grep -q 'releases/download' "$T/curl.log" || fail "asset downloaded without release metadata"
+pass "code-server: API HTTP 403 rate limit reported as such (not 'no digest'), nothing downloaded"
+rm -f "$_csj.status" "$_csj.body" "$_csj.headers"
+
+# A transport failure names curl's error.
+printf '6' > "$_csj.curlexit"
+mkdir -p "$T/csnet"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csnet" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 1 && -z "$(ls -A "$T/csnet")" ]] || fail "code-server transport failure: rc=$rc"
+grep -qF 'request failed (curl exit 6: curl: (6) simulated transport failure)' "$T/err" \
+    || fail "transport failure not reported with curl's error: $(cat "$T/err")"
+! grep -q 'publishes no digest' "$T/err" || fail "transport failure misreported as a missing digest"
+pass "code-server: curl transport failure reported with its exit code and message"
+rm -f "$_csj.curlexit"
+
+# A release that really lists no digest keeps its own message.
+cp "$_csj" "$T/csj.keep"
+jq '.assets |= map(del(.digest))' "$T/csj.keep" > "$_csj"
+mkdir -p "$T/csnd"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csnd" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+{ [[ $rc -eq 1 && -z "$(ls -A "$T/csnd")" ]] && grep -q 'publishes no digest' "$T/err" && ! grep -q 'GitHub API' "$T/err"; } \
+    || fail "missing digest not reported as such: rc=$rc $(cat "$T/err")"
+pass "code-server: a release without a digest is still reported as 'publishes no digest'"
+cp "$T/csj.keep" "$_csj"
+
+# The build secret authenticates GitHub API calls; the token reaches no log.
+mkdir -p "$T/secrets"; printf 'ghs_TESTTOKEN0123456789\n' > "$T/secrets/mios_github_token"
+printf '403' > "$_csj.status"; printf '{"message":"Forbidden"}' > "$_csj.body"
+: > "$T/curl.headers"
+mkdir -p "$T/csauth"
+set +e; ( SCURL_SECRETS_DIR="$T/secrets"; _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csauth" ) >"$T/out.log" 2>"$T/err"; rc=$?; set -e
+grep -qx 'https://api.github.com/repos/coder/code-server/releases/tags/v4.142.0 Authorization: token ghs_TESTTOKEN0123456789' "$T/curl.headers" \
+    || fail "build secret not sent to the GitHub API: $(cat "$T/curl.headers")"
+grep -qF 'HTTP 403 (Forbidden), authenticated' "$T/err" || fail "authenticated call not reported as such: $(cat "$T/err")"
+! grep -q 'ghs_TESTTOKEN' "$T/err" "$T/out.log" || fail "token leaked into the log"
+pass "code-server: the mios_github_token build secret authenticates the API call and stays out of the log"
+rm -f "$_csj.status" "$_csj.body" "$T/secrets/mios_github_token"
 
 echo "PASS test-upstream-latest: all consumers resolve latest, record it, and abort on integrity failure"

@@ -46,7 +46,24 @@ mask_filter() {
     sed -u "$sed_script"
 }
 
+# A GitHub token from the environment, else from the image build's secret
+# mount (podman build --secret id=mios_github_token,...): a build secret is a
+# tmpfs file under /run/secrets for the one RUN step, never a layer, build-arg
+# or log line. Prints nothing when neither is present (unauthenticated).
+: "${SCURL_SECRETS_DIR:=/run/secrets}"
+_scurl_github_token() {
+    local -
+    set +x
+    local token="${GH_TOKEN:-${GITHUB_TOKEN:-${GHCR_TOKEN:-}}}"
+    if [[ -z "$token" && -r "${SCURL_SECRETS_DIR}/mios_github_token" ]]; then
+        token="$(tr -d '[:space:]' < "${SCURL_SECRETS_DIR}/mios_github_token")"
+    fi
+    printf '%s' "$token"
+}
+
 scurl() {
+    local -
+    set +x
     local args=(--retry 5 --retry-delay 3 --connect-timeout 20)
     local url=""
     local is_binary=false
@@ -71,9 +88,12 @@ scurl() {
         fi
     done
 
-    if [[ "$url" =~ github\.com|ghcr\.io ]]; then
-        if [[ -n "${GH_TOKEN:-}" || -n "${GITHUB_TOKEN:-}" || -n "${GHCR_TOKEN:-}" ]]; then
-            local token="${GH_TOKEN:-${GITHUB_TOKEN:-${GHCR_TOKEN:-}}}"
+    # The token goes to GitHub hosts only (matched on the URL's host, not
+    # anywhere in it) and is never traced.
+    if [[ "$url" =~ ^https?://([^/@:]+\.)?(github\.com|ghcr\.io)(:[0-9]+)?(/|$) ]]; then
+        local token
+        token="$(_scurl_github_token)"
+        if [[ -n "$token" ]]; then
             args+=("-H" "Authorization: token $token")
             add_mask "$token"
         fi

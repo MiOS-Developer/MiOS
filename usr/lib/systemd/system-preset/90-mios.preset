@@ -362,6 +362,14 @@ disable mios-pgvector-backup.service
 enable mios-pgvector-optimize.timer
 disable mios-pgvector-optimize.service
 enable mios-podman-gc.timer
+# Hardware health on bare metal (both skip in containers and WSL):
+# mios-storage-link flags a USB disk whose USB 3 link fell back to USB 2.0
+# under root, swap or the journal; rasdaemon records machine-check and EDAC
+# events, and mios-ras-check counts each boot's against [hardware.ras].
+enable mios-storage-link.service
+enable rasdaemon.service
+enable mios-ras-check.timer
+disable mios-ras-check.service
 disable mios-podman-gc.service
 enable mios-tailscale-sync.timer
 disable mios-tailscale-sync.service
