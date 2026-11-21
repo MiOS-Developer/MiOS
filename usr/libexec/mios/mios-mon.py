@@ -1124,7 +1124,9 @@ if TEXTUAL_AVAILABLE:
         def view_changed(self, event):
             view = event.tab.id.removeprefix("--content-tab-")
             if self.desktop_panel:
-                self.layout_panel_overview(self.size.width, self.size.height)
+                # An activation still queued at shutdown must not lay out the pruned DOM.
+                if self.is_running:
+                    self.layout_panel_overview(self.size.width, self.size.height)
                 return
             title = {"tab-clients": "Clients", "tab-agents": "Agents & AI", "tab-global": "System",
                      "tab-build": "Build", "tab-flash": "Flash"}.get(view, "Monitor")
@@ -1263,8 +1265,9 @@ if TEXTUAL_AVAILABLE:
                     self.collectors_started = True
                     self.set_interval(self.panel_policy["poll_s"], self.update_panel_view)
                     if not IS_WINDOWS:
-                        self.set_interval(self.panel_policy["poll_s"], self.schedule_desktop_attachment)
-                        self.call_after_refresh(self.schedule_desktop_attachment)
+                        # Queued after the initial view activation above, so no
+                        # attachment poll (timer or first check) precedes it.
+                        self.call_after_refresh(self._start_desktop_attachment_polling)
                 return
 
             table = self.query_one("#svc-table", DataTable)
@@ -1289,6 +1292,10 @@ if TEXTUAL_AVAILABLE:
             event.stop()
             cells = event.data_table.get_row(event.row_key)
             self.push_screen(InventoryDetails(" · ".join(clean(cell, 2000) for cell in cells)))
+
+        def _start_desktop_attachment_polling(self):
+            self.set_interval(self.panel_policy["poll_s"], self.schedule_desktop_attachment)
+            self.schedule_desktop_attachment()
 
         def schedule_desktop_attachment(self):
             # Textual awaits async timer/message callbacks. Return immediately
@@ -1369,7 +1376,8 @@ if TEXTUAL_AVAILABLE:
                           else "Input facts · read-only; target unavailable")
 
         def update_panel_view(self):
-            if not self.desktop_panel or not self.collectors_enabled or self._collection_paused:
+            # A poll tick that lands during shutdown must not query the pruned DOM.
+            if not self.is_running or not self.desktop_panel or not self.collectors_enabled or self._collection_paused:
                 return
             view = self.query_one(TabbedContent).active
             if self._panel_overview_split and view in {"tab-agents", "tab-global"}:

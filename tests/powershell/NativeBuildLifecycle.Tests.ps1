@@ -101,7 +101,7 @@ Describe 'MiOS full install build lifecycle' {
             if ($Arguments -contains 'merge') { $global:LASTEXITCODE=1 } else { $global:LASTEXITCODE=0 }
         }
         Mock Invoke-GitFetchWithRetry { return 0 }
-        { Update-MiosCheckout $TestDrive 'main' } | Should -Throw '*local commits are preserved*'
+        { Update-MiosCheckout $TestDrive 'main' } | Should -Throw '*local commits and untracked files are preserved*'
     }
     It 'routes the full build through the same native engine' {
         $MiosRepoDir = $TestDrive

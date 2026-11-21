@@ -22,6 +22,12 @@ OLD = Path(os.environ.get('MIOS_INPUTD_OLD_BIN', '/nonexistent'))
 OLD_SSOT = Path(os.environ.get('MIOS_INPUTD_OLD_SSOT', '/nonexistent'))
 LUA = Path('/usr/bin/lua')
 NORTH, RB, LB, SELECT, START, GUIDE, EAST, L3, R3 = 0x133, 0x137, 0x136, 0x13a, 0x13b, 0x13c, 0x131, 0x13d, 0x13e
+# The vendor policy is the global controller contract (usr/share/doc/mios/keybinds.md): L3+R3 attaches/detaches the
+# verified focused window once both buttons are up, Select+Start zooms it, and Start belongs to the app. With these three
+# switches off (a host tier) the earlier contract still holds: Start is the cursor/half-capture return and a held
+# L3+R3 releases capture. Both policies ship, so both are pinned here.
+LEGACY_POLICY = ('[keybindings.global.controller]\nglobal_capture_toggle = false\nwindow_zoom_chord = []\n'
+                 '[keybindings.global.controller.nav]\nstart_options = false\n')
 
 
 def key(code, value=1):
@@ -41,6 +47,11 @@ class Base(unittest.TestCase):
         cls.root = Path(cls.temp.name) / 'root'
         (cls.root / 'usr/share/mios').mkdir(parents=True)
         shutil.copy(ROOT / 'usr/share/mios/mios.toml', cls.root / 'usr/share/mios/mios.toml')
+        cls.legacy_root = Path(cls.temp.name) / 'legacy-root'
+        (cls.legacy_root / 'usr/share/mios').mkdir(parents=True)
+        (cls.legacy_root / 'etc/mios').mkdir(parents=True)
+        shutil.copy(ROOT / 'usr/share/mios/mios.toml', cls.legacy_root / 'usr/share/mios/mios.toml')
+        (cls.legacy_root / 'etc/mios/mios.toml').write_text(LEGACY_POLICY)
         cls.old_root = None
         if OLD.is_file() and OLD_SSOT.is_file():
             cls.old_root = Path(cls.temp.name) / 'old-root'
@@ -85,7 +96,7 @@ class Ownership(Base):
             for release, expected in (([], []), ([key(first, 0)], []),
                                       ([key(first, 0), key(last, 0)], ["input:window off"])):
                 with self.subTest(first=first, released=len(release)):
-                    result = self.run_bin('replay', data=json.dumps(dict(
+                    result = self.run_bin('replay', root=self.legacy_root, data=json.dumps(dict(
                         context='app-capture', script=held + release)))
                     self.assertEqual(result.returncode, 0, result.stderr)
                     output = json.loads(result.stdout)['output']
@@ -95,13 +106,35 @@ class Ownership(Base):
                         self.assertIn((code, 0), app, 'qualifying hold must drain the app before returning')
                     self.assertEqual(app[-3:], [(EAST, 0), (L3, 0), (R3, 0)])
 
+    def test_global_capture_chord_drains_and_never_reaches_the_app(self):
+        # Vendor policy: forming L3+R3 drains what the app holds at once; the chord members are deferred, so the
+        # app never sees them, and partial releases, holds and repeats cannot retrigger. Without a verified window
+        # target (replay has none) the chord commits nothing: it never fabricates a release.
+        for first, last in ((L3, R3), (R3, L3)):
+            held = [key(EAST), key(L3), key(R3), {"tick_ms": 600}, key(first, 2)]
+            for release in ([], [key(first, 0)], [key(first, 0), key(last, 0)]):
+                with self.subTest(first=first, released=len(release)):
+                    result = self.run_bin('replay', data=json.dumps(dict(context='app-capture', script=held + release)))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    output = json.loads(result.stdout)['output']
+                    self.assertEqual(output['actions'], [])
+                    app = [(e['code'], e['value']) for e in output['app'] if e['kind'] == 1]
+                    self.assertEqual(app, [(EAST, 1), (EAST, 0)], 'East drained when the chord forms; L3/R3 never forwarded')
+
     def test_c01_half_capture_keeps_rb_guide_and_north_with_the_app(self):
-        actions, app = self.replay('app-capture', self.HALF + tap(RB))
-        self.assertEqual(actions, ['input:cursor on'])
-        self.assertEqual(app, [(RB, 1), (RB, 0)])
-        actions, app = self.replay('app-capture', self.HALF + [key(GUIDE), key(EAST), key(EAST, 0), key(GUIDE, 0)] + tap(NORTH) + tap(START))
+        for root in (self.root, self.legacy_root):
+            with self.subTest(policy=root.name):
+                actions, app = self.replay('app-capture', self.HALF + tap(RB), root=root)
+                self.assertEqual(actions, ['input:cursor on'])
+                self.assertEqual(app, [(RB, 1), (RB, 0)])
+        guide_east = [key(GUIDE), key(EAST), key(EAST, 0), key(GUIDE, 0)]
+        actions, app = self.replay('app-capture', self.HALF + guide_east + tap(NORTH) + tap(START), root=self.legacy_root)
         self.assertEqual(actions, ['input:cursor on', 'input:cursor off'], 'Guide+East is app input; Start returns to full capture')
         self.assertEqual(app, [(GUIDE, 1), (EAST, 1), (EAST, 0), (GUIDE, 0), (NORTH, 1), (NORTH, 0)])
+        # Vendor policy: Start is the app's pause/options button, in half capture too; Guide+Select returns.
+        actions, app = self.replay('app-capture', self.HALF + guide_east + tap(NORTH) + tap(START) + self.HALF)
+        self.assertEqual(actions, ['input:cursor on', 'input:cursor off'], 'Guide+East and Start are app input; Guide+Select returns to full capture')
+        self.assertEqual(app, [(GUIDE, 1), (EAST, 1), (EAST, 0), (GUIDE, 0), (NORTH, 1), (NORTH, 0), (START, 1), (START, 0)])
 
     def test_c01_negative_old_binary_fires_shaderglass_in_half_capture(self):
         self.need_old()
@@ -272,7 +305,7 @@ for _,d in ipairs(D) do print('DISPATCH '..d.kind..' '..tostring(d.v)) end
 
 
 class Serve(Base):
-    def sandbox(self, *, uinput=True, lock_held=False):
+    def sandbox(self, *, uinput=True, lock_held=False, session='TYPE=wayland'):
         """A private root has no host input, compositor, /proc or logind state.
         Root CI uses chroot then drops uid/gid; unprivileged callers use bwrap.
         A regular file stands in only for the uinput access check. There are no
@@ -292,7 +325,11 @@ class Serve(Base):
         shutil.copy2(self.root / 'usr/share/mios/mios.toml', private / 'usr/share/mios/mios.toml')
         (private / 'run/systemd/users' / str(uid)).write_text('STATE=active\nDISPLAY=fixture\n')
         (private / 'run/systemd/sessions/fixture').write_text(
-            f'UID={uid}\nTYPE=wayland\nSEAT=seat-fixture\nACTIVE=1\n')
+            f'UID={uid}\n{session}\nSEAT=seat-fixture\nACTIVE=1\n')
+        # Physical admission re-reads the seat before the device probes: this user's session is the active one
+        # (a graphical session would also wait for its compositor, which the private root never runs).
+        (private / 'run/systemd/seats').mkdir()
+        (private / 'run/systemd/seats/seat-fixture').write_text('ACTIVE=fixture\n')
         if uinput:
             (private / 'dev/uinput').touch(mode=0o666)
             (private / 'dev/uinput').chmod(0o666)
@@ -341,7 +378,7 @@ class Serve(Base):
                 self.assertIn('"serve":"disabled"', r.stderr)
 
     def test_no_device_access_idles_then_sigterm_exits_zero(self):
-        argv, env = self.sandbox(uinput=False)
+        argv, env = self.sandbox(uinput=False, session='TYPE=tty\nVTNR=7\nTTY=tty7')
         p = self.start(argv, env)
         try:
             time.sleep(2.5)
@@ -357,8 +394,9 @@ class Serve(Base):
             if p.stderr:
                 p.stderr.close()
         self.assertEqual(p.returncode, 0, err)
-        self.assertIn('"serve":"idle"', err)
-        self.assertIn('/dev/uinput', err)
+        idle = [json.loads(line) for line in err.splitlines() if line.startswith('{"discovery":"idle"')]
+        self.assertTrue(idle, err)
+        self.assertIn('/dev/uinput', idle[-1]['reason'], 'the active seat is this user\'s: uinput access is what is missing')
         self.assertNotIn('"mode":"bridge"', err)
 
     def test_bridge_error_exits_nonzero(self):

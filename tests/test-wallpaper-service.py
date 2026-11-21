@@ -74,11 +74,17 @@ class TestWallpaperService(unittest.TestCase):
         self.assertLess(fn.find(build.group(0)), check.start())
         self.assertLess(check.start(), move, "PE check must precede publication")
 
+        # 70de349 (Respect User scope when staging the native wallpaper service) made the
+        # machine service elevation-only: the installer receives the service name only when
+        # elevated, and registration stays inside the elevated branch after the install.
         service = content.find("$svcName = 'MiOS-Wallpaper-Service'")
+        scoped = content.find("$wallpaperServiceName = if ($script:IsAdmin) { $svcName } else { '' }")
         install = content.find("Install-MiosNativeWindowsArtifact -Root $MiosRepoDir -Machine $DevDistro "
-                               "-Binary 'mios-wallpaperd' -Destination $wallpaperd_exe -ServiceName $svcName")
+                               "-Binary 'mios-wallpaperd' -Destination $wallpaperd_exe -ServiceName $wallpaperServiceName")
+        elevated = content.find("if ($script:IsAdmin) {", install)
         register = content.find("sc.exe create $svcName")
-        self.assertTrue(-1 < service < install < register, "service must be registered only after the verified install")
+        self.assertTrue(-1 < service < scoped < install < elevated < register,
+                        "service must be registered only after the verified install, and only when elevated")
 
         # The engine itself verifies the PE before staging the artifact.
         with open(_VERIFY_RS, "r", encoding="utf-8") as fh:
