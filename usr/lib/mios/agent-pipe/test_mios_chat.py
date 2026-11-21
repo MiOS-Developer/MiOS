@@ -444,6 +444,104 @@ asyncio.run(run())
           result.stderr if result.returncode else "ASGI 2.4, exact SSE error + DONE, HTTPX/admission cleanup")
 
 
+def _test_stream_route_preflight_and_early_headers():
+    """The public ASGI route validates before headers, then defers real routing."""
+    import subprocess
+    child = r'''import asyncio, json
+from unittest.mock import patch
+import httpx
+from fastapi import FastAPI
+from starlette.responses import JSONResponse
+import test_mios_chat as fixture
+import mios_pipe.routing.chat as chat
+import mios_pipe.access.authn as authn
+
+app = FastAPI()
+app.include_router(chat.chat_router)
+body = {"model": "m", "messages": [{"role": "user", "content": "hello"}], "stream": True}
+completion = {"id": "reply", "model": "m", "object": "chat.completion", "created": 123,
+              "choices": [{"index": 0, "message": {"role": "assistant", "content": "ready"},
+                           "finish_reason": "stop"}]}
+
+async def run():
+    fixture._wire_common(_INGRESS_KEY="fixture-ingress", _has_client_tools=lambda b: bool(b.get("tools")))
+    called = []
+    async def logic(request):
+        called.append(True)
+        return JSONResponse(completion)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://asgi.invalid") as client:
+        with patch.object(chat, "chat_completions_logic", logic), \
+             patch.object(chat, "_toml_section", return_value={"stream_keepalive_s": 0.01}), \
+             patch.object(authn, "_check_inbound_principal", return_value=None):
+            invalid = [b"{", b"[]", b"null", b'{"stream":true}', b'{"messages":{},"stream":true}']
+            invalid.extend(json.dumps({**body, "stream_options": value}).encode()
+                           for value in (["include_usage"], "usage", True))
+            for raw in invalid:
+                result = await client.post("/v1/chat/completions", content=raw)
+                assert result.status_code == 400 and "application/json" in result.headers["content-type"], result.text
+                assert not called
+            for extra in ({"tool_choice": "none"}, {"tools": [{"type": "function"}]}):
+                result = await client.post("/v1/chat/completions", json={**body, **extra})
+                assert result.status_code == 401 and result.json()["error"]["message"] == "unauthorized", result.text
+                assert not called
+                result = await client.post("/v1/chat/completions", json={**body, **extra},
+                                           headers={"Authorization": "Bearer fixture-ingress"})
+                assert result.status_code == 200 and "text/event-stream" in result.headers["content-type"]
+                assert "ready" in result.text
+                called.clear()
+            result = await client.post("/v1/chat/completions", json={**body, "stream": False})
+            assert result.status_code == 200 and result.json() == completion
+            assert called == [True]
+            called.clear()
+        for interval in (0, -1, float("inf"), float("nan"), "invalid"):
+            with patch.object(chat, "chat_completions_logic", logic), \
+                 patch.object(chat, "_toml_section", return_value={"stream_keepalive_s": interval}):
+                result = await client.post("/v1/chat/completions", json=body)
+                assert result.status_code == 503 and result.json()["error"]["code"] == "invalid_stream_config"
+                assert not called
+
+    entered, release, started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    async def rehydrate(*args):
+        entered.set()
+        await release.wait()
+    async def ready(*args, **kwargs): return JSONResponse(completion)
+    fixture._wire_common(_scratchpad_rehydrate=rehydrate, _maybe_run_pending_approval=ready)
+    incoming = asyncio.Queue()
+    await incoming.put({"type": "http.request", "body": json.dumps(body).encode(), "more_body": False})
+    sent = []
+    async def send(event):
+        sent.append(event)
+        if event["type"] == "http.response.start": started.set()
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+             "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/v1/chat/completions", "raw_path": b"/v1/chat/completions",
+             "query_string": b"", "headers": [(b"host", b"asgi.invalid")],
+             "server": ("asgi.invalid", 80), "client": ("127.0.0.1", 12345)}
+    with patch.object(chat, "_toml_section", side_effect=lambda section:
+            {"stream_keepalive_s": 0.01} if section == "agent_pipe" else {}):
+        task = asyncio.create_task(app(scope, incoming.get, send))
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            await asyncio.wait_for(started.wait(), 5)
+            assert not release.is_set() and sent[0]["status"] == 200
+            release.set()
+            await asyncio.wait_for(task, 5)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    output = b"".join(event.get("body", b"") for event in sent)
+    assert b"ready" in output and output.count(b"data: [DONE]") == 1, output
+    assert asyncio.all_tasks() == {asyncio.current_task()}, asyncio.all_tasks()
+    print("STREAM_ROUTE_PREFLIGHT_AND_HEADERS_PASS")
+asyncio.run(run())
+'''
+    result = subprocess.run([sys.executable, "-c", child], capture_output=True, text=True,
+                            timeout=45, cwd=os.path.dirname(os.path.abspath(__file__)))
+    check("stream route: preflight HTTP errors and headers before blocked pipeline",
+          result.returncode == 0 and "STREAM_ROUTE_PREFLIGHT_AND_HEADERS_PASS" in result.stdout,
+          result.stderr if result.returncode else "real ASGI validation/auth, nonstream parity, SSOT interval, early headers")
+
+
 def _test_refine_preserves_constraints_and_tool_free_chat():
     from fastapi.responses import JSONResponse, StreamingResponse
     from mios_pipe.routing import sse
@@ -661,6 +759,8 @@ def main():
     _test_explicit_agent_contract()
 
     _test_real_asgi_error_and_disconnect()
+
+    _test_stream_route_preflight_and_early_headers()
 
     _test_refine_preserves_constraints_and_tool_free_chat()
 
