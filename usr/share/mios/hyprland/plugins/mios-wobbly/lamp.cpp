@@ -1,4 +1,4 @@
-// AI-hint: Magic lamp for Hyprland 0.56 (MiOS original source; part of mios-wobbly.so, the one MiOS mesh backend).
+// AI-hint: Magic lamp for Hyprland 0.57 (MiOS original source; part of mios-wobbly.so, the one MiOS mesh backend).
 // minimize: the window bends into a genie tube and flows into its dock icon (lampmath.hpp), then moves silently to
 // `minimized_workspace`; restore: moved back (workspace, floating geometry, focus) and played in reverse out of the
 // dock; launch: a window mapping within launch_timeout_ms of a dock launch of its app grows out of that icon.
@@ -17,8 +17,11 @@
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowEffectsController.hpp>
+#include <hyprland/src/desktop/view/window/WindowGroupMembership.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
@@ -29,6 +32,7 @@
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/gl/GLFramebuffer.hpp>
 #include <hyprland/src/render/transformer/Transformer.hpp>
+#include <hyprland/src/render/transformer/TransformerList.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
@@ -125,10 +129,9 @@ namespace {
         PHLMONITORREF        preMinMonitor;
         std::vector<SSiblingSnapshot> siblings;
         std::optional<CBox>  geometryTo;
-        // filled by preWindowRender for the frame being drawn
-        bool                 drawnValid = false;
-        CBox                 drawnBox; // monitor-local logical
-        PHLMONITORREF        drawnMonitor;
+        // the mesh extent of this frame relative to the window box (onRenderPre), for transformedExtents
+        bool                 extValid = false;
+        CBox                 extRel;
     };
 
     struct SMinimized {
@@ -152,7 +155,7 @@ namespace {
     SP<CEventLoopTimer>                     g_timer;
     Clock::time_point                       g_dockChecked;
     int64_t                                 g_dockMtimeNs = -1;
-    SP<SHyprCtlCommand>                     g_cmd;
+    SP<IPC::Socket1::SCommand>              g_cmd;
     bool                                    g_exiting = false;
 
     GLuint                                  g_prog = 0, g_vao = 0, g_vbo = 0, g_sampler = 0;
@@ -258,20 +261,25 @@ namespace {
     }
     // Workspace selector safe to splice into a Lua string literal.
     std::string workspaceSelector(const PHLWORKSPACE& ws) {
-        if (!ws || ws->m_isSpecialWorkspace)
+        if (!ws || ws->type() == Workspace::eWorkspaceType::SPECIAL)
             return {};
-        if (ws->m_id > 0)
-            return std::to_string(ws->m_id);
-        const bool safe = !ws->m_name.empty() && std::all_of(ws->m_name.begin(), ws->m_name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; });
-        return safe ? "name:" + ws->m_name : std::string{};
+        if (const auto id = ws->numberedID(); id && *id > 0)
+            return std::to_string(*id);
+        // 0.57: a named workspace has no numeric id; its addressable name is what "name:<n>" resolves to
+        const auto& name = ws->addressableName();
+        const bool  safe = !name.empty() && std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_' || c == '.'; });
+        return safe ? "name:" + name : std::string{};
     }
     bool onMinimizedWs(const PHLWINDOW& w) {
-        return w && w->m_workspace && w->m_workspace->m_isSpecialWorkspace && w->m_workspace->m_name == minimizedWs();
+        return w && w->m_workspace && w->m_workspace->type() == Workspace::eWorkspaceType::SPECIAL && w->m_workspace->addressableName() == minimizedWs();
+    }
+    bool pinned(const PHLWINDOW& w) {
+        return !!(w->m_state & Desktop::View::WINDOW_STATE_PINNED);
     }
     CBox windowBoxGlobal(const PHLWINDOW& w) {
         CBox       box = w->getFullWindowBoundingBox();
         const auto ws  = w->m_workspace;
-        box.translate((w->m_pinned || !ws ? Vector2D{} : ws->m_renderOffset->value()) + w->m_floatingOffset);
+        box.translate((pinned(w) || !ws ? Vector2D{} : ws->m_renderOffset->value()) + w->presentation().floatingOffset());
         return box;
     }
     std::string dispatch(const std::string& lua) {
@@ -352,57 +360,60 @@ namespace {
         return true;
     }
 
+    // Hyprland 0.57 owns the window's transformers and drops every inactive one (removeInactive): active exactly while
+    // the lamp has it attached; the extent is the genie mesh (window box to icon), so the output canvas holds it.
     class CLampTransformer : public Render::IWindowTransformer {
       public:
         explicit CLampTransformer(PHLWINDOWREF w) : m_window(w) {}
-        ~CLampTransformer() override {
-            if (g_exiting) // GL teardown during unload is not worth the risk; leak the buffers
-                (void)new std::vector<std::pair<Render::IFramebuffer*, SP<Render::GL::CGLFramebuffer>>>(std::move(m_out));
-        }
 
-        void preWindowRender(CSurfacePassElement::SRenderData* rd) override {
+        SLamp* state() const {
             const auto it = g_lamps.find(m_window.get());
-            if (it == g_lamps.end())
-                return;
-            auto&      s   = *it->second;
-            const auto w   = m_window.lock();
-            const auto mon = rd ? rd->pMonitor.lock() : nullptr;
-            s.drawnValid   = false;
-            if (!w || !mon || g_pHyprRenderer->m_bRenderingSnapshot)
-                return;
-            const auto ws  = w->m_workspace;
-            CBox       box = w->getFullWindowBoundingBox();
-            box.translate((w->m_pinned || !ws ? Vector2D{} : ws->m_renderOffset->value()) + w->m_floatingOffset - mon->m_position);
-            s.drawnBox     = box;
-            s.drawnMonitor = mon;
-            s.drawnValid   = true;
-            s.lastDrawn    = Clock::now();
+            return it == g_lamps.end() ? nullptr : it->second.get();
         }
 
-        SP<Render::IFramebuffer> transform(SP<Render::IFramebuffer> in) override;
+        bool active() const override {
+            const auto s = state();
+            return !g_exiting && s && s->attached;
+        }
 
-        PHLWINDOWREF                                                                  m_window;
-        std::vector<std::pair<Render::IFramebuffer*, SP<Render::GL::CGLFramebuffer>>> m_out;
+        // currentBox: the monitor-local logical box Hyprland draws the window at (the 0.56 drawnBox).
+        CBox transformedExtents(const CBox& currentBox) const override {
+            const auto s = state();
+            if (!s || !s->attached || !s->extValid)
+                return currentBox;
+            return CBox{currentBox.x + s->extRel.x, currentBox.y + s->extRel.y, s->extRel.w, s->extRel.h};
+        }
+
+        void preWindowRender(Render::CRenderContext& ctx, CSurfacePassElement::SRenderData* rd) override {
+            const auto s = state();
+            if (s && !ctx.m_renderingSnapshot && rd && rd->pMonitor)
+                s->lastDrawn = Clock::now();
+        }
+
+        Render::SWindowTransformBuffer transform(Render::CRenderContext& ctx, const Render::SWindowTransformBuffer& in, const Render::SWindowTransformContext& context) override;
+
+        PHLWINDOWREF m_window;
     };
 
-    SP<Render::IFramebuffer> CLampTransformer::transform(SP<Render::IFramebuffer> in) {
-        if (!in || g_exiting)
+    Render::SWindowTransformBuffer CLampTransformer::transform(Render::CRenderContext& ctx, const Render::SWindowTransformBuffer& in, const Render::SWindowTransformContext& context) {
+        if (!in.framebuffer || g_exiting || context.standalone || context.renderingSnapshot)
             return in;
-        const auto it = g_lamps.find(m_window.get());
-        if (it == g_lamps.end())
+        const auto sp = state();
+        if (!sp)
             return in;
-        auto&      s   = *it->second;
-        const auto mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
-        if (!s.drawnValid || !mon || s.drawnMonitor.lock() != mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
+        auto&      s   = *sp;
+        const auto mon = context.monitor.lock();
+        if (!mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
             return in;
-        const auto inTex = in->getTexture();
-        if (!inTex || !inTex->m_texID)
+        const auto inTex = in.framebuffer->getTexture();
+        if (!inTex || !inTex->m_texID || inTex->m_size.x < 1 || inTex->m_size.y < 1)
             return in;
-        const int fw = (int)in->m_size.x, fh = (int)in->m_size.y;
-        if (fw < 1 || fh < 1 || fw > 16384 || fh > 16384 || !ensureGL())
+        const float scale  = mon->m_scale;
+        const CBox  canvas = Render::pixelBoxForLogical(context.outputBox.copy().expand(1.0 / scale), scale);
+        if (canvas.empty() || canvas.w > 16384 || canvas.h > 16384 || !ensureGL())
             return in;
 
-        const SRect win  = rectOf(s.drawnBox);
+        const SRect win  = rectOf(context.currentBox);
         const SRect icon = {s.target.x - mon->m_position.x, s.target.y - mon->m_position.y, s.target.w, s.target.h};
         const SRect winG = {win.x + mon->m_position.x, win.y + mon->m_position.y, win.w, win.h};
         const auto  prm  = meshParams();
@@ -410,37 +421,26 @@ namespace {
         if (!buildMesh(win, icon, chooseEdge(winG, s.target, s.edgeHint), s.t, prm, mesh))
             return in;
 
-        SP<Render::GL::CGLFramebuffer> out;
-        for (auto o = m_out.begin(); o != m_out.end(); ++o)
-            if (o->first == in.get()) {
-                out = o->second;
-                std::rotate(o, o + 1, m_out.end()); // most recently used last
-                break;
-            }
-        if (!out) {
-            if (m_out.size() >= 4) // content + blur matte; evict the least recently used work buffer
-                m_out.erase(m_out.begin());
-            out = makeShared<Render::GL::CGLFramebuffer>("mios-lamp");
-            m_out.emplace_back(in.get(), out);
-        }
-        if (!out->isAllocated() || out->m_size != in->m_size) {
-            out->release();
-            if (!out->alloc(fw, fh, in->m_drmFormat != DRM_FORMAT_INVALID ? in->m_drmFormat : DRM_FORMAT_ARGB8888))
-                return in;
-        }
-        out->setImageDescription(in->imageDescription());
+        // the output canvas: a work buffer of the monitor's pool (content and blur matte each take one)
+        const auto out   = g_pHyprRenderer->getWorkBuffer(ctx, canvas.size());
+        auto*      glOut = out ? dynamic_cast<Render::GL::CGLFramebuffer*>(out.get()) : nullptr;
+        if (!glOut || !out->isAllocated() || !out->getTexture())
+            return in;
+        const int fw = (int)out->getTexture()->m_size.x, fh = (int)out->getTexture()->m_size.y;
+        if (fw < 1 || fh < 1)
+            return in;
+        const Vector2D inOrigin = in.box.pos(), inSize = inTex->m_size, outOrigin = canvas.pos();
 
-        const float scale = mon->m_scale;
         const int   C = prm.cols, R = prm.rows;
         static std::vector<float> tris;
         tris.clear();
         tris.reserve((size_t)C * R * 6 * 4);
         auto put = [&](int i, int j) {
             const auto& v = mesh[(size_t)j * (C + 1) + i];
-            tris.push_back((float)(v.x * scale / fw) * 2.f - 1.f);
-            tris.push_back((float)(v.y * scale / fh) * 2.f - 1.f);
-            tris.push_back((float)((win.x + v.u * win.w) * scale / fw));
-            tris.push_back((float)((win.y + v.v * win.h) * scale / fh));
+            tris.push_back((float)((v.x * scale - outOrigin.x) / fw) * 2.f - 1.f);
+            tris.push_back((float)((v.y * scale - outOrigin.y) / fh) * 2.f - 1.f);
+            tris.push_back((float)(((win.x + v.u * win.w) * scale - inOrigin.x) / inSize.x));
+            tris.push_back((float)(((win.y + v.v * win.h) * scale - inOrigin.y) / inSize.y));
         };
         for (int j = 0; j < R; ++j)
             for (int i = 0; i < C; ++i) {
@@ -470,7 +470,7 @@ namespace {
         auto& gl = Render::GL::g_pHyprOpenGL;
         gl->setCapStatus(GL_SCISSOR_TEST, false);
         gl->blend(false);
-        glBindFramebuffer(GL_FRAMEBUFFER, out->getFBID());
+        glBindFramebuffer(GL_FRAMEBUFFER, glOut->getFBID());
         gl->setViewport(0, 0, fw, fh);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -503,7 +503,7 @@ namespace {
         h          = MiosFxStats::fnv(&gain, sizeof(gain), h);
         h          = MiosFxStats::fnv(&alpha, sizeof(alpha), h);
         MiosFxStats::draw(MiosFxStats::LAMP, mon->m_name, mon->m_refreshRate, h, MiosFxStats::nowMs(), s.modelMs);
-        return out;
+        return {.framebuffer = out, .box = canvas};
     }
 
     // ---- state ------------------------------------------------------------------------------------------------
@@ -515,41 +515,44 @@ namespace {
         s.tagged = on;
         if (w->m_ruleApplicator->m_tagKeeper.applyTag((on ? "+" : "-") + tag)) {
             w->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_TAG);
-            w->updateDecorationValues();
+            w->presentation().refreshValues(); // 0.56 updateDecorationValues; what the 0.57 tag action calls
         }
     }
 
     void attach(SLamp& s, const PHLWINDOW& w) {
         if (s.attached)
             return;
-        w->m_transformers.emplace_back(makeUnique<CLampTransformer>(s.window));
-        s.attached = true;
+        s.attached = true; // a detached transformer the list has not dropped yet becomes active again
+        if (!w->effects().transformers()->get<CLampTransformer>())
+            w->effects().transformers()->emplace<CLampTransformer>(s.window);
     }
 
     void detach(SLamp& s, const PHLWINDOW& w) {
         if (w) {
-            std::erase_if(w->m_transformers, [](const auto& t) { return dynamic_cast<CLampTransformer*>(t.get()) != nullptr; });
+            s.attached = false; // inactive: the transformer list drops it
+            w->effects().transformers()->removeInactive();
             if (s.lastExt.w > 0)
                 g_pHyprRenderer->damageBox(s.lastExt);
             g_pHyprRenderer->damageWindow(w);
         }
-        s.attached   = false;
-        s.drawnValid = false;
-        s.lastExt    = {};
+        s.attached = false;
+        s.extValid = false;
+        s.lastExt  = {};
     }
 
     // Window alphas while the lamp owns the window: the rigid glass pane fades out with the layout alpha (the content
     // is compensated in the shader); Hyprland's own fade-in / workspace fades must not play on top of the lamp.
     void applyAlphas(const SLamp& s, const PHLWINDOW& w) {
         using namespace Desktop::View;
-        w->alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp((float)paneFade(s.t, paneMin()));
-        if (s.kind == eKind::OPEN && w->alpha(WINDOW_ALPHA_FADE)->value() < 1.f)
-            w->alpha(WINDOW_ALPHA_FADE)->setValueAndWarp(1.f);
+        auto& p = w->presentation();
+        p.alpha(WINDOW_ALPHA_LAYOUT)->setValueAndWarp((float)paneFade(s.t, paneMin()));
+        if (s.kind == eKind::OPEN && p.alpha(WINDOW_ALPHA_FADE)->value() < 1.f)
+            p.alpha(WINDOW_ALPHA_FADE)->setValueAndWarp(1.f);
         if (s.kind == eKind::RESTORE) {
-            if (w->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->value() < 1.f)
-                w->alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.f);
-            if (w->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->value() < 1.f)
-                w->alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(1.f);
+            if (p.alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->value() < 1.f)
+                p.alpha(WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.f);
+            if (p.alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->value() < 1.f)
+                p.alpha(WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(1.f);
         }
     }
 
@@ -561,7 +564,7 @@ namespace {
         if (w) {
             if (onMinimizedWs(w))
                 syncWorkspaceMonitor(w, s.preMinMonitor.lock(), nullptr, true);
-            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
+            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
             setTag(s, w, false);
         }
     }
@@ -603,8 +606,8 @@ namespace {
             mon = w->m_monitor.lock();
         STargetQuery q;
         q.output           = !overrideMonName.empty() ? overrideMonName : (mon ? mon->m_name : std::string{});
-        q.cls              = w->m_class;
-        q.initialCls       = w->m_initialClass;
+        q.cls              = w->metadata().appID();
+        q.initialCls       = w->metadata().initialAppID();
         q.address          = addressOf(w);
         q.monitor          = monitorRect(mon);
         q.restore          = restore;
@@ -636,7 +639,7 @@ namespace {
     }
 
     void syncWorkspaceMonitor(const PHLWINDOW& w, const PHLMONITOR& preferred, const PHLMONITOR& dying, bool stopFade) {
-        if (!w || !w->m_workspace || w->m_workspace->m_name != minimizedWs())
+        if (!w || !w->m_workspace || w->m_workspace->addressableName() != minimizedWs())
             return;
         PHLMONITOR target = monitorAlive(preferred, dying) ? preferred : nullptr;
         if (!target) {
@@ -650,19 +653,19 @@ namespace {
             w->m_workspace->m_monitor = target;
             w->m_monitor              = target;
             for (const auto& sib : Desktop::windowState()->windows()) {
-                if (sib && sib->m_isMapped && sib->m_workspace == w->m_workspace)
+                if (sib && sib->mapped() && sib->m_workspace == w->m_workspace)
                     sib->m_monitor = target;
             }
         }
-        if (!w->m_workspace->isVisible()) {
+        if (!w->m_workspace->visible()) {
             w->m_workspace->m_renderOffset->warp();
             w->m_workspace->m_alpha->setValueAndWarp(0.f);
             w->m_workspace->m_forceRendering = false;
         }
         if (stopFade) {
-            w->m_monitorMovedFrom = MONITOR_INVALID;
-            w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.f);
-            w->alpha(Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(1.f);
+            w->presentation().resetMonitorMovedFrom();
+            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_MOVE_FROM_WORKSPACE)->setValueAndWarp(1.f);
+            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_MOVE_TO_WORKSPACE)->setValueAndWarp(1.f);
             w->positionAnimation()->warp();
             w->sizeAnimation()->warp();
         }
@@ -728,7 +731,7 @@ namespace {
             }
         }
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (w && w->m_isMapped && onMinimizedWs(w))
+            if (w && w->mapped() && onMinimizedWs(w))
                 syncWorkspaceMonitor(w, nullptr, dying, false);
         }
         publishMinimized();
@@ -737,7 +740,7 @@ namespace {
     void pruneMinimized() {
         std::erase_if(g_minimized, [](const SMinimized& m) {
             const auto w = m.window.lock();
-            return !w || !w->m_isMapped || (!onMinimizedWs(w) && !g_lamps.contains(w.get()));
+            return !w || !w->mapped() || (!onMinimizedWs(w) && !g_lamps.contains(w.get()));
         });
         std::erase_if(g_wsTiles, [](const auto& kv) {
             return std::none_of(g_minimized.begin(), g_minimized.end(), [&](const SMinimized& m) { return m.workspace == kv.first; });
@@ -765,7 +768,7 @@ namespace {
     using Layout::Tiled::SDwindleNodeData;
 
     Layout::Tiled::CDwindleAlgorithm* dwindleOf(const PHLWINDOW& w) {
-        if (!w || w->m_isFloating)
+        if (!w || w->isFloating())
             return nullptr;
         const auto target = w->layoutTarget();
         const auto space  = target ? target->space() : nullptr;
@@ -845,7 +848,7 @@ namespace {
         std::unordered_map<std::string, SP<SDwindleNodeData>> leafOf;
         std::vector<SP<SDwindleNodeData>>                     inner;
         for (const auto& sib : Desktop::windowState()->windows()) {
-            if (!sib || !sib->m_isMapped || sib->m_isFloating || sib->m_workspace != w->m_workspace)
+            if (!sib || !sib->mapped() || sib->isFloating() || sib->m_workspace != w->m_workspace)
                 continue;
             const auto n = dw->getNodeFromWindow(sib);
             if (!n || n->children[0] || n->children[1])
@@ -935,7 +938,7 @@ namespace {
     }
 
     SDispatchResult startMinimize(const PHLWINDOW& w) {
-        if (!w || !w->m_isMapped)
+        if (!w || !w->mapped())
             return {.success = false, .error = "mios_lamp.minimize: no such window"};
         if (onMinimizedWs(w))
             return {};
@@ -961,7 +964,7 @@ namespace {
         const auto ws  = w->m_workspace;
         // No animation for: the lamp off, a window nobody sees, grouped windows (their layout alpha is the group's),
         // rotated outputs (the transformer does not handle output transforms).
-        if (!eventOn("minimize") || !mon || !ws || !ws->isVisible() || w->isHidden() || w->m_group || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL) {
+        if (!eventOn("minimize") || !mon || !ws || !ws->visible() || w->isHidden() || w->grouping().group() || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL) {
             plainMinimize(w);
             return {};
         }
@@ -972,14 +975,14 @@ namespace {
         rec.originMonitor = mon;
         rec.address   = addressOf(w);
         rec.workspace = workspaceSelector(ws);
-        rec.cls       = w->m_class;
-        rec.title     = w->m_title;
+        rec.cls       = w->metadata().appID();
+        rec.title     = w->metadata().title();
         rec.monitor   = mon->m_name;
-        rec.floating  = w->m_isFloating;
+        rec.floating  = w->isFloating();
         rec.geometry  = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
         rec.timeMs    = epochMs();
         for (const auto& sib : Desktop::windowState()->windows()) {
-            if (sib && sib != w && sib->m_isMapped && !sib->m_isFloating && sib->m_workspace == ws) {
+            if (sib && sib != w && sib->mapped() && !sib->isFloating() && sib->m_workspace == ws) {
                 rec.siblings.push_back({addressOf(sib), CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()}});
             }
         }
@@ -1018,7 +1021,7 @@ namespace {
             if (const auto w = it->window.lock(); w && onMinimizedWs(w))
                 return w;
         for (const auto& w : Desktop::windowState()->windows()) // minimized by an older build or by hand
-            if (w && w->m_isMapped && onMinimizedWs(w))
+            if (w && w->mapped() && onMinimizedWs(w))
                 return w;
         return nullptr;
     }
@@ -1028,7 +1031,7 @@ namespace {
     SDispatchResult startRestore(PHLWINDOW w, const std::optional<std::string>& sourceHint = std::nullopt) {
         if (!w)
             w = lastMinimized();
-        if (!w || !w->m_isMapped)
+        if (!w || !w->mapped())
             return {.success = false, .error = "mios_lamp.restore: no minimized window"};
         auto       it  = g_lamps.find(w.get());
         const auto now = Clock::now();
@@ -1123,10 +1126,10 @@ namespace {
         std::vector<PHLWINDOW>                 targetTiled;
         std::unordered_map<std::string, CBox>  desiredBoxes;
 
-        if (!s.wasFloating && !w->m_isFloating && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
+        if (!s.wasFloating && !w->isFloating() && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
             // Find all currently mapped tiled windows on target workspace
             for (const auto& sib : Desktop::windowState()->windows()) {
-                if (sib && sib != w && sib->m_isMapped && !sib->m_isFloating && sib->m_workspace &&
+                if (sib && sib != w && sib->mapped() && !sib->isFloating() && sib->m_workspace &&
                     workspaceSelector(sib->m_workspace) == s.workspaceTo) {
                     targetTiled.push_back(sib);
                 }
@@ -1244,13 +1247,13 @@ namespace {
 
         const auto sel = "address:" + s.address;
         dispatch(std::format("hl.dsp.window.move({{workspace = \"{}\", window = \"{}\", follow = false}})", s.workspaceTo, sel));
-        if (s.geometryTo && w->m_isFloating) {
+        if (s.geometryTo && w->isFloating()) {
             const auto g = *s.geometryTo;
             if ((w->positionAnimation()->goal() - g.pos()).size() > 0.5)
                 dispatch(std::format("hl.dsp.window.move({{x = {}, y = {}, window = \"{}\"}})", (int)std::lround(g.x), (int)std::lround(g.y), sel));
             if ((w->sizeAnimation()->goal() - g.size()).size() > 0.5)
                 dispatch(std::format("hl.dsp.window.resize({{x = {}, y = {}, window = \"{}\"}})", (int)std::lround(g.w), (int)std::lround(g.h), sel));
-        } else if (!s.wasFloating && !w->m_isFloating && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
+        } else if (!s.wasFloating && !w->isFloating() && s.preMinBox.w > 0 && s.preMinBox.h > 0) {
             // exact: the recorded split tree (structure + ratios); the slot heuristics below only when it cannot apply
             const bool treeRestored = applyTiles(s.workspaceTo, w);
             if (!treeRestored && g_layoutManager && !desiredBoxes.empty()) {
@@ -1313,7 +1316,7 @@ namespace {
         // Warp all sibling tiled windows on target workspace so the layout snaps immediately without backgrounding w
         const auto targetWs = w->m_workspace;
         for (const auto& sib : Desktop::windowState()->windows()) {
-            if (sib && sib != w && sib->m_isMapped && sib->m_workspace == targetWs && !sib->m_isFloating) {
+            if (sib && sib != w && sib->mapped() && sib->m_workspace == targetWs && !sib->isFloating()) {
                 sib->positionAnimation()->warp();
                 sib->sizeAnimation()->warp();
             }
@@ -1341,12 +1344,12 @@ namespace {
         if (!w || g_exiting || !eventOn("launch") || g_lamps.contains(w.get()))
             return;
         const auto mon = w->m_monitor.lock();
-        if (!mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL || !w->m_workspace || !w->m_workspace->isVisible())
+        if (!mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL || !w->m_workspace || !w->m_workspace->visible())
             return;
         const auto pending = parseLaunches(readSmall(runtimePath(g_cfg.launchFile, "mios-lamp-launch.json")));
         if (pending.empty())
             return;
-        const auto hit = matchLaunch(pending, epochMs(), std::max<double>(500, g_cfg.launchTimeout->value()), w->m_class, w->m_initialClass, mon->m_name,
+        const auto hit = matchLaunch(pending, epochMs(), std::max<double>(500, g_cfg.launchTimeout->value()), w->metadata().appID(), w->metadata().initialAppID(), mon->m_name,
                                      [](const std::string& id) { return std::find(g_consumed.begin(), g_consumed.end(), id) != g_consumed.end(); });
         if (!hit)
             return;
@@ -1423,7 +1426,7 @@ namespace {
         for (auto& [raw, sp] : g_lamps) {
             auto&      s = *sp;
             const auto w = s.window.lock();
-            if (!w || !w->m_isMapped) {
+            if (!w || !w->mapped()) {
                 drop.push_back(raw);
                 continue;
             }
@@ -1578,8 +1581,8 @@ namespace {
         return out + "]}";
     }
 
-    std::string hyprctl(eHyprCtlOutputFormat, std::string request) {
-        std::string_view rest{request};
+    IPC::Socket1::SResponse hyprctl(const IPC::Socket1::SRequest& request) {
+        std::string_view rest{request.command};
         if (rest.starts_with("mios-lamp"))
             rest.remove_prefix(9);
         while (!rest.empty() && rest.front() == ' ')
@@ -1602,7 +1605,7 @@ namespace {
         }
         if (cmd == "minimize" || cmd == "restore" || cmd == "toggle") {
             const auto r = runKind(cmd == "minimize" ? 0 : cmd == "restore" ? 1 : 2, arg.empty() ? std::nullopt : std::optional<std::string>(arg));
-            return r.success ? "ok" : r.error;
+            return r.success ? std::string{"ok"} : r.error;
         }
         return "usage: hyprctl mios-lamp status | stats [reset|raw] | minimize|restore|toggle [window selector]";
     }
@@ -1635,13 +1638,15 @@ namespace MiosLampFx {
                 s.t = progressAt(s, now);
             s.modelMs = nowMs;
             applyAlphas(s, w);
-            if (!s.attached || !w->m_workspace || !w->m_workspace->isVisible())
+            if (!s.attached || !w->m_workspace || !w->m_workspace->visible())
                 continue;
             const SRect win = rectOf(windowBoxGlobal(w));
             if (!buildMesh(win, s.target, chooseEdge(win, s.target, s.edgeHint), s.t, prm, mesh))
                 continue;
             const SRect b   = meshBounds(mesh);
             CBox        ext = CBox{b.x, b.y, b.w, b.h}.expand(6);
+            s.extRel        = CBox{ext.x - win.x, ext.y - win.y, ext.w, ext.h};
+            s.extValid      = true;
             const SRect u   = unite(rectOf(ext), rectOf(s.lastExt));
             g_pHyprRenderer->damageBox(CBox{u.x, u.y, u.w, u.h});
             s.lastExt = ext;
@@ -1683,7 +1688,7 @@ namespace MiosLampFx {
         HyprlandAPI::addLuaFunction(PH, "mios_lamp", "minimize", &luaMinimize);
         HyprlandAPI::addLuaFunction(PH, "mios_lamp", "restore", &luaRestore);
         HyprlandAPI::addLuaFunction(PH, "mios_lamp", "toggle", &luaToggle);
-        g_cmd = HyprlandAPI::registerHyprCtlCommand(PH, SHyprCtlCommand{.name = "mios-lamp", .exact = false, .fn = hyprctl});
+        g_cmd = HyprlandAPI::registerHyprCtlCommand(PH, IPC::Socket1::SCommand{.name = "mios-lamp", .match = IPC::Socket1::COMMAND_MATCH_PREFIX, .handler = hyprctl});
 
         g_timer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) {
             try {
@@ -1693,7 +1698,7 @@ namespace MiosLampFx {
         g_pEventLoopManager->addTimer(g_timer);
 
         g_listeners.push_back(Event::bus()->m_events.window.moveToWorkspace.listen([](PHLWINDOW w, PHLWORKSPACE ws) {
-            if (!w || !ws || ws->m_name != minimizedWs())
+            if (!w || !ws || ws->addressableName() != minimizedWs())
                 return;
             for (const auto& m : g_minimized)
                 if (m.window.lock() == w) {
@@ -1702,7 +1707,7 @@ namespace MiosLampFx {
                 }
             const auto prevMon = w->m_prevMonitor.lock();
             const auto mon     = prevMon ? prevMon : w->m_monitor.lock();
-            std::string origWs = (w->m_workspace && w->m_workspace->m_name != minimizedWs()) ? workspaceSelector(w->m_workspace) : std::string{};
+            std::string origWs = (w->m_workspace && w->m_workspace->addressableName() != minimizedWs()) ? workspaceSelector(w->m_workspace) : std::string{};
             if (origWs.empty()) {
                 const auto fm = mon ? mon : Desktop::focusState()->monitor();
                 origWs        = fm ? workspaceSelector(fm->m_activeWorkspace) : std::string{"1"};
@@ -1712,14 +1717,14 @@ namespace MiosLampFx {
             rec.originMonitor = mon;
             rec.address   = addressOf(w);
             rec.workspace = origWs;
-            rec.cls       = w->m_class;
-            rec.title     = w->m_title;
+            rec.cls       = w->metadata().appID();
+            rec.title     = w->metadata().title();
             rec.monitor   = mon ? mon->m_name : std::string{};
-            rec.floating  = w->m_isFloating;
+            rec.floating  = w->isFloating();
             rec.geometry  = CBox{w->positionAnimation()->goal(), w->sizeAnimation()->goal()};
             rec.timeMs    = epochMs();
             for (const auto& sib : Desktop::windowState()->windows()) {
-                if (sib && sib != w && sib->m_isMapped && !sib->m_isFloating && sib->m_workspace && workspaceSelector(sib->m_workspace) == origWs) {
+                if (sib && sib != w && sib->mapped() && !sib->isFloating() && sib->m_workspace && workspaceSelector(sib->m_workspace) == origWs) {
                     rec.siblings.push_back({addressOf(sib), CBox{sib->positionAnimation()->goal(), sib->sizeAnimation()->goal()}});
                 }
             }
@@ -1773,6 +1778,10 @@ namespace MiosLampFx {
         for (auto& [raw, s] : g_lamps)
             finish(*s);
         g_lamps.clear();
+        // every lamp transformer is inactive now (g_exiting); none may outlive the code it runs
+        for (const auto& w : Desktop::windowState()->windows())
+            if (w && w->effects().transformers()->get<CLampTransformer>())
+                w->effects().transformers()->removeInactive();
         if (g_cmd)
             HyprlandAPI::unregisterHyprCtlCommand(PH, g_cmd);
         g_cmd.reset();

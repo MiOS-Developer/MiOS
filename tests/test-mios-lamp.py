@@ -211,9 +211,9 @@ class PluginHostTests(unittest.TestCase):
         self.assertRegex(src, r'"plugin:mios_wobbly:pane_fade", "[^"]*", 1\.F\)')
         self.assertIn("            const float paneMin = std::clamp((float)g_cfg.paneFade->value(), 0.05f, 1.0f);\n", src)
         self.assertIn("            s.paneFade          = paneMin >= 1.0f ? 1.0f : (float)MiosLamp::wobblePaneFade(dev, paneMin, 2.0);\n", src)
-        self.assertIn("            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);\n", src)
+        self.assertIn("            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);\n", src)
         self.assertIn("g_cfg.flipY, g_cfg.paneFade})", src)
-        self.assertIn("        const float gain = 1.0f / std::max(s.paneFade, 0.05f);", src)
+        self.assertIn("        const float gain = 1.0f / std::max(s->paneFade, 0.05f);", src)
         self.assertNotIn("const float gain = 1.0f;", src)
         self.assertIn("            glUniform1f(g_locGain, gain);", src)
         self.assertNotIn("glUniform1f(g_locGain, 1.0f);", src)
@@ -266,7 +266,7 @@ class PluginHostTests(unittest.TestCase):
             src,
         )
         self.assertIn(
-            "            if (sib && sib != w && sib->m_isMapped && sib->m_workspace == targetWs && !sib->m_isFloating) {\n                sib->positionAnimation()->warp();\n                sib->sizeAnimation()->warp();",
+            "            if (sib && sib != w && sib->mapped() && sib->m_workspace == targetWs && !sib->isFloating()) {\n                sib->positionAnimation()->warp();\n                sib->sizeAnimation()->warp();",
             src,
         )
 

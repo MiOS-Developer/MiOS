@@ -1,4 +1,4 @@
-// AI-hint: mios-pacing -- a per-output compositor frame cap for Hyprland 0.56 (MiOS original source; [desktop.framerate]).
+// AI-hint: mios-pacing -- a per-output compositor frame cap for Hyprland 0.57 (MiOS original source; [desktop.framerate]).
 // Hyprland has no frame limiter: every damage asks aquamarine for a frame and CMonitorFrameScheduler::onFrame renders
 // and commits it. This plugin hooks onFrame (exported, non-virtual; found through findFunctionsByName) and admits a
 // frame only on phase-locked deadlines 1/max_fps apart (pacing.hpp). A deferred frame is not lost: the damage stays
@@ -49,7 +49,7 @@
 #include <hyprland/src/desktop/state/LayerState.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/protocols/core/Subcompositor.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
@@ -101,7 +101,7 @@ namespace {
         eIcons,
         float
     );
-    using origNotifDraw            = void (*)(Notification::CNotificationOverlay*, PHLMONITOR);
+    using origNotifDraw            = void (*)(Notification::CNotificationOverlay*, Render::CRenderContext&, PHLMONITOR); // 0.57: draw(ctx, monitor)
     using origCaptureToplevel      = void (*)(CToplevelExportClient*, uint32_t, int32_t, PHLWINDOW);
     using origMouseMoved = void (*)(CInputManager*, IPointer::SMotionEvent);
     using origMouseWarp = void (*)(CInputManager*, IPointer::SMotionAbsoluteEvent);
@@ -210,7 +210,7 @@ namespace {
     }
 
     void hkCaptureToplevel(CToplevelExportClient* self, uint32_t frame, int32_t overlayCursor, PHLWINDOW window) {
-        const MiosCaptureGuard::SWindowFacts FACTS{.exists = !!window, .mapped = window && window->m_isMapped, .hasMonitor = window && !!window->m_monitor.lock()};
+        const MiosCaptureGuard::SWindowFacts FACTS{.exists = !!window, .mapped = window && window->mapped(), .hasMonitor = window && !!window->m_monitor.lock()};
         const auto VERDICT = MiosCaptureGuard::verdict(FACTS, !g_exiting && g_cfg.captureGuard && g_cfg.captureGuard->value());
         switch (VERDICT) {
             case MiosCaptureGuard::eVerdict::PASS:
@@ -255,7 +255,7 @@ namespace {
         uint64_t                         follows = 0;
     } g_focused;
     std::vector<CHyprSignalListener>         g_listeners;
-    SP<SHyprCtlCommand>                      g_cmd;
+    SP<IPC::Socket1::SCommand>               g_cmd;
 
     std::string str(const SP<Config::Values::CStringValue>& v) {
         return std::string{v->value()};
@@ -490,11 +490,11 @@ namespace {
     std::string windowJson() {
         followFocused(); // a focus change that sent no event (a raw focus reset) is caught here
         const auto W = g_focused.window.lock();
-        if (!W || !W->m_isMapped || !g_focused.root.lock())
+        if (!W || !W->mapped() || !g_focused.root.lock())
             return "null";
         const auto MON = W->m_monitor.lock();
         return std::format("{{\"address\":\"0x{:x}\",\"class\":\"{}\",\"output\":\"{}\",\"fps\":{:.2f},\"frames\":{},\"surfaces\":{},\"follows\":{}}}",
-                           reinterpret_cast<std::uintptr_t>(W.get()), jsonEscape(W->m_class), jsonEscape(MON ? MON->m_name : ""),
+                           reinterpret_cast<std::uintptr_t>(W.get()), jsonEscape(W->metadata().appID()), jsonEscape(MON ? MON->m_name : ""),
                            g_focused.rate.fps(MiosPacing::Clock::now()), g_focused.rate.frames, g_focused.rate.surfaces.size(), g_focused.follows);
     }
 
@@ -621,13 +621,13 @@ namespace {
         return ret;
     }
 
-    void hkNotifDraw(Notification::CNotificationOverlay* self, PHLMONITOR mon) {
+    void hkNotifDraw(Notification::CNotificationOverlay* self, Render::CRenderContext& ctx, PHLMONITOR mon) {
         if (!g_exiting && self) {
             self->dismissNotifications(-1);
             return;
         }
         const auto ORIG = reinterpret_cast<origNotifDraw>(g_notifDrawHook->m_original);
-        ORIG(self, mon);
+        ORIG(self, ctx, mon);
     }
 
     std::string jsonEscape(const std::string& s) {
@@ -676,8 +676,8 @@ namespace {
             g_cursor.armed ? "true" : "false", g_cursor.overridden ? "true" : "false") + ",\"window\":" + windowJson() + "}";
     }
 
-    std::string hyprctl(eHyprCtlOutputFormat, std::string request) {
-        std::string_view rest{request};
+    IPC::Socket1::SResponse hyprctl(const IPC::Socket1::SRequest& request) {
+        std::string_view rest{request.command};
         if (rest.starts_with("mios-pacing"))
             rest.remove_prefix(11);
         while (!rest.empty() && rest.front() == ' ')
@@ -846,7 +846,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             follow(nullptr);
     }));
     followFocused();
-    g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "mios-pacing", .exact = false, .fn = hyprctl});
+    g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{.name = "mios-pacing", .match = IPC::Socket1::COMMAND_MATCH_PREFIX, .handler = hyprctl});
 
     return {"mios-pacing", "Per-output frame cap for the MiOS frame-rate policy (VRR outputs); focused-window frame meter", "MiOS", "1.1"};
 }
