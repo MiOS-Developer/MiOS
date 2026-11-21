@@ -2870,6 +2870,9 @@ _mios_input MIOS_NETWORK_FIREWALLD_DEFAULT_ZONE MIOS_FIREWALLD_ZONE || { return 
 : "${MIOS_NETWORK_FIREWALLD_DEFAULT_ZONE:=drop}"
 [ -n "${MIOS_FIREWALLD_ZONE+x}" ] || MIOS_FIREWALLD_ZONE="${MIOS_NETWORK_FIREWALLD_DEFAULT_ZONE:-}"
 : "${MIOS_FIREWALL_OPEN_PORTS:=forge_http,open_webui,code_server,hermes,searxng,cockpit,hermes_dashboard,llm_light,pgvector,cockpit_link,adguard_ui,ssh,forge_ssh,llm_heavy,cpu_node,ssh_ca}"
+: "${MIOS_FIREWALL_WINDOWS_EXPOSE:=forge_http,open_webui,hermes,cockpit,llm_light,code_server,guacamole_web}"
+: "${MIOS_FIREWALL_WINDOWS_PROFILES:=Private,Domain}"
+: "${MIOS_FIREWALL_WINDOWS_REMOTE_ADDRESSES:=LocalSubnet,100.64.0.0/10,fd7a:115c:a1e0::/48}"
 _mios_input MIOS_PATHS_VAR_DIR MIOS_VAR_DIR || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PATHS_VAR_DIR:=/var/lib/mios}"
 [ -n "${MIOS_VAR_DIR+x}" ] || MIOS_VAR_DIR="${MIOS_PATHS_VAR_DIR:-}"
@@ -8165,6 +8168,7 @@ _mios_input MIOS_WSL2_DESKTOP_COMPAT_QT_PLATFORM MIOS_WSLG_QT_PLATFORM || { retu
 : "${MIOS_WSL2_DNS_TUNNELING:=true}"
 : "${MIOS_WSL2_FIREWALL:=true}"
 : "${MIOS_WSL2_GUI_APPLICATIONS:=true}"
+: "${MIOS_WSL2_HOST_ADDRESS_LOOPBACK:=true}"
 : "${MIOS_WSL2_LOCALHOST_FORWARDING:=true}"
 : "${MIOS_WSL2_NETWORKING_MODE:=NAT}"
 [ -n "${MIOS_WSLBOOT_DONE+x}" ] || MIOS_WSLBOOT_DONE="${MIOS_PATHS_WSL_FIRSTBOOT_DONE:-}"
