@@ -496,10 +496,12 @@ pub mod emit_build {
     use std::collections::BTreeSet;
     use toml::Value;
 
-    pub fn emit_build_shell(merged: &Value, stack_offset: i64) -> Result<String, String> {
+    /// Deduplicated `[packages.<section>].pkgs` across `sections`, in order; a
+    /// missing, malformed or empty selection is an error, never a partial list.
+    fn package_selection(merged: &Value, sections: &[&str]) -> Result<Vec<String>, String> {
         let mut packages = Vec::new();
         let mut seen = BTreeSet::new();
-        for section in ["mcp", "agent_cli"] {
+        for section in sections {
             let values = merged
                 .get("packages")
                 .and_then(|v| v.get(section))
@@ -513,14 +515,21 @@ pub mod emit_build {
                     .ok_or_else(|| {
                         format!("SSOT packages.{section}.pkgs contains an invalid package")
                     })?;
-                if seen.insert(package) {
-                    packages.push(package);
+                if seen.insert(package.to_string()) {
+                    packages.push(package.to_string());
                 }
             }
         }
         if packages.is_empty() {
-            return Err("SSOT service-base packages are empty".into());
+            return Err(format!("SSOT packages {} are empty", sections.join("+")));
         }
+        Ok(packages)
+    }
+
+    pub fn emit_build_shell(merged: &Value, stack_offset: i64) -> Result<String, String> {
+        let packages = package_selection(merged, &["mcp", "agent_cli"])?;
+        // Present only for the service base's agent CLI build step, removed after it.
+        let build_packages = package_selection(merged, &["agent_cli_build"])?;
         let reference = merged
             .get("build")
             .and_then(|v| v.get("bake_refs"))
@@ -531,8 +540,9 @@ pub mod emit_build {
         let mut exports = crate::emit::build_exports_map(merged, stack_offset);
         crate::emit::resolve_cross_references(&mut exports);
         let mut output = format!(
-            "export MIOS_MCP_PACKAGES={}\nexport SEARXNG_REF={}\n",
+            "export MIOS_MCP_PACKAGES={}\nexport MIOS_AGENT_CLI_BUILD_PACKAGES={}\nexport SEARXNG_REF={}\n",
             crate::emit_shell::shlex_quote(&packages.join(" ")),
+            crate::emit_shell::shlex_quote(&build_packages.join(" ")),
             crate::emit_shell::shlex_quote(reference)
         );
         for key in [
@@ -558,7 +568,7 @@ pub mod emit_build {
     mod tests {
         use super::*;
         fn fixture() -> Value {
-            "[packages.mcp]\npkgs=['python3','git']\n[packages.agent_cli]\npkgs=['git','tmux']\n[build.bake_refs]\nsearxng='custom'\n[env]\nMIOS_SERVICES_PIPER_BASE='base'\nMIOS_SERVICES_PIPER_VERSION='v1'\nMIOS_SERVICES_PIPER_VOICE='voice'\nMIOS_SERVICES_PIPER_UID='1000'\nMIOS_SERVICES_PIPER_GID='1000'".parse().unwrap()
+            "[packages.mcp]\npkgs=['python3','git']\n[packages.agent_cli]\npkgs=['git','tmux']\n[packages.agent_cli_build]\npkgs=['make','gcc-c++']\n[build.bake_refs]\nsearxng='custom'\n[env]\nMIOS_SERVICES_PIPER_BASE='base'\nMIOS_SERVICES_PIPER_VERSION='v1'\nMIOS_SERVICES_PIPER_VOICE='voice'\nMIOS_SERVICES_PIPER_UID='1000'\nMIOS_SERVICES_PIPER_GID='1000'".parse().unwrap()
         }
         #[test]
         fn selections_are_deduplicated_and_shell_quoted() {
@@ -567,6 +577,7 @@ pub mod emit_build {
                 Value::String("branch'; touch /tmp/control".into());
             let text = emit_build_shell(&data, 0).unwrap();
             assert!(text.contains("MIOS_MCP_PACKAGES='python3 git tmux'"));
+            assert!(text.contains("MIOS_AGENT_CLI_BUILD_PACKAGES='make gcc-c++'"));
             assert!(text.contains("SEARXNG_REF='branch'\"'\"'; touch /tmp/control'"));
         }
         #[test]
@@ -577,6 +588,13 @@ pub mod emit_build {
             assert!(emit_build_shell(&data, 0).is_err());
             let mut data = fixture();
             data["env"]["MIOS_SERVICES_PIPER_VOICE"] = Value::String(String::new());
+            assert!(emit_build_shell(&data, 0).is_err());
+            // The build-only toolchain is required: without it node-gyp cannot build node-pty.
+            let mut data = fixture();
+            data["packages"].as_table_mut().unwrap().remove("agent_cli_build");
+            assert!(emit_build_shell(&data, 0).is_err());
+            let mut data = fixture();
+            data["packages"]["agent_cli_build"]["pkgs"] = Value::Array(Vec::new());
             assert!(emit_build_shell(&data, 0).is_err());
         }
     }

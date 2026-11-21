@@ -1,10 +1,10 @@
 # AI-hint: Hypr3D 3D->2D keyboard transition (applies after hypr3d-mios-room-input.patch): leaving the room always hands the keyboard to a window. deactivate3D re-focuses, after the layout restore, the window the room had focused at exit; when the room had no aim focus (a quick 0.15-0.4 s re-toggle, or the crosshair on the floor) the window that had the keyboard in 2D when the room opened (saved by enter3D, kept across a re-entry during the exit); then the newest still-shown window in Hyprland's focus history; then the newest window on the room's monitor. Visible workspace, mapped, not no_focus only; never under a session lock. Without it clearAimFocus leaves the desktop with no focused window and typed keys go nowhere.
 # AI-related: tests/test-hypr3d-input-transitions.py, tests/test-hypr3d-input-transitions-live.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d].patches, usr/share/mios/hyprland/patches/hypr3d-mios-room-input.patch
 diff --git a/src/main.cpp b/src/main.cpp
-index 7864f43..364bdf1 100644
+index 09be857..a5e9f1d 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -43,6 +43,7 @@
+@@ -46,6 +46,7 @@
  #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
  #include <hyprland/src/config/values/ConfigValues.hpp>
  #include <hyprland/src/desktop/state/WindowState.hpp>
@@ -12,7 +12,7 @@ index 7864f43..364bdf1 100644
  #include <hyprland/src/config/ConfigValue.hpp>
  #include <hyprland/src/devices/IKeyboard.hpp>
  #include <hyprland/src/devices/IPointer.hpp>
-@@ -305,6 +306,11 @@ static std::uintptr_t g_skirtFinalRefreshId = 0;
+@@ -308,6 +309,11 @@ static std::uintptr_t g_skirtFinalRefreshId = 0;
  // The window that currently owns keyboard focus, as the aim logic last set it.
  static std::uintptr_t g_lastFocusId = 0;
  
@@ -24,7 +24,7 @@ index 7864f43..364bdf1 100644
  // 3D FPS-style mouse gestures. Super is the modifier: LMB moves the aimed
  // window in the 3D room, RMB resizes its real Hyprland/Wayland geometry.
  enum class EPointerGesture : uint8_t {
-@@ -4902,6 +4908,54 @@ static CHyprSignalListener g_pipFullscreenListener;
+@@ -4927,6 +4933,54 @@ static CHyprSignalListener g_pipFullscreenListener;
  
  // --- lifecycle --------------------------------------------------------------
  
@@ -38,7 +38,7 @@ index 7864f43..364bdf1 100644
 +// room can end). Without it a room exit with no aim focus -- a quick
 +// re-toggle, or the crosshair on the floor -- left keys going nowhere.
 +static bool roomExitFocusable(const PHLWINDOW& W) {
-+    return W && W->m_isMapped && !W->isHidden() && W->m_workspace && W->m_workspace->isVisible() &&
++    return W && W->mapped() && !W->isHidden() && W->m_workspace && W->m_workspace->visible() &&
 +        !(W->m_ruleApplicator && W->m_ruleApplicator->noFocus().valueOrDefault());
 +}
 +
@@ -79,7 +79,7 @@ index 7864f43..364bdf1 100644
  static void deactivate3D() {
      finishClientButton(0);
      resetPointerGesture();
-@@ -4956,6 +5010,9 @@ static void deactivate3D() {
+@@ -4981,6 +5035,9 @@ static void deactivate3D() {
      if (Compat::setCursorHidden(false) && g_pHyprRenderer)
          g_pHyprRenderer->setCursorFromName("default", true);
  
@@ -89,7 +89,7 @@ index 7864f43..364bdf1 100644
      clearAimFocus();
      g_world.clear();
      g_faceViewer.clear();
-@@ -4976,6 +5033,9 @@ static void deactivate3D() {
+@@ -5001,6 +5058,9 @@ static void deactivate3D() {
      unghostWindows();
      g_renderedOnce = false;
  
@@ -99,7 +99,7 @@ index 7864f43..364bdf1 100644
      HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {tab_yield = true}}})");
      applyGlobalShaderGlassState(false);
  
-@@ -5015,6 +5075,12 @@ static void requestDeactivate3D() {
+@@ -5040,6 +5100,12 @@ static void requestDeactivate3D() {
  }
  
  static void enter3D() {

@@ -235,9 +235,10 @@ decision is always a new record, never a rewrite of the old one.
 | `usr/share/doc/mios/adr/0028-one-canonical-task-list.md` | ADR-0028 makes tasks.jsonl at the repo root the only canonical MiOS task list, edited directly; TASKS.md is its rendered documentation plus an operator-overrides block every task tool applies; the... |
 | `usr/share/doc/mios/adr/0029-agent-succession-and-interop.md` | ADR-0029 adds a coordinator lease (agent.lease, Kubernetes Lease semantics) beside the relay's presence lease, so a standby harness can detect the holder's credit exhaustion from its transcript and... |
 | `usr/share/doc/mios/adr/0030-source-file-budget.md` | ADR-0030 caps EACH MiOS repo (mios.git and mios-bootstrap) at 500 tracked files TOTAL (dependencies included): shrink-only per-domain budgets in [legibility.file_budget], projections become build... |
+| `usr/share/doc/mios/adr/0031-k3s-fleet-conversion-and-tailnet-service-names.md` | ADR-0031 (proposed) decides how non-hardware MiOS services move to k3s across 2-6 Blades with failover, and how each gets a tailnet MagicDNS name; the reasoning, inventory and open questions are in... |
 | `usr/share/doc/mios/adr/README.md` | Index + process spec for MiOS Architecture Decision Records; read this first to learn the ADR format, status lifecycle, and which ADR governs the workstream you are implementing. |
 
-<!-- derived from the AI-hint headers of 31 file(s) matching usr/share/doc/mios/adr/*.md -->
+<!-- derived from the AI-hint headers of 32 file(s) matching usr/share/doc/mios/adr/*.md -->
 <!-- /MIOS-GEN:index:usr/share/doc/mios/adr/*.md -->
 
 ## manual

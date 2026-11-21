@@ -104,11 +104,31 @@ mios_gh_repo() {
     printf '%s\n' "$rest"
 }
 
-# mios_gh_release_json OWNER/REPO TAG|latest -> release JSON on stdout.
+# mios_gh_release_json OWNER/REPO TAG|latest -> release JSON on stdout. When
+# the API does not answer 200 it says why on stderr -- curl's own error, or the
+# HTTP status with GitHub's message and the rate-limit headers -- and returns 1,
+# so an unreachable or rate-limited API is never reported as a missing digest.
 mios_gh_release_json() {
-    local repo="$1" tag="$2" path
+    local repo="$1" tag="$2" path url tmp code rc=0 msg remaining reset auth
     if [[ "$tag" == latest ]]; then path="releases/latest"; else path="releases/tags/${tag}"; fi
-    scurl -fsSL -H 'Accept: application/vnd.github+json' "${MIOS_GITHUB_API}/repos/${repo}/${path}"
+    url="${MIOS_GITHUB_API}/repos/${repo}/${path}"
+    tmp="$(mktemp -d)"
+    code="$(scurl -sSL -H 'Accept: application/vnd.github+json' -D "$tmp/headers" -o "$tmp/body" \
+                  -w '%{http_code}' "$url" 2>"$tmp/stderr")" || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        mios_err "GitHub API ${url}: request failed (curl exit ${rc}: $(tr '\n' ' ' < "$tmp/stderr" | sed 's/ *$//'))"
+        rm -rf -- "$tmp"; return 1
+    fi
+    if [[ "$code" != 200 ]]; then
+        msg="$(jq -r '.message // empty' < "$tmp/body" 2>/dev/null | head -n 1)" || msg=""
+        remaining="$(awk -F': *' 'tolower($1)=="x-ratelimit-remaining"{v=$2} END{gsub(/\r/,"",v); print v}' "$tmp/headers")"
+        reset="$(awk -F': *' 'tolower($1)=="x-ratelimit-reset"{v=$2} END{gsub(/\r/,"",v); print v}' "$tmp/headers")"
+        if declare -f _scurl_github_token >/dev/null && [[ -n "$(_scurl_github_token)" ]]; then auth=authenticated; else auth=unauthenticated; fi
+        mios_err "GitHub API ${url}: HTTP ${code:-none}${msg:+ (${msg})}, ${auth}${remaining:+, x-ratelimit-remaining ${remaining}}${reset:+, x-ratelimit-reset ${reset}}"
+        rm -rf -- "$tmp"; return 1
+    fi
+    cat -- "$tmp/body"
+    rm -rf -- "$tmp"
 }
 
 # mios_gh_asset_sha256 JSON NAME -> the sha256 GitHub publishes for that asset.
@@ -162,11 +182,15 @@ mios_record_resolved() {
 
 # mios_fetch_gh_release_asset REPO_URL TAG ASSET DEST LABEL -> one release asset
 # proven by GitHub's published digest; prints the sha256. Returns 2 (nothing
-# downloaded) when the forge cannot supply that digest.
+# downloaded) when the release lists no digest for the asset, 1 (nothing
+# downloaded) when the release metadata could not be fetched at all.
 mios_fetch_gh_release_asset() {
     local url="$1" tag="$2" asset="$3" dest="$4" label="$5" repo json sha
     repo="$(mios_gh_repo "$url")" || { mios_err "${label}: not a github.com repo: ${url}"; return 1; }
-    json="$(mios_gh_release_json "$repo" "$tag" 2>/dev/null)" || json=""
+    json="$(mios_gh_release_json "$repo" "$tag")" || {
+        mios_err "${label}: release ${tag} metadata unavailable from the GitHub API; not downloading ${asset}"
+        return 1
+    }
     sha="$(mios_gh_asset_sha256 "$json" "$asset")" || {
         mios_warn "${label}: GitHub publishes no digest for ${asset}@${tag}; not downloading it"
         return 2
@@ -179,7 +203,7 @@ mios_fetch_gh_release_asset() {
 mios_gh_release_asset_name() {
     local repo json
     repo="$(mios_gh_repo "$1")" || return 1
-    json="$(mios_gh_release_json "$repo" "$2" 2>/dev/null)" || return 2
+    json="$(mios_gh_release_json "$repo" "$2")" || return 2
     jq -er --arg re "$3" '[.assets[]?.name | select(test($re))][0] // empty' <<<"$json" 2>/dev/null || return 2
 }
 

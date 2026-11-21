@@ -147,6 +147,52 @@ fn container_name(marker: &str) -> Result<String, String> {
     }
     Ok(name.to_owned())
 }
+/// The build contexts [keybindings.tmux.desktop.source].admit may name.
+const ADMISSIONS: [&str; 3] = ["podman-MiOS-DEV", "image-bake", "drift-gate"];
+/// Which admitted context this build runs in, from the observed environment:
+/// the MiOS-DEV container by its actual name, an OCI image build by buildah's
+/// working-container marker, or the CI drift-gate job inside its container.
+/// Only contexts the SSOT `admit` list names are accepted.
+fn admission(
+    admit: &[String],
+    containerenv: Option<&str>,
+    github_actions: bool,
+    dockerenv: bool,
+) -> Result<String, String> {
+    if admit.is_empty() || admit.iter().any(|a| !ADMISSIONS.contains(&a.as_str())) {
+        return Err(format!(
+            "[keybindings.tmux.desktop.source].admit must name only {ADMISSIONS:?}"
+        ));
+    }
+    let allowed = |name: &str| admit.iter().any(|a| a == name);
+    if let Some(marker) = containerenv {
+        if allowed("podman-MiOS-DEV") {
+            if let Ok(name) = container_name(marker) {
+                return Ok(name);
+            }
+        }
+        let value = |key: &str| {
+            marker.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix(key)
+                    .map(|v| v.trim().trim_matches(['\'', '"']).to_owned())
+            })
+        };
+        if allowed("image-bake")
+            && value("engine=").is_some_and(|e| e.starts_with("buildah-"))
+            && value("name=").is_some_and(|n| n.ends_with("-working-container"))
+        {
+            return Ok("image-bake".into());
+        }
+    }
+    if allowed("drift-gate") && github_actions && (dockerenv || containerenv.is_some()) {
+        return Ok("drift-gate".into());
+    }
+    Err(format!(
+        "build-tmux-desktop runs only in an admitted context ({}); this is none of them",
+        admit.join(", ")
+    ))
+}
 fn digest_copy(input: &Path, mut output: Option<&mut File>) -> Result<String, String> {
     if !fs::metadata(input).map_err(|e| e.to_string())?.is_file() {
         return Err(format!("{} must be a regular file", input.display()));
@@ -243,9 +289,6 @@ pub fn run(
     build_dir: &Path,
     install_root: &Path,
 ) -> Result<(), String> {
-    let marker = fs::read_to_string("/run/.containerenv")
-        .map_err(|e| format!("run inside the admitted podman-MiOS-DEV container: {e}"))?;
-    let container = container_name(&marker)?;
     let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     let desktop = data
         .get("keybindings")
@@ -255,6 +298,23 @@ pub fn run(
     let source = desktop
         .get("source")
         .ok_or("missing keybindings.tmux.desktop.source")?;
+    let admit = source
+        .get("admit")
+        .and_then(Value::as_array)
+        .ok_or("desktop source admit must be an array")?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or("admit entries must be strings")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let container = admission(
+        &admit,
+        fs::read_to_string("/run/.containerenv").ok().as_deref(),
+        std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"),
+        Path::new("/.dockerenv").exists(),
+    )?;
     let version = field(source, "version")?;
     if !version
         .bytes()
@@ -402,6 +462,37 @@ mod tests {
         ] {
             assert!(container_name(bad).is_err());
         }
+    }
+    #[test]
+    fn only_ssot_admitted_build_contexts_run() {
+        let all: Vec<String> = ADMISSIONS.iter().map(|a| a.to_string()).collect();
+        let dev = "engine=\"podman-5\"\nname=\"podman-MiOS-DEV\"\n";
+        let bake = "engine=\"buildah-1.33.7\"\nname=\"machine-os-working-container\"\n";
+        let other = "engine=\"podman-5\"\nname=\"some-dev-box\"\n";
+        assert_eq!(
+            admission(&all, Some(dev), false, false).unwrap(),
+            "podman-MiOS-DEV"
+        );
+        assert_eq!(
+            admission(&all, Some(bake), false, false).unwrap(),
+            "image-bake"
+        );
+        assert_eq!(admission(&all, None, true, true).unwrap(), "drift-gate");
+        assert_eq!(
+            admission(&all, Some(other), true, false).unwrap(),
+            "drift-gate"
+        );
+        // Outside every admitted context, and each context only while the SSOT admits it.
+        assert!(admission(&all, Some(other), false, false).is_err());
+        assert!(admission(&all, None, false, true).is_err());
+        assert!(admission(&all, None, true, false).is_err());
+        let only_dev = vec!["podman-MiOS-DEV".to_string()];
+        assert!(admission(&only_dev, Some(bake), false, false).is_err());
+        assert!(admission(&only_dev, None, true, true).is_err());
+        assert!(admission(&[], Some(dev), false, false).is_err());
+        assert!(admission(&["anywhere".to_string()], Some(dev), false, false).is_err());
+        let fake_bake = "engine=\"podman-5\"\nname=\"x-working-container\"\n";
+        assert!(admission(&all, Some(fake_bake), false, false).is_err());
     }
     #[test]
     fn staging_paths_reject_escape_and_filesystem_root() {

@@ -56,9 +56,9 @@ def edge_violations(patch: str) -> list[str]:
     main = added(patch, "src/main.cpp")
     glass = added(patch, "src/MiosGlass.cpp")
     shader = added(patch, "src/Shaders.hpp")
-    if "makeUnique<CGlassEdgeDecoration>(window)" not in main:
+    if "makeShared<CGlassEdgeDecoration>(window)" not in main:
         errors.append("onNewWindow does not add CGlassEdgeDecoration")
-    hook = main[main.find("MiOS: the edge pass"):main.find("makeUnique<CGlassEdgeDecoration>")]
+    hook = main[main.find("MiOS: the edge pass"):main.find("makeShared<CGlassEdgeDecoration>")]
     if re.search(r"m_class|initialClass|m_title|opaque\(\)|m_isFloating|m_isX11|isModal|getClass", hook):
         errors.append("the edge decoration is filtered by window class/title/opacity/state")
     draw = glass[glass.find("void CGlassEdgeDecoration::draw"):glass.find("void CGlassEdgeDecoration::renderPass")]

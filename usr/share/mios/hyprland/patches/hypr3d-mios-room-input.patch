@@ -188,7 +188,7 @@ index 0000000..8407429
 +
 +} // namespace H3D::FaceViewer
 diff --git a/src/main.cpp b/src/main.cpp
-index f4555c9..7864f43 100644
+index 747f037..09be857 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -1,4 +1,7 @@
@@ -199,7 +199,7 @@ index f4555c9..7864f43 100644
  #include <hyprland/src/plugins/PluginAPI.hpp>
  #include <hyprland/src/plugins/PluginSystem.hpp>
  #include <dlfcn.h>
-@@ -212,6 +215,29 @@ static SPiPTheatre g_pipTheatre;
+@@ -215,6 +218,29 @@ static SPiPTheatre g_pipTheatre;
  static float g_cfgTheatreDistance=4.f, g_cfgTheatreWidth=4.f, g_cfgTheatreFill=0.9f;
  static float g_cfgTheatreSeconds=0.25f, g_cfgPiPRasterMax=2048.f;
  
@@ -229,7 +229,7 @@ index f4555c9..7864f43 100644
  static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
  // The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
  // own default, so the exit's "moved in the room?" test needs this separate record).
-@@ -1473,6 +1499,8 @@ static Vector2D crosshairLogical() {
+@@ -1498,6 +1524,8 @@ static Vector2D crosshairLogical() {
  static void resetMovementKeys() {
      g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
      g_keyUp = g_keyDown = g_keySprint = false;
@@ -238,7 +238,7 @@ index f4555c9..7864f43 100644
      g_superHeld = false;
      g_altHeld = false;
      g_shiftHeld = false;
-@@ -2170,6 +2198,7 @@ static void updateAimFocus(float dt) {
+@@ -2195,6 +2223,7 @@ static void updateAimFocus(float dt) {
      if (WINDOW) {
          Compat::focusWindow(WINDOW);
          g_lastFocusId = FOCUS;
@@ -246,7 +246,7 @@ index f4555c9..7864f43 100644
      }
      else {
          Compat::clearFocus();
-@@ -2264,7 +2293,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
+@@ -2289,7 +2318,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
   }
   const auto* e=g_world.find(id);if(!e) return;
   g_pipTheatre.id=id;g_pipTheatre.window=w;
@@ -255,7 +255,7 @@ index f4555c9..7864f43 100644
   g_pipTheatre.saved.scaleMul=retinaMul(id);
   const auto previous=g_fsStableBoxes.find(id);
   g_pipTheatre.sourceBox=previous!=g_fsStableBoxes.end() ? previous->second : CBox{e->logicalLeft+mon->m_position.x,e->logicalTop+mon->m_position.y,e->logicalWidth,e->logicalHeight};
-@@ -2276,7 +2305,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
+@@ -2301,7 +2330,7 @@ static void pollPiPTheatre(const PHLMONITOR& mon,const PHLWINDOW& w) {
   g_pipTheatre.rasterBox=CBox{mon->m_position.x+fit.x+(fit.w-source.w*sized->rasterFactor)*.5,mon->m_position.y+fit.y+(fit.h-source.h*sized->rasterFactor)*.5,source.w*sized->rasterFactor,source.h*sized->rasterFactor};
   const auto& cam=g_scene.camera();
   g_pipTheatre.id=id;g_pipTheatre.window=w;
@@ -264,7 +264,7 @@ index f4555c9..7864f43 100644
   const auto area=retinaFitArea(mon);
   const auto up=cross(cam.right(),cam.forward());
   const float offset=static_cast<float>((mon->m_size.y*0.5-(area.y+area.h*0.5))/mon->m_size.y)*2*g_cfgTheatreDistance*retinaTan();
-@@ -2306,6 +2335,30 @@ static void placePiPTheatre(World3D::SEntity& e,const PHLMONITOR& mon,const CBox
+@@ -2331,6 +2360,30 @@ static void placePiPTheatre(World3D::SEntity& e,const PHLMONITOR& mon,const CBox
  
  // Keep the optical/depth multiplier separate from extra room magnification.
  // Reversing a large resize can then recover the original native pixel density.
@@ -295,7 +295,7 @@ index f4555c9..7864f43 100644
  struct SPiPRasterOptics { PHLWINDOWREF window; float baseMul=1.f; };
  static std::unordered_map<std::uintptr_t,SPiPRasterOptics> g_pipRasterOptics;
  static bool resizePiPRaster(const PHLWINDOW& w,const CBox& start,float startMul,double wanted,CBox& out) {
-@@ -2969,6 +3022,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2994,6 +3047,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
          }
  
          placePiPTheatre(entity, mon, BOX);
@@ -303,7 +303,7 @@ index f4555c9..7864f43 100644
          ENTITIES.push_back(entity);
      }
  
-@@ -2995,6 +3049,9 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -3020,6 +3074,9 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
      }
  
      g_world.setEntities(std::move(ENTITIES), false);
@@ -313,7 +313,7 @@ index f4555c9..7864f43 100644
  
      // --- build the draw list from world + snapshot ---
      g_renderWindows.clear();
-@@ -4292,6 +4349,7 @@ static void beginExit3D() {
+@@ -4317,6 +4374,7 @@ static void beginExit3D() {
              }
              MW.roomPose.box2D       = MW.box2D;
              g_savedPoses[ENTITY.id] = MW.roomPose;
@@ -321,7 +321,7 @@ index f4555c9..7864f43 100644
              MW.stack                = static_cast<float>(i) * kMorphStackEps;
              ++i;
              g_viewMorphWins[ENTITY.id] = MW;
-@@ -4357,6 +4415,7 @@ static void beginExit3D() {
+@@ -4382,6 +4440,7 @@ static void beginExit3D() {
  
          MW.roomPose.box2D       = MW.box2D;
          g_savedPoses[ENTITY.id] = MW.roomPose;
@@ -329,7 +329,7 @@ index f4555c9..7864f43 100644
  
          MW.stack = static_cast<float>(i) * kMorphStackEps;
          ++i;
-@@ -4526,6 +4585,7 @@ static void saveViewPoses() {
+@@ -4551,6 +4610,7 @@ static void saveViewPoses() {
              }
          }
  
@@ -337,7 +337,7 @@ index f4555c9..7864f43 100644
          g_savedPoses[E.id] = POSE;
      }
  }
-@@ -4898,6 +4958,8 @@ static void deactivate3D() {
+@@ -4923,6 +4983,8 @@ static void deactivate3D() {
  
      clearAimFocus();
      g_world.clear();
@@ -346,7 +346,7 @@ index f4555c9..7864f43 100644
      g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
      g_retinaSettle.clear();
      g_winAnims3D.clear();
-@@ -5282,7 +5344,7 @@ static void applyCameraMovement(float dt) {
+@@ -5331,7 +5393,7 @@ static void applyCameraMovement(float dt) {
          const float postureMult =
              (g_playerPosture == EPlayerPosture::Crouch) ? 0.55f :
              (g_playerPosture == EPlayerPosture::Sit)    ? 0.25f : 1.0f;
@@ -355,7 +355,7 @@ index f4555c9..7864f43 100644
          const Vec3  TARGET =
              CAM.flatForward() * (FORWARD * SPEED) +
              CAM.right() * (STRAFE * SPEED);
-@@ -5300,7 +5362,7 @@ static void applyCameraMovement(float dt) {
+@@ -5349,7 +5411,7 @@ static void applyCameraMovement(float dt) {
  
      // --- flying: all three axes are key-driven ---
      const float SPEED =
@@ -364,7 +364,7 @@ index f4555c9..7864f43 100644
      const Vec3 TARGET =
          CAM.flatForward() * (FORWARD * SPEED) +
          CAM.right() * (STRAFE * SPEED) +
-@@ -5638,6 +5700,8 @@ static void update3D(float dt) {
+@@ -5698,6 +5760,8 @@ static void update3D(float dt) {
          g_input.reset();
      }
      pollGamepadState(dt);
@@ -373,7 +373,7 @@ index f4555c9..7864f43 100644
  
      // Release capture unconditionally when the view no longer owns input, so
      // a disappearing monitor or a closing transition can never strand the
-@@ -5822,7 +5886,7 @@ static void update3D(float dt) {
+@@ -5891,7 +5955,7 @@ static void update3D(float dt) {
                                              VEL.GetZ() * VEL.GetZ());
                  const auto ST = !g_grounded
                      ? CPlayerModel::EState::Jump
@@ -382,7 +382,7 @@ index f4555c9..7864f43 100644
                                                  : CPlayerModel::EState::Walk)
                                   : CPlayerModel::EState::Idle;
                  g_scene.player()->setState(ST);
-@@ -8222,12 +8286,30 @@ static void selectWindowCrt() {
+@@ -8326,12 +8390,30 @@ static void selectWindowCrt() {
      }
  
      if (hasMenu) {
@@ -419,7 +419,7 @@ index f4555c9..7864f43 100644
      } else {
          cycleCrtPreset();
      }
-@@ -8769,6 +8851,22 @@ static int luaConfig(lua_State* L) {
+@@ -9042,6 +9124,22 @@ static int luaConfig(lua_State* L) {
            return luaL_error(L,"hypr3d.config: invalid PiP Theatre settings");
           g_cfgTheatreDistance=distance;g_cfgTheatreWidth=width;g_cfgTheatreFill=fill;g_cfgTheatreSeconds=seconds;g_cfgPiPRasterMax=budget;
          }
@@ -442,10 +442,10 @@ index f4555c9..7864f43 100644
          if (!SET_NUM(idx, "window_scale", g_cfgWindowScale,
                       "windows.window_scale"))
              return luaL_error(L, "hypr3d.config: windows.window_scale must be a number");
-@@ -8944,6 +9042,13 @@ static int luaConfig(lua_State* L) {
-             return luaL_error(L, "hypr3d.config: player.flying must be a boolean");
-         if (!SET_BOOL(idx, "walk_bob", g_cfgWalkBob, "player.walk_bob"))
-             return luaL_error(L, "hypr3d.config: player.walk_bob must be a boolean");
+@@ -9223,6 +9321,13 @@ static int luaConfig(lua_State* L) {
+         if (!SET_NUM(idx, "first_person_offset", g_cfgFpBodyBack,
+                      "player.first_person_offset"))
+             return luaL_error(L, "hypr3d.config: player.first_person_offset must be a number");
 +        {
 +            // MiOS room input: the recenter verb's ease time constant (seconds).
 +            float rs = g_cfgRecenterSeconds;
@@ -456,7 +456,7 @@ index f4555c9..7864f43 100644
          if (!SET_BOOL(idx, "collision", g_playerCollision, "player.collision"))
              return luaL_error(L, "hypr3d.config: player.collision must be a boolean");
          {
-@@ -10258,6 +10363,152 @@ static SDispatchResult dispatchClick(std::string args) {
+@@ -10595,6 +10700,152 @@ static SDispatchResult dispatchClick(std::string args) {
      return {};
  }
  
@@ -537,7 +537,7 @@ index f4555c9..7864f43 100644
 +        float best = INFINITY;
 +        for (const auto& e : g_world.entities()) {
 +            const auto W = Compat::findWindowById(e.id);
-+            if (!W || !W->m_isMapped)
++            if (!W || !W->mapped())
 +                continue;
 +            const Vec3 d = e.center - cam.position;
 +            const float dist = d.x * d.x + d.y * d.y + d.z * d.z;
@@ -609,7 +609,7 @@ index f4555c9..7864f43 100644
  static SDispatchResult dispatchView(std::string args) {
      while (!args.empty() && std::isspace(static_cast<unsigned char>(args.front())))
          args.erase(args.begin());
-@@ -10321,7 +10572,14 @@ static int luaExportLayout(lua_State* L) {
+@@ -10658,7 +10909,14 @@ static int luaExportLayout(lua_State* L) {
          << "\",\"fullscreen_phase\":" << static_cast<int>(g_fsPhase) << ",\"view_morph\":" << static_cast<int>(g_viewMorph) << ",\"owns_input\":" << (ownsInput()?"true":"false") << ",\"camera\":{\"x\":" << cam.position.x
          << ",\"y\":" << cam.position.y << ",\"z\":" << cam.position.z
          << ",\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch
@@ -625,7 +625,7 @@ index f4555c9..7864f43 100644
      bool first=true;
      for (const auto& e:g_world.entities()) {
          if (!first) out << ',';
-@@ -10333,7 +10591,16 @@ static int luaExportLayout(lua_State* L) {
+@@ -10670,7 +10928,16 @@ static int luaExportLayout(lua_State* L) {
              << ",\"scale\":" << e.spawnScale << ",\"left\":" << box.x
              << ",\"top\":" << box.y << ",\"width\":" << box.w
              << ",\"height\":" << box.h << ",\"rendered_width\":" << e.width << ",\"rendered_height\":" << e.height
@@ -643,15 +643,15 @@ index f4555c9..7864f43 100644
      }
      out << "]}";
      const auto json=out.str();lua_pushlstring(L,json.data(),json.size());return 1;
-@@ -10472,6 +10739,27 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
-     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick))
-         throw std::runtime_error("[hypr3d] failed to register click dispatcher");
+@@ -10796,6 +11063,27 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
  
-+    // MiOS room input: the [keybindings.global.controller.room] verbs, as dispatchers and Lua functions.
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:cancel", dispatchCancel) ||
-+        !HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:sprint", dispatchSprint) ||
-+        !HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:recenter", dispatchRecenter))
-+        throw std::runtime_error("[hypr3d] failed to register room input dispatchers");
+     HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick);
+ 
++    // MiOS room input: the [keybindings.global.controller.room] verbs, as dispatchers and Lua functions
++    // (the dispatchers best-effort like the rest: a Lua-config compositor refuses them).
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:cancel", dispatchCancel);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:sprint", dispatchSprint);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:recenter", dispatchRecenter);
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "cancel", [](lua_State* L) -> int {
 +            const auto what = roomCancel();
 +            lua_pushlstring(L, what.data(), what.size());
@@ -671,7 +671,7 @@ index f4555c9..7864f43 100644
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "jump", [](lua_State* L) -> int {
          std::string arg;
          if (lua_gettop(L) >= 1 && lua_isstring(L, 1))
-@@ -10747,6 +11035,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+@@ -11092,6 +11380,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
  
  APICALL EXPORT void PLUGIN_EXIT() {
      // No event may call back into an unmapped plugin, even after a failed reload.

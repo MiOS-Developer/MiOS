@@ -13,28 +13,29 @@ index b42ff23..5e04958 100644
 + set_tests_properties(mios-pip-geometry PROPERTIES TIMEOUT 5)
 +endif()
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
-index 5e6d0f1..8120d04 100644
+index ae8927e..1deeed7 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
-@@ -383,7 +383,7 @@ void finishSkirtMask(CWindowCapture::SSkirtState& state,
- // the desktop's stack itself -- pane, client, edge pass -- with the same preset.
+@@ -387,7 +387,8 @@ void finishSkirtMask(CWindowCapture::SSkirtState& state,
+ // What remains for this scope is the client's own opacity.
  class CForeignSnapshotScope {
    public:
--    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr)
+-    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr) : m_window(window) {
 +    explicit CForeignSnapshotScope(const PHLWINDOW& window = nullptr, bool opaqueClient = false)
-         : m_saved(g_pHyprRenderer->m_renderData.renderModif), m_window(window) {
-         auto& modif = g_pHyprRenderer->m_renderData.renderModif;
-         modif.modifs.emplace_back(Render::SRenderModifData::RMOD_TYPE_TRANSLATE, Vector2D{0.0, 0.0});
-@@ -397,6 +397,7 @@ class CForeignSnapshotScope {
++        : m_window(window) {
+         if (m_window) {
+             // A foreign capture needs opaque pixels, but must not change the live
+             // alpha animation's value, goal, timer, or fullscreen input ownership.
+@@ -395,6 +396,7 @@ class CForeignSnapshotScope {
              // variables keep their exact state and are restored on scope exit.
              auto& pool = opaqueAlphas();
              for (size_t i = 0; i < CHANNELS.size(); ++i) {
 +                if (CHANNELS[i] == Desktop::View::WINDOW_ALPHA_ACTIVE && !opaqueClient) continue;
-                 if (m_window->alphaValue(CHANNELS[i]) >= 1.F)
+                 if (m_window->presentation().alphaValue(CHANNELS[i]) >= 1.F)
                      continue;
                  if (!pool[i])
-@@ -425,8 +426,8 @@ class CForeignSnapshotScope {
-
+@@ -421,8 +423,8 @@ class CForeignSnapshotScope {
+ 
    private:
      static constexpr std::array CHANNELS{Desktop::View::WINDOW_ALPHA_FADE,
 -        Desktop::View::WINDOW_ALPHA_LAYOUT, Desktop::View::WINDOW_ALPHA_FULLSCREEN};
@@ -44,10 +45,10 @@ index 5e6d0f1..8120d04 100644
          static std::array<PHLANIMVAR<float>, CHANNELS.size()> pool;
          return pool;
      }
-@@ -606,6 +607,52 @@ void main() {
+@@ -600,6 +602,52 @@ void main() {
      return out;
  }
-
+ 
 +
 +// Copy the SAME live effect client used by the desktop into the target's
 +// existing client rectangle. Decorations, picking, pose, and native ownership
@@ -97,7 +98,7 @@ index 5e6d0f1..8120d04 100644
  bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& monitor, bool force) {
      if (!window || !monitor)
          return false;
-@@ -686,7 +733,7 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
+@@ -680,7 +728,7 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
      // MiOS: as a foreign render, without hyprglass' pane and edge pass.
      SP<Render::IFramebuffer> fb;
      {
@@ -105,16 +106,16 @@ index 5e6d0f1..8120d04 100644
 +        CForeignSnapshotScope foreign(window, m_opaqueClient);
          fb = g_pHyprRenderer->makeSnapshotFB(window);
      }
-
-@@ -832,7 +879,7 @@ bool CWindowCapture::makeTiledSnapshot(
-
+ 
+@@ -827,7 +875,7 @@ bool CWindowCapture::makeTiledSnapshot(
+ 
              SP<Render::IFramebuffer> fb;
              {
 -                CForeignSnapshotScope foreign(window); // MiOS: no hyprglass pane / edge pass baked in
 +                CForeignSnapshotScope foreign(window, m_opaqueClient); // MiOS: no hyprglass pane / edge pass baked in
                  fb = g_pHyprRenderer->makeSnapshotFB(window);
              }
-
+ 
 diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
 index 7898df9..242697b 100644
 --- a/src/HyprlandCompat/WindowCapture.hpp
@@ -130,7 +131,7 @@ index 7898df9..242697b 100644
      void setMipmaps(bool on) {
          m_mipmaps = on;
      }
-
+ 
    private:
 +    bool m_opaqueClient = false;
      // Oversized windows: monitor-sized tiles, composited into one texture.
@@ -169,7 +170,7 @@ index 0000000..33be32d
 +}
 +}
 diff --git a/src/main.cpp b/src/main.cpp
-index 231cb1c..f4555c9 100644
+index 90e9388..747f037 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -1,3 +1,4 @@
@@ -177,15 +178,15 @@ index 231cb1c..f4555c9 100644
  #include <hyprland/src/plugins/PluginAPI.hpp>
  #include <hyprland/src/plugins/PluginSystem.hpp>
  #include <dlfcn.h>
-@@ -32,6 +33,7 @@
- #include <hyprland/src/render/gl/GLFramebuffer.hpp>
- #include <hyprland/src/output/Monitor.hpp>
- #include <hyprland/src/desktop/view/Window.hpp>
+@@ -35,6 +36,7 @@
+ #include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+ #include <hyprland/src/desktop/view/window/WindowBackend.hpp>
+ #include <hyprland/src/layout/target/WindowTarget.hpp>
 +#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
  #include <hyprland/src/managers/SeatManager.hpp>
  #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
  #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
-@@ -101,6 +103,8 @@ static InputController g_input;
+@@ -104,6 +106,8 @@ static InputController g_input;
  static World3D::CWorld g_world;
  static AimFocus        g_aim;
  static Compat::CWindowCapture g_capture;
@@ -193,8 +194,8 @@ index 231cb1c..f4555c9 100644
 +static std::unordered_set<std::uintptr_t> g_shaderComposited;
  // Background layers belong to the environment, never the window/picking list.
  static Compat::CWindowCapture g_environmentCapture;
-
-@@ -194,6 +198,20 @@ struct SViewPose {
+ 
+@@ -197,6 +201,20 @@ struct SViewPose {
  // Room poses remembered across toggles; keyed by window id, pruned against
  // the live room on every save (closed windows drop out).
  static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
@@ -215,7 +216,7 @@ index 231cb1c..f4555c9 100644
  static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
  // The room centre buildEnterMorph gave each window (the spawn path rewrites g_entryPoses3D with its
  // own default, so the exit's "moved in the room?" test needs this separate record).
-@@ -296,6 +314,9 @@ struct SResizeGesture {
+@@ -299,6 +317,9 @@ struct SResizeGesture {
      // resize is driven by the aim's DELTA from this point, so the grabbed
      // corner never snaps to the crosshair when the gesture starts.
      Vector2D      grabPx{};
@@ -225,7 +226,7 @@ index 231cb1c..f4555c9 100644
      int           edgeX = 0; // -1 left, +1 right
      int           edgeY = 0; // +1 top, -1 bottom
  };
-@@ -463,6 +484,13 @@ static bool domeDue() {
+@@ -466,6 +487,13 @@ static bool domeDue() {
  // windows (Super+LMB), resizes (Super+RMB) and clicks through to clients.
  enum class EKeyboardMode : uint8_t { Space, Window };
  static EKeyboardMode g_keyboardMode = EKeyboardMode::Space;
@@ -234,12 +235,12 @@ index 231cb1c..f4555c9 100644
 +static PHLWINDOWREF g_appInputWindow;
 +static bool appOwnsInput() {
 +    const auto W=g_appInputWindow.lock();
-+    return g_active && W && W->m_isMapped && Compat::focusedWindow()==W;
++    return g_active && W && W->mapped() && Compat::focusedWindow()==W;
 +}
-
+ 
  // input.typing_cursor: window (typing) mode also frees the pointer and gives
  // it a cursor on the windows. Off, window mode only redirects the keyboard
-@@ -1528,11 +1556,24 @@ static void clearAimFocus() {
+@@ -1553,12 +1581,25 @@ static void clearAimFocus() {
  // triggers a relayout of the ones still attached, which would corrupt boxes
  // captured afterwards. Ghosting is what stops tiling from managing windows
  // while they are living in 3D space.
@@ -261,11 +262,13 @@ index 231cb1c..f4555c9 100644
      std::erase_if(infos, [](const Compat::SWindowInfo& info) {
          return info.window &&
 -            (info.window->m_class == "shaderglass.exe" ||
-+            (boundShaderPane(info.window) || info.window->m_class == "shaderglass.exe" ||
-              info.window->m_initialClass == "shaderglass.exe");
+-             info.window->m_initialClass == "shaderglass.exe");
++            (boundShaderPane(info.window) || info.window->metadata().appID() == "shaderglass.exe" ||
++             info.window->metadata().initialAppID() == "shaderglass.exe");
      });
      return infos;
-@@ -1731,7 +1772,7 @@ static void startFramePump() {
+ }
+@@ -1756,7 +1797,7 @@ static void startFramePump() {
                  // Snapshot release deferred from deactivate3D: safe to
                  // destroy GL objects here, outside any render pass.
                  if (g_captureReleasePending && !g_active) {
@@ -274,10 +277,10 @@ index 231cb1c..f4555c9 100644
                      g_scene.setEnvironmentTexture(0);
                      g_environmentCapture.releaseAll();
                      g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
-@@ -1766,6 +1807,26 @@ static std::unordered_map<std::uintptr_t, SWinAnim3D> g_winAnims3D;
+@@ -1791,6 +1832,26 @@ static std::unordered_map<std::uintptr_t, SWinAnim3D> g_winAnims3D;
  static std::unordered_set<std::uintptr_t>             g_skipCloseAnim3D;
  static std::unordered_map<std::uintptr_t, CBox>       g_preMax3DBoxes;
-
+ 
 +
 +// Only mutually tagged, live native windows form an effect attachment. A
 +// recycled address or an unbound settings pane cannot replace another client.
@@ -291,7 +294,7 @@ index 231cb1c..f4555c9 100644
 +            const auto raw=tag.substr(prefix.size());size_t end=0;
 +            const auto id=std::stoull(raw,&end,16);if(end!=raw.size())continue;
 +            const auto pane=Compat::findWindowById(id);
-+            if(pane && pane!=target && pane->m_isMapped && !pane->isHidden() && pane->m_ruleApplicator &&
++            if(pane && pane!=target && pane->mapped() && !pane->isHidden() && pane->m_ruleApplicator &&
 +                pane->m_ruleApplicator->m_tagKeeper.isTagged(back.str())) return pane;
 +        } catch (...) {}
 +    }
@@ -301,17 +304,17 @@ index 231cb1c..f4555c9 100644
  static void refreshCaptures(
      const std::vector<Compat::SWindowInfo>& infos,
      const PHLMONITOR& mon
-@@ -1809,6 +1870,9 @@ static void refreshCaptures(
+@@ -1834,6 +1895,9 @@ static void refreshCaptures(
          g_fsPhase == EFullscreenPhase::To3D;
-
+ 
      bool consumedSkirt = false;
 +    std::unordered_set<std::uintptr_t> composited;
 +    std::vector<std::uintptr_t> effectKeep;
 +    g_shaderCapture.setOpaqueClient(true);
-
+ 
      size_t index = 0;
-
-@@ -1859,7 +1923,9 @@ static void refreshCaptures(
+ 
+@@ -1884,7 +1948,9 @@ static void refreshCaptures(
          // aim, focus) would retake EVERY window at full rate for the whole
          // transition -- the FPS crater. A mid-fade snapshot would bake
          // partial alpha anyway; keeping the last good one is better.
@@ -322,17 +325,17 @@ index 231cb1c..f4555c9 100644
              (FADING ||
              ALPHA_GRACE ||
              info.id == g_lastAimedId ||
-@@ -1867,7 +1933,7 @@ static void refreshCaptures(
+@@ -1892,7 +1958,7 @@ static void refreshCaptures(
              (g_pointerGesture == EPointerGesture::ResizeReal && g_pointerDown &&
               g_resize.id == info.id) || // the resized window: a retake every
                                          // frame, the quad must track the box
 -            info.id == FOCUSED_ID);
 +            info.id == FOCUSED_ID));
-
+ 
          // The frame after a resize gesture ended: one forced snapshot, whose
          // only purpose is the settled full-resolution silhouette refresh.
-@@ -1881,7 +1947,7 @@ static void refreshCaptures(
-
+@@ -1906,7 +1972,7 @@ static void refreshCaptures(
+ 
          // Morph retake budget: a window already holding a snapshot waits for
          // its rotation slot; fresh captures and layers are always served.
 -        if (MORPHING && !FORCE && !finalSkirt && !info.isLayer &&
@@ -340,10 +343,10 @@ index 231cb1c..f4555c9 100644
              g_capture.has(info.id)) {
              const size_t SLOT =
                  (index + morphCaptureCursor) % infos.size();
-@@ -1899,8 +1965,15 @@ static void refreshCaptures(
+@@ -1924,8 +1990,15 @@ static void refreshCaptures(
          else
              g_capture.makeSnapshot(info.window, mon, FORCE || finalSkirt);
-
+ 
 +        if (effectPane) {
 +            const auto effectId=Compat::windowId(effectPane);effectKeep.push_back(effectId);
 +            if(g_shaderCapture.makeSnapshot(effectPane,mon) && g_shaderCapture.get(effectId) &&
@@ -353,22 +356,22 @@ index 231cb1c..f4555c9 100644
      }
 +    g_shaderCapture.retainOnly(effectKeep);
 +    g_shaderComposited=std::move(composited);
-
+ 
      morphCaptureCursor =
          (morphCaptureCursor + 1) % std::max(infos.size(), size_t{1});
-@@ -2084,6 +2157,9 @@ static void updateAimFocus(float dt) {
+@@ -2109,6 +2182,9 @@ static void updateAimFocus(float dt) {
      g_lastAimedId = AIMED;
-
+ 
      const std::uintptr_t FOCUS = g_aim.update(AIMED, dt);
 +    // Hover is not an explicit request to dismiss the cinema presentation.
 +    // Native fullWindowFocus would unmaximize it when the ray crosses a neighbour.
 +    if(g_pipTheatre.id && FOCUS!=g_pipTheatre.id) return;
-
+ 
      if (FOCUS == g_lastFocusId)
          return;
-@@ -2138,7 +2214,130 @@ static float retinaMul(std::uintptr_t id) {
+@@ -2163,7 +2239,130 @@ static float retinaMul(std::uintptr_t id) {
  }
-
+ 
  // The room scale of one window: the config scale times its multiplier.
 +static bool managedPiP(const PHLWINDOW& w) {
 + return w && w->m_ruleApplicator && w->m_ruleApplicator->m_tagKeeper.isTagged("mios-pip-managed");
@@ -412,7 +415,7 @@ index 231cb1c..f4555c9 100644
 +   // old output-sized box. Fullscreen mode and pin restoration remain native.
 +   const auto surface=w->getWindowMainSurfaceBox();
 +   if(std::fabs(surface.w-box.w)>.5 || std::fabs(surface.h-box.h)>.5 || std::fabs(surface.x-box.x)>.5 || std::fabs(surface.y-box.y)>.5) {
-+    w->setBox(box);w->sendWindowSize();w->m_target->warpPositionSize();
++    w->setBox(box);w->sendWindowSize();w->windowTarget()->warpPositionSize();
 +    if(g_pHyprRenderer)g_pHyprRenderer->damageWindow(w);
 +   }
 +  }
@@ -496,64 +499,64 @@ index 231cb1c..f4555c9 100644
 +    if(id==g_pipTheatre.id && g_pipTheatre.effectiveScale>0) return g_pipTheatre.effectiveScale;
      return configWindowScale() * retinaMul(id);
  }
-
-@@ -2769,6 +2968,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+ 
+@@ -2794,6 +2993,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
                  (static_cast<float>(g_resize.edgeY) * DH * 0.5f);
          }
-
+ 
 +        placePiPTheatre(entity, mon, BOX);
          ENTITIES.push_back(entity);
      }
-
-@@ -2870,7 +3070,8 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
-
+ 
+@@ -2895,7 +3095,8 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+ 
          render.controls = controlsForWindow(entity.id);
          render.controlStyle = controlStyleForWindow(entity.id);
 -        render.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty());
 +        // An attached real profile has already rendered the effect. Never apply a second unrelated CRT preset.
 +        render.crtEnabled = !attachedShaderPane(Compat::findWindowById(entity.id)) && (g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty()));
-
+ 
          // 3D Magic Lamp opening effect for newly spawned windows in 3D room
          float openScaleDepth = 1.0f;
-@@ -3431,7 +3632,16 @@ static void pollFullscreen() {
+@@ -3456,7 +3657,16 @@ static void pollFullscreen() {
      // so the fade keeps ticking even when a frame is slow.
      damageWindowsWithLiveAlpha(MON);
-
+ 
 -    const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
 +    auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
 +    PHLWINDOW maximizedPiP;
 +    for(const auto& w:Desktop::windowState()->windows()) {
-+     if(w && w->m_isMapped && w->m_workspace==MON->m_activeWorkspace && w->m_monitor.lock()==MON && theatreMaximized(w)) {
++     if(w && w->mapped() && w->m_workspace==MON->m_activeWorkspace && w->m_monitor.lock()==MON && theatreMaximized(w)) {
 +      maximizedPiP=w;
 +      if(Compat::windowId(w)==g_pipTheatre.id) break;
 +     }
 +    }
 +    pollPiPTheatre(MON, maximizedPiP);
 +    if(theatreMaximized(FSW)) FSW=nullptr;
-
+ 
      g_fsCurrentId = FSW ? Compat::windowId(FSW) : 0;
-
-@@ -3967,6 +4177,8 @@ static void beginExit3D() {
+ 
+@@ -3992,6 +4202,8 @@ static void beginExit3D() {
          return;
-
+ 
      resetPointerGesture();
 +    const auto exitTheatre=g_pipTheatre;
 +    if(g_pipTheatre.id) restorePiPTheatre();
-
+ 
      const auto MON = targetMonitor();
-
-@@ -4053,6 +4265,7 @@ static void beginExit3D() {
+ 
+@@ -4078,6 +4290,7 @@ static void beginExit3D() {
                  MW.boxRoom = MW.roomPose.box;
          }
-
+ 
 +        if(ENTITY.id==exitTheatre.id) MW.boxRoom=viewMorphLocalBox(MON,exitTheatre.sourceBox);
          MW.roomPose.box = MW.boxRoom;
-
+ 
          // The 2D box the window must land on: the layout save.
-@@ -4444,7 +4657,16 @@ static void updateRealResize() {
+@@ -4469,7 +4682,16 @@ static void updateRealResize() {
              point))
          return;
-
+ 
 -    const CBox BOX = resizeBoxFromAim(point, MON);
 +    CBox BOX = resizeBoxFromAim(point, MON);
 +    if(g_resize.spatialPiP) {
@@ -565,52 +568,52 @@ index 231cb1c..f4555c9 100644
 +     BOX.x=g_resize.startBox.x+(g_resize.edgeX<0 ? g_resize.startBox.w-BOX.w : 0);
 +     BOX.y=g_resize.startBox.y+(g_resize.edgeY>0 ? g_resize.startBox.h-BOX.h : 0);
 +    }
-
+ 
      // A real resize: the client re-renders at the new size, so the content
      // stays crisp at any room size. The 2D box is remembered at entry and
-@@ -4616,6 +4838,7 @@ static void onRenderPre(PHLMONITOR mon) {
-
+@@ -4641,6 +4863,7 @@ static void onRenderPre(PHLMONITOR mon) {
+ 
  // Direct signal listeners must leave the event bus before dlclose.
  static CHyprSignalListener g_renderPreListener, g_renderStageListener, g_mouseMoveListener, g_mouseButtonListener, g_mouseAxisListener, g_keyboardKeyListener;
 +static CHyprSignalListener g_pipFullscreenListener;
-
+ 
  // --- lifecycle --------------------------------------------------------------
-
-@@ -4623,6 +4846,7 @@ static void deactivate3D() {
+ 
+@@ -4648,6 +4871,7 @@ static void deactivate3D() {
      finishClientButton(0);
      resetPointerGesture();
-
+ 
 +    if(g_pipTheatre.id) restorePiPTheatre();
      g_active = false;
      stopFramePump();
-
-@@ -4681,7 +4905,7 @@ static void deactivate3D() {
+ 
+@@ -4706,7 +4930,7 @@ static void deactivate3D() {
      g_input.reset();
      resetMovementKeys();
-
+ 
 -    g_capture.releaseAll();
 +    g_capture.releaseAll();g_shaderCapture.releaseAll();g_shaderComposited.clear();
      g_scene.setEnvironmentTexture(0);
      g_environmentCapture.releaseAll();
      g_scene.releaseGlassPacingCache(); // MiOS frame rate: glass slots + dome copy
-@@ -4831,7 +5055,7 @@ static void enter3D() {
+@@ -4856,7 +5080,7 @@ static void enter3D() {
          }
      }
-
+ 
 -    g_capture.releaseAll();
 +    g_capture.releaseAll();g_shaderCapture.releaseAll();g_shaderComposited.clear();
      g_scene.setEnvironmentTexture(0);
      g_environmentCapture.releaseAll();
-
-@@ -4846,6 +5070,7 @@ static void enter3D() {
+ 
+@@ -4883,6 +5107,7 @@ static void enter3D() {
      g_scene.setPlayerDebugCapsule(Vec3{}, false);
-
+ 
      g_keyboardMode = EKeyboardMode::Space;
 +    g_appInputWindow.reset();
      g_scene.setCrosshairVisible(!g_cfgStills);
      g_freeOnRoom     = false;
      g_swallowRelease = 0;
-@@ -4864,8 +5089,8 @@ static void enter3D() {
+@@ -4901,8 +5126,8 @@ static void enter3D() {
      // shrink, and the exit restores it as a floating panel (the FS exit
      // path asserts that size).
          if (const auto MON = targetMonitor()) {
@@ -621,17 +624,17 @@ index 231cb1c..f4555c9 100644
                  double curW = g_cfgSpawnWidth > 0 ? g_cfgSpawnWidth : 960.0;
                  double curH = g_cfgSpawnHeight > 0 ? g_cfgSpawnHeight : 532.0;
                  const CBox curBox = Compat::currentWindowBox(FSW);
-@@ -5139,6 +5364,7 @@ static bool     s_padWasMoving         = false;
+@@ -5188,6 +5413,7 @@ static bool     s_padWasMoving         = false;
  static bool     s_padWasLooking        = false;
-
+ 
  static void pollGamepadFullscreenExit() {
 +    if (appOwnsInput()) { s_padSeqInit=false; return; }
      if (g_fsPhase != EFullscreenPhase::In2D)
          return;
-
-@@ -5191,6 +5417,15 @@ static void pollGamepadFullscreenExit() {
+ 
+@@ -5240,6 +5466,15 @@ static void pollGamepadFullscreenExit() {
  }
-
+ 
  static void pollGamepadState(float dt) {
 +    if (appOwnsInput()) {
 +        s_padSeqInit=false;
@@ -645,27 +648,27 @@ index 231cb1c..f4555c9 100644
      if (!ownsInput()) {
          if (!g_active)
              s_padSeqInit = false;
-@@ -5397,6 +5632,11 @@ static void pollGamepadState(float dt) {
- }
-
- static void update3D(float dt) {
-+    if (const auto W=g_appInputWindow.lock(); W && (!W->m_isMapped || Compat::focusedWindow()!=W)) {
+@@ -5457,6 +5692,11 @@ static void update3D(float dt) {
+             P = P < T ? std::min(T, P + STEP * 1.6f) : std::max(T, P - STEP * 1.6f);
+         }
+     }
++    if (const auto W=g_appInputWindow.lock(); W && (!W->mapped() || Compat::focusedWindow()!=W)) {
 +        g_appInputWindow.reset();
 +        resetCameraKeys();
 +        g_input.reset();
 +    }
      pollGamepadState(dt);
-
+ 
      // Release capture unconditionally when the view no longer owns input, so
-@@ -5961,6 +6201,7 @@ static void update3D(float dt) {
+@@ -6063,6 +6303,7 @@ static void update3D(float dt) {
              std::vector<std::uintptr_t> closed;
-
+ 
              for (const auto& [ID, BOX] : g_roomBoxes) {
 +                if(ID==g_pipTheatre.id) continue;
                  const auto W = Compat::findWindowById(ID);
-
+ 
                  if (!W) {
-@@ -6023,7 +6264,7 @@ static void update3D(float dt) {
+@@ -6125,7 +6366,7 @@ static void update3D(float dt) {
      // Frozen during transitions: the flying quads sweep the crosshair across
      // whatever sits behind them. Typing mode: the pointer drives the plugin's
      // cursor instead.
@@ -674,15 +677,15 @@ index 231cb1c..f4555c9 100644
          g_viewMorph == EViewMorph::None && !pointerFree())
          forwardPointerToAim(inputTimeMs());
  }
-@@ -6426,6 +6667,7 @@ static void dumpStatus() {
+@@ -6528,6 +6769,7 @@ static void dumpStatus() {
      out << "sceneObjects=" << g_sceneObjects.size() << " joltBodies="
          << g_joltBodies.size() << " objTrees=" << g_objTrees.size() << "\n";
-
+ 
 +    out << "pipTheatre=" << g_pipTheatre.id << " distance=" << g_cfgTheatreDistance << " rasterMax=" << g_cfgPiPRasterMax << "\n";
      out << "fsPhase=" << static_cast<int>(g_fsPhase)
          << " fsWasOn=" << (g_fsWasOn ? 1 : 0)
          << " fsAlpha=" << g_fsAlpha << "\n";
-@@ -6637,6 +6879,7 @@ static void vcEnterWindow(const World3D::SHit& hit) {
+@@ -6740,6 +6982,7 @@ static void vcEnterWindow(const World3D::SHit& hit) {
      // layer holding the keyboard (a launcher) keeps it until a click.
      const auto TARGET = targetFromHit(hit.id);
      if (TARGET.window && g_lastFocusId != hit.id &&
@@ -690,7 +693,7 @@ index 231cb1c..f4555c9 100644
          !Compat::layerHasKeyboardFocus()) {
          Compat::focusWindow(TARGET.window);
          g_lastFocusId = hit.id;
-@@ -6679,6 +6922,15 @@ static void vcLeaveToDesktop(const Vector2D& global) {
+@@ -6782,6 +7025,15 @@ static void vcLeaveToDesktop(const Vector2D& global) {
  // (clamp where there is none), else drop into whatever window is under it.
  static void vcResolveScreen(const PHLMONITOR& mon) {
      const Vector2D SIZE = mon->m_size;
@@ -703,13 +706,13 @@ index 231cb1c..f4555c9 100644
 +        else { g_vcId=ID; vcDeliverMotion(); }
 +        return;
 +    }
-
+ 
      if (g_vcScreen.x < 0 || g_vcScreen.y < 0 || g_vcScreen.x >= SIZE.x ||
          g_vcScreen.y >= SIZE.y) {
-@@ -6737,6 +6989,14 @@ static void vcMove(double dx, double dy) {
+@@ -6840,6 +7092,14 @@ static void vcMove(double dx, double dy) {
      if (!MON)
          return;
-
+ 
 +    if (appOwnsInput()) {
 +        g_vcSpace=ECursorSpace::Screen;
 +        g_vcScreen=g_vcScreen+Vector2D{dx,dy};
@@ -721,7 +724,7 @@ index 231cb1c..f4555c9 100644
      if (g_vcSpace != ECursorSpace::Screen) {
          Vector2D nextGlobal = Pointer::mgr()->position() + Vector2D{dx, dy};
          nextGlobal.x = std::clamp(nextGlobal.x, MON->m_position.x, MON->m_position.x + MON->m_size.x - 1.0);
-@@ -7299,6 +7559,9 @@ static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& windowLoca
+@@ -7403,6 +7663,9 @@ static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& windowLoca
              // Button 2 (Maximize): Right-Click = Fullscreen (2D) Mode (Super + F11), Left-Click = 3D Maximize / Restore
              if (button == BTN_RIGHT || g_fsPhase == EFullscreenPhase::In2D || g_fsPhase == EFullscreenPhase::To2D) {
                  toggleFullscreen2D(/*allowExit=*/true);
@@ -731,10 +734,10 @@ index 231cb1c..f4555c9 100644
              } else if (const auto MON = targetMonitor()) {
                  const CBox   curBox  = Compat::currentWindowBox(W);
                  const double maxW    = std::round(MON->m_size.x * 0.82);
-@@ -7350,6 +7613,12 @@ static void onMouseButton(
+@@ -7454,6 +7717,12 @@ static void onMouseButton(
      const bool PRESSED =
          event.state == WL_POINTER_BUTTON_STATE_PRESSED;
-
+ 
 +    if (appOwnsInput()) {
 +        vcClickButton(event.button,PRESSED);
 +        info.cancelled=true;
@@ -744,18 +747,18 @@ index 231cb1c..f4555c9 100644
      if (!PRESSED && g_swallowRelease == event.button) {
          g_swallowRelease = 0;
          info.cancelled = true;
-@@ -8010,6 +8279,7 @@ static void onKeyboardKey(
-
+@@ -8114,6 +8383,7 @@ static void onKeyboardKey(
+ 
      // A layer holds the keyboard (launcher, sidebar text field): every key
      // is its, in both modes. Held camera keys must not keep walking.
 +    if (appOwnsInput()) return;
      if (Compat::layerHasKeyboardFocus()) {
          if (PRESSED)
              resetCameraKeys();
-@@ -8120,6 +8390,13 @@ static void onKeyboardKey(
- // other things (e.g. switching to a dedicated workspace on the way in and
- // back on the way out) can tell the two states apart without tracking its
- // own state, which a config reload would lose.
+@@ -8301,6 +8571,13 @@ static int luaFirstPersonBody(lua_State* L) {
+     return 1;
+ }
+ 
 +// Whether the effect pane is currently represented by a room capture. Native
 +// fullscreen passthrough owns 2D composition and needs its real overlay visible.
 +static int luaEffectInRoom(lua_State* L) {
@@ -766,7 +769,7 @@ index 231cb1c..f4555c9 100644
  static int luaActive(lua_State* L) {
      lua_pushboolean(L, g_active && g_transitionTarget > 0.5f);
      return 1;
-@@ -8482,6 +8759,16 @@ static int luaConfig(lua_State* L) {
+@@ -8755,6 +9032,16 @@ static int luaConfig(lua_State* L) {
      if (idx == -1)
          return luaL_error(L, "hypr3d.config: windows must be a table");
      if (idx > 0) {
@@ -783,18 +786,18 @@ index 231cb1c..f4555c9 100644
          if (!SET_NUM(idx, "window_scale", g_cfgWindowScale,
                       "windows.window_scale"))
              return luaL_error(L, "hypr3d.config: windows.window_scale must be a number");
-@@ -9396,6 +9683,10 @@ static bool startResize3D() {
+@@ -9733,6 +10020,10 @@ static bool startResize3D() {
          return false;
-
+ 
      focusRoomWindow(useTarget.window);
 +    if(theatreMaximized(useTarget.window)) {
 +     Fullscreen::controller()->setFullscreenMode(useTarget.window,Fullscreen::FSMODE_NONE,Fullscreen::FSMODE_NONE);
 +     restorePiPTheatre();
 +    }
-
+ 
      g_resize = {};
      g_resize.active = true;
-@@ -9410,6 +9701,12 @@ static bool startResize3D() {
+@@ -9747,6 +10038,12 @@ static bool startResize3D() {
      g_resize.edgeX = useHit.u < 0.5f ? -1 : 1;
      g_resize.edgeY = useHit.v < 0.5f ? 1 : -1;
      g_resize.grabPx = worldPointToGlobalPx(targetMonitor(), useHit.point);
@@ -804,23 +807,23 @@ index 231cb1c..f4555c9 100644
 +    g_resize.startUp=g_world.upOf(useHit.id);
 +    g_resize.startRetinaMul=retinaMul(useHit.id);
 +
-
+ 
      g_pointerGesture = EPointerGesture::ResizeReal;
      g_pointerButton  = BTN_RIGHT;
-@@ -9630,7 +9927,8 @@ static void toggleFullscreen2D(bool allowExit) {
+@@ -9967,7 +10264,8 @@ static void toggleFullscreen2D(bool allowExit) {
      if (!MON)
          return;
-
+ 
 -    const auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
 +    auto FSW = Fullscreen::controller()->getFullscreenWindow(MON);
 +    if(theatreMaximized(FSW)) { restorePiPTheatre(); FSW=nullptr; }
      if (g_fsPhase == EFullscreenPhase::In2D ||
          g_fsPhase == EFullscreenPhase::To2D || FSW) {
          const auto W = FSW ? FSW : g_fsWindow.lock();
-@@ -9689,6 +9987,47 @@ static void toggleFullscreen2D(bool allowExit) {
+@@ -10026,6 +10324,47 @@ static void toggleFullscreen2D(bool allowExit) {
      damageCurrentMonitor();
  }
-
+ 
 +static bool captureApplicationInput(const std::string& mode) {
 +    if (!g_active) return false;
 +    if (mode=="off") {
@@ -842,7 +845,7 @@ index 231cb1c..f4555c9 100644
 +        if (W && g_world.find(Compat::windowId(W))) id=Compat::windowId(W);
 +    }
 +    const auto W=Compat::findWindowById(id);
-+    if (!W || !W->m_isMapped) return false;
++    if (!W || !W->mapped()) return false;
 +    focusRoomWindow(W);
 +    if (mode=="fullscreen" && g_fsPhase!=EFullscreenPhase::In2D && g_fsPhase!=EFullscreenPhase::To2D)
 +        toggleFullscreen2D(false);
@@ -865,10 +868,10 @@ index 231cb1c..f4555c9 100644
  static void cycleCrtPreset() {
      g_crtPresetIdx = (g_crtPresetIdx + 1) % kCrtPresets.size();
      const auto& P = kCrtPresets[g_crtPresetIdx];
-@@ -9721,6 +10060,18 @@ static void vcClickButton(uint32_t button, bool pressed) {
+@@ -10058,6 +10397,18 @@ static void vcClickButton(uint32_t button, bool pressed) {
      if (g_clientButtonDown)
          finishClientButton(nowMs);
-
+ 
 +    if (appOwnsInput()) {
 +        const auto W=g_appInputWindow.lock();
 +        const auto E=g_world.find(Compat::windowId(W));
@@ -884,7 +887,7 @@ index 231cb1c..f4555c9 100644
      if (pointerFree()) {
          const auto MON = targetMonitor();
          // START puts the controller cursor on the 2D desktop for HUD layers.
-@@ -9937,11 +10288,37 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
+@@ -10274,11 +10625,37 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
  // A live renderer replacement must preserve the room, not just the 2D boxes.
  // The versioned checkpoint contains window ids (valid only in this session),
  // their independent room poses, and the camera. Import only while inactive.
@@ -900,7 +903,7 @@ index 231cb1c..f4555c9 100644
 +      end=0;stableId=std::stoull(stable,&end,16);if(end!=std::strlen(stable)) id=0;} catch(...) {id=0;}
 + const auto w=id ? Compat::findWindowById(id) : nullptr;
 + const auto* e=id ? g_world.find(id) : nullptr;
-+ if(!w || !e || !w->m_target || w->getPID()!=pid || w->m_stableID!=stableId || !managedPiP(w))
++ if(!w || !e || !w->windowTarget() || w->backend().pid()!=pid || w->metadata().stableID()!=stableId || !managedPiP(w))
 +  return luaL_error(L,"hypr3d.pip_scale: PiP identity changed");
 + if(!std::isfinite(factor) || factor<=0 || Fullscreen::controller()->getFullscreenModes(w).internal!=Fullscreen::FSMODE_NONE)
 +  return luaL_error(L,"hypr3d.pip_scale: invalid factor or maximized target");
@@ -923,7 +926,7 @@ index 231cb1c..f4555c9 100644
          << ",\"y\":" << cam.position.y << ",\"z\":" << cam.position.z
          << ",\"yaw\":" << cam.yaw << ",\"pitch\":" << cam.pitch
          << ",\"mode\":" << g_viewMode << "},\"windows\":[";
-@@ -9955,7 +10332,8 @@ static int luaExportLayout(lua_State* L) {
+@@ -10292,7 +10669,8 @@ static int luaExportLayout(lua_State* L) {
              << ",\"yaw\":" << e.yaw << ",\"pitch\":" << e.pitch << ",\"roll\":" << e.roll
              << ",\"scale\":" << e.spawnScale << ",\"left\":" << box.x
              << ",\"top\":" << box.y << ",\"width\":" << box.w
@@ -933,10 +936,10 @@ index 231cb1c..f4555c9 100644
      }
      out << "]}";
      const auto json=out.str();lua_pushlstring(L,json.data(),json.size());return 1;
-@@ -10121,6 +10499,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+@@ -10445,6 +10823,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
      }))
          throw std::runtime_error("[hypr3d] failed to register Lua posture");
-
+ 
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "input_owner", [](lua_State* L) -> int {
 +        const auto W=g_appInputWindow.lock();
 +        lua_pushinteger(L,appOwnsInput() ? static_cast<lua_Integer>(Compat::windowId(W)) : 0);
@@ -952,46 +955,47 @@ index 231cb1c..f4555c9 100644
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "fullscreen", [](lua_State*) -> int {
          dispatchFullscreen("");
          return 0;
-@@ -10173,7 +10563,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+@@ -10497,7 +10887,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
          throw std::runtime_error("[hypr3d] failed to register Lua resize");
-
+ 
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "camera", [](lua_State* L) -> int {
 -        if (lua_gettop(L) >= 2 && ownsInput()) {
 +        if (lua_gettop(L) >= 2 && ownsInput() && !appOwnsInput()) {
              double dx = lua_tonumber(L, 1);
              double dy = lua_tonumber(L, 2);
              if (std::fabs(dx) < 0.001 && std::fabs(dy) < 0.001) {
-@@ -10190,7 +10580,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+@@ -10514,7 +10904,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
          throw std::runtime_error("[hypr3d] failed to register Lua camera");
-
+ 
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "move", [](lua_State* L) -> int {
 -        if (lua_gettop(L) >= 2) {
 +        if (lua_gettop(L) >= 2 && !appOwnsInput()) {
              float lx = static_cast<float>(lua_tonumber(L, 1));
              float ly = static_cast<float>(lua_tonumber(L, 2));
              g_analogStrafe      = std::clamp(lx, -1.0f, 1.0f);
-@@ -10225,13 +10615,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
-     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "close", luaClose))
-         throw std::runtime_error("[hypr3d] failed to register Lua close");
-
+@@ -10565,6 +10955,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "sit", luaSit))
+         throw std::runtime_error("[hypr3d] failed to register Lua sit");
+ 
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","pip_scale",luaPiPScale))
 +        throw std::runtime_error("[hypr3d] failed to register Lua PiP scale");
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "active", luaActive))
          throw std::runtime_error("[hypr3d] failed to register Lua active");
-
-     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "on_state", luaOnState))
-         throw std::runtime_error("[hypr3d] failed to register Lua on_state");
-
+ 
+@@ -10573,7 +10965,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ 
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "toggle_flight", luaToggleFlight))
+         throw std::runtime_error("[hypr3d] failed to register Lua toggle_flight");
 -    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","export_layout",luaExportLayout) ||
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","effect_in_room",luaEffectInRoom) ||
 +        !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","export_layout",luaExportLayout) ||
          !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","restore_layout",luaRestoreLayout))
          throw std::runtime_error("[hypr3d] failed to register layout checkpoint interface");
-
-@@ -10319,6 +10712,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ 
+@@ -10664,6 +11057,15 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
-
+ 
 +    g_pipFullscreenListener=Event::bus()->m_events.window.fullscreen.listen([](PHLWINDOW w) {
 +     try {
 +      const auto mon=targetMonitor();
@@ -1004,18 +1008,18 @@ index 231cb1c..f4555c9 100644
      (void)g_renderPreListener;
      (void)g_renderStageListener;
      (void)g_mouseMoveListener;
-@@ -10345,6 +10747,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
-
+@@ -10690,6 +11092,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+ 
  APICALL EXPORT void PLUGIN_EXIT() {
      // No event may call back into an unmapped plugin, even after a failed reload.
 +    g_pipFullscreenListener.reset();
      g_renderPreListener.reset();
      g_renderStageListener.reset();
      g_mouseMoveListener.reset();
-@@ -10367,6 +10770,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
-
+@@ -10712,6 +11115,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
+ 
      joltShutdown();
-
+ 
 +    if(g_pipTheatre.id) restorePiPTheatre();
      g_active = false;
      stopFramePump();

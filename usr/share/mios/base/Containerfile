@@ -3,6 +3,8 @@
 ARG MIOS_BASE_IMAGE=registry.fedoraproject.org/fedora-minimal:latest
 FROM ${MIOS_BASE_IMAGE}
 ARG MIOS_MCP_PACKAGES
+# [packages.agent_cli_build]: present only inside the agent CLI install step below.
+ARG MIOS_AGENT_CLI_BUILD_PACKAGES
 
 LABEL org.opencontainers.image.title="mios-base"
 LABEL org.opencontainers.image.description="MiOS shared minimal Fedora base -- every MiOS service container derives FROM this so the bound-image store dedupes the base once."
@@ -53,8 +55,18 @@ COPY --from=mios /usr/share/fonts/geist-nerd/ /usr/share/fonts/geist-nerd/
 COPY --from=mios /usr/share/fonts/nerd-symbols/ /usr/share/fonts/nerd-symbols/
 # bootc bases can leave /root pointing at an unpopulated /var/roothome.
 # Package installers need that directory even before the first system boot.
+# The agent CLI install builds native node modules (node-pty) with node-gyp, so
+# the [packages.agent_cli_build] toolchain is installed for this step only, and
+# every package it added is removed again in the same layer.
 RUN install -d -m 0700 "$(realpath -m /root)" \
     && /usr/lib/mios/mcp/.venv/bin/python3 -c 'from mcp import Client; import uvicorn' \
     && /usr/libexec/mios/tmux-mcp --version \
+    && rpm -qa --qf '%{NAME}\n' | sort -u > /tmp/mios-rpms-before \
+    && dnf5 -y install --setopt=install_weak_deps=0 --setopt=tsflags=nodocs --setopt=keepcache=0 \
+        ${MIOS_AGENT_CLI_BUILD_PACKAGES:?SSOT packages.agent_cli_build required} \
     && /usr/lib/mios/mcp/.venv/bin/python3 /usr/libexec/mios/mios-mcp-server --agent-cli --install \
+    && rpm -qa --qf '%{NAME}\n' | sort -u | comm -13 /tmp/mios-rpms-before - > /tmp/mios-rpms-added \
+    && if [ -s /tmp/mios-rpms-added ]; then xargs -a /tmp/mios-rpms-added dnf5 -y remove --noautoremove; fi \
+    && dnf5 clean all \
+    && rm -rf /var/cache/* /var/log/* /tmp/mios-rpms-before /tmp/mios-rpms-added \
     && fc-cache -f
