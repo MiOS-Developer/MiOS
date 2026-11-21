@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4377,
+  "total_files_scanned": 4372,
   "total_metadata_entries": 3503,
   "total_hints": 3497,
-  "total_functions_indexed": 2297,
-  "total_related_links": 7109,
+  "total_functions_indexed": 2298,
+  "total_related_links": 7110,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -21806,6 +21806,7 @@
         "peer_name",
         "sync_rows",
         "set_table_header",
+        "ClientTable",
         "ClientView",
         "AgentView",
         "SystemSummary"
@@ -43316,10 +43317,11 @@
     },
     {
       "path": "usr/share/mios/wsl/dot-wslconfig.template",
-      "hint": "Recommended global .wslconfig for MiOS WSL2 host integration.",
+      "hint": "Recommended global .wslconfig for MiOS WSL2 host integration, matching mios.toml [wsl2].",
       "related": [
         "usr/lib/wsl.conf",
-        "usr/lib/wsl-distribution.conf"
+        "usr/lib/wsl-distribution.conf",
+        "usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,

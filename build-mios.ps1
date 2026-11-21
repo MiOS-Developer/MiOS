@@ -22,6 +22,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference    = "SilentlyContinue"
+# This script's own source: Phase 4's elevated exposure worker is compiled from fixed functions in it, never its top
+# level. `mios build` runs it as a script block, where $PSCommandPath is empty.
+$script:MiosBuildSource = if ($PSCommandPath) { [IO.File]::ReadAllText($PSCommandPath) } else { $MyInvocation.MyCommand.Definition }
 
 function Resolve-MiosBuilderDistribution([string]$Machine) {
     $registered = @(& wsl.exe --list --quiet 2>$null) |
@@ -53,6 +56,98 @@ function Install-MiosNativeCatalog([string]$Root, [string]$Machine) {
     & wsl.exe -d $distribution -u root -- mv -f -- $pendingVendor /usr/share/mios/mios.toml
     if ($LASTEXITCODE -ne 0) { throw 'Current-source vendor SSOT publication failed' }
     return @{ Distribution = $distribution; LinuxRoot = $linuxRoot }
+}
+
+# The MiOS login: the vendor/host [identity].username through MiOS's identity guard (the text mios.git's
+# usr/share/mios/windows/*.ps1 carries), never a uid or a literal name. It is the one resolver every wsl.exe login in
+# this installer takes. The guard prints its refusal on stderr; this throws, so a caller never falls back to a name.
+# Python is single-quoted for the guest, and there is no 2>$null: Windows PowerShell turns any stderr line (wsl.exe
+# prints config notices there) into a terminating error.
+function Get-MiosLinuxLogin([string]$Distribution) {
+    $identityProbe = 'import sys,pwd; sys.path.insert(0,''/usr/lib/mios''); import mios_toml as m; n=str((m.base_view().get(''identity'') or {}).get(''username'') or '''').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith((''nologin'', ''false'')) else sys.exit(''MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)'' % n)'
+    $login = ((& wsl.exe -d $Distribution -u root --exec python3 -c $identityProbe) -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $login -or $login -eq 'root') { throw "The MiOS login (vendor/host [identity].username) is not a usable account in $Distribution; set [identity].username and re-run the installer" }
+    # Generated scripts and shortcuts carry the name as a literal, so only a plain login name is accepted.
+    if ($login -cnotmatch '^[a-z_][a-z0-9_-]*$') { throw "The MiOS login in $Distribution is not a plain login name; set [identity].username and re-run the installer" }
+    return $login
+}
+
+# MiOS's own offline payload installer, the call its Containerfile makes after [packages.mcp] (realize installs that
+# section): the MCP venv from the vendored wheelhouse, tmux-mcp and the terminal fonts, each archive checked against its
+# SSOT digest. It runs on every install, with no skip, so the payload always matches the checkout. Then the probe that
+# mios-native-client-setup.ps1 runs, as the same uid-1000 user. Either failing is fatal.
+function Install-MiosNativeMcp([string]$Machine) {
+    $distribution = Resolve-MiosBuilderDistribution $Machine
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $false }
+        $script:_mcpInstallOut = @(& wsl.exe -d $distribution -u root --exec python3.13 /usr/libexec/mios/mios-mcp-server --install-native --source-root / --root / 2>&1 | ForEach-Object { "$_" })
+        $script:_mcpInstallRc = $LASTEXITCODE
+    }
+    $script:_mcpInstallOut | ForEach-Object { Write-Log "mios-mcp-install: $_" }
+    if ($script:_mcpInstallRc -ne 0) { throw "Native MiOS-MCP install failed (exit $($script:_mcpInstallRc)): python3.13 /usr/libexec/mios/mios-mcp-server --install-native in $distribution" }
+    # Python sources are single-quoted for the guest: no double quote reaches a native argument on either PowerShell.
+    # No 2>$null: Windows PowerShell turns any stderr line (wsl.exe prints config notices there) into a terminating error.
+    # The probe account is the MiOS login (Get-MiosLinuxLogin), never a uid literal; an unusable login is fatal.
+    $user = Get-MiosLinuxLogin $distribution
+    $python = ((& wsl.exe -d $distribution -u $user --exec python3 -c 'import sys; sys.path.insert(0, ''/usr/lib/mios''); import mios_toml; print(mios_toml.load_merged()[''mcp''][''python''])') -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $python.StartsWith('/')) { throw 'Could not resolve [mcp].python from the MiOS SSOT' }
+    & {
+        $ErrorActionPreference = 'Continue'
+        if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) { $PSNativeCommandUseErrorActionPreference = $false }
+        $script:_mcpProbeOut = @(& wsl.exe -d $distribution -u $user --exec $python -c 'import os; from mcp import Client; assert os.getuid()!=0; assert os.access(''/usr/libexec/mios/tmux-mcp'',os.X_OK); print(''native-ready'')' 2>&1 | ForEach-Object { "$_" })
+        $script:_mcpProbeRc = $LASTEXITCODE
+    }
+    $script:_mcpProbeOut | ForEach-Object { Write-Log "mios-mcp-probe: $_" }
+    if ($script:_mcpProbeRc -ne 0 -or $script:_mcpProbeOut -notcontains 'native-ready') { throw "Native MiOS-MCP probe failed as $user (exit $($script:_mcpProbeRc)); see the mios-mcp-probe lines in the log" }
+    Log-Ok "Native MiOS-MCP installed and probed as $user in $distribution"
+}
+
+# The installed Windows layout, the one source for every native-bin default and both PowerShell profile redirectors.
+# Get-MiOS.ps1 carries the same function over Get-MiosWindowsInstallRoot; tests/test_install_native_layout.ps1 holds the
+# two to one answer. Unelevated: %LOCALAPPDATA%\MiOS, User scope. Elevated: %SystemDrive%\MiOS, Machine scope. The
+# installer's own paths win once set; MIOS_NATIVE_BIN overrides only the native bin.
+function Get-MiosInstalledLayout {
+    $elevated = if ($null -ne $script:IsAdmin) { [bool]$script:IsAdmin } else {
+        try { ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { $false }
+    }
+    $root = if ($script:MiosInstallDir) { $script:MiosInstallDir }
+            elseif ($elevated) { Join-Path $env:SystemDrive 'MiOS' }
+            else { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'MiOS' }
+    $bin = if ($script:MiosBinDir) { $script:MiosBinDir } else { Join-Path $root 'bin' }
+    return [pscustomobject]@{
+        Root        = $root
+        Bin         = $bin
+        NativeBin   = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { $bin }
+        ProfileBody = Join-Path $root 'powershell\profile.ps1'
+        Scope       = if ($elevated) { 'Machine' } else { 'User' }
+    }
+}
+
+# Arguments for MiOS's client setup in the installed layout. A User layout (the unelevated install) passes -Scope User
+# with its own bin and profile body, so the setup writes only User variables and never requests elevation.
+function Get-MiosClientSetupArguments([string]$Setup, [string]$Distro, [string]$SourceRoot) {
+    $layout = Get-MiosInstalledLayout
+    $arguments = @{ Distro = $Distro; BinDirectory = $layout.Bin; SourceRoot = $SourceRoot }
+    if ($layout.Scope -eq 'User') {
+        $parameters = (Get-Command -Name $Setup -ErrorAction Stop).Parameters
+        if (-not $parameters.ContainsKey('Scope') -or -not $parameters.ContainsKey('ProfilePath')) {
+            throw "The MiOS client setup at $Setup has no -Scope User; update the MiOS checkout before a per-user install"
+        }
+        $arguments['Scope'] = 'User'
+        $arguments['ProfilePath'] = $layout.ProfileBody
+    }
+    return $arguments
+}
+
+# True when the first mios.toml in $Candidates sets [bootstrap].dev_overlay_full = false. That skips the full dev
+# overlay, whose [packages.build-toolchain] is the only source of the Rust toolchain the native catalog builds with.
+function Test-MiosDevOverlayFullDisabled([string[]]$Candidates) {
+    $top = $Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $top) { return $false }
+    $text = [IO.File]::ReadAllText($top, (New-Object System.Text.UTF8Encoding($false)))
+    $m = [regex]::Match($text, '(?ms)^\[bootstrap\]\s*$.*?^\s*dev_overlay_full\s*=\s*(?<v>true|false)\s*$')
+    return ($m.Success -and $m.Groups['v'].Value -eq 'false')
 }
 
 function Invoke-MiosNativeImageBuild([string]$Root, [string]$Machine) {
@@ -90,6 +185,14 @@ function Install-MiosNativeWindowsArtifact([string]$Root, [string]$Machine, [str
     return $Destination
 }
 
+function Get-MiosDistroStepVerdict([int]$Exit, [string]$Script) {
+    # A script run inside the distro succeeds only on exit 0. 127 is bash's "No such file or directory" for the script
+    # itself: it is not in the distro yet (for example when the mios.git checkout of / did not land).
+    if ($Exit -eq 0) { return [pscustomobject]@{ Ok = $true; Detail = '' } }
+    if ($Exit -eq 127) { return [pscustomobject]@{ Ok = $false; Detail = "exit 127: $Script is missing in the distro" } }
+    return [pscustomobject]@{ Ok = $false; Detail = "exit $Exit from $Script" }
+}
+
 function Ensure-MiosBuilder([string]$Machine, [hashtable]$Hardware) {
     $registered = @(& wsl.exe --list --quiet 2>$null) |
         ForEach-Object { ($_ -replace [char]0, '').Trim() } | Where-Object { $_ }
@@ -121,7 +224,7 @@ if ($BuildOnly) {
         if (-not (Test-Path -LiteralPath (Join-Path $SourceRoot $required) -PathType Leaf)) { throw "Current-source build input missing: $required" }
     }
     if (-not $BuildDistro) {
-        $binding = Get-Content -Raw -LiteralPath (Join-Path $env:ProgramData 'MiOS\bin\native-binding.json') -ErrorAction Stop | ConvertFrom-Json
+        $binding = Get-Content -Raw -LiteralPath (Join-Path (Get-MiosInstalledLayout).NativeBin 'native-binding.json') -ErrorAction Stop | ConvertFrom-Json
         $BuildDistro = $binding.distro
     }
     if (-not $BuildDistro) { throw 'A provisioned MiOS builder distribution is required' }
@@ -273,6 +376,49 @@ function Get-MiosSsotPort {
     $port = Get-MiosTomlValue -Section 'ports' -Key $Key -Default 0
     if ($port -is [int] -and $port -ge 1 -and $port -le 65535) { return $port }
     return $null
+}
+
+function Resolve-MiosWslNetworkingMode {
+    # [wsl2].networking_mode from the layered SSOT, the only source of the .wslconfig networkingMode. NAT (the default)
+    # or mirrored, case-insensitive; anything else is NAT. Mirrored needs Windows 11 22H2 (build 22621): below it the
+    # result is NAT. NAT is never upgraded to mirrored, whatever the Windows build.
+    param([int]$WindowsBuild = [Environment]::OSVersion.Version.Build)
+    $raw = ([string](Get-MiosTomlValue -Section 'wsl2' -Key 'networking_mode' -Default 'NAT')).Trim()
+    if ($raw -ieq 'NAT') { return 'NAT' }
+    if ($raw -ine 'mirrored') {
+        Write-Host "  [!] WSL-NETWORKING-MODE-INVALID: mios.toml [wsl2].networking_mode '$raw' is neither NAT nor mirrored; using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    if ($WindowsBuild -lt 22621) {
+        Write-Host "  [!] WSL-MIRRORED-UNSUPPORTED: mios.toml [wsl2].networking_mode is mirrored but Windows build $WindowsBuild is below 22621 (Windows 11 22H2); using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    return 'mirrored'
+}
+
+function Get-MiosWslExperimentalLines {
+    # The .wslconfig [experimental] hostAddressLoopback line, managed from SSOT: written under mirrored networking (the
+    # only mode that reads it), removed under NAT. Every other line and section is kept as it was.
+    param([AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines, [Parameter(Mandatory)][string]$NetworkingMode,
+        [bool]$HostAddressLoopback = $true)
+    $mirrored = ($NetworkingMode -ieq 'mirrored')
+    $out = New-Object System.Collections.Generic.List[string]
+    $inside = $false; $placed = $false
+    foreach ($line in @($Lines)) {
+        if ($line -match '^\s*\[\s*experimental\s*\]\s*(?:[#;].*)?$') {
+            $inside = $true; $out.Add($line)
+            if ($mirrored -and -not $placed) { $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant()); $placed = $true }
+            continue
+        }
+        if ($line -match '^\s*\[') { $inside = $false }
+        if ($inside -and $line -match '^\s*hostAddressLoopback\s*=') { continue }
+        $out.Add($line)
+    }
+    if ($mirrored -and -not $placed) {
+        $out.Add('[experimental]')
+        $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant())
+    }
+    return , $out.ToArray()
 }
 
 function Resolve-MiosLoginCredential {
@@ -435,6 +581,7 @@ if ($script:IsAdmin) {
 $script:MiosInstallDir     = $MiosInstallDir
 $script:MiosProgramData    = $MiosProgramData
 $script:MiosRepoDir        = $MiosRepoDir
+$script:MiosNativeCatalogInstalled = $false   # set once Phase 3 has built the native catalog in this process
 $script:MiosBootstrapShadow = $MiosBootstrapShadow
 $script:MiosBinDir         = $MiosBinDir
 $script:MiosShareDir       = $MiosShareDir
@@ -707,7 +854,7 @@ function Write-Log {
 function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
-    $launcher = Join-Path $env:ProgramData 'MiOS\bin\mios-launch.exe'
+    $launcher = Join-Path (Get-MiosInstalledLayout).NativeBin 'mios-launch.exe'
     $monitorScript = @($env:MIOS_MONITOR_SCRIPT,
         (Join-Path $PSScriptRoot 'usr\libexec\mios\mios-mon.py'),
         'C:\MiOS\usr\libexec\mios\mios-mon.py') |
@@ -1208,26 +1355,21 @@ function Repair-WslConfig {
     $bootSectionKeys = @('systemd', 'command', 'enabled', 'appendWindowsPath',
                          'default', 'options', 'mountFsTab',
                          'generateHosts', 'generateResolvConf', 'hostname')
-    $winBuild = [Environment]::OSVersion.Version.Build
-    $targetNetMode = if ($winBuild -ge 22621) { 'mirrored' } else { 'NAT' }
+    # networkingMode comes from SSOT [wsl2].networking_mode only (never upgraded to mirrored by Windows build), and
+    # filtering stays on: firewall=false bypasses the Hyper-V firewall policy altogether.
+    $targetNetMode = Resolve-MiosWslNetworkingMode
+    $loopback = [bool](Get-MiosTomlValue -Section 'wsl2' -Key 'host_address_loopback' -Default $true)
+    $fwall = Get-MiosTomlValue -Section 'wsl2' -Key 'firewall' -Default $true
+    if ($fwall -isnot [bool] -or -not $fwall) { throw 'mios.toml [wsl2].firewall=false disables the required inbound security policy; enable it before continuing.' }
 
-    if (-not (Test-Path $wslCfg)) {
-        $initLines = @(
-            "[wsl2]",
-            "networkingMode=$targetNetMode"
-        )
-        [System.IO.File]::WriteAllLines($wslCfg, $initLines, (New-Object System.Text.UTF8Encoding($false)))
-        Log-Ok ".wslconfig: initialized with [wsl2] networkingMode=$targetNetMode (BOM-free UTF-8)"
-        return
-    }
-
-    $lines = Get-Content $wslCfg
+    $exists = Test-Path -LiteralPath $wslCfg
+    $lines = if ($exists) { @(Get-Content -LiteralPath $wslCfg) } else { @() }
     $inWsl2 = $false
     $hasWsl2 = $false
     $hasNetMode = $false
+    $hasFirewall = $false
     $newLines = [System.Collections.Generic.List[string]]::new()
     $scrubbed = 0
-    $modified = 0
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i]
@@ -1238,10 +1380,9 @@ function Repair-WslConfig {
             continue
         }
         if ($line -match '^\s*\[') {
-            if ($inWsl2 -and -not $hasNetMode) {
-                $newLines.Add("networkingMode=$targetNetMode")
-                $hasNetMode = $true
-                $modified++
+            if ($inWsl2) {
+                if (-not $hasNetMode) { $newLines.Add("networkingMode=$targetNetMode"); $hasNetMode = $true }
+                if (-not $hasFirewall) { $newLines.Add('firewall=true'); $hasFirewall = $true }
             }
             $inWsl2 = $false
             $newLines.Add($line)
@@ -1257,18 +1398,19 @@ function Repair-WslConfig {
                     continue
                 }
                 if ($key -ieq 'networkingMode') {
+                    if ($hasNetMode) { continue }
                     $hasNetMode = $true
-                    if ($winBuild -lt 22621 -and $val -ieq 'mirrored') {
-                        Write-Log "wslconfig-repair: rewriting networkingMode=mirrored to NAT for Windows 10 (Build $winBuild)" "INFO"
-                        $newLines.Add("networkingMode=NAT")
-                        $modified++
-                        continue
-                    } elseif ($winBuild -ge 22621 -and $val -ieq 'NAT') {
-                        Write-Log "wslconfig-repair: upgrading networkingMode=NAT to mirrored for Windows 11 22H2+ (Build $winBuild)" "INFO"
-                        $newLines.Add("networkingMode=mirrored")
-                        $modified++
-                        continue
+                    if ($val -cne $targetNetMode) {
+                        Write-Log "wslconfig-repair: networkingMode=$val set to $targetNetMode from mios.toml [wsl2].networking_mode" "INFO"
                     }
+                    $newLines.Add("networkingMode=$targetNetMode")
+                    continue
+                }
+                if ($key -ieq 'firewall') {
+                    if ($hasFirewall) { continue }
+                    $hasFirewall = $true
+                    $newLines.Add('firewall=true')
+                    continue
                 }
                 # Preserve user-configured memory, processors, swap, etc.
             }
@@ -1276,18 +1418,22 @@ function Repair-WslConfig {
         $newLines.Add($line)
     }
 
-    if ($hasWsl2 -and -not $hasNetMode) {
-        $newLines.Add("networkingMode=$targetNetMode")
-        $modified++
+    if ($inWsl2) {
+        if (-not $hasNetMode) { $newLines.Add("networkingMode=$targetNetMode") }
+        if (-not $hasFirewall) { $newLines.Add('firewall=true') }
     } elseif (-not $hasWsl2) {
         $newLines.Add("[wsl2]")
         $newLines.Add("networkingMode=$targetNetMode")
-        $modified++
+        $newLines.Add('firewall=true')
     }
+    $final = Get-MiosWslExperimentalLines -Lines $newLines.ToArray() -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
+    if ($exists -and $scrubbed -eq 0 -and (($final -join "`n") -ceq ($lines -join "`n"))) { return }
 
-    [System.IO.File]::WriteAllLines($wslCfg, $newLines, (New-Object System.Text.UTF8Encoding($false)))
-    if ($scrubbed -gt 0 -or $modified -gt 0) {
-        Log-Ok ".wslconfig: repaired ($scrubbed misplaced keys dropped, $modified updates, BOM-free UTF-8)"
+    [System.IO.File]::WriteAllLines($wslCfg, $final, (New-Object System.Text.UTF8Encoding($false)))
+    if (-not $exists) {
+        Log-Ok ".wslconfig: initialized with [wsl2] networkingMode=$targetNetMode firewall=true (BOM-free UTF-8)"
+    } else {
+        Log-Ok ".wslconfig: repaired ($scrubbed misplaced keys dropped, networkingMode=$targetNetMode, firewall=true, BOM-free UTF-8)"
     }
 }
 
@@ -1379,10 +1525,12 @@ function Open-ConfiguratorInDev([string]$RepoDir, [string]$Html) {
     }
     if (-not $wslDistro) { return $false }
 
-    # Find the regular user (uid 1000) inside the dev VM. Podman machines
-    # default to "user"; we honor whatever's actually there.
-    $devUser = ((& wsl.exe -d $wslDistro --exec bash -c "getent passwd 1000 | cut -d: -f1" 2>$null) -join "").Trim()
-    if (-not $devUser) { $devUser = "user" }
+    # The configurator opens as the MiOS login (Get-MiosLinuxLogin), never a uid literal or a fallback name.
+    try { $devUser = Get-MiosLinuxLogin $wslDistro }
+    catch {
+        Log-Warn "MiOS-DEV has no usable login for [identity].username; the configurator opens on Windows instead"
+        return $false
+    }
 
     # Convert C:\path\mios.html -> /mnt/c/path/mios.html
     $drive    = $Html.Substring(0,1).ToLower()
@@ -1881,6 +2029,28 @@ function Set-PodmanMachineStorageOn {
     }
 }
 
+function Assert-MiosPodmanInitSupport {
+    # `podman machine init --update-connection` exists from Podman 6.0. An older client would fail only after the machine-os
+    # image is staged, so refuse first, with the installed version, the required one and the remedy.
+    param([Parameter(Mandatory)][string]$RequiredTag)
+    # Resolve once and run exactly that command; name it, so a stale podman earlier on PATH than the machine install shows.
+    $version = 'an unknown Podman client'
+    $where = 'no podman on PATH'
+    $help = ''
+    try {
+        $cmd = Get-Command podman -ErrorAction Stop | Select-Object -First 1
+        $where = if ($cmd.CommandType -eq 'Application') { [string]$cmd.Source } else { "$($cmd.CommandType) $($cmd.Name)" }
+        $version = (((& $cmd --version 2>&1) | Out-String).Trim())
+        $help = ((& $cmd machine init --help 2>&1) | Out-String)
+    } catch { $version = "no usable Podman client ($($_.Exception.Message))" }
+    if ($help -match '(?m)^\s*(?:-\w,\s*)?--update-connection\b') { return }
+    $message = "Installed '$version' ($where) has no 'podman machine init --update-connection'; MiOS-DEV needs Podman $RequiredTag or newer " +
+        "(machine-os $RequiredTag). Remedy: re-run the MiOS installer and approve its UAC prompt; its elevated preparation installs the " +
+        "pinned, verified Podman MSI from [bootstrap.prereqs]. No machine or connection was created."
+    Log-Fail $message
+    throw $message
+}
+
 function Get-PodmanMachineOsImage {
     [CmdletBinding()]
     param(
@@ -2135,6 +2305,9 @@ function New-BuilderDistro([hashtable]$HW) {
             throw "machine-os:latest is unavailable and the installed Podman version could not be resolved"
         }
     }
+    # Before any machine-os download or init: a client that cannot take the init flags below stops here, so no machine or
+    # connection is ever half-created.
+    Assert-MiosPodmanInitSupport -RequiredTag $machineTag
     if (-not $MachineImage) {
         $machineCacheDir = Join-Path $script:MiosInstallDir 'machine-os'
         $MachineImage = $null
@@ -2487,20 +2660,27 @@ echo "[mios-overlay] manual refresh: sudo mios-dev-seed"
              "cp '$tomlWslPath' /tmp/mios.toml; " +
              "/tmp/mios-overlay.sh"
     & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "overlay-seed: $_" }
-    if ($LASTEXITCODE -ne 0) {
-        Log-Warn "overlay seed exited rc=$LASTEXITCODE -- partial install possible (packages may still be present; rerun safe)"
-    } else {
-        Log-Ok "MiOS package overlay seeded into $DevDistro"
+    $seedRc = $LASTEXITCODE
+    # A non-zero exit is a failure: the package layer MiOS-DEV builds with is incomplete, whatever a rerun might do.
+    if ($seedRc -ne 0) {
+        Log-Fail "MiOS package overlay failed (rc=$seedRc) in $DevDistro; see the overlay-seed lines above."
+        throw "MiOS package overlay failed (rc=$seedRc)"
     }
+    Log-Ok "MiOS package overlay seeded into $DevDistro"
 }
 
 function Invoke-MiosQuadletOverlay {
+    # Two stages of one seed script. checkout makes / a mios.git checkout and starts nothing (no daemon-reload, no
+    # .wants link, no render, no sentinel). realize runs once the native catalog has installed the Quadlet renderer:
+    # it renders, then enables and starts units, and writes the sentinel last.
+    param([Parameter(Mandatory = $true)][ValidateSet('checkout', 'realize')][string]$Stage)
     if ($env:MIOS_SKIP_DEV_QUADLETS -in @('1','true','TRUE','yes')) {
-        Log-Warn "MIOS_SKIP_DEV_QUADLETS set -- Quadlet overlay skipped"
+        Log-Warn "MIOS_SKIP_DEV_QUADLETS set -- Quadlet overlay ($Stage) skipped"
         return
     }
 
-    Set-Step "Overlaying MiOS Quadlets + systemd units onto $DevDistro..."
+    if ($Stage -eq 'checkout') { Set-Step "Checking out mios.git at / in $DevDistro (nothing is started yet)..." }
+    else { Set-Step "Rendering and starting MiOS Quadlets + systemd units in $DevDistro..." }
 
     # Per the directive "M:\ IS git", mios.git is overlaid AT
     # $MiosRepoDir root, not at $MiosRepoDir\mios subdir.
@@ -2536,6 +2716,8 @@ function Invoke-MiosQuadletOverlay {
         }
     }
     if (-not $sshOk) {
+        # After the checkout, skipping the render would leave unrendered Quadlets for the next guest boot to start.
+        if ($Stage -eq 'realize') { Log-Fail "wsl.exe probe into $DevDistro timed out at 8s; the checked-out Quadlets are not rendered"; throw "Quadlet overlay (realize) cannot reach $DevDistro" }
         Log-Warn "wsl.exe probe into $DevDistro timed out at 8s -- install-time Quadlet overlay skipped."
         Log-Warn "  The mios-build-driver / bootc switch path still delivers the SAME Quadlets via the OCI image,"
         Log-Warn "  so MiOS-DEV will reach full-parity (MiOS-DEV == MiOS) after the build phase regardless."
@@ -2563,16 +2745,49 @@ function Invoke-MiosQuadletOverlay {
 # Generated by build-mios.ps1 / Invoke-MiosQuadletOverlay.
 set -uo pipefail
 
+# >>> overlay-stage-gate
 SRC="${1:?source mios.git path required}"
 SENTINEL="/var/lib/mios/.quadlet-overlay-seeded"
+STAGE1_MARKER="/run/mios/quadlet-stage1"
+OVERLAY_STAGE="${mios_overlay_stage:-}"
+case "$OVERLAY_STAGE" in
+    checkout|realize) ;;
+    *) echo "[quadlet-overlay] ERROR: mios_overlay_stage must be checkout or realize (got '$OVERLAY_STAGE')"; exit 2 ;;
+esac
 
+# The sentinel is the only gate, for both stages: realize writes it last, so a run that stopped anywhere repeats.
 # Skip if sentinel is newer than the source mios.git's Containerfile
 # (cheap proxy for "has the source tree changed since last overlay").
 if [[ -f "$SENTINEL" && "$SENTINEL" -nt "$SRC/Containerfile" ]]; then
-    echo "[quadlet-overlay] sentinel newer than mios.git -> skip"
+    echo "[quadlet-overlay] sentinel newer than mios.git -> skip ($OVERLAY_STAGE)"
     exit 0
 fi
+# <<< overlay-stage-gate
 
+mios_resolve_ns() {
+    SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1) || SYSTEMD_PID=""
+    if [[ -n "$SYSTEMD_PID" ]]; then
+        NS="sudo nsenter -t $SYSTEMD_PID -a"
+        echo "[quadlet-overlay] entering systemd ns (PID $SYSTEMD_PID) for systemctl calls"
+    else
+        NS="sudo"
+        echo "[quadlet-overlay] WARN: systemd PID not found -- systemctl calls may fail"
+    fi
+}
+
+mios_sync_env() {
+    if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
+        echo "[quadlet-overlay] generating /etc/mios/install.env via mios-sync-env"
+        sudo /usr/libexec/mios/system-sync-env.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
+            echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
+    fi
+    return 0
+}
+
+# >>> overlay-stage-checkout
+# Stage 1 (checkout). It reloads, links, renders and starts nothing: Podman's Quadlet generator turns every
+# checked-out .container into a unit at the next daemon-reload or guest boot, and most are WantedBy=multi-user.target.
+if [[ "$OVERLAY_STAGE" == checkout ]]; then
 echo "[quadlet-overlay] making / a git working tree of mios.git ($SRC) ..."
 
 ORIGIN_URL="${MIOS_GIT_ORIGIN:-https://github.com/mios-dev/MiOS.git}"
@@ -2635,6 +2850,9 @@ fi
 
 # Preserve locally edited deployed files. The verified image pipeline performs
 # the whole-system update; this optional live overlay must never discard them.
+# A modified root (an earlier realize renders tracked files in place) skips only the checkout; the rest of this
+# stage and the realize stage still run.
+ROOT_PRESERVED=0
 if sudo git -C / rev-parse --verify HEAD >/dev/null 2>&1; then
     if ! root_changes=$(sudo git -C / status --porcelain --untracked-files=no 2>&1); then
         echo "[overlay] ERROR: cannot inspect existing root checkout" >&2
@@ -2642,10 +2860,121 @@ if sudo git -C / rev-parse --verify HEAD >/dev/null 2>&1; then
     fi
     if [[ -n "$root_changes" ]]; then
         echo "[overlay] preserving modified root overlay; full image build remains required"
-        exit 0
+        ROOT_PRESERVED=1
     fi
 fi
 
+# >>> mios-root-checkout (exercised by tests/test_build_quadlet_overlay.ps1)
+# machine-os ships these paths and mios.git tracks them. MiOS owns them (MiOS-DEV == MiOS: identity, time sync, the
+# bound-image store, the WSL boot/user/automount config), so each one git would refuse to overwrite is backed up, moved
+# aside and replaced by the checkout. os-release and the rpc_pipefs unit stay rpm-owned: `rpm -V` reports them and a
+# dnf update could rewrite them; MiOS-DEV is replaced through machine-os, never dnf-updated. Any other path refuses.
+mios_root_overlap=(etc/chrony.conf etc/wsl.conf usr/lib/os-release
+    usr/lib/systemd/system/var-lib-nfs-rpc_pipefs.mount usr/share/containers/storage.conf)
+
+# 0 when a container store under root $1 already holds images or layers: they would then mount under MiOS's
+# storage.conf (overlay metacopy=on,userxattr) instead of the trusted.* xattrs they were written with.
+mios_store_has_content() {
+    local base="${1%/}" store first
+    for store in "$base/var/lib/containers/storage" "$base"/home/*/.local/share/containers/storage "$base/root/.local/share/containers/storage"; do
+        [[ -d "$store" ]] || continue
+        # Layers are 64-hex directories; `l` (short links) and dotfiles such as .has-mount-program are bookkeeping.
+        first=$(find "$store/overlay" -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{64}' -print -quit 2>/dev/null)
+        [[ -n "$first" ]] && return 0
+        if [[ -s "$store/overlay-images/images.json" && "$(tr -d '[:space:]' < "$store/overlay-images/images.json")" != "[]" ]]; then
+            return 0
+        fi
+    done
+    if [[ -z "$base" ]] && command -v podman >/dev/null 2>&1; then
+        [[ -n "$(timeout 30 podman images -q 2>/dev/null)" ]] && return 0
+    fi
+    return 1
+}
+
+# Puts every path in "$@" back from backup $2 under root $1; a path that exists again keeps its original in the backup.
+mios_root_restore() {
+    local base="$1" backup="$2" p
+    shift 2
+    for p in "$@"; do
+        if [[ -e "$base/$p" || -L "$base/$p" ]]; then
+            echo "[overlay] WARN: $p exists again; its original stays at $backup/files/$p"
+        else
+            sudo mkdir -p "$(dirname "$base/$p")" && sudo mv "$backup/files/$p" "$base/$p" && echo "[overlay] restored $p"
+        fi
+    done
+}
+
+# Checks out $2 (FETCH_HEAD) into root $1, or fast-forwards an existing checkout. It fails closed: a path off the
+# known list, or a populated container store, refuses with nothing moved; a failed checkout restores what it moved.
+mios_root_checkout() {
+    local root="$1" ref="$2" base="${1%/}" p k known rc stamp backup meta
+    local -a conflicts=() unknown=() moved=()
+    local -A tracked=()
+    if ! sudo git -C "$root" rev-parse --verify -q "$ref^{commit}" >/dev/null; then
+        echo "[overlay] ERROR: $ref is not a commit in $root; nothing was moved"
+        return 6
+    fi
+    # Exactly what git would refuse: paths the target tracks that exist on disk and are not tracked yet.
+    while IFS= read -r -d '' p; do tracked["$p"]=1; done < <(sudo git -C "$root" ls-files -z 2>/dev/null)
+    while IFS= read -r -d '' p; do
+        [[ -n "${tracked[$p]:-}" ]] && continue
+        if [[ -e "$base/$p" || -L "$base/$p" ]]; then conflicts+=("$p"); fi
+    done < <(sudo git -C "$root" ls-tree -r -z --name-only "$ref")
+    for p in "${conflicts[@]}"; do
+        known=0
+        for k in "${mios_root_overlap[@]}"; do if [[ "$p" == "$k" ]]; then known=1; break; fi; done
+        (( known )) || unknown+=("$p")
+    done
+    if (( ${#unknown[@]} )); then
+        echo "[overlay] ERROR: the checkout would overwrite files that are not on the known machine-os overlap list; nothing was moved:"
+        printf '[overlay]   %s\n' "${unknown[@]}"
+        echo "[overlay] REMEDY: ${MIOS_BUILDER_DISTRO:-MiOS-DEV} holds files from an earlier incomplete overlay; re-provision it (podman machine rm ${MIOS_BUILDER_DISTRO:-MiOS-DEV}, then re-run the installer)"
+        return 4
+    fi
+    for p in "${conflicts[@]}"; do
+        if [[ "$p" == usr/share/containers/storage.conf ]] && mios_store_has_content "$root"; then
+            echo "[overlay] ERROR: the container store already holds images or layers; MiOS's storage.conf (overlay metacopy=on,userxattr) would change how they mount. Nothing was moved."
+            return 5
+        fi
+    done
+    if (( ${#conflicts[@]} )); then
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        backup="$base/var/lib/mios/overlay-backup/$stamp-$$"
+        if ! sudo install -d -m 0700 "$backup/files"; then
+            echo "[overlay] ERROR: cannot create the private backup $backup; nothing was moved"
+            return 6
+        fi
+        for p in "${conflicts[@]}"; do
+            meta="$(sudo stat -c '%U:%G %a %s' "$base/$p") $(sudo sha256sum "$base/$p" | cut -d' ' -f1)"
+            if sudo mkdir -p "$backup/files/$(dirname "$p")" && sudo mv "$base/$p" "$backup/files/$p"; then
+                moved+=("$p")
+                printf '%s %s\n' "$meta" "$p" | sudo tee -a "$backup/MANIFEST" >/dev/null
+                echo "[overlay] moved machine-os $p aside to $backup ($meta)"
+            else
+                echo "[overlay] ERROR: cannot move $p aside; restoring"
+                mios_root_restore "$base" "$backup" "${moved[@]}"
+                return 6
+            fi
+        done
+    fi
+    if sudo git -C "$root" rev-parse --verify -q HEAD >/dev/null; then
+        sudo git -C "$root" merge --ff-only "$ref"
+        rc=$?
+    else
+        echo "[overlay] $root has no checkout yet; checking out $ref"
+        sudo git -C "$root" checkout --detach "$ref"
+        rc=$?
+    fi
+    if (( rc != 0 )); then
+        echo "[overlay] ERROR: checkout of $ref into $root failed (rc=$rc)"
+        if (( ${#moved[@]} )); then mios_root_restore "$base" "$backup" "${moved[@]}"; fi
+        return "$rc"
+    fi
+    return 0
+}
+# <<< mios-root-checkout
+
+if (( ! ROOT_PRESERVED )); then
 # -- Phase B: ensure / is a git working tree pointing at the native cache -----
 echo "[overlay] making / a git working tree of mios.git ($CACHE_DIR)"
 sudo git -C / init -b "$ORIGIN_BRANCH" 2>&1 | head -1 || true
@@ -2664,10 +2993,9 @@ if [[ $fetch_rc -ne 0 ]]; then
     echo "[overlay] ERROR: git fetch failed (rc=$fetch_rc)"
 fi
 if [[ $fetch_rc -ne 0 ]]; then exit "$fetch_rc"; fi
-if sudo git -C / rev-parse --verify HEAD >/dev/null 2>&1; then
-    sudo git -C / merge --ff-only FETCH_HEAD || exit 1
-else
-    sudo git -C / checkout --detach FETCH_HEAD || exit 1
+# A root left at "git init, no HEAD" by an earlier failed run resumes here: nothing is tracked, so the guard above
+# had nothing to preserve, and the checkout picks up where it stopped.
+mios_root_checkout / FETCH_HEAD || exit $?
 fi
 
 count=$(sudo git -C / ls-tree -r --name-only HEAD 2>/dev/null | wc -l)
@@ -2683,16 +3011,6 @@ echo "[quadlet-overlay] restoring +x on MiOS scripts (Windows git checkout drops
 sudo chmod -R +x /usr/libexec/mios/ 2>/dev/null || true
 sudo find /usr/lib/mios -type f \( -name "*.sh" -o -name "mios-*" \) ! -name "*.py" ! -name "*.json" ! -name "*.yaml" ! -name "*.md" -exec chmod +x {} + 2>/dev/null || true
 sudo find /usr/bin /usr/local/bin -maxdepth 1 -name "mios-*" -type f -exec chmod +x {} + 2>/dev/null || true
-
-sudo install -d -m 0755 /usr/lib/systemd/system/multi-user.target.wants 2>/dev/null || true
-sudo ln -sf ../mios-ai-firstboot.service /usr/lib/systemd/system/multi-user.target.wants/mios-ai-firstboot.service 2>/dev/null \
-    && echo "[quadlet-overlay] mios-ai-firstboot enabled via .wants symlink (runs on first boot)" \
-    || echo "[quadlet-overlay] WARN: could not symlink mios-ai-firstboot.service"
-
-sudo install -d -m 0755 /etc/systemd/user/default.target.wants 2>/dev/null || true
-sudo ln -sf /usr/lib/systemd/user/mios-launcher.service /etc/systemd/user/default.target.wants/mios-launcher.service 2>/dev/null \
-    && echo "[quadlet-overlay] mios-launcher (OS-control broker) enabled via global user .wants symlink" \
-    || echo "[quadlet-overlay] WARN: could not symlink mios-launcher.service"
 
 # Sanity: the smoke test expects /usr/share/mios. If git reset
 # succeeded but the dir isn't there, surface that loudly so we
@@ -2714,33 +3032,120 @@ if [[ -r /tools/lib/userenv.sh ]]; then
     sudo install -D -m 0755 /tools/lib/userenv.sh /usr/lib/mios/userenv.sh \
         && echo "[quadlet-overlay] deployed env-bridge resolver -> /usr/lib/mios/userenv.sh"
 fi
-if [[ -x /usr/libexec/mios/system-sync-env.sh ]]; then
-    echo "[quadlet-overlay] generating /etc/mios/install.env via mios-sync-env"
-    sudo /usr/libexec/mios/system-sync-env.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
-        echo "[quadlet-overlay] WARN: mios-sync-env exited non-zero (install.env may be stale)"
+mios_sync_env
+
+mios_resolve_ns
+echo "[quadlet-overlay] realizing sysusers / tmpfiles (the realize stage reloads systemd, after the render) ..."
+$NS systemd-sysusers 2>&1 | tail -3 || true
+$NS systemd-tmpfiles --create 2>&1 | tail -3 || true
+sudo mkdir -p "$(dirname "$STAGE1_MARKER")" && sudo touch "$STAGE1_MARKER"
+echo "[quadlet-overlay] checkout stage done: nothing was reloaded, linked, rendered or started"
+exit 0
+fi
+# <<< overlay-stage-checkout
+
+# >>> overlay-stage-realize
+# Stage 2 (realize), after the native catalog installed the renderer. Every step must exit 0: the ERR trap names the
+# failed line and command, and the sentinel, written last, is never reached.
+set -eE
+trap '_mios_rc=$?; if (( BASH_SUBSHELL == 0 )); then echo "[quadlet-overlay] ERROR: realize stopped at line $LINENO (exit $_mios_rc): $BASH_COMMAND; the overlay is not sealed and the next run repeats this stage"; exit 7; fi' ERR
+
+if [[ -e "$STAGE1_MARKER" ]]; then
+    echo "[quadlet-overlay] realize: the checkout stage ran in this guest boot"
+else
+    echo "[quadlet-overlay] WARN: $STAGE1_MARKER is missing: the guest restarted after the checkout stage; units generated from unrendered Quadlets are stopped before the render"
 fi
 
 # Render failure is fatal (exit 3, thrown by the caller): a unit started with an unrendered ${MIOS_*} reads it literally (task_3426).
+RENDERER=/usr/libexec/mios/mios-render-quadlets
+RENDERER_TARGET=$(readlink -f "$RENDERER" 2>/dev/null) || RENDERER_TARGET=""
+echo "[quadlet-overlay] renderer: $RENDERER -> ${RENDERER_TARGET:-missing}"
+if [[ "$RENDERER_TARGET" != /usr/bin/mios-render-quadlets || ! -x "$RENDERER_TARGET" ]]; then
+    echo "[quadlet-overlay] ERROR: $RENDERER must resolve to the native /usr/bin/mios-render-quadlets from the catalog; nothing was rendered or started"
+    exit 3
+fi
+
+mios_sync_env
+mios_resolve_ns
+
+# >>> quadlet-unit-cycle
+# A guest boot or daemon-reload since the checkout stage lets the Quadlet generator make units from unrendered
+# sources, which then hold literal ${MIOS_*} values. Those units are stopped before the render and started after it.
+STOPPED_UNITS=()
+# $1 = "system" or a user manager's UID; prints the systemctl command line for that manager.
+mios_unit_ctl() {
+    local name
+    if [[ "$1" == system ]]; then echo "$NS systemctl"; return 0; fi
+    name=$(getent passwd "$1" | cut -d: -f1) || return 1
+    [[ -n "$name" ]] || return 1
+    echo "$NS runuser -u $name -- env XDG_RUNTIME_DIR=/run/user/$1 systemctl --user"
+}
+# $1 = manager; prints "unit source" for each active, activating or failed unit generated from a Quadlet source
+# (/usr/share/containers/systemd, its users/ and the /etc copies), plus mios-ai-firstboot.service.
+mios_quadlet_units_running() {
+    local ctl listing u src
+    ctl=$(mios_unit_ctl "$1") || return 1
+    listing=$($ctl list-units --all --plain --no-legend --type=service --state=active,activating,failed) || return 1
+    while read -r u _; do
+        [[ -n "$u" ]] || continue
+        src=$($ctl show -p SourcePath --value "$u") || return 1
+        case "$src" in
+            /usr/share/containers/systemd/*|/etc/containers/systemd/*) echo "$u $src" ;;
+            *) if [[ "$u" == mios-ai-firstboot.service ]]; then echo "$u ${src:-unit-file}"; fi ;;
+        esac
+    done <<< "$listing"
+    return 0
+}
+# $1 = manager, $2 = required|optional (a user manager that cannot be listed is reported, not fatal).
+mios_stop_unrendered() {
+    local manager="$1" ctl found u src
+    if ! ctl=$(mios_unit_ctl "$manager") || ! found=$(mios_quadlet_units_running "$manager"); then
+        if [[ "$2" == optional ]]; then
+            echo "[quadlet-overlay] WARN: cannot list the units of user manager $manager; its Quadlet units were not checked"
+            return 0
+        fi
+        echo "[quadlet-overlay] ERROR: cannot list the units of the $manager manager"
+        return 1
+    fi
+    while read -r u src; do
+        [[ -n "$u" ]] || continue
+        echo "[quadlet-overlay] stopping $u ($manager manager, from $src) before the render"
+        $ctl stop "$u" || { echo "[quadlet-overlay] ERROR: cannot stop $u"; return 1; }
+        STOPPED_UNITS+=("$manager $u")
+    done <<< "$found"
+    return 0
+}
+mios_restart_stopped() {
+    local entry manager u ctl
+    for entry in "${STOPPED_UNITS[@]}"; do
+        manager="${entry%% *}"; u="${entry#* }"
+        ctl=$(mios_unit_ctl "$manager")
+        if [[ "$manager" != system ]]; then $ctl daemon-reload; fi
+        echo "[quadlet-overlay] starting $u ($manager manager) again, now rendered"
+        $ctl start --no-block "$u"
+    done
+    return 0
+}
+# <<< quadlet-unit-cycle
+
+mios_stop_unrendered system required
+for _uid in $($NS systemctl list-units --plain --no-legend --state=active 'user@*.service' 2>/dev/null | sed -n 's/^user@\([0-9][0-9]*\)\.service.*/\1/p'); do
+    mios_stop_unrendered "$_uid" optional
+done
+
 [[ -x /automation/34-render-quadlets.sh ]] || { echo "[quadlet-overlay] ERROR: /automation/34-render-quadlets.sh not found"; exit 3; }
 echo "[quadlet-overlay] rendering Quadlet \${MIOS_*} placeholders via automation/34-render-quadlets.sh"
 sudo /automation/34-render-quadlets.sh 2>&1 | sed 's/^/[quadlet-overlay]   /' || \
     { echo "[quadlet-overlay] ERROR: 34-render-quadlets.sh failed; no unit was started"; exit 3; }
 
-SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
-if [[ -n "$SYSTEMD_PID" ]]; then
-    NS="sudo nsenter -t $SYSTEMD_PID -a"
-    echo "[quadlet-overlay] entering systemd ns (PID $SYSTEMD_PID) for systemctl calls"
-else
-    NS="sudo"
-    echo "[quadlet-overlay] WARN: systemd PID not found -- systemctl calls may fail"
-fi
-
 echo "[quadlet-overlay] realizing sysusers / tmpfiles / daemon-reload ..."
 $NS systemd-sysusers 2>&1 | tail -3 || true
 $NS systemd-tmpfiles --create 2>&1 | tail -3 || true
-$NS systemctl daemon-reload 2>&1 | tail -3 || true
+# This reload runs the Quadlet generator on the rendered sources; a failed reload would keep the unrendered units.
+$NS systemctl daemon-reload 2>&1 | tail -3
+mios_restart_stopped
 
-echo "[quadlet-overlay] setting wsl.conf [boot].systemd=true + [user].default=mios"
+echo "[quadlet-overlay] setting wsl.conf [boot].systemd=true + [user].default=<the [identity].username login>"
 if ! grep -q '^\[boot\]' /etc/wsl.conf 2>/dev/null; then
     printf '\n[boot]\nsystemd=true\n' | sudo tee -a /etc/wsl.conf >/dev/null
     echo "[quadlet-overlay] /etc/wsl.conf: appended [boot] systemd=true"
@@ -2755,21 +3160,21 @@ elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=[[:space:]]*true[[:space:]]*$'
 else
     echo "[quadlet-overlay] /etc/wsl.conf: [boot] systemd=true already set"
 fi
-if id mios >/dev/null 2>&1; then
+# The default login is the vendor/host [identity].username through MiOS's identity guard (no literal name).
+mios_login=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)") || mios_login=""
+if [ -n "$mios_login" ]; then
     if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
-        printf '\n[user]\ndefault=mios\n' | sudo tee -a /etc/wsl.conf >/dev/null
-        echo "[quadlet-overlay] /etc/wsl.conf: appended [user] default=mios"
+        printf '\n[user]\ndefault=%s\n' "$mios_login" | sudo tee -a /etc/wsl.conf >/dev/null
+        echo "[quadlet-overlay] /etc/wsl.conf: appended [user] default=$mios_login"
     elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
-        sudo sed -i '/^\[user\]/a default=mios' /etc/wsl.conf
-        echo "[quadlet-overlay] /etc/wsl.conf: inserted default=mios under existing [user]"
-    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=[[:space:]]*mios[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
-        sudo sed -i 's|^[[:space:]]*default[[:space:]]*=.*|default=mios|' /etc/wsl.conf
-        echo "[quadlet-overlay] /etc/wsl.conf: rewrote default=<other> to default=mios"
+        sudo sed -i "/^\[user\]/a default=$mios_login" /etc/wsl.conf
+        echo "[quadlet-overlay] /etc/wsl.conf: inserted default=$mios_login under existing [user]"
     else
-        echo "[quadlet-overlay] /etc/wsl.conf: default=mios already set"
+        # Fill only: an existing default is never rewritten here, so mios.git's tracked etc/wsl.conf stays clean (R5).
+        echo "[quadlet-overlay] /etc/wsl.conf: [user] default already set; left as it is"
     fi
 else
-    echo "[quadlet-overlay] WARN: mios user not found after sysusers; skipping wsl.conf default-user write"
+    echo "[quadlet-overlay] WARN: no usable MiOS login for [identity].username; wsl.conf [user].default left as it is"
 fi
 
 echo "[quadlet-overlay] container-host prerequisites for mios user ..."
@@ -2801,12 +3206,26 @@ if [[ -d /var/lib/flatpak/exports/share/applications ]]; then
         [[ -f "$_df" ]] || continue
         _base=$(basename "$_df")
         if [[ ! -e "/usr/share/applications/$_base" ]]; then
-            sudo ln -sf "$_df" "/usr/share/applications/$_base" 2>/dev/null
-            echo "[quadlet-overlay]   linked flatpak desktop: $_base"
+            if sudo ln -sf "$_df" "/usr/share/applications/$_base" 2>/dev/null; then
+                echo "[quadlet-overlay]   linked flatpak desktop: $_base"
+            else
+                echo "[quadlet-overlay]   WARN: could not link flatpak desktop: $_base"
+            fi
         fi
     done
     sudo update-desktop-database /usr/share/applications/ 2>/dev/null || true
 fi
+
+# Enabled only now, after the render: both start at the next guest boot.
+sudo install -d -m 0755 /usr/lib/systemd/system/multi-user.target.wants 2>/dev/null || true
+sudo ln -sf ../mios-ai-firstboot.service /usr/lib/systemd/system/multi-user.target.wants/mios-ai-firstboot.service 2>/dev/null \
+    && echo "[quadlet-overlay] mios-ai-firstboot enabled via .wants symlink (runs on first boot)" \
+    || echo "[quadlet-overlay] WARN: could not symlink mios-ai-firstboot.service"
+
+sudo install -d -m 0755 /etc/systemd/user/default.target.wants 2>/dev/null || true
+sudo ln -sf /usr/lib/systemd/user/mios-launcher.service /etc/systemd/user/default.target.wants/mios-launcher.service 2>/dev/null \
+    && echo "[quadlet-overlay] mios-launcher (OS-control broker) enabled via global user .wants symlink" \
+    || echo "[quadlet-overlay] WARN: could not symlink mios-launcher.service"
 
 NATIVE_SET=(cockpit.socket mios-cdi-detect.service nvidia-cdi-refresh.path)
 
@@ -2959,9 +3378,11 @@ WRAPPER
 done
 }
 
-DEV_USER=$(getent passwd 1000 | cut -d: -f1)
-[[ -z "$DEV_USER" ]] && DEV_USER=user
-if [[ ! -f /etc/sudoers.d/00-mios-dev ]]; then
+# The sudoers grant goes to the vendor/host [identity].username login through MiOS's identity guard, never uid 1000.
+DEV_USER=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)") || DEV_USER=""
+if [[ -z "$DEV_USER" ]]; then
+    echo "[quadlet-overlay] WARN: no usable MiOS login for [identity].username; sudoers drop-in not written"
+elif [[ ! -f /etc/sudoers.d/00-mios-dev ]]; then
     sudo tee /etc/sudoers.d/00-mios-dev >/dev/null <<SUDO
 # MiOS-DEV passwordless sudo. Generated by Invoke-MiosQuadletOverlay.
 # The dev VM is single-tenant on Windows; the operator already has
@@ -2978,17 +3399,24 @@ fi
 
 _mios_pw='__MIOS_LOGIN_PASSWORD__'
 _mios_pw_hash='__MIOS_LOGIN_PASSWORD_HASH__'
-for account in "$DEV_USER" mios; do
-    if [[ -n "$_mios_pw_hash" ]]; then
-        printf '%s:%s\n' "$account" "$_mios_pw_hash" | sudo chpasswd -e 2>&1 \
-            && echo "[quadlet-overlay] $account password hash applied" \
-            || echo "[quadlet-overlay] WARN: chpasswd -e for $account failed"
-    else
-        printf '%s:%s\n' "$account" "$_mios_pw" | sudo chpasswd 2>&1 \
-            && echo "[quadlet-overlay] $account password set" \
-            || echo "[quadlet-overlay] WARN: chpasswd for $account failed"
-    fi
-done
+# The operator's credential goes to the MiOS login only. The mios service account logs in with no password
+# (its terminals carry their own credential), so its password stays locked, on every run and on existing guests.
+if [[ -z "$DEV_USER" ]]; then
+    echo "[quadlet-overlay] WARN: no usable MiOS login for [identity].username; the operator's credential was not applied"
+elif [[ -n "$_mios_pw_hash" ]]; then
+    printf '%s:%s\n' "$DEV_USER" "$_mios_pw_hash" | sudo chpasswd -e 2>&1 \
+        && echo "[quadlet-overlay] $DEV_USER password hash applied" \
+        || echo "[quadlet-overlay] WARN: chpasswd -e for $DEV_USER failed"
+else
+    printf '%s:%s\n' "$DEV_USER" "$_mios_pw" | sudo chpasswd 2>&1 \
+        && echo "[quadlet-overlay] $DEV_USER password set" \
+        || echo "[quadlet-overlay] WARN: chpasswd for $DEV_USER failed"
+fi
+if id mios >/dev/null 2>&1; then
+    sudo usermod -L mios 2>&1 \
+        && echo "[quadlet-overlay] mios password locked" \
+        || echo "[quadlet-overlay] WARN: usermod -L mios failed"
+fi
 
 if [[ -n "$_mios_pw" ]] && command -v python3 >/dev/null 2>&1; then
     if python3 - "${_mios_pw}" <<'PYVERIFY' 2>&1; then
@@ -3149,17 +3577,8 @@ else
     echo "[quadlet-overlay] Flatpak is not installed after package provisioning; deferring desktop apps to the later installer pass"
 fi
 
-sudo install -d -m 0755 /var/lib/mios
-sudo touch "$SENTINEL"
-
-SYSTEMD_PID=$(pidof systemd 2>/dev/null | tr ' ' '\n' | head -1)
-if [[ -n "$SYSTEMD_PID" ]]; then
-    NS="sudo nsenter -t $SYSTEMD_PID -a"
-    echo "[quadlet-overlay] post-pkg: re-resolved systemd ns (PID $SYSTEMD_PID)"
-else
-    NS="sudo"
-    echo "[quadlet-overlay] post-pkg: WARN systemd PID not found; falling back to bare sudo"
-fi
+echo "[quadlet-overlay] post-pkg: re-resolving the systemd namespace"
+mios_resolve_ns
 
 echo "[quadlet-overlay] writing /etc/mios/hermes/config.local.yaml (host-network URL overrides)"
 sudo install -d -m 0755 /etc/mios/hermes
@@ -3209,7 +3628,7 @@ echo "[quadlet-overlay] applying Network=host drop-ins (dev VM port-forward work
 sudo rm -f /etc/containers/systemd/mios-searxng.container.d/10-mios-dev-host-network.conf
 for svc_pair in \
     "mios-forge:Environment=FORGEJO__server__HTTP_ADDR=0.0.0.0|Environment=GITEA__server__HTTP_ADDR=0.0.0.0" \
-    "mios-open-webui:Environment=PORT=3030" \
+    "mios-open-webui:" \
     "mios-code-server:" \
     "mios-cockpit-link:" \
     "mios-llm-light:Environment=HOME=/var/lib/mios/llamacpp|Environment=LD_LIBRARY_PATH=/usr/lib/wsl/lib:/usr/local/cuda/lib64" \
@@ -3247,12 +3666,14 @@ $NS systemctl daemon-reload
 
 if [[ -r /usr/lib/systemd/system-preset/90-mios.preset ]]; then
     echo "[quadlet-overlay] applying 90-mios.preset (cockpit + pcp + firstboot services)"
-    grep -E '^enable ' /usr/lib/systemd/system-preset/90-mios.preset 2>/dev/null \
+    { grep -E '^enable ' /usr/lib/systemd/system-preset/90-mios.preset 2>/dev/null || true; } \
       | awk '{print $2}' \
       | while read -r _unit; do
             [[ -z "$_unit" ]] && continue
             if $NS systemctl cat "$_unit" >/dev/null 2>&1; then
-                $NS systemctl preset "$_unit" 2>&1 | sed 's/^/[quadlet-overlay]   /'
+                # A unit the mask loop below masked on an earlier run refuses its preset; that is expected.
+                $NS systemctl preset "$_unit" 2>&1 | sed 's/^/[quadlet-overlay]   /' \
+                    || echo "[quadlet-overlay]   WARN: preset $_unit did not apply (masked or not installable)"
             fi
         done
 fi
@@ -3273,6 +3694,12 @@ echo "[quadlet-overlay] Cockpit:        https://localhost:__MIOS_COCKPIT_PORT__/
 echo "[quadlet-overlay] Podman Desktop: containers under MiOS-DEV machine carry openInBrowser labels"
 echo "[quadlet-overlay] Terminal:       Ptyxis flatpak ready -- launch via WSLg, default tab is host shell"
 echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for the local Ollama Quadlet"
+
+# Last: set -eE stopped the stage at any failed step above, so only a complete realize seals the overlay.
+sudo install -d -m 0755 /var/lib/mios
+sudo touch "$SENTINEL"
+echo "[quadlet-overlay] sealed: $SENTINEL"
+# <<< overlay-stage-realize
 '@
 
     $_quadletAutostartDefault = @(
@@ -3291,40 +3718,19 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_AUTOSTART__', $_autostartBash
     $overlayScript = $overlayScript -replace '__MIOS_QUADLET_OPTIN__',     $_optinBash
 
-    $_fwServicePorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
-        ssh              = 8222
-        forge_ssh        = 8301
-        cpu_node         = 8458
-        agent_pipe       = 8640
-        ttyd_bash        = 8681
-        ttyd_powershell  = 8682
-        adguard_dns      = 53
-        adguard_ui       = 8053
-        crawl4ai         = 8235
-        firecrawl        = 8302
-        opencode_gateway = 8633
-        llm_heavy        = 8520
-        prefilter        = 8641
-        arbiter          = 8650
-        daemon_agent     = 8644
-        model_router     = 8645
-        oscontrol        = 8453
-        mcp              = 8460
-    }
+    # The [ports] keys the dev VM's firewalld opens (SearXNG is the one [ports].searxng key below). Each port comes from
+    # the layered [ports] reader with no vendor literal; a key with no port is left out by name.
+    $_fwServicePorts = @(
+        'forge_http', 'open_webui', 'code_server', 'cockpit', 'llm_light', 'hermes', 'hermes_dashboard', 'guacamole_web',
+        'ceph_dashboard', 'rdp', 'ssh', 'forge_ssh', 'cpu_node', 'agent_pipe', 'ttyd_bash', 'ttyd_powershell', 'adguard_dns',
+        'adguard_ui', 'crawl4ai', 'firecrawl', 'opencode_gateway', 'llm_heavy', 'prefilter', 'arbiter', 'daemon_agent',
+        'model_router', 'oscontrol', 'mcp')
     $_fwPortList = [System.Collections.Generic.List[int]]::new()
     [void]$_fwPortList.Add(22)
-    foreach ($_k in $_fwServicePorts.Keys) {
-        [void]$_fwPortList.Add([int](Get-MiosTomlValue -Section 'ports' -Key $_k -Default $_fwServicePorts[$_k]))
+    foreach ($_k in $_fwServicePorts) {
+        $_p = Get-MiosSsotPort -Key $_k
+        if ($_p) { [void]$_fwPortList.Add($_p) }
+        else { Log-Warn "dev VM firewalld: mios.toml [ports].$_k does not resolve from any layer; its port stays closed" }
     }
     # SearXNG: the one [ports].searxng key, with no vendor literal.
     $_searxngPort = Get-MiosSsotPort -Key 'searxng'
@@ -3335,16 +3741,22 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
     $cockpitPort = [int](Get-MiosTomlValue -Section 'ports' -Key 'cockpit' -Default 8090)
     $overlayScript = $overlayScript -replace '__MIOS_COCKPIT_PORT__', $cockpitPort
 
-    $_loginCredential = Resolve-MiosLoginCredential
-    $_miosLoginPassword = [string]$_loginCredential.Plain
-    $_miosLoginHash = [string]$_loginCredential.Hash
-    # Escape single-quote so the bash literal stays sound even if the
-    # operator picks a password containing a quote character.
-    $_miosLoginPasswordEsc = $_miosLoginPassword -replace "'", "'\''"
-    $_miosLoginHashEsc = $_miosLoginHash -replace "'", "'\''"
+    # Only the realize stage sets account passwords, so only its staged copy carries the credential.
+    $_miosLoginPasswordEsc = ''
+    $_miosLoginHashEsc = ''
+    if ($Stage -eq 'realize') {
+        $_loginCredential = Resolve-MiosLoginCredential
+        $_miosLoginPassword = [string]$_loginCredential.Plain
+        $_miosLoginHash = [string]$_loginCredential.Hash
+        # Escape single-quote so the bash literal stays sound even if the
+        # operator picks a password containing a quote character.
+        $_miosLoginPasswordEsc = $_miosLoginPassword -replace "'", "'\''"
+        $_miosLoginHashEsc = $_miosLoginHash -replace "'", "'\''"
+        $_loginCredential = $null; $_miosLoginPassword = $null; $_miosLoginHash = $null
+    }
     $overlayScript = $overlayScript.Replace('__MIOS_LOGIN_PASSWORD__', $_miosLoginPasswordEsc)
     $overlayScript = $overlayScript.Replace('__MIOS_LOGIN_PASSWORD_HASH__', $_miosLoginHashEsc)
-    $_loginCredential = $null
+    $_miosLoginPasswordEsc = $null; $_miosLoginHashEsc = $null
 
     # CRLF -> LF: bash on Linux is allergic to \r in shebang lines /
     # heredoc terminators. The PowerShell here-string ships CRLF on
@@ -3356,22 +3768,42 @@ echo "[quadlet-overlay] Ollama:         set MIOS_DEV_ENABLE_AI=1 then re-run for
         New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
     }
     $stagedPath  = Join-Path $stagingDir 'quadlet-overlay-seed.sh'
-    [System.IO.File]::WriteAllText($stagedPath, $overlayScript, [System.Text.UTF8Encoding]::new($false))
 
     # Convert Windows path -> WSL /mnt/<drive>/... path so the seed
     # script can be invoked from the WSL side without re-mounting.
     $stagedDrive = $stagedPath.Substring(0,1).ToLower()
     $stagedWsl   = "/mnt/$stagedDrive" + ($stagedPath.Substring(2) -replace '\\','/')
 
-    $stage = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner'; " +
-             "bash '$stagedWsl' '$miosRootWsl'"
-    & wsl.exe -d $wslDistro --exec bash -c $stage 2>&1 | ForEach-Object { Write-Log "quadlet-overlay: $_" }
-    if ($LASTEXITCODE -eq 3) { Log-Fail "Quadlet placeholders did not render; no unit was started"; throw "Quadlet overlay failed: 34-render-quadlets.sh" }
-    if ($LASTEXITCODE -ne 0) {
-        Log-Warn "Quadlet overlay rc=$LASTEXITCODE -- partial overlay possible (units may still be present; rerun safe)"
-    } else {
-        Log-Ok "MiOS Quadlet overlay applied to $DevDistro"
+    # Not $stage: PowerShell names are case-insensitive, so that would be the ValidateSet-bound $Stage parameter.
+    $seedCommand = "set -e; export MIOS_DEV_ENABLE_AI='$enableAi' MIOS_DEV_ENABLE_RUNNER='$enableRunner' MIOS_BUILDER_DISTRO='$DevDistro' mios_overlay_stage='$Stage'; " +
+                   "bash '$stagedWsl' '$miosRootWsl'"
+    $seedLines = New-Object System.Collections.Generic.List[string]
+    try {
+        [System.IO.File]::WriteAllText($stagedPath, $overlayScript, [System.Text.UTF8Encoding]::new($false))
+        & wsl.exe -d $wslDistro --exec bash -c $seedCommand 2>&1 | ForEach-Object { $seedLines.Add([string]$_); Write-Log "quadlet-overlay: $_" }
+        $overlayRc = $LASTEXITCODE
+    } finally {
+        # The realize copy holds the login credential; no staged copy outlives its run.
+        Remove-Item -LiteralPath $stagedPath -Force -ErrorAction SilentlyContinue
     }
+    if ($overlayRc -eq 3) { Log-Fail "Quadlet placeholders did not render; no unit was started"; throw "Quadlet overlay failed: 34-render-quadlets.sh" }
+    # Any other non-zero exit means / in MiOS-DEV is not a complete mios.git checkout, so nothing later may assume it.
+    if ($overlayRc -ne 0) {
+        $detail = ''
+        if ($overlayRc -eq 4) {
+            # The operator sees this line, not the log: name the paths and the remedy.
+            $unknownPaths = @($seedLines | Where-Object { $_ -match '^\[overlay\]   \S' } | ForEach-Object { $_.Substring(12).Trim() })
+            $detail = " Unknown paths: $($unknownPaths -join ', '). $DevDistro holds files from an earlier incomplete overlay; re-provision it (podman machine rm $DevDistro, then re-run the installer)."
+        }
+        if ($Stage -eq 'checkout') {
+            Log-Fail "Quadlet overlay failed (rc=$overlayRc): / in $DevDistro is not a complete mios.git checkout; see the quadlet-overlay lines above.$detail"
+        } else {
+            Log-Fail "Quadlet overlay realize failed (rc=$overlayRc): $DevDistro is not sealed and the next run repeats the realize stage; the quadlet-overlay ERROR line above names the step."
+        }
+        throw "Quadlet overlay failed (rc=$overlayRc)"
+    }
+    if ($Stage -eq 'checkout') { Log-Ok "mios.git checked out at / in $DevDistro (nothing started; the realize stage renders first)" }
+    else { Log-Ok "MiOS Quadlet overlay applied to $DevDistro" }
 }
 
 function Invoke-GhcrLogin([string]$Token) {
@@ -3635,13 +4067,17 @@ function Import-MiosWsl {
     # Configure /etc/wsl.conf and /usr/lib/wsl.conf without duplicate sections
     try {
         $sanitizePy = @'
-import os, re, shutil
+import os, re, shutil, subprocess, sys
 
-def sanitize_conf(filepath, has_user_mios):
+# The default login is the vendor/host [identity].username through MiOS's identity guard (the text
+# usr/share/mios/windows/*.ps1 carries), never a literal name.
+GUARD = "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)"
+
+def sanitize_conf(filepath, login):
     if not os.path.exists(filepath):
         content = "[boot]\nsystemd=true\n"
-        if has_user_mios:
-            content += "\n[user]\ndefault=mios\n"
+        if login:
+            content += f"\n[user]\ndefault={login}\n"
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         return
@@ -3678,7 +4114,8 @@ def sanitize_conf(filepath, has_user_mios):
                 new_lines.append("systemd=true")
                 continue
             if current_sec == "user" and k == "default":
-                new_lines.append("default=mios" if has_user_mios else f"default={v}")
+                # Fill only: an existing default is kept, so mios.git's tracked wsl.conf copies stay clean (R5).
+                new_lines.append(f"default={v}")
                 continue
             new_lines.append(line)
             continue
@@ -3692,37 +4129,39 @@ def sanitize_conf(filepath, has_user_mios):
         idx = new_lines.index("[boot]") + 1
         new_lines.insert(idx, "systemd=true")
 
-    if has_user_mios:
+    if login:
         if "user" not in seen_sections:
             new_lines.append("[user]")
-            new_lines.append("default=mios")
+            new_lines.append(f"default={login}")
         elif "default" not in sec_keys.get("user", set()):
             idx = new_lines.index("[user]") + 1
-            new_lines.insert(idx, "default=mios")
+            new_lines.insert(idx, f"default={login}")
 
     output = "\n".join(new_lines).strip() + "\n"
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(output)
 
-has_mios = os.system("id mios >/dev/null 2>&1") == 0
+probe = subprocess.run([sys.executable, "-c", GUARD], capture_output=True, text=True)
+login = probe.stdout.strip() if probe.returncode == 0 else ""
+if not login:
+    print((probe.stderr.strip().splitlines() or ["MiOS identity: no usable login"])[-1] + "; [user] default left as it is")
 if os.path.exists("/usr/lib/wsl.conf"):
-    sanitize_conf("/usr/lib/wsl.conf", has_mios)
+    sanitize_conf("/usr/lib/wsl.conf", login)
     shutil.copyfile("/usr/lib/wsl.conf", "/etc/wsl.conf")
     os.chmod("/etc/wsl.conf", 0o644)
 else:
-    sanitize_conf("/etc/wsl.conf", has_mios)
+    sanitize_conf("/etc/wsl.conf", login)
 '@
         $pyB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($sanitizePy))
+        # Without python3 the SSOT identity cannot be resolved, so the fallback sets [boot] only and leaves [user] alone.
         $bashCmd = "if command -v python3 >/dev/null 2>&1; then echo '$pyB64' | base64 -d | python3; else " +
                    "if [ -f /usr/lib/wsl.conf ]; then " +
                    "if ! grep -q '^\[boot\]' /usr/lib/wsl.conf 2>/dev/null; then printf '[boot]\nsystemd=true\n\n' >> /usr/lib/wsl.conf; fi; " +
-                   "if id mios >/dev/null 2>&1 && ! grep -q '^\[user\]' /usr/lib/wsl.conf 2>/dev/null; then printf '[user]\ndefault=mios\n\n' >> /usr/lib/wsl.conf; fi; " +
                    "cp -f /usr/lib/wsl.conf /etc/wsl.conf; chmod 644 /etc/wsl.conf; " +
                    "else " +
                    "if ! grep -q '^\[boot\]' /etc/wsl.conf 2>/dev/null; then printf '[boot]\nsystemd=true\n\n' >> /etc/wsl.conf; " +
-                   "elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then sed -i '/^\[boot\]/a systemd=true' /etc/wsl.conf; fi; " +
-                   "if id mios >/dev/null 2>&1; then if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then printf '[user]\ndefault=mios\n\n' >> /etc/wsl.conf; " +
-                   "elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then sed -i '/^\[user\]/a default=mios' /etc/wsl.conf; fi; fi; fi; fi"
+                   "elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then sed -i '/^\[boot\]/a systemd=true' /etc/wsl.conf; fi; fi; " +
+                   "echo 'no python3: the [identity].username login cannot be resolved; [user] default left as it is'; fi"
         & wsl.exe -d $targetDistro --user root --exec bash -c $bashCmd 2>&1 | ForEach-Object { Write-Log "wsl-conf: $_" }
     } catch {
         Write-Log "WARN: /etc/wsl.conf configuration: $($_.Exception.Message)" "WARN"
@@ -4196,28 +4635,35 @@ function Set-MiosWslConfig {
     $Cpus = Resolve-MiosCpuAllocation -AvailableCpus ([Environment]::ProcessorCount) -RequestedCpus $Cpus
 
     $wslCfg = Join-Path $env:USERPROFILE ".wslconfig"
-    $winBuild = [Environment]::OSVersion.Version.Build
-    $isWin11_22H2 = ($winBuild -ge 22621)
-    $targetNetMode = if ($isWin11_22H2) { "mirrored" } else { "NAT" }
+    # networkingMode from SSOT only: Resolve-MiosWslNetworkingMode never upgrades NAT to mirrored by Windows build.
+    $targetNetMode = Resolve-MiosWslNetworkingMode
+    $isMirrored = ($targetNetMode -eq 'mirrored')
+    $loopback = [bool](Get-MiosTomlValue -Section 'wsl2' -Key 'host_address_loopback' -Default $true)
+    $fwall = Get-MiosTomlValue -Section 'wsl2' -Key 'firewall' -Default $true
+    if ($fwall -isnot [bool] -or -not $fwall) { throw 'mios.toml [wsl2].firewall=false disables the required inbound security policy; enable it before continuing.' }
+    $wslFlag = { param([string]$Key) ([bool](Get-MiosTomlValue -Section 'wsl2' -Key $Key -Default $true)).ToString().ToLowerInvariant() }
 
     $defaultKeys = [ordered]@{
         memory              = "${RamGB}GB"
         processors          = "$Cpus"
         swap                = "4GB"
         networkingMode      = $targetNetMode
-        localhostForwarding = "true"
-        dnsTunneling        = "true"
-        autoProxy           = "true"
-        guiApplications     = "true"
     }
+    # localhostForwarding is a NAT-only setting; mirrored networking ignores it, so it is dropped there.
+    if (-not $isMirrored) { $defaultKeys['localhostForwarding'] = & $wslFlag 'localhost_forwarding' }
+    $defaultKeys['dnsTunneling']    = & $wslFlag 'dns_tunneling'
+    $defaultKeys['autoProxy']       = & $wslFlag 'auto_proxy'
+    $defaultKeys['guiApplications'] = & $wslFlag 'gui_applications'
+    $defaultKeys['firewall'] = $fwall.ToString().ToLowerInvariant()
 
-    $cfgRaw = if (Test-Path $wslCfg) { Get-Content $wslCfg -Raw } else { "" }
+    $cfgRaw = if (Test-Path $wslCfg) { [string](Get-Content $wslCfg -Raw) } else { "" }
 
     if ($cfgRaw -notmatch "\[wsl2\]") {
-        $block = "`n[wsl2]`n# MiOS-managed -- host resources for MiOS-DEV`n"
-        foreach ($kv in $defaultKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)`n" }
-        $finalContent = if ($cfgRaw.Trim()) { $cfgRaw.TrimEnd() + "`n`n" + $block.TrimStart() } else { $block }
-        [System.IO.File]::WriteAllText($wslCfg, $finalContent, (New-Object System.Text.UTF8Encoding($false)))
+        $block = @('[wsl2]', '# MiOS-managed -- host resources for MiOS-DEV')
+        foreach ($kv in $defaultKeys.GetEnumerator()) { $block += "$($kv.Key)=$($kv.Value)" }
+        $created = if ($cfgRaw.Trim()) { @($cfgRaw.TrimEnd() -split "\r?\n") + @('') + $block } else { $block }
+        $created = Get-MiosWslExperimentalLines -Lines $created -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
+        [System.IO.File]::WriteAllLines($wslCfg, $created, (New-Object System.Text.UTF8Encoding($false)))
         Log-Ok ".wslconfig: wrote [wsl2] -- ${RamGB}GB RAM, $Cpus CPUs, $targetNetMode"
         if (-not $NoShutdown) {
             try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
@@ -4225,7 +4671,7 @@ function Set-MiosWslConfig {
         return
     }
 
-    $deprecatedKeys = @('firewall')
+    $dropKeys = @(if ($isMirrored) { 'localhostForwarding' })
     $bootSectionKeys = @('systemd', 'command', 'enabled', 'appendWindowsPath',
                          'default', 'options', 'mountFsTab',
                          'generateHosts', 'generateResolvConf', 'hostname')
@@ -4243,7 +4689,7 @@ function Set-MiosWslConfig {
         if ($inWsl2 -and $line -match "^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*)$") {
             $key = $Matches[1]
             $val = $Matches[2].Trim()
-            if ($deprecatedKeys -contains $key -or $bootSectionKeys -contains $key) { continue }
+            if ($dropKeys -contains $key -or $bootSectionKeys -contains $key) { continue }
             if ($key -ieq 'processors') {
                 if ($val -notmatch '^([0-9]+)(\s*[#;].*)?$') {
                     throw 'Existing WSL processors value must be an integer.'
@@ -4259,7 +4705,7 @@ function Set-MiosWslConfig {
                     if ($key -ieq 'processors') { $effectiveCpus = $val }
                     continue
                 }
-                # Reconcile networkingMode based on Windows build
+                # networkingMode is the SSOT value, whatever the file held.
                 if ($key -ieq 'networkingMode') {
                     $patched.Add("networkingMode=$targetNetMode")
                     $null = $inserted.Add($key)
@@ -4284,12 +4730,113 @@ function Set-MiosWslConfig {
             $offset++
         }
     }
+    $final = Get-MiosWslExperimentalLines -Lines $patched.ToArray() -NetworkingMode $targetNetMode -HostAddressLoopback $loopback
     # BOM-free UTF-8: a UTF-8 BOM makes WSL ignore [wsl2].
-    [System.IO.File]::WriteAllLines($wslCfg, $patched, (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllLines($wslCfg, $final, (New-Object System.Text.UTF8Encoding($false)))
     Log-Ok ".wslconfig: merged [wsl2] -- $effectiveRam RAM, $effectiveCpus CPUs, $effectiveNetMode"
     if (-not $NoShutdown) {
         try { & wsl.exe --shutdown 2>$null | Out-Null } catch {}
     }
+}
+
+function ConvertTo-MiosNetworkPrefix {
+    # The network address of IP/PrefixLength in CIDR form (192.168.1.37/24 -> 192.168.1.0/24).
+    param([Parameter(Mandatory)][Net.IPAddress]$Address, [Parameter(Mandatory)][int]$PrefixLength)
+    $bytes = $Address.GetAddressBytes()
+    if ($PrefixLength -lt 1 -or $PrefixLength -gt ($bytes.Length * 8)) { throw 'Invalid prefix length.' }
+    for ($b = 0; $b -lt $bytes.Length; $b++) {
+        $keep = [math]::Min(8, [math]::Max(0, $PrefixLength - ($b * 8)))
+        $bytes[$b] = $bytes[$b] -band [byte]((0xFF -shl (8 - $keep)) -band 0xFF)
+    }
+    return ([Net.IPAddress]::new($bytes)).ToString() + '/' + $PrefixLength
+}
+
+function Test-MiosPrefixWithin {
+    # True when CIDR Inner lies wholly inside CIDR Outer (same family, at least as long a prefix, same network bits).
+    param([Parameter(Mandatory)][string]$Inner, [Parameter(Mandatory)][string]$Outer)
+    if ($Inner -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $iIp = [Net.IPAddress]::Parse($Matches[1]); $iLen = [int]$Matches[2]
+    if ($Outer -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $oIp = [Net.IPAddress]::Parse($Matches[1]); $oLen = [int]$Matches[2]
+    if ($iIp.AddressFamily -ne $oIp.AddressFamily -or $iLen -lt $oLen) { return $false }
+    return ((ConvertTo-MiosNetworkPrefix -Address $iIp -PrefixLength $oLen) -eq (ConvertTo-MiosNetworkPrefix -Address $oIp -PrefixLength $oLen))
+}
+
+function Get-MiosVendorTomlValue {
+    # A value from the system SSOT layers alone (the usr\share\mios\mios.toml tiers), never the operator or host layer:
+    # the bound an elevated step applies to what the user-writable layer asks for. $Default when no vendor layer has it.
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][AllowEmptyString()]$Default)
+    $missing = [guid]::NewGuid().ToString('N')
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
+        $v = Get-MiosTomlValue -Section $Section -Key $Key -Default $missing -SourcePath $layer.Path
+        if ($v -isnot [string] -or $v -ne $missing) {
+            if ($Default -is [int] -and $v -isnot [int]) { $n = 0; if ([int]::TryParse([string]$v, [ref]$n)) { return $n }; continue }
+            if ($Default -is [array] -and $v -isnot [array]) {
+                $t = ([string]$v).Trim()
+                if ($t -match '^\[(.*)\]$') { return @($Matches[1] -split ',' | ForEach-Object { $_.Trim().Trim('"', "'") } | Where-Object { $_ }) }
+                continue
+            }
+            return $v
+        }
+    }
+    return $Default
+}
+
+function Get-MiosLanExposurePlan {
+    # The Windows-host exposure of MiOS-DEV, from mios.toml [firewall.windows] bounded by the system SSOT: expose and
+    # profiles keep only operator entries the vendor list also has, and a remote entry is LocalSubnet or a parsed
+    # address/CIDR (prefix 1 or longer) that the vendor scope also allows -- never a keyword, range, Any or /0. Port
+    # numbers and stack_id come from the system SSOT alone, so the user-writable layer cannot point a key elsewhere.
+    $plan = [pscustomobject]@{ Ports = [ordered]@{}; Profiles = @(); RemoteAddresses = @(); Refused = @() }
+    $bound = {
+        param([string]$Key)
+        $vendor = @(Get-MiosVendorTomlValue -Section 'firewall.windows' -Key $Key -Default @())
+        $effective = @(Get-MiosTomlValue -Section 'firewall.windows' -Key $Key -Default @())
+        $kept = @(); $out = @()
+        foreach ($item in $effective) {
+            $item = ([string]$item).Trim()
+            if (@($vendor | Where-Object { $_ -ieq $item }).Count) { if (-not @($kept | Where-Object { $_ -ieq $item }).Count) { $kept += $item } }
+            else { $out += $item }
+        }
+        return [pscustomobject]@{ Vendor = $vendor; Kept = $kept; Outside = $out }
+    }
+    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0; $plan.Refused += 'mios.toml [ports].stack_id is not a nonnegative integer; using 0' }
+    $expose = & $bound 'expose'
+    foreach ($svc in $expose.Outside) { $plan.Refused += "operator [firewall.windows].expose entry '$svc' is outside the system SSOT" }
+    foreach ($svc in $expose.Kept) {
+        $base = Get-MiosVendorTomlValue -Section 'ports' -Key $svc -Default 0
+        $port = if ($base -is [int] -and $base -ge 1) { $base + ($stack * 10000) } else { 0 }
+        if ($port -ge 1 -and $port -le 65535) { $plan.Ports[$svc] = $port } else { $plan.Refused += "$svc has no valid [ports].$svc value" }
+    }
+    $profiles = & $bound 'profiles'
+    foreach ($p in $profiles.Outside) { $plan.Refused += "operator [firewall.windows].profiles entry '$p' is outside the system SSOT" }
+    foreach ($p in $profiles.Kept) {
+        $name = @('Domain', 'Private', 'Public') | Where-Object { $_ -ieq $p }
+        if ($name) { $plan.Profiles += $name } else { $plan.Refused += "profile '$p' is not Domain, Private or Public" }
+    }
+    $parse = {
+        param([string]$Entry)
+        if ($Entry -ieq 'LocalSubnet') { return 'LocalSubnet' }
+        $ipText = $Entry; $len = $null
+        if ($Entry -match '^([^/]+)/([0-9]{1,3})$') { $ipText = $Matches[1]; $len = [int]$Matches[2] }
+        $ip = $null
+        if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { return $null }
+        $bits = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+        if ($null -eq $len) { $len = $bits }
+        if ($len -lt 1 -or $len -gt $bits -or $ip.Equals([Net.IPAddress]::Any) -or $ip.Equals([Net.IPAddress]::IPv6Any)) { return $null }
+        return ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+    }
+    $vendorScope = @(@(Get-MiosVendorTomlValue -Section 'firewall.windows' -Key 'remote_addresses' -Default @()) | ForEach-Object { & $parse ([string]$_).Trim() } | Where-Object { $_ })
+    foreach ($r in @(Get-MiosTomlValue -Section 'firewall.windows' -Key 'remote_addresses' -Default @())) {
+        $r = ([string]$r).Trim()
+        $canon = & $parse $r
+        if (-not $canon) { $plan.Refused += "remote address '$r' is not LocalSubnet or a scoped address/CIDR"; continue }
+        $inside = if ($canon -eq 'LocalSubnet') { $vendorScope -contains 'LocalSubnet' } else {
+            @($vendorScope | Where-Object { $_ -ne 'LocalSubnet' -and (Test-MiosPrefixWithin -Inner $canon -Outer $_) }).Count -gt 0 }
+        if (-not $inside) { $plan.Refused += "remote address '$r' is outside the system SSOT scope"; continue }
+        if ($plan.RemoteAddresses -notcontains $r) { $plan.RemoteAddresses += $r }
+    }
+    return $plan
 }
 
 function Set-MiosLanFirewallRules {
@@ -4299,23 +4846,11 @@ function Set-MiosLanFirewallRules {
         return
     }
 
-    $_defaultPorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
-    }
-
-    # Resolve per-service ports from [ports].<key>, falling back to vendor.
-    $_ports = [ordered]@{}
-    foreach ($k in $_defaultPorts.Keys) {
-        $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
+    $plan = Get-MiosLanExposurePlan
+    foreach ($r in $plan.Refused) { Log-Warn "Firewall: refused ($r)" }
+    $scoped = ($plan.RemoteAddresses.Count -gt 0 -and $plan.Profiles.Count -gt 0)
+    if (-not $scoped) {
+        Log-Warn "LAN-FIREWALL-UNSCOPED: mios.toml [firewall.windows] resolved to no remote address or no profile; no MiOS-DEV LAN rule is opened"
     }
     # SearXNG gets no LAN rule: its one listener is loopback-only (mios.toml
     # [ports].searxng), so direct LAN forwarding to it is unsupported. The rule
@@ -4327,39 +4862,38 @@ function Set-MiosLanFirewallRules {
     }
     else { Log-Warn "Firewall: mios.toml [ports].searxng does not resolve from any layer; no SearXNG LAN rule" }
 
-    # Which profiles + which services to expose (operator-editable).
-    $_profiles = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'profiles' -Default @('Private','Domain'))
-    $_expose   = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose'   -Default @($_ports.Keys))
-    if ($_profiles.Count -eq 0) { $_profiles = @('Private','Domain') }
-    if ($_expose.Count   -eq 0) { $_expose   = @($_ports.Keys) }
-
-    $applied = New-Object System.Collections.Generic.List[string]
-    foreach ($svc in $_expose) {
-        if (-not $_ports.Contains($svc)) {
-            Write-Log "firewall: skip '$svc' -- not in [ports] section"
-            continue
+    # Rule names carry the "MiOS - " prefix this function owns: one per exposed service. A MiOS rule for a service
+    # that left [firewall.windows].expose (or every MiOS rule, when the scope is empty) is removed.
+    $wanted = [ordered]@{}
+    if ($scoped) { foreach ($svc in $plan.Ports.Keys) { $wanted["MiOS - $svc ($($plan.Ports[$svc])/tcp)"] = $svc } }
+    foreach ($old in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue | Where-Object { $_ })) {
+        if (-not $wanted.Contains([string]$old.DisplayName)) {
+            Remove-NetFirewallRule -DisplayName ([string]$old.DisplayName) -ErrorAction SilentlyContinue
+            Write-Log "firewall: removed '$($old.DisplayName)' (not in mios.toml [firewall.windows].expose)"
         }
-        $port = [int]$_ports[$svc]
-        if ($port -lt 1 -or $port -gt 65535) { continue }
-        # Rule name carries the "MiOS - " prefix so Invoke-MiOSFullReap
-        # can sweep them on uninstall without touching other rules.
-        $name = "MiOS - $svc ($port/tcp)"
+    }
+    if (-not $scoped) { return }
+
+    $profileText = $plan.Profiles -join ','
+    $applied = New-Object System.Collections.Generic.List[string]
+    foreach ($name in @($wanted.Keys)) {
+        $svc = $wanted[$name]; $port = [int]$plan.Ports[$svc]
         try {
             $existing = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue
             if ($existing) {
-                # Idempotent re-run: refresh action / profile / port.
+                # Idempotent re-run: refresh action / profile / port / scope.
                 Set-NetFirewallRule -DisplayName $name `
                     -Enabled True -Action Allow -Direction Inbound `
-                    -Profile ($_profiles -join ',') -ErrorAction SilentlyContinue
+                    -Profile $profileText -RemoteAddress $plan.RemoteAddresses -ErrorAction Stop
                 $existing | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue |
                     Set-NetFirewallPortFilter -Protocol TCP -LocalPort $port -ErrorAction SilentlyContinue
-                Write-Log "firewall: refreshed '$name' on profiles $($_profiles -join ',')"
+                Write-Log "firewall: refreshed '$name' on profiles $profileText from $($plan.RemoteAddresses -join ',')"
             } else {
                 New-NetFirewallRule -DisplayName $name `
-                    -Description "MiOS LAN inbound (auto-generated by mios-bootstrap)" `
+                    -Description "MiOS LAN inbound (auto-generated by mios-bootstrap from mios.toml [firewall.windows])" `
                     -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port `
-                    -Profile ($_profiles -join ',') -ErrorAction Stop | Out-Null
-                Write-Log "firewall: created '$name' (TCP $port) on profiles $($_profiles -join ',')"
+                    -Profile $profileText -RemoteAddress $plan.RemoteAddresses -ErrorAction Stop | Out-Null
+                Write-Log "firewall: created '$name' (TCP $port) on profiles $profileText from $($plan.RemoteAddresses -join ',')"
             }
             $applied.Add("$svc/$port")
         } catch {
@@ -4367,39 +4901,19 @@ function Set-MiosLanFirewallRules {
         }
     }
     if ($applied.Count -gt 0) {
-        Log-Ok ("Windows Firewall: LAN inbound rules on $($_profiles -join '+') for " + ($applied -join ', '))
+        Log-Ok ("Windows Firewall: LAN inbound rules on $profileText from $($plan.RemoteAddresses -join ', ') for " + ($applied -join ', '))
     }
 }
 
 function Set-MiosLanPortProxy {
-    # Skip entirely under WSL2 mirrored networking: there is no distinct VM
-    # eth0 to resolve and Windows already exposes container ports on the host,
-    # so netsh portproxy is both impossible and unnecessary (the
-    # "could not resolve a clean WSL VM IP" warning came from mirrored mode --
-    # the .wslconfig the installer writes now uses networkingMode=mirrored).
-    try {
-        $_wslCfg = Join-Path $env:USERPROFILE '.wslconfig'
-        if ((Test-Path $_wslCfg) -and ((Get-Content -LiteralPath $_wslCfg -Raw -ErrorAction SilentlyContinue) -match '(?im)^\s*networkingMode\s*=\s*mirrored\b')) {
-            Log-Ok "portproxy: skipped (networkingMode=mirrored exposes container ports on the host directly)"
-            return
-        }
-    } catch {}
-    $_defaultPorts = [ordered]@{
-        forge_http       = 8300
-        open_webui       = 8033
-        code_server      = 8800
-        cockpit          = 8090
-        llm_light        = 8450
-        hermes           = 8642
-        hermes_dashboard = 8119
-        guacamole_web    = 8080
-        ceph_dashboard   = 8444
-        rdp              = 8389
+    # Under mirrored networking Windows already exposes container ports on the host, so netsh portproxy is both
+    # impossible (no distinct VM eth0) and unnecessary. The mode is the SSOT one every .wslconfig writer renders.
+    param([string]$WslAddress = '')   # the VM address resolved before elevation; empty asks WSL here
+    if ((Resolve-MiosWslNetworkingMode) -eq 'mirrored') {
+        Log-Ok "portproxy: skipped (mios.toml [wsl2].networking_mode=mirrored exposes container ports on the host directly)"
+        return
     }
-    $_ports = [ordered]@{}
-    foreach ($k in $_defaultPorts.Keys) {
-        $_ports[$k] = [int](Get-MiosTomlValue -Section 'ports' -Key $k -Default $_defaultPorts[$k])
-    }
+    $plan = Get-MiosLanExposurePlan
     # SearXNG is not forwarded: its one listener is loopback-only (mios.toml
     # [ports].searxng), which the VM's eth0 IP never reaches, so direct LAN
     # forwarding to it is unsupported. The mapping an earlier run added is removed.
@@ -4409,28 +4923,32 @@ function Set-MiosLanPortProxy {
         Log-Info "portproxy: SearXNG is not forwarded -- direct LAN forwarding is unsupported (loopback-only listener on mios.toml [ports].searxng, port $_searxngPort)"
     }
     else { Log-Warn "portproxy: mios.toml [ports].searxng does not resolve from any layer; SearXNG is not forwarded" }
-    $_expose = @(Get-MiosTomlValue -Section 'ports.lan_firewall' -Key 'expose' -Default @($_ports.Keys))
-    if ($_expose.Count -eq 0) { $_expose = @($_ports.Keys) }
 
-    $_wslIp = $null
-    try {
-        $_prevWslUtf8 = $env:WSL_UTF8
-        $env:WSL_UTF8 = '1'
-        $_raw = (& wsl.exe -d $DevDistro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
-        $env:WSL_UTF8 = $_prevWslUtf8
-        $_m = [regex]::Match($_raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
-        if ($_m.Success) { $_wslIp = $_m.Groups[1].Value }
-    } catch {}
+    if ($WslAddress) { $_wslIp = $WslAddress; $_wslDistro = 'the operator-resolved address' }
+    else { $_vm = Resolve-MiosWslVmAddress; $_wslIp = $_vm.Address; $_wslDistro = $_vm.Distro }
     if (-not $_wslIp -or $_wslIp -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
-        Log-Warn "portproxy: could not resolve a clean WSL VM IP (got: '$_wslIp') -- skipping forwarding"
+        Log-Warn "portproxy: could not resolve a clean WSL VM IP of '$_wslDistro' (got: '$_wslIp') -- skipping forwarding"
         return
     }
     Write-Log "portproxy: WSL VM ip = $_wslIp"
 
-    foreach ($svc in $_expose) {
-        if (-not $_ports.Contains($svc)) { continue }
-        $port = [int]$_ports[$svc]
-        if ($port -lt 1 -or $port -gt 65535) { continue }
+    # A 0.0.0.0 forward of a MiOS [ports] value that is no longer exposed (one an earlier run added) is removed; forwards
+    # of ports MiOS does not own are left alone.
+    $wanted = @($plan.Ports.Values | ForEach-Object { [string]$_ })
+    $owned = Get-MiosVendorPortSet
+    foreach ($line in @(& netsh interface portproxy show v4tov4 2>$null)) {
+        if ([string]$line -notmatch '^\s*0\.0\.0\.0\s+([0-9]+)\s+\S+\s+([0-9]+)\s*$') { continue }
+        $listen = $Matches[1]
+        if ($owned.ContainsKey($listen) -and $wanted -notcontains $listen) {
+            & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$listen 2>&1 | Out-Null
+            Write-Log "portproxy: removed 0.0.0.0:$listen (not in mios.toml [firewall.windows].expose)"
+        }
+    }
+
+    # Only [firewall.windows].expose ports are forwarded; the Windows Defender rules Set-MiosLanFirewallRules scopes to
+    # remote_addresses decide who reaches them.
+    foreach ($svc in $plan.Ports.Keys) {
+        $port = [int]$plan.Ports[$svc]
         # Drop any prior rule (idempotent re-run).
         & netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=$port 2>&1 | Out-Null
         $r = & netsh interface portproxy add v4tov4 `
@@ -4453,6 +4971,416 @@ function Set-MiosLanPortProxy {
             Start-Service -Name iphlpsvc -ErrorAction SilentlyContinue
         }
     } catch {}
+}
+
+function Resolve-MiosWslVmAddress {
+    # The NAT guest's eth0 IPv4 address from the registered builder distribution (WSL registers the podman machine as
+    # podman-<machine>). Only the unelevated build's own token sees its WSL distributions, so the elevated worker is
+    # handed this address and never asks WSL itself.
+    $distro = try { Resolve-MiosBuilderDistribution $DevDistro } catch { $DevDistro }
+    $address = $null
+    try {
+        $prevUtf8 = $env:WSL_UTF8
+        $env:WSL_UTF8 = '1'
+        $raw = (& wsl.exe -d $distro --user root -- sh -c "ip -4 -o addr show eth0" 2>$null) -join "`n"
+        $env:WSL_UTF8 = $prevUtf8
+        $m = [regex]::Match($raw, '\binet\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b')
+        if ($m.Success) { $address = $m.Groups[1].Value }
+    } catch {}
+    return [pscustomobject]@{ Distro = $distro; Address = $address }
+}
+
+function Get-MiosVendorPortSet {
+    # Every port the system SSOT assigns in [ports], shifted by [ports].stack_id * 10000, keyed as strings: the portproxy
+    # listeners MiOS owns, the only forwards it removes once they leave [firewall.windows].expose.
+    $stack = Get-MiosVendorTomlValue -Section 'ports' -Key 'stack_id' -Default 0
+    if ($stack -isnot [int] -or $stack -lt 0) { $stack = 0 }
+    $owned = @{}
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        if ([string]$layer.Path -notmatch '[\\/]usr[\\/]share[\\/]mios[\\/]mios\.toml$') { continue }
+        $body = [regex]::Match([string]$layer.Text, '(?ms)^\[ports\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)').Groups['body'].Value
+        foreach ($m in [regex]::Matches($body, '(?m)^[ \t]*[a-z][a-z0-9_]*[ \t]*=[ \t]*([0-9]{1,5})\b')) { $owned[[string]([int]$m.Groups[1].Value + ($stack * 10000))] = $true }
+    }
+    return $owned
+}
+
+function Get-MiosLanExposureDrift {
+    # Read-only: each change Set-MiosLanFirewallRules and Set-MiosLanPortProxy would make on this host, one line per
+    # difference, measured against the same plan they apply. Defender rules and port forwards read back without
+    # elevation, so Invoke-MiosLanExposure asks for UAC only when this returns something. Windows reads scopes back in
+    # mask form and profiles in its own order; both are compared canonically.
+    param([string]$WslAddress = '')
+    $drift = New-Object System.Collections.Generic.List[string]
+    $plan = Get-MiosLanExposurePlan
+    $scoped = ($plan.RemoteAddresses.Count -gt 0 -and $plan.Profiles.Count -gt 0)
+    $wanted = [ordered]@{}
+    if ($scoped) { foreach ($svc in $plan.Ports.Keys) { $wanted["MiOS - $svc ($($plan.Ports[$svc])/tcp)"] = [string]$plan.Ports[$svc] } }
+    $canon = {
+        param($Items)
+        (@(@($Items) | Where-Object { $null -ne $_ } | ForEach-Object {
+            $t = ([string]$_).Trim()
+            if ($t -ieq 'LocalSubnet') { 'LocalSubnet' } else { ConvertTo-MiosCanonicalPrefix $t }
+        } | Sort-Object -Unique)) -join ','
+    }
+    $wantScope = & $canon $plan.RemoteAddresses
+    $wantProfiles = (@($plan.Profiles) | Sort-Object -Unique) -join ','
+    $present = @{}
+    foreach ($r in @(Get-NetFirewallRule -DisplayName 'MiOS - *' -ErrorAction SilentlyContinue | Where-Object { $_ })) {
+        $name = [string]$r.DisplayName
+        $present[$name] = $true
+        if (-not $wanted.Contains($name)) { $drift.Add("remove Defender rule '$name'"); continue }
+        $pf = @($r | Get-NetFirewallPortFilter -ErrorAction SilentlyContinue)[0]
+        $af = @($r | Get-NetFirewallAddressFilter -ErrorAction SilentlyContinue)[0]
+        $profiles = (@(([string]$r.Profile) -split '[,\s]+' | Where-Object { $_ }) | Sort-Object -Unique) -join ','
+        $ports = (@($pf.LocalPort) | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ }) -join ','
+        if ([string]$r.Enabled -ne 'True' -or [string]$r.Action -ne 'Allow' -or [string]$r.Direction -ne 'Inbound' -or
+            [string]$pf.Protocol -ne 'TCP' -or $ports -ne $wanted[$name] -or $profiles -ne $wantProfiles -or
+            (& $canon $af.RemoteAddress) -ne $wantScope) { $drift.Add("refresh Defender rule '$name'") }
+    }
+    foreach ($name in @($wanted.Keys)) { if (-not $present.ContainsKey($name)) { $drift.Add("create Defender rule '$name'") } }
+    # The port proxy follows Set-MiosLanPortProxy: nothing under mirrored networking, and nothing to measure without a
+    # VM address (it skips forwarding then too).
+    if ((Resolve-MiosWslNetworkingMode) -ne 'mirrored' -and $WslAddress) {
+        $forwards = @{}
+        foreach ($line in @(& netsh interface portproxy show v4tov4 2>$null)) {
+            if ([string]$line -match '^\s*0\.0\.0\.0\s+([0-9]+)\s+(\S+)\s+([0-9]+)\s*$') { $forwards[$Matches[1]] = "$($Matches[2]):$($Matches[3])" }
+        }
+        $want = @($plan.Ports.Values | ForEach-Object { [string]$_ })
+        foreach ($port in $want) { if ($forwards[$port] -ne "${WslAddress}:$port") { $drift.Add("forward 0.0.0.0:$port to ${WslAddress}:$port") } }
+        $owned = Get-MiosVendorPortSet
+        foreach ($listen in @($forwards.Keys)) { if ($owned.ContainsKey($listen) -and $want -notcontains $listen) { $drift.Add("remove forward 0.0.0.0:$listen") } }
+    }
+    return $drift.ToArray()
+}
+
+function Get-MiosLanExposureLayers {
+    # The resolved TOML layers, each cut down to the three sections the Phase-4 exposure reads -- [firewall.windows],
+    # [wsl2] and [ports] -- in the same order and under the same paths, so the elevated worker resolves exactly the plan
+    # this token does. Every other section stays here: credentials ([identity], [auth], ...) never cross to the worker.
+    foreach ($layer in @(Resolve-MiosTomlLayers)) {
+        $kept = New-Object System.Collections.Generic.List[string]
+        $on = $false
+        foreach ($line in ([string]$layer.Text -split "\r?\n")) {
+            if ($line -match '^\s*\[\[') { $on = $false; continue }
+            if ($line -match '^\s*\[\s*([A-Za-z0-9_][A-Za-z0-9_.\-]*)\s*\]\s*(#.*)?$') {
+                $on = ($Matches[1] -cmatch '^(firewall\.windows|wsl2|ports)$')
+                if ($on) { $kept.Add("[$($Matches[1])]") }
+                continue
+            }
+            if ($line -match '^\[') { $on = $false; continue }
+            if ($on) { $kept.Add($line) }
+        }
+        [pscustomobject]@{ Path = [string]$layer.Path; Text = ($kept -join "`n") }
+    }
+}
+
+function Test-MiosLanExposureLayerText {
+    # True when a layer holds nothing but what Get-MiosLanExposureLayers keeps: no array table, and no section header
+    # other than [firewall.windows], [wsl2] or [ports]. The elevated worker refuses any other layer.
+    param([AllowEmptyString()][string]$Text)
+    foreach ($line in ($Text -split "\r?\n")) {
+        if ($line -match '^\s*\[\[') { return $false }
+        if ($line -match '^\s*\[\s*([A-Za-z0-9_][A-Za-z0-9_.\-]*)\s*\]\s*(#.*)?$' -and $Matches[1] -cnotmatch '^(firewall\.windows|wsl2|ports)$') { return $false }
+        if ($line -match '^\[' -and $line -cnotmatch '^\[(firewall\.windows|wsl2|ports)\]\s*(#.*)?$') { return $false }
+    }
+    return $true
+}
+
+function Test-MiosWslNatAddress {
+    # True when IPv4 Address is a guest address inside a preferred prefix of this host's WSL virtual adapter
+    # (vEthernet (WSL ...)): the only place the elevated worker points MiOS-DEV's exposed ports at.
+    param([Parameter(Mandatory)][string]$Address)
+    $ip = $null
+    if ($Address -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [Net.IPAddress]::TryParse($Address, [ref]$ip)) { return $false }
+    foreach ($a in @(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue | Where-Object { [string]$_.InterfaceAlias -like 'vEthernet (WSL*' })) {
+        $len = [int]$a.PrefixLength
+        if ($len -lt 8 -or $len -gt 30 -or [string]$a.IPAddress -eq $Address) { continue }
+        $net = ConvertTo-MiosNetworkPrefix -Address ([Net.IPAddress]::Parse([string]$a.IPAddress)) -PrefixLength $len
+        if (Test-MiosPrefixWithin -Inner "$Address/32" -Outer $net) { return $true }
+    }
+    return $false
+}
+
+function Invoke-MiosLanExposureRequest {
+    # The elevated side: check the request, then apply the Phase-4 exposure from exactly the layers it carries. Only
+    # [firewall.windows], [wsl2] and [ports] may arrive, and forwards may only point into this host's WSL network, so a
+    # request can never open more than the plan those sections resolve to.
+    param([Parameter(Mandatory)]$Request)
+    $names = @($Request.PSObject.Properties.Name)
+    if ($names.Count -ne 2 -or @($names | Where-Object { $_ -notin @('Layers', 'WslAddress') }).Count) { throw 'Invalid exposure request fields.' }
+    $address = [string]$Request.WslAddress
+    if ($address -and -not (Test-MiosWslNatAddress $address)) { throw "The WSL VM address '$address' is not on this host's WSL network." }
+    if (@($Request.Layers).Count -gt 16) { throw 'Too many exposure layers.' }
+    $layers = @()
+    foreach ($l in @($Request.Layers)) {
+        $fields = @($l.PSObject.Properties.Name)
+        if ($fields.Count -ne 2 -or @($fields | Where-Object { $_ -notin @('Path', 'Text') }).Count) { throw 'Invalid exposure layer fields.' }
+        $path = [string]$l.Path
+        $text = [string]$l.Text
+        if (-not $path -or $path.Length -gt 2048) { throw 'Invalid exposure layer path.' }
+        if (-not (Test-MiosLanExposureLayerText $text)) { throw "Exposure layer '$path' carries a section other than [firewall.windows], [wsl2] or [ports]." }
+        $layers += [pscustomobject]@{ Path = $path; Text = $text }
+    }
+    $script:_MiosTomlCache = @{ '_layers' = $layers }
+    Set-MiosLanFirewallRules
+    Set-MiosLanPortProxy -WslAddress $address
+}
+
+function ConvertTo-MiosLanExposureReply {
+    # The worker's one reply line. Its log lines travel as a plain array: ConvertTo-Json cannot serialize a generic List.
+    param([Parameter(Mandatory)][string]$Status, [string]$Detail = '', [AllowNull()]$Lines)
+    $reply = @{ Status = $Status; Lines = @(if ($null -ne $Lines) { $Lines.ToArray() }) }
+    if ($Detail) { $reply['Detail'] = $Detail }
+    return ($reply | ConvertTo-Json -Depth 4 -Compress)
+}
+
+function Invoke-MiosLanExposureWorker {
+    param([Parameter(Mandatory)][string]$PipeName, [Parameter(Mandatory)][int]$OriginProcessId)
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'The Windows host exposure worker requires UAC elevation.'
+    }
+    Initialize-MiosPipePeerApi
+    $pipe = New-Object IO.Pipes.NamedPipeClientStream('.', $PipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None)
+    try {
+        $pipe.Connect(180000)
+        [uint32]$peer = 0
+        if (-not [MiosBootstrapPipePeer]::GetNamedPipeServerProcessId($pipe.SafePipeHandle.DangerousGetHandle(), [ref]$peer) -or $peer -ne $OriginProcessId) { throw 'The exposure worker pipe has the wrong originating process.' }
+        $reader = New-Object IO.StreamReader($pipe, (New-Object Text.UTF8Encoding($false)), $false, 4096, $true)
+        $writer = New-Object IO.StreamWriter($pipe, (New-Object Text.UTF8Encoding($false)), 4096, $true)
+        $writer.AutoFlush = $true
+        try {
+            $line = Read-MiosPipeLine -Reader $reader
+            if (-not $line) { throw 'Empty exposure request.' }
+            $request = ConvertFrom-Json -InputObject $line -ErrorAction Stop
+            Invoke-MiosLanExposureRequest -Request $request
+            $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'applied' -Lines $script:MiosWorkerLines))
+        } catch {
+            $writer.WriteLine((ConvertTo-MiosLanExposureReply -Status 'error' -Detail $_.Exception.Message -Lines $script:MiosWorkerLines))
+            throw
+        } finally { $writer.Dispose(); $reader.Dispose() }
+    } finally { $pipe.Dispose() }
+}
+
+function Get-MiosLanExposureWorkerScript {
+    # The elevated Phase-4 worker: only these fixed functions of this script, compiled from its source by the AST, the
+    # shape of Get-MiOS.ps1's machine worker. This script's top level never runs elevated; the worker's log lines
+    # return in its reply.
+    param([Parameter(Mandatory)][string]$Source)
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
+    if ($errors.Count) { throw 'Cannot prepare the exposure worker from an invalid build-mios.ps1 source.' }
+    $names = @('Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosVendorTomlValue', 'Get-MiosSsotPort', 'ConvertTo-MiosNetworkPrefix',
+        'Test-MiosPrefixWithin', 'Resolve-MiosWslNetworkingMode', 'Get-MiosLanExposurePlan', 'Get-MiosVendorPortSet',
+        'Resolve-MiosBuilderDistribution', 'Resolve-MiosWslVmAddress', 'Set-MiosLanFirewallRules', 'Set-MiosLanPortProxy',
+        'Test-MiosWslNatAddress', 'Test-MiosLanExposureLayerText', 'Initialize-MiosPipePeerApi', 'Read-MiosPipeLine',
+        'Invoke-MiosLanExposureRequest', 'ConvertTo-MiosLanExposureReply', 'Invoke-MiosLanExposureWorker')
+    $functions = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $names }, $true))
+    foreach ($name in $names) { if (@($functions | Where-Object { $_.Name -eq $name }).Count -ne 1) { throw "Missing or duplicate exposure worker function: $name" } }
+    $shims = @'
+$script:MiosWorkerLines = New-Object System.Collections.Generic.List[object]
+function Write-Log { param([string]$M, [string]$L = 'INFO') $script:MiosWorkerLines.Add([pscustomobject]@{ L = $L; M = $M }) }
+function Log-Ok([string]$T) { Write-Log $T 'OK' }
+function Log-Info([string]$T) { Write-Log $T 'STEP' }
+function Log-Warn([string]$T) { Write-Log $T 'WARN' }
+'@
+    return "param([string]`$PipeName, [int]`$OriginProcessId)`r`n`$ErrorActionPreference = 'Stop'`r`n" + $shims + "`r`n" +
+        (($functions | ForEach-Object { $_.Extent.Text }) -join "`r`n") +
+        "`r`nInvoke-MiosLanExposureWorker -PipeName `$PipeName -OriginProcessId `$OriginProcessId`r`n"
+}
+
+function Invoke-MiosElevatedLanExposure {
+    # The unelevated side of the Phase-4 hand-off, in the shape of Get-MiOS.ps1's machine preparation: fixed functions
+    # compiled into a private, digest-checked worker that UAC starts, then one request and one reply over a pipe that
+    # only this account and Administrators can open, each end checking the other's process ID.
+    param([string]$WslAddress = '')
+    $layers = @(Get-MiosLanExposureLayers)
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $pipeName = 'MiOS-LanExposure-' + [guid]::NewGuid().ToString('N')
+    $security = New-Object IO.Pipes.PipeSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($s in @($sid, 'S-1-5-32-544')) {
+        $rights = if ($s -eq $sid) { 'FullControl' } else { 'ReadWrite' }
+        $security.AddAccessRule((New-Object IO.Pipes.PipeAccessRule((New-Object Security.Principal.SecurityIdentifier $s), $rights, 'Allow')))
+    }
+    $options = [IO.Pipes.PipeOptions]::Asynchronous
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        $pipe = New-Object IO.Pipes.NamedPipeServerStream($pipeName, [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Byte, $options, 4096, 4096, $security)
+    } else {
+        $pipe = [IO.Pipes.NamedPipeServerStreamAcl]::Create($pipeName, [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Byte,
+            $options, 4096, 4096, $security, [IO.HandleInheritability]::None, [IO.Pipes.PipeAccessRights]0)
+    }
+    $workerPath = Join-Path $env:TEMP ('mios-lan-exposure-' + [guid]::NewGuid().ToString('N') + '.ps1')
+    try {
+        New-Item -ItemType File -Path $workerPath -ErrorAction Stop | Out-Null
+        Set-MiosPrivateUserTomlAcl $workerPath
+        $encoding = New-Object Text.UTF8Encoding($true)
+        [byte[]]$bytes = $encoding.GetPreamble() + $encoding.GetBytes((Get-MiosLanExposureWorkerScript $script:MiosBuildSource))
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') } finally { $sha.Dispose() }
+        [IO.File]::WriteAllBytes($workerPath, $bytes)
+        Initialize-MiosPipePeerApi
+        $connected = $pipe.BeginWaitForConnection($null, $null)
+        # UAC receives a verifier and a digest, never an unverified -File invocation: read once, hash those exact bytes,
+        # then run those same bytes.
+        $quotedPath = $workerPath.Replace("'", "''")
+        $launch = @"
+`$ErrorActionPreference = 'Stop'
+`$bytes = [IO.File]::ReadAllBytes('$quotedPath')
+`$sha = [Security.Cryptography.SHA256]::Create()
+try { `$actual = [BitConverter]::ToString(`$sha.ComputeHash(`$bytes)).Replace('-', '') } finally { `$sha.Dispose() }
+if (`$actual -cne '$digest') { throw 'The exposure worker source changed before UAC launch.' }
+`$source = [Text.Encoding]::UTF8.GetString(`$bytes).TrimStart([char]0xfeff)
+& ([scriptblock]::Create(`$source)) -PipeName '$pipeName' -OriginProcessId $PID
+"@
+        $encodedLaunch = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launch))
+        $engine = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Write-Host '  [*] Approve UAC to apply the MiOS-DEV Windows firewall rules and port forwards from mios.toml [firewall.windows].' -ForegroundColor Cyan
+        Write-Log 'Windows host exposure: requesting UAC for the elevated exposure worker'
+        try {
+            $worker = Start-Process -FilePath $engine -Verb RunAs -PassThru -WorkingDirectory $env:SystemRoot -WindowStyle Hidden -ErrorAction Stop `
+                -ArgumentList @('-NoProfile', '-EncodedCommand', $encodedLaunch)
+        } catch {
+            throw "LAN-EXPOSURE-ELEVATION-DECLINED: UAC did not start the exposure worker ($($_.Exception.Message)); the Windows host exposure is unchanged."
+        }
+        if (-not $connected.AsyncWaitHandle.WaitOne(180000)) { throw 'The elevated exposure worker did not connect.' }
+        $pipe.EndWaitForConnection($connected)
+        [uint32]$peer = 0
+        if (-not [MiosBootstrapPipePeer]::GetNamedPipeClientProcessId($pipe.SafePipeHandle.DangerousGetHandle(), [ref]$peer) -or $peer -ne $worker.Id) { throw 'The exposure pipe has the wrong elevated worker.' }
+        $writer = New-Object IO.StreamWriter($pipe, (New-Object Text.UTF8Encoding($false)), 4096, $true)
+        $reader = New-Object IO.StreamReader($pipe, (New-Object Text.UTF8Encoding($false)), $false, 4096, $true)
+        try {
+            $writer.AutoFlush = $true
+            $writer.WriteLine((@{ Layers = $layers; WslAddress = $WslAddress } | ConvertTo-Json -Depth 5 -Compress))
+            $reply = Read-MiosPipeLine -Reader $reader -Limit 1048576
+            if (-not $reply) { throw 'The elevated exposure worker exited without a result.' }
+            $result = ConvertFrom-Json -InputObject $reply -ErrorAction Stop
+            foreach ($l in @($result.Lines)) {
+                switch ([string]$l.L) {
+                    'OK'    { Log-Ok ([string]$l.M) }
+                    'STEP'  { Log-Info ([string]$l.M) }
+                    'WARN'  { Log-Warn ([string]$l.M) }
+                    default { Write-Log ([string]$l.M) ([string]$l.L) }
+                }
+            }
+            if ([string]$result.Status -ne 'applied') { throw ("Windows host exposure stopped: " + $result.Detail) }
+            $worker.WaitForExit()
+            if ($worker.ExitCode -ne 0) { throw 'The elevated exposure worker failed after applying.' }
+            return $result
+        } finally { $writer.Dispose(); $reader.Dispose() }
+    } finally { $pipe.Dispose(); Remove-Item -LiteralPath $workerPath -Force -ErrorAction SilentlyContinue }
+}
+
+function Invoke-MiosLanExposure {
+    # Phase 4's Windows-host exposure of MiOS-DEV (Defender rules; port forwards under NAT) from mios.toml
+    # [firewall.windows]. Reading both needs no elevation and writing does, so drift is measured here and UAC is asked
+    # only when the host differs: the writes run here when elevated, otherwise in a UAC-started worker. -Force skips the
+    # drift check.
+    param([switch]$Force)
+    if (-not (Get-Command New-NetFirewallRule -ErrorAction SilentlyContinue)) {
+        Log-Warn "Firewall: New-NetFirewallRule cmdlet not available; skipping LAN inbound rules"
+        return
+    }
+    $address = ''
+    if ((Resolve-MiosWslNetworkingMode) -ne 'mirrored') {
+        $vm = Resolve-MiosWslVmAddress
+        if ($vm.Address) { $address = [string]$vm.Address }
+        else { Log-Warn "portproxy: could not resolve a clean WSL VM IP of '$($vm.Distro)' -- port forwarding is not measured or applied" }
+    }
+    $drift = @(Get-MiosLanExposureDrift -WslAddress $address)
+    if (-not $drift.Count -and -not $Force) {
+        Log-Ok 'Windows host exposure: the Defender rules and port forwards already match mios.toml [firewall.windows]; no elevation needed'
+        return
+    }
+    foreach ($d in $drift) { Write-Log "Windows host exposure drift: $d" }
+    if ($script:IsAdmin) {
+        try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
+        try { Set-MiosLanPortProxy -WslAddress $address } catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
+        return
+    }
+    $null = Invoke-MiosElevatedLanExposure -WslAddress $address
+}
+
+function ConvertTo-MiosCanonicalPrefix {
+    # One rule address in the form this script writes (network/length), whatever form Windows reads it back in:
+    # a bare address (a host prefix), address/length, or IPv4 address/dotted-mask. Anything else is returned as written.
+    param([AllowEmptyString()][string]$Text)
+    $t = $Text.Trim()
+    $ipText = $t; $len = $null
+    if ($t -match '^([^/]+)/(.+)$') {
+        $ipText = $Matches[1]; $tail = $Matches[2]
+        if ($tail -match '^[0-9]{1,3}$') { $len = [int]$tail }
+        else {
+            $mask = $null
+            if (-not [Net.IPAddress]::TryParse($tail, [ref]$mask) -or $mask.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { return $t }
+            $bits = ''
+            foreach ($byte in $mask.GetAddressBytes()) { $bits += [Convert]::ToString($byte, 2).PadLeft(8, '0') }
+            if ($bits -notmatch '^1*0*$') { return $t }
+            $len = $bits.IndexOf('0'); if ($len -lt 0) { $len = 32 }
+        }
+    }
+    $ip = $null
+    if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { return $t }
+    $bitsMax = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+    if ($null -eq $len) { $len = $bitsMax }
+    if ($len -lt 1 -or $len -gt $bitsMax) { return $t }
+    return ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+}
+
+function Assert-MiosNoReparsePath {
+    param([Parameter(Mandatory)][string]$Path)
+    $p = [IO.Path]::GetFullPath($Path)
+    while ($p) {
+        $item = $null
+        try { $item = Get-Item -LiteralPath $p -Force -ErrorAction Stop }
+        catch { if ($_.CategoryInfo.Category -ne [Management.Automation.ErrorCategory]::ObjectNotFound) { throw } }
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'A TOML path passes through a reparse point; refusing to write.' }
+        $next = Split-Path -Parent $p
+        if ($next -eq $p) { break }
+        $p = $next
+    }
+}
+
+function Set-MiosPrivateUserTomlAcl {
+    param([Parameter(Mandatory)][string]$Path)
+    Assert-MiosNoReparsePath $Path
+    $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @($owner, (New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
+    }
+    $acl.SetOwner($owner)
+    # A fresh FileSecurity modifies owner/access only; do not ask Set-Acl to persist an audit section.
+    $info = New-Object IO.FileInfo $Path
+    try {
+        if ($PSVersionTable.PSEdition -eq 'Desktop') { $info.SetAccessControl($acl) }
+        else { [IO.FileSystemAclExtensions]::SetAccessControl($info, $acl) }
+    } catch { throw }
+}
+
+function Initialize-MiosPipePeerApi {
+    if (-not ('MiosBootstrapPipePeer' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class MiosBootstrapPipePeer {
+    [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeServerProcessId(IntPtr handle, out uint pid);
+    [DllImport("kernel32.dll", SetLastError=true)] public static extern bool GetNamedPipeClientProcessId(IntPtr handle, out uint pid);
+}
+'@ -ErrorAction Stop
+    }
+}
+
+function Read-MiosPipeLine {
+    param([Parameter(Mandatory)][IO.TextReader]$Reader, [int]$Limit = 8388608)
+    $line = New-Object Text.StringBuilder
+    while ($true) {
+        $next = $Reader.Read()
+        if ($next -lt 0) { throw 'The machine preparation pipe closed before a complete message.' }
+        if ($next -eq 10) { return $line.ToString().TrimEnd("`r") }
+        if ($line.Length -ge $Limit) { throw 'Machine preparation message exceeds its size limit.' }
+        [void]$line.Append([char]$next)
+    }
 }
 
 function Restore-PodmanPrefix {
@@ -4613,7 +5541,7 @@ function Install-MiOSTmuxProfile {
     param([switch]$Required)
     # Bootstrap may run before the native catalog is installed. Final installation
     # and runtime must use the native renderer; a deferred phase is never success.
-    $nativeRoots = @($env:MIOS_NATIVE_BIN, (Join-Path $env:ProgramData 'MiOS\bin'), (Join-Path $env:LOCALAPPDATA 'MiOS\bin'))
+    $nativeRoots = @((Get-MiosInstalledLayout).NativeBin)
     foreach ($nativeRoot in $nativeRoots) {
         if (-not $nativeRoot) { continue }
         $launcher = Join-Path $nativeRoot 'mios-launch.exe'
@@ -4865,13 +5793,13 @@ function Install-WindowsBranding {
         $existing = if (Test-Path $profilePath) { Get-Content $profilePath -Raw } else { '' }
         $marker   = '# >>> MiOS oh-my-posh init >>>'
         $endMark  = '# <<< MiOS oh-my-posh init <<<'
-        $miosProfilePath = if (Test-Path 'M:\') { 'M:\MiOS\powershell\profile.ps1' }
-                            else { Join-Path $env:USERPROFILE 'MiOS-bootstrap\powershell\profile.ps1' }
+        # The same body Get-MiOS.ps1's redirector loads: the installed layout's profile.
+        $miosProfilePath = (Get-MiosInstalledLayout).ProfileBody.Replace("'", "''")
         $block = @"
 $marker
 # Auto-generated redirector. The MiOS profile body (PSReadLine reload +
-# oh-my-posh init + fastfetch MOTD + dashboard) lives at M:\ as the
-# SSOT; this block is replaced on every re-run between the markers.
+# oh-my-posh init + fastfetch MOTD + dashboard) lives in the installed
+# layout; this block is replaced on every re-run between the markers.
 `$_miosProfile = '$miosProfilePath'
 if (Test-Path `$_miosProfile) { . `$_miosProfile }
 $endMark
@@ -5075,6 +6003,9 @@ function Install-MiosLauncher {
     foreach ($d in @($MiosInstallDir, $MiosBinDir, $MiosIconsDir, $MiosThemesDir, $StartMenuDir)) {
         New-Item -ItemType Directory -Path $d -Force | Out-Null
     }
+    # Every login this launcher writes (the generated verbs, the shortcuts, the terminal profile) is the MiOS login,
+    # resolved once here through Get-MiosLinuxLogin; the guest exists by now. Re-running the installer re-resolves it.
+    $miosLogin = Get-MiosLinuxLogin (Resolve-MiosBuilderDistribution $DevDistro)
 
     # -- 1. Generate the icon family (one .ico per verb) ---------------
     $iconMap = @{
@@ -5107,7 +6038,7 @@ $ErrorActionPreference = 'SilentlyContinue'
 
 $Global:MiosProfileMotdRendered = $true
 
-$_miosProfile = 'M:\MiOS\powershell\profile.ps1'
+$_miosProfile = Join-Path (Split-Path -Parent $PSScriptRoot) 'powershell\profile.ps1'
 if (Test-Path -LiteralPath $_miosProfile) {
     . $_miosProfile
     if (Get-Command Show-MiosDashboard -ErrorAction SilentlyContinue) {
@@ -5115,7 +6046,7 @@ if (Test-Path -LiteralPath $_miosProfile) {
         return
     }
 }
-Write-Host "  [!] M:\MiOS\powershell\profile.ps1 missing or Show-MiosDashboard not defined." -ForegroundColor Yellow
+Write-Host "  [!] $_miosProfile missing or Show-MiosDashboard not defined." -ForegroundColor Yellow
 Write-Host "      Re-run irm | iex Get-MiOS.ps1 to refresh the profile." -ForegroundColor DarkGray
 return
 '@
@@ -5156,13 +6087,17 @@ if (`$args.Count -eq 0) {
     $miosBuildRefLiteral = "'" + ([string]$MiosRef).Replace("'", "''") + "'"
     $miosBootstrapRefLiteral = "'" + ([string]$MiosBootstrapRef).Replace("'", "''") + "'"
 
+    # The installed layout's MiOS checkout, baked into the verb scripts instead of a guessed drive root (C:\, C:\MiOS, M:\).
+    $miosRepoLiteral = "'" + $MiosRepoDir.Replace("'", "''") + "'"
+    $_repoTrim = $MiosRepoDir.TrimEnd('\')
+    $miosRepoWsl = '/mnt/' + $_repoTrim.Substring(0, 1).ToLower() + ($_repoTrim.Substring(2) -replace '\\', '/')
     $pullPath = Join-Path $MiosBinDir 'mios-pull.ps1'
     $pullScript = @"
 $devResolveBlock
 $windowsRefreshBlock
 `$ErrorActionPreference = 'Continue'
 `$sysLetter = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
-`$miosRoot = if (Test-Path "`$sysLetter\.git") { "`$sysLetter\" } elseif (Test-Path "`$sysLetter\MiOS\.git") { "`$sysLetter\MiOS" } elseif (Test-Path 'M:\.git') { 'M:\' } else { "`$sysLetter\" }
+`$miosRoot = $miosRepoLiteral
 if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
     Update-MiosWindowsBuildCheckout -Path `$miosRoot -Ref $miosBuildRefLiteral
 } else {
@@ -5176,7 +6111,7 @@ if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction
 $losslessPullShell
 '@
 `$inlinePullLf = `$inlinePull.Replace("``r``n", "``n")
-`$inlinePullLf | wsl.exe -d (Resolve-MiosDevDistro) --user mios -- sh -s -- / $miosBuildRefLiteral --sudo
+`$inlinePullLf | wsl.exe -d (Resolve-MiosDevDistro) --user $miosLogin -- sh -s -- / $miosBuildRefLiteral --sudo
 if (`$LASTEXITCODE -ne 0) { throw 'The native checkout refused a safe refresh; local work was preserved.' }
 "@
     Set-Content -Path $pullPath -Value $pullScript -Encoding UTF8
@@ -5393,7 +6328,7 @@ try {
     `$distro = Resolve-MiosDevDistro
     if (`$tomlSrc) { `$tomlDst = Import-MiosUserToml -SourcePath `$tomlSrc.FullName -DestinationPath `$tomlDst }
     if (Test-Path -LiteralPath `$tomlDst -PathType Leaf) {
-        Sync-MiosUserTomlToBuilder -Path `$tomlDst -Distro `$distro -User mios
+        Sync-MiosUserTomlToBuilder -Path `$tomlDst -Distro `$distro -User '$miosLogin'
     }
     if (`$tomlSrc) {
         `$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -5410,7 +6345,7 @@ try {
 `$ErrorActionPreference = 'Continue'
 
 `$sysLetter = if (`$env:SystemDrive) { `$env:SystemDrive } else { 'C:' }
-`$miosRoot = if (Test-Path "`$sysLetter\.git") { "`$sysLetter\" } elseif (Test-Path "`$sysLetter\MiOS\.git") { "`$sysLetter\MiOS" } elseif (Test-Path 'M:\.git') { 'M:\' } else { "`$sysLetter\" }
+`$miosRoot = $miosRepoLiteral
 if ((Test-Path (Join-Path `$miosRoot '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
     Update-MiosWindowsBuildCheckout -Path `$miosRoot -Ref $miosBuildRefLiteral
 } else {
@@ -5431,7 +6366,7 @@ if (Test-Path `$pull) {
 Write-Host ''
 Write-Host ('  [build] pre-warming WSL distro {0} ...' -f `$distro) -ForegroundColor DarkGray
 try {
-    & wsl.exe -d `$distro --user mios -- true 2>&1 | Out-Null
+    & wsl.exe -d `$distro --user $miosLogin -- true 2>&1 | Out-Null
 } catch {}
 
 Write-Host ('  [build] starting WSL-Podman machine: {0} ...' -f `$podmanMachine) -ForegroundColor Cyan
@@ -5462,20 +6397,20 @@ try {
 # build driver's first `podman ...` invocation.
 Start-Sleep -Milliseconds 800
 
-`$driverSrc = '/mnt/c/usr/libexec/mios/mios-build-driver'
-if (Test-Path 'C:\MiOS\usr\libexec\mios\mios-build-driver') {
-    `$driverSrc = '/mnt/c/MiOS/usr/libexec/mios/mios-build-driver'
-} elseif (-not (Test-Path 'C:\usr\libexec\mios\mios-build-driver') -and (Test-Path 'M:\usr\libexec\mios\mios-build-driver')) {
-    `$driverSrc = '/mnt/m/usr/libexec/mios/mios-build-driver'
-}
+# The driver comes from the installed MiOS checkout only, so the build runs the checked-out source, never a download.
+`$driverSrc = '$miosRepoWsl/usr/libexec/mios/mios-build-driver'
 Write-Host ('  [build] staging mios-build-driver into {0}:/usr/libexec/mios/' -f `$distro) -ForegroundColor DarkGray
-& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] WARN: `$driverSrc not readable from inside `$distro -- falling back to curl'; curl -fsSL -o /usr/libexec/mios/mios-build-driver '$MiosRawBase/usr/libexec/mios/mios-build-driver' && chmod +x /usr/libexec/mios/mios-build-driver; fi"
+& wsl.exe -d `$distro --user root -- bash -c "mkdir -p /usr/libexec/mios && if [ -r '`$driverSrc' ]; then cp '`$driverSrc' /usr/libexec/mios/mios-build-driver && chmod +x /usr/libexec/mios/mios-build-driver && echo '[stage] driver staged from `$driverSrc'; else echo '[stage] ERROR: `$driverSrc is not readable inside `$distro'; exit 1; fi"
+if (`$LASTEXITCODE -ne 0) {
+    Write-Host '  [build] mios-build-driver could not be staged from the installed MiOS checkout; build stopped.' -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ''
 Write-Host ('  [build] handing off to {0}:/usr/libexec/mios/mios-build-driver' -f `$distro) -ForegroundColor Cyan
 Write-Host '  [build] (this builds the OCI image inside MiOS-DEV; first run takes 10-30 min)' -ForegroundColor DarkGray
 Write-Host ''
-& wsl.exe -d `$distro --user mios --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
+& wsl.exe -d `$distro --user $miosLogin --cd / -- bash -lc '/usr/libexec/mios/mios-build-driver'
 `$_drc = `$LASTEXITCODE
 if (`$_drc -ne 0) {
     Write-Host ('  [build] OCI image build FAILED inside {0} (exit {1}) -- MiOS AI will NOT be operational until this build succeeds; see the log above.' -f `$distro, `$_drc) -ForegroundColor Red
@@ -5487,12 +6422,7 @@ Write-Host '  [build] OCI image build completed OK.' -ForegroundColor Green
 # never wired in, so the AI-plane "is it operational?" check never executed. The
 # smoke is best-effort here (non-fatal): a still-warming AI plane warns rather
 # than failing the build verb; `mios smoke` re-runs it on demand.
-`$_smoke = '/mnt/c/tests/post-bootstrap-smoke.sh'
-if (Test-Path 'C:\MiOS\tests\post-bootstrap-smoke.sh') {
-    `$_smoke = '/mnt/c/MiOS/tests/post-bootstrap-smoke.sh'
-} elseif (-not (Test-Path 'C:\tests\post-bootstrap-smoke.sh') -and (Test-Path 'M:\tests\post-bootstrap-smoke.sh')) {
-    `$_smoke = '/mnt/m/tests/post-bootstrap-smoke.sh'
-}
+`$_smoke = '$miosRepoWsl/tests/post-bootstrap-smoke.sh'
 if ((& wsl.exe -d `$distro --user root -- bash -lc "test -f `$_smoke && echo y" 2>`$null) -eq 'y') {
     Write-Host '  [build] running post-bootstrap acceptance smoke (AI-plane + parity)...' -ForegroundColor Cyan
     & wsl.exe -d `$distro --user root -- bash `$_smoke
@@ -5510,28 +6440,40 @@ $ErrorActionPreference = 'SilentlyContinue'
 $Script:MiOSBin  = $PSScriptRoot
 $Script:MiOSRoot = Split-Path -Parent $Script:MiOSBin
 
-# Canonical profile body (Show-MiosDashboard + mios <verb> dispatcher).
+# The native entry hands verbs it does not own back to this hub, so a hub reached from its own dispatch is a loop.
+if ($env:MiosHubActive) {
+    Write-Host "  [!] mios verb '$($args -join ' ')' has no handler (the native entry returned it to the hub)." -ForegroundColor Yellow
+    exit 64
+}
+
+# Canonical profile body (Show-MiosDashboard + mios <verb> dispatcher), loaded for its functions only: dispatching a
+# verb must not open the host terminal the body starts for an interactive session.
 $_miosProfile = Join-Path $Script:MiOSRoot 'powershell\profile.ps1'
 if (Test-Path -LiteralPath $_miosProfile) {
+    $_skipMotd = $env:MIOS_SKIP_MOTD
+    $env:MIOS_SKIP_MOTD = '1'
     try { . $_miosProfile } catch {
         Write-Host "  [!] Failed to load $_miosProfile : $($_.Exception.Message)" -ForegroundColor Yellow
-    }
+    } finally { $env:MIOS_SKIP_MOTD = $_skipMotd }
 }
 
 if ($args.Count -gt 0) {
     $verb = $args[0]
     $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
-    if (Get-Command mios -ErrorAction SilentlyContinue) {
-        & mios $verb @rest
+    # Only a function is a dispatcher here: a command named mios may be this very script on PATH.
+    $dispatcher = Get-Command mios -CommandType Function -ErrorAction SilentlyContinue
+    $vScript = Join-Path $Script:MiOSBin "mios-$verb.ps1"
+    $nativeEntry = Join-Path $Script:MiOSBin 'mios-native-entry.ps1'
+    if (-not $dispatcher -and (Test-Path -LiteralPath $vScript)) {
+        & $vScript @rest
+    } elseif ($dispatcher -or (Test-Path -LiteralPath $nativeEntry)) {
+        # Both of these may hand an unowned verb back to this hub; the guard turns that into one refusal.
+        $env:MiosHubActive = '1'
+        try {
+            if ($dispatcher) { & $dispatcher $verb @rest } else { & $nativeEntry $verb @rest }
+        } finally { Remove-Item Env:MiosHubActive -ErrorAction SilentlyContinue }
     } else {
-        # Fallback when the profile didn't load: invoke the per-verb
-        # bin script directly.
-        $vScript = Join-Path $Script:MiOSBin "mios-$verb.ps1"
-        if (Test-Path -LiteralPath $vScript) {
-            & $vScript @rest
-        } else {
-            Write-Host "  [!] mios verb '$verb' not found ($vScript)." -ForegroundColor Yellow
-        }
+        Write-Host "  [!] mios verb '$verb' not found ($vScript)." -ForegroundColor Yellow
     }
 }
 '@
@@ -5541,8 +6483,12 @@ if ($args.Count -gt 0) {
     # exist independently of the user's PowerShell profile, including Xbox.
     $_nativeSetup = Join-Path $MiosRepoDir 'usr\share\mios\windows\mios-native-client-setup.ps1'
     if (-not (Test-Path -LiteralPath $_nativeSetup)) { throw "Native MiOS CMD setup missing: $_nativeSetup" }
-    $null = Install-MiosNativeCatalog -Root $MiosRepoDir -Machine $DevDistro
-    & $_nativeSetup -Distro $DevDistro -BinDirectory $MiosBinDir -SourceRoot $MiosRepoDir
+    # Phase 3 built the catalog before the Quadlet realize stage; this process does not build it twice.
+    if (-not $script:MiosNativeCatalogInstalled) { $null = Install-MiosNativeCatalog -Root $MiosRepoDir -Machine $DevDistro }
+    $_setupArgs = Get-MiosClientSetupArguments -Setup $_nativeSetup -Distro $DevDistro -SourceRoot $MiosRepoDir
+    # The client setup probes the native MiOS-MCP payload; nothing else installs it outside the image build.
+    Install-MiosNativeMcp -Machine $DevDistro
+    & $_nativeSetup @_setupArgs
     if (-not $?) { throw 'Native MiOS CMD/client setup failed' }
 
     # mios-code.ps1 -- `mios code` verb. Opens code-server in the
@@ -5576,7 +6522,7 @@ Start-Process $url | Out-Null
 # AI-hint: Legacy Windows mios-ai command enters the native AI workspace in the invoking terminal.
 # AI-related: usr/share/mios/windows/mios-native-client-setup.ps1, build-mios.ps1
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Arguments)
-$nativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { Join-Path $env:ProgramData 'MiOS\bin' }
+$nativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { $PSScriptRoot }
 $entry = Join-Path $nativeBin 'mios-native-entry.ps1'
 if (-not (Test-Path -LiteralPath $entry)) { throw 'MiOS native terminal entrypoint is missing; run the MiOS native client setup.' }
 & $entry ai @Arguments
@@ -5625,7 +6571,7 @@ try {
         if (`$_wsl -contains `$_cand) { `$_distro = `$_cand; break }
     }
 } catch {}
-& wsl.exe -d `$_distro --user mios -- mios $v @Args
+& wsl.exe -d `$_distro --user $miosLogin -- mios $v @Args
 "@
         Set-Content -Path $vPath -Value $vScript -Encoding UTF8
     }
@@ -5880,7 +6826,7 @@ function btop {
     Set-MiosWindow -Mode reading
     Start-Sleep -Milliseconds 200   # let WT settle the new dims
     try {
-        & wsl.exe -d `$_dev --user mios -- btop @args
+        & wsl.exe -d `$_dev --user $miosLogin -- btop @args
     } finally {
         Set-MiosWindow -Mode portal
     }
@@ -5888,7 +6834,8 @@ function btop {
 
 # Windows tmux dispatch is rendered and enforced by the native Rust SSOT launcher.
 function tmux {
-    & (Join-Path `$env:ProgramData 'MiOS\bin\mios-launch.exe') --tmux @args
+    `$_nativeBin = if (`$env:MIOS_NATIVE_BIN) { `$env:MIOS_NATIVE_BIN } else { `$Global:MiosBin }
+    & (Join-Path `$_nativeBin 'mios-launch.exe') --tmux @args
 }
 $endMark
 "@
@@ -6276,9 +7223,9 @@ End If
             # mios-gui dispatches through flatpak-launch, which arms the
             # SSOT Windows window-centering observer before mapping WSLg UI.
             $_args   = if ($_isWslg) {
-                ("-d {0} --user mios --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId)
+                ("-d {0} --user {2} --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId, $miosLogin)
             } else {
-                ("-d {0} --user mios -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId)
+                ("-d {0} --user {2} -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_appId, $miosLogin)
             }
             try {
                 New-Shortcut -Path $_lnk `
@@ -6301,9 +7248,9 @@ End If
             $_lnk = Join-Path $linuxAppsDir ("{0}.lnk" -f $_sa.Name)
             $_isWslg = $wslExe -match 'wslg\.exe$'
             $_sysArgs = if ($_isWslg) {
-                ("-d {0} --user mios --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd)
+                ("-d {0} --user {2} --cd `"~`" -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd, $miosLogin)
             } else {
-                ("-d {0} --user mios -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd)
+                ("-d {0} --user {2} -- /usr/libexec/mios/mios-gui {1}" -f $linuxDistro, $_sa.Cmd, $miosLogin)
             }
             try {
                 New-Shortcut -Path $_lnk `
@@ -6432,7 +7379,7 @@ End If
                 Log-Warn "Install-MiOSPowerShellProfile not defined after Get-MiOS.ps1 dot-source -- gate may have triggered too early"
             }
             if (Get-Command Install-MiOSTerminalProfile -ErrorAction SilentlyContinue) {
-                Install-MiOSTerminalProfile | Out-Null
+                Install-MiOSTerminalProfile -LinuxLogin $miosLogin | Out-Null
                 Log-Ok "Get-MiOS Install-MiOSTerminalProfile re-substituted (WT settings.json from current mios.toml)"
             }
             if (Get-Command Install-MiOSTmuxProfile -ErrorAction SilentlyContinue) {
@@ -6738,7 +7685,10 @@ function Invoke-GitFetchWithRetry {
 }
 
 function Update-MiosCheckout([string]$RepoPath, [string]$Ref) {
-    $changes = @(& git -C $RepoPath status --porcelain --untracked-files=all)
+    # Only tracked changes are local contributions. The mios-bootstrap overlay below copies untracked files into the
+    # mios.git work tree on every run; counting them deferred every later update forever. A fast-forward that would
+    # overwrite an untracked file still refuses (merge --ff-only), so nothing untracked is ever lost.
+    $changes = @(& git -C $RepoPath status --porcelain --untracked-files=no)
     if ($LASTEXITCODE -ne 0) { throw "Cannot inspect checkout $RepoPath; refusing to update it." }
     if ($changes.Count) {
         Log-Warn "Preserving local contributions at $RepoPath; remote update deferred."
@@ -6746,8 +7696,38 @@ function Update-MiosCheckout([string]$RepoPath, [string]$Ref) {
     }
     $fetchExit = Invoke-GitFetchWithRetry -RepoPath $RepoPath -Ref $Ref
     if ($fetchExit -ne 0) { throw "Cannot fetch $Ref at $RepoPath (exit $fetchExit)" }
+    # The fetch is depth 1, so in a shallow checkout HEAD and FETCH_HEAD are separate shallow roots and a fast-forward
+    # refuses them as "unrelated histories". Deepen until HEAD is reachable from FETCH_HEAD; a HEAD that never becomes
+    # reachable is a local commit, and it stays preserved.
+    $deepened = 0
+    foreach ($depth in @(8, 64, 512)) {
+        & git -C $RepoPath merge-base --is-ancestor HEAD FETCH_HEAD 2>$null
+        if ($LASTEXITCODE -eq 0) { break }
+        if ((& git -C $RepoPath rev-parse --is-shallow-repository 2>$null) -ne 'true') { break }
+        & git -C $RepoPath fetch -q "--deepen=$depth" origin $Ref 2>&1 | ForEach-Object { Write-Log "git-update: $_" }
+        if ($LASTEXITCODE -ne 0) { throw "Cannot deepen $RepoPath to find HEAD in $Ref (exit $LASTEXITCODE)" }
+        $deepened = $depth
+    }
+    & git -C $RepoPath merge-base --is-ancestor HEAD FETCH_HEAD 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot fast-forward $RepoPath to ${Ref}: HEAD is not in its history; local commits are preserved." }
+    if ($deepened) { Write-Log "git-update: deepened to $deepened; HEAD is an ancestor of $Ref" }
     & git -C $RepoPath merge --ff-only FETCH_HEAD | ForEach-Object { Write-Log "git-update: $_" }
-    if ($LASTEXITCODE -ne 0) { throw "Cannot fast-forward $RepoPath to $Ref; local commits are preserved." }
+    if ($LASTEXITCODE -ne 0) { throw "Cannot fast-forward $RepoPath to $Ref; local commits and untracked files are preserved." }
+}
+
+function Publish-MiosEntryScripts([string]$ShadowDir, [string]$BinDir) {
+    # Entry scripts come from the mios-bootstrap shadow checkout, the published bytes. The mios.git work tree also tracks
+    # older root copies of Get-MiOS.ps1 and build-mios.ps1 that the missing-files-only overlay never refreshes, so it is
+    # never the source. Each staged copy must hash equal to its shadow source.
+    foreach ($script in @('Get-MiOS.ps1', 'build-mios.ps1', 'build-mios.sh', 'bootstrap.ps1', 'bootstrap.sh')) {
+        $srcFile = Join-Path $ShadowDir $script
+        if (-not (Test-Path -LiteralPath $srcFile -PathType Leaf)) { continue }
+        $destFile = Join-Path $BinDir $script
+        Copy-Item -LiteralPath $srcFile -Destination $destFile -Force
+        $want = (Get-FileHash -LiteralPath $srcFile -Algorithm SHA256).Hash
+        $have = (Get-FileHash -LiteralPath $destFile -Algorithm SHA256).Hash
+        if ($have -ne $want) { throw "Staged $destFile (sha256 $have) does not match the mios-bootstrap shadow $srcFile (sha256 $want)." }
+    }
 }
 
 # -- Phase 1 -- Detecting existing build environment --------------------------
@@ -6845,33 +7825,34 @@ $miosRepo = $MiosRepoDir
     Set-Content -Path (Join-Path $MiosInstallDir "VERSION") -Value $MiosVersion -Encoding ASCII -Force
 
     # Stage entry-point scripts under $MiosBinDir for Start Menu shortcuts /
-    # PATH integration that target a stable non-git location. Files come
-    # from M:\ (overlay) since both repos' contents are now there.
-    foreach ($script in @("Get-MiOS.ps1","build-mios.ps1","build-mios.sh","bootstrap.ps1","bootstrap.sh")) {
-        $srcFile = Join-Path $MiosRepoDir $script
-        if (Test-Path $srcFile) {
-            Copy-Item -Path $srcFile -Destination (Join-Path $MiosBinDir $script) -Force
-        }
-    }
+    # PATH integration that target a stable non-git location, from the
+    # mios-bootstrap shadow (never the mios.git work tree's stale root copies).
+    Publish-MiosEntryScripts -ShadowDir $MiosBootstrapShadow -BinDir $MiosBinDir
     Log-Ok (Get-MiosTomlValue -Section 'messages.steps' -Key 'entry_scripts_staged' -Default "Entry scripts staged at $MiosBinDir")
     End-Phase 2
 
     # -- Phase 3 -- MiOS-DEV distro (formerly MiOS-BUILDER) -------------------
     Start-Phase 3
 
-    try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (pre-Phase-3): $($_.Exception.Message)" }
-    $script:ResolvedBuilderDistribution = Ensure-MiosBuilder -Machine $BuilderDistro -Hardware $HW
-    Log-Ok "Using preserved MiOS builder $script:ResolvedBuilderDistribution"
-
-    Invoke-MiosQuadletOverlay
-
-    $_wslDistroForTerm = $script:ResolvedBuilderDistribution
-    Set-Step "Layering MiOS build essentials onto $_wslDistroForTerm..."
     $devVmTomlCands = @(
         'M:\etc\mios\mios.toml',
         (Join-Path $script:MiosRepoDir 'usr\share\mios\mios.toml'),
         'M:\usr\share\mios\mios.toml'
     )
+    # Preflight, before the machine is touched: the realize stage renders with the native catalog's renderer.
+    if (Test-MiosDevOverlayFullDisabled $devVmTomlCands) {
+        Log-Fail "[bootstrap].dev_overlay_full=false: the native catalog needs the Rust toolchain from the full dev overlay ([packages.build-toolchain]); MiOS-DEV was not changed"
+        throw "[bootstrap].dev_overlay_full=false leaves no Rust toolchain for the native catalog; set it to true and re-run"
+    }
+
+    try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (pre-Phase-3): $($_.Exception.Message)" }
+    $script:ResolvedBuilderDistribution = Ensure-MiosBuilder -Machine $BuilderDistro -Hardware $HW
+    Log-Ok "Using preserved MiOS builder $script:ResolvedBuilderDistribution"
+
+    Invoke-MiosQuadletOverlay -Stage checkout
+
+    $_wslDistroForTerm = $script:ResolvedBuilderDistribution
+    Set-Step "Layering MiOS build essentials onto $_wslDistroForTerm..."
     $miosEssentials  = ''
     $essentialsSource = ''
     foreach ($p in $devVmTomlCands) {
@@ -7152,14 +8133,16 @@ $miosRepo = $MiosRepoDir
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        $_nvOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash /usr/libexec/mios/install-nvidia-wsl-userland.sh 2>&1
-        $_nvExit = $LASTEXITCODE
-        if ($_nvExit -eq 0) {
+        $_nvScript = '/usr/libexec/mios/install-nvidia-wsl-userland.sh'
+        $_nvOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash $_nvScript 2>&1
+        $_nvVerdict = Get-MiosDistroStepVerdict -Exit $LASTEXITCODE -Script $_nvScript
+        $_nvOut | ForEach-Object { Write-Log "nvidia-wsl: $_" }
+        if ($_nvVerdict.Ok) {
             $_nvSummary = ($_nvOut | Where-Object { $_ -match '^\s*\[(ok|skip|warn)\]' } | Select-Object -Last 3) -join ' / '
             if (-not $_nvSummary) { $_nvSummary = '(silent - see install log if needed)' }
             Log-Ok "NVIDIA WSL userland: $_nvSummary"
         } else {
-            Log-Warn "NVIDIA WSL userland install exit=$_nvExit; GUI apps may fall back to dzn-only Vulkan path"
+            Log-Warn "NVIDIA WSL userland not installed ($($_nvVerdict.Detail)); GUI apps may fall back to dzn-only Vulkan path"
         }
     }
 
@@ -7206,7 +8189,8 @@ if ! id mios >/dev/null 2>&1; then
     _useradd_rc=$?
     set -e
     if id mios >/dev/null 2>&1; then
-        echo 'mios:mios' | chpasswd 2>/dev/null || true
+        # No password: the account is locked. The operator's credential goes to the MiOS login (the realize stage).
+        usermod -L mios 2>/dev/null || true
         # Passwordless sudo for mios so build-mios.ps1's later steps
         # (smoke test, container-host setup) don't prompt.
         if [ -d /etc/sudoers.d ]; then
@@ -7215,7 +8199,7 @@ if ! id mios >/dev/null 2>&1; then
         fi
         echo "[mios-seed] mios user created (uid=$(id -u mios), groups=$(id -Gn mios))"
     else
-        echo "[mios-seed] WARN: useradd mios failed (rc=$_useradd_rc) -- wsl.conf default=mios will fail until the user exists"
+        echo "[mios-seed] WARN: useradd mios failed (rc=$_useradd_rc)"
     fi
 fi
 if [ ! -f /etc/wsl.conf ]; then
@@ -7235,19 +8219,22 @@ elif ! grep -qE '^[[:space:]]*systemd[[:space:]]*=[[:space:]]*true[[:space:]]*$'
 else
     echo "[mios-seed] /etc/wsl.conf: [boot] systemd=true already set"
 fi
-if id mios >/dev/null 2>&1; then
+# The default login is the vendor/host [identity].username through MiOS's identity guard (no literal name). Before
+# the overlay lays down /usr/lib/mios the guard cannot run; the realize stage sets the default login then.
+mios_login=$(python3 -c "import sys,pwd; sys.path.insert(0,'/usr/lib/mios'); import mios_toml as m; n=str((m.base_view().get('identity') or {}).get('username') or '').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith(('nologin', 'false')) else sys.exit('MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)' % n)" 2>/dev/null) || mios_login=""
+if [ -n "$mios_login" ]; then
     if ! grep -q '^\[user\]' /etc/wsl.conf 2>/dev/null; then
-        printf '\n[user]\ndefault=mios\n' >> /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf: appended [user].default=mios"
+        printf '\n[user]\ndefault=%s\n' "$mios_login" >> /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: appended [user].default=$mios_login"
     elif ! grep -qE '^[[:space:]]*default[[:space:]]*=' /etc/wsl.conf 2>/dev/null; then
-        sed -i '/^\[user\]/a default=mios' /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf: inserted default=mios under existing [user]"
-    elif ! grep -qE '^[[:space:]]*default[[:space:]]*=[[:space:]]*mios[[:space:]]*$' /etc/wsl.conf 2>/dev/null; then
-        sed -i 's|^[[:space:]]*default[[:space:]]*=.*|default=mios|' /etc/wsl.conf
-        echo "[mios-seed] /etc/wsl.conf: rewrote default=<other> to default=mios"
+        sed -i "/^\[user\]/a default=$mios_login" /etc/wsl.conf
+        echo "[mios-seed] /etc/wsl.conf: inserted default=$mios_login under existing [user]"
     else
-        echo "[mios-seed] /etc/wsl.conf: default=mios already set"
+        # Fill only: an existing default is never rewritten here, so mios.git's tracked etc/wsl.conf stays clean (R5).
+        echo "[mios-seed] /etc/wsl.conf: [user] default already set; left as it is"
     fi
+else
+    echo "[mios-seed] no usable MiOS login for [identity].username yet; the realize stage sets wsl.conf [user].default"
 fi
 # Pre-bootc bridge: source mios.git profile.d scripts from /mnt/m/ on
 # every interactive bash login, IF the canonical /etc/profile.d/mios-*
@@ -7356,6 +8343,15 @@ fi
         Log-Warn "MiOS terminal experience seed failed (exit $($script:_seedRc)) -- bare bash login until bootc switch"
     }
 
+    # The native catalog installs /usr/libexec/mios/mios-render-quadlets, which the realize stage renders with. Both run
+    # here: after the dev overlay brought the Rust toolchain, and before anything restarts the guest (a guest boot
+    # would start the checked-out Quadlets unrendered).
+    Set-Step "Building the MiOS native catalog in $_wslDistroForTerm (it includes the Quadlet renderer)..."
+    $null = Install-MiosNativeCatalog -Root $MiosRepoDir -Machine $DevDistro
+    $script:MiosNativeCatalogInstalled = $true
+    Log-Ok "MiOS native catalog installed in $_wslDistroForTerm"
+    Invoke-MiosQuadletOverlay -Stage realize
+
     Set-Step "Compiling MiOS dconf system-db in $_wslDistroForTerm..."
     & {
         $ErrorActionPreference = 'Continue'
@@ -7436,10 +8432,13 @@ exit 0
         if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
         }
-        $_aiOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash /usr/libexec/mios/install-ai-clis.sh 2>&1
+        $_aiScript = '/usr/libexec/mios/install-ai-clis.sh'
+        $_aiOut = & wsl.exe -d $_wslDistroForTerm --user root -- bash $_aiScript 2>&1
+        $_aiVerdict = Get-MiosDistroStepVerdict -Exit $LASTEXITCODE -Script $_aiScript
         $_aiOut | ForEach-Object { Write-Log "mios-ai-cli: $_" }
+        if ($_aiVerdict.Ok) { Log-Ok "MiOS AI CLIs installed (claude + gemini available on PATH)" }
+        else { Log-Warn "MiOS AI CLIs not installed ($($_aiVerdict.Detail))" }
     }
-    Log-Ok "MiOS AI CLIs installed (claude + gemini available on PATH)"
 
     Set-Step "Reconciling mios home ownership + locale in $_wslDistroForTerm..."
     & {
@@ -7457,16 +8456,15 @@ exit 0
     Set-Step "wsl --shutdown so .wslconfig + /etc/wsl.conf take effect on next entry..."
     & wsl.exe --shutdown 2>&1 |
         ForEach-Object { Write-Log "wsl-shutdown-end-phase3: $_" }
-    Log-Ok "WSL2 utility VM shutdown -- next entry uses mirrored networking + mios as default user"
+    Log-Ok "WSL2 utility VM shutdown -- next entry uses the mios.toml [wsl2] networking mode + mios as default user"
 
     End-Phase 3
 
     Start-Phase 4
     try { Set-MiosWslConfig -RamGB $HW.RamGB -Cpus $HW.Cpus -Force } catch { Log-Warn "Set-MiosWslConfig (Phase-4 recheck): $($_.Exception.Message)" }
 
-    Set-Step "Adding Windows Firewall LAN inbound rules for MiOS service ports..."
-    try { Set-MiosLanFirewallRules } catch { Log-Warn "Set-MiosLanFirewallRules: $($_.Exception.Message)" }
-    try { Set-MiosLanPortProxy }     catch { Log-Warn "Set-MiosLanPortProxy: $($_.Exception.Message)" }
+    Set-Step "Applying the Windows host exposure of MiOS-DEV (firewall rules, port forwards)..."
+    try { Invoke-MiosLanExposure } catch { Log-Warn "Windows host exposure: $($_.Exception.Message)" }
 
     End-Phase 4
 
@@ -7586,7 +8584,8 @@ exit 0
     Start-Phase 6
     $script:CurStep = "Resolving identity from mios.toml..."
     Show-Dashboard -Force
-    $MiosUser     = [string](Get-MiosTomlValue -Section 'identity' -Key 'username' -Default 'mios')
+    $MiosUser     = ([string](Get-MiosTomlValue -Section 'identity' -Key 'username' -Default '')).Trim()
+    if (-not $MiosUser) { throw "[identity].username is not set in any mios.toml layer (~\.config\mios\mios.toml, which mios.html writes, C:\etc\mios\mios.toml or C:\usr\share\mios\mios.toml); set it there and re-run the installer" }
     $MiosHostname = [string](Get-MiosTomlValue -Section 'identity' -Key 'hostname' -Default 'mios')
     $loginCredential = Resolve-MiosLoginCredential
     $MiosHash = $loginCredential.Hash
@@ -8179,12 +9178,9 @@ if (`$Purge) {
         } catch {}
         Write-Log "auto-chain: resolved dev distro = '$devDistro'"
         if ($devDistro) {
+            # The MiOS login (Get-MiosLinuxLogin); a guest without a usable one runs the driver as root.
             $resolvedUser = 'root'
-            try {
-                $passwd = (& wsl.exe -d $devDistro --user root -- cat /etc/passwd 2>$null) -join "`n"
-                if ($passwd -match '(?m)^mios:') { $resolvedUser = 'mios' }
-                elseif ($passwd -match '(?m)^core:') { $resolvedUser = 'core' }
-            } catch {}
+            try { $resolvedUser = Get-MiosLinuxLogin $devDistro } catch { Write-Log "auto-chain: $($_.Exception.Message); running the driver as root" "WARN" }
             Write-Log "auto-chain: resolved user = '$resolvedUser'"
             Write-Host "  -> Launching $devDistro (--user $resolvedUser) to run mios-build-driver..." -ForegroundColor Cyan
             Write-Host "     Output streams below; the OCI build runs inside MiOS-DEV." -ForegroundColor DarkGray

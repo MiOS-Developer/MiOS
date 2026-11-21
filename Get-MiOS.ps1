@@ -192,10 +192,40 @@ public static class MiosBootstrapWindow {
 }
 Center-MiosBootstrapWindow
 
+function Test-MiosElevated {
+    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-MiosWindowsInstallRoot {
+    param([bool]$Elevated = (Test-MiosElevated),
+          [string]$LocalAppData = ([Environment]::GetFolderPath('LocalApplicationData')),
+          [string]$SystemDrive = $env:SystemDrive)
+    if ($Elevated) { return Join-Path $SystemDrive 'MiOS' }
+    if (-not $LocalAppData) { throw 'The operator Local AppData folder is unavailable.' }
+    return Join-Path $LocalAppData 'MiOS'
+}
+
+# The installed Windows layout, the one source for every native-bin default and both PowerShell profile redirectors.
+# build-mios.ps1 carries the same function; tests/test_install_native_layout.ps1 holds the two to one answer.
+# Unelevated: %LOCALAPPDATA%\MiOS, User scope. Elevated: %SystemDrive%\MiOS, Machine scope. MIOS_NATIVE_BIN overrides
+# only the native bin.
+function Get-MiosInstalledLayout {
+    param([bool]$Elevated = (Test-MiosElevated))
+    $root = Get-MiosWindowsInstallRoot -Elevated $Elevated
+    $bin = Join-Path $root 'bin'
+    return [pscustomobject]@{
+        Root        = $root
+        Bin         = $bin
+        NativeBin   = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { $bin }
+        ProfileBody = Join-Path $root 'powershell\profile.ps1'
+        Scope       = if ($Elevated) { 'Machine' } else { 'User' }
+    }
+}
+
 function Start-MiosBuildMonitor {
     if ($env:MIOS_NO_MONITOR -in @('1','true','yes','on') -or
         $env:MIOS_HEADLESS -in @('1','true','yes','on')) { return }
-    $launcher = Join-Path $env:ProgramData 'MiOS\bin\mios-launch.exe'
+    $launcher = Join-Path (Get-MiosInstalledLayout).NativeBin 'mios-launch.exe'
     $monitorScript = @($env:MIOS_MONITOR_SCRIPT,
         (Join-Path $PSScriptRoot 'usr\libexec\mios\mios-mon.py'),
         'C:\MiOS\usr\libexec\mios\mios-mon.py') |
@@ -752,10 +782,9 @@ function Initialize-MiosHostTierDirectory {
         throw 'A host TOML destination must be etc/mios/mios.toml.'
     }
     Assert-MiosNoReparsePath $Path
-    # Protect both directory levels: a writable parent grants delete/replace even when the file itself is read-only.
+    # Both levels, vendor-style: an existing directory must already pass admission; an absent one is created atomically protected.
     foreach ($d in @($etc, $dir)) {
-        if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -ErrorAction Stop | Out-Null }
-        Set-MiosHostTierAcl $d
+        if (Test-Path -LiteralPath $d) { Assert-MiosMachineWriteBoundary $d } else { New-MiosProtectedMachineDirectory $d }
     }
     Assert-MiosNoReparsePath $Path
 }
@@ -807,12 +836,13 @@ function New-MiosProtectedMachineDirectory {
         $methods = @([IO.FileSystemAclExtensions].GetMethods())
         $method = @($methods | Where-Object { $_.Name -eq 'CreateDirectory' -and $_.GetParameters().Count -eq 2 -and
             $_.GetParameters()[0].ParameterType -eq [Security.AccessControl.DirectorySecurity] -and $_.GetParameters()[1].ParameterType -eq [string] }) | Select-Object -First 1
-        if ($method) { $null = $method.Invoke($null, @($acl, $Path)) }
+        # Reflection needs the raw .NET objects, not the PSObject wrappers function output carries.
+        if ($method) { $null = $method.Invoke($null, [object[]]@($acl.psobject.BaseObject, $Path)) }
         else {
             $method = @($methods | Where-Object { $_.Name -eq 'Create' -and $_.GetParameters().Count -eq 2 -and
                 $_.GetParameters()[0].ParameterType -eq [IO.DirectoryInfo] -and $_.GetParameters()[1].ParameterType -eq [Security.AccessControl.DirectorySecurity] }) | Select-Object -First 1
             if (-not $method) { throw 'Atomic directory creation with a protected ACL is unavailable.' }
-            $null = $method.Invoke($null, @((New-Object IO.DirectoryInfo $Path), $acl))
+            $null = $method.Invoke($null, [object[]]@((New-Object IO.DirectoryInfo $Path).psobject.BaseObject, $acl.psobject.BaseObject))
         }
     }
     # A concurrent pre-existing directory must pass the same boundary checks; never take over its ACL or owner.
@@ -830,8 +860,8 @@ function Write-MiosPrivateMachineFile {
         $method = @([IO.FileSystemAclExtensions].GetMethods() | Where-Object { $_.Name -eq 'Create' -and $_.GetParameters().Count -eq 7 -and
             $_.GetParameters()[0].ParameterType -eq [IO.FileInfo] -and $_.GetParameters()[6].ParameterType -eq [Security.AccessControl.FileSecurity] }) | Select-Object -First 1
         if (-not $method) { throw 'Atomic file creation with a protected ACL is unavailable.' }
-        $stream = $method.Invoke($null, @((New-Object IO.FileInfo $Path), [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
-            [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $acl))
+        $stream = $method.Invoke($null, [object[]]@((New-Object IO.FileInfo $Path).psobject.BaseObject, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write,
+            [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $acl.psobject.BaseObject))
     }
     try { $stream.Write($Bytes, 0, $Bytes.Length); $stream.Flush() } finally { $stream.Dispose() }
 }
@@ -852,6 +882,674 @@ function Assert-MiosMachineWriteBoundary {
         if (($rule.FileSystemRights -band $write) -and $rule.IdentityReference.Value -notin $trusted) {
             throw 'An existing machine TOML path allows an untrusted account to modify or replace it.'
         }
+    }
+}
+
+function Initialize-MiosMachineBoundaryApi {
+    if (-not ('MiosMachineBoundaryNative' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public sealed class MiosBoundaryInfo {
+    public uint Attributes; public uint Links; public uint Volume; public ulong Index; public long Created; public long Written; public ulong Size;
+}
+public static class MiosMachineBoundaryNative {
+    [StructLayout(LayoutKind.Sequential)] struct FT { public uint Low; public uint High; }
+    [StructLayout(LayoutKind.Sequential)] struct BHFI { public uint Attributes; public FT Created; public FT Accessed; public FT Written;
+        public uint Volume; public uint SizeHigh; public uint SizeLow; public uint Links; public uint IndexHigh; public uint IndexLow; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle, out BHFI info);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+    [DllImport("advapi32.dll")]
+    static extern uint GetSecurityInfo(SafeFileHandle handle, int type, uint info, out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+    [DllImport("advapi32.dll")] static extern uint SetSecurityInfo(SafeFileHandle handle, int type, uint info, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool ConvertSecurityDescriptorToStringSecurityDescriptorW(IntPtr descriptor, uint revision, uint info, out IntPtr text, out uint length);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool ConvertStringSecurityDescriptorToSecurityDescriptorW(string text, uint revision, out IntPtr descriptor, out uint length);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetSecurityDescriptorOwner(IntPtr descriptor, out IntPtr owner, out bool defaulted);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetSecurityDescriptorControl(IntPtr descriptor, out ushort control, out uint revision);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr memory);
+    [StructLayout(LayoutKind.Sequential)] struct LUID { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential)] struct TOKEN_PRIVILEGES { public uint Count; public LUID Luid; public uint Attributes; }
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool LookupPrivilegeValueW(string system, string name, out LUID luid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TOKEN_PRIVILEGES state, uint length, IntPtr previous, IntPtr returnLength);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DuplicateHandle(IntPtr sourceProcess, SafeFileHandle source, IntPtr targetProcess, out SafeFileHandle target,
+        uint access, bool inherit, uint options);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct FINDSTREAM { public long Size; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 296)] public string Name; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr FindFirstStreamW(string path, int level, out FINDSTREAM data, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool FindNextStreamW(IntPtr find, out FINDSTREAM data);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool FindClose(IntPtr find);
+    const uint OwnerInfo = 0x1, DaclInfo = 0x4, ProtectedDacl = 0x80000000, UnprotectedDacl = 0x20000000;
+    // Every data stream of a file, the unnamed "::$DATA" included; ERROR_HANDLE_EOF (38) ends the list.
+    public static string[] Streams(string path) {
+        System.Collections.Generic.List<string> names = new System.Collections.Generic.List<string>();
+        FINDSTREAM data;
+        IntPtr find = FindFirstStreamW(path, 0, out data, 0u);
+        if (find == new IntPtr(-1)) {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 38) { return names.ToArray(); }
+            throw new Win32Exception(error, "Cannot list the streams of " + path);
+        }
+        try {
+            do { names.Add(data.Name); } while (FindNextStreamW(find, out data));
+            int last = Marshal.GetLastWin32Error();
+            if (last != 38) { throw new Win32Exception(last, "Cannot list the streams of " + path); }
+        } finally { FindClose(find); }
+        return names.ToArray();
+    }
+    // Restoring another account as owner needs SeRestorePrivilege; an elevated token holds it disabled.
+    public static void EnablePrivilege(string name) {
+        IntPtr token;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x20u | 0x8u, out token)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        try {
+            LUID luid;
+            if (!LookupPrivilegeValueW(null, name, out luid)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            TOKEN_PRIVILEGES state = new TOKEN_PRIVILEGES(); state.Count = 1; state.Luid = luid; state.Attributes = 0x2;
+            if (!AdjustTokenPrivileges(token, false, ref state, 0u, IntPtr.Zero, IntPtr.Zero)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            int error = Marshal.GetLastWin32Error();
+            if (error == 1300) { throw new Win32Exception(error, name + " is not held by this token."); }
+        } finally { CloseHandle(token); }
+    }
+    // DACL only: unprotected makes Windows recompute this object's inherited ACEs from its parent.
+    public static void SetDacl(SafeFileHandle handle, string sddl, bool isProtected) {
+        IntPtr descriptor; uint length;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1u, out descriptor, out length)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        try {
+            IntPtr dacl; bool present, defaulted;
+            if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present || dacl == IntPtr.Zero) {
+                throw new InvalidOperationException("The descriptor has no DACL.");
+            }
+            uint result = SetSecurityInfo(handle, 1, DaclInfo | (isProtected ? ProtectedDacl : UnprotectedDacl), IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+            if (result != 0) { throw new Win32Exception((int)result); }
+        } finally { LocalFree(descriptor); }
+    }
+    // READ_CONTROL | FILE_READ_ATTRIBUTES | FILE_READ_DATA (+ WRITE_DAC | WRITE_OWNER); OPEN_EXISTING; BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+    // A write handle shares read only, so no one else may write or delete the object while it is held. Windows enforces
+    // share modes only for handles with data access, so the write handle carries FILE_READ_DATA (FILE_LIST_DIRECTORY).
+    public static SafeFileHandle Open(string path, bool write) {
+        uint access = 0x20000u | 0x80u | (write ? (0x1u | 0x40000u | 0x80000u) : 0x1u);
+        SafeFileHandle handle = CreateFileW(path, access, write ? 1u : 7u, IntPtr.Zero, 3u, 0x02000000u | 0x00200000u, IntPtr.Zero);
+        if (handle.IsInvalid) { throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open " + path); }
+        return handle;
+    }
+    // Duplicate the already-validated data handle; never reopen a file by path. Disposing the stream closes only the duplicate,
+    // so the caller retains the original share-read-only handle through validation and SetSecurityInfo.
+    static System.IO.FileStream DataStream(SafeFileHandle handle) {
+        SafeFileHandle copy;
+        IntPtr process = GetCurrentProcess();
+        if (!DuplicateHandle(process, handle, process, out copy, 0u, false, 0x2u)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        System.IO.FileStream stream = null;
+        try {
+            stream = new System.IO.FileStream(copy, System.IO.FileAccess.Read);
+            stream.Position = 0;
+            return stream;
+        } catch { if (stream != null) { stream.Dispose(); } else { copy.Dispose(); } throw; }
+    }
+    public static byte[] ReadBytes(SafeFileHandle handle) {
+        using (System.IO.FileStream stream = DataStream(handle)) {
+            using (System.IO.MemoryStream bytes = new System.IO.MemoryStream()) { stream.CopyTo(bytes); return bytes.ToArray(); }
+        }
+    }
+    public static string Sha256(SafeFileHandle handle) {
+        using (System.IO.FileStream stream = DataStream(handle)) {
+            using (System.Security.Cryptography.SHA256 hash = System.Security.Cryptography.SHA256.Create()) {
+                return BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            }
+        }
+    }
+    // An ancestor pin (FILE_LIST_DIRECTORY, so its share mode is enforced) shares read only: while it is held no one
+    // else may open the directory to write, rename or remove it.
+    public static SafeFileHandle Pin(string path) {
+        SafeFileHandle handle = CreateFileW(path, 0x1u | 0x20000u | 0x80u, 1u, IntPtr.Zero, 3u, 0x02000000u | 0x00200000u, IntPtr.Zero);
+        if (handle.IsInvalid) { throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot pin " + path); }
+        return handle;
+    }
+    public static MiosBoundaryInfo Info(SafeFileHandle handle) {
+        BHFI raw;
+        if (!GetFileInformationByHandle(handle, out raw)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        MiosBoundaryInfo info = new MiosBoundaryInfo();
+        info.Attributes = raw.Attributes; info.Links = raw.Links; info.Volume = raw.Volume;
+        info.Index = ((ulong)raw.IndexHigh << 32) | raw.IndexLow; info.Size = ((ulong)raw.SizeHigh << 32) | raw.SizeLow;
+        info.Created = (long)(((ulong)raw.Created.High << 32) | raw.Created.Low);
+        info.Written = (long)(((ulong)raw.Written.High << 32) | raw.Written.Low);
+        return info;
+    }
+    public static string FinalPath(SafeFileHandle handle) {
+        StringBuilder buffer = new StringBuilder(4096);
+        uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0u);
+        if (length == 0 || length >= buffer.Capacity) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        string path = buffer.ToString();
+        if (path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal)) { return @"\\" + path.Substring(8); }
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) { return path.Substring(4); }
+        return path;
+    }
+    public static string GetSddl(SafeFileHandle handle) {
+        IntPtr owner, group, dacl, sacl, descriptor;
+        uint result = GetSecurityInfo(handle, 1, OwnerInfo | DaclInfo, out owner, out group, out dacl, out sacl, out descriptor);
+        if (result != 0) { throw new Win32Exception((int)result); }
+        try {
+            IntPtr text; uint length;
+            if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1u, OwnerInfo | DaclInfo, out text, out length)) {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try { return Marshal.PtrToStringUni(text); } finally { LocalFree(text); }
+        } finally { LocalFree(descriptor); }
+    }
+    public static void SetSddl(SafeFileHandle handle, string sddl) {
+        IntPtr descriptor; uint length;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, 1u, out descriptor, out length)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+        try {
+            IntPtr owner, dacl; bool defaulted, present; ushort control; uint revision;
+            if (!GetSecurityDescriptorOwner(descriptor, out owner, out defaulted) || owner == IntPtr.Zero) { throw new InvalidOperationException("The descriptor has no owner."); }
+            if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present || dacl == IntPtr.Zero) {
+                throw new InvalidOperationException("The descriptor has no DACL.");
+            }
+            if (!GetSecurityDescriptorControl(descriptor, out control, out revision)) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            uint info = OwnerInfo | DaclInfo | ((control & 0x1000) != 0 ? ProtectedDacl : UnprotectedDacl);
+            uint result = SetSecurityInfo(handle, 1, info, owner, IntPtr.Zero, dacl, IntPtr.Zero);
+            if (result != 0) { throw new Win32Exception((int)result); }
+        } finally { LocalFree(descriptor); }
+    }
+}
+'@ -ErrorAction Stop
+    }
+}
+
+function Get-MiosMachineBoundaryGap {
+    param([Parameter(Mandatory)][string]$Path)
+    try { Assert-MiosMachineWriteBoundary $Path; return '' } catch { return $_.Exception.Message }
+}
+
+function Read-MiosBoundaryObject {
+    # One object read by handle. Strict mode refuses reparse points, other final paths and hard-linked files; -Lenient only records them.
+    param([Parameter(Mandatory)][string]$Path, [switch]$WithBytes, [switch]$Lenient)
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $handle = [MiosMachineBoundaryNative]::Open($full, $false)
+    $sha = ''; $bytes = $null
+    try {
+        $info = [MiosMachineBoundaryNative]::Info($handle)
+        $isReparse = [bool]($info.Attributes -band 0x400)
+        $isDirectory = [bool]($info.Attributes -band 0x10)
+        if (-not $Lenient) {
+            if ($isReparse) { throw "Boundary recovery refuses a reparse point: $full" }
+            $final = [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\')
+            if ($final -ine $full) { throw "Boundary recovery refuses a path that resolves elsewhere: $full" }
+            if (-not $isDirectory -and $info.Links -ne 1) { throw "Boundary recovery refuses a hard-linked file: $full" }
+        }
+        $sddl = [MiosMachineBoundaryNative]::GetSddl($handle)
+        if (-not $isDirectory -and -not $isReparse) {
+            $content = [MiosMachineBoundaryNative]::ReadBytes($handle)
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try { $sha = [BitConverter]::ToString($hasher.ComputeHash($content)).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+            if ($WithBytes) { $bytes = [Convert]::ToBase64String($content) }
+            $afterRead = [MiosMachineBoundaryNative]::Info($handle)
+            foreach ($field in 'Attributes', 'Links', 'Volume', 'Index', 'Created', 'Written', 'Size') {
+                if ($afterRead.$field -ne $info.$field) { throw "Boundary recovery object changed while its bytes were read: $full" }
+            }
+            if ([MiosMachineBoundaryNative]::GetSddl($handle) -cne $sddl) { throw "Boundary recovery descriptor changed while its bytes were read: $full" }
+        }
+    } finally { $handle.Dispose() }
+    $record = [ordered]@{
+        Path = $full; Kind = $(if ($isDirectory) { 'directory' } else { 'file' })
+        Owner = (New-Object Security.AccessControl.RawSecurityDescriptor $sddl).Owner.Value; Sddl = $sddl
+        Attributes = [string]$info.Attributes; Links = [string]$info.Links; Volume = [string]$info.Volume; Index = ('{0:x16}' -f $info.Index)
+        Created = [string]$info.Created; Written = [string]$info.Written; Size = [string]$info.Size; Sha256 = $sha
+    }
+    if ($WithBytes) { $record.Bytes = $bytes }
+    return [pscustomobject]$record
+}
+
+function Get-MiosBoundaryDescendants {
+    # Bounded, breadth-first, parents before children; a reparse point anywhere below is refused.
+    param([Parameter(Mandatory)][string]$Path, [int]$Limit = 512)
+    $found = New-Object System.Collections.Generic.List[string]
+    $queue = New-Object System.Collections.Generic.Queue[string]
+    $queue.Enqueue([IO.Path]::GetFullPath($Path))
+    while ($queue.Count) {
+        foreach ($entry in [IO.Directory]::EnumerateFileSystemEntries($queue.Dequeue())) {
+            if ($found.Count -ge $Limit) { throw "Boundary recovery refuses more than $Limit descendants below $Path" }
+            $attributes = [IO.File]::GetAttributes($entry)
+            if ($attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Boundary recovery refuses a reparse point below ${Path}: $entry" }
+            $found.Add($entry)
+            if ($attributes -band [IO.FileAttributes]::Directory) { $queue.Enqueue($entry) }
+        }
+    }
+    return $found.ToArray()
+}
+
+function Get-MiosExplicitAces {
+    param([Parameter(Mandatory)][string]$Sddl)
+    $acl = (New-Object Security.AccessControl.RawSecurityDescriptor $Sddl).DiscretionaryAcl
+    return @(@($acl) | Where-Object { -not ([int]$_.AceFlags -band 0x10) } |   # 0x10 INHERITED_ACE
+        ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.AceType, $_.AceFlags, $_.AccessMask, $_.SecurityIdentifier.Value })
+}
+
+function Test-MiosSameExplicitAces {
+    param([Parameter(Mandatory)][string]$Before, [Parameter(Mandatory)][string]$After)
+    return [bool](((Get-MiosExplicitAces $Before) -join ';') -ceq ((Get-MiosExplicitAces $After) -join ';'))
+}
+
+function Get-MiosInheritedWriteGrants {
+    # Inherited allow ACEs that still give a non-trusted account write, delete or ownership rights on this object.
+    param([Parameter(Mandatory)][string]$Sddl)
+    $raw = New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
+    if ([int]$raw.ControlFlags -band 0x1000) { return @() }
+    $write = 0x116 -bor 0x10000 -bor 0x40 -bor 0x40000 -bor 0x80000 -bor 0x40000000 -bor 0x10000000
+    return @(@($raw.DiscretionaryAcl) | Where-Object { ([int]$_.AceFlags -band 0x10) -and -not ([int]$_.AceFlags -band 0x08) -and
+        [string]$_.AceQualifier -eq 'AccessAllowed' -and ($_.AccessMask -band $write) -and $_.SecurityIdentifier.Value -notin @('S-1-5-18', 'S-1-5-32-544') } |
+        ForEach-Object { $_.SecurityIdentifier.Value })
+}
+
+function Get-MiosBoundaryOwnerAction {
+    # The owner after recovery: SYSTEM and Administrators stay; only the validated operator is replaced; anyone else is refused.
+    param([Parameter(Mandatory)][string]$Owner, [Parameter(Mandatory)][string]$OriginSid, [Parameter(Mandatory)][string]$Path)
+    if ($Owner -in @('S-1-5-18', 'S-1-5-32-544')) { return $Owner }
+    if ($Owner -eq $OriginSid) { return 'S-1-5-32-544' }
+    throw "Boundary recovery refuses $Path owned by ${Owner}: only SYSTEM, Administrators or the validated operator can be recovered"
+}
+
+function Assert-MiosBoundaryAcePolicy {
+    # Only plain allow ACEs are reviewed policy; a deny, object, callback or NULL DACL stops recovery unchanged.
+    param([Parameter(Mandatory)][string]$Sddl, [Parameter(Mandatory)][string]$Path)
+    $raw = New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
+    if ($null -eq $raw.DiscretionaryAcl) { throw "Boundary recovery refuses $Path with a NULL DACL" }
+    foreach ($ace in @($raw.DiscretionaryAcl)) {
+        if ($ace -isnot [Security.AccessControl.CommonAce] -or [string]$ace.AceQualifier -ne 'AccessAllowed' -or $ace.IsCallback) {
+            throw "Boundary recovery refuses $Path with an unreviewed ACE ($($ace.AceType))"
+        }
+    }
+}
+
+function New-MiosSharedPrefixSddl {
+    # Shared FHS prefix: trusted access on the directory itself only; every inheritable ACE it passes to children stays, as InheritOnly.
+    param([Parameter(Mandatory)][string]$Sddl, [Parameter(Mandatory)][string]$Owner)
+    $current = New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
+    $acl = New-Object Security.AccessControl.RawAcl -ArgumentList ([byte]2), 0
+    foreach ($self in @(@('S-1-5-18', 0x1F01FF), @('S-1-5-32-544', 0x1F01FF), @('S-1-5-32-545', 0x1200A9))) {
+        $sid = New-Object Security.Principal.SecurityIdentifier $self[0]
+        $acl.InsertAce($acl.Count, (New-Object Security.AccessControl.CommonAce -ArgumentList ([Security.AccessControl.AceFlags]::None),
+            ([Security.AccessControl.AceQualifier]::AccessAllowed), ([int]$self[1]), $sid, $false, $null))
+    }
+    foreach ($ace in @($current.DiscretionaryAcl)) {
+        $flags = [int]$ace.AceFlags
+        if (-not ($flags -band 0x03)) { continue }   # OBJECT_INHERIT | CONTAINER_INHERIT
+        $template = $ace.Copy()
+        $template.AceFlags = [Security.AccessControl.AceFlags](($flags -bor 0x08) -band (-bnot 0x10))   # + INHERIT_ONLY, - INHERITED
+        $acl.InsertAce($acl.Count, $template)
+    }
+    $control = [Security.AccessControl.ControlFlags]'DiscretionaryAclPresent, DiscretionaryAclProtected, SelfRelative'
+    $result = New-Object Security.AccessControl.RawSecurityDescriptor -ArgumentList $control, (New-Object Security.Principal.SecurityIdentifier $Owner), $null, $null, $acl
+    return $result.GetSddlForm([Security.AccessControl.AccessControlSections]'Owner, Access')
+}
+
+function New-MiosLeafSddl {
+    # MiOS-namespaced leaf: exactly the descriptor fresh creation uses (-Private: SYSTEM/Administrators only), with the decided owner.
+    param([Parameter(Mandatory)][bool]$Directory, [Parameter(Mandatory)][string]$Owner, [switch]$Private)
+    $raw = New-Object Security.AccessControl.RawSecurityDescriptor ((New-MiosMachineCreationAcl -Directory:$Directory -Private:$Private).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner, Access'))
+    $raw.Owner = New-Object Security.Principal.SecurityIdentifier $Owner
+    return $raw.GetSddlForm([Security.AccessControl.AccessControlSections]'Owner, Access')
+}
+
+function Open-MiosBoundaryAncestors {
+    # Pins every ancestor against rename or delete for one repair; handles opened earlier by other processes are not revoked.
+    param([Parameter(Mandatory)][string]$Path)
+    $chain = New-Object System.Collections.Generic.List[string]
+    $dir = Split-Path -Parent ([IO.Path]::GetFullPath($Path))
+    while ($dir) {
+        $chain.Insert(0, $dir)
+        $up = Split-Path -Parent $dir
+        if (-not $up -or $up -eq $dir) { break }
+        $dir = $up
+    }
+    $pins = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($p in $chain) {
+            $handle = [MiosMachineBoundaryNative]::Pin($p)
+            $info = [MiosMachineBoundaryNative]::Info($handle)
+            $pins.Add([pscustomobject]@{ Path = $p; Handle = $handle; Volume = [string]$info.Volume; Index = ('{0:x16}' -f $info.Index) })
+            if (-not ($info.Attributes -band 0x10) -or ($info.Attributes -band 0x400) -or
+                [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\') -ine $p.TrimEnd('\')) { throw "Boundary recovery refuses an unstable ancestor: $p" }
+        }
+    } catch { foreach ($pin in $pins) { $pin.Handle.Dispose() }; throw }
+    return $pins.ToArray()
+}
+
+function Update-MiosBoundaryInheritance {
+    # Recompute one descendant's inherited ACEs from its repaired parent, by handle; its owner and explicit ACEs stay.
+    param([Parameter(Mandatory)]$Object, [Parameter(Mandatory)][string]$Backup)
+    $handle = [MiosMachineBoundaryNative]::Open([string]$Object.Path, $true)
+    try {
+        $now = [MiosMachineBoundaryNative]::Info($handle)
+        if ([string]$now.Volume -ne [string]$Object.Volume -or ('{0:x16}' -f $now.Index) -ne [string]$Object.Index -or ($now.Attributes -band 0x400) -or
+            (-not ($now.Attributes -band 0x10) -and $now.Links -ne 1) -or [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\') -ine [string]$Object.Path) {
+            throw "Boundary recovery descendant changed before its inheritance update: $($Object.Path); backup $Backup"
+        }
+        $raw = New-Object Security.AccessControl.RawSecurityDescriptor ([MiosMachineBoundaryNative]::GetSddl($handle))
+        if ([int]$raw.ControlFlags -band 0x1000) { return }   # SE_DACL_PROTECTED: inherits nothing
+        $explicit = New-Object Security.AccessControl.RawAcl -ArgumentList ([byte]2), 0
+        foreach ($ace in @($raw.DiscretionaryAcl)) { if (-not ([int]$ace.AceFlags -band 0x10)) { $explicit.InsertAce($explicit.Count, $ace.Copy()) } }
+        $only = New-Object Security.AccessControl.RawSecurityDescriptor -ArgumentList ([Security.AccessControl.ControlFlags]'DiscretionaryAclPresent, SelfRelative'), $null, $null, $null, $explicit
+        [MiosMachineBoundaryNative]::SetDacl($handle, $only.GetSddlForm([Security.AccessControl.AccessControlSections]::Access), $false)
+    } finally { $handle.Dispose() }
+}
+
+function Get-MiosNamedStreams {
+    # Alternate data streams of a file: every stream except the unnamed ::$DATA.
+    param([Parameter(Mandatory)][string]$Path)
+    return @([MiosMachineBoundaryNative]::Streams([IO.Path]::GetFullPath($Path)) | Where-Object { $_ -ne '::$DATA' })
+}
+
+function Get-MiosNewReaders {
+    # Accounts outside SYSTEM/Administrators that $After lets read an object although $Before did not. An earlier
+    # Authenticated Users read covers BUILTIN\Users (its members are authenticated); an earlier Everyone read covers anyone.
+    param([Parameter(Mandatory)][string]$Before, [Parameter(Mandatory)][string]$After)
+    $readers = {
+        param([string]$Sddl)
+        $raw = New-Object Security.AccessControl.RawSecurityDescriptor $Sddl
+        if ($null -eq $raw.DiscretionaryAcl) { return @('S-1-1-0') }
+        # FILE_READ_DATA / FILE_LIST_DIRECTORY, GENERIC_READ, GENERIC_ALL on the object itself (not InheritOnly).
+        return @(@($raw.DiscretionaryAcl) | Where-Object { -not ([int]$_.AceFlags -band 0x08) -and [string]$_.AceQualifier -eq 'AccessAllowed' -and
+            ($_.AccessMask -band (0x1 -bor 0x80000000 -bor 0x10000000)) } | ForEach-Object { $_.SecurityIdentifier.Value })
+    }
+    $old = @(& $readers $Before)
+    if ($old -contains 'S-1-1-0') { return @() }
+    return @(@(& $readers $After) | Where-Object { $_ -notin @('S-1-5-18', 'S-1-5-32-544') -and $_ -notin $old -and
+        -not ($_ -eq 'S-1-5-32-545' -and $old -contains 'S-1-5-11') } | Sort-Object -Unique)
+}
+
+function Initialize-MiosBoundaryBackupDirectory {
+    param([Parameter(Mandatory)][string]$Directory)
+    foreach ($level in @((Split-Path -Parent $Directory), $Directory)) {
+        if (Test-Path -LiteralPath $level) { Assert-MiosMachineWriteBoundary $level } else { New-MiosProtectedMachineDirectory $level }
+    }
+}
+
+function Assert-MiosPrivateBackupLeaf {
+    # A backup leaf is a plain, single-link file owned by and accessible only to SYSTEM and Administrators, under a protected DACL.
+    param([Parameter(Mandatory)][string]$Path, [switch]$WithBytes)
+    $record = Read-MiosBoundaryObject $Path -WithBytes:$WithBytes
+    $raw = New-Object Security.AccessControl.RawSecurityDescriptor $record.Sddl
+    if ($record.Kind -ne 'file' -or $record.Owner -notin @('S-1-5-18', 'S-1-5-32-544') -or $null -eq $raw.DiscretionaryAcl -or
+        -not ([int]$raw.ControlFlags -band 0x1000) -or @(@($raw.DiscretionaryAcl) | Where-Object { $_.SecurityIdentifier.Value -notin @('S-1-5-18', 'S-1-5-32-544') }).Count) {
+        throw "Not a private MiOS boundary backup: $Path"
+    }
+    return $record
+}
+
+function Save-MiosTomlBackup {
+    # Exact original TOML bytes as one private, content-addressed leaf, before any TOML writer runs, even when every path passes
+    # admission. An existing leaf is verified, never replaced. A TOML with alternate data streams is refused: they cannot be preserved.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][ValidateSet('vendor', 'host')][string]$Role, [Parameter(Mandatory)][string]$Directory)
+    $record = Read-MiosBoundaryObject $Path -WithBytes
+    if ($record.Kind -ne 'file') { throw "Boundary recovery refuses a TOML path that is not a file: $Path" }
+    $streams = @(Get-MiosNamedStreams $Path)
+    if ($streams.Count) { throw "Boundary recovery refuses ${Path}: it has $($streams.Count) alternate data stream(s) that the TOML backup cannot preserve" }
+    Initialize-MiosBoundaryBackupDirectory $Directory
+    $leaf = Join-Path $Directory ('{0}-{1}.toml' -f $Role, $record.Sha256)
+    if (Test-Path -LiteralPath $leaf) {
+        if ((Assert-MiosPrivateBackupLeaf $leaf).Sha256 -ne $record.Sha256) { throw "A MiOS TOML backup does not hold the bytes its name records: $leaf" }
+    } else { Write-MiosPrivateMachineFile -Path $leaf -Bytes ([Convert]::FromBase64String([string]$record.Bytes)) }
+    $now = Read-MiosBoundaryObject $Path
+    foreach ($field in 'Owner', 'Sddl', 'Volume', 'Index', 'Sha256', 'Size', 'Written') {
+        if ($now.$field -cne $record.$field) { throw "Boundary recovery TOML changed while it was backed up: $Path" }
+    }
+    # Per-run descriptor provenance is independent of deduplicated content leaves: a compliant file can still be rewritten next.
+    return [pscustomobject][ordered]@{
+        Path = $record.Path; Role = $Role; Kind = $record.Kind; Owner = $record.Owner; Sddl = $record.Sddl
+        Attributes = $record.Attributes; Links = $record.Links; Volume = $record.Volume; Index = $record.Index
+        Created = $record.Created; Written = $record.Written; Sha256 = $record.Sha256; Size = $record.Size; Backup = $leaf
+    }
+}
+
+function Save-MiosBoundaryBackup {
+    # One new private file per recovery run (CreateNew, SYSTEM/Administrators only), never overwriting an earlier backup.
+    param([Parameter(Mandatory)][object[]]$Objects, [object[]]$Tomls = @(), [Parameter(Mandatory)][string]$Reason, [string]$Directory)
+    if (-not $Directory) { $Directory = Join-Path $env:ProgramData 'MiOS\boundary-recovery' }
+    Initialize-MiosBoundaryBackupDirectory $Directory
+    $file = Join-Path $Directory ((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssfffZ') + '-' + [guid]::NewGuid().ToString('N') + '.json')
+    $document = [ordered]@{ schema = 'mios-boundary-recovery/2'; created = (Get-Date).ToUniversalTime().ToString('o'); reason = $Reason
+        objects = @($Objects); tomls = @($Tomls) }
+    Write-MiosPrivateMachineFile -Path $file -Bytes ((New-Object Text.UTF8Encoding($false)).GetBytes(($document | ConvertTo-Json -Depth 4 -Compress)))
+    return $file
+}
+
+function Invoke-MiosMachineBoundaryRecovery {
+    # Explicit recovery after origin validation and before any TOML write. Production orchestration supplies only the system root
+    # and an explicitly selected existing host-storage root; direct use defaults to SystemDrive. There is no drive discovery.
+    # Both TOML files' bytes and original descriptors are preserved privately on every run, even when admission already passes.
+    # Admission (Assert-MiosMachineWriteBoundary) is unchanged and decides afterwards; no descriptor changes when every path passes.
+    param([Parameter(Mandatory)][string]$OriginSid, [string]$Root, [string]$BackupDirectory)
+    if (-not $Root) { $Root = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' } }
+    $Root = [IO.Path]::GetFullPath($Root.TrimEnd('\') + '\')
+    if (-not $BackupDirectory) { $BackupDirectory = Join-Path $env:ProgramData 'MiOS\boundary-recovery' }
+    if ($OriginSid -notmatch '^S-1-[0-9]+(-[0-9]+)+$') { throw 'Boundary recovery needs the validated origin SID.' }
+    Initialize-MiosMachineBoundaryApi
+    # Each known TOML file comes before its namespace directory, so it is protected before that directory's inheritance changes.
+    $items = @(
+        @{ Rel = 'usr'; Policy = 'shared' }, @{ Rel = 'usr\share'; Policy = 'shared' },
+        @{ Rel = 'usr\share\mios\mios.toml'; Policy = 'vendor-toml'; Parent = 'usr\share\mios' }, @{ Rel = 'usr\share\mios'; Policy = 'leaf' },
+        @{ Rel = 'etc'; Policy = 'shared' },
+        @{ Rel = 'etc\mios\mios.toml'; Policy = 'host-toml'; Parent = 'etc\mios' }, @{ Rel = 'etc\mios'; Policy = 'leaf' })
+    $gaps = @{}
+    foreach ($item in $items) {
+        $path = (Join-Path $Root $item.Rel).TrimEnd('\')
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        Assert-MiosNoReparsePath $path
+        $gaps[$item.Rel] = Get-MiosMachineBoundaryGap $path
+    }
+    $plan = New-Object System.Collections.Generic.List[object]
+    foreach ($item in $items) {
+        if (-not $gaps.ContainsKey($item.Rel)) { continue }
+        $path = (Join-Path $Root $item.Rel).TrimEnd('\')
+        $gap = $gaps[$item.Rel]
+        if (-not $gap -and $item.Parent -and $gaps[$item.Parent] -and
+            -not ([int](New-Object Security.AccessControl.RawSecurityDescriptor (Read-MiosBoundaryObject $path).Sddl).ControlFlags -band 0x1000)) {
+            $gap = 'it inherits from a namespace directory that is being recovered'
+        }
+        if ($gap) { $plan.Add([pscustomobject]@{ Path = $path; Policy = $item.Policy; Gap = $gap }) }
+    }
+    $tomlItems = @(@(@('usr\share\mios\mios.toml', 'vendor'), @('etc\mios\mios.toml', 'host')) | Where-Object { Test-Path -LiteralPath (Join-Path $Root $_[0]) -PathType Leaf })
+    if (-not $plan.Count -and -not $tomlItems.Count) { return $null }
+    $why = if ($plan.Count) { "$($plan[0].Path): $($plan[0].Gap)" } else { 'TOML backup' }
+    if (-not (Test-MiosElevated)) { throw "Boundary recovery requires an elevated token ($why)" }
+    # Plan and validate everything before anything is written.
+    $planned = @($plan | ForEach-Object { $_.Path })
+    $objects = New-Object System.Collections.Generic.List[object]
+    foreach ($step in $plan) {
+        $record = Read-MiosBoundaryObject $step.Path
+        Assert-MiosBoundaryAcePolicy -Sddl $record.Sddl -Path $step.Path
+        $owner = Get-MiosBoundaryOwnerAction -Owner $record.Owner -OriginSid $OriginSid -Path $step.Path
+        $isDirectory = $record.Kind -eq 'directory'
+        $target = switch ($step.Policy) {
+            'shared' { New-MiosSharedPrefixSddl -Sddl $record.Sddl -Owner $owner }
+            'host-toml' { New-MiosLeafSddl -Directory $false -Owner $owner -Private }
+            default { New-MiosLeafSddl -Directory $isDirectory -Owner $owner }
+        }
+        foreach ($sid in @(Get-MiosNewReaders -Before $record.Sddl -After $target)) { throw "Boundary recovery refuses $($step.Path): its recovered descriptor would let $sid read it" }
+        $children = @(); $siblings = @()
+        if ($step.Policy -eq 'leaf' -and $isDirectory) {
+            # A planned target below a leaf (a known TOML file) is its own step, so it is not also a descendant to keep unchanged.
+            $children = @(Get-MiosBoundaryDescendants $step.Path | Where-Object { $_ -notin $planned } | ForEach-Object { Read-MiosBoundaryObject $_ })
+            # Re-inheriting from the hardened leaf must not let anyone read a descendant that cannot read it now.
+            $byPath = @{}; foreach ($c in $children) { $byPath[$c.Path] = $c }
+            $leafAces = @((New-Object Security.AccessControl.RawSecurityDescriptor $target).DiscretionaryAcl)
+            foreach ($c in $children) {
+                $raw = New-Object Security.AccessControl.RawSecurityDescriptor $c.Sddl
+                $inherits = -not ([int]$raw.ControlFlags -band 0x1000)
+                for ($p = Split-Path -Parent $c.Path; $inherits -and $p -and $p -ine $step.Path; $p = Split-Path -Parent $p) {
+                    if ($byPath.ContainsKey($p) -and ([int](New-Object Security.AccessControl.RawSecurityDescriptor $byPath[$p].Sddl).ControlFlags -band 0x1000)) { $inherits = $false }
+                }
+                if (-not $inherits) { continue }
+                $future = New-Object Security.AccessControl.RawAcl -ArgumentList ([byte]2), 0
+                foreach ($ace in @($raw.DiscretionaryAcl)) { if (-not ([int]$ace.AceFlags -band 0x10)) { $future.InsertAce($future.Count, $ace.Copy()) } }
+                $applies = if ($c.Kind -eq 'directory') { 0x02 } else { 0x01 }   # CONTAINER_INHERIT reaches directories, OBJECT_INHERIT files
+                foreach ($ace in $leafAces) {
+                    if ([int]$ace.AceFlags -band $applies) { $copy = $ace.Copy(); $copy.AceFlags = [Security.AccessControl.AceFlags]::Inherited; $future.InsertAce($future.Count, $copy) }
+                }
+                $after = (New-Object Security.AccessControl.RawSecurityDescriptor -ArgumentList ([Security.AccessControl.ControlFlags]'DiscretionaryAclPresent, SelfRelative'),
+                    $null, $null, $null, $future).GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+                foreach ($sid in @(Get-MiosNewReaders -Before $c.Sddl -After $after)) { throw "Boundary recovery refuses $($c.Path): re-inheriting from the recovered $($step.Path) would let $sid read it" }
+            }
+        }
+        if ($step.Policy -eq 'shared') {
+            $siblings = @([IO.Directory]::EnumerateFileSystemEntries($step.Path) | Where-Object { $_ -notin $planned } | ForEach-Object { Read-MiosBoundaryObject $_ -Lenient })
+        }
+        $chain = @(Open-MiosBoundaryAncestors $step.Path)
+        try { $chainIds = @($chain | ForEach-Object { "$($_.Path)|$($_.Volume)|$($_.Index)" }) } finally { foreach ($pin in $chain) { $pin.Handle.Dispose() } }
+        $step | Add-Member -NotePropertyName Owner -NotePropertyValue $owner
+        $step | Add-Member -NotePropertyName Record -NotePropertyValue $record
+        $step | Add-Member -NotePropertyName Target -NotePropertyValue $target
+        $step | Add-Member -NotePropertyName Children -NotePropertyValue $children
+        $step | Add-Member -NotePropertyName Siblings -NotePropertyValue $siblings
+        $step | Add-Member -NotePropertyName Chain -NotePropertyValue $chainIds
+        foreach ($o in @($record) + $children) { if (-not @($objects | Where-Object { $_.Path -eq $o.Path }).Count) { $objects.Add($o) } }
+    }
+    $tomls = @(foreach ($t in $tomlItems) { Save-MiosTomlBackup -Path (Join-Path $Root $t[0]) -Role $t[1] -Directory $BackupDirectory })
+    foreach ($toml in $tomls) {
+        $existing = @($objects | Where-Object { $_.Path -eq $toml.Path })
+        if ($existing.Count) {
+            foreach ($field in 'Owner', 'Sddl', 'Volume', 'Index', 'Sha256') {
+                if ($existing[0].$field -cne $toml.$field) { throw "Boundary recovery TOML changed between planning and its backup: $($toml.Path)" }
+            }
+        } else { $objects.Add($toml) }
+    }
+    $reason = if ($plan.Count) { ($plan | ForEach-Object { "$($_.Path) [$($_.Policy)]: $($_.Gap)" }) -join '; ' } else { 'Preserve original TOMLs before publication; no ACL recovery required' }
+    $backup = Save-MiosBoundaryBackup -Objects $objects.ToArray() -Tomls $tomls -Directory $BackupDirectory `
+        -Reason $reason
+    foreach ($step in $plan) {
+        $pins = @(Open-MiosBoundaryAncestors $step.Path)
+        try {
+            if ((@($pins | ForEach-Object { "$($_.Path)|$($_.Volume)|$($_.Index)" }) -join ';') -cne ($step.Chain -join ';')) {
+                throw "Boundary recovery ancestor chain changed after planning: $($step.Path); backup $backup"
+            }
+            $handle = [MiosMachineBoundaryNative]::Open($step.Path, $true)
+            try {
+                $now = [MiosMachineBoundaryNative]::Info($handle)
+                $sddlNow = [MiosMachineBoundaryNative]::GetSddl($handle)
+                if ([string]$now.Volume -ne $step.Record.Volume -or ('{0:x16}' -f $now.Index) -ne $step.Record.Index -or ($now.Attributes -band 0x400) -or
+                    (-not ($now.Attributes -band 0x10) -and $now.Links -ne 1) -or [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\') -ine $step.Path -or
+                    (New-Object Security.AccessControl.RawSecurityDescriptor $sddlNow).Owner.Value -ne $step.Record.Owner -or
+                    -not (Test-MiosSameExplicitAces -Before $step.Record.Sddl -After $sddlNow)) { throw "Boundary recovery target changed after its backup: $($step.Path); backup $backup" }
+                $target = if ($step.Policy -eq 'shared') { New-MiosSharedPrefixSddl -Sddl $sddlNow -Owner $step.Owner } else { $step.Target }
+                # An elevated administrator may assign as owner only itself or Administrators; assigning SYSTEM needs SeRestorePrivilege,
+                # which recovery never enables. A kept owner (SYSTEM on C:\etc) is therefore not rewritten: only the protected DACL changes.
+                # A replaced owner is always Administrators (Get-MiosBoundaryOwnerAction).
+                if ($step.Owner -eq $step.Record.Owner) { [MiosMachineBoundaryNative]::SetDacl($handle, $target, $true) }
+                else { [MiosMachineBoundaryNative]::SetSddl($handle, $target) }
+            } finally { $handle.Dispose() }
+            foreach ($child in $step.Children) { Update-MiosBoundaryInheritance -Object $child -Backup $backup }
+            foreach ($pin in $pins) {
+                $info = [MiosMachineBoundaryNative]::Info($pin.Handle)
+                if ([string]$info.Volume -ne $pin.Volume -or ('{0:x16}' -f $info.Index) -ne $pin.Index) { throw "Boundary recovery ancestor changed: $($pin.Path); backup $backup" }
+            }
+        } finally { foreach ($pin in $pins) { $pin.Handle.Dispose() } }
+    }
+    $problems = New-Object System.Collections.Generic.List[string]
+    foreach ($step in $plan) {
+        $after = Read-MiosBoundaryObject $step.Path
+        foreach ($field in 'Volume', 'Index', 'Created', 'Written', 'Size', 'Sha256') { if ($after.$field -ne $step.Record.$field) { $problems.Add("$($step.Path) $field changed") } }
+        $gap = Get-MiosMachineBoundaryGap $step.Path
+        if ($gap) { $problems.Add($gap) }
+        foreach ($old in $step.Children) {
+            $new = Read-MiosBoundaryObject $old.Path
+            foreach ($field in 'Volume', 'Index', 'Created', 'Written', 'Size', 'Sha256', 'Owner') { if ($new.$field -ne $old.$field) { $problems.Add("$($old.Path) $field changed") } }
+            if (-not (Test-MiosSameExplicitAces -Before $old.Sddl -After $new.Sddl)) { $problems.Add("$($old.Path) explicit ACEs changed") }
+            foreach ($sid in (Get-MiosInheritedWriteGrants $new.Sddl)) { $problems.Add("$($old.Path) still inherits write access for $sid") }
+            foreach ($sid in @(Get-MiosNewReaders -Before $old.Sddl -After $new.Sddl)) { $problems.Add("$($old.Path) became readable by $sid") }
+        }
+        foreach ($old in $step.Siblings) {
+            $new = Read-MiosBoundaryObject $old.Path -Lenient
+            foreach ($field in 'Sddl', 'Owner', 'Volume', 'Index', 'Written', 'Size', 'Sha256') { if ($new.$field -cne $old.$field) { $problems.Add("sibling $($old.Path) $field changed") } }
+        }
+    }
+    if ($problems.Count) { throw "Boundary recovery could not be verified ($($problems -join '; ')); original descriptors are in $backup and TOML bytes in $BackupDirectory" }
+    if ($plan.Count) { Write-Host "  [+] Recovered the MiOS machine boundary ($($plan.Count) path(s)); originals: $backup" -ForegroundColor DarkGray }
+    else { Write-Host "  [+] Preserved the original MiOS TOMLs before publication; originals: $backup" -ForegroundColor DarkGray }
+    return $backup
+}
+
+function Restore-MiosMachineBoundary {
+    # Rollback of one recovery run: re-applies its recorded descriptors by handle, top-down as recorded, only after the backup leaf
+    # and every object validate. It refuses rather than put an old descriptor on content that changed since (a rewritten or scrubbed
+    # TOML). TOML bytes stay in their private backup leaves for manual use.
+    param([Parameter(Mandatory)][string]$BackupPath, [string]$BackupDirectory)
+    if (-not (Test-MiosElevated)) { throw 'Boundary restore requires an elevated token.' }
+    Initialize-MiosMachineBoundaryApi
+    if (-not $BackupDirectory) { $BackupDirectory = Join-Path $env:ProgramData 'MiOS\boundary-recovery' }
+    $full = [IO.Path]::GetFullPath($BackupPath)
+    if ((Split-Path -Parent $full) -ine [IO.Path]::GetFullPath($BackupDirectory).TrimEnd('\') -or $full -notmatch '\.json$') {
+        throw "Boundary restore accepts only a recovery backup in ${BackupDirectory}: $BackupPath"
+    }
+    Assert-MiosMachineWriteBoundary $BackupDirectory
+    $leaf = Assert-MiosPrivateBackupLeaf $full -WithBytes
+    $document = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$leaf.Bytes)) | ConvertFrom-Json
+    if ($document.schema -cne 'mios-boundary-recovery/2') { throw "Not a MiOS boundary backup: $BackupPath" }
+    $objects = @($document.objects)
+    foreach ($object in $objects) {
+        $now = Read-MiosBoundaryObject ([string]$object.Path)
+        if ($now.Volume -ne [string]$object.Volume -or $now.Index -ne [string]$object.Index -or $now.Kind -ne [string]$object.Kind) {
+            throw "Boundary restore target is not the recorded object: $($object.Path)"
+        }
+        if ($now.Kind -eq 'file' -and $now.Sha256 -ne [string]$object.Sha256) {
+            throw "Boundary restore refuses $($object.Path): its content changed since the backup, so its old descriptor is not re-applied"
+        }
+    }
+    [MiosMachineBoundaryNative]::EnablePrivilege('SeRestorePrivilege')
+    # Retain every ancestor and target before restoring any parent ACL. Target handles have data access and share read only:
+    # no writer may enter between the content check and SetSddl, including while old writable parent descriptors are restored.
+    $pins = New-Object System.Collections.Generic.List[object]
+    $targets = New-Object System.Collections.Generic.List[object]
+    try {
+        foreach ($object in $objects) {
+            foreach ($pin in @(Open-MiosBoundaryAncestors ([string]$object.Path))) { $pins.Add($pin) }
+            $handle = [MiosMachineBoundaryNative]::Open([string]$object.Path, $true)
+            $targets.Add([pscustomobject]@{ Object = $object; Handle = $handle })
+            $now = [MiosMachineBoundaryNative]::Info($handle)
+            $kind = if ($now.Attributes -band 0x10) { 'directory' } else { 'file' }
+            if ([string]$now.Volume -ne [string]$object.Volume -or ('{0:x16}' -f $now.Index) -ne [string]$object.Index -or
+                $kind -cne [string]$object.Kind -or ($now.Attributes -band 0x400) -or ($kind -eq 'file' -and $now.Links -ne 1) -or
+                [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\') -ine [string]$object.Path) { throw "Boundary restore target is not the recorded object: $($object.Path)" }
+            if ($kind -eq 'file' -and [MiosMachineBoundaryNative]::Sha256($handle) -cne [string]$object.Sha256) {
+                throw "Boundary restore refuses $($object.Path): its content changed since the backup, so its old descriptor is not re-applied"
+            }
+        }
+        foreach ($pin in $pins) {
+            $now = [MiosMachineBoundaryNative]::Info($pin.Handle)
+            if ([string]$now.Volume -ne $pin.Volume -or ('{0:x16}' -f $now.Index) -ne $pin.Index -or
+                -not ($now.Attributes -band 0x10) -or ($now.Attributes -band 0x400) -or
+                [MiosMachineBoundaryNative]::FinalPath($pin.Handle).TrimEnd('\') -ine $pin.Path.TrimEnd('\')) { throw "Boundary restore ancestor changed: $($pin.Path)" }
+        }
+        # Parents before children (stable by depth); every handle and its ancestor pins stay held until all writes finish.
+        $ordered = @(for ($i = 0; $i -lt $targets.Count; $i++) {
+            [pscustomobject]@{ Depth = ([string]$targets[$i].Object.Path).Split('\').Count; Order = $i; Target = $targets[$i] }
+        }) | Sort-Object Depth, Order | ForEach-Object { $_.Target }
+        foreach ($target in $ordered) {
+            $object = $target.Object; $handle = $target.Handle
+            $now = [MiosMachineBoundaryNative]::Info($handle)
+            if ([string]$now.Volume -ne [string]$object.Volume -or ('{0:x16}' -f $now.Index) -ne [string]$object.Index -or
+                ($now.Attributes -band 0x400) -or ($object.Kind -eq 'file' -and $now.Links -ne 1) -or
+                [MiosMachineBoundaryNative]::FinalPath($handle).TrimEnd('\') -ine [string]$object.Path) { throw "Boundary restore target changed before apply: $($object.Path)" }
+            if ($object.Kind -eq 'file' -and [MiosMachineBoundaryNative]::Sha256($handle) -cne [string]$object.Sha256) {
+                throw "Boundary restore refuses $($object.Path): its content changed since the backup, so its old descriptor is not re-applied"
+            }
+            [MiosMachineBoundaryNative]::SetSddl($handle, [string]$object.Sddl)
+        }
+    } finally {
+        foreach ($target in $targets) { $target.Handle.Dispose() }
+        foreach ($pin in $pins) { $pin.Handle.Dispose() }
     }
 }
 
@@ -953,8 +1651,23 @@ function ConvertTo-MiosNativeArgument {
     return $out.ToString()
 }
 
+# The MiOS login: the vendor/host [identity].username through MiOS's identity guard (the text mios.git's
+# usr/share/mios/windows/*.ps1 carries; build-mios.ps1 holds the installer's copy). The profile verbs resolve it at
+# run time, once per distro per session. The guard prints its refusal on stderr and the verb then stops: never a
+# fallback name. Single-quoted Python, and no 2>$null (Windows PowerShell turns wsl.exe's stderr into errors).
+function Get-MiosLinuxLogin {
+    param([Parameter(Mandatory)][string]$Distribution)
+    if (-not $Global:MiosLinuxLogins) { $Global:MiosLinuxLogins = @{} }
+    if ($Global:MiosLinuxLogins.ContainsKey($Distribution)) { return $Global:MiosLinuxLogins[$Distribution] }
+    $identityProbe = 'import sys,pwd; sys.path.insert(0,''/usr/lib/mios''); import mios_toml as m; n=str((m.base_view().get(''identity'') or {}).get(''username'') or '''').strip(); p={e.pw_name: e for e in pwd.getpwall()}.get(n); print(n) if p and p.pw_uid != 0 and p.pw_uid >= m._uid_min() and not p.pw_shell.endswith((''nologin'', ''false'')) else sys.exit(''MiOS identity: the vendor/host [identity].username %r is not a login account here (missing, root, a system uid below UID_MIN, or no login shell)'' % n)'
+    $login = ((& wsl.exe -d $Distribution -u root --exec python3 -c $identityProbe) -join '').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $login -or $login -eq 'root') { throw "The MiOS login (vendor/host [identity].username) is not a usable account in $Distribution; set [identity].username and re-run the installer" }
+    if ($login -cnotmatch '^[a-z_][a-z0-9_-]*$') { throw "The MiOS login in $Distribution is not a plain login name; set [identity].username and re-run the installer" }
+    $Global:MiosLinuxLogins[$Distribution] = $login
+    return $login
+}
 function Sync-MiosUserTomlToBuilder {
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Distro, [string]$User = 'mios')
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Distro, [Parameter(Mandatory)][string]$User)
     if ($Distro -notmatch '^[A-Za-z0-9_.-]+$' -or $User -notmatch '^[A-Za-z_][A-Za-z0-9_-]*$') { throw 'Invalid builder distribution or user name.' }
     Set-MiosPrivateUserTomlAcl $Path
     function Get-MiosUserTomlReceiverScript {
@@ -1088,7 +1801,8 @@ echo '[mios-pull] Checkout is current after a clean fast-forward.'
 }
 
 function Get-MiosWslConfigText {
-    param([AllowEmptyString()][string]$Existing, [string[]]$ManagedLines, [Parameter(Mandatory)][bool]$Firewall)
+    param([AllowEmptyString()][string]$Existing, [string[]]$ManagedLines, [Parameter(Mandatory)][bool]$Firewall,
+        [bool]$HostAddressLoopback = $true)
     if (-not $Firewall) { throw 'mios.toml [wsl2].firewall=false disables the required inbound security policy; enable it before continuing.' }
     $managed = New-Object System.Collections.Generic.List[string]
     foreach ($line in $ManagedLines) {
@@ -1117,7 +1831,10 @@ function Get-MiosWslConfigText {
         $out.Add('[wsl2]')
         foreach ($entry in $managed) { $out.Add($entry) }
     }
-    return ($out -join "`r`n")
+    # [experimental] hostAddressLoopback follows the managed networkingMode: written when mirrored, removed under NAT.
+    $mode = if (@($managed | Where-Object { $_ -ieq 'networkingMode=mirrored' }).Count) { 'mirrored' } else { 'NAT' }
+    $lines = Get-MiosWslExperimentalLines -Lines $out.ToArray() -NetworkingMode $mode -HostAddressLoopback $HostAddressLoopback
+    return ($lines -join "`r`n")
 }
 
 function Get-MiosTomlTableArray {
@@ -1159,9 +1876,12 @@ function Get-MiosTomlValue {
     param(
         [Parameter(Mandatory)] [string]$Section,   # e.g. "terminal" or "bootstrap.host_storage"
         [Parameter(Mandatory)] [string]$Key,       # e.g. "cols"
-        [Parameter(Mandatory)] [AllowEmptyString()] $Default  # returned if not found / unparseable
+        [Parameter(Mandatory)] [AllowEmptyString()] $Default, # returned if not found / unparseable
+        # System SSOT only: values an elevated step trusts (download pins) never come from the operator layer.
+        [switch]$VendorOnly
     )
-    foreach ($txt in @((Resolve-MiosTomlText), (Resolve-MiosVendorTomlText))) {
+    $_layers = if ($VendorOnly) { @((Resolve-MiosVendorTomlText)) } else { @((Resolve-MiosTomlText), (Resolve-MiosVendorTomlText)) }
+    foreach ($txt in $_layers) {
     if (-not $txt) { continue }
     # Slice the section body: from `[Section]` (line-anchored) to the next
     # `[other.section]` header or EOF.
@@ -1239,6 +1959,49 @@ function Get-MiosTomlValue {
     if (-not [string]::IsNullOrWhiteSpace($raw)) { return $raw }
     }
     return $Default
+}
+
+function Resolve-MiosWslNetworkingMode {
+    # [wsl2].networking_mode from the layered SSOT, the only source of the .wslconfig networkingMode. NAT (the default)
+    # or mirrored, case-insensitive; anything else is NAT. Mirrored needs Windows 11 22H2 (build 22621): below it the
+    # result is NAT. NAT is never upgraded to mirrored, whatever the Windows build.
+    param([int]$WindowsBuild = [Environment]::OSVersion.Version.Build)
+    $raw = ([string](Get-MiosTomlValue -Section 'wsl2' -Key 'networking_mode' -Default 'NAT')).Trim()
+    if ($raw -ieq 'NAT') { return 'NAT' }
+    if ($raw -ine 'mirrored') {
+        Write-Host "  [!] WSL-NETWORKING-MODE-INVALID: mios.toml [wsl2].networking_mode '$raw' is neither NAT nor mirrored; using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    if ($WindowsBuild -lt 22621) {
+        Write-Host "  [!] WSL-MIRRORED-UNSUPPORTED: mios.toml [wsl2].networking_mode is mirrored but Windows build $WindowsBuild is below 22621 (Windows 11 22H2); using NAT." -ForegroundColor Yellow
+        return 'NAT'
+    }
+    return 'mirrored'
+}
+
+function Get-MiosWslExperimentalLines {
+    # The .wslconfig [experimental] hostAddressLoopback line, managed from SSOT: written under mirrored networking (the
+    # only mode that reads it), removed under NAT. Every other line and section is kept as it was.
+    param([AllowEmptyCollection()][AllowEmptyString()][string[]]$Lines, [Parameter(Mandatory)][string]$NetworkingMode,
+        [bool]$HostAddressLoopback = $true)
+    $mirrored = ($NetworkingMode -ieq 'mirrored')
+    $out = New-Object System.Collections.Generic.List[string]
+    $inside = $false; $placed = $false
+    foreach ($line in @($Lines)) {
+        if ($line -match '^\s*\[\s*experimental\s*\]\s*(?:[#;].*)?$') {
+            $inside = $true; $out.Add($line)
+            if ($mirrored -and -not $placed) { $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant()); $placed = $true }
+            continue
+        }
+        if ($line -match '^\s*\[') { $inside = $false }
+        if ($inside -and $line -match '^\s*hostAddressLoopback\s*=') { continue }
+        $out.Add($line)
+    }
+    if ($mirrored -and -not $placed) {
+        $out.Add('[experimental]')
+        $out.Add('hostAddressLoopback=' + $HostAddressLoopback.ToString().ToLowerInvariant())
+    }
+    return , $out.ToArray()
 }
 
 # The monitor must use the profile named by the operator SSOT. Delay launch
@@ -1632,15 +2395,6 @@ function Assert-MiosOriginContext {
     Assert-MiosNoReparsePath $Context.ConfigPath
 }
 
-function Get-MiosWindowsInstallRoot {
-    param([bool]$Elevated = (Test-MiosElevated),
-          [string]$LocalAppData = ([Environment]::GetFolderPath('LocalApplicationData')),
-          [string]$SystemDrive = $env:SystemDrive)
-    if ($Elevated) { return Join-Path $SystemDrive 'MiOS' }
-    if (-not $LocalAppData) { throw 'The operator Local AppData folder is unavailable.' }
-    return Join-Path $LocalAppData 'MiOS'
-}
-
 function Get-MiosWindowsBootstrapRoot {
     param([bool]$Elevated = (Test-MiosElevated),
           [string]$LocalAppData = ([Environment]::GetFolderPath('LocalApplicationData')),
@@ -1732,16 +2486,28 @@ function Get-MiosMachineWorkerScript {
     $ast = [Management.Automation.Language.Parser]::ParseInput($Source, [ref]$tokens, [ref]$errors)
     if ($errors.Count) { throw 'Cannot prepare an invalid installer source.' }
     $names = @('Assert-MiosNoReparsePath', 'Get-MiosTomlAssignments', 'Split-MiosTomlKeyLine', 'Get-MiosTomlCredentialKeys',
-        'ConvertTo-MiosCredentialFreeToml', 'Resolve-MiosTomlText', 'Resolve-MiosVendorTomlText', 'Get-MiosTomlValue',
+        'ConvertTo-MiosCredentialFreeToml', 'Resolve-MiosTomlText', 'Resolve-MiosVendorTomlText', 'Get-MiosTomlValue', 'Get-MiosMachineTomlRoots',
         'Set-MiosHostTierAcl', 'Initialize-MiosHostTierDirectory', 'Write-MiosHostToml', 'Repair-MiosHostTierCredentials',
         'Assert-MiosMachineWriteBoundary', 'Initialize-MiosVendorTierDirectory', 'Write-MiosVendorToml',
         'New-MiosMachineCreationAcl', 'New-MiosProtectedMachineDirectory', 'Write-MiosPrivateMachineFile',
+        'Initialize-MiosMachineBoundaryApi', 'Get-MiosMachineBoundaryGap', 'Read-MiosBoundaryObject', 'Get-MiosBoundaryDescendants',
+        'Get-MiosExplicitAces', 'Test-MiosSameExplicitAces', 'Get-MiosInheritedWriteGrants', 'Get-MiosBoundaryOwnerAction',
+        'Assert-MiosBoundaryAcePolicy', 'New-MiosSharedPrefixSddl', 'New-MiosLeafSddl', 'Open-MiosBoundaryAncestors',
+        'Update-MiosBoundaryInheritance', 'Get-MiosNamedStreams', 'Get-MiosNewReaders', 'Initialize-MiosBoundaryBackupDirectory',
+        'Assert-MiosPrivateBackupLeaf', 'Save-MiosTomlBackup', 'Save-MiosBoundaryBackup', 'Invoke-MiosMachineBoundaryRecovery',
         'Write-Info', 'Write-Good', 'Write-Err', 'Initialize-DataDisk',
         'Test-MiosElevated', 'Get-MiosFeatureState', 'Get-MiosDismEnableOutcome', 'Enable-MiOSWindowsFeatures',
         'Get-MiosTomlTableArray', 'ConvertTo-MiosWindowsPath', 'Test-MiosDefenderExclusionRefused', 'Get-MiosDefenderExclusionPlan',
         'Add-MiosDefenderExclusions', 'Test-MiosWslVmCreator', 'Register-MiosWslVmCreator', 'Set-MiosWslFirewallPolicy',
+        'Get-MiosTomlStringArray', 'Get-MiosWslServicePortPlan', 'ConvertTo-MiosNetworkPrefix', 'Resolve-MiosWslRemoteScope',
+        'Get-MiosVendorBoundedList', 'ConvertTo-MiosCanonicalPrefix', 'Test-MiosPrefixWithin', 'Resolve-MiosWslServiceScope',
+        'Sync-MiosWslServicePortRules', 'Resolve-MiosWslNetworkingMode',
         'Invoke-MiosPlatformGate', 'Assert-MiosOriginContext', 'Initialize-MiosPipePeerApi',
         'Initialize-MiosMachineStorage', 'Publish-MiosMachineToml', 'Register-MiosBootstrapResume',
+        'Get-MiosMachinePodmanExe', 'Get-MiosMachinePodmanVersion', 'Get-MiosPodmanVersion', 'Get-MiosRequiredPodmanVersion',
+        'Get-MiosPinnedDownloadBytes', 'Invoke-MiosMsiInstall', 'Install-MiosPodmanClient', 'Read-MiosPodmanUninstallEntries',
+        'Get-MiosOlderPodmanEntries', 'Get-MiosPodmanRemovalPlan', 'Invoke-MiosPodmanRemoval', 'Remove-MiosOlderPodman',
+        'Get-MiosMachinePodmanPaths', 'Get-MiosMachinePath', 'Get-MiosMsiPackageInfo', 'Get-MiosMsiRelatedProducts', 'Remove-MiosPerUserPodman',
         'Read-MiosPipeLine', 'Invoke-MiosMachineWorker', 'Invoke-MiosMachinePreparationRequest', 'Invoke-MiosMachinePreparationCore')
     $functions = @($ast.FindAll({ param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $names }, $true))
     foreach ($name in $names) { if (@($functions | Where-Object Name -eq $name).Count -ne 1) { throw "Missing or duplicate machine helper: $name" } }
@@ -2306,6 +3072,7 @@ function Get-MiosTerminalProfileCommand {
 }
 
 function Install-MiOSTerminalProfile {
+    param([string]$LinuxLogin = '')
     # Defensive readiness wait: even if Install-MiOSWindowsTerminal
     # already waited, AppX deployment can still be propagating user-state
     # paths. Re-wait so we never write to a non-existent LocalState dir.
@@ -2387,7 +3154,7 @@ function Install-MiOSTerminalProfile {
         Write-Host "  [!] No pwsh 7 found; falling back to Windows PS 5.1 in MiOS profile." -ForegroundColor Yellow
     }
     $_sysDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
-    $miosProfilePath = Join-Path (Get-MiosWindowsInstallRoot) 'powershell/profile.ps1'
+    $miosProfilePath = (Get-MiosInstalledLayout).ProfileBody
     $profileCmdline = Get-MiosTerminalProfileCommand -ShellPath $defaultPwsh -ProfilePath $miosProfilePath
 
     $_themeFontFace    = Get-MiosTomlValue -Section 'theme.font' -Key 'family'             -Default 'GeistMono Nerd Font Mono'
@@ -2474,6 +3241,10 @@ function Install-MiOSTerminalProfile {
     foreach ($k in $commonProfileProps.Keys) { $miosProfile[$k] = $commonProfileProps[$k] }
 
     $_devDistroName = 'podman-MiOS-DEV'   # default if probing fails
+    # The MiOS-DEV login: the launcher's second render passes the guard's name (-LinuxLogin). This first render runs
+    # before the guest exists, so the vendor [identity].username is only a placeholder that the launcher replaces.
+    $_devLogin = if ($LinuxLogin) { $LinuxLogin } else { ([string](Get-MiosTomlValue -Section 'identity' -Key 'username' -Default '' -VendorOnly)).Trim() }
+    $_devLoginArg = if ($_devLogin -cmatch '^[a-z_][a-z0-9_-]*$') { ' --user ' + $_devLogin } else { '' }
     try {
         $_wslList = @(& wsl.exe -l -q 2>$null) | ForEach-Object { ($_ -replace [char]0,'').Trim() } | Where-Object { $_ }
         foreach ($_cand in @('podman-MiOS-DEV','MiOS-DEV','podman-MiOS-BUILDER','MiOS-BUILDER')) {
@@ -2483,7 +3254,7 @@ function Install-MiOSTerminalProfile {
     $miosDevProfile = [ordered]@{
         guid              = $miosDevGuid
         name              = 'MiOS-DEV'
-        commandline       = ('wsl.exe -d ' + $_devDistroName + ' --cd / --user mios')
+        commandline       = ('wsl.exe -d ' + $_devDistroName + ' --cd /' + $_devLoginArg)
         startingDirectory = $null
     }
     foreach ($k in $commonProfileProps.Keys) { $miosDevProfile[$k] = $commonProfileProps[$k] }
@@ -2674,13 +3445,9 @@ param(
 )
 $ErrorActionPreference = 'SilentlyContinue'
 
-$_programDataLauncher = "$env:ProgramData\MiOS\bin\mios-launch.exe"
-$_programDataBinding  = "$env:ProgramData\MiOS\bin\native-binding.json"
-if ((Test-Path -LiteralPath $_programDataBinding) -and (Test-Path -LiteralPath $_programDataLauncher)) {
-    $_nativeLauncher = $_programDataLauncher
-} else {
-    $_nativeLauncher = Join-Path $PSScriptRoot 'mios-launch.exe'
-}
+# This script lives in the installed layout's bin, next to the native launcher; MIOS_NATIVE_BIN overrides it.
+$_nativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { $PSScriptRoot }
+$_nativeLauncher = Join-Path $_nativeBin 'mios-launch.exe'
 if (Test-Path -LiteralPath $_nativeLauncher) {
     & $_nativeLauncher $Profile
     exit $LASTEXITCODE
@@ -2830,8 +3597,9 @@ if ($hwnd -ne [IntPtr]::Zero) {
     if (-not $pwshExe) { $pwshExe = (Get-Command powershell.exe -ErrorAction SilentlyContinue).Source }
     if (-not $pwshExe) { Write-Host "  [!] No pwsh.exe found; cannot create launcher .lnk." -ForegroundColor Yellow; return }
 
-    $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\bin\run-hidden.vbs'
-    if (-not (Test-Path -LiteralPath $_runHiddenVbs)) { $_runHiddenVbs = Join-Path $env:ProgramData 'MiOS\run-hidden.vbs' }
+    $_layout = Get-MiosInstalledLayout
+    $_runHiddenVbs = Join-Path $_layout.NativeBin 'run-hidden.vbs'
+    if (-not (Test-Path -LiteralPath $_runHiddenVbs)) { $_runHiddenVbs = Join-Path $_layout.Root 'run-hidden.vbs' }
     if (-not (Test-Path -LiteralPath $_runHiddenVbs) -and $miosRoot) {
         $_vbsCandidate = Join-Path $miosRoot 'usr\share\mios\windows\run-hidden.vbs'
         if (Test-Path -LiteralPath $_vbsCandidate) { $_runHiddenVbs = $_vbsCandidate }
@@ -2892,15 +3660,8 @@ if ($hwnd -ne [IntPtr]::Zero) {
     # Prefer the compiled subsystem:Windows launcher (.exe -- zero pwsh
     # flash, proper window centering loop). Fall back to pwsh + .ps1
     # only for recovery of an older installation without the native launcher.
-    $_programDataLauncher = "$env:ProgramData\MiOS\bin\mios-launch.exe"
-    $_programDataBinding  = "$env:ProgramData\MiOS\bin\native-binding.json"
-    if ((Test-Path -LiteralPath $_programDataBinding) -and (Test-Path -LiteralPath $_programDataLauncher)) {
-        $_launcherExe = $_programDataLauncher
-        $_useExeLauncher = $true
-    } else {
-        $_launcherExe = Join-Path $miosRoot 'bin\mios-launch.exe'
-        $_useExeLauncher = Test-Path -LiteralPath $_launcherExe
-    }
+    $_launcherExe = Join-Path (Get-MiosInstalledLayout).NativeBin 'mios-launch.exe'
+    $_useExeLauncher = Test-Path -LiteralPath $_launcherExe
 
     $writeMiosLnk = {
         param([string]$LnkPath, [string]$LnkTarget, [string]$LnkArgs, [string]$LnkDesc)
@@ -3534,7 +4295,7 @@ function Install-MiOSTmuxProfile {
     param([switch]$Required)
     # Bootstrap may run before the native catalog is installed. Final installation
     # and runtime must use the native renderer; a deferred phase is never success.
-    $nativeRoots = @($env:MIOS_NATIVE_BIN, (Join-Path $env:ProgramData 'MiOS\bin'), (Join-Path $env:LOCALAPPDATA 'MiOS\bin'))
+    $nativeRoots = @((Get-MiosInstalledLayout).NativeBin)
     foreach ($nativeRoot in $nativeRoots) {
         if (-not $nativeRoot) { continue }
         $launcher = Join-Path $nativeRoot 'mios-launch.exe'
@@ -3554,9 +4315,13 @@ function Install-MiOSTmuxProfile {
 function Install-MiOSPowerShellProfile {
     $sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
     $sysDrive  = "${sysLetter}:"
-    $miosPsRoot = Join-Path (Get-MiosWindowsInstallRoot) 'powershell'
+    # The body path and its native-bin default both come from the installed layout; build-mios.ps1's redirector
+    # resolves the same body through the same function.
+    $_layout = Get-MiosInstalledLayout
+    $miosProfileScript = $_layout.ProfileBody
+    $miosPsRoot = Split-Path -Parent $miosProfileScript
     if (-not (Test-Path $miosPsRoot)) { New-Item -ItemType Directory -Path $miosPsRoot -Force | Out-Null }
-    $miosProfileScript = Join-Path $miosPsRoot 'profile.ps1'
+    $safeNativeBin = $_layout.Bin.Replace("'", "''")
     $safeInstallRoot = (Get-MiosWindowsInstallRoot).Replace("'", "''")
     $operatorRepoRoot = if (Test-MiosElevated) { Get-MiosWindowsInstallRoot } else { Join-Path (Get-MiosWindowsInstallRoot) 'repo' }
     $safeOperatorRepoRoot = $operatorRepoRoot.Replace("'", "''")
@@ -3648,7 +4413,7 @@ function Install-MiOSPowerShellProfile {
     ) + ')'
 
     $userTomlHelperBlock = (@('Assert-MiosNoReparsePath', 'Set-MiosPrivateUserTomlAcl', 'Import-MiosUserToml',
-        'ConvertTo-MiosNativeArgument', 'Sync-MiosUserTomlToBuilder') | ForEach-Object {
+        'ConvertTo-MiosNativeArgument', 'Get-MiosLinuxLogin', 'Sync-MiosUserTomlToBuilder') | ForEach-Object {
             'function ' + $_ + " {`r`n" + (Get-Command $_ -CommandType Function -ErrorAction Stop).Definition + "`r`n}"
         }) -join "`r`n"
     $windowsRefreshBlock = 'function Update-MiosWindowsBuildCheckout {' +
@@ -3754,8 +4519,13 @@ if (`$true) {
     # Both variants use the same native dashboard; no embedded roster or TOML scrape.
     function Show-MiosDashboard {
         param([string]`$ConfigPath, [string]`$LogoPath)
-        `$_native = if (`$env:MIOS_NATIVE_BIN) { `$env:MIOS_NATIVE_BIN } else { Join-Path `$env:ProgramData 'MiOS\bin' }
-        . (Join-Path `$_native 'mios-native-shell.ps1') -BinDirectory `$_native
+        `$_native = if (`$env:MIOS_NATIVE_BIN) { `$env:MIOS_NATIVE_BIN } else { '$safeNativeBin' }
+        `$_shell = Join-Path `$_native 'mios-native-shell.ps1'
+        if (-not (Test-Path -LiteralPath `$_shell)) {
+            Write-Host "  [!] MiOS native shell missing at `$_shell -- finish the MiOS install, then open a new terminal." -ForegroundColor Yellow
+            return
+        }
+        . `$_shell -BinDirectory `$_native
         Invoke-MiosNativeDashboard
     }
 
@@ -3838,7 +4608,7 @@ function mios-build {
                 # command line) for the builder distro's mios user. It is never copied into C:\etc\mios or M:\etc\mios.
                 `$tomlDst = Import-MiosUserToml -SourcePath `$tomlSrc.FullName
                 `$_devDistro = Resolve-MiosDevDistro
-                Sync-MiosUserTomlToBuilder -Path `$tomlDst -Distro `$_devDistro -User mios
+                Sync-MiosUserTomlToBuilder -Path `$tomlDst -Distro `$_devDistro -User (Get-MiosLinuxLogin `$_devDistro)
                 `$syncedUserToml = `$true
                 Write-Host ('         [+] '+`$tomlSrc.Name+' -> private user tiers (Windows + '+`$_devDistro+')') -ForegroundColor Green
                 `$archive = Join-Path `$dlDir (`$tomlSrc.BaseName+'.imported-'+`$stamp+'.toml')
@@ -3871,7 +4641,8 @@ function mios-build {
     # Existing user tiers and -SkipConfig retries must reach the builder as well.
     `$existingUserToml = Join-Path `$env:USERPROFILE '.config\mios\mios.toml'
     if (-not `$syncedUserToml -and (Test-Path -LiteralPath `$existingUserToml -PathType Leaf)) {
-        Sync-MiosUserTomlToBuilder -Path `$existingUserToml -Distro (Resolve-MiosDevDistro) -User mios
+        `$_devDistro = Resolve-MiosDevDistro
+        Sync-MiosUserTomlToBuilder -Path `$existingUserToml -Distro `$_devDistro -User (Get-MiosLinuxLogin `$_devDistro)
     }
     # END PRIVATE USER CONFIGURATION HANDOFF
 
@@ -3956,7 +4727,7 @@ function mios-dev {
     if (`$Args.Count -eq 0) {
         & (Join-Path `$Global:MiosBin 'mios.cmd') terminal
     } else {
-        & wsl.exe -d `$_devDistro --cd / --user mios @Args
+        & wsl.exe -d `$_devDistro --cd / --user (Get-MiosLinuxLogin `$_devDistro) @Args
     }
 }
 
@@ -3967,12 +4738,12 @@ function mios-mini {
         `$_distro = `$null
         foreach (`$_d in @('podman-MiOS-DEV','MiOS-DEV')) {
             try {
-                `$_chk = & wsl.exe -d `$_d --user mios -- echo ready 2>`$null
+                `$_chk = & wsl.exe -d `$_d -u root --exec echo ready 2>`$null
                 if (`$LASTEXITCODE -eq 0 -and `$_chk -match 'ready') { `$_distro = `$_d; break }
             } catch {}
         }
         if (`$_distro) {
-            & wsl.exe -d `$_distro --cd / --user mios -- /usr/libexec/mios/mios-dashboard.sh --mini @Args
+            & wsl.exe -d `$_distro --cd / --user (Get-MiosLinuxLogin `$_distro) -- /usr/libexec/mios/mios-dashboard.sh --mini @Args
             return
         }
     }
@@ -4060,13 +4831,13 @@ function mios-dash {
         `$_distro = `$null
         foreach (`$_d in @('podman-MiOS-DEV','MiOS-DEV')) {
             try {
-                `$_chk = & wsl.exe -d `$_d --user mios -- echo ready 2>`$null
+                `$_chk = & wsl.exe -d `$_d -u root --exec echo ready 2>`$null
                 if (`$LASTEXITCODE -eq 0 -and `$_chk -match 'ready') { `$_distro = `$_d; break }
             } catch {}
         }
         if (`$_distro) {
             try {
-                & wsl.exe -d `$_distro --user mios -- bash -lc 'systemctl --user list-units --type=service --state=active --no-legend --no-pager 2>/dev/null | head -30; echo ""; echo "graphical-session.target: `$(systemctl --user is-active graphical-session.target 2>/dev/null)"; echo "xdg-desktop-portal.service: `$(systemctl --user is-active xdg-desktop-portal.service 2>/dev/null)"; echo "podman.socket: `$(systemctl --user is-active podman.socket 2>/dev/null)"'
+                & wsl.exe -d `$_distro --user (Get-MiosLinuxLogin `$_distro) -- bash -lc 'systemctl --user list-units --type=service --state=active --no-legend --no-pager 2>/dev/null | head -30; echo ""; echo "graphical-session.target: `$(systemctl --user is-active graphical-session.target 2>/dev/null)"; echo "xdg-desktop-portal.service: `$(systemctl --user is-active xdg-desktop-portal.service 2>/dev/null)"; echo "podman.socket: `$(systemctl --user is-active podman.socket 2>/dev/null)"'
             } catch {
                 Write-Host "  [!] failed to query MiOS-DEV services: `$_" -ForegroundColor Yellow
             }
@@ -4104,7 +4875,7 @@ function mios-help {
     Write-Host '  mios pull     git fetch + hard reset root overlay to origin/main' -ForegroundColor White
     Write-Host '  mios config   open the HTML configurator (mios.toml editor)' -ForegroundColor White
     Write-Host '  mios ai       open Open WebUI (rich LLM interface) in your browser' -ForegroundColor White
-    Write-Host '  mios dev      wsl into the MiOS-DEV distro (root /, user mios)' -ForegroundColor White
+    Write-Host '  mios dev      wsl into MiOS-DEV (root /) as the MiOS login, [identity].username; re-run the installer after changing it' -ForegroundColor White
     Write-Host '  mios dash     FULL dashboard: ASCII banner + services + extended sys specs' -ForegroundColor White
     Write-Host '  mios xbox     Xbox VM Secure Boot / XML repair' -ForegroundColor White
     Write-Host '  mios virt     apply optimized VM config + CPU pinning' -ForegroundColor White
@@ -4218,7 +4989,7 @@ function btop {
     try { Set-MiosWindow -Mode reading } catch {}
     Start-Sleep -Milliseconds 200
     try {
-        & wsl.exe -d `$_dev --user mios -- btop @args
+        & wsl.exe -d `$_dev --user (Get-MiosLinuxLogin `$_dev) -- btop @args
     } finally {
         try { Set-MiosWindow -Mode portal } catch {}
     }
@@ -4226,20 +4997,28 @@ function btop {
 
 # Windows tmux dispatch is rendered and enforced by the native Rust SSOT launcher.
 function tmux {
-    & (Join-Path `$env:ProgramData 'MiOS\bin\mios-launch.exe') --tmux @args
+    `$_nativeBin = if (`$env:MIOS_NATIVE_BIN) { `$env:MIOS_NATIVE_BIN } else { '$safeNativeBin' }
+    & (Join-Path `$_nativeBin 'mios-launch.exe') --tmux @args
 }
 "@
+    # The native client setup replaces this block with its own hook once it has installed the native shell.
     $nativeStartup = @'
 # >>> MiOS native SSOT runtime >>>
-$_miosNativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { Join-Path $env:ProgramData 'MiOS\bin' }
-. (Join-Path $_miosNativeBin 'mios-native-shell.ps1') -BinDirectory $_miosNativeBin
-if (-not $env:MIOS_SKIP_MOTD -and -not $env:MIOS_HOST_TMUX -and -not $env:TMUX -and -not $env:SSH_CONNECTION -and -not [Console]::IsInputRedirected) {
-    & (Join-Path $_miosNativeBin 'mios-launch.exe') --host-terminal
-    if ($LASTEXITCODE -ne 0) { throw "Native MiOS host terminal failed (exit $LASTEXITCODE)" }
-    return
+$_miosNativeBin = if ($env:MIOS_NATIVE_BIN) { $env:MIOS_NATIVE_BIN } else { '__MIOS_NATIVE_BIN__' }
+$_miosNativeShell = Join-Path $_miosNativeBin 'mios-native-shell.ps1'
+if (-not (Test-Path -LiteralPath $_miosNativeShell)) {
+    Write-Host "  [!] MiOS native shell missing at $_miosNativeShell -- finish the MiOS install, then open a new terminal." -ForegroundColor Yellow
+} else {
+    . $_miosNativeShell -BinDirectory $_miosNativeBin
+    if (-not $env:MIOS_SKIP_MOTD -and -not $env:MIOS_HOST_TMUX -and -not $env:TMUX -and -not $env:SSH_CONNECTION -and -not [Console]::IsInputRedirected) {
+        & (Join-Path $_miosNativeBin 'mios-launch.exe') --host-terminal
+        if ($LASTEXITCODE -ne 0) { throw "Native MiOS host terminal failed (exit $LASTEXITCODE)" }
+        return
+    }
 }
 # <<< MiOS native SSOT runtime <<<
 '@
+    $nativeStartup = $nativeStartup.Replace('__MIOS_NATIVE_BIN__', $safeNativeBin)
     $miosScriptBody = $nativeStartup + "`n" + $miosScriptBody
     $_utf8Bom = New-Object System.Text.UTF8Encoding($true)
     [System.IO.File]::WriteAllText($miosProfileScript, $miosScriptBody, $_utf8Bom)
@@ -4371,10 +5150,6 @@ function Get-MiosFeatureState([string[]]$Info) {
 function Get-MiosDismEnableOutcome([int]$ExitCode) {
     # dism /enable-feature /norestart: 0 = enabled; 3010 (ERROR_SUCCESS_REBOOT_REQUIRED) = enabled, active after a restart
     switch ($ExitCode) { 0 { return 'enabled' } 3010 { return 'restart' } default { return 'unavailable' } }
-}
-
-function Test-MiosElevated {
-    return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
 function Enable-MiOSWindowsFeatures {
@@ -4565,9 +5340,316 @@ function Ensure-Git {
     }
 }
 
+function Get-MiosMachinePodmanPaths {
+    # The per-machine podman.exe locations, all under %ProgramFiles% (administrator-writable): the pinned 6.x MSI's
+    # INSTALLDIR first, then the 5.x setup bundle's layout. Never PATH, never a user profile.
+    return @((Join-Path ${env:ProgramFiles} 'Podman\podman.exe'), (Join-Path ${env:ProgramFiles} 'RedHat\Podman\podman.exe'))
+}
+
+function Resolve-MiosPodmanExe {
+    # User side only: the podman.exe this unelevated session would run, or $null. The per-machine install paths after
+    # PATH, so a client the elevated stage just installed is found before a new logon picks up the machine PATH.
+    $cmd = Get-Command podman -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return [string]$cmd.Source }
+    foreach ($candidate in @(Get-MiosMachinePodmanPaths)) { if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+    return $null
+}
+
+function Get-MiosMachinePodmanExe {
+    # Elevated side: only the per-machine install paths, never PATH. Under admin-approval UAC the elevated PATH still carries
+    # user-writable directories (WinGet Links, WindowsApps), so a podman.exe found through PATH could be a planted one.
+    foreach ($path in @(Get-MiosMachinePodmanPaths)) { if (Test-Path -LiteralPath $path -PathType Leaf) { return $path } }
+    return $null
+}
+
+function Get-MiosMachinePodmanVersion {
+    # The machine client's version. It is executed elevated only after its Authenticode signature is Valid and its signer
+    # is exactly the SSOT signer; an absent client is $null, a present unsigned or foreign-signed one is refused, never run.
+    param([Parameter(Mandatory)][string]$Signer)
+    $exe = Get-MiosMachinePodmanExe
+    if (-not $exe) { return $null }
+    $signature = Get-AuthenticodeSignature -LiteralPath $exe
+    if ([string]$signature.Status -ne 'Valid') { throw "The machine Podman client $exe has a $($signature.Status) signature, not Valid; it is never run elevated. Nothing was installed." }
+    $subject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { '' }
+    if ($subject -cne $Signer) { throw "The machine Podman client $exe is signed by '$subject', not the SSOT signer; it is never run elevated. Nothing was installed." }
+    return Get-MiosPodmanVersion $exe
+}
+
+function Get-MiosPodmanVersion {
+    # major.minor[.build] from `podman --version`, or $null when the client is absent or unreadable.
+    param([AllowEmptyString()][string]$Exe)
+    if (-not $Exe) { return $null }
+    $text = ((& $Exe --version 2>$null) | Out-String)
+    if ($text -match '(\d+)\.(\d+)(?:\.(\d+))?') {
+        $build = if ($Matches[3]) { [int]$Matches[3] } else { 0 }
+        return New-Object Version ([int]$Matches[1]), ([int]$Matches[2]), $build
+    }
+    return $null
+}
+
+function Get-MiosRequiredPodmanVersion {
+    # The Podman client must be at least the machine-os major.minor MiOS-DEV is provisioned from ([image].machine_os_tag).
+    $tag = [string](Get-MiosTomlValue -Section 'image' -Key 'machine_os_tag' -Default '')
+    if ($tag -notmatch '^v?(\d+)\.(\d+)') { throw "The system SSOT [image].machine_os_tag '$tag' is not a major.minor machine-os version; the Podman client cannot be checked." }
+    return New-Object Version ([int]$Matches[1]), ([int]$Matches[2])
+}
+
+function Get-MiosPinnedDownloadBytes {
+    param([Parameter(Mandatory)][string]$Uri)
+    $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -ErrorAction Stop
+    if ($response.Content -is [byte[]]) { return , $response.Content }
+    if ($response.RawContentStream) { return , $response.RawContentStream.ToArray() }
+    throw "The pinned download $Uri returned no binary content."
+}
+
+function Invoke-MiosMsiInstall {
+    param([Parameter(Mandatory)][string]$Path, [string[]]$Properties = @())
+    $msiexec = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+    $proc = Start-Process -FilePath $msiexec -ArgumentList (@('/i', ('"' + $Path + '"')) + @($Properties) + @('/qn', '/norestart')) -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+    return [int]$proc.ExitCode
+}
+
+function Get-MiosMachinePath {
+    # The machine-wide PATH (HKLM Environment) as stored, without this process's additions.
+    return [string][Environment]::GetEnvironmentVariable('Path', 'Machine')
+}
+
+function Get-MiosMsiPackageInfo {
+    # ProductCode, UpgradeCode and Manufacturer from an MSI's own Property table, opened read-only through Windows Installer
+    # (msiOpenDatabaseModeReadOnly). Called only on the private copy after its sha256, signature and signer are verified.
+    param([Parameter(Mandatory)][string]$Path)
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($Path, [int]0))
+    $info = [ordered]@{}
+    try {
+        foreach ($name in 'ProductCode', 'UpgradeCode', 'Manufacturer') {
+            $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db, @("SELECT ``Value`` FROM ``Property`` WHERE ``Property`` = '$name'"))
+            try {
+                [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+                $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+                $info[$name] = if ($record) { [string]$record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, [object[]]@([int]1)) } else { '' }
+            } finally {
+                [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+                [void][Runtime.InteropServices.Marshal]::ReleaseComObject($view)
+            }
+        }
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($db) }
+    return [pscustomobject]$info
+}
+
+function Get-MiosMsiRelatedProducts {
+    # The installed products of one UpgradeCode as this (elevated) account sees them: the per-machine ones and its own
+    # per-user ones. AssignmentType is Windows Installer's own: '1' per-machine, '0' per-user.
+    param([Parameter(Mandatory)][string]$UpgradeCode)
+    $installer = New-Object -ComObject WindowsInstaller.Installer
+    $related = $installer.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $installer, @($UpgradeCode))
+    $count = [int]$related.GetType().InvokeMember('Count', 'GetProperty', $null, $related, $null)
+    $products = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt $count; $i++) {
+        $code = [string]$related.GetType().InvokeMember('Item', 'GetProperty', $null, $related, [object[]]@([int]$i))
+        $assignment = [string]$installer.GetType().InvokeMember('ProductInfo', 'GetProperty', $null, $installer, [object[]]@($code, 'AssignmentType'))
+        $version = [string]$installer.GetType().InvokeMember('ProductInfo', 'GetProperty', $null, $installer, [object[]]@($code, 'VersionString'))
+        $products.Add([pscustomobject]@{ ProductCode = $code; AssignmentType = $assignment; Version = $version })
+    }
+    return $products.ToArray()
+}
+
+function Remove-MiosPerUserPodman {
+    # A per-user install of the pinned package family (the UpgradeCode read from the verified MSI) belongs to the account
+    # that elevated, not to the machine, and the operator account never sees it. It is removed by its GUID-validated
+    # ProductCode with msiexec /x in this account's context, then re-checked. Per-machine products of the family are left to
+    # the MSI's own upgrade; any other state refuses before install.
+    param([Parameter(Mandatory)][string]$UpgradeCode)
+    $guid = '^\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$'
+    $related = @(Get-MiosMsiRelatedProducts -UpgradeCode $UpgradeCode)
+    $unknown = @($related | Where-Object { $_.AssignmentType -notin @('0', '1') -or $_.ProductCode -notmatch $guid })
+    if ($unknown.Count) { throw "A Podman product of the pinned family has an unexpected Windows Installer registration ($(@($unknown | ForEach-Object { "$($_.ProductCode) assignment '$($_.AssignmentType)'" }) -join ', ')); nothing was removed and the pinned Podman MSI was not installed." }
+    $perUser = @($related | Where-Object { $_.AssignmentType -eq '0' })
+    $removed = 0
+    foreach ($p in $perUser) {
+        Write-Info "Removing the per-user Podman $($p.Version) [$($p.ProductCode)] of this elevated account; MiOS installs Podman per-machine."
+        $code = Invoke-MiosPodmanRemoval -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -Arguments @('/x', $p.ProductCode, '/qn', '/norestart')
+        if ($code -notin @(0, 3010)) { throw "Removing the per-user Podman $($p.Version) [$($p.ProductCode)] failed (exit $code); the pinned Podman MSI was not installed." }
+        $removed++
+    }
+    $left = @(@(Get-MiosMsiRelatedProducts -UpgradeCode $UpgradeCode) | Where-Object { $_.AssignmentType -ne '1' })
+    if ($left.Count) { throw "A per-user Podman is still installed for this elevated account after removal ($(@($left | ForEach-Object { "$($_.Version) [$($_.ProductCode)]" }) -join ', ')); the pinned Podman MSI was not installed." }
+    return $removed
+}
+
+function Read-MiosPodmanUninstallEntries {
+    # Machine-wide uninstall registrations (64-bit and WOW6432Node views) read as data; no registry command text is ever run.
+    $entries = New-Object System.Collections.Generic.List[object]
+    foreach ($root in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($key in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+            $p = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+            if (-not $p -or [string]$p.DisplayName -notmatch 'podman') { continue }
+            $entries.Add([pscustomobject]@{ Root = $root; Key = [string]$key.PSChildName; DisplayName = [string]$p.DisplayName; Publisher = [string]$p.Publisher
+                DisplayVersion = [string]$p.DisplayVersion; WindowsInstaller = [string]$p.WindowsInstaller; BundleCachePath = [string]$p.BundleCachePath
+                BundleProviderKey = [string]$p.BundleProviderKey; QuietUninstallString = [string]$p.QuietUninstallString })
+        }
+    }
+    return $entries.ToArray()
+}
+
+function Get-MiosOlderPodmanEntries {
+    # Only an entry named exactly 'Podman' from Red Hat whose version is older than machine-os major.minor. 'Podman Desktop',
+    # other publishers and current versions never match.
+    param([Parameter(Mandatory)][Version]$Required)
+    $publishers = @('Red Hat', 'Red Hat Inc.', 'Red Hat, LLC')
+    return @(@(Read-MiosPodmanUninstallEntries) | Where-Object {
+        $_.DisplayName -ieq 'Podman' -and $_.Publisher -cin $publishers -and $_.DisplayVersion -match '^(\d+)\.(\d+)' -and
+        (New-Object Version ([int]$Matches[1]), ([int]$Matches[2])) -lt $Required })
+}
+
+function Get-MiosPodmanRemovalPlan {
+    # Every older entry is validated before anything is removed: a setup bundle whose cached exe lies under
+    # %ProgramData%\Package Cache and carries the SSOT signer (run with fixed arguments), or a Windows Installer product
+    # addressed only by its GUID key. Any other shape refuses; registry argument text is data, never executed.
+    param([Parameter(Mandatory)][object[]]$Entries, [Parameter(Mandatory)][string]$Signer)
+    $cacheRoot = [IO.Path]::GetFullPath((Join-Path $env:ProgramData 'Package Cache')).TrimEnd('\') + '\'
+    $plan = New-Object System.Collections.Generic.List[object]
+    foreach ($e in $Entries) {
+        $label = "$($e.DisplayName) $($e.DisplayVersion) [$($e.Key)]"
+        if ($e.BundleCachePath -or $e.BundleProviderKey) {
+            $exe = [string]$e.BundleCachePath
+            if (-not $exe -or -not [IO.Path]::IsPathRooted($exe) -or $exe -notmatch '\.exe$') { throw "The Podman bundle $label has no absolute cached bundle exe; nothing was removed." }
+            $full = [IO.Path]::GetFullPath($exe)
+            if ($full -ine $exe -or -not $full.StartsWith($cacheRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "The Podman bundle $label caches its exe outside $cacheRoot; nothing was removed." }
+            $quiet = ([string]$e.QuietUninstallString).Trim()
+            if ($quiet -and $quiet -ine ('"' + $exe + '" /uninstall /quiet')) { throw "The Podman bundle $label has an unexpected uninstall command; nothing was removed." }
+            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "The Podman bundle $label cached exe is missing; nothing was removed." }
+            $signature = Get-AuthenticodeSignature -LiteralPath $full
+            if ([string]$signature.Status -ne 'Valid') { throw "The Podman bundle $label exe has a $($signature.Status) signature, not Valid; nothing was removed." }
+            $subject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { '' }
+            if ($subject -cne $Signer) { throw "The Podman bundle $label exe is signed by '$subject', not the SSOT signer; nothing was removed." }
+            $plan.Add([pscustomobject]@{ Order = 0; Kind = 'bundle'; Label = $label; Key = $e.Key; FilePath = $full; Arguments = @('/uninstall', '/quiet', '/norestart') })
+        } elseif ($e.WindowsInstaller -eq '1' -and $e.Key -match '^\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$') {
+            $plan.Add([pscustomobject]@{ Order = 1; Kind = 'msi'; Label = $label; Key = $e.Key; FilePath = (Join-Path $env:SystemRoot 'System32\msiexec.exe'); Arguments = @('/x', $e.Key, '/qn', '/norestart') })
+        } else { throw "The Podman entry $label is neither a cached setup bundle nor a Windows Installer product; nothing was removed." }
+    }
+    return @($plan | Sort-Object Order)
+}
+
+function Invoke-MiosPodmanRemoval {
+    param([Parameter(Mandatory)][string]$FilePath, [Parameter(Mandatory)][string[]]$Arguments)
+    $proc = Start-Process -FilePath $FilePath -ArgumentList $Arguments -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+    return [int]$proc.ExitCode
+}
+
+function Remove-MiosOlderPodman {
+    # The pinned MSI cannot upgrade an older Podman in place (its installer refuses with 1603), so the older Red Hat
+    # registrations go first: the setup bundle, then any Windows Installer product still registered. The vendor preserves
+    # containers, images, machines and data on uninstall; no podman command, user directory or policy is touched here.
+    param([Parameter(Mandatory)][Version]$Required, [Parameter(Mandatory)][string]$Signer)
+    $older = @(Get-MiosOlderPodmanEntries -Required $Required)
+    if (-not $older.Count) { return 0 }
+    $plan = @(Get-MiosPodmanRemovalPlan -Entries $older -Signer $Signer)
+    $removed = 0
+    foreach ($step in $plan) {
+        # A bundle normally removes its own Windows Installer product; only what is still registered is removed here.
+        if ($step.Kind -eq 'msi' -and -not @(@(Get-MiosOlderPodmanEntries -Required $Required) | Where-Object { $_.Key -eq $step.Key }).Count) { continue }
+        Write-Info "Removing $($step.Label) ($($step.Kind)); the vendor preserves containers, images, machines and data."
+        $code = Invoke-MiosPodmanRemoval -FilePath $step.FilePath -Arguments $step.Arguments
+        if ($code -notin @(0, 3010)) { throw "Removing $($step.Label) failed (exit $code); the pinned Podman MSI was not installed." }
+        $removed++
+    }
+    $left = @(Get-MiosOlderPodmanEntries -Required $Required)
+    if ($left.Count) { throw "An older Red Hat Podman is still registered after removal ($(@($left | ForEach-Object { "$($_.DisplayName) $($_.DisplayVersion) [$($_.Key)]" }) -join ', ')); the pinned Podman MSI was not installed." }
+    return $removed
+}
+
+function Install-MiosPodmanClient {
+    # Elevated machine preparation (the operator's UAC): bring the Podman client up to the machine-os version MiOS-DEV needs.
+    # Only the system SSOT pin is trusted: the MSI must match its sha256, carry a Valid Authenticode signature and the pinned
+    # signer, all checked before msiexec runs. Any mismatch refuses with a message and installs nothing.
+    param([string]$DownloadDirectory)
+    $required = Get-MiosRequiredPodmanVersion
+    $url = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_msi_url' -Default '' -VendorOnly)
+    $sha = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_msi_sha256' -Default '' -VendorOnly)
+    $signer = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_cli_msi_signer' -Default '' -VendorOnly)
+    # The signer also gates running the installed client elevated, so it is required before any version check.
+    if (-not $signer.Trim()) {
+        throw "The system SSOT has no complete pinned Podman MSI ([bootstrap.prereqs] podman_cli_msi_url, podman_cli_msi_sha256, podman_cli_msi_signer); the machine Podman client cannot be verified before it runs elevated. Nothing was installed."
+    }
+    $installed = Get-MiosMachinePodmanVersion -Signer $signer
+    $have = if ($installed) { "Podman $installed" } else { 'no Podman client' }
+    if ($installed -and (New-Object Version $installed.Major, $installed.Minor) -ge $required) {
+        Write-Good "Podman client $installed satisfies machine-os $required"
+        return 'current'
+    }
+    if ($url -notmatch '^https://[^\s"'']+\.msi$' -or $sha -cnotmatch '^[0-9a-f]{64}$') {
+        throw "Found $have; MiOS-DEV needs Podman $required or newer, and the system SSOT has no complete pinned Podman MSI ([bootstrap.prereqs] podman_cli_msi_url, podman_cli_msi_sha256, podman_cli_msi_signer). Nothing was installed."
+    }
+    if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Found $have; the pinned Podman MSI is for amd64, not $($env:PROCESSOR_ARCHITECTURE). Nothing was installed." }
+    if (-not $DownloadDirectory) { $DownloadDirectory = Join-Path $env:ProgramData 'MiOS\downloads' }
+    if (Test-Path -LiteralPath $DownloadDirectory) { Assert-MiosMachineWriteBoundary $DownloadDirectory } else { New-MiosProtectedMachineDirectory $DownloadDirectory }
+    Write-Info "Found $have; installing the pinned Podman MSI for machine-os $required ..."
+    $bytes = Get-MiosPinnedDownloadBytes -Uri $url
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $actual = ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+    if ($actual -cne $sha) { throw "The pinned Podman MSI sha256 is $actual, not the SSOT $sha. Nothing was installed." }
+    $msi = Join-Path $DownloadDirectory ('podman-' + $sha.Substring(0, 16) + '-' + [guid]::NewGuid().ToString('N') + '.msi')
+    Write-MiosPrivateMachineFile -Path $msi -Bytes $bytes
+    try {
+        $signature = Get-AuthenticodeSignature -LiteralPath $msi
+        if ([string]$signature.Status -ne 'Valid') { throw "The pinned Podman MSI signature is $($signature.Status), not Valid. Nothing was installed." }
+        $subject = if ($signature.SignerCertificate) { [string]$signature.SignerCertificate.Subject } else { '' }
+        if ($subject -cne $signer) { throw "The pinned Podman MSI is signed by '$subject', not the SSOT signer '$signer'. Nothing was installed." }
+        # The verified package's own identity; its UpgradeCode names the family whose per-user installs are removed below.
+        $package = Get-MiosMsiPackageInfo -Path $msi
+        $guid = '^\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$'
+        if ($package.ProductCode -notmatch $guid -or $package.UpgradeCode -notmatch $guid) { throw "The verified Podman MSI has no valid ProductCode/UpgradeCode ('$($package.ProductCode)', '$($package.UpgradeCode)'). Nothing was installed." }
+        Write-Info "Verified Podman MSI: ProductCode $($package.ProductCode), UpgradeCode $($package.UpgradeCode), Manufacturer '$($package.Manufacturer)'."
+        # Only with a verified replacement in hand: remove an older Red Hat Podman the MSI cannot upgrade, then re-check.
+        $removed = Remove-MiosOlderPodman -Required $required -Signer $signer
+        # Re-read the machine client after a removal: anything left at the machine path must still carry the SSOT signer.
+        if ($removed) { $null = Get-MiosMachinePodmanVersion -Signer $signer }
+        $removed += Remove-MiosPerUserPodman -UpgradeCode $package.UpgradeCode
+        # The package is dual-purpose (ALLUSERS=2, MSIINSTALLPERUSER=1): without these it installs per-user for whichever
+        # account approved the UAC prompt. ALLUSERS=1 makes it per-machine, and MSIINSTALLPERUSER=0 (not "", which Windows
+        # PowerShell 5.1 would strip) selects its machine-PATH component instead of the per-user one.
+        $code = Invoke-MiosMsiInstall -Path $msi -Properties @('ALLUSERS=1', 'MSIINSTALLPERUSER=0')
+        if ($code -notin @(0, 3010)) {
+            $state = if ($removed) { "the older Podman was already removed ($removed registration(s))" } else { "$have is unchanged" }
+            throw "msiexec could not install the verified Podman MSI (exit $code); $state."
+        }
+    } finally { Remove-Item -LiteralPath $msi -Force -ErrorAction SilentlyContinue }
+    # Windows Installer itself must report the verified product per-machine.
+    $scope = @(@(Get-MiosMsiRelatedProducts -UpgradeCode $package.UpgradeCode) | Where-Object { $_.ProductCode -eq $package.ProductCode })
+    if (-not @($scope | Where-Object { $_.AssignmentType -eq '1' }).Count) {
+        throw "The verified Podman MSI $($package.ProductCode) installed per-user for this elevated account, not per-machine; the operator account cannot use it."
+    }
+    $after = Get-MiosMachinePodmanVersion -Signer $signer
+    if (-not $after) {
+        throw "After installing the verified MSI, no Podman client was found at $(@(Get-MiosMachinePodmanPaths) -join ' or '); the elevated stage trusts only those per-machine paths."
+    }
+    if ((New-Object Version $after.Major, $after.Minor) -lt $required) {
+        throw "After installing the verified MSI, Podman $after is still older than machine-os $required."
+    }
+    # The package's machine-PATH component puts its INSTALLDIR on the machine PATH; the user side also finds the exe directly.
+    $installDir = Split-Path -Parent @(Get-MiosMachinePodmanPaths)[0]
+    if (-not @(@((Get-MiosMachinePath) -split ';') | Where-Object { $_.Trim().TrimEnd('\') -ieq $installDir }).Count) {
+        Write-Info "Warning: the machine PATH does not list $installDir; the operator side finds $(@(Get-MiosMachinePodmanPaths)[0]) directly."
+    }
+    Write-Good "Podman client $after installed per-machine from the verified MSI"
+    return 'installed'
+}
+
 function Ensure-PodmanDesktop {
+    # An elevated machine preparation may have just installed the pinned client; see it before deciding anything.
+    $env:PATH = [Environment]::GetEnvironmentVariable('PATH', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('PATH', 'User') + ';' + $env:PATH
     if (Get-Command podman -ErrorAction SilentlyContinue) {
         Write-Good "Podman already installed ($((podman --version) 2>&1))"
+        return
+    }
+    # A per-machine client the elevated stage installed is used even if the machine PATH has not picked it up yet; its
+    # directory goes first on this session's PATH so build-mios and its guard resolve the same exe. No winget run over it.
+    $machineClient = Resolve-MiosPodmanExe
+    if ($machineClient) {
+        $env:PATH = (Split-Path -Parent $machineClient) + ';' + $env:PATH
+        Write-Good "Podman already installed at $machineClient"
         return
     }
     # Check if we should install Podman Desktop
@@ -4606,36 +5688,10 @@ function Ensure-PodmanDesktop {
         }
     }
 
-    # Direct MSI download and silent installation fallback if winget failed/is missing
-    if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
-        Write-Info "winget install failed or unavailable. Attempting direct MSI download and install of Podman CLI..."
-        $podmanVersion = "6.0.0"
-        try {
-            $podmanUrl = [string](Get-MiosTomlValue -Section 'bootstrap.prereqs' -Key 'podman_url' -Default 'https://api.github.com/repos/containers/podman/releases/latest')
-            $latestRelease = Invoke-RestMethod -Uri $podmanUrl -UseBasicParsing -ErrorAction Stop
-            if ($latestRelease.tag_name -match '^v?([0-9\.]+)$') {
-                $podmanVersion = $Matches[1]
-            }
-        } catch {
-            Write-Info "Failed to query latest version from GitHub API (offline or rate-limited). Using default fallback version v6.0.0"
-        }
-        $msiUrl = "https://github.com/containers/podman/releases/download/v$podmanVersion/podman-v$podmanVersion.msi"
-        $msiPath = Join-Path $env:TEMP "podman-installer.msi"
-        Write-Info "Downloading Podman CLI MSI from $msiUrl ..."
-        try {
-            $webClient = New-Object System.Net.WebClient
-            $webClient.DownloadFile($msiUrl, $msiPath)
-            Write-Info "Installing Podman CLI silently via msiexec..."
-            $proc = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart" -Wait -NoNewWindow -PassThru
-            if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) {
-                Write-Err "msiexec exited with non-zero code: $($proc.ExitCode)"
-            }
-            Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
-        } catch {
-            Write-Err "Direct MSI installation failed: $_"
-            Write-Err "  Please download and install Podman CLI manually via the setup/MSI from the official release page:"
-            Write-Err "  https://github.com/containers/podman/releases"
-        }
+    # No unverified download: the only MSI path is the pinned, hash- and signature-checked install in elevated machine preparation.
+    if (-not (Get-Command podman -ErrorAction SilentlyContinue) -and -not (Resolve-MiosPodmanExe)) {
+        Write-Err "No Podman client is installed. The elevated machine preparation installs the pinned Podman MSI from the system SSOT"
+        Write-Err "  ([bootstrap.prereqs] podman_cli_msi_url/sha256/signer); re-run the installer and approve its UAC prompt."
     }
 
     # Refresh PATH from registry so the just-installed podman.exe is
@@ -4648,6 +5704,7 @@ function Ensure-PodmanDesktop {
         # CLI install dir, Podman Desktop's resources bundle, the older
         # podman-machine standalone, plus any user-scope variants.
         $pmCandidates = @(
+            (Join-Path ${env:ProgramFiles}      'Podman'),
             (Join-Path ${env:ProgramFiles}      'RedHat\Podman\bin'),
             (Join-Path ${env:ProgramFiles}      'RedHat\Podman'),
             (Join-Path ${env:ProgramFiles}      'RedHat\Podman\resources\app\binary'),
@@ -4726,7 +5783,7 @@ function Initialize-DataDisk {
     if ($existing) {
         Write-Err "Drive ${DriveLetter}: exists with label '$($existing.FileSystemLabel)' (not '$VolumeLabel')."
         Write-Err "Either remove the volume manually or pass -DriveLetter <other> to Get-MiOS.ps1."
-        exit 1
+        throw "Initialize-DataDisk: drive ${DriveLetter}: already exists with another label; no disk changes were made."
     }
     $_displayGb = Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'display_size_gb' -Default 256
     Write-Info "Provisioning ${DriveLetter}:\ at $ShrinkMB MB (target $_displayGb GB visible in Explorer) ..."
@@ -4754,7 +5811,7 @@ function Initialize-DataDisk {
     $disk = Get-Disk -Number $cPart.DiskNumber
     if ($disk.PartitionStyle -notin @('GPT','MBR')) {
         Write-Err "Disk $($disk.Number) has unsupported partition style '$($disk.PartitionStyle)'"
-        exit 1
+        throw "Initialize-DataDisk: disk $($disk.Number) has an unsupported partition style; no disk changes were made."
     }
     Write-Info "  shrinking ${sysLetter}: $([math]::Round($cPart.Size/1GB,1)) GB -> $([math]::Round($newCSize/1GB,1)) GB ..."
     Resize-Partition -DriveLetter $sysLetter -Size $newCSize -ErrorAction Stop
@@ -5008,6 +6065,287 @@ function Register-MiosWslVmCreator([string]$Creator) {
     throw 'The WSL firewall creator did not appear after registration; provisioning stopped before MiOS-DEV.'
 }
 
+function Get-MiosTomlStringArray {
+    # A TOML array of quoted strings (single- or multi-line, comments allowed) from the layered TOML. The first layer
+    # that declares the key wins, an empty array included. Returns $null when no layer declares it. -VendorOnly reads the
+    # system SSOT alone: the trust anchor an elevated step bounds the operator layer with.
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key, [switch]$VendorOnly)
+    $layers = if ($VendorOnly) { @((Resolve-MiosVendorTomlText)) } else { @((Resolve-MiosTomlText), (Resolve-MiosVendorTomlText)) }
+    foreach ($txt in $layers) {
+        if (-not $txt) { continue }
+        $mSec = [regex]::Match($txt, '(?ms)^\[' + [regex]::Escape($Section) + '\][ \t]*\r?\n(?<body>.*?)(?=^\[[^\]]+\]|\z)')
+        if (-not $mSec.Success) { continue }
+        $body = $mSec.Groups['body'].Value
+        $mKey = [regex]::Match($body, '(?m)^[ \t]*' + [regex]::Escape($Key) + '[ \t]*=[ \t]*\[')
+        if (-not $mKey.Success) { continue }
+        $items = New-Object System.Collections.Generic.List[string]
+        $i = $mKey.Index + $mKey.Length; $closed = $false
+        while ($i -lt $body.Length) {
+            $c = $body[$i]
+            if ($c -eq ']') { $closed = $true; break }
+            if ($c -eq '#') { while ($i -lt $body.Length -and $body[$i] -ne "`n") { $i++ }; continue }
+            if ($c -eq '"' -or $c -eq "'") {
+                $end = $body.IndexOf($c, $i + 1)
+                if ($end -lt 0) { break }
+                $value = $body.Substring($i + 1, $end - $i - 1)
+                if ($value.Contains('\') -or $value.Contains("`n")) { throw "Unsupported string in mios.toml [$Section].$Key." }
+                $items.Add($value); $i = $end + 1; continue
+            }
+            if ($c -eq ',' -or [char]::IsWhiteSpace($c)) { $i++; continue }
+            throw "mios.toml [$Section].$Key must be an array of quoted strings."
+        }
+        if (-not $closed) { throw "mios.toml [$Section].$Key is an unterminated array." }
+        return , $items.ToArray()
+    }
+    return $null
+}
+
+function Get-MiosVendorBoundedList {
+    # A [firewall.windows] list for an elevated step: the system SSOT declares the most it may open, and the operator layer
+    # can only narrow it. Operator entries the system SSOT does not list are refused, never added.
+    param([Parameter(Mandatory)][string]$Section, [Parameter(Mandatory)][string]$Key)
+    $vendor = Get-MiosTomlStringArray -Section $Section -Key $Key -VendorOnly
+    if ($null -eq $vendor) { return [pscustomobject]@{ Values = @(); Refused = @("mios.toml [$Section].$Key is not declared by the system SSOT") } }
+    $effective = Get-MiosTomlStringArray -Section $Section -Key $Key
+    $values = @(); $refused = @()
+    foreach ($item in @($effective)) {
+        if (@($vendor | Where-Object { $_ -ieq $item }).Count) { if (@($values | Where-Object { $_ -ieq $item }).Count -eq 0) { $values += $item } }
+        else { $refused += "operator [$Section].$Key entry '$item' is outside the system SSOT" }
+    }
+    return [pscustomobject]@{ Values = $values; Refused = $refused }
+}
+
+function Get-MiosWslServicePortPlan {
+    # MiOS-DEV's service ports, from SSOT only: each [firewall.windows].expose key resolved through [ports].<key>, shifted
+    # by [ports].stack_id * 10000. [firewall].open_ports is the guest firewalld list (it carries pgvector) and is never read
+    # here. Port numbers and stack_id come from the system SSOT alone, so the user-writable layer cannot point an exposed
+    # key at another listener. A key without a valid [ports] value opens nothing and is reported as refused.
+    $plan = [pscustomobject]@{ Ports = [ordered]@{}; Refused = @() }
+    $ports = [ordered]@{}
+    $list = Get-MiosVendorBoundedList -Section 'firewall.windows' -Key 'expose'
+    $plan.Refused += $list.Refused
+    $stack = Get-MiosTomlValue -Section 'ports' -Key 'stack_id' -Default 0 -VendorOnly
+    if ($stack -isnot [int] -or $stack -lt 0) { throw 'mios.toml [ports].stack_id must be a nonnegative integer.' }
+    $seen = @{}
+    foreach ($key in $list.Values) {
+        if ($key -notmatch '^[a-z][a-z0-9_]*$') { $plan.Refused += "expose entry '$key' is not a [ports] key name"; continue }
+        if ($ports.Contains($key)) { continue }
+        $base = Get-MiosTomlValue -Section 'ports' -Key $key -Default 0 -VendorOnly
+        if ($base -isnot [int] -or $base -lt 1 -or $base -gt 65535) { $plan.Refused += "$key has no valid [ports].$key value"; continue }
+        $port = $base + ($stack * 10000)
+        if ($port -gt 65535) { $plan.Refused += "$key resolves to $port with stack_id $stack, above 65535"; continue }
+        if ($seen.ContainsKey($port)) { $plan.Refused += "$key repeats port $port of $($seen[$port])"; continue }
+        $seen[$port] = $key
+        $ports[$key] = $port
+    }
+    $plan.Ports = $ports
+    return $plan
+}
+
+function ConvertTo-MiosNetworkPrefix {
+    # The network address of IP/PrefixLength in CIDR form (192.168.1.37/24 -> 192.168.1.0/24).
+    param([Parameter(Mandatory)][Net.IPAddress]$Address, [Parameter(Mandatory)][int]$PrefixLength)
+    $bytes = $Address.GetAddressBytes()
+    if ($PrefixLength -lt 1 -or $PrefixLength -gt ($bytes.Length * 8)) { throw 'Invalid prefix length.' }
+    for ($b = 0; $b -lt $bytes.Length; $b++) {
+        $keep = [math]::Min(8, [math]::Max(0, $PrefixLength - ($b * 8)))
+        $bytes[$b] = $bytes[$b] -band [byte]((0xFF -shl (8 - $keep)) -band 0xFF)
+    }
+    return ([Net.IPAddress]::new($bytes)).ToString() + '/' + $PrefixLength
+}
+
+function ConvertTo-MiosCanonicalPrefix {
+    # One rule address in the form this script writes (network/length), whatever form Windows reads it back in:
+    # a bare address (a host prefix), address/length, or IPv4 address/dotted-mask. Anything else is returned as written.
+    param([AllowEmptyString()][string]$Text)
+    $t = $Text.Trim()
+    $ipText = $t; $len = $null
+    if ($t -match '^([^/]+)/(.+)$') {
+        $ipText = $Matches[1]; $tail = $Matches[2]
+        if ($tail -match '^[0-9]{1,3}$') { $len = [int]$tail }
+        else {
+            $mask = $null
+            if (-not [Net.IPAddress]::TryParse($tail, [ref]$mask) -or $mask.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) { return $t }
+            $bits = ''
+            foreach ($byte in $mask.GetAddressBytes()) { $bits += [Convert]::ToString($byte, 2).PadLeft(8, '0') }
+            if ($bits -notmatch '^1*0*$') { return $t }
+            $len = $bits.IndexOf('0'); if ($len -lt 0) { $len = 32 }
+        }
+    }
+    $ip = $null
+    if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { return $t }
+    $bitsMax = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+    if ($null -eq $len) { $len = $bitsMax }
+    if ($len -lt 1 -or $len -gt $bitsMax) { return $t }
+    return ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+}
+
+function Test-MiosPrefixWithin {
+    # True when CIDR Inner lies wholly inside CIDR Outer (same family, at least as long a prefix, same network bits).
+    param([Parameter(Mandatory)][string]$Inner, [Parameter(Mandatory)][string]$Outer)
+    if ($Inner -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $iIp = [Net.IPAddress]::Parse($Matches[1]); $iLen = [int]$Matches[2]
+    if ($Outer -notmatch '^(.+)/([0-9]{1,3})$') { return $false }; $oIp = [Net.IPAddress]::Parse($Matches[1]); $oLen = [int]$Matches[2]
+    if ($iIp.AddressFamily -ne $oIp.AddressFamily -or $iLen -lt $oLen) { return $false }
+    return ((ConvertTo-MiosNetworkPrefix -Address $iIp -PrefixLength $oLen) -eq (ConvertTo-MiosNetworkPrefix -Address $oIp -PrefixLength $oLen))
+}
+
+function Resolve-MiosWslRemoteScope {
+    # SSOT remote_addresses to the explicit prefixes a Hyper-V rule accepts. Hyper-V rules take only addresses, subnets
+    # and ranges (MSFT_NetFirewallHyperVRule.RemoteAddresses), not the LocalSubnet keyword host rules take, so LocalSubnet
+    # becomes the subnets of this host's preferred unicast addresses, loopback and link-local excluded.
+    # Anything unscoped (Any, /0, 0.0.0.0, ::) is refused, never widened.
+    param([AllowEmptyCollection()][string[]]$Entries)
+    $scope = New-Object System.Collections.Generic.List[string]
+    $refused = @()
+    foreach ($raw in @($Entries)) {
+        $entry = ([string]$raw).Trim()
+        if ($entry -ieq 'LocalSubnet') {
+            if (-not (Get-Command Get-NetIPAddress -ErrorAction SilentlyContinue)) { $refused += 'LocalSubnet: Get-NetIPAddress is unavailable'; continue }
+            $found = 0
+            foreach ($a in @(Get-NetIPAddress -AddressState Preferred -ErrorAction Stop)) {
+                $ip = $null
+                if (-not [Net.IPAddress]::TryParse(([string]$a.IPAddress -replace '%.*$', ''), [ref]$ip)) { continue }
+                if ([Net.IPAddress]::IsLoopback($ip) -or $ip.IsIPv6LinkLocal) { continue }
+                if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork -and $ip.GetAddressBytes()[0] -eq 169 -and $ip.GetAddressBytes()[1] -eq 254) { continue }
+                $len = [int]$a.PrefixLength
+                if ($len -lt 1) { continue }
+                $cidr = ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $len
+                if (-not $scope.Contains($cidr)) { $scope.Add($cidr) }
+                $found++
+            }
+            if (-not $found) { $refused += 'LocalSubnet: no preferred unicast address on this host' }
+            continue
+        }
+        $ipText = $entry; $prefix = $null
+        if ($entry -match '^([^/]+)/([0-9]{1,3})$') { $ipText = $Matches[1]; $prefix = [int]$Matches[2] }
+        $ip = $null
+        if (-not [Net.IPAddress]::TryParse($ipText, [ref]$ip)) { $refused += "'$entry' is not an address, CIDR or LocalSubnet"; continue }
+        $bits = if ($ip.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork) { 32 } else { 128 }
+        if ($null -eq $prefix) { $prefix = $bits }
+        if ($prefix -lt 1 -or $prefix -gt $bits -or $ip.Equals([Net.IPAddress]::Any) -or $ip.Equals([Net.IPAddress]::IPv6Any)) {
+            $refused += "'$entry' is unscoped"; continue
+        }
+        $cidr = ConvertTo-MiosNetworkPrefix -Address $ip -PrefixLength $prefix
+        if (-not $scope.Contains($cidr)) { $scope.Add($cidr) }
+    }
+    return [pscustomobject]@{ Addresses = @($scope | Sort-Object); Refused = $refused }
+}
+
+function Resolve-MiosWslServiceScope {
+    # The [firewall.windows].remote_addresses scope for the elevated Hyper-V rules. The system SSOT bounds it: an
+    # operator prefix is kept only when it lies inside a prefix the system SSOT resolves to, so the user-writable layer
+    # can narrow the scope but never widen it.
+    $vendor = Get-MiosTomlStringArray -Section 'firewall.windows' -Key 'remote_addresses' -VendorOnly
+    if ($null -eq $vendor) { return [pscustomobject]@{ Addresses = @(); Refused = @('mios.toml [firewall.windows].remote_addresses is not declared by the system SSOT') } }
+    $bound = Resolve-MiosWslRemoteScope -Entries $vendor
+    $effective = Get-MiosTomlStringArray -Section 'firewall.windows' -Key 'remote_addresses'
+    $scope = Resolve-MiosWslRemoteScope -Entries @($effective)
+    $kept = @(); $refused = @($scope.Refused)
+    foreach ($cidr in $scope.Addresses) {
+        if (@($bound.Addresses | Where-Object { Test-MiosPrefixWithin -Inner $cidr -Outer $_ }).Count) { $kept += $cidr }
+        else { $refused += "operator scope '$cidr' is outside the system SSOT scope" }
+    }
+    return [pscustomobject]@{ Addresses = @($kept | Sort-Object); Refused = $refused }
+}
+
+function Sync-MiosWslServicePortRules {
+    # One inbound Hyper-V allow rule per SSOT service port for the WSL VM creator, scoped to [firewall.windows]
+    # (remote_addresses: the local subnet and the tailnet; profiles: never Any). Reconciled by name: missing rules are
+    # created, drifted rules corrected, and rules for ports that left SSOT removed. The default inbound action is never touched.
+    param([Parameter(Mandatory)][string]$Creator)
+    $prefix = 'MiOS-DEV-Port-'
+    $result = [pscustomobject]@{ Status = 'ready'; Opened = @(); Removed = @(); Refused = @(); Addresses = @(); Profiles = @() }
+    $cmdlets = @('Get-NetFirewallHyperVRule', 'New-NetFirewallHyperVRule', 'Set-NetFirewallHyperVRule', 'Remove-NetFirewallHyperVRule')
+    $missing = @($cmdlets | Where-Object { -not (Get-Command $_ -ErrorAction SilentlyContinue) })
+    if ($missing.Count) {
+        Write-Host "  [!] WSL-SERVICE-PORTS-UNSUPPORTED: $($missing -join ', ') unavailable (Hyper-V firewall needs Windows 11 22H2+ with WSL 2.0.9+); MiOS-DEV service ports stay closed to the LAN and tailnet." -ForegroundColor Yellow
+        $result.Status = 'unsupported'
+        return $result
+    }
+    $plan = Get-MiosWslServicePortPlan
+    $result.Refused += $plan.Refused
+    $scope = Resolve-MiosWslServiceScope
+    $result.Refused += $scope.Refused
+    $result.Addresses = $scope.Addresses
+    $profileList = Get-MiosVendorBoundedList -Section 'firewall.windows' -Key 'profiles'
+    $result.Refused += $profileList.Refused
+    $profiles = @()
+    foreach ($p in $profileList.Values) {
+        $name = @('Domain', 'Private', 'Public') | Where-Object { $_ -ieq $p }
+        if ($name) { $profiles += $name } else { $result.Refused += "profile '$p' is not Domain, Private or Public" }
+    }
+    $profiles = @($profiles | Sort-Object -Unique)
+    $result.Profiles = $profiles
+    foreach ($r in $result.Refused) { Write-Host "  [!] WSL service port refused ($r)" -ForegroundColor Yellow }
+    $desired = [ordered]@{}
+    if (-not $scope.Addresses.Count -or -not $profiles.Count) {
+        Write-Host '  [!] WSL-SERVICE-PORTS-UNSCOPED: mios.toml [firewall.windows] resolved to no remote address or no firewall profile; no MiOS-DEV service port is opened.' -ForegroundColor Yellow
+        $result.Status = 'unscoped'
+    } else {
+        foreach ($key in $plan.Ports.Keys) {
+            $desired[$prefix + ($key -replace '[^A-Za-z0-9-]', '-')] = @{ Key = $key; Port = [string]$plan.Ports[$key] }
+        }
+    }
+    $profileText = $profiles -join ','
+    $existing = @{}
+    foreach ($rule in @(Get-NetFirewallHyperVRule -ErrorAction Stop)) {
+        if ([string]$rule.Name -like ($prefix + '*')) { $existing[[string]$rule.Name] = $rule }
+    }
+    # Remove first: a port that left SSOT, or a rule whose action/direction/creator/state cannot be corrected in place.
+    foreach ($name in @($existing.Keys)) {
+        $rule = $existing[$name]
+        $sameCreator = $false
+        $id = [guid]::Empty
+        if ([guid]::TryParse([string]$rule.VMCreatorId, [ref]$id)) { $sameCreator = ($id -eq [guid]$Creator) }
+        $fixed = $sameCreator -and ([string]$rule.Direction -eq 'Inbound') -and ([string]$rule.Action -eq 'Allow') -and
+            ([string]$rule.Enabled -ne 'False')
+        if (-not $desired.Contains($name) -or -not $fixed) {
+            Remove-NetFirewallHyperVRule -Name $name -ErrorAction Stop
+            $existing.Remove($name)
+            if (-not $desired.Contains($name)) { $result.Removed += $name }
+        }
+    }
+    foreach ($name in $desired.Keys) {
+        $want = $desired[$name]
+        $display = "MiOS-DEV $($want.Key) ($($want.Port)/tcp)"
+        try {
+            if ($existing.ContainsKey($name)) {
+                $rule = $existing[$name]
+                $ports = @($rule.LocalPorts | ForEach-Object { [string]$_ })
+                # Windows may read an address back as address/mask or a bare host: compare in the form written.
+                $addrs = @($rule.RemoteAddresses | ForEach-Object { ConvertTo-MiosCanonicalPrefix ([string]$_) } | Sort-Object)
+                # Profiles may read back as names ('Domain, Private') or as the flag value (1 Domain, 2 Private, 4 Public).
+                $ruleProfiles = @(([string]$rule.Profiles) -split '[,\s]+' | Where-Object { $_ } | ForEach-Object {
+                    if ($_ -match '^[0-9]+$') { $bits = [int]$_; if ($bits -band 1) { 'Domain' }; if ($bits -band 2) { 'Private' }; if ($bits -band 4) { 'Public' } } else { $_ }
+                } | Sort-Object -Unique)
+                $drift = ([string]$rule.Protocol -notin @('TCP', '6')) -or ($ports.Count -ne 1 -or $ports[0] -ne $want.Port) -or
+                    (($addrs -join ',') -ne ($scope.Addresses -join ',')) -or (($ruleProfiles -join ',') -ne $profileText)
+                if ($drift) {
+                    Set-NetFirewallHyperVRule -Name $name -NewDisplayName $display -Protocol TCP -LocalPorts $want.Port `
+                        -RemoteAddresses $scope.Addresses -Profiles $profileText -ErrorAction Stop | Out-Null
+                }
+            } else {
+                New-NetFirewallHyperVRule -Name $name -DisplayName $display -VMCreatorId $Creator -Direction Inbound -Action Allow `
+                    -Protocol TCP -LocalPorts $want.Port -RemoteAddresses $scope.Addresses -Profiles $profileText -ErrorAction Stop | Out-Null
+            }
+            $result.Opened += "$($want.Key)/$($want.Port)"
+        } catch {
+            $result.Refused += "$($want.Key): $($_.Exception.Message)"
+            Write-Host "  [!] WSL-SERVICE-PORT-FAILED: $($want.Key) ($($want.Port)/tcp) stays closed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    if ($result.Opened.Count) {
+        Write-Host "  [+] MiOS-DEV inbound: $($result.Opened -join ', ') from $($scope.Addresses -join ', ') on $profileText" -ForegroundColor Green
+    }
+    $mode = Resolve-MiosWslNetworkingMode
+    if ($mode -ne 'mirrored') {
+        Write-Host "  [i] WSL networking_mode=$mode`: LAN and tailnet clients reach a NAT guest through the host port proxy and the Windows Defender rules build-mios.ps1 scopes to [firewall.windows]; Windows localhost through the loopback the policy allows." -ForegroundColor Cyan
+    } else {
+        Write-Host '  [i] WSL networking_mode=mirrored: Windows<->WSL loopback also needs the image to leave loopback0 unmanaged by NetworkManager.' -ForegroundColor Cyan
+    }
+    return $result
+}
+
 function Set-MiosWslFirewallPolicy {
     $creator = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
     $provider = @('Get-NetFirewallHyperVVMCreator', 'Get-NetFirewallHyperVVMSetting', 'Set-NetFirewallHyperVVMSetting', 'Get-NetFirewallHyperVRule',
@@ -5056,6 +6394,8 @@ function Set-MiosWslFirewallPolicy {
         New-NetFirewallHyperVRule -Name $name -DisplayName $name -VMCreatorId $creator -Direction Inbound -Action Allow `
             -Protocol $protocol -LocalPorts ([string]$rule['local_port']) -RemoteAddresses $remote -ErrorAction Stop | Out-Null
     }
+    # MiOS-DEV's SSOT service ports, reconciled after the policy reads back inbound Block.
+    $null = Sync-MiosWslServicePortRules -Creator $creator
 }
 
 function Invoke-MiosPlatformGate {
@@ -5075,23 +6415,23 @@ function Initialize-MiosMachineStorage {
     # Install-robustness (B2): hardware-virtualization preflight. WSL2 +
     # `podman machine init` cannot start without VT-x/AMD-V (SVM) enabled in BIOS/
     # UEFI. Fail fast before Initialize-DataDisk (reboot/disk changes).
-    try {
-        $_virtFw = $true; $_hyperv = $true
-        try { $_virtFw = [bool](Get-CimInstance Win32_Processor -EA Stop | Select-Object -First 1 -Expand VirtualizationFirmwareEnabled) } catch {}
-        try { $_hyperv = [bool](Get-CimInstance Win32_ComputerSystem -EA Stop).HypervisorPresent } catch {}
-        if (-not $_virtFw -and -not $_hyperv) {
-            Write-Err "Hardware virtualization is DISABLED -- WSL2 + podman machine cannot start."
-            Write-Err "  -> Enable Intel VT-x / AMD-V (SVM) in BIOS/UEFI, then re-run the bootstrap."
-            exit 1
-        }
-    } catch {}
+    # A failure here throws its public reason back through the worker pipe to the operator. It never exits the worker silently
+    # and never reaps or cleans anything: existing distributions, persistent state, sources and models stay as they are.
+    $_virtFw = $true; $_hyperv = $true
+    try { $_virtFw = [bool](Get-CimInstance Win32_Processor -EA Stop | Select-Object -First 1 -Expand VirtualizationFirmwareEnabled) } catch {}
+    try { $_hyperv = [bool](Get-CimInstance Win32_ComputerSystem -EA Stop).HypervisorPresent } catch {}
+    if (-not $_virtFw -and -not $_hyperv) {
+        Write-Err "Hardware virtualization is DISABLED -- WSL2 + podman machine cannot start."
+        Write-Err "  -> Enable Intel VT-x / AMD-V (SVM) in BIOS/UEFI, then re-run the bootstrap."
+        throw 'Hardware virtualization is disabled: enable Intel VT-x / AMD-V (SVM) in BIOS/UEFI, then re-run. No storage changes were made.'
+    }
 
     Write-Host ''
     Write-Host "  $_msgStep0" -ForegroundColor Cyan
-    $_dataOk = $true
-    try { Initialize-DataDisk } catch { $_dataOk = $false; Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
+    $_dataOk = $true; $_dataReason = ''
+    try { Initialize-DataDisk } catch { $_dataOk = $false; $_dataReason = $_.Exception.Message; Write-Host ('  ' + ($_msgStep0Failed -f $_.Exception.Message)) -ForegroundColor Yellow }
     $_dataDrive = [string](Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default 'C')
-    if ($_dataOk -and -not (Get-Volume -DriveLetter $_dataDrive -ErrorAction SilentlyContinue)) { $_dataOk = $false }
+    if ($_dataOk -and -not (Get-Volume -DriveLetter $_dataDrive -ErrorAction SilentlyContinue)) { $_dataOk = $false; $_dataReason = "configured volume ${_dataDrive}: was not returned by storage discovery" }
     if (-not $_dataOk) {
         Write-Err "Could not provision the ${_dataDrive}:\ data partition -- MiOS stores its containers,"
         Write-Err "  packages, config and repos there, so the install cannot continue without it."
@@ -5099,36 +6439,52 @@ function Initialize-MiosMachineStorage {
         Write-Err "    - Under ~64 GB free on C:  (free some space / empty the Recycle Bin, then re-run)."
         Write-Err "    - C: is BitLocker-locked or non-shrinkable  (suspend it, then re-run the one-liner:"
         Write-Err "        manage-bde -protectors -disable C: -RebootCount 1)."
-        try { Invoke-MiOSFullReap } catch {}
-        exit 1
+        throw "Could not provision the ${_dataDrive}:\ data partition ($_dataReason); existing distributions, persistent state and source checkouts are preserved."
     }
 }
 
+function Get-MiosMachineTomlRoots {
+    # The system root and an explicitly selected, already provisioned secondary drive only.
+    # A drive merely being present never opts it in. An absent selected drive waits for storage provisioning.
+    $_systemDrive = $(if ($env:SystemDrive) { [string]$env:SystemDrive } else { 'C:' }).Trim().TrimEnd('\').ToUpperInvariant()
+    if ($_systemDrive -notmatch '^[A-Z]:$') { throw 'The Windows system drive must be one absolute drive root.' }
+    $_selectedDrive = ([string](Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default $_systemDrive.Substring(0, 1))).Trim().ToUpperInvariant()
+    if ($_selectedDrive -notmatch '^[A-Z]:?$') { throw 'The configured host storage drive must be one Windows drive letter.' }
+    $_systemDrive
+    $_dataRoot = $_selectedDrive.Substring(0, 1) + ':'
+    if ($_dataRoot -cne $_systemDrive -and (Test-Path -LiteralPath ($_dataRoot + '\') -PathType Container)) { $_dataRoot }
+}
+
 function Publish-MiosMachineToml {
-    param([Parameter(Mandatory)]$Context)
-    # Restrict/repair old readable credential copies before network fetching or any later provisioning can fail.
-    $_hostSecurityDrive = if ($env:SystemDrive) { $env:SystemDrive } else { 'C:' }
-    $null = Repair-MiosHostTierCredentials -Paths @((Join-Path $_hostSecurityDrive 'etc\mios\mios.toml'), 'M:\etc\mios\mios.toml')
-
-
+    param([Parameter(Mandatory)]$Context, [string[]]$AdmittedRoots)
+    # Core supplies its one admitted-root snapshot. Standalone callers resolve once here.
+    # Validate a supplied snapshot against the same in-memory selection without adding newly appeared drives.
+    if ($PSBoundParameters.ContainsKey('AdmittedRoots')) {
+        $_roots = @($AdmittedRoots)
+        $_systemRoot = $(if ($env:SystemDrive) { [string]$env:SystemDrive } else { 'C:' }).Trim().TrimEnd('\').ToUpperInvariant()
+        $_selectedDrive = ([string](Get-MiosTomlValue -Section 'bootstrap.host_storage' -Key 'drive_letter' -Default $_systemRoot.Substring(0, 1))).Trim().ToUpperInvariant()
+        if ($_roots.Count -lt 1 -or $_roots.Count -gt 2 -or
+            @($_roots | Where-Object { $_ -cnotmatch '^[A-Z]:$' }).Count -or $_roots[0] -cne $_systemRoot -or
+            $_selectedDrive -notmatch '^[A-Z]:?$' -or
+            ($_roots.Count -eq 2 -and ($_roots[1] -ceq $_roots[0] -or $_roots[1] -cne ($_selectedDrive.Substring(0, 1) + ':')))) {
+            throw 'Machine TOML publication received an invalid admitted-root snapshot.'
+        }
+    } else { $_roots = @(Get-MiosMachineTomlRoots) }
+    # Restrict/repair old readable credential copies only inside those admitted roots.
+    $null = Repair-MiosHostTierCredentials -Paths @($_roots | ForEach-Object { Join-Path $_ 'etc\mios\mios.toml' })
     try {
         $_miosVendorToml = Resolve-MiosVendorTomlText
         $_miosHostToml = Resolve-MiosTomlText
-        $_sysLetter = if ($env:SystemDrive) { $env:SystemDrive.TrimEnd(':') } else { 'C' }
-        $_sysDrive  = "${_sysLetter}:"
         if ($_miosVendorToml) {
-            $_vendorDst = Join-Path $_sysDrive 'usr\share\mios\mios.toml'
-            Write-MiosVendorToml -Path $_vendorDst -Text $_miosVendorToml
-            if (Test-Path 'M:\') { Write-MiosVendorToml -Path 'M:\usr\share\mios\mios.toml' -Text $_miosVendorToml }
-            if ($_miosHostToml) {
-                # The operator layer stays in the user tier (~\.config\mios); the host tier gets its credential-free projection.
-                Write-MiosHostToml -Path (Join-Path $_sysDrive 'etc\mios\mios.toml') -Text $_miosHostToml
-                if (Test-Path 'M:\') {
-                    Write-MiosHostToml -Path 'M:\etc\mios\mios.toml' -Text $_miosHostToml
+            foreach ($_root in $_roots) {
+                Write-MiosVendorToml -Path (Join-Path $_root 'usr\share\mios\mios.toml') -Text $_miosVendorToml
+                if ($_miosHostToml) {
+                    # The operator layer stays in the user tier; the host tier gets its credential-free projection.
+                    Write-MiosHostToml -Path (Join-Path $_root 'etc\mios\mios.toml') -Text $_miosHostToml
+                    Write-Host "  [+] Full vendor mios.toml -> $_root\usr\share\mios; operator profile (credential-free) -> $_root\etc\mios" -ForegroundColor DarkGray
+                } else {
+                    Write-Host "  [+] Full vendor mios.toml -> $_root\usr\share\mios (no host override found)" -ForegroundColor DarkGray
                 }
-                Write-Host "  [+] Full vendor mios.toml -> $_sysDrive\usr\share\mios; operator profile (credential-free) -> $_sysDrive\etc\mios" -ForegroundColor DarkGray
-            } else {
-                Write-Host "  [+] Full vendor mios.toml -> $_sysDrive\usr\share\mios (no host override found)" -ForegroundColor DarkGray
             }
         } else {
             Write-Host "  [!] Full vendor mios.toml could not be loaded -- mios.toml was not overwritten" -ForegroundColor Yellow
@@ -5136,12 +6492,13 @@ function Publish-MiosMachineToml {
     } catch {
         throw 'Host TOML security/promotion failed; provisioning stopped. Check host-tier ACLs before retrying.'
     }
-    $_checkDst = if (Test-Path (Join-Path $_sysDrive 'usr\share\mios\mios.toml')) { Join-Path $_sysDrive 'usr\share\mios\mios.toml' } else { 'M:\usr\share\mios\mios.toml' }
-    if (-not (Test-Path -LiteralPath $_checkDst -PathType Leaf) -or
-        [IO.File]::ReadAllText($_checkDst, (New-Object System.Text.UTF8Encoding($false))) -cne $_miosVendorToml) {
-        throw "Full fetched system mios.toml was not staged exactly on $_checkDst; refusing to continue the installer."
+    foreach ($_root in $_roots) {
+        $_checkDst = Join-Path $_root 'usr\share\mios\mios.toml'
+        if (-not (Test-Path -LiteralPath $_checkDst -PathType Leaf) -or
+            [IO.File]::ReadAllText($_checkDst, (New-Object System.Text.UTF8Encoding($false))) -cne $_miosVendorToml) {
+            throw "Full fetched system mios.toml was not staged exactly on $_checkDst; refusing to continue the installer."
+        }
     }
-
 }
 
 function Register-MiosBootstrapResume {
@@ -5206,7 +6563,12 @@ function Invoke-MiosMachinePreparationCore {
     if (-not (Test-MiosElevated)) { throw 'Machine preparation requires an elevated token.' }
     Assert-MiosOriginContext $Context
     $script:MiosMachineOrigin = $Context
-    Publish-MiosMachineToml -Context $Context
+    # Recover exactly the TOML-selected existing roots, after origin validation and before any publication or repair.
+    $_tomlRoots = @(Get-MiosMachineTomlRoots)
+    foreach ($_tomlRoot in $_tomlRoots) {
+        $null = Invoke-MiosMachineBoundaryRecovery -OriginSid ([string]$Context.Sid) -Root $_tomlRoot
+    }
+    Publish-MiosMachineToml -Context $Context -AdmittedRoots $_tomlRoots
     Initialize-MiosMachineStorage -Context $Context
     Add-MiosDefenderExclusions
     # The readiness gate remains mandatory and outside a warning-only catch.
@@ -5218,6 +6580,8 @@ function Invoke-MiosMachinePreparationCore {
     if (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName 'MiOS-Resume-Bootstrap' -Confirm:$false -ErrorAction SilentlyContinue
     }
+    # The Podman client must match the machine-os MiOS-DEV is provisioned from; this elevated stage is the only install path.
+    $null = Install-MiosPodmanClient
     Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -Type DWord -Force -ErrorAction Stop
     return $_platform
 }
@@ -5237,10 +6601,11 @@ $_platform = Invoke-MiosMachinePreparation -Context $Script:MiosOriginContext
 Complete-MiosMachinePreparation -Result $_platform
 & wsl.exe --set-default-version 2 2>&1 | Out-Null
 
-$_netMode  = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'networking_mode'      -Default 'NAT')
+$_netMode  = Resolve-MiosWslNetworkingMode
 $_lhfwd    = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'localhost_forwarding' -Default 'true')
 $_fwall    = Get-MiosTomlValue -Section 'wsl2' -Key 'firewall' -Default $true
 $_gui      = [string](Get-MiosTomlValue -Section 'wsl2' -Key 'gui_applications'     -Default 'true')
+$_loopback = [bool](Get-MiosTomlValue -Section 'wsl2' -Key 'host_address_loopback' -Default $true)
 $_isMirror = ($_netMode -ieq 'mirrored')
 $_wslHostRamGB = try { [math]::Floor((Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).TotalPhysicalMemory / 1GB) } catch { 16 }
 $_wslReservePct = [math]::Min(95, [math]::Max(0, [int](Get-MiosTomlValue -Section 'bootstrap.dev_vm.host_reserve' -Key 'memory_pct' -Default 50)))
@@ -5258,7 +6623,7 @@ if (-not $_isMirror -and $_lhfwd -ieq 'true') { $_keyLines.Add('localhostForward
 if ($_gui -ieq 'true') { $_keyLines.Add('guiApplications=true') }
 
 # Reconcile the entire managed key set, including a stale firewall=false even when all resource keys match.
-$_desiredWslConfig = Get-MiosWslConfigText -Existing $_wslCfgRaw -ManagedLines $_keyLines.ToArray() -Firewall $_fwall
+$_desiredWslConfig = Get-MiosWslConfigText -Existing $_wslCfgRaw -ManagedLines $_keyLines.ToArray() -Firewall $_fwall -HostAddressLoopback $_loopback
 if ($_desiredWslConfig -cne $_wslCfgRaw) {
     [IO.File]::WriteAllText($_wslCfg, $_desiredWslConfig, (New-Object Text.UTF8Encoding($false)))
     Write-Host "  [+] .wslconfig: $_netMode mode, ${_wslRamGB}GB RAM and SSOT firewall filtering reconciled" -ForegroundColor Green
@@ -5602,10 +6967,13 @@ if ($_bootstrapExit -eq 0) {
     }
     # Reconcile after the legacy app registrar so its per-action links cannot
     # reappear at the end of a fresh install. Uninstall remains in Windows Settings.
-    $_nativeProjection = Join-Path (Get-MiosWindowsInstallRoot) 'bin\mios-native-client-setup.ps1'
-    if (-not (Test-Path -LiteralPath $_nativeProjection)) { $_nativeProjection = Join-Path $env:ProgramData 'MiOS\bin\mios-native-client-setup.ps1' }
+    $_layout = Get-MiosInstalledLayout
+    $_nativeProjection = Join-Path $_layout.NativeBin 'mios-native-client-setup.ps1'
     if (Test-Path -LiteralPath $_nativeProjection) {
-        & $_nativeProjection -RuntimeOnly -BinDirectory (Split-Path -Parent $_nativeProjection)
+        # A per-user layout projects in User scope: no Machine variable, all-users key or shortcut, and no elevation.
+        $_projectionArgs = @{ RuntimeOnly = $true; BinDirectory = (Split-Path -Parent $_nativeProjection) }
+        if ($_layout.Scope -eq 'User') { $_projectionArgs['Scope'] = 'User'; $_projectionArgs['ProfilePath'] = $_layout.ProfileBody }
+        & $_nativeProjection @_projectionArgs
     }
 }
 

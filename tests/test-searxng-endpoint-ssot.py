@@ -358,7 +358,9 @@ $ErrorActionPreference = 'Stop'
 $errs = $null; $toks = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Src, [ref]$toks, [ref]$errs)
 if ($errs.Count) { throw ("build-mios.ps1 does not parse: " + $errs[0].Message) }
-$want = 'Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosSsotPort', 'Set-MiosLanFirewallRules', 'Set-MiosLanPortProxy'
+$want = 'Resolve-MiosTomlLayers', 'Get-MiosTomlValue', 'Get-MiosSsotPort', 'Resolve-MiosWslNetworkingMode', 'ConvertTo-MiosNetworkPrefix',
+    'Test-MiosPrefixWithin', 'Get-MiosVendorTomlValue', 'Get-MiosLanExposurePlan', 'Set-MiosLanFirewallRules', 'Set-MiosLanPortProxy',
+    'Get-MiosVendorPortSet', 'Resolve-MiosWslVmAddress', 'Resolve-MiosBuilderDistribution'
 $fns = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $want -contains $n.Name }, $false))
 if ($fns.Count -ne $want.Count) { throw ("expected " + ($want -join ', ') + "; found " + (($fns | ForEach-Object Name) -join ', ')) }
 function Get-Run([string]$Anchor, [scriptblock]$First, [scriptblock]$Last) {
@@ -382,7 +384,7 @@ function Log-Ok { param($T) }
 function Log-Info { param($T) $script:infos += $T }
 function Log-Warn { param($T) $script:warnings += $T }
 function Get-NetFirewallRule { param($DisplayName, $ErrorAction) $null }
-function New-NetFirewallRule { param($DisplayName, $Description, $Direction, $Action, $Protocol, $LocalPort, $Profile, $ErrorAction)
+function New-NetFirewallRule { param($DisplayName, $Description, $Direction, $Action, $Protocol, $LocalPort, $Profile, $RemoteAddress, $ErrorAction)
     $script:rules += [pscustomobject]@{ Name = $DisplayName; Port = [int]$LocalPort } }
 function Remove-NetFirewallRule { param($DisplayName, $ErrorAction) $script:removed += [string]$DisplayName }
 function netsh {
