@@ -591,7 +591,10 @@ pub mod emit_build {
             assert!(emit_build_shell(&data, 0).is_err());
             // The build-only toolchain is required: without it node-gyp cannot build node-pty.
             let mut data = fixture();
-            data["packages"].as_table_mut().unwrap().remove("agent_cli_build");
+            data["packages"]
+                .as_table_mut()
+                .unwrap()
+                .remove("agent_cli_build");
             assert!(emit_build_shell(&data, 0).is_err());
             let mut data = fixture();
             data["packages"]["agent_cli_build"]["pkgs"] = Value::Array(Vec::new());
