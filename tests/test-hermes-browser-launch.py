@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-# AI-hint: Runs mios-hermes-browser start against fake dbus-run-session and flatpak binaries and asserts the argv it execs: flatpak run with --no-documents-portal (the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot succeed under NoNewPrivileges), the profile and runtime dirs shared, the app id, and headless CDP on 127.0.0.1.
+# AI-hint: Runs mios-hermes-browser start against a stub session-bus wrapper and asserts the argv it execs: flatpak run with --no-documents-portal (the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot succeed under NoNewPrivileges), the profile and runtime dirs shared, the app id, and headless CDP on 127.0.0.1.
 # AI-related: usr/libexec/mios/mios-hermes-browser, usr/lib/systemd/system/mios-hermes-browser.service, usr/lib/systemd/system/mios-hermes-browser-worker.service
 # AI-doc: usr/share/doc/mios/manual/tests.md
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 LAUNCHER = ROOT / "usr/libexec/mios/mios-hermes-browser"
+# The session-bus wrapper the launcher execs flatpak under, read from the launcher
+# itself; the test replaces it with a stub that records argv and starts no bus.
+WRAPPER = re.search(r"^exec (\S+) -- flatpak run", LAUNCHER.read_text(), re.M).group(1)
 
 
 class HermesBrowserLaunch(unittest.TestCase):
@@ -20,11 +24,11 @@ class HermesBrowserLaunch(unittest.TestCase):
             bin_dir = d / "bin"
             bin_dir.mkdir()
             record = d / "argv"
-            # dbus-run-session -- CMD...: record CMD's argv, one per line, and exit.
-            (bin_dir / "dbus-run-session").write_text(
+            # WRAPPER -- CMD...: record CMD's argv, one per line, and exit.
+            (bin_dir / WRAPPER).write_text(
                 '#!/bin/sh\n[ "$1" = "--" ] && shift\nprintf \'%s\\n\' "$@" > "$RECORD"\n'
             )
-            (bin_dir / "dbus-run-session").chmod(0o755)
+            (bin_dir / WRAPPER).chmod(0o755)
             env = {
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "RECORD": str(record),
