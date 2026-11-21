@@ -1,7 +1,8 @@
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 044d8d60..1477992d 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
-@@ -27,11 +27,35 @@
+@@ -27,11 +27,35 @@ namespace {
  // Raw identity of a surface's last-committed buffer. Taking the pointer does
  // NOT keep the buffer alive (no reference is held), so the client's buffer
  // lifecycle is untouched.
@@ -39,7 +40,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
  }
  
  bool boxEquals(const CBox& a, const CBox& b) {
-@@ -356,19 +380,34 @@
+@@ -356,19 +380,34 @@ void finishSkirtMask(CWindowCapture::SSkirtState& state,
  // the desktop's stack itself -- pane, client, edge pass -- with the same preset.
  class CForeignSnapshotScope {
    public:
@@ -76,7 +77,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
  };
  
  #ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
-@@ -402,8 +441,12 @@
+@@ -402,8 +441,12 @@ static void recordWindowLook(const PHLWINDOW& window, CWindowCapture::SSnapshot&
          1.0f :
          std::clamp(window->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE), 0.0f, 1.0f);
      const auto RES = window->getFullWindowReservedArea();
@@ -91,7 +92,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
  }
  
  // MiOS rotated outputs (hypr3d-mios-transform.patch): Hyprland renders a
-@@ -556,9 +599,11 @@
+@@ -556,9 +599,11 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
      // plus a monitor-sized framebuffer allocation), and skipping it for idle
      // windows is what keeps the room cheap while a screen capture is running.
      const auto ID = reinterpret_cast<std::uintptr_t>(window.get());
@@ -103,7 +104,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
              IT->second.lastBuffer == bufferIdentity(window->resource()) &&
              boxEquals(IT->second.fullBox, fullBox))
              return true;
-@@ -604,20 +649,25 @@
+@@ -604,20 +649,25 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
      const bool     SHIFTED  = shift.x != 0.0 || shift.y != 0.0;
      const Vector2D ORIGINAL = WORKSPACE ? WORKSPACE->m_renderOffset->value() : Vector2D{};
  
@@ -132,7 +133,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
  
      if (!fb)
          return false;
-@@ -643,8 +693,8 @@
+@@ -643,8 +693,8 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
      // the live geometry.
      snapshot.fullBox = fullBox;
      snapshot.sampledBox = CBox{
@@ -143,7 +144,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
          fullBox.w,
          fullBox.h,
      };
-@@ -663,6 +713,7 @@
+@@ -663,6 +713,7 @@ bool CWindowCapture::makeSnapshot(const PHLWINDOW& window, const PHLMONITOR& mon
          destroySnapshotGL(IT->second);
          m_snapshots.erase(IT);
      }
@@ -151,7 +152,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
      m_snapshots.emplace(ID, std::move(snapshot));
  
      refreshSkirtMask(ID, m_snapshots.find(ID)->second, monitor);
-@@ -733,6 +784,9 @@
+@@ -733,6 +784,9 @@ bool CWindowCapture::makeTiledSnapshot(
  
      bool anyTile = false;
  
@@ -161,7 +162,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
      for (int j = 0; j < ROWS; ++j) {
          for (int i = 0; i < COLS; ++i) {
              const float TILE_X = i * MONLOGI.x;
-@@ -752,7 +806,7 @@
+@@ -752,7 +806,7 @@ bool CWindowCapture::makeTiledSnapshot(
  
              SP<Render::IFramebuffer> fb;
              {
@@ -170,19 +171,20 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
                  fb = g_pHyprRenderer->makeSnapshotFB(window);
              }
  
-@@ -789,6 +843,8 @@
-             anyTile = true;
+@@ -790,6 +844,8 @@ bool CWindowCapture::makeTiledSnapshot(
          }
      }
-+
-+    window->m_pinned = WAS_PINNED;
  
++    window->m_pinned = WAS_PINNED;
++
      if (!anyTile)
          return false;
+ 
 diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCompat.cpp
+index 527cc1ce..11842ca5 100644
 --- a/src/HyprlandCompat/WindowsCompat.cpp
 +++ b/src/HyprlandCompat/WindowsCompat.cpp
-@@ -191,6 +191,6 @@
+@@ -205,7 +205,7 @@ bool decoratedSurfaceBox(
      // each side margin so a rogue rule cannot blow the quad up.
      constexpr double MAX_MARGIN = 150.0;
      const double LEFT   = std::clamp<double>(SURF.x - FULL.x, 0.0, MAX_MARGIN);
@@ -190,10 +192,12 @@ diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCo
 +    const double TOP    = std::clamp<double>(std::max<double>(SURF.y - FULL.y, 32.0), 0.0, MAX_MARGIN);
      const double RIGHT  = std::clamp<double>((FULL.x + FULL.w) - (SURF.x + SURF.w), 0.0, MAX_MARGIN);
      const double BOTTOM = std::clamp<double>((FULL.y + FULL.h) - (SURF.y + SURF.h), 0.0, MAX_MARGIN);
+ 
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 58bdca35..21bdf6a1 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
-@@ -126,6 +126,7 @@
+@@ -126,6 +126,7 @@ struct SWPoly {
      float               alpha = 1.0f; // the window's room alpha (g_fsFade etc.)
      bool glassWall = false;
      bool glassFace = false; // walls keep their existing appearance
@@ -201,7 +205,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
      std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
      std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
-@@ -149,6 +150,7 @@
+@@ -149,6 +150,7 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
      front.owner    = back.owner = poly.owner;
      front.glassWall = back.glassWall = poly.glassWall;
      front.glassFace = back.glassFace = poly.glassFace;
@@ -209,7 +213,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      front.glassUV = back.glassUV = poly.glassUV;
      front.glassSurface = back.glassSurface = poly.glassSurface;
      front.glassMetrics = back.glassMetrics = poly.glassMetrics;
-@@ -195,6 +197,23 @@
+@@ -195,6 +197,23 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
          }
      }
  
@@ -233,7 +237,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      hasFront = hasFront && front.verts.size() >= 3;
      hasBack  = hasBack  && back.verts.size()  >= 3;
  }
-@@ -209,12 +228,19 @@
+@@ -209,12 +228,19 @@ static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
      if (polys.empty()) return;
      // Reject degenerate fragments before choosing a plane (zero normals
      // incorrectly classify every other polygon as coplanar).
@@ -243,7 +247,6 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 -        for (size_t i=1; i+1<p.verts.size(); ++i) {
 -            const auto n=cross(p.verts[i].p-p.verts[0].p,p.verts[i+1].p-p.verts[0].p);
 -            if (dot(n,n)>1e-14f) return normalize(n);
--        }
 +        Vec3 n{};
 +        const size_t N = p.verts.size();
 +        for (size_t i = 0; i < N; ++i) {
@@ -252,12 +255,12 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +            n.x += (c.y - next.y) * (c.z + next.z);
 +            n.y += (c.z - next.z) * (c.x + next.x);
 +            n.z += (c.x - next.x) * (c.y + next.y);
-+        }
+         }
 +        if (dot(n, n) > 1e-12f) return normalize(n);
          return Vec3{};
      };
      polys.erase(std::remove_if(polys.begin(),polys.end(),[&](const SWPoly& p) {
-@@ -225,9 +251,12 @@
+@@ -225,9 +251,12 @@ static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
      const size_t candidates=std::min<size_t>(polys.size(),16);
      for (size_t k=0;k<candidates;++k) {
          const size_t index=k*polys.size()/candidates;
@@ -270,7 +273,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              bool pos=false,neg=false;
              for (const auto& v:p.verts) {
                  const float d=dot(v.p-point,normal);
-@@ -238,7 +267,16 @@
+@@ -238,7 +267,16 @@ static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
          const size_t cost=std::max(front,back)+split*4;
          if (cost<bestCost) {bestCost=cost;best=index;}
      }
@@ -287,12 +290,10 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      std::vector<SWPoly> frontList,backList;
      for (size_t index = 0; index < polys.size(); ++index) {
          auto& p = polys[index];
-@@ -247,6 +285,15 @@
-         // Re-inserting it unchanged makes the BSP recurse without progress.
-         if (index == best) {
+@@ -249,6 +287,15 @@ static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
              node.coplanar.push_back(std::move(p));
-+            continue;
-+        }
+             continue;
+         }
 +        // Polygons belonging to the same window (p.owner == splitter.owner) must never split each other
 +        if (p.owner == splitterOwner) {
 +            float avgD = 0.f;
@@ -300,10 +301,12 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
 +            if (std::abs(avgD) <= 1e-3f) node.coplanar.push_back(std::move(p));
 +            else if (avgD < 0.f) backList.push_back(std::move(p));
 +            else frontList.push_back(std::move(p));
-             continue;
-         }
++            continue;
++        }
          bool pos=false,neg=false;
-@@ -560,6 +607,11 @@
+         for (const auto& v:p.verts) {
+             const float d=dot(v.p-node.p,node.n);
+@@ -560,6 +607,11 @@ uniform vec4 uGlassSurface;
  uniform vec4 uGlassMetrics;
  uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
  uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
@@ -315,7 +318,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  out vec4 fragColor;
  
  
-@@ -719,9 +771,23 @@
+@@ -719,9 +771,23 @@ float getRoundedBoxSDF(vec2 posPx, vec2 boxSizePx, vec4 cornerRadii) {
      return min(max(q.x, q.y), 0.0) + lpNorm(max(q, 0.0), roundingPower, invRoundingPower) - clampedR;
  }
  
@@ -340,7 +343,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  }
  
  // Edge distance for the bevel, crease-free. Inside the window, getCornerSDF is
-@@ -742,7 +808,8 @@
+@@ -742,7 +808,8 @@ float getCornerSDF(vec2 uv) {
  float getBevelSDF(vec2 uv) {
      vec2  H = glassBoxSizePx * 0.5;
      float h = min(H.x, H.y);
@@ -350,7 +353,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      float r = min(pickCornerRadius(signedP, radii), h);
      vec2  p = abs(signedP);
      vec2  a = p - H + r;
-@@ -756,7 +823,11 @@
+@@ -756,7 +823,11 @@ float getBevelSDF(vec2 uv) {
              d = dc;                                        // in a corner zone: the rounded contour
      }
      vec2 s = p - H + h;
@@ -363,7 +366,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  }
  
  // ============================================================================
-@@ -1184,46 +1255,63 @@
+@@ -1184,46 +1255,63 @@ void main() {
          return;
      }
      if (uTextured != 0 && uGlassFace != 0) {
@@ -448,7 +451,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          }
          hgMaterial();
          if (uGlassHasEnvironment) {
-@@ -1242,22 +1330,79 @@
+@@ -1242,22 +1330,79 @@ void main() {
          // MiOS one glass look: composite exactly as the desktop does. The snapshot
          // holds the client at its own opacity (WindowCapture keeps hyprglass' pane
          // and edge pass out of it), so: the pane (hgColor, over the 3D backdrop,
@@ -538,7 +541,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          fragColor = vec4(uPremult != 0 ? rgb * a : rgb, a);
          return;
      }
-@@ -1630,6 +1775,11 @@
+@@ -1630,6 +1775,11 @@ void main() {
      m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
      m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
      m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
@@ -550,7 +553,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      if (m_maxAnisotropy < 0.f) {
          // MiOS: GL_EXT_texture_filter_anisotropic (Mesa, NVIDIA); 0 when absent.
-@@ -3013,6 +3163,7 @@
+@@ -3017,6 +3167,7 @@ void GLScene::drawWindows(
          slab.front.owner = window.id;
          slab.front.alpha = window.alpha;
          slab.front.glassFace = window.glassMetrics[3] > 0.5f;
@@ -558,7 +561,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          slab.front.glassSurface = window.glassSurface;
          slab.front.glassMetrics = window.glassMetrics;
          slab.front.glassDeco = window.glassDeco;
-@@ -3054,6 +3205,7 @@
+@@ -3058,6 +3209,7 @@ void GLScene::drawWindows(
              slab.back.owner = window.id;
              slab.back.alpha = window.alpha;
              slab.back.glassFace = slab.front.glassFace;
@@ -566,7 +569,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              slab.back.glassSurface = slab.front.glassSurface;
              slab.back.glassMetrics = slab.front.glassMetrics;
              slab.back.glassDeco = slab.front.glassDeco;
-@@ -3110,6 +3262,7 @@
+@@ -3114,6 +3266,7 @@ void GLScene::drawWindows(
                      wall.owner = window.id;
                      wall.alpha = window.alpha;
                      wall.glassWall = slab.front.glassFace;
@@ -574,7 +577,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
                      wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
                      wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
-@@ -3300,7 +3453,8 @@
+@@ -3304,7 +3457,8 @@ void GLScene::drawWindows(
                 ordered[j].glassSurface == ordered[i].glassSurface &&
                 ordered[j].glassMetrics == ordered[i].glassMetrics &&
                 ordered[j].glassDeco == ordered[i].glassDeco &&
@@ -584,7 +587,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              ++j;
  
          verts.clear();
-@@ -3367,6 +3521,11 @@
+@@ -3371,6 +3525,11 @@ void GLScene::drawWindows(
              const auto& D = ordered[i].glassDeco;
              glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
              glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
@@ -597,9 +600,10 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              // key is the WINDOW (its snapshot texture is re-allocated by captures) and the batch's ordinal within it.
              const uint64_t OWNER    = ordered[i].owner ? static_cast<uint64_t>(ordered[i].owner) : ordered[i].tex;
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index dd30120a..659512a2 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
-@@ -143,6 +143,7 @@
+@@ -143,6 +143,7 @@ class GLScene {
          std::array<float,4> glassDeco{0.f,0.f,0.f,0.f};
          float glassWindowAlpha = 1.0f;
          float alpha = 1.0f;
@@ -607,7 +611,7 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
  
          // Depth slab: thickness in world units, extruded BACKWARDS along the
          // window's normal (0 = the plain flat quad). When `outlines` carries
-@@ -232,6 +233,12 @@
+@@ -232,6 +233,12 @@ class GLScene {
          int   anisotropy         = 16;    // MiOS: max anisotropic samples (1 = trilinear only)
          float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
          bool  texelSharp         = false; // MiOS retina spawn: texel-sharp 1:1 / magnified window textures
@@ -620,7 +624,7 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
      };
      const SRenderQuality& renderQuality() const { return m_rq; }
      void setRenderQuality(const SRenderQuality& q) {
-@@ -547,6 +554,7 @@
+@@ -558,6 +565,7 @@ class GLScene {
      int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
      int m_sceneTexSharp = -1; // MiOS retina spawn
      int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
@@ -629,9 +633,10 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
      SGlassConfig m_glassConfig;
      unsigned int m_discVAO = 0, m_discVBO = 0;
 diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
+index 600e5e88..cec3b927 100644
 --- a/src/World/Outline.cpp
 +++ b/src/World/Outline.cpp
-@@ -325,6 +325,18 @@
+@@ -325,6 +325,18 @@ std::vector<SOutlineLoop> traceOutlines(
      return out;
  }
  
@@ -650,7 +655,7 @@ diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
  SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
                               float insetPx, int arcSegments) {
      SOutlineLoop OUT;
-@@ -354,9 +366,28 @@
+@@ -354,9 +366,28 @@ SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
          pts.push_back({FW, FH});
          pts.push_back({0.f, FH});
      } else {
@@ -683,9 +688,10 @@ diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
          ARC(FW - R, FH - R,  0.f,  90.f, R, SEG); // bottom-right corner
          ARC(R,      FH - R, 90.f, 180.f, R, SEG); // bottom-left corner
 diff --git a/src/main.cpp b/src/main.cpp
+index 94ef3e07..c6e6b9fd 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -30,6 +30,7 @@
+@@ -33,6 +33,7 @@
  #include <hyprland/src/managers/SeatManager.hpp>
  #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
  #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
@@ -693,7 +699,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  #include <hyprland/src/config/values/ConfigValues.hpp>
  #include <hyprland/src/desktop/state/WindowState.hpp>
  #include <hyprland/src/config/ConfigValue.hpp>
-@@ -70,16 +71,21 @@
+@@ -73,16 +74,21 @@ extern "C" {
  #include <atomic>
  #include <chrono>
  #include <cmath>
@@ -715,7 +721,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  namespace H3D {
  
-@@ -173,6 +179,7 @@
+@@ -176,6 +182,7 @@ struct SViewPose {
      // client re-renders at the room's size -- crisp content), on exit back
      // to the 2D box. Empty = never sized in the room.
      CBox box{};
@@ -723,7 +729,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // MiOS retina spawn: the stacking scale multiplier (retinaMul) the window
      // had in the room, so a remembered window keeps its magnification.
-@@ -182,6 +189,7 @@
+@@ -185,6 +192,7 @@ struct SViewPose {
  // Room poses remembered across toggles; keyed by window id, pruned against
  // the live room on every save (closed windows drop out).
  static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
@@ -731,7 +737,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  enum class EViewMorph : uint8_t { None, To3D, To2D };
  static EViewMorph g_viewMorph = EViewMorph::None;
-@@ -382,7 +390,7 @@
+@@ -385,7 +393,7 @@ static void buildEnterMorph(
  // window_scale gives the same panel in the room with more pixels (sharper,
  // more content), as if the window were further away.
  static float      g_cfgSpawnWidth  = 960.0f;
@@ -740,7 +746,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  static constexpr float kSpawnDistance = 10.0f;
  
  // A normal damage cycle stops when nothing else in Hyprland changes. 3D mode is
-@@ -449,6 +457,30 @@
+@@ -452,6 +460,30 @@ static bool     g_cfgTypingCursor = true;
  // 0 = none.
  static uint32_t g_cfgTypingButton = 0;
  static bool          g_altHeld      = false;
@@ -771,11 +777,10 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  // The free cursor was last seen over the room (see onMouseMove).
  static bool g_freeOnRoom = false;
-@@ -464,6 +496,28 @@
- static bool g_keyUp = false;
+@@ -468,6 +500,28 @@ static bool g_keyUp = false;
  static bool g_keyDown = false;
  static bool g_keySprint = false;
-+
+ 
 +// Analog movement and look vectors from gamepad / controller dispatchers (-1.0 to 1.0)
 +static float g_analogFwd      = 0.0f;
 +static float g_analogStrafe   = 0.0f;
@@ -797,17 +802,25 @@ diff --git a/src/main.cpp b/src/main.cpp
 +static void vcClickButton(uint32_t button, bool pressed);
 +static std::uintptr_t targetCrtWindow();
 +static void toggleWindowCrt(std::uintptr_t id);
- 
++
  static bool g_hookInstalled = false;
  
-@@ -489,9 +543,13 @@
+ // Plugin settings, set from lua via hl.plugin.hypr3d.config({...}). Missing
+@@ -492,7 +546,7 @@ static bool        g_cfgUnderLayers = true;
  static bool        g_cfgStills = false;
  
  // --- windows ----------------------------------------------------------------
--static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window size
+-static float       g_cfgWindowScale   = 0.08f;   // room multiplier on window size
++static float       g_cfgWindowScale   = 0.076684f; // room multiplier on window size (M=1 at 0.65m)
+ static float       g_cfgDarkLevel     = 0.15f;   // room light level with the lights off
+ static float       g_lightTarget      = 1.0f;    // hypr3d.lights(): where the level fades to
+ // player.seat: a chair the player can sit in (hypr3d.sit(), and on entering 3D)
+@@ -508,8 +562,12 @@ struct SSeatCfg {
+ static SSeatCfg g_seat;
+ static bool     g_seated = false;
+ static std::unordered_map<std::string, float> g_powerTarget; // hypr3d.power(): group -> 0/1
 -static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
 -static float       g_cfgWindowDepth   = 0.05f;   // slab thickness, 0 = flat quads
-+static float       g_cfgWindowScale   = 0.076684f; // room multiplier on window size (M=1 at 0.65m)
 +static float       g_cfgSpawnDistance = 0.65f;     // arm's reach (meters) in front of the camera
 +static float       g_cfgWindowDepth   = 0.008f;    // slab thickness, 0 = flat quads (sleek glass pane)
 +static float       g_cfgEyelineOffset = 0.0f;      // vertical offset from eyeline (meters)
@@ -817,7 +830,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  // --- MiOS retina spawn (hypr3d-mios-retina-spawn.patch) ---------------------
  // A window opens in the room at the flat desktop's size. Its magnification
-@@ -584,12 +642,15 @@
+@@ -608,15 +666,18 @@ static float       g_cfgLookInertia   = 0.03f;   // seconds, 0 = off
  static float       g_cfgMoveInertia   = 0.05f;   // seconds, 0 = off
  static float       g_cfgMoveSpeed     = 4.0f;    // world units / second
  static float       g_cfgSensitivity   = 0.0025f; // radians per pointer count
@@ -827,15 +840,18 @@ diff --git a/src/main.cpp b/src/main.cpp
          // the movement system, so this only gates future per-object contact
 -static bool        g_cfgWalkBob       = true;    // view-only walk bob (walking only)
 +static bool        g_cfgWalkBob       = false;   // view-only walk bob (disabled by default for VR-native locomotion)
+ static bool        g_cfgFpBody        = false;   // draw the character in first person (headless)
+ static float       g_cfgFpBodyBack    = 0.2f;    // first-person body: metres behind the eye
  static GLScene::SPlayerCfg g_playerCfg;          // the player character
  static float        g_playerAnimSpeed[4] = {1.f, 1.f, 1.f, 1.f};
-+
+ 
 +enum class EPlayerPosture : uint8_t { Stand = 0, Crouch = 1, Sit = 2 };
 +static EPlayerPosture g_playerPosture = EPlayerPosture::Stand;
- 
++
  // Feet position; eyes ride kEyeHeight above (spawn 0,0,0 = standing on
  // the grid platform at world zero).
-@@ -826,6 +887,11 @@
+ static Vec3 g_playerSpawn{0.0f, 0.0f, 0.0f};
+@@ -857,6 +918,11 @@ static bool        g_playerJumpQueued = false;
  // Body center -> eye offset: the eye rides kEyeHeight above the feet.
  static constexpr float PLAYER_EYE_OFF =
      Camera::kEyeHeight - Camera::kBodyHeight * 0.5f;
@@ -847,7 +863,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  static void ensurePlayerBody() {
      if (!g_joltSystem || !g_playerBody.IsInvalid())
-@@ -877,7 +943,7 @@
+@@ -908,7 +974,7 @@ static void syncFloorBody() {
          return;
  
      if (g_cfgGrid && g_floorBody.IsInvalid()) {
@@ -856,22 +872,20 @@ diff --git a/src/main.cpp b/src/main.cpp
          SLAB.SetEmbedded();
          auto RES = SLAB.Create();
          if (RES.HasError())
-@@ -1261,15 +1327,71 @@
+@@ -1292,15 +1358,71 @@ static void notify(
      const std::string& text,
      const CHyprColor& color
  ) {
 -    if (!PHANDLE)
--        return;
--
++    if (!PHANDLE || text.empty())
+         return;
+ 
 -    HyprlandAPI::addNotification(
 -        PHANDLE,
 -        text,
 -        color,
 -        3000
 -    );
-+    if (!PHANDLE || text.empty())
-+        return;
-+
 +    std::string title = "Hypr3D";
 +    std::string body  = text;
 +    if (body.rfind("[hypr3d]", 0) == 0) {
@@ -937,7 +951,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  }
  
  static uint32_t inputTimeMs() {
-@@ -1329,6 +1451,13 @@
+@@ -1360,6 +1482,13 @@ static void resetMovementKeys() {
      g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
      g_keyUp = g_keyDown = g_keySprint = false;
      g_superHeld = false;
@@ -951,7 +965,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  }
  
  // Clears only the camera keys, keeping the gesture modifiers honest -- used
-@@ -1336,6 +1465,11 @@
+@@ -1367,6 +1496,11 @@ static void resetMovementKeys() {
  static void resetCameraKeys() {
      g_keyFwd = g_keyBack = g_keyLeft = g_keyRight = false;
      g_keyUp = g_keyDown = g_keySprint = false;
@@ -963,7 +977,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  }
  
  // True while the 3D view owns the pointer and the keyboard.
-@@ -1399,6 +1533,16 @@
+@@ -1430,6 +1564,16 @@ static void clearAimFocus() {
  // triggers a relayout of the ones still attached, which would corrupt boxes
  // captured afterwards. Ghosting is what stops tiling from managing windows
  // while they are living in 3D space.
@@ -980,7 +994,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  static void ghostWindows(
      const PHLMONITOR& mon,
      const std::vector<Compat::SWindowInfo>* infos = nullptr) {
-@@ -1411,7 +1555,7 @@
+@@ -1442,7 +1586,7 @@ static void ghostWindows(
      const std::vector<Compat::SWindowInfo>* list = infos;
  
      if (!list) {
@@ -989,21 +1003,21 @@ diff --git a/src/main.cpp b/src/main.cpp
          list       = &enumerated;
      }
  
-@@ -1473,8 +1617,11 @@
+@@ -1504,8 +1648,11 @@ static void ghostWindows(
          // coordinates: centre on this monitor, not on the layout origin
          // (which belongs to whichever monitor sits at 0,0, or none at all).
          // A dialog (a window with a parent) keeps the size it asked for.
--        if (info.window && !info.window->parent()) {
+-        if (info.window && !info.window->backend().parent()) {
 -            double SW = g_cfgSpawnWidth, SH = g_cfgSpawnHeight;
 +        // Floating and pinned (e.g. PiP video player) windows keep their native size/aspect ratio,
 +        // while windows auto-floated by mios-placement ("mios-placed") resize to the 3D sheet-of-paper spawn box.
-+        if (info.window && !info.window->parent() && ((!info.floating && !info.window->m_pinned) || !info.window->m_pinned) && g_cfgSpawnWidth > 0 && g_cfgSpawnHeight > 0) {
++        if (info.window && !info.window->backend().parent() && ((!info.floating && !info.window->m_pinned) || !info.window->m_pinned) && g_cfgSpawnWidth > 0 && g_cfgSpawnHeight > 0) {
 +            double SW = (info.monitorLocalBox.w > 1.0) ? info.monitorLocalBox.w : g_cfgSpawnWidth;
 +            double SH = (info.monitorLocalBox.h > 1.0) ? info.monitorLocalBox.h : g_cfgSpawnHeight;
              double CX = mon->m_position.x + mon->m_size.x * 0.5 - SW * 0.5;
              double CY = mon->m_position.y + mon->m_size.y * 0.5 - SH * 0.5;
  
-@@ -1613,20 +1760,37 @@
+@@ -1644,21 +1791,38 @@ static void startFramePump() {
  
  // --- live window capture -----------------------------------------------------
  
@@ -1037,13 +1051,14 @@ diff --git a/src/main.cpp b/src/main.cpp
 +            keep.push_back(animId);
  
      g_capture.retainOnly(keep);
-+
+ 
 +    if (infos.empty())
 +        return;
- 
++
      const auto FOCUSED = Compat::focusedWindow();
      const std::uintptr_t FOCUSED_ID = FOCUSED ? Compat::windowId(FOCUSED) : 0;
-@@ -1804,7 +1968,7 @@
+ 
+@@ -1835,7 +1999,7 @@ static void serviceCapture() {
      }
      g_environmentCapture.retainOnly(environmentIds);
  
@@ -1052,7 +1067,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      if (g_viewMorphArmed) {
          // First pass of a fresh 3D session: capture the windows BEFORE the
-@@ -2066,7 +2230,7 @@
+@@ -2097,7 +2261,7 @@ static SRetinaPose retinaPlace(const PHLMONITOR& mon, const CBox& box,
      const double PERPX = 2.0 * dist * retinaTan() / mon->m_size.y; // world units per screen logical px
      P.center = CAM.position + FWD * dist +
          RIGHT * static_cast<float>((cx - mon->m_size.x * 0.5) * PERPX) +
@@ -1061,7 +1076,7 @@ diff --git a/src/main.cpp b/src/main.cpp
      return P;
  }
  
-@@ -2169,7 +2333,7 @@
+@@ -2200,7 +2364,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
      // monitor blur FBs; the compositor's outer endRender() then aborted in
      // CMonitor::useFP16(). Capture and ghosting therefore happen outside the
      // frame -- see serviceCapture().
@@ -1070,7 +1085,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // Attached surfaces (popups, X11 menus) come after every window, so each
      // finds its parent's entity already built this frame. An X11 menu whose
-@@ -2425,11 +2589,20 @@
+@@ -2456,11 +2620,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              entity.center     = P.center;
              entity.spawnScale = WIN_SCALE * P.mul;
              entity.yaw   = std::atan2(-FWD.x, -FWD.z);
@@ -1092,7 +1107,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
              // Never on the far side of a wall: a spawn point behind scene
              // geometry comes forward to just in front of it. Nor inside a
-@@ -2444,13 +2617,20 @@
+@@ -2475,13 +2648,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
                  WIN.hit && WIN.distance < dist + 0.15f)
                  dist = std::max(0.5f, WIN.distance - 0.15f);
  
@@ -1115,7 +1130,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          }
  
          // The quad size follows the snapshot box (times the config scale):
-@@ -2500,13 +2680,38 @@
+@@ -2531,13 +2711,38 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
          ENTITIES.push_back(entity);
      }
  
@@ -1155,7 +1170,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          const auto* SNAPSHOT = g_capture.get(entity.id);
  
          if (!SNAPSHOT || (SNAPSHOT->texID == 0 && !SNAPSHOT->bigTex))
-@@ -2571,13 +2776,34 @@
+@@ -2602,13 +2807,34 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              render.glassWindowAlpha = SNAPSHOT->windowAlpha;
          }
  
@@ -1191,7 +1206,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
          if (SNAPSHOT->outlines && !SNAPSHOT->outlines->empty())
              render.outlines = SNAPSHOT->outlines;
-@@ -2605,6 +2831,64 @@
+@@ -2636,6 +2862,64 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
          g_renderWindows.push_back(render);
      }
  
@@ -1256,13 +1271,11 @@ diff --git a/src/main.cpp b/src/main.cpp
      // Aim focus updates freeze during the fullscreen transition: the flying
      // quad sweeps the crosshair across other windows and would thrash focus.
      // The view morph flies every window at once -- same freeze.
-@@ -2647,24 +2931,56 @@
+@@ -2678,24 +2962,56 @@ static Vector2D localFromHit(const World3D::SHit& hit) {
  // what keeps aim/focus from flapping between an overlay and the window it
  // covers.
  static World3D::SHit pickVisible(const Vec3& dir) {
 -    const auto& cam = g_scene.camera();
--
--    for (const auto& HIT : g_world.pickAll(cam.position, dir)) {
 +    const auto& cam  = g_scene.camera();
 +    auto        hits = g_world.pickAll(cam.position, dir);
 +
@@ -1293,7 +1306,8 @@ diff --git a/src/main.cpp b/src/main.cpp
 +            return tabA;
 +        return entityOrder(a.id) > entityOrder(b.id);
 +    });
-+
+ 
+-    for (const auto& HIT : g_world.pickAll(cam.position, dir)) {
 +    for (const auto& HIT : hits) {
          const auto* SNAPSHOT = g_capture.get(HIT.id);
  
@@ -1305,27 +1319,25 @@ diff --git a/src/main.cpp b/src/main.cpp
 -                static_cast<int>(HIT.u * SNAPSHOT->alphaW));
 -            const int MY = std::min(SNAPSHOT->alphaH - 1,
 -                static_cast<int>(HIT.v * SNAPSHOT->alphaH));
--
--            const int A = SNAPSHOT->alphaMask[static_cast<size_t>(MY) * SNAPSHOT->alphaW + MX];
--
--            if (A < 8)
--                continue; // transparent pixel of an overlay: next surface
 +            const bool onProtrudingTab = isTabHit(HIT);
 +            if (!onProtrudingTab) {
 +                const int MX = std::min(SNAPSHOT->alphaW - 1,
 +                    static_cast<int>(HIT.u * SNAPSHOT->alphaW));
 +                const int MY = std::min(SNAPSHOT->alphaH - 1,
 +                    static_cast<int>(HIT.v * SNAPSHOT->alphaH));
-+
+ 
+-            const int A = SNAPSHOT->alphaMask[static_cast<size_t>(MY) * SNAPSHOT->alphaW + MX];
 +                const int A = SNAPSHOT->alphaMask[static_cast<size_t>(MY) * SNAPSHOT->alphaW + MX];
-+
+ 
+-            if (A < 8)
+-                continue; // transparent pixel of an overlay: next surface
 +                if (A < 8)
 +                    continue; // transparent pixel of an overlay: next surface
 +            }
          }
  
          return HIT;
-@@ -2927,17 +3243,17 @@
+@@ -2958,17 +3274,17 @@ static void startTo2D(const PHLWINDOW& window, bool captureRestoreBox) {
  // In2D -> To3D: restore the real floating box, capture input, hide the
  // cursor; the animation runs the quad back to its room pose.
  static void startTo3D() {
@@ -1350,7 +1362,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
          if (!pointerFree() && Compat::setCursorHidden(true))
              Pointer::mgr()->resetCursorImage();
-@@ -2947,6 +3263,34 @@
+@@ -2978,6 +3294,34 @@ static void startTo3D() {
          g_fsPhase      = EFullscreenPhase::To3D;
          g_fsPhaseStart = std::chrono::steady_clock::now();
          g_input.reset();
@@ -1385,7 +1397,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          damageCurrentMonitor();
      }
  }
-@@ -2981,6 +3325,8 @@
+@@ -3012,6 +3356,8 @@ static void damageWindowsWithLiveAlpha(const PHLMONITOR& mon) {
      }
  }
  
@@ -1394,7 +1406,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  static void pollFullscreen() {
      const auto MON = targetMonitor();
  
-@@ -3038,6 +3384,7 @@
+@@ -3069,6 +3415,7 @@ static void pollFullscreen() {
  
          g_fsLastFSWindow = FSW;
      } else if (g_fsPhase == EFullscreenPhase::In2D) {
@@ -1402,7 +1414,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          // Exit passthrough when OUR window is no longer the fullscreen one
          // (toggled off, or fullscreen moved to another window entirely).
          const auto W = g_fsWindow.lock();
-@@ -3067,9 +3414,19 @@
+@@ -3098,9 +3445,19 @@ static void applyFullscreenAnimation() {
      auto* E = W ? g_world.find(Compat::windowId(W)) : nullptr;
  
      if (!E) {
@@ -1425,7 +1437,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          return;
      }
  
-@@ -3191,6 +3548,7 @@
+@@ -3222,6 +3579,7 @@ static void applyFullscreenAnimation() {
  
              if (Compat::setCursorHidden(false) && g_pHyprRenderer)
                  g_pHyprRenderer->setCursorFromName("default", true);
@@ -1433,7 +1445,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          } else {
              // Rapid exit+reenter: the FS state may already be ON again for
              // this window -- fly it back to the screen (real 2D) instead of
-@@ -3293,6 +3651,7 @@
+@@ -3324,6 +3682,7 @@ static bool boxesDiffer(const CBox& A, const CBox& B) {
  static void buildEnterMorph(
      const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
      g_viewMorphWins.clear();
@@ -1441,7 +1453,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      const auto& CAM = g_scene.camera();
      const Vec3  FWD = CAM.forward();
-@@ -3320,6 +3679,24 @@
+@@ -3351,6 +3710,24 @@ static void buildEnterMorph(
              POSE != g_savedPoses.end()) {
              MW.roomPose = POSE->second;
  
@@ -1466,7 +1478,7 @@ diff --git a/src/main.cpp b/src/main.cpp
              // Sizes are per-mode: the room keeps the real box the window
              // had here last time. The morph drives the real box there (the
              // client re-renders -- crisp content at the room's size); the
-@@ -3329,36 +3706,62 @@
+@@ -3360,36 +3737,62 @@ static void buildEnterMorph(
              g_retinaMul[info.id] = MW.roomPose.scaleMul;
              OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
          } else {
@@ -1554,7 +1566,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
  
          // Every window's box is frozen at enter: the room is its own
-@@ -3423,6 +3826,11 @@
+@@ -3454,6 +3857,11 @@ static void beginExit3D() {
      g_viewMorphWins.clear();
  
      int i = 0;
@@ -1566,7 +1578,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      for (const auto& ENTITY : g_world.entities()) {
          SViewMorphWin MW;
-@@ -3472,26 +3880,69 @@
+@@ -3503,27 +3911,70 @@ static void beginExit3D() {
  
          MW.roomPose.box = MW.boxRoom;
  
@@ -1628,13 +1640,12 @@ diff --git a/src/main.cpp b/src/main.cpp
  
 -            MW.box2D   = viewMorphLocalBox(MON, SAVE.box);
 -            MW.animBox = boxesDiffer(MW.box2D, MW.boxRoom);
--
 +            SAVE.box = targetBox;
 +            SAVE.wasFloating = true;
 +            g_flagFloated.erase(SAVE.id);
 +            if (auto W = SAVE.window.lock(); W && W->m_target && !W->m_target->floating())
 +                W->m_target->setFloating(true);
-+
+ 
 +            if (!SAVE.ghosted) {
 +                MW.box2D   = viewMorphLocalBox(MON, SAVE.box);
 +                MW.animBox = boxesDiffer(MW.box2D, MW.boxRoom);
@@ -1643,13 +1654,14 @@ diff --git a/src/main.cpp b/src/main.cpp
 +            }
              break;
          }
-+
+ 
 +        MW.roomPose.box2D       = MW.box2D;
 +        g_savedPoses[ENTITY.id] = MW.roomPose;
- 
++
          MW.stack = static_cast<float>(i) * kMorphStackEps;
          ++i;
-@@ -3635,6 +4086,7 @@
+ 
+@@ -3666,6 +4117,7 @@ static void applyViewMorph(const PHLMONITOR& mon) {
  // Remember the room as it is right now; prunes windows that no longer exist.
  static void saveViewPoses() {
      g_savedPoses.clear();
@@ -1657,12 +1669,10 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      for (const auto& E : g_world.entities()) {
          SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
-@@ -3648,6 +4100,16 @@
- 
-             if (ROOM != g_roomBoxes.end())
+@@ -3681,6 +4133,16 @@ static void saveViewPoses() {
                  POSE.box = ROOM->second;
-+        }
-+
+         }
+ 
 +        POSE.box2D = POSE.box;
 +        if (MON) {
 +            for (const auto& SAVE : g_layoutSaves) {
@@ -1671,10 +1681,12 @@ diff --git a/src/main.cpp b/src/main.cpp
 +                    break;
 +                }
 +            }
-         }
- 
++        }
++
          g_savedPoses[E.id] = POSE;
-@@ -3803,6 +4265,7 @@
+     }
+ }
+@@ -3834,6 +4296,7 @@ static void resetPointerGesture() {
      g_pointerDown = false;
      g_pointerGesture = EPointerGesture::None;
      g_pointerButton = 0;
@@ -1682,7 +1694,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // A finished resize gesture: schedule one forced snapshot of the resized
      // window for the next capture pass -- its purpose is the silhouette's
-@@ -3913,6 +4376,12 @@
+@@ -3944,6 +4407,12 @@ static bool onPointerMotion(double dx, double dy) {
      return true;
  }
  
@@ -1695,7 +1707,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  static void onRenderPre(PHLMONITOR mon) {
      if (g_capturing)
          return;
-@@ -3932,7 +4401,15 @@
+@@ -3963,7 +4432,15 @@ static void onRenderPre(PHLMONITOR mon) {
      }
  
      g_monitor = mon;
@@ -1711,7 +1723,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  }
  
  
-@@ -3995,6 +4472,7 @@
+@@ -4026,6 +4503,7 @@ static void deactivate3D() {
      g_world.clear();
      g_retinaMul.clear();    // MiOS retina spawn: the poses remember it
      g_retinaSettle.clear();
@@ -1719,11 +1731,10 @@ diff --git a/src/main.cpp b/src/main.cpp
      g_renderWindows.clear();
      g_input.reset();
      resetMovementKeys();
-@@ -4007,6 +4485,15 @@
- 
+@@ -4039,6 +4517,15 @@ static void deactivate3D() {
      unghostWindows();
      g_renderedOnce = false;
-+
+ 
 +    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
 +    applyGlobalShaderGlassState(false);
 +
@@ -1732,10 +1743,11 @@ diff --git a/src/main.cpp b/src/main.cpp
 +        if (out)
 +            out << "active=0 frames=" << g_diagFrames << " transition=0 target=0\n";
 +    }
- 
++
      notify("[hypr3d] room closed", CHyprColor{0.4f, 0.6f, 0.9f, 1.0f});
  
-@@ -4175,21 +4662,28 @@
+     fireOnState(false);
+@@ -4218,21 +4705,28 @@ static void enter3D() {
          if (const auto MON = targetMonitor()) {
              if (const auto FSW =
                      Fullscreen::controller()->getFullscreenWindow(MON)) {
@@ -1768,7 +1780,7 @@ diff --git a/src/main.cpp b/src/main.cpp
                  g_boxDriven.insert(Compat::windowId(FSW));
  
                  g_layoutSaves.clear(); // no stale saves may survive into this session
-@@ -4215,6 +4709,18 @@
+@@ -4258,6 +4752,18 @@ static void enter3D() {
      g_captureFrames = 0;
      g_reportedFramebufferError = false;
      g_reportedRenderError = false;
@@ -1787,7 +1799,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      fireOnState(true);
  
-@@ -4223,5 +4728,10 @@ }
+@@ -4266,6 +4772,11 @@ static void enter3D() {
+ }
  
  static void toggle3D() {
 +    if (g_active && (g_fsPhase == EFullscreenPhase::In2D || g_fsPhase == EFullscreenPhase::To2D)) {
@@ -1798,7 +1811,8 @@ diff --git a/src/main.cpp b/src/main.cpp
      g_transitionTarget =
          g_transitionTarget > 0.5f ? 0.0f : 1.0f;
  
-@@ -4305,8 +4815,15 @@ // with the move-inertia glide. The PLAYER BODY applies it -- Jolt owns the
+@@ -4360,9 +4871,16 @@ static constexpr float kBobRoll      = 0.008f; // radians (~0.9 deg) head tilt
+ // with the move-inertia glide. The PLAYER BODY applies it -- Jolt owns the
  // pose, so this no longer moves the camera directly.
  static void applyCameraMovement(float dt) {
 -    float FORWARD  = (g_keyFwd ? 1.f : 0.f) - (g_keyBack ? 1.f : 0.f);
@@ -1817,7 +1831,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      auto& CAM = g_scene.camera();
  
-@@ -4332,6 +4849,9 @@     if (!g_playerFlying) {
+@@ -4387,7 +4905,10 @@ static void applyCameraMovement(float dt) {
+     if (!g_playerFlying) {
          // --- walking: the keys own the horizontal plane; Jolt's gravity
          // (system -14, the old player constant) owns the vertical one ---
 -        const float SPEED = CAM.moveSpeed * (g_keySprint ? 2.5f : 1.0f);
@@ -1828,7 +1843,8 @@ diff --git a/src/main.cpp b/src/main.cpp
          const Vec3  TARGET =
              CAM.flatForward() * (FORWARD * SPEED) +
              CAM.right() * (STRAFE * SPEED);
-@@ -4373,6 +4893,306 @@         s_moveVel = {};
+@@ -4428,7 +4949,307 @@ static void applyCameraMovement(float dt) {
+         s_moveVel = {};
  }
  
 +#pragma pack(push, 1)
@@ -2132,14 +2148,14 @@ diff --git a/src/main.cpp b/src/main.cpp
  static void update3D(float dt) {
 +    pollGamepadState(dt);
 +
-     // Release capture unconditionally when the view no longer owns input, so
-     // a disappearing monitor or a closing transition can never strand the
-     // pointer in captured mode.
-@@ -4498,7 +5318,28 @@         // (g_transition is the ROOM progress -- 1.0 in normal 3D -- it must
+     // Room lights: fade the shared level toward hypr3d.lights()'s target.
+     {
+         float& LV = CMapModel::s_lightLevel;
+@@ -4570,9 +5391,30 @@ static void update3D(float dt) {
+         // (g_transition is the ROOM progress -- 1.0 in normal 3D -- it must
          // NOT gate this.)
          if (!g_playerBody.IsInvalid()) {
 -            const auto PPOS = g_bodyIf->GetPosition(g_playerBody);
--            const Vec3 EYE{PPOS.GetX(), PPOS.GetY() + PLAYER_EYE_OFF,
 +            const float targetEyeOff = g_playerFlying
 +                ? PLAYER_EYE_OFF
 +                : (g_playerPosture == EPlayerPosture::Crouch
@@ -2162,11 +2178,14 @@ diff --git a/src/main.cpp b/src/main.cpp
 +                    g_bodyIf->SetLinearVelocity(
 +                        g_playerBody, JPH::Vec3(vel.GetX(), 0.0f, vel.GetZ()));
 +            }
-+            const Vec3 EYE{PPOS.GetX(), PPOS.GetY() + g_currentEyeOff,
+             const Vec3 EYE{PPOS.GetX(),
+-                           g_seated ? g_seat.y + g_seat.eye : PPOS.GetY() + PLAYER_EYE_OFF,
++                           g_seated ? g_seat.y + g_seat.eye : PPOS.GetY() + g_currentEyeOff,
                             PPOS.GetZ()};
              auto& CAM = g_scene.camera();
  
-@@ -4613,11 +5454,11 @@         if (g_fsPhase == EFullscreenPhase::None && g_viewMode == 0) {
+@@ -4688,12 +5530,12 @@ static void update3D(float dt) {
+         if (g_fsPhase == EFullscreenPhase::None && g_viewMode == 0) {
              const auto CUR = g_bodyIf->GetPosition(g_playerBody);
              const float DX = CAM.position.x - CUR.GetX();
 -            const float DY = CAM.position.y - (CUR.GetY() + PLAYER_EYE_OFF);
@@ -2181,7 +2200,8 @@ diff --git a/src/main.cpp b/src/main.cpp
                                 CAM.position.z),
                      JPH::Quat::sIdentity(), JPH::EActivation::Activate);
          }
-@@ -4644,6 +5485,6 @@             // the orbit position pulls the camera in front of walls.
+@@ -4752,7 +5594,7 @@ static void update3D(float dt) {
+             // the orbit position pulls the camera in front of walls.
              if (g_viewMode != 0) {
                  const Vec3 ORBIT_EYE{PPOS.GetX(),
 -                                     PPOS.GetY() + PLAYER_EYE_OFF,
@@ -2189,7 +2209,8 @@ diff --git a/src/main.cpp b/src/main.cpp
                                       PPOS.GetZ()};
                  const Vec3 FLAT = CAM.flatForward();
                  const float P = CAM.pitch;
-@@ -4714,35 +5555,39 @@                 s_moveVel.x, VY, s_moveVel.z));
+@@ -4822,36 +5664,40 @@ static void update3D(float dt) {
+                 s_moveVel.x, VY, s_moveVel.z));
          }
  
 -        // Walk bob (view-only, walking + grounded): a small vertical sway
@@ -2220,15 +2241,15 @@ diff --git a/src/main.cpp b/src/main.cpp
 -            CAM.position.y += s_bobAmp * std::sin(s_bobPhase);
 -            CAM.roll = (s_bobAmp * (1.0f / kBobAmplitude)) * kBobRoll *
 -                std::sin(s_bobPhase * 0.5f);
+-        } else {
 +        // Walk bob (view-only, walking + grounded): disabled by default
 +        // (g_cfgWalkBob = false) so walking translates cleanly to VR natively
 +        // without vertical head-bobbing or roll tilt.
 +        if (!g_cfgWalkBob) {
 +            s_bobAmp = 0.0f;
 +            s_bobPhase = 0.0f;
-+            CAM.roll = 0.0f;
-         } else {
--            CAM.roll = 0.0f;
+             CAM.roll = 0.0f;
++        } else {
 +            const float BOB_SPEED = std::sqrt(s_moveVel.x * s_moveVel.x +
 +                                              s_moveVel.z * s_moveVel.z);
 +            const bool BOBING = !g_playerFlying && g_grounded &&
@@ -2258,7 +2279,8 @@ diff --git a/src/main.cpp b/src/main.cpp
          }
      }
  
-@@ -5144,8 +5989,5 @@     // missing the bug (it self-healed before the read); the timeline catches
+@@ -5252,9 +6098,6 @@ static void dumpStatus() {
+     // missing the bug (it self-healed before the read); the timeline catches
      // the transition frame by frame. Bounded at ~128 KB, trimmed from the
      // head.
 -    std::ofstream out("/tmp/hypr3d-status.txt",
@@ -2267,7 +2289,8 @@ diff --git a/src/main.cpp b/src/main.cpp
      {
          std::error_code              ec;
          const auto                   SZ = std::filesystem::file_size(
-@@ -5166,5 +6008,7 @@         }
+@@ -5274,6 +6117,8 @@ static void dumpStatus() {
+         }
      }
  
 +    std::ofstream out("/tmp/hypr3d-status.txt", std::ios::app);
@@ -2275,7 +2298,8 @@ diff --git a/src/main.cpp b/src/main.cpp
      out << "--- frame " << g_diagFrames << " t="
          << std::chrono::duration<float>(std::chrono::steady_clock::now() -
                                          g_inputClockStart)
-@@ -5185,6 +6029,14 @@         << " morphS=" << g_morphS
+@@ -5293,7 +6138,15 @@ static void dumpStatus() {
+         << " morphS=" << g_morphS
          << " morphWins=" << g_viewMorphWins.size()
          << " savedPoses=" << g_savedPoses.size()
 -        << " renderedOnce=" << (g_renderedOnce ? 1 : 0) << "\n";
@@ -2291,7 +2315,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // MiOS render quality: the effective supersampled scene and frame rate.
      out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
-@@ -5337,6 +6189,8 @@     // snapshot texture via the GPU copy, fallback analytic; layers: traced
+@@ -5445,7 +6298,9 @@ static void dumpStatus() {
+     // snapshot texture via the GPU copy, fallback analytic; layers: traced
      // from the picking mask). skirt=0/err=N says the copy failed and why.
      for (const auto& RW : g_renderWindows) {
 -        out << "  rwin=" << RW.id << " depth=" << RW.depth
@@ -2301,18 +2326,20 @@ diff --git a/src/main.cpp b/src/main.cpp
              << " outlines=" << (RW.outlines ? (long)RW.outlines->size() : -1);
  
          if (RW.outlines && !RW.outlines->empty()) {
-@@ -5459,6 +6313,9 @@             << PP.GetZ() << ") vel=(" << PV.GetX() << "," << PV.GetY()
+@@ -5568,7 +6423,10 @@ static void dumpStatus() {
              << "," << PV.GetZ() << ") moveVel=(" << s_moveVel.x << ","
              << s_moveVel.y << "," << s_moveVel.z << ") grounded="
--            << g_grounded << " flying=" << g_playerFlying << "\n";
-+            << g_grounded << " flying=" << g_playerFlying
+             << g_grounded << " flying=" << g_playerFlying
+-            << " seated=" << g_seated << "\n";
++            << " seated=" << g_seated
 +            << " posture=" << static_cast<int>(g_playerPosture)
 +            << " walkBob=" << g_cfgWalkBob
 +            << " roll=" << g_scene.camera().roll << "\n";
      }
  }
  
-@@ -5668,12 +6525,23 @@     g_vcId    = 0;
+@@ -5777,13 +6635,24 @@ static void vcResolveScreen(const PHLMONITOR& mon) {
+     g_vcId    = 0;
  }
  
 +static void vcEnterFromDesktop(const Vector2D& global);
@@ -2323,7 +2350,6 @@ diff --git a/src/main.cpp b/src/main.cpp
          return;
  
 -    if (g_vcSpace != ECursorSpace::Screen)
--        return;
 +    if (g_vcSpace != ECursorSpace::Screen) {
 +        Vector2D nextGlobal = Pointer::mgr()->position() + Vector2D{dx, dy};
 +        nextGlobal.x = std::clamp(nextGlobal.x, MON->m_position.x, MON->m_position.x + MON->m_size.x - 1.0);
@@ -2333,12 +2359,13 @@ diff --git a/src/main.cpp b/src/main.cpp
 +        } else {
 +            Pointer::mgr()->warpTo(nextGlobal);
 +        }
-+        return;
+         return;
 +    }
  
      g_vcScreen = g_vcScreen + Vector2D{dx, dy};
      vcResolveScreen(MON);
-@@ -5795,6 +6663,6 @@ 
+@@ -5904,7 +6773,7 @@ static void onRenderStage(eRenderStage stage, Render::CRenderContext& ctx) {
+ 
      dumpStatus();
  
 -    const float dt = updateTransition();
@@ -2346,19 +2373,21 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      if (g_transition <= 0.0f && g_transitionTarget <= 0.0f) {
          requestDeactivate3D();
-@@ -5819,11 +6687,5 @@     // its input are dormant. The frame pump polls for the fullscreen exit.
+@@ -5929,12 +6798,6 @@ static void onRenderStage(eRenderStage stage, Render::CRenderContext& ctx) {
      if (g_fsPhase == EFullscreenPhase::In2D)
          return;
--
+ 
 -    const auto U3_T0 = std::chrono::steady_clock::now();
 -    update3D(dt);
 -    g_msUpdate3D = g_msUpdate3D * 0.9 +
 -        std::chrono::duration<double, std::milli>(
 -            std::chrono::steady_clock::now() - U3_T0).count() * 0.1;
- 
+-
      // Composite alpha: the view morph needs the scene opaque from its first
      // frame (the windows land exactly on the 2D rectangles; the environment
-@@ -6188,5 +7050,74 @@     damageCurrentMonitor();
+     // fades per-pixel inside the scene instead). The fullscreen passthrough
+@@ -6298,6 +7161,75 @@ static void onMouseAxis(
+     damageCurrentMonitor();
  }
  
 +static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& rawLocal, uint32_t button = BTN_LEFT) {
@@ -2433,7 +2462,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  static void onMouseButton(
      IPointer::SButtonEvent event,
      Event::SCallbackInfo& info
-@@ -6242,5 +7173,9 @@             return;
+@@ -6352,6 +7284,10 @@ static void onMouseButton(
+             return;
  
          const auto LOCAL = surfaceLocal(*E, g_vcLocal);
 +        const Vector2D RAW_LOCAL{g_vcLocal.x - E->surfaceOffsetX, g_vcLocal.y - E->surfaceOffsetY};
@@ -2443,7 +2473,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
          // A click focuses, as on the desktop -- also taking the keyboard
          // back from a launcher or sidebar.
-@@ -6540,7 +7475,19 @@     }
+@@ -6650,8 +7586,20 @@ static void onMouseButton(
+     }
  
      const Vector2D LOCAL = localFromHit(HIT);
 +    Vector2D RAW_LOCAL = LOCAL;
@@ -2463,13 +2494,22 @@ diff --git a/src/main.cpp b/src/main.cpp
          if (TARGET.window)
              focusRoomWindow(TARGET.window);
  
-@@ -6620,12 +7567,185 @@     }
+@@ -6730,20 +7678,193 @@ static void setMovementSym(xkb_keysym_t sym, bool down) {
+     }
  }
  
+-static void onKeyboardKey(
+-    IKeyboard::SKeyEvent event,
+-    Event::SCallbackInfo& info
+-) {
+-    if (!ownsInput())
+-        return;
+-
+-    if (!g_pSeatManager || g_pSeatManager->m_keyboard.expired())
 +static void syncShaderGlassStateFromFile() {
 +    std::ifstream st("/tmp/mios-hypr3d-crt.state");
 +    if (!st)
-+        return;
+         return;
 +    std::string line;
 +    bool sawGlobal = false;
 +    bool globalVal = false;
@@ -2552,11 +2592,14 @@ diff --git a/src/main.cpp b/src/main.cpp
 +                << " crtWindows=" << (g_crtGlobalOn ? std::max<size_t>(1, g_crtWindows.size()) : g_crtWindows.size()) << "\n";
 +        }
 +    }
-+
+ 
+-    const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
 +    HyprlandAPI::invokeHyprctlCommand("keyword", "decoration:screen_shader [[EMPTY]]");
 +    damageCurrentMonitor();
 +}
-+
+ 
+-    if (!KEYBOARD || !KEYBOARD->m_xkbSymState)
+-        return;
 +static std::uintptr_t targetCrtWindow() {
 +    if (g_lastFocusId != 0 && g_world.find(g_lastFocusId))
 +        return g_lastFocusId;
@@ -2642,17 +2685,22 @@ diff --git a/src/main.cpp b/src/main.cpp
 +    }
 +}
 +
- static void onKeyboardKey(
-     IKeyboard::SKeyEvent event,
-     Event::SCallbackInfo& info
- ) {
--    if (!ownsInput())
--        return;
--
-     if (!g_pSeatManager || g_pSeatManager->m_keyboard.expired())
-         return;
++static void onKeyboardKey(
++    IKeyboard::SKeyEvent event,
++    Event::SCallbackInfo& info
++) {
++    if (!g_pSeatManager || g_pSeatManager->m_keyboard.expired())
++        return;
++
++    const auto KEYBOARD = g_pSeatManager->m_keyboard.lock();
++
++    if (!KEYBOARD || !KEYBOARD->m_xkbSymState)
++        return;
  
-@@ -6647,7 +7767,24 @@     // gestures, and Super + Left Alt toggles the keyboard mode.
+     // libinput reports evdev codes; xkb wants them offset by 8.
+     const auto SYM = xkb_state_key_get_one_sym(
+@@ -6757,8 +7878,25 @@ static void onKeyboardKey(
+     // gestures, and Super + Left Alt toggles the keyboard mode.
      if (SYM == XKB_KEY_Super_L || SYM == XKB_KEY_Super_R)
          g_superHeld = PRESSED;
 -    else if (SYM == XKB_KEY_Alt_L)
@@ -2678,7 +2726,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // A layer holds the keyboard (launcher, sidebar text field): every key
      // is its, in both modes. Held camera keys must not keep walking.
-@@ -6658,14 +7795,32 @@         return;
+@@ -6768,15 +7906,33 @@ static void onKeyboardKey(
+         return;
      }
  
 -    // Walking mode: Space jumps off whatever the capsule stands on. The
@@ -2717,13 +2766,10 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      // F3 toggles the debug HUD (collision wireframe + info overlay) in both
      // keyboard modes: it never belongs to the focused window.
-@@ -6687,5 +7842,21 @@                 EKeyboardMode::Window :
-                 EKeyboardMode::Space);
+@@ -6801,6 +7957,22 @@ static void onKeyboardKey(
+         return;
+     }
  
-+        info.cancelled = true;
-+        return;
-+    }
-+
 +    // ShaderGlass CRT keybind intercepts in 3D mode:
 +    // Super+Shift+G or Super+Alt+S: toggle CRT on target window
 +    // Super+Alt+G: open CRT window selector / picker
@@ -2736,10 +2782,15 @@ diff --git a/src/main.cpp b/src/main.cpp
 +
 +    if (PRESSED && (g_superHeld && g_altHeld && (SYM == XKB_KEY_G || SYM == XKB_KEY_g))) {
 +        selectWindowCrt();
-         info.cancelled = true;
++        info.cancelled = true;
++        return;
++    }
++
+     // Window mode: every key reaches the focused window untouched.
+     if (g_keyboardMode == EKeyboardMode::Window)
          return;
-     }
-@@ -7048,5 +8219,22 @@         q.scale = std::clamp(q.scale, 1.0f, 4.0f);
+@@ -7327,6 +8499,23 @@ static int luaConfig(lua_State* L) {
+         q.scale = std::clamp(q.scale, 1.0f, 4.0f);
          q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
          q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
 +        // MiOS CRT: barrel curvature, radius, scanlines, scanline weight, dotmask.
@@ -2762,7 +2813,8 @@ diff --git a/src/main.cpp b/src/main.cpp
          g_scene.setRenderQuality(q);
          // MiOS stills: no crosshair, room over the 2D shell layers.
          if (!SET_BOOL(idx, "stills", g_cfgStills, "render.stills"))
-@@ -7082,5 +8270,17 @@         if (!SET_NUM(idx, "depth", g_cfgWindowDepth,
+@@ -7361,6 +8550,18 @@ static int luaConfig(lua_State* L) {
+         if (!SET_NUM(idx, "depth", g_cfgWindowDepth,
                       "windows.depth"))
              return luaL_error(L, "hypr3d.config: windows.depth must be a number");
 +        if (!SET_NUM(idx, "eyeline_offset", g_cfgEyelineOffset,
@@ -2780,7 +2832,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
          // MiOS retina spawn (see g_cfgPixelExact).
          if (!SET_BOOL(idx, "pixel_exact", g_cfgPixelExact, "windows.pixel_exact"))
-@@ -7673,5 +8873,814 @@     return {};
+@@ -8023,6 +9224,815 @@ static SDispatchResult dispatchToggleFlight(std::string) {
+     return {};
  }
  
 +static SDispatchResult dispatchCamera(std::string args) {
@@ -3595,7 +3648,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  APICALL EXPORT std::string PLUGIN_API_VERSION() {
      return HYPRLAND_API_VERSION;
  }
-@@ -7703,10 +9712,8 @@         );
+@@ -8053,11 +10063,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+         );
      }
  
 -    HyprlandAPI::addNotification(
@@ -3607,46 +3661,23 @@ diff --git a/src/main.cpp b/src/main.cpp
 +        CHyprColor{0.2f, 0.8f, 0.4f, 1.0f}
      );
  
-     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:toggle", dispatchToggle))
-@@ -7718,5 +9725,163 @@ 
-     if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:close", dispatchClose))
-         throw std::runtime_error("[hypr3d] failed to register close dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:camera", dispatchCamera))
-+        throw std::runtime_error("[hypr3d] failed to register camera dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:move", dispatchMove))
-+        throw std::runtime_error("[hypr3d] failed to register move dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:crt", dispatchCrt))
-+        throw std::runtime_error("[hypr3d] failed to register crt dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:grab", dispatchGrab))
-+        throw std::runtime_error("[hypr3d] failed to register grab dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:resize", dispatchResize))
-+        throw std::runtime_error("[hypr3d] failed to register resize dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:view", dispatchView))
-+        throw std::runtime_error("[hypr3d] failed to register view dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:mode", dispatchMode))
-+        throw std::runtime_error("[hypr3d] failed to register mode dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:jump", dispatchJump))
-+        throw std::runtime_error("[hypr3d] failed to register jump dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fly", dispatchFly))
-+        throw std::runtime_error("[hypr3d] failed to register fly dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:posture", dispatchPosture))
-+        throw std::runtime_error("[hypr3d] failed to register posture dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fullscreen", dispatchFullscreen))
-+        throw std::runtime_error("[hypr3d] failed to register fullscreen dispatcher");
-+
-+    if (!HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick))
-+        throw std::runtime_error("[hypr3d] failed to register click dispatcher");
+     // Lua-config Hyprland (0.57+) keeps addDispatcherV2 for ABI only and makes
+@@ -8067,6 +10075,140 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:open", dispatchOpen);
+     HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:close", dispatchClose);
+     HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:toggle_flight", dispatchToggleFlight);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:camera", dispatchCamera);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:move", dispatchMove);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:crt", dispatchCrt);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:grab", dispatchGrab);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:resize", dispatchResize);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:view", dispatchView);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:mode", dispatchMode);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:jump", dispatchJump);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fly", dispatchFly);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:posture", dispatchPosture);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:fullscreen", dispatchFullscreen);
++    HyprlandAPI::addDispatcherV2(PHANDLE, "hypr3d:click", dispatchClick);
 +
 +    if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "jump", [](lua_State* L) -> int {
 +        std::string arg;
@@ -3772,7 +3803,8 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "toggle", luaToggle))
          throw std::runtime_error("[hypr3d] failed to register Lua toggle");
-@@ -7825,10 +9990,12 @@     (void)mouseAxis;
+@@ -8196,11 +10338,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     (void)mouseAxis;
      (void)keyboardKey;
  
 -    if (!HyprlandAPI::reloadConfig()) {
@@ -3790,7 +3822,8 @@ diff --git a/src/main.cpp b/src/main.cpp
      }
  
      return {
-@@ -7861,5 +10028,7 @@     g_transition = 0.0f;
+@@ -8232,6 +10376,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
+     g_transition = 0.0f;
      g_transitionTarget = 0.0f;
  
 +    HyprlandAPI::invokeHyprctlCommand("eval", "hl.config({plugin = {hyprbars = {reveal_on = \"focus+proximity\", tab_yield = true, icon_on_hover = true}}})");
@@ -3799,12 +3832,13 @@ diff --git a/src/main.cpp b/src/main.cpp
          g_pHyprRenderer->setCursorFromName("default", true);
  
 diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+index 0611812f..a6bc85da 100644
 --- a/tests/mios-bsp-regression.cpp
 +++ b/tests/mios-bsp-regression.cpp
-@@ -235,3 +235,46 @@         for (const auto& v : p->verts)
+@@ -235,4 +235,47 @@ int main() {
+         for (const auto& v : p->verts)
              require(v.u >= 0.f && v.u <= 1.f && v.v >= 0.f && v.v <= 1.f);
      }
--}
 +
 +    // Tab S-fillet contour in roundedRectLoop for standard window radius (R < 25)
 +    const auto tabbed = roundedRectLoop(640, 400, 12.f, 1.f, 8);
@@ -3848,4 +3882,4 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 +        if (!p.glassWall && p.owner == 100) ++faceFragments;
 +    });
 +    require(faceFragments == 1);
-+}
+ }

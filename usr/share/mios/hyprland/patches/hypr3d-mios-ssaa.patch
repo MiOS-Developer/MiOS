@@ -14,7 +14,7 @@ look (automation/tests); the status dump reports the effective scene size.
 Applies after hypr3d-mios-render-quality.patch.
 
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index 0c88154..ded15d1 100644
+index ea7e25ba..3dd913c3 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -33,45 +33,69 @@ namespace {
@@ -294,7 +294,7 @@ index 0c88154..ded15d1 100644
      if (!m_sceneFBO) {
          glGenFramebuffers(1, &m_sceneFBO);
          glGenTextures(1, &m_sceneColor);
-@@ -2382,6 +2467,7 @@ void GLScene::drawPanorama(float aspect) {
+@@ -2386,6 +2471,7 @@ void GLScene::drawPanorama(float aspect) {
      glUniform1f(m_panoramaTanY, TANY);
      glUniform1f(m_panoramaLod, lod);
      glUniform1f(m_panoramaMirrorLoc, m_panoramaMirror ? 1.f : 0.f);
@@ -302,7 +302,7 @@ index 0c88154..ded15d1 100644
      glUniform1i(m_panoramaLiveWallpaper, m_environmentTex != 0);
  
      glActiveTexture(GL_TEXTURE0);
-@@ -2719,6 +2805,7 @@ void GLScene::drawWindows(
+@@ -2723,6 +2809,7 @@ void GLScene::drawWindows(
      glBindTexture(GL_TEXTURE_2D, environment);
      glUniform1i(m_glassEnvironment, 2);
      glUniform1f(m_glassMirror, m_panoramaMirror ? 1.f : 0.f);
@@ -310,7 +310,7 @@ index 0c88154..ded15d1 100644
      for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
          glUniform1f(m_glassParameters[i], m_glassConfig.values[i]);
      for (size_t i = 0; i < 3; ++i) {
-@@ -2736,6 +2823,7 @@ void GLScene::drawWindows(
+@@ -2740,6 +2827,7 @@ void GLScene::drawWindows(
      glActiveTexture(GL_TEXTURE0);
      glUniform1i(m_glassBackground, 1);
      glUniform2f(m_glassViewport, static_cast<float>(m_sceneWidth), static_cast<float>(m_sceneHeight));
@@ -318,7 +318,7 @@ index 0c88154..ded15d1 100644
  
      // Consecutive polys with the same texture and alpha merge into ONE
      // upload + draw: a depth slab adds ~100 wall quads per window, and a
-@@ -3083,8 +3171,17 @@ void GLScene::drawFullscreen(
+@@ -3087,8 +3175,17 @@ void GLScene::drawFullscreen(
      glUniform1i(m_blitTexture, 0);
      glUniform1f(m_blitAlpha, alpha);
      glUniform1i(m_blitPerPx, perPixel ? 1 : 0);
@@ -337,7 +337,7 @@ index 0c88154..ded15d1 100644
      glUniform1i(m_blitFxaa, m_rq.fxaa ? 1 : 0);
      glUniform1f(m_blitSharpen, std::clamp(m_rq.sharpen, 0.0f, 1.0f));
  
-@@ -3170,7 +3267,8 @@ void GLScene::drawDebugOverlay(int width, int height) {
+@@ -3174,7 +3271,8 @@ void GLScene::drawDebugOverlay(int width, int height) {
      glGetIntegerv(GL_VIEWPORT, oldViewport);
  
      glBindFramebuffer(GL_FRAMEBUFFER, sceneDrawFBO());
@@ -347,7 +347,7 @@ index 0c88154..ded15d1 100644
  
      // The lines: coordinates, view angles, fps, map size.
      const auto& CAM = m_camera;
-@@ -3387,7 +3485,14 @@ bool GLScene::render(
+@@ -3391,7 +3489,14 @@ bool GLScene::render(
  
      glBindFramebuffer(GL_FRAMEBUFFER, sceneDrawFBO());
  
@@ -363,7 +363,7 @@ index 0c88154..ded15d1 100644
  
      glDisable(GL_SCISSOR_TEST);
      glDisable(GL_CULL_FACE);
-@@ -3505,8 +3610,8 @@ bool GLScene::render(
+@@ -3510,8 +3615,8 @@ bool GLScene::render(
      // cannot become fully opaque no matter what the fade is set to.
      if (m_probeRequested) {
          glReadPixels(
@@ -374,7 +374,7 @@ index 0c88154..ded15d1 100644
              1,
              1,
              GL_RGBA,
-@@ -3833,6 +3938,9 @@ void GLScene::destroyGLObjects() {
+@@ -3838,6 +3943,9 @@ void GLScene::destroyGLObjects() {
  
      m_sceneWidth = 0;
      m_sceneHeight = 0;
@@ -385,7 +385,7 @@ index 0c88154..ded15d1 100644
  
  } // namespace H3D
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 2656c29..77a89a7 100644
+index c3145827..11a95480 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -72,6 +72,13 @@ class GLScene {
@@ -415,7 +415,7 @@ index 2656c29..77a89a7 100644
              m_msaaDirtyCfg = true;
          m_rq = q;
      }
-@@ -385,6 +393,10 @@ class GLScene {
+@@ -396,6 +404,10 @@ class GLScene {
      int  m_msaaSamples = 0;
      bool m_msaaDirtyCfg = false;
      int  m_blitTexel = -1, m_blitFxaa = -1, m_blitSharpen = -1, m_sceneTexSS = -1;
@@ -426,7 +426,7 @@ index 2656c29..77a89a7 100644
      unsigned int sceneDrawFBO() const { return m_msaaSamples > 1 ? m_msaaFBO : m_sceneFBO; }
      void resolveSceneMsaa();
      unsigned int m_sceneDepth = 0;
-@@ -439,6 +451,8 @@ class GLScene {
+@@ -450,6 +462,8 @@ class GLScene {
      int m_discVertexCount = 0;
      int m_glassMirror = -1, m_panoramaMirrorLoc = -1;
      bool m_panoramaMirror = false;
@@ -436,10 +436,10 @@ index 2656c29..77a89a7 100644
      std::array<int, 3> m_glassColors{}, m_glassAlphas{};
  
 diff --git a/src/main.cpp b/src/main.cpp
-index ee23991..01de2e8 100644
+index f1ad23d9..5926e2d1 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -4679,6 +4679,11 @@ static void dumpStatus() {
+@@ -4781,6 +4781,11 @@ static void dumpStatus() {
          << " savedPoses=" << g_savedPoses.size()
          << " renderedOnce=" << (g_renderedOnce ? 1 : 0) << "\n";
  
@@ -451,7 +451,7 @@ index ee23991..01de2e8 100644
      out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
          << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
          << " sinkCalls=" << g_diagSinkCalls
-@@ -6408,6 +6413,14 @@ static int luaConfig(lua_State* L) {
+@@ -6677,6 +6682,14 @@ static int luaConfig(lua_State* L) {
                  return luaL_error(L, "hypr3d.config: world.panorama_mirror must be a boolean");
              g_scene.setPanoramaMirror(mirror);
          }
@@ -465,8 +465,8 @@ index ee23991..01de2e8 100644
 +        }
          if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
              return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
-         lua_pop(L, 1);
-@@ -6455,6 +6468,10 @@ static int luaConfig(lua_State* L) {
+         if (!SET_NUM(idx, "dark_level", g_cfgDarkLevel, "world.dark_level"))
+@@ -6728,6 +6741,10 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
          if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
              return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");
@@ -477,8 +477,8 @@ index ee23991..01de2e8 100644
          q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
          q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
          g_scene.setRenderQuality(q);
-@@ -6592,6 +6609,21 @@ static int luaConfig(lua_State* L) {
-             return luaL_error(L, "hypr3d.config: player.walk_bob must be a boolean");
+@@ -6871,6 +6888,21 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: player.first_person_offset must be a number");
          if (!SET_BOOL(idx, "collision", g_playerCollision, "player.collision"))
              return luaL_error(L, "hypr3d.config: player.collision must be a boolean");
 +        {
@@ -500,7 +500,7 @@ index ee23991..01de2e8 100644
          // The shared mesh-block parser: path + transform + material
          // overrides -- the SAME description for the player and the scene
 diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
-index b659604..0611812 100644
+index b6596045..0611812f 100644
 --- a/tests/mios-bsp-regression.cpp
 +++ b/tests/mios-bsp-regression.cpp
 @@ -39,12 +39,13 @@ precision highp float;

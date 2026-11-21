@@ -6,10 +6,10 @@ their input; only their pixels are covered. Default false. Applies on the
 next frame after hl.plugin.hypr3d.config({render={stills=...}}).
 
 diff --git a/src/main.cpp b/src/main.cpp
-index 01de2e8..8719191 100644
+index 5926e2d1..aa2dc786 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -440,6 +440,11 @@ static bool        g_cfgGrid = true;
+@@ -443,6 +443,11 @@ static bool        g_cfgGrid = true;
  // world.under_layers = false to return to panels-in-the-room.
  static bool        g_cfgUnderLayers = true;
  
@@ -19,9 +19,9 @@ index 01de2e8..8719191 100644
 +static bool        g_cfgStills = false;
 +
  // --- windows ----------------------------------------------------------------
- static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window size
- static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
-@@ -3651,7 +3656,7 @@ static void enter3D() {
+ static float       g_cfgWindowScale   = 0.08f;   // room multiplier on window size
+ static float       g_cfgDarkLevel     = 0.15f;   // room light level with the lights off
+@@ -3688,7 +3693,7 @@ static void enter3D() {
      g_scene.setPlayerDebugCapsule(Vec3{}, false);
  
      g_keyboardMode = EKeyboardMode::Space;
@@ -30,7 +30,7 @@ index 01de2e8..8719191 100644
      g_freeOnRoom     = false;
      g_swallowRelease = 0;
      g_vcSpace        = ECursorSpace::Desktop;
-@@ -5234,7 +5239,7 @@ static void onRenderStage(eRenderStage stage) {
+@@ -5337,7 +5342,7 @@ static void onRenderStage(eRenderStage stage, Render::CRenderContext& ctx) {
      // world.under_layers: after the windows, before the top and overlay
      // layers -- bars, launchers and notifications draw over the room as
      // ordinary 2D. Otherwise the room covers everything.
@@ -39,7 +39,7 @@ index 01de2e8..8719191 100644
          return;
  
      if (!g_currentRenderMon || g_currentRenderMon != g_monitor)
-@@ -5363,7 +5368,7 @@ static void setKeyboardMode(EKeyboardMode mode) {
+@@ -5467,7 +5472,7 @@ static void setKeyboardMode(EKeyboardMode mode) {
          g_lastFocusId = 0;
      }
  
@@ -48,7 +48,7 @@ index 01de2e8..8719191 100644
  
      notify(
          g_keyboardMode == EKeyboardMode::Space ?
-@@ -6475,6 +6480,10 @@ static int luaConfig(lua_State* L) {
+@@ -6748,6 +6753,10 @@ static int luaConfig(lua_State* L) {
          q.msaa = std::clamp(static_cast<int>(msaa + 0.5f), 0, 16);
          q.sharpen = std::clamp(q.sharpen, 0.0f, 1.0f);
          g_scene.setRenderQuality(q);

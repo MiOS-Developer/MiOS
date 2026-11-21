@@ -17,7 +17,7 @@ transforms (window at the work-area centre at 1:1, a second window cascaded righ
 (capture rates and counts unchanged).
 
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
-index 7b0764c..23e7b84 100644
+index f35e4ea1..044d8d60 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
 @@ -14,6 +14,8 @@
@@ -234,7 +234,7 @@ index 7b0764c..23e7b84 100644
      const int PW = static_cast<int>(std::lround(BOXOPT->w * SX));
      const int PH = static_cast<int>(std::lround(BOXOPT->h * SY));
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index 9897319..a5a1585 100644
+index 18b9d40b..58bdca35 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -1282,6 +1282,23 @@ layout(location = 1) in vec2 aUV;
@@ -278,7 +278,7 @@ index 9897319..a5a1585 100644
      m_blitFxaa    = glGetUniformLocation(m_blitProgram, "uFxaa");
      m_blitSharpen = glGetUniformLocation(m_blitProgram, "uSharpen");
      m_blitSrcTexel = glGetUniformLocation(m_blitProgram, "uSrcTexel");
-@@ -3550,6 +3568,15 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+@@ -3554,6 +3572,15 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
          ny = CY / CW;
          return true;
      };
@@ -294,7 +294,7 @@ index 9897319..a5a1585 100644
  
      const auto drawLayer = [&](float ox, float oy, float r, float g, float b) {
          std::vector<float> verts;
-@@ -3559,6 +3586,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+@@ -3563,6 +3590,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
              float nx = 0.0f, ny = 0.0f;
              if (!toNdc(V[0] + ox, V[1] + oy, nx, ny))
                  return;
@@ -302,7 +302,7 @@ index 9897319..a5a1585 100644
  
              // Drawn straight into Hyprland's framebuffer, which is stored
              // vertically flipped (the scene blit flips v for the same
-@@ -3605,6 +3633,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
+@@ -3609,6 +3637,7 @@ void GLScene::drawPointer(const Mat4& vp, int width, int height) {
              float nx = 0.0f, ny = 0.0f;
              if (!toNdc(C[0], C[1], nx, ny))
                  return;
@@ -310,7 +310,7 @@ index 9897319..a5a1585 100644
  
              // Flipped framebuffer, as below.
              verts.insert(verts.end(), {nx, -ny, 0.0f, C[2], C[3]});
-@@ -3678,6 +3707,7 @@ void GLScene::drawFullscreen(
+@@ -3682,6 +3711,7 @@ void GLScene::drawFullscreen(
      glUniform1i(m_blitTexture, 0);
      glUniform1f(m_blitAlpha, alpha);
      glUniform1i(m_blitPerPx, perPixel ? 1 : 0);
@@ -318,7 +318,7 @@ index 9897319..a5a1585 100644
      glUniform2f(m_blitTexel, m_outputWidth > 0 ? 1.0f / m_outputWidth : 0.0f,
                  m_outputHeight > 0 ? 1.0f / m_outputHeight : 0.0f);
      glUniform2f(m_blitSrcTexel, m_sceneWidth > 0 ? 1.0f / m_sceneWidth : 0.0f,
-@@ -3909,7 +3939,8 @@ bool GLScene::render(
+@@ -3913,7 +3943,8 @@ bool GLScene::render(
      int height,
      float alpha,
      float dt,
@@ -328,7 +328,7 @@ index 9897319..a5a1585 100644
  ) {
      if (width <= 0 || height <= 0)
          return false;
-@@ -3917,6 +3948,14 @@ bool GLScene::render(
+@@ -3921,6 +3952,14 @@ bool GLScene::render(
      if (!initialize())
          return false;
  
@@ -343,7 +343,7 @@ index 9897319..a5a1585 100644
      if (!ensureSceneFramebuffer(width, height))
          return false;
  
-@@ -4133,7 +4172,7 @@ bool GLScene::render(
+@@ -4138,7 +4177,7 @@ bool GLScene::render(
      // --- composite over whatever Hyprland already drew for this frame ---
      glBindFramebuffer(GL_FRAMEBUFFER, targetFBO);
  
@@ -352,7 +352,7 @@ index 9897319..a5a1585 100644
  
      glDisable(GL_DEPTH_TEST);
      glDisable(GL_CULL_FACE);
-@@ -4160,8 +4199,8 @@ bool GLScene::render(
+@@ -4165,8 +4204,8 @@ bool GLScene::render(
      }
  
      drawFullscreen(std::clamp(alpha, 0.0f, 1.0f), MORPH);
@@ -364,7 +364,7 @@ index 9897319..a5a1585 100644
      // --- restore compositor state ---
      glUseProgram(static_cast<GLuint>(oldProgram));
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 9dd1c51..89b4cc4 100644
+index 41f69538..dd30120a 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -25,6 +25,30 @@ static constexpr float kFovDeg = 65.0f;
@@ -411,7 +411,7 @@ index 9dd1c51..89b4cc4 100644
  
      // Raw pointer counts -> camera look. Prefer driving this through
      // InputController so sensitivity policy stays in one testable place.
-@@ -519,6 +546,7 @@ class GLScene {
+@@ -530,6 +557,7 @@ class GLScene {
      int m_glassSurface = -1, m_glassMetrics = -1;
      int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
      int m_sceneTexSharp = -1; // MiOS retina spawn
@@ -420,10 +420,10 @@ index 9dd1c51..89b4cc4 100644
      SGlassConfig m_glassConfig;
      unsigned int m_discVAO = 0, m_discVBO = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index c1785f4..ebf52bf 100644
+index e30855ef..94ef3e07 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -2127,9 +2127,8 @@ static Vec3 retinaSettle(const PHLMONITOR& mon, World3D::SEntity& entity, const
+@@ -2158,9 +2158,8 @@ static Vec3 retinaSettle(const PHLMONITOR& mon, World3D::SEntity& entity, const
          return center;
      g_retinaSettle.erase(IT);
      const auto& CAM = g_scene.camera();
@@ -435,7 +435,7 @@ index c1785f4..ebf52bf 100644
      const Vec3   FWD = CAM.forward(), RIGHT = CAM.right(), UP = cross(RIGHT, FWD);
      const Vec3   N   = retinaNormal(entity.yaw, entity.pitch);
      if (dot(N, FWD) > -0.99999f || std::fabs(entity.roll) > 1e-5f)
-@@ -5033,13 +5032,17 @@ class CHypr3DPassElement final : public IPassElement {
+@@ -5141,13 +5140,17 @@ class CHypr3DPassElement final : public IPassElement {
          Render::GL::g_pHyprOpenGL->makeEGLCurrent();
  
          const auto R_T0 = std::chrono::steady_clock::now();

@@ -27,13 +27,13 @@ desktop with the same hyprglass preset, and clean edges at any angle:
 - The status file gains a "texture: mip= aniso= maxAniso=" line.
 
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
-index 73e8fbe..7b0764c 100644
+index 34d5c0ab..f35e4ea1 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
 @@ -3,6 +3,7 @@
  #include "HyprlandCompat/WindowsCompat.hpp"
  
- #include <hyprland/src/desktop/view/Window.hpp>
+ #include <hyprland/src/desktop/view/window/Window.hpp>
 +#include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
  #include <hyprland/src/desktop/view/LayerSurface.hpp>
  #include <hyprland/src/protocols/LayerShell.hpp>
@@ -176,7 +176,7 @@ index 73e8fbe..7b0764c 100644
      m_snapshots.erase(ID);
      m_snapshots.emplace(ID, std::move(snapshot));
 diff --git a/src/HyprlandCompat/WindowCapture.hpp b/src/HyprlandCompat/WindowCapture.hpp
-index 6f92072..7898df9 100644
+index 6f92072d..7898df9f 100644
 --- a/src/HyprlandCompat/WindowCapture.hpp
 +++ b/src/HyprlandCompat/WindowCapture.hpp
 @@ -6,6 +6,7 @@
@@ -226,7 +226,7 @@ index 6f92072..7898df9 100644
  
  } // namespace H3D::Compat
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index ded15d1..57525c7 100644
+index 3dd913c3..f68275ad 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -18,6 +18,7 @@
@@ -815,7 +815,7 @@ index ded15d1..57525c7 100644
      m_glassBackground = glGetUniformLocation(m_sceneProgram, "uGlassBackground");
      m_glassEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassEnvironment");
      m_glassHasEnvironment = glGetUniformLocation(m_sceneProgram, "uGlassHasEnvironment");
-@@ -2516,6 +2669,76 @@ void GLScene::drawGrid(
+@@ -2520,6 +2673,76 @@ void GLScene::drawGrid(
      glBindVertexArray(0);
  }
  
@@ -892,7 +892,7 @@ index ded15d1..57525c7 100644
  void GLScene::drawWindows(
      const Mat4& vp,
      const std::vector<WindowRender>& windows
-@@ -2576,6 +2799,8 @@ void GLScene::drawWindows(
+@@ -2580,6 +2803,8 @@ void GLScene::drawWindows(
          slab.front.glassFace = window.glassMetrics[3] > 0.5f;
          slab.front.glassSurface = window.glassSurface;
          slab.front.glassMetrics = window.glassMetrics;
@@ -901,7 +901,7 @@ index ded15d1..57525c7 100644
          slab.front.glassUV = {window.u0, window.v0,
                               window.u1 - window.u0, window.v1 - window.v0};
  
-@@ -2614,6 +2839,8 @@ void GLScene::drawWindows(
+@@ -2618,6 +2843,8 @@ void GLScene::drawWindows(
              slab.back.glassFace = slab.front.glassFace;
              slab.back.glassSurface = slab.front.glassSurface;
              slab.back.glassMetrics = slab.front.glassMetrics;
@@ -910,7 +910,7 @@ index ded15d1..57525c7 100644
              slab.back.glassUV = slab.front.glassUV;
  
              for (int c = 0; c < 4; ++c) {
-@@ -2840,7 +3067,9 @@ void GLScene::drawWindows(
+@@ -2844,7 +3071,9 @@ void GLScene::drawWindows(
                 ordered[j].glassWall == ordered[i].glassWall &&
                 ordered[j].glassUV == ordered[i].glassUV &&
                 ordered[j].glassSurface == ordered[i].glassSurface &&
@@ -921,7 +921,7 @@ index ded15d1..57525c7 100644
              ++j;
  
          verts.clear();
-@@ -2874,6 +3103,19 @@ void GLScene::drawWindows(
+@@ -2878,6 +3107,19 @@ void GLScene::drawWindows(
          glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
          glUniform1i(m_sceneTextured, 1);
          glUniform1i(m_sceneTexSS, m_rq.textureSupersample ? 1 : 0);
@@ -941,7 +941,7 @@ index ded15d1..57525c7 100644
          glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
  
          // Do not sample the framebuffer we are drawing into. Refresh the
-@@ -2890,13 +3132,29 @@ void GLScene::drawWindows(
+@@ -2894,13 +3136,29 @@ void GLScene::drawWindows(
              const auto& M = ordered[i].glassMetrics;
              glUniform4f(m_glassSurface, S[0], S[1], S[2], S[3]);
              glUniform4f(m_glassMetrics, M[0], M[1], M[2], M[3]);
@@ -971,7 +971,7 @@ index ded15d1..57525c7 100644
          }
          glDrawArrays(GL_TRIANGLES, 0,
                       static_cast<GLint>(verts.size() / 5));
-@@ -3886,6 +4144,18 @@ void GLScene::destroyGLObjects() {
+@@ -3891,6 +4149,18 @@ void GLScene::destroyGLObjects() {
          m_sceneDepth = 0;
      }
  
@@ -991,7 +991,7 @@ index ded15d1..57525c7 100644
          glDeleteTextures(1, &m_glassColor);
          m_glassColor = 0;
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 77a89a7..1b05b8f 100644
+index 11a95480..05c47227 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -59,6 +59,10 @@ class GLScene {
@@ -1035,7 +1035,7 @@ index 77a89a7..1b05b8f 100644
          float scale              = 2.0f;  // supersampling: scene size / output size (1..4)
      };
      const SRenderQuality& renderQuality() const { return m_rq; }
-@@ -388,6 +399,13 @@ class GLScene {
+@@ -399,6 +410,13 @@ class GLScene {
      unsigned int m_sceneFBO = 0;
      unsigned int m_sceneColor = 0;
      unsigned int m_glassColor = 0; // independent scene-backdrop copy
@@ -1049,7 +1049,7 @@ index 77a89a7..1b05b8f 100644
      SRenderQuality m_rq;
      unsigned int m_msaaFBO = 0, m_msaaColor = 0, m_msaaDepth = 0;
      int  m_msaaSamples = 0;
-@@ -446,6 +464,8 @@ class GLScene {
+@@ -457,6 +475,8 @@ class GLScene {
      int m_glassLiveWallpaper = -1, m_panoramaLiveWallpaper = -1;
      int m_glassUV = -1, m_glassViewport = -1;
      int m_glassSurface = -1, m_glassMetrics = -1;
@@ -1059,10 +1059,10 @@ index 77a89a7..1b05b8f 100644
      unsigned int m_discVAO = 0, m_discVBO = 0;
      int m_discVertexCount = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index 8719191..e0f0e9e 100644
+index aa2dc786..97b53c6c 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -2111,6 +2111,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2136,6 +2136,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              render.glassMetrics = {static_cast<float>(SNAPSHOT->surfaceSize.x),
                  static_cast<float>(SNAPSHOT->surfaceSize.y),
                  std::max(0.f, static_cast<float>(W->rounding())), 1.f};
@@ -1073,7 +1073,7 @@ index 8719191..e0f0e9e 100644
          }
  
  
-@@ -4688,6 +4692,10 @@ static void dumpStatus() {
+@@ -4790,6 +4794,10 @@ static void dumpStatus() {
      out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
          << " scale=" << g_scene.sceneScale() << " msaa=" << g_scene.msaaSamples()
          << " fps=" << g_debugFps << "\n";
@@ -1084,7 +1084,7 @@ index 8719191..e0f0e9e 100644
  
      out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
          << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
-@@ -6473,6 +6481,14 @@ static int luaConfig(lua_State* L) {
+@@ -6746,6 +6754,14 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
          if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
              return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");

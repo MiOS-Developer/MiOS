@@ -1,8 +1,10 @@
 # AI-hint: Hypr3D enter/exit morph: tiled 2D windows enter the room as ONE flat group plane (global orientation and tilt, never angled per window; relative sizes/positions kept, reading_distance/scale back) with true z-rank stacking (widgets < tiled < floating/modal < pinned PiP < popups); windows opened while the room is showing JOIN the same group frame (angles, plane, apparent scale); a window not moved in the room exits to exactly its saved 2D box and mode.
 # AI-related: tests/test-hypr3d-enter-morph-scale.py, usr/share/mios/mios.toml [desktop.hyprland.hypr3d.spawn]
+diff --git a/src/main.cpp b/src/main.cpp
+index c3acda0f..b148ad46 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -192,6 +192,19 @@
+@@ -198,6 +198,19 @@ struct SViewPose {
  // the live room on every save (closed windows drop out).
  static std::unordered_map<std::uintptr_t, SViewPose> g_savedPoses;
  static std::unordered_map<std::uintptr_t, Vec3>      g_entryPoses3D;
@@ -22,7 +24,7 @@
  
  enum class EViewMorph : uint8_t { None, To3D, To2D };
  static EViewMorph g_viewMorph = EViewMorph::None;
-@@ -2663,11 +2676,39 @@
+@@ -2662,11 +2675,39 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
                  maxDist = std::max(0.6f, WALL.dist - 0.3f);
              const auto P = retinaPlace(mon, BOX, OBST, 0, maxDist);
              retinaRecord(info.id, BOX, P);
@@ -67,7 +69,7 @@
              g_entryPoses3D[info.id] = entity.center;
              if (!g_viewMorphArmed && g_viewMorph == EViewMorph::None &&
                  !g_cfgStills && !info.isLayer && !info.attached &&
-@@ -3731,6 +3772,8 @@
+@@ -3748,6 +3789,8 @@ static void buildEnterMorph(
      const PHLMONITOR& mon, const std::vector<Compat::SWindowInfo>& infos) {
      g_viewMorphWins.clear();
      g_entryPoses3D.clear();
@@ -76,7 +78,7 @@
  
      const auto& CAM = g_scene.camera();
      const Vec3  FWD = CAM.forward();
-@@ -3746,6 +3789,28 @@
+@@ -3763,6 +3806,28 @@ static void buildEnterMorph(
              obstacles.push_back(O);
      };
  
@@ -105,7 +107,7 @@
      for (const auto& info : infos) {
          SViewMorphWin MW;
  
-@@ -3798,33 +3863,72 @@
+@@ -3815,33 +3880,72 @@ static void buildEnterMorph(
              const double dx = winCx - monW * 0.5;
              const double dy = winCy - monH * 0.5;
  
@@ -201,7 +203,7 @@
              MW.roomPose.box = MW.boxRoom;
              g_retinaMul[info.id] = MW.roomPose.scaleMul;
              OBSTACLE(MW.roomPose, MW.boxRoom, MW.roomPose.scaleMul);
-@@ -3840,7 +3944,8 @@
+@@ -3857,7 +3961,8 @@ static void buildEnterMorph(
              }
          }
  
@@ -211,7 +213,7 @@
          MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
  
          // Every window's box is frozen at enter: the room is its own
-@@ -3897,6 +4002,7 @@
+@@ -3914,6 +4019,7 @@ static void beginExit3D() {
  
      // An interrupted ENTER morph contributes its intended room poses.
      const auto PREVIOUS = std::move(g_viewMorphWins);
@@ -219,7 +221,7 @@
  
      if (!g_world.entities().empty())
          g_savedPoses.clear(); // rebuilt from the live room below; an empty
-@@ -3963,6 +4069,32 @@
+@@ -3978,6 +4084,32 @@ static void beginExit3D() {
          MW.box2D   = MW.boxRoom;
          MW.animBox = false;
  

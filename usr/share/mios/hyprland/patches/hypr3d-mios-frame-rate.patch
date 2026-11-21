@@ -32,7 +32,7 @@ upstream behaviour:
   35 fps; glass_fps 5 73 fps -- every batch copy + frost is a full-scene pass.
 
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index 57525c7..dde464c 100644
+index f68275ad..822d390e 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -122,6 +122,7 @@ struct SWVert {
@@ -51,7 +51,7 @@ index 57525c7..dde464c 100644
      front.glassWall = back.glassWall = poly.glassWall;
      front.glassFace = back.glassFace = poly.glassFace;
      front.glassUV = back.glassUV = poly.glassUV;
-@@ -2739,6 +2741,181 @@ unsigned int GLScene::frostGlassCopy() {
+@@ -2743,6 +2745,181 @@ unsigned int GLScene::frostGlassCopy() {
      return m_frostTex[1];
  }
  
@@ -233,7 +233,7 @@ index 57525c7..dde464c 100644
  void GLScene::drawWindows(
      const Mat4& vp,
      const std::vector<WindowRender>& windows
-@@ -2795,6 +2972,7 @@ void GLScene::drawWindows(
+@@ -2799,6 +2976,7 @@ void GLScene::drawWindows(
  
          SWinSlab slab;
          slab.front.tex   = window.texture;
@@ -241,7 +241,7 @@ index 57525c7..dde464c 100644
          slab.front.alpha = window.alpha;
          slab.front.glassFace = window.glassMetrics[3] > 0.5f;
          slab.front.glassSurface = window.glassSurface;
-@@ -2835,6 +3013,7 @@ void GLScene::drawWindows(
+@@ -2839,6 +3017,7 @@ void GLScene::drawWindows(
              // each content face is visible exclusively from its own side,
              // so the two never stack through a translucent window.
              slab.back.tex   = window.texture;
@@ -249,7 +249,7 @@ index 57525c7..dde464c 100644
              slab.back.alpha = window.alpha;
              slab.back.glassFace = slab.front.glassFace;
              slab.back.glassSurface = slab.front.glassSurface;
-@@ -2890,6 +3069,7 @@ void GLScene::drawWindows(
+@@ -2894,6 +3073,7 @@ void GLScene::drawWindows(
  
                      SWPoly wall;
                      wall.tex   = window.texture;
@@ -257,7 +257,7 @@ index 57525c7..dde464c 100644
                      wall.alpha = window.alpha;
                      wall.glassWall = slab.front.glassFace;
  
-@@ -3029,8 +3209,21 @@ void GLScene::drawWindows(
+@@ -3033,8 +3213,21 @@ void GLScene::drawWindows(
      glActiveTexture(GL_TEXTURE2);
      glGetIntegerv(GL_TEXTURE_BINDING_2D, &oldTexture2);
      const GLuint environment = m_environmentTex ? m_environmentTex : m_panoramaTex;
@@ -280,7 +280,7 @@ index 57525c7..dde464c 100644
      glUniform1f(m_glassMirror, m_panoramaMirror ? 1.f : 0.f);
      glUniform1f(m_glassLiveMirror, m_liveWrapMirror ? 1.f : 0.f);
      for (size_t i = 0; i < GLASS_PARAMETERS.size(); ++i)
-@@ -3135,6 +3328,19 @@ void GLScene::drawWindows(
+@@ -3139,6 +3332,19 @@ void GLScene::drawWindows(
              const auto& D = ordered[i].glassDeco;
              glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
              glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
@@ -300,7 +300,7 @@ index 57525c7..dde464c 100644
              glActiveTexture(GL_TEXTURE1);
              glBindTexture(GL_TEXTURE_2D, m_glassColor);
              resolveSceneMsaa();
-@@ -3142,7 +3348,14 @@ void GLScene::drawWindows(
+@@ -3146,7 +3352,14 @@ void GLScene::drawWindows(
              glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_sceneWidth, m_sceneHeight);
              // MiOS: frost the copy once for the whole batch (separable Gaussian), then
              // put back exactly the state this loop draws with.
@@ -316,7 +316,7 @@ index 57525c7..dde464c 100644
              glUseProgram(m_sceneProgram);
              glBindVertexArray(m_polyVAO);
              glBindBuffer(GL_ARRAY_BUFFER, m_polyVBO);
-@@ -3164,6 +3377,21 @@ void GLScene::drawWindows(
+@@ -3168,6 +3381,21 @@ void GLScene::drawWindows(
  
      glUniform1i(m_glassFace, 0);
      glUniform1i(m_glassWall, 0);
@@ -338,7 +338,7 @@ index 57525c7..dde464c 100644
      glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(oldReadFBO));
      glActiveTexture(GL_TEXTURE2);
      glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(oldTexture2));
-@@ -4160,6 +4388,11 @@ void GLScene::destroyGLObjects() {
+@@ -4165,6 +4393,11 @@ void GLScene::destroyGLObjects() {
          glDeleteTextures(1, &m_glassColor);
          m_glassColor = 0;
      }
@@ -351,7 +351,7 @@ index 57525c7..dde464c 100644
      if (m_msaaFBO) {
          glDeleteFramebuffers(1, &m_msaaFBO);
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 1b05b8f..dbba3b2 100644
+index 05c47227..9e30418f 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -8,10 +8,12 @@
@@ -399,7 +399,7 @@ index 1b05b8f..dbba3b2 100644
  
      // What the crosshair currently points at, or 0 for "nothing". Ray is cast
      // through the centre of the screen from the camera, never from the OS
-@@ -406,6 +433,31 @@ class GLScene {
+@@ -417,6 +444,31 @@ class GLScene {
      std::array<unsigned int, 2> m_frostTex{}, m_frostFBO{};
      int m_frostW = 0, m_frostH = 0;
      unsigned int frostGlassCopy(); // returns the texture the glass samples (the copy itself when sigma is ~0)
@@ -432,10 +432,10 @@ index 1b05b8f..dbba3b2 100644
      unsigned int m_msaaFBO = 0, m_msaaColor = 0, m_msaaDepth = 0;
      int  m_msaaSamples = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index e0f0e9e..c828f93 100644
+index 97b53c6c..b8c1bcd5 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -387,6 +387,45 @@ static constexpr float kSpawnDistance = 10.0f;
+@@ -390,6 +390,45 @@ static constexpr float kSpawnDistance = 10.0f;
  static SP<CEventLoopTimer> g_framePump;
  static constexpr auto kFramePumpInterval = std::chrono::milliseconds(8);
  
@@ -481,7 +481,7 @@ index e0f0e9e..c828f93 100644
  // Two keyboard modes, toggled with Super + Left Alt:
  //   Space  -- WASD/Space/Shift/Ctrl drive the camera;
  //   Window -- every key reaches the focused window for typing.
-@@ -1458,13 +1497,14 @@ static void startFramePump() {
+@@ -1483,13 +1522,14 @@ static void startFramePump() {
                      g_capture.releaseAll();
                      g_scene.setEnvironmentTexture(0);
                      g_environmentCapture.releaseAll();
@@ -497,7 +497,7 @@ index e0f0e9e..c828f93 100644
              },
              nullptr
          );
-@@ -1472,7 +1512,8 @@ static void startFramePump() {
+@@ -1497,7 +1537,8 @@ static void startFramePump() {
          g_pEventLoopManager->addTimer(g_framePump);
      }
  
@@ -507,7 +507,7 @@ index e0f0e9e..c828f93 100644
  }
  
  // --- live window capture -----------------------------------------------------
-@@ -1646,14 +1687,23 @@ static void serviceCapture() {
+@@ -1671,14 +1712,23 @@ static void serviceCapture() {
              if (box && box->w >= MON->m_size.x * 0.95 &&
                  box->h >= MON->m_size.y * 0.95) background = layer;
          }
@@ -538,7 +538,7 @@ index e0f0e9e..c828f93 100644
              }
          }
      }
-@@ -3508,6 +3558,7 @@ static void deactivate3D() {
+@@ -3533,6 +3583,7 @@ static void deactivate3D() {
      g_capture.releaseAll();
      g_scene.setEnvironmentTexture(0);
      g_environmentCapture.releaseAll();
@@ -546,7 +546,7 @@ index e0f0e9e..c828f93 100644
      Compat::setPointerCapture(false);
  
      unghostWindows();
-@@ -4696,6 +4747,23 @@ static void dumpStatus() {
+@@ -4798,6 +4849,23 @@ static void dumpStatus() {
      out << "texture: mip=" << (g_scene.renderQuality().textureSupersample ? 1 : 0)
          << " aniso=" << g_scene.renderQuality().anisotropy
          << " maxAniso=" << g_scene.maxAnisotropy() << "\n";
@@ -570,7 +570,7 @@ index e0f0e9e..c828f93 100644
  
      out << "hookInstalled=" << (g_hookInstalled ? 1 : 0)
          << " hookActive=" << (Compat::pointerHookActive() ? 1 : 0)
-@@ -6420,13 +6488,21 @@ static int luaConfig(lua_State* L) {
+@@ -6689,13 +6757,21 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: world.monitor must be a string");
          if (!SET_BOOL(idx, "under_layers", g_cfgUnderLayers, "world.under_layers"))
              return luaL_error(L, "hypr3d.config: world.under_layers must be a boolean");
@@ -594,10 +594,10 @@ index e0f0e9e..c828f93 100644
              // MiOS: live wallpaper wrap: "mirror" (once + mirrored back half) or "repeat".
              std::string wrap = "mirror";
              if (!SET_STRING(idx, "live_wrap", wrap, "world.live_wrap") ||
-@@ -6436,6 +6512,14 @@ static int luaConfig(lua_State* L) {
-         }
-         if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
-             return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
+@@ -6709,6 +6785,14 @@ static int luaConfig(lua_State* L) {
+             return luaL_error(L, "hypr3d.config: world.dark_level must be a number");
+         g_cfgDarkLevel = std::clamp(g_cfgDarkLevel, 0.0f, 1.0f);
+         CMapModel::s_darkLevel = g_cfgDarkLevel;
 +        {
 +            // MiOS frame rate: live dome re-captures per second (0 = every frame).
 +            float live = g_cfgLiveFps;
@@ -609,7 +609,7 @@ index e0f0e9e..c828f93 100644
          lua_pop(L, 1);
      }
  
-@@ -6500,6 +6584,19 @@ static int luaConfig(lua_State* L) {
+@@ -6773,6 +6857,19 @@ static int luaConfig(lua_State* L) {
          if (!SET_BOOL(idx, "stills", g_cfgStills, "render.stills"))
              return luaL_error(L, "hypr3d.config: render.stills must be a boolean");
          g_scene.setCrosshairVisible(!g_cfgStills && !pointerFree());

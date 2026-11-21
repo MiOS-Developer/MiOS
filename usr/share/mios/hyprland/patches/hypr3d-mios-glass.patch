@@ -62,7 +62,7 @@ index c02a3da2..b42ff23c 100644
 +    set_tests_properties(mios-bsp-regression PROPERTIES TIMEOUT 5)
 +endif()
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
-index 6c667e04..73e8fbed 100644
+index 199ee91e..34d5c0ab 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
 @@ -832,7 +832,7 @@ bool CWindowCapture::makeSnapshotPopup(const WP<Desktop::View::CPopup>& popup,
@@ -97,7 +97,7 @@ index 619d6a65..6f92072d 100644
      // A window's popup (menu, tooltip), captured at its own box; `box` is
      // its monitor-local box.
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index 7cbe2909..3b347fed 100644
+index 882d814f..db7906d3 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -2,6 +2,7 @@
@@ -196,19 +196,29 @@ index 7cbe2909..3b347fed 100644
  
      for (size_t i = 0; i < COUNT; ++i) {
          const size_t J = (i + 1) % COUNT;
-@@ -119,63 +175,71 @@ struct SBspNode {
+@@ -119,73 +175,71 @@ struct SBspNode {
  };
  
  static void bspBuild(SBspNode& node, std::vector<SWPoly>& polys, int depth) {
+-    // A split can leave slivers with fewer than three vertices: nothing to
+-    // draw, and no plane to take (reading verts[2] of one crashed).
+-    std::erase_if(polys, [](const SWPoly& p) { return p.verts.size() < 3; });
 -    if (polys.empty())
 -        return;
 -
--    // Node plane from the first polygon.
+-    // Node plane from the first polygon with a usable one.
 -    const Vec3 A = polys[0].verts[0].p;
 -    const Vec3 B = polys[0].verts[1].p;
 -    const Vec3 C = polys[0].verts[2].p;
+-    const Vec3 CR = cross(B - A, C - A);
+-    if (!(dot(CR, CR) > 1e-12f)) {
+-        // Degenerate (collinear) first polygon: no splitting plane here.
+-        for (auto& P : polys)
+-            node.coplanar.push_back(std::move(P));
+-        return;
+-    }
 -    node.p = A;
--    node.n = normalize(cross(B - A, C - A));
+-    node.n = normalize(CR);
 -
 -    std::vector<SWPoly> frontList, backList;
 -
@@ -321,7 +331,7 @@ index 7cbe2909..3b347fed 100644
      }
  }
  
-@@ -206,6 +270,11 @@ static GLuint compileShader(
+@@ -216,6 +270,11 @@ static GLuint compileShader(
      if (!shader)
          return 0;
  
@@ -333,7 +343,7 @@ index 7cbe2909..3b347fed 100644
      glShaderSource(
          shader,
          1,
-@@ -368,6 +437,28 @@ static void appendQuad(
+@@ -378,6 +437,28 @@ static void appendQuad(
      );
  }
  
@@ -362,7 +372,7 @@ index 7cbe2909..3b347fed 100644
  } // namespace
  
  GLScene::GLScene() {
-@@ -403,8 +494,10 @@ uniform mat4 uMVP;
+@@ -413,8 +494,10 @@ uniform mat4 uMVP;
  uniform vec4 uUVRect;
  
  out vec2 vUV;
@@ -373,7 +383,7 @@ index 7cbe2909..3b347fed 100644
      gl_Position = uMVP * vec4(aPosition, 1.0);
      vUV = aUV * uUVRect.zw + uUVRect.xy;
  }
-@@ -412,19 +505,610 @@ void main() {
+@@ -422,19 +505,610 @@ void main() {
  
      static constexpr const char* sceneFragmentShader = R"GLSL(
  #version 300 es
@@ -989,7 +999,7 @@ index 7cbe2909..3b347fed 100644
      vec4 c = uTextured != 0 ? texture(uTexture, vUV) * uColor : uColor;
  
      // Premultiplied mode (the 2D<->3D view morph): the scene buffer holds
-@@ -568,57 +1252,42 @@ void main() {
+@@ -578,57 +1252,42 @@ void main() {
      if (!m_blitProgram)
          return false;
  
@@ -1071,7 +1081,7 @@ index 7cbe2909..3b347fed 100644
  }
  )GLSL";
  
-@@ -690,6 +1359,27 @@ void main() {
+@@ -700,6 +1359,27 @@ void main() {
              "uPremult"
          );
  
@@ -1099,7 +1109,7 @@ index 7cbe2909..3b347fed 100644
      m_blitTexture =
          glGetUniformLocation(
              m_blitProgram,
-@@ -743,6 +1433,8 @@ void main() {
+@@ -753,6 +1433,8 @@ void main() {
              m_panoramaProgram,
              "uLod"
          );
@@ -1108,7 +1118,7 @@ index 7cbe2909..3b347fed 100644
  
      m_panoramaSampler =
          glGetUniformLocation(
-@@ -770,6 +1462,12 @@ void main() {
+@@ -780,6 +1462,12 @@ void main() {
  }
  
  bool GLScene::createMeshes() {
@@ -1121,7 +1131,7 @@ index 7cbe2909..3b347fed 100644
      // Unit window quad, centred on the origin, facing +Z (the pose windows
      // are modelled in). Per-window position and size come from the model
      // matrix, so every window is independently placeable and scalable.
-@@ -803,6 +1501,24 @@ bool GLScene::createMeshes() {
+@@ -813,6 +1501,24 @@ bool GLScene::createMeshes() {
          -0.5f, 0.0f, -0.5f
      );
  
@@ -1146,7 +1156,7 @@ index 7cbe2909..3b347fed 100644
      glGenVertexArrays(1, &m_floorVAO);
      glGenBuffers(1, &m_floorVBO);
  
-@@ -1019,6 +1735,16 @@ bool GLScene::ensureSceneFramebuffer(
+@@ -1029,6 +1735,16 @@ bool GLScene::ensureSceneFramebuffer(
  
      glBindTexture(GL_TEXTURE_2D, 0);
  
@@ -1163,7 +1173,7 @@ index 7cbe2909..3b347fed 100644
      glBindRenderbuffer(GL_RENDERBUFFER, m_sceneDepth);
  
      glRenderbufferStorage(
-@@ -1128,14 +1854,29 @@ void GLScene::drawFloor(
+@@ -1138,14 +1854,29 @@ void GLScene::drawFloor(
      glCullFace(GL_BACK);
      glFrontFace(GL_CCW);
  
@@ -1194,7 +1204,7 @@ index 7cbe2909..3b347fed 100644
  
      glCullFace(static_cast<GLenum>(oldCullMode));
      glFrontFace(static_cast<GLenum>(oldFrontFace));
-@@ -1500,7 +2241,7 @@ void GLScene::refreshPlayer() {
+@@ -1514,7 +2245,7 @@ void GLScene::refreshPlayer() {
  }
  
  void GLScene::drawPanorama(float aspect) {
@@ -1203,7 +1213,7 @@ index 7cbe2909..3b347fed 100644
          return;
  
      glUseProgram(m_panoramaProgram);
-@@ -1535,7 +2276,7 @@ void GLScene::drawPanorama(float aspect) {
+@@ -1549,7 +2280,7 @@ void GLScene::drawPanorama(float aspect) {
      // 2*tanX / screenWidth radians.
      float lod = 0.0f;
  
@@ -1212,7 +1222,7 @@ index 7cbe2909..3b347fed 100644
          const float texelsPerPixel =
              static_cast<float>(m_panoramaW) / (2.0f * PI) *
              (2.0f * TANY * aspect) / static_cast<float>(m_sceneWidth);
-@@ -1549,18 +2290,23 @@ void GLScene::drawPanorama(float aspect) {
+@@ -1563,18 +2294,23 @@ void GLScene::drawPanorama(float aspect) {
      glUniform1f(m_panoramaTanX, TANY * aspect);
      glUniform1f(m_panoramaTanY, TANY);
      glUniform1f(m_panoramaLod, lod);
@@ -1239,7 +1249,7 @@ index 7cbe2909..3b347fed 100644
  
      glDepthMask(GL_TRUE);
      glEnable(GL_DEPTH_TEST);
-@@ -1650,6 +2396,11 @@ void GLScene::drawWindows(
+@@ -1664,6 +2400,11 @@ void GLScene::drawWindows(
          SWinSlab slab;
          slab.front.tex   = window.texture;
          slab.front.alpha = window.alpha;
@@ -1251,7 +1261,7 @@ index 7cbe2909..3b347fed 100644
  
          for (int c = 0; c < 4; ++c) {
              SWVert V{
-@@ -1683,6 +2434,10 @@ void GLScene::drawWindows(
+@@ -1697,6 +2438,10 @@ void GLScene::drawWindows(
              // so the two never stack through a translucent window.
              slab.back.tex   = window.texture;
              slab.back.alpha = window.alpha;
@@ -1262,7 +1272,7 @@ index 7cbe2909..3b347fed 100644
  
              for (int c = 0; c < 4; ++c) {
                  SWVert V{
-@@ -1732,6 +2487,7 @@ void GLScene::drawWindows(
+@@ -1746,6 +2491,7 @@ void GLScene::drawWindows(
                      SWPoly wall;
                      wall.tex   = window.texture;
                      wall.alpha = window.alpha;
@@ -1270,7 +1280,7 @@ index 7cbe2909..3b347fed 100644
  
                      wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
                      wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
-@@ -1744,7 +2500,17 @@ void GLScene::drawWindows(
+@@ -1758,7 +2504,17 @@ void GLScene::drawWindows(
                  }
              };
  
@@ -1289,7 +1299,7 @@ index 7cbe2909..3b347fed 100644
                  for (const auto& LOOP : *window.outlines)
                      EMIT_WALLS(LOOP.pts, LOOP.uvs);
              } else {
-@@ -1792,7 +2558,7 @@ void GLScene::drawWindows(
+@@ -1806,7 +2562,7 @@ void GLScene::drawWindows(
          for (auto& P : S.inner)
              polys.push_back(std::move(P));
  
@@ -1298,7 +1308,7 @@ index 7cbe2909..3b347fed 100644
      }
  
      if (polys.empty())
-@@ -1837,7 +2603,7 @@ void GLScene::drawWindows(
+@@ -1851,7 +2607,7 @@ void GLScene::drawWindows(
      glUniform1i(m_scenePremult, m_windowsPremultiplied ? 1 : 0);
  
      glEnable(GL_DEPTH_TEST);
@@ -1307,7 +1317,7 @@ index 7cbe2909..3b347fed 100644
      glEnable(GL_BLEND);
      if (m_windowsPremultiplied)
          glBlendFuncSeparate(
-@@ -1855,6 +2621,31 @@ void GLScene::drawWindows(
+@@ -1869,6 +2625,31 @@ void GLScene::drawWindows(
  
      glActiveTexture(GL_TEXTURE0);
  
@@ -1339,7 +1349,7 @@ index 7cbe2909..3b347fed 100644
      // Consecutive polys with the same texture and alpha merge into ONE
      // upload + draw: a depth slab adds ~100 wall quads per window, and a
      // draw call per wall quad would sink the frame. Only CONSECUTIVE polys
-@@ -1865,7 +2656,12 @@ void GLScene::drawWindows(
+@@ -1879,7 +2660,12 @@ void GLScene::drawWindows(
      for (size_t i = 0; i < ordered.size();) {
          size_t j = i;
          while (j < ordered.size() && ordered[j].tex == ordered[i].tex &&
@@ -1353,7 +1363,7 @@ index 7cbe2909..3b347fed 100644
              ++j;
  
          verts.clear();
-@@ -1900,12 +2696,40 @@ void GLScene::drawWindows(
+@@ -1914,12 +2700,40 @@ void GLScene::drawWindows(
          glUniform1i(m_sceneTextured, 1);
          glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
  
@@ -1394,7 +1404,7 @@ index 7cbe2909..3b347fed 100644
      glBindVertexArray(0);
      glBindBuffer(GL_ARRAY_BUFFER, 0);
      glBindTexture(GL_TEXTURE_2D, 0);
-@@ -2764,6 +3588,11 @@ void GLScene::shutdown() {
+@@ -2779,6 +3593,11 @@ void GLScene::shutdown() {
  }
  
  void GLScene::destroyGLObjects() {
@@ -1406,7 +1416,7 @@ index 7cbe2909..3b347fed 100644
      if (m_textVBO) {
          glDeleteBuffers(1, &m_textVBO);
          m_textVBO = 0;
-@@ -2827,6 +3656,10 @@ void GLScene::destroyGLObjects() {
+@@ -2842,6 +3661,10 @@ void GLScene::destroyGLObjects() {
          m_floorVBO = 0;
      }
  
@@ -1417,7 +1427,7 @@ index 7cbe2909..3b347fed 100644
      if (m_floorVAO) {
          glDeleteVertexArrays(1, &m_floorVAO);
          m_floorVAO = 0;
-@@ -2847,6 +3680,11 @@ void GLScene::destroyGLObjects() {
+@@ -2862,6 +3685,11 @@ void GLScene::destroyGLObjects() {
          m_sceneDepth = 0;
      }
  
@@ -1430,7 +1440,7 @@ index 7cbe2909..3b347fed 100644
          glDeleteTextures(1, &m_sceneColor);
          m_sceneColor = 0;
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 083d93f2..04c2a2d2 100644
+index 4532b0c8..b49ba5a9 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -7,6 +7,7 @@
@@ -1515,7 +1525,7 @@ index 083d93f2..04c2a2d2 100644
  
      // What the crosshair currently points at, or 0 for "nothing". Ray is cast
      // through the centre of the screen from the camera, never from the OS
-@@ -310,6 +364,7 @@ class GLScene {
+@@ -321,6 +375,7 @@ class GLScene {
  
      unsigned int m_sceneFBO = 0;
      unsigned int m_sceneColor = 0;
@@ -1523,7 +1533,7 @@ index 083d93f2..04c2a2d2 100644
      unsigned int m_sceneDepth = 0;
  
      unsigned int m_sceneProgram = 0;
-@@ -352,6 +407,18 @@ class GLScene {
+@@ -363,6 +418,18 @@ class GLScene {
      int m_sceneColorUniform = -1;
      int m_sceneUVRect = -1;
      int m_scenePremult = -1;
@@ -1542,7 +1552,7 @@ index 083d93f2..04c2a2d2 100644
  
      int m_blitTexture = -1;
      int m_blitAlpha = -1;
-@@ -370,6 +437,9 @@ class GLScene {
+@@ -381,6 +448,9 @@ class GLScene {
      std::filesystem::file_time_type m_panoramaMtime{};
      bool m_panoramaMtimeValid = false;
      unsigned int m_panoramaTex = 0;
@@ -1553,10 +1563,10 @@ index 083d93f2..04c2a2d2 100644
  
      int  m_width = 0, m_height = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index 14dce494..d6d9d69b 100644
+index cc669b75..931b9e9e 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -90,6 +90,8 @@ static InputController g_input;
+@@ -93,6 +93,8 @@ static InputController g_input;
  static World3D::CWorld g_world;
  static AimFocus        g_aim;
  static Compat::CWindowCapture g_capture;
@@ -1565,7 +1575,7 @@ index 14dce494..d6d9d69b 100644
  
  static bool g_active = false;
  
-@@ -1449,6 +1451,8 @@ static void startFramePump() {
+@@ -1474,6 +1476,8 @@ static void startFramePump() {
                  // destroy GL objects here, outside any render pass.
                  if (g_captureReleasePending && !g_active) {
                      g_capture.releaseAll();
@@ -1574,7 +1584,7 @@ index 14dce494..d6d9d69b 100644
                      g_captureReleasePending = false;
                  }
  
-@@ -1625,6 +1629,31 @@ static void serviceCapture() {
+@@ -1650,6 +1654,31 @@ static void serviceCapture() {
  
      g_capturing = true;
  
@@ -1606,7 +1616,7 @@ index 14dce494..d6d9d69b 100644
      const auto INFOS = Compat::enumerateEligibleWindows(MON, g_cfgUnderLayers);
  
      if (g_viewMorphArmed) {
-@@ -2065,6 +2094,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2090,6 +2119,20 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              (LAST_FS_WIN && entity.id == Compat::windowId(LAST_FS_WIN));
  
          render.alpha = IS_FS_WINDOW ? 1.0f : g_fsFade;
@@ -1627,7 +1637,7 @@ index 14dce494..d6d9d69b 100644
  
          // Depth slab (windows.depth): silhouette source priority -- the
          // outline traced from the snapshot texture's real alpha (exact
-@@ -3454,6 +3497,8 @@ static void deactivate3D() {
+@@ -3479,6 +3522,8 @@ static void deactivate3D() {
      resetMovementKeys();
  
      g_capture.releaseAll();
@@ -1636,7 +1646,7 @@ index 14dce494..d6d9d69b 100644
      Compat::setPointerCapture(false);
  
      unghostWindows();
-@@ -3592,6 +3637,8 @@ static void enter3D() {
+@@ -3617,6 +3662,8 @@ static void enter3D() {
      }
  
      g_capture.releaseAll();
@@ -1645,7 +1655,7 @@ index 14dce494..d6d9d69b 100644
  
      resetMovementKeys();
  
-@@ -6355,11 +6402,44 @@ static int luaConfig(lua_State* L) {
+@@ -6624,6 +6671,12 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: world.monitor must be a string");
          if (!SET_BOOL(idx, "under_layers", g_cfgUnderLayers, "world.under_layers"))
              return luaL_error(L, "hypr3d.config: world.under_layers must be a boolean");
@@ -1657,6 +1667,8 @@ index 14dce494..d6d9d69b 100644
 +        }
          if (!SET_BOOL(idx, "grid", g_cfgGrid, "world.grid"))
              return luaL_error(L, "hypr3d.config: world.grid must be a boolean");
+         if (!SET_NUM(idx, "dark_level", g_cfgDarkLevel, "world.dark_level"))
+@@ -6633,6 +6686,33 @@ static int luaConfig(lua_State* L) {
          lua_pop(L, 1);
      }
  

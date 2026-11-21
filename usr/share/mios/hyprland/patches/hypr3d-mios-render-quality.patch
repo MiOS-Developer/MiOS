@@ -5,7 +5,7 @@ hypr3d.config({ render = { msaa, fxaa, sharpen, texture_supersample } })
 section. Applies after hypr3d-mios-glass.patch.
 
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index 3b347fe..0c88154 100644
+index db7906d3..ea7e25ba 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -1033,9 +1033,25 @@ void hgMaterial() {
@@ -235,7 +235,7 @@ index 3b347fe..0c88154 100644
      glBindFramebuffer(GL_FRAMEBUFFER, 0);
  
      return status == GL_FRAMEBUFFER_COMPLETE;
-@@ -2694,6 +2785,7 @@ void GLScene::drawWindows(
+@@ -2698,6 +2789,7 @@ void GLScene::drawWindows(
          glActiveTexture(GL_TEXTURE0);
          glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
          glUniform1i(m_sceneTextured, 1);
@@ -243,7 +243,7 @@ index 3b347fe..0c88154 100644
          glUniform4f(m_sceneColorUniform, 1.f, 1.f, 1.f, ordered[i].alpha);
  
          // Do not sample the framebuffer we are drawing into. Refresh the
-@@ -2712,8 +2804,10 @@ void GLScene::drawWindows(
+@@ -2716,8 +2808,10 @@ void GLScene::drawWindows(
              glUniform4f(m_glassMetrics, M[0], M[1], M[2], M[3]);
              glActiveTexture(GL_TEXTURE1);
              glBindTexture(GL_TEXTURE_2D, m_glassColor);
@@ -254,7 +254,7 @@ index 3b347fe..0c88154 100644
              glActiveTexture(GL_TEXTURE0);
          }
          glDrawArrays(GL_TRIANGLES, 0,
-@@ -2989,6 +3083,10 @@ void GLScene::drawFullscreen(
+@@ -2993,6 +3087,10 @@ void GLScene::drawFullscreen(
      glUniform1i(m_blitTexture, 0);
      glUniform1f(m_blitAlpha, alpha);
      glUniform1i(m_blitPerPx, perPixel ? 1 : 0);
@@ -265,7 +265,7 @@ index 3b347fe..0c88154 100644
  
      glBindVertexArray(m_fullscreenVAO);
  
-@@ -3071,7 +3169,7 @@ void GLScene::drawDebugOverlay(int width, int height) {
+@@ -3075,7 +3173,7 @@ void GLScene::drawDebugOverlay(int width, int height) {
      glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &oldFBO);
      glGetIntegerv(GL_VIEWPORT, oldViewport);
  
@@ -274,7 +274,7 @@ index 3b347fe..0c88154 100644
      glViewport(0, 0, width, height);
  
      // The lines: coordinates, view angles, fps, map size.
-@@ -3287,7 +3385,7 @@ bool GLScene::render(
+@@ -3291,7 +3389,7 @@ bool GLScene::render(
  
      m_windowsPremultiplied = MORPH;
  
@@ -283,7 +283,7 @@ index 3b347fe..0c88154 100644
  
      glViewport(0, 0, width, height);
  
-@@ -3398,6 +3496,9 @@ bool GLScene::render(
+@@ -3403,6 +3501,9 @@ bool GLScene::render(
      // F3 HUD: always on top of the scene, never part of the 3D pass state.
      drawDebugOverlay(width, height);
  
@@ -293,7 +293,7 @@ index 3b347fe..0c88154 100644
      // Read back one pixel of the offscreen scene while it is still bound. A
      // floor point in the lower half of the screen, where ground and sky are
      // both opaque by construction: alpha below 255 here means the composite
-@@ -3685,6 +3786,14 @@ void GLScene::destroyGLObjects() {
+@@ -3690,6 +3791,14 @@ void GLScene::destroyGLObjects() {
          m_glassColor = 0;
      }
  
@@ -309,7 +309,7 @@ index 3b347fe..0c88154 100644
          glDeleteTextures(1, &m_sceneColor);
          m_sceneColor = 0;
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index 04c2a2d..2656c29 100644
+index b49ba5a9..c3145827 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -151,6 +151,21 @@ class GLScene {
@@ -334,7 +334,7 @@ index 04c2a2d..2656c29 100644
      void setDebugOverlay(bool on) {
          m_debugOverlay = on;
      }
-@@ -365,6 +380,13 @@ class GLScene {
+@@ -376,6 +391,13 @@ class GLScene {
      unsigned int m_sceneFBO = 0;
      unsigned int m_sceneColor = 0;
      unsigned int m_glassColor = 0; // independent scene-backdrop copy
@@ -349,10 +349,10 @@ index 04c2a2d..2656c29 100644
  
      unsigned int m_sceneProgram = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index d6d9d69..ee23991 100644
+index 931b9e9e..f1ad23d9 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -6440,6 +6440,27 @@ static int luaConfig(lua_State* L) {
+@@ -6713,6 +6713,27 @@ static int luaConfig(lua_State* L) {
          lua_pop(L, 1);
      }
  

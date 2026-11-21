@@ -1,4 +1,5 @@
 diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCapture.cpp
+index 1477992d..56877849 100644
 --- a/src/HyprlandCompat/WindowCapture.cpp
 +++ b/src/HyprlandCompat/WindowCapture.cpp
 @@ -9,6 +9,9 @@
@@ -11,7 +12,7 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
  #include <hyprland/src/render/OpenGL.hpp>
  #include <hyprland/src/render/gl/GLFramebuffer.hpp>
  
-@@ -388,23 +391,46 @@
+@@ -388,23 +391,46 @@ class CForeignSnapshotScope {
          if (m_window) {
              m_savedTransformers = std::move(m_window->m_transformers);
              m_window->m_transformers.clear();
@@ -66,9 +67,10 @@ diff --git a/src/HyprlandCompat/WindowCapture.cpp b/src/HyprlandCompat/WindowCap
      PHLWINDOW                                    m_window;
      std::vector<UP<Render::IWindowTransformer>>  m_savedTransformers;
 diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCompat.cpp
+index 11842ca5..6fb72372 100644
 --- a/src/HyprlandCompat/WindowsCompat.cpp
 +++ b/src/HyprlandCompat/WindowsCompat.cpp
-@@ -544,7 +544,8 @@
+@@ -558,7 +558,8 @@ static SP<CWLSurfaceResource> surfaceAt(const PHLWINDOW& window, Vector2D& local
      return window->resource();
  }
  
@@ -78,7 +80,7 @@ diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCo
      if (!monitor || !Desktop::viewState())
          return false;
  
-@@ -553,18 +554,28 @@
+@@ -567,20 +568,30 @@ bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global) {
      Vector2D coords;
      PHLLS    found;
  
@@ -102,17 +104,20 @@ diff --git a/src/HyprlandCompat/WindowsCompat.cpp b/src/HyprlandCompat/WindowsCo
      }
  
      return false;
-+}
-+
-+bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global) {
-+    return interactiveLayerAt(monitor, global, nullptr, nullptr);
  }
  
++bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global) {
++    return interactiveLayerAt(monitor, global, nullptr, nullptr);
++}
++
  bool layerHasKeyboardFocus() {
+     if (!g_pSeatManager || !Desktop::layerState())
+         return false;
 diff --git a/src/HyprlandCompat/WindowsCompat.hpp b/src/HyprlandCompat/WindowsCompat.hpp
+index bc570a27..b931b088 100644
 --- a/src/HyprlandCompat/WindowsCompat.hpp
 +++ b/src/HyprlandCompat/WindowsCompat.hpp
-@@ -163,6 +163,8 @@
+@@ -163,6 +163,8 @@ void clearPointerFocus();
  // this monitor -- Hyprland's own hit test, input regions included. Those
  // draw over the room and are used as ordinary 2D surfaces.
  bool interactiveLayerAt(const PHLMONITOR& monitor, const Vector2D& global);
@@ -122,9 +127,10 @@ diff --git a/src/HyprlandCompat/WindowsCompat.hpp b/src/HyprlandCompat/WindowsCo
  // Whether keyboard focus is on a layer surface (a launcher, a sidebar's
  // text field): the room then leaves the keyboard and focus alone.
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
+index 21bdf6a1..3eb71424 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
-@@ -127,6 +127,8 @@
+@@ -127,6 +127,8 @@ struct SWPoly {
      bool glassWall = false;
      bool glassFace = false; // walls keep their existing appearance
      bool crtEnabled = false;
@@ -133,7 +139,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      std::array<float, 4> glassUV{0.f, 0.f, 1.f, 1.f};
      std::array<float, 4> glassSurface{0.f, 0.f, 1.f, 1.f};
      std::array<float, 4> glassMetrics{800.f, 600.f, 12.f, 0.f};
-@@ -151,6 +153,8 @@
+@@ -151,6 +153,8 @@ static void bspSplitPoly(const SWPoly& poly, const Vec3& pl, const Vec3& n,
      front.glassWall = back.glassWall = poly.glassWall;
      front.glassFace = back.glassFace = poly.glassFace;
      front.crtEnabled = back.crtEnabled = poly.crtEnabled;
@@ -142,7 +148,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      front.glassUV = back.glassUV = poly.glassUV;
      front.glassSurface = back.glassSurface = poly.glassSurface;
      front.glassMetrics = back.glassMetrics = poly.glassMetrics;
-@@ -607,6 +611,12 @@
+@@ -607,6 +611,12 @@ uniform vec4 uGlassSurface;
  uniform vec4 uGlassMetrics;
  uniform vec4 uGlassDeco;          // MiOS: solid decoration extents l,t,r,b (logical px)
  uniform float uGlassWindowAlpha;  // MiOS: the client's composite opacity (desktop transmission = 1 - it)
@@ -155,7 +161,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  uniform int uCrtCurvature;
  uniform float uCrtRadius;
  uniform int uCrtScanlines;
-@@ -772,8 +782,10 @@
+@@ -772,8 +782,10 @@ float getRoundedBoxSDF(vec2 posPx, vec2 boxSizePx, vec4 cornerRadii) {
  }
  
  float tabShapeSDF(vec2 boxLocalPx) {
@@ -168,7 +174,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  }
  
  float sminTab(float a, float b, float k) {
-@@ -782,10 +794,11 @@
+@@ -782,10 +794,11 @@ float sminTab(float a, float b, float k) {
  }
  
  float getCornerSDF(vec2 uv) {
@@ -182,7 +188,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      }
      return d;
  }
-@@ -806,6 +819,7 @@
+@@ -806,6 +819,7 @@ float getCornerSDF(vec2 uv) {
  // contours are stadiums, i.e. the plain distance to the box rounded by h (so a
  // capsule gets its exact distance everywhere).
  float getBevelSDF(vec2 uv) {
@@ -190,7 +196,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      vec2  H = glassBoxSizePx * 0.5;
      float h = min(H.x, H.y);
      vec2  boxLocalPx = uv * fullSize - glassBoxOffsetPx;
-@@ -824,8 +838,8 @@
+@@ -824,8 +838,8 @@ float getBevelSDF(vec2 uv) {
      }
      vec2 s = p - H + h;
      float winBevel = -max(d, h - length(max(s, 0.0)) - min(max(s.x, s.y), 0.0));
@@ -201,7 +207,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      }
      return winBevel;
  }
-@@ -916,7 +930,7 @@
+@@ -916,7 +930,7 @@ vec3 hgTone(vec3 color) {
      // ========================================
      // COLOR TINT OVERLAY
      // ========================================
@@ -210,7 +216,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
      // ========================================
      // BEVEL — thin lit line hugging the edge, brightest on the side facing the light
-@@ -1208,7 +1222,7 @@
+@@ -1208,7 +1222,7 @@ vec4 hgEdgePass(vec2 uv, float cornerSdf) {
      float inv = edgePassWidth > 0.0 ? 1.0 / edgePassWidth : invBezelWidthPx;
      float bevelSdf = roundingPower == 2.0 ? getBevelSDF(uv) : cornerSdf;
      float edgeProximity = min(exp(bevelSdf * inv), 1.0);
@@ -219,7 +225,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      float b = 0.0, s = 0.0;
      vec3  L = vec3(1.0);
      if (bevelStrength > 0.001) {
-@@ -1313,6 +1327,17 @@
+@@ -1313,6 +1327,17 @@ void main() {
          if (coverage <= 0.0) {
              discard;
          }
@@ -237,7 +243,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          hgMaterial();
          if (uGlassHasEnvironment) {
              // Environment reflection, distinct from the transmitted scene
-@@ -1340,63 +1365,34 @@
+@@ -1340,63 +1365,34 @@ void main() {
              C.rgb = clamp(C.rgb * scan * dotmask, 0.0, 1.0);
          }
          vec4 D = C + (1.0 - C.a) * hgColor;
@@ -326,7 +332,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              }
          }
          if (lampP < -0.001) {
-@@ -1775,6 +1771,8 @@
+@@ -1775,6 +1771,8 @@ void main() {
      m_sceneTexSharp = glGetUniformLocation(m_sceneProgram, "uTexSharp");
      m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
      m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
@@ -335,7 +341,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
      m_crtCurvature = glGetUniformLocation(m_sceneProgram, "uCrtCurvature");
      m_crtRadius = glGetUniformLocation(m_sceneProgram, "uCrtRadius");
      m_crtScanlines = glGetUniformLocation(m_sceneProgram, "uCrtScanlines");
-@@ -3164,6 +3162,8 @@
+@@ -3168,6 +3166,8 @@ void GLScene::drawWindows(
          slab.front.alpha = window.alpha;
          slab.front.glassFace = window.glassMetrics[3] > 0.5f;
          slab.front.crtEnabled = window.crtEnabled;
@@ -344,7 +350,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
          slab.front.glassSurface = window.glassSurface;
          slab.front.glassMetrics = window.glassMetrics;
          slab.front.glassDeco = window.glassDeco;
-@@ -3206,6 +3206,8 @@
+@@ -3210,6 +3210,8 @@ void GLScene::drawWindows(
              slab.back.alpha = window.alpha;
              slab.back.glassFace = slab.front.glassFace;
              slab.back.crtEnabled = slab.front.crtEnabled;
@@ -353,7 +359,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              slab.back.glassSurface = slab.front.glassSurface;
              slab.back.glassMetrics = slab.front.glassMetrics;
              slab.back.glassDeco = slab.front.glassDeco;
-@@ -3263,6 +3265,8 @@
+@@ -3267,6 +3269,8 @@ void GLScene::drawWindows(
                      wall.alpha = window.alpha;
                      wall.glassWall = slab.front.glassFace;
                      wall.crtEnabled = slab.front.crtEnabled;
@@ -362,7 +368,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
  
                      wall.verts.push_back(SWVert{AF, SUA.x, SUA.y});
                      wall.verts.push_back(SWVert{BF, SUB.x, SUB.y});
-@@ -3281,7 +3285,8 @@
+@@ -3285,7 +3289,8 @@ void GLScene::drawWindows(
                  const auto& S=window.glassSurface;
                  const auto& M=window.glassMetrics;
                  auto loop=roundedRectLoop(std::max(1,static_cast<int>(M[0])),
@@ -372,7 +378,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
                  for (auto& P:loop.pts) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
                  for (auto& P:loop.uvs) {P.x=S[0]+P.x*S[2];P.y=S[1]+P.y*S[3];}
                  EMIT_WALLS(loop.pts,loop.uvs);
-@@ -3454,7 +3459,9 @@
+@@ -3458,7 +3463,9 @@ void GLScene::drawWindows(
                 ordered[j].glassMetrics == ordered[i].glassMetrics &&
                 ordered[j].glassDeco == ordered[i].glassDeco &&
                 ordered[j].glassWindowAlpha == ordered[i].glassWindowAlpha &&
@@ -383,7 +389,7 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              ++j;
  
          verts.clear();
-@@ -3521,6 +3528,8 @@
+@@ -3525,6 +3532,8 @@ void GLScene::drawWindows(
              const auto& D = ordered[i].glassDeco;
              glUniform4f(m_glassDeco, D[0], D[1], D[2], D[3]);
              glUniform1f(m_glassWindowAlpha, ordered[i].glassWindowAlpha);
@@ -393,9 +399,10 @@ diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
              glUniform1f(m_crtRadius, m_rq.crtRadius);
              glUniform1i(m_crtScanlines, (ordered[i].crtEnabled && m_rq.crtScanlines) ? 1 : 0);
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
+index 659512a2..06921e93 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
-@@ -144,6 +144,8 @@
+@@ -144,6 +144,8 @@ class GLScene {
          float glassWindowAlpha = 1.0f;
          float alpha = 1.0f;
          bool crtEnabled = false;
@@ -404,7 +411,7 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
  
          // Depth slab: thickness in world units, extruded BACKWARDS along the
          // window's normal (0 = the plain flat quad). When `outlines` carries
-@@ -554,6 +556,8 @@
+@@ -565,6 +567,8 @@ class GLScene {
      int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
      int m_sceneTexSharp = -1; // MiOS retina spawn
      int m_outTransform = 0, m_blitOutTransform = -1; // MiOS rotated outputs
@@ -414,9 +421,10 @@ diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
      float m_maxAnisotropy = -1.f; // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0 = unsupported, -1 = not queried yet
      SGlassConfig m_glassConfig;
 diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
+index cec3b927..8a750357 100644
 --- a/src/World/Outline.cpp
 +++ b/src/World/Outline.cpp
-@@ -338,7 +338,7 @@
+@@ -338,7 +338,7 @@ static float outlineSminTab(float a, float b, float k) {
  }
  
  SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
@@ -425,7 +433,7 @@ diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
      SOutlineLoop OUT;
      if (wPx <= 0 || hPx <= 0)
          return OUT;
-@@ -367,27 +367,32 @@
+@@ -367,27 +367,32 @@ SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
          pts.push_back({0.f, FH});
      } else {
          // Clockwise in y-down screen coords:
@@ -471,16 +479,16 @@ diff --git a/src/World/Outline.cpp b/src/World/Outline.cpp
 -        } else {
 -            pts.push_back({R, 0.0f});
 -            pts.push_back({FW - R, 0.0f});
--        }
-+        }
+         }
 +        pts.push_back({FW-R,0.F});
          ARC(FW - R, R,     270.f, 360.f, R, SEG); // top-right corner
          ARC(FW - R, FH - R,  0.f,  90.f, R, SEG); // bottom-right corner
          ARC(R,      FH - R, 90.f, 180.f, R, SEG); // bottom-left corner
 diff --git a/src/World/Outline.hpp b/src/World/Outline.hpp
+index 92c49039..3b819025 100644
 --- a/src/World/Outline.hpp
 +++ b/src/World/Outline.hpp
-@@ -40,6 +40,6 @@
+@@ -40,6 +40,6 @@ std::vector<SOutlineLoop> traceOutlines(
  // so walls sample solid border texels instead of the antialiased fringe.
  // Returns an empty loop for degenerate boxes.
  SOutlineLoop roundedRectLoop(int wPx, int hPx, float radiusPx,
@@ -489,6 +497,7 @@ diff --git a/src/World/Outline.hpp b/src/World/Outline.hpp
  
  } // namespace H3D
 diff --git a/src/main.cpp b/src/main.cpp
+index c6e6b9fd..c3acda0f 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -1,4 +1,9 @@
@@ -501,7 +510,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
  #include <Jolt/Jolt.h>
  #include <Jolt/RegisterTypes.h>
-@@ -1354,50 +1359,21 @@
+@@ -1379,50 +1384,21 @@ static void notify(
      else if (color.g > 0.65f && color.r < 0.55f)
          kind = "success";
  
@@ -567,11 +576,10 @@ diff --git a/src/main.cpp b/src/main.cpp
  }
  
  static uint32_t inputTimeMs() {
-@@ -2004,6 +1980,75 @@
-     return IT == g_attachParent.end() ? id : IT->second;
+@@ -2030,6 +2006,75 @@ static std::uintptr_t focusIdFor(std::uintptr_t id) {
  }
  static World3D::SHit aimHit();
-+
+ 
 +// The 3D tab is generated by the glass shader, not captured from hyprbars.
 +// Feed its reveal and click geometry from the same live operator settings.
 +
@@ -640,10 +648,11 @@ diff --git a/src/main.cpp b/src/main.cpp
 +    return {shown ? 1.f : 0.f, offset};
 +}
 +
- 
++
  // Handoff the keyboard to whatever the crosshair is on -- and to nothing else.
  // Aiming at empty space drops focus entirely rather than leaving the last
-@@ -2782,6 +2827,8 @@
+ // window typed into.
+@@ -2807,6 +2852,8 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              render.glassWindowAlpha = SNAPSHOT->windowAlpha;
          }
  
@@ -652,7 +661,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          render.crtEnabled = g_crtGlobalOn || g_crtWindows.contains(entity.id) || (g_cfgCrtDefaultOn && g_crtWindows.empty());
  
          // 3D Magic Lamp opening effect for newly spawned windows in 3D room
-@@ -3291,7 +3338,7 @@
+@@ -3316,7 +3363,7 @@ static void startTo3D() {
          if (const auto MON = targetMonitor(); MON && MON->m_activeWorkspace && Desktop::windowState()) {
              for (auto const& W3 : Desktop::windowState()->windows()) {
                  if (W3 && W3->m_workspace == MON->m_activeWorkspace && !W3->m_pinned)
@@ -661,16 +670,16 @@ diff --git a/src/main.cpp b/src/main.cpp
              }
          }
          applyGlobalShaderGlassState(false);
-@@ -3598,7 +3645,7 @@
-                                 !W3->m_pinned)
-                                 *W3->alpha(
+@@ -3623,7 +3670,7 @@ static void applyFullscreenAnimation() {
+                                 !bool(W3->m_state & Desktop::View::WINDOW_STATE_PINNED))
+                                 *W3->presentation().alpha(
                                       Desktop::View::WINDOW_ALPHA_FULLSCREEN) =
 -                                    1.F;
 +                                    W3->isBlockedByFullscreen() ? 0.F : 1.F;
                          }
                      }
                  }
-@@ -3631,6 +3678,24 @@
+@@ -3656,6 +3703,24 @@ static CBox viewMorphLocalBox(const PHLMONITOR& mon, const CBox& global) {
      };
  }
  
@@ -695,7 +704,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  static CBox lerpBox(const CBox& A, const CBox& B, float t) {
      return CBox{
          A.x + (B.x - A.x) * t,
-@@ -3678,7 +3743,7 @@
+@@ -3703,7 +3768,7 @@ static void buildEnterMorph(
  
          const auto* SNAPSHOT = g_capture.get(info.id);
  
@@ -704,7 +713,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          MW.boxRoom = MW.box2D;
  
          if (const auto POSE = g_savedPoses.find(info.id);
-@@ -3863,10 +3928,8 @@
+@@ -3888,10 +3953,8 @@ static void beginExit3D() {
          // boxes).
          const auto* SNAPSHOT = g_capture.get(ENTITY.id);
  
@@ -717,7 +726,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
          if (midEnter && MW.roomPose.box.w > 1.0 && MW.roomPose.box.h > 1.0)
              MW.boxRoom = MW.roomPose.box;
-@@ -4006,7 +4069,7 @@
+@@ -4031,7 +4094,7 @@ static void applyViewMorphWindows(const PHLMONITOR& mon, float s) {
                  // behind the box mid-flight; at flight speed that reads as
                  // a smooth stretch, and the first ungated pass after the
                  // morph lands the exact sizes.
@@ -726,7 +735,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
                  g_boxDriven.insert(RW.id);
              }
-@@ -4096,7 +4159,7 @@
+@@ -4121,7 +4184,7 @@ static void saveViewPoses() {
  
      for (const auto& E : g_world.entities()) {
          SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
@@ -735,7 +744,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          POSE.scaleMul = retinaMul(E.id);
  
          // A window left fullscreen (no passthrough ran for it): its live box
-@@ -4419,6 +4482,9 @@
+@@ -4444,6 +4507,9 @@ static void onRenderPre(PHLMONITOR mon) {
  }
  
  
@@ -745,7 +754,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  // --- lifecycle --------------------------------------------------------------
  
  static void deactivate3D() {
-@@ -4492,7 +4558,7 @@
+@@ -4517,7 +4583,7 @@ static void deactivate3D() {
      unghostWindows();
      g_renderedOnce = false;
  
@@ -754,7 +763,7 @@ diff --git a/src/main.cpp b/src/main.cpp
      applyGlobalShaderGlassState(false);
  
      {
-@@ -4719,7 +4785,7 @@
+@@ -4756,7 +4822,7 @@ static void enter3D() {
  
      // Keep the operator's proximity reveal policy in 3D too; forcing "always" leaves every
      // window's controls raised and makes the global title/menu row jump inward.
@@ -763,7 +772,7 @@ diff --git a/src/main.cpp b/src/main.cpp
      if (const auto MON = targetMonitor(); MON && Desktop::windowState() && g_pHyprRenderer) {
          for (const auto& W : Desktop::windowState()->windows()) {
              if (W && W->m_isMapped && !W->isHidden())
-@@ -6546,7 +6612,7 @@
+@@ -6649,7 +6715,7 @@ static void vcMove(double dx, double dy) {
          if (!g_cfgUnderLayers || !Compat::interactiveLayerAt(MON, nextGlobal)) {
              vcEnterFromDesktop(nextGlobal);
          } else {
@@ -772,7 +781,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          }
          return;
      }
-@@ -7057,17 +7123,33 @@
+@@ -7161,17 +7227,33 @@ static void onMouseAxis(
      damageCurrentMonitor();
  }
  
@@ -810,7 +819,7 @@ diff --git a/src/main.cpp b/src/main.cpp
              // Button 0 (Close): Left-Click = graceful close, Right-Click = force kill (SIGKILL)
              if (button == BTN_RIGHT) {
                  (void)Config::Actions::signalWindow(SIGKILL, W);
-@@ -7075,7 +7157,7 @@
+@@ -7179,7 +7261,7 @@ static bool handleHyprbarsClick3D(const PHLWINDOW& W, const Vector2D& rawLocal,
              } else {
                  (void)Config::Actions::closeWindow(W);
              }
@@ -819,7 +828,7 @@ diff --git a/src/main.cpp b/src/main.cpp
              // Button 1 (Minimize): Left-Click = animated 3D minimize, Right-Click = instant minimize
              if (button == BTN_RIGHT)
                  g_skipCloseAnim3D.insert(id);
-@@ -9509,6 +9591,25 @@
+@@ -9846,6 +9928,25 @@ static void vcClickButton(uint32_t button, bool pressed) {
  
      if (pointerFree()) {
          const auto MON = targetMonitor();
@@ -845,7 +854,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          if (MON && g_vcSpace == ECursorSpace::Screen)
              vcResolveScreen(MON);
  
-@@ -9700,6 +9801,91 @@
+@@ -10037,6 +10138,91 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
      return HYPRLAND_API_VERSION;
  }
  
@@ -937,7 +946,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
      joltInit();
  
-@@ -9913,13 +10099,17 @@
+@@ -10241,6 +10427,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
      if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "on_state", luaOnState))
          throw std::runtime_error("[hypr3d] failed to register Lua on_state");
  
@@ -945,9 +954,10 @@ diff --git a/src/main.cpp b/src/main.cpp
 +        !HyprlandAPI::addLuaFunction(PHANDLE,"hypr3d","restore_layout",luaRestoreLayout))
 +        throw std::runtime_error("[hypr3d] failed to register layout checkpoint interface");
 +
-     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "config", luaConfig))
-         throw std::runtime_error("[hypr3d] failed to register Lua config");
+     if (!HyprlandAPI::addLuaFunction(PHANDLE, "hypr3d", "toggle_flight", luaToggleFlight))
+         throw std::runtime_error("[hypr3d] failed to register Lua toggle_flight");
  
+@@ -10250,7 +10440,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
      // Every handler is wrapped: an exception must NEVER escape into
      // Hyprland (std::terminate there kills the whole compositor). The
      // exception text lands in the status dump instead.
@@ -956,16 +966,16 @@ diff --git a/src/main.cpp b/src/main.cpp
          Event::bus()->m_events.render.pre.listen(
              [](PHLMONITOR mon) {
                  try {
-@@ -9932,7 +10122,7 @@
+@@ -10263,7 +10453,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
 -    static auto renderStage =
 +    g_renderStageListener =
          Event::bus()->m_events.render.stage.listen(
-             [](eRenderStage stage) {
+             [](Event::SRenderStageEvent event) {
                  try {
-@@ -9945,7 +10135,7 @@
+@@ -10279,7 +10469,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
@@ -974,7 +984,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          Event::bus()->m_events.input.mouse.move.listen(
              [](Vector2D pos, Event::SCallbackInfo& info) {
                  try {
-@@ -9958,7 +10148,7 @@
+@@ -10292,7 +10482,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
@@ -983,7 +993,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          Event::bus()->m_events.input.mouse.button.listen(
              [](IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
                  try {
-@@ -9971,7 +10161,7 @@
+@@ -10305,7 +10495,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
@@ -992,7 +1002,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          Event::bus()->m_events.input.mouse.axis.listen(
              [](IPointer::SAxisEvent event, Event::SCallbackInfo& info) {
                  try {
-@@ -9984,7 +10174,7 @@
+@@ -10318,7 +10508,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
@@ -1001,7 +1011,7 @@ diff --git a/src/main.cpp b/src/main.cpp
          Event::bus()->m_events.input.keyboard.key.listen(
              [](IKeyboard::SKeyEvent event, Event::SCallbackInfo& info) {
                  try {
-@@ -9997,12 +10187,12 @@
+@@ -10331,12 +10521,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
              }
          );
  
@@ -1020,7 +1030,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      {
          syncShaderGlassStateFromFile();
-@@ -10022,6 +10212,14 @@
+@@ -10356,6 +10546,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
  }
  
  APICALL EXPORT void PLUGIN_EXIT() {
@@ -1035,7 +1045,7 @@ diff --git a/src/main.cpp b/src/main.cpp
      // Hyprland keeps the last frame's pass elements until the next
      // beginRender() clears them -- ours included. After dlclose() that clear()
      // ran the destructor of a CHypr3DPassElement whose code was gone: unloading
-@@ -10042,7 +10240,7 @@
+@@ -10376,7 +10574,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
      g_transition = 0.0f;
      g_transitionTarget = 0.0f;
  
@@ -1044,7 +1054,7 @@ diff --git a/src/main.cpp b/src/main.cpp
  
      if (Compat::setCursorHidden(false) && g_pHyprRenderer)
          g_pHyprRenderer->setCursorFromName("default", true);
-@@ -10073,12 +10271,12 @@
+@@ -10407,12 +10605,12 @@ APICALL EXPORT void PLUGIN_EXIT() {
      // The FS fade channel: on FS-on Hyprland dims EVERY other workspace
      // window to alpha 0 (WINDOW_ALPHA_FULLSCREEN). If our transition raced
      // the fade, windows can be left semi-transparent after the 3D exit.
@@ -1053,16 +1063,17 @@ diff --git a/src/main.cpp b/src/main.cpp
      if (const auto MON = targetMonitor(); MON && MON->m_activeWorkspace) {
          for (auto const& W3 : Desktop::windowState()->windows()) {
              if (W3 && W3->m_workspace == MON->m_activeWorkspace &&
-                 !W3->m_pinned)
--                *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = 1.F;
-+                *W3->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = W3->isBlockedByFullscreen() ? 0.F : 1.F;
+                 !bool(W3->m_state & Desktop::View::WINDOW_STATE_PINNED))
+-                *W3->presentation().alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = 1.F;
++                *W3->presentation().alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = W3->isBlockedByFullscreen() ? 0.F : 1.F;
          }
      }
  
 diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
+index a6bc85da..d2277556 100644
 --- a/tests/mios-bsp-regression.cpp
 +++ b/tests/mios-bsp-regression.cpp
-@@ -222,6 +222,7 @@
+@@ -222,6 +222,7 @@ int main() {
      bspBuild(empty, polys, 0);
      require(empty.coplanar.empty() && !empty.front && !empty.back);
  
@@ -1070,7 +1081,7 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
      SWPoly front, back;
      bool hasFront = false, hasBack = false;
      bspSplitPoly(warped, {0.5f,0,0}, {1,0,0}, front, back, hasFront, hasBack);
-@@ -232,20 +233,26 @@
+@@ -232,20 +233,26 @@ int main() {
          require(p->glassUV == warped.glassUV);
          require(p->glassSurface == warped.glassSurface);
          require(p->glassMetrics == warped.glassMetrics);
@@ -1087,8 +1098,6 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 -        const float x = point.x * 640.f, y = point.y * 400.f;
 -        if (x >= 25.0f && x <= 147.0f && y < -0.01f)
 -            foundProtrudingTab = true;
--    }
--    require(foundProtrudingTab);
 +    // The native tab geometry governs the outline at every radius. Hidden
 +    // controls have no ghost tab/wall; distinctive settings catch copied defaults.
 +    const auto plain=roundedRectLoop(640,400,28.F,1.F,8);
@@ -1102,7 +1111,8 @@ diff --git a/tests/mios-bsp-regression.cpp b/tests/mios-bsp-regression.cpp
 +            require(p.x*640.F >= 145.F && p.x*640.F <= 277.F);
 +            require(p.y*400.F >= -36.01F);
 +        }
-+    }
+     }
+-    require(foundProtrudingTab);
 +    require(protruding);
  
      // Vertex deduplication in bspSplitPoly
