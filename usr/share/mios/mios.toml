@@ -19584,6 +19584,7 @@ unit = [
     "tests/test-bake-portal.py",
     "tests/test-portal-probe.py",
     "tests/test-credential-ssot.py",
+    "tests/test-build-github-secret.py",
     "tests/test-windows-credential-pure-render.py",
     "tests/test-windows-login-credential.py",
     "tests/test-greeter.py",
