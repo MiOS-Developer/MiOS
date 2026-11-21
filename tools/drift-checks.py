@@ -4528,6 +4528,8 @@ def check_preset_roster_complete() -> int:
     # Axis 1: every enable/disable target in preset must resolve to a real unit or known upstream unit
     known_upstream = {
         "chronyd.service", "sshd.service", "NetworkManager.service", "auditd.service",
+        # rasdaemon (packages.utils) records machine-check and EDAC events.
+        "rasdaemon.service",
         "nftables.service", "redis.service", "usbguard.service", "crowdsec.service",
         "crowdsec-firewall-bouncer.service", "fapolicyd.service", "firewalld.service",
         "cockpit.socket", "libvirtd.service", "libvirtd.socket", "libvirtd-ro.socket",
@@ -4620,7 +4622,10 @@ def check_unit_dependency_closure() -> int:
         'greetd.service',
         # Fedora systemd owns getty-pre.target and modprobe@.service. Only the
         # cdc_acm instance used by ventulusd is registered, not every modprobe name.
-        'getty-pre.target', 'modprobe@cdc_acm.service'
+        'getty-pre.target', 'modprobe@cdc_acm.service',
+        # systemd's own swap.target orders after every swap device;
+        # rasdaemon.service ships with the rasdaemon package (packages.utils).
+        'swap.target', 'rasdaemon.service',
     }
     known_units.update(well_known)
 

@@ -3011,6 +3011,9 @@ _mios_input MIOS_PORTS_GUACD MIOS_PORT_GUACD MIOS_GUACD_PORT || { return 1 2>/de
 : "${MIOS_HARDWARE_FAN_CONTROL_SOCKET_GROUP:=wheel}"
 : "${MIOS_HARDWARE_FAN_CONTROL_TOOL:=ventulusd}"
 : "${MIOS_HARDWARE_FAN_CONTROL_UNIDENTIFIED:=firmware}"
+: "${MIOS_HARDWARE_RAS_CORRECTED_WARN_PER_BOOT:=1}"
+: "${MIOS_HARDWARE_STORAGE_LINK_CRITICAL_ROLES:=root,swap,journal}"
+[ -n "${MIOS_HARDWARE_STORAGE_LINK_NVME_BRIDGES+x}" ] || MIOS_HARDWARE_STORAGE_LINK_NVME_BRIDGES='{ id = "0bda:9210", name = "Realtek RTL9210", smartctl = "sntrealtek" },{ id = "174c:2362", name = "ASMedia ASM2362", smartctl = "sntasmedia" },{ id = "152d:0583", name = "JMicron JMS583", smartctl = "sntjmicron" }'
 : "${MIOS_HEADSCALE_CONFIG_PATH:=/etc/headscale/config.yaml}"
 : "${MIOS_HEADSCALE_DB_PATH:=/var/lib/headscale/db.sqlite}"
 : "${MIOS_HEADSCALE_ENABLED:=false}"
@@ -5733,7 +5736,7 @@ _mios_input MIOS_UKI_VERITY_UKI_BUILD MIOS_UKI_VERITY_BUILD || { return 1 2>/dev
 : "${MIOS_UNIT_PROJECTION_MAX_DRIFT:=52}"
 : "${MIOS_UNIT_PROJECTION_MAX_UNDECLARED:=159}"
 : "${MIOS_UNIT_PROJECTION_MAX_UNDECLARED_USER:=19}"
-: "${MIOS_UNIT_PROJECTION_STRICT_NO_WRITE:=mios-agent-share.service,mios-boot-display-report.service,mios-cockpit-link.service,mios-embed-backfill.service,mios-node.service,mios-policy-arbiter.service,mios-rdp-usb@.service}"
+: "${MIOS_UNIT_PROJECTION_STRICT_NO_WRITE:=mios-agent-share.service,mios-boot-display-report.service,mios-cockpit-link.service,mios-embed-backfill.service,mios-node.service,mios-policy-arbiter.service,mios-ras-check.service,mios-rdp-usb@.service,mios-storage-link.service}"
 : "${MIOS_URLS_BOOTSTRAP_REPO:=https://github.com/mios-developer/mios-bootstrap.git}"
 : "${MIOS_URLS_NON_ADDRESSABLE:=adguard_dns,adguard_ui,agent_pipe,agent_share,ai_legacy,arbiter,ceph_dashboard,cockpit_internal,crawl4ai,crawl4ai_internal,field_live_chat,firecrawl_internal,hermes,llm_heavy,llm_light,node,pgvector,pgvector_internal,chrome_cdp_worker,cockpit_link,cpu_node,daemon_agent,devpod_agent,igpu,win_llm_light,firecrawl,forge_ssh,guacamole_web,guacd,headscale,hermes_dashboard,llm_igpu,rpc_igpu,k3s_api,mcp,model_router,opencode_gateway,oscontrol,otelcol_otlp,piper,prefilter,pxe_hub_api,radosgw,rdp,redis,ssh,ssh_ca,tailnet_https,ttyd_bash,ttyd_powershell,whisper}"
 [ -n "${MIOS_USER+x}" ] || MIOS_USER="${MIOS_IDENTITY_USERNAME:-}"

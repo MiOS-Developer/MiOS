@@ -1,0 +1,11 @@
+# AI-hint: Re-runs mios-ras-check hourly so corrected machine-check errors surface while the boot that logged them is still up.
+# AI-related: mios-ras-check.service, timers.target
+[Unit]
+Description='MiOS' hardware error check schedule
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target

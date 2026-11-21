@@ -4,8 +4,11 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod ras;
+mod storage;
+
 mod probes {
-    use crate::report::{Probe, Report, Verdict};
+    use crate::report::{Probe, Report, Verdict, PREFLIGHT};
     use std::path::Path;
 
     /// The resolved six-tier SSOT under `root` (vendor < vendor.d < host <
@@ -28,11 +31,83 @@ mod probes {
     }
 
     fn cannot_run(why: String) -> Report {
+        cannot_run_as(PREFLIGHT, why)
+    }
+
+    fn cannot_run_as(set: (&'static str, &'static str, &'static str), why: String) -> Report {
+        report(set, String::new(), Vec::new(), Some(why))
+    }
+
+    fn report(
+        (name, fail_footer, ok_footer): (&'static str, &'static str, &'static str),
+        title: String,
+        probes: Vec<Probe>,
+        could_not_run: Option<String>,
+    ) -> Report {
         Report {
-            title: String::new(),
-            probes: Vec::new(),
-            could_not_run: Some(why),
+            title,
+            probes,
+            could_not_run,
+            name,
+            fail_footer,
+            ok_footer,
         }
+    }
+
+    const STORAGE: (&str, &str, &str) = (
+        "storage",
+        "Storage check found {n} degraded link(s) under a critical role.",
+        "No USB storage link carries a critical role degraded.",
+    );
+    const RAS: (&str, &str, &str) = (
+        "ras",
+        "RAS check found {n} uncorrected-error condition(s).",
+        "No uncorrected hardware error this boot.",
+    );
+
+    /// USB storage links: a disk whose USB 3 link fell back to USB 2.0.
+    pub fn storage(root: &Path, sys: &Path, proc_: &Path) -> Report {
+        let cfg = match ssot(root) {
+            Ok(v) => v,
+            Err(e) => return cannot_run_as(STORAGE, e),
+        };
+        let policy = match crate::storage::Policy::from_ssot(&cfg) {
+            Ok(p) => p,
+            Err(e) => return cannot_run_as(STORAGE, e),
+        };
+        let title = format!("'MiOS' v{} -- Storage Links", version(root));
+        if !sys.join("block").is_dir() {
+            let probes = vec![Probe {
+                key: "storage_link".to_string(),
+                verdict: Verdict::NotApplicable,
+                message: format!(
+                    "Storage: {} has no block/ tree on this platform",
+                    sys.display()
+                ),
+            }];
+            return report(STORAGE, title, probes, None);
+        }
+        let disks = crate::storage::scan(sys, proc_);
+        report(STORAGE, title, crate::storage::judge(&policy, &disks), None)
+    }
+
+    /// Hardware error counts for this boot.
+    pub fn ras(root: &Path, sys: &Path, kernel_log: Option<&str>) -> Report {
+        let cfg = match ssot(root) {
+            Ok(v) => v,
+            Err(e) => return cannot_run_as(RAS, e),
+        };
+        let warn_at = match crate::ras::warn_threshold(&cfg) {
+            Ok(n) => n,
+            Err(e) => return cannot_run_as(RAS, e),
+        };
+        let counts = crate::ras::gather(sys, kernel_log);
+        report(
+            RAS,
+            format!("'MiOS' v{} -- Hardware Errors", version(root)),
+            crate::ras::judge(&counts, warn_at),
+            None,
+        )
     }
 
     fn version(root: &Path) -> String {
@@ -169,11 +244,12 @@ mod probes {
             });
         }
 
-        Report {
-            title: format!("'MiOS' v{} -- Pre-flight Check", version(root)),
+        report(
+            PREFLIGHT,
+            format!("'MiOS' v{} -- Pre-flight Check", version(root)),
             probes,
-            could_not_run: None,
-        }
+            None,
+        )
     }
 
     /// Host-install thresholds: what a machine needs before MiOS is installed onto
@@ -257,11 +333,12 @@ mod probes {
             });
         }
 
-        Report {
-            title: format!("'MiOS' v{} -- Host Readiness", version(root)),
+        report(
+            PREFLIGHT,
+            format!("'MiOS' v{} -- Host Readiness", version(root)),
             probes,
-            could_not_run: None,
-        }
+            None,
+        )
     }
 
     fn total_ram_gib() -> Option<u64> {
@@ -311,7 +388,18 @@ mod report {
         pub probes: Vec<Probe>,
         /// Set when the probe set could not run at all -- exit 2, never 0.
         pub could_not_run: Option<String>,
+        /// The probe set's name in JSON output, and its text footers (on
+        /// failure, `{n}` is the failure count; on a clean run, the line).
+        pub name: &'static str,
+        pub fail_footer: &'static str,
+        pub ok_footer: &'static str,
     }
+
+    pub const PREFLIGHT: (&str, &str, &str) = (
+        "preflight",
+        "Pre-flight failed with {n} error(s). Resolve above before building.",
+        "All pre-flight checks passed.",
+    );
 
     const GREEN: &str = "\x1b[0;32m";
     const RED: &str = "\x1b[0;31m";
@@ -363,11 +451,12 @@ mod report {
             if failures > 0 {
                 out.push('\n');
                 out.push_str(&format!(
-                "{r}[FAIL]{n} Pre-flight failed with {failures} error(s). Resolve above before building.\n"
-            ));
+                    "{r}[FAIL]{n} {}\n",
+                    self.fail_footer.replace("{n}", &failures.to_string())
+                ));
             } else {
                 out.push('\n');
-                out.push_str(&format!("{g}[OK]{n}  All pre-flight checks passed.\n"));
+                out.push_str(&format!("{g}[OK]{n}  {}\n", self.ok_footer));
             }
             out
         }
@@ -387,14 +476,17 @@ mod report {
                 })
                 .collect();
             let value = serde_json::json!({
-                "probe": "preflight",
+                "probe": self.name,
                 "status": if self.could_not_run.is_some() { "could_not_run" }
                           else if self.failures() > 0 { "failed" } else { "ready" },
                 "summary": self.could_not_run.clone().unwrap_or_else(|| self.title.clone()),
                 "probes": probes,
             });
             serde_json::to_string_pretty(&value).unwrap_or_else(|_| {
-                String::from("{\"probe\":\"preflight\",\"status\":\"could_not_run\",\"probes\":[]}")
+                format!(
+                    "{{\"probe\":\"{}\",\"status\":\"could_not_run\",\"probes\":[]}}",
+                    self.name
+                )
             })
         }
     }
@@ -409,9 +501,23 @@ pub const EXIT_VIOLATIONS: u8 = 1;
 pub const EXIT_CANNOT_RUN: u8 = 2;
 
 const USAGE: &str =
-    "usage: mios-probe [build|host] [--root DIR] [--format text|json] [--no-color]\n\
-                     build  build-host readiness  (default)\n\
-                     host   host-install thresholds\n";
+    "usage: mios-probe [build|host|storage|ras] [--root DIR] [--sys DIR] [--proc DIR]\n\
+                     [--kernel-log FILE] [--format text|json] [--no-color]\n\
+                     build    build-host readiness  (default)\n\
+                     host     host-install thresholds\n\
+                     storage  USB storage links that fell back from USB 3\n\
+                     ras      this boot's corrected/uncorrected hardware errors\n";
+
+/// This boot's kernel messages, from the journal.
+fn kernel_log() -> Option<String> {
+    let out = std::process::Command::new("journalctl")
+        .args(["-k", "-b", "0", "-o", "cat", "--no-pager", "-q"])
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -421,6 +527,9 @@ fn main() -> ExitCode {
         .ok();
     let mut json = false;
     let mut color = std::env::var("NO_COLOR").is_err();
+    let mut sys = std::path::PathBuf::from("/sys");
+    let mut proc_ = std::path::PathBuf::from("/proc");
+    let mut log_file: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -446,6 +555,19 @@ fn main() -> ExitCode {
                     }
                 }
             }
+            "--sys" | "--proc" | "--kernel-log" => {
+                let flag = args[i].clone();
+                i += 1;
+                let Some(v) = args.get(i) else {
+                    eprint!("mios-probe: {flag} needs a path\n{USAGE}");
+                    return ExitCode::from(EXIT_CANNOT_RUN);
+                };
+                match flag.as_str() {
+                    "--sys" => sys = v.into(),
+                    "--proc" => proc_ = v.into(),
+                    _ => log_file = Some(v.clone()),
+                }
+            }
             "--no-color" => color = false,
             "-h" | "--help" => {
                 print!("{USAGE}");
@@ -467,6 +589,14 @@ fn main() -> ExitCode {
     let report = match set.as_str() {
         "build" => probes::build(&root),
         "host" => probes::host(&root),
+        "storage" => probes::storage(&root, &sys, &proc_),
+        "ras" => {
+            let log = match &log_file {
+                Some(f) => std::fs::read_to_string(f).ok(),
+                None => kernel_log(),
+            };
+            probes::ras(&root, &sys, log.as_deref())
+        }
         other => {
             eprint!("mios-probe: no such probe set {other:?}\n{USAGE}");
             return ExitCode::from(EXIT_CANNOT_RUN);

@@ -129,7 +129,9 @@ strict_no_write = [
   "mios-embed-backfill.service",
   "mios-node.service",
   "mios-policy-arbiter.service",
+  "mios-ras-check.service",
   "mios-rdp-usb@.service",
+  "mios-storage-link.service",
 ]
 strict_no_write_user = []
 drift = [
@@ -204,6 +206,53 @@ Description = "Weekly Podman Cleanup"
 OnCalendar = "weekly"
 Persistent = "true"
 [units."mios-podman-gc.timer".Install]
+WantedBy = "timers.target"
+
+[units."mios-storage-link.service".Unit]
+comment = "# AI-hint: Boot oneshot running `mios-probe storage`: flags a USB disk whose USB 3 link fell back to 480 Mb/s (bulk-only, USB 2.0 bus power) and fails when it carries root, swap or the journal ([hardware.storage_link]).\n# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/storage.rs, local-fs.target, swap.target"
+Description = "'MiOS' USB storage link check"
+After = ["local-fs.target", "swap.target"]
+ConditionVirtualization = "!container"
+
+[units."mios-storage-link.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-probe storage --root / --no-color"
+RemainAfterExit = "yes"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+PrivateTmp = "yes"
+NoNewPrivileges = "yes"
+
+[units."mios-storage-link.service".Install]
+WantedBy = "multi-user.target"
+
+[units."rasdaemon.service.d/10-mios.conf".Unit]
+comment = "# AI-hint: Keeps rasdaemon to hosts with their own machine-check and EDAC sources: a container or WSL has none, so the daemon would only fail to open tracefs there.\n# AI-related: rasdaemon.service, mios-ras-check.service, usr/lib/systemd/system-preset/90-mios.preset"
+ConditionVirtualization = "!container"
+
+[units."mios-ras-check.service".Unit]
+comment = "# AI-hint: Oneshot running `mios-probe ras`: counts this boot's corrected hardware errors (kernel MCE notices, EDAC ce_count) against [hardware.ras].corrected_warn_per_boot and fails on any uncorrected EDAC error; rasdaemon keeps the per-event record.\n# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/ras.rs, mios-ras-check.timer, rasdaemon.service"
+Description = "'MiOS' hardware error check"
+After = "rasdaemon.service"
+ConditionVirtualization = "!container"
+
+[units."mios-ras-check.service".Service]
+Type = "oneshot"
+ExecStart = "/usr/bin/mios-probe ras --root / --no-color"
+ProtectSystem = "strict"
+ProtectHome = "read-only"
+PrivateTmp = "yes"
+NoNewPrivileges = "yes"
+
+[units."mios-ras-check.timer".Unit]
+comment = "# AI-hint: Re-runs mios-ras-check hourly so corrected machine-check errors surface while the boot that logged them is still up.\n# AI-related: mios-ras-check.service, timers.target"
+Description = "'MiOS' hardware error check schedule"
+
+[units."mios-ras-check.timer".Timer]
+OnBootSec = "10min"
+OnUnitActiveSec = "1h"
+
+[units."mios-ras-check.timer".Install]
 WantedBy = "timers.target"
 
 [units."mios-tailscale-sync.service".Unit]
@@ -2614,6 +2663,28 @@ name   = ""
 driver = "usbhid-ups"
 port   = "auto"
 desc   = "MiOS Uninterruptible Power Supply"
+
+# USB storage links, read by `mios-probe storage` (mios-storage-link.service at
+# boot). A disk on a 480 Mb/s link while its controller has a SuperSpeed bus
+# lost its USB 3 link (cable, port, enclosure or bridge firmware) and falls back
+# to bulk-only usb-storage; under an NVMe bridge it also drops to the USB 2.0
+# bus-power budget. That warns; it fails when the disk carries a critical role.
+[hardware.storage_link]
+critical_roles = ["root", "swap", "journal"]
+# USB-to-NVMe bridges by idVendor:idProduct, with the smartctl -d type that
+# reaches the SSD's NVMe SMART log through them.
+nvme_bridges = [
+  { id = "0bda:9210", name = "Realtek RTL9210", smartctl = "sntrealtek" },
+  { id = "174c:2362", name = "ASMedia ASM2362", smartctl = "sntasmedia" },
+  { id = "152d:0583", name = "JMicron JMS583",  smartctl = "sntjmicron" },
+]
+
+# Hardware error accounting, read by `mios-probe ras` (mios-ras-check.timer).
+# rasdaemon records every machine-check and EDAC event; the probe counts this
+# boot's corrected errors (kernel MCE notices, EDAC ce_count), warns at this
+# many, and fails on any uncorrected EDAC error.
+[hardware.ras]
+corrected_warn_per_boot = 1
 
 # Motherboard fan control: ventulusd (MIT, github.com/Plan-B-Development/ventulusd)
 # driven through the MiOS client mios-fanctl (CLI + ratatui TUI). The vendor
@@ -10748,6 +10819,9 @@ pkgs = [
     "fastfetch",
     "lm_sensors",
     "smartmontools",
+    # rasdaemon: records machine-check and EDAC events (ras-mc-ctl --errors)
+    # for mios-probe ras / mios-ras-check.timer.
+    "rasdaemon",
     "tuned",
     "tuned-ppd",
     "fuse",
