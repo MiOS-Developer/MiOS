@@ -111,10 +111,13 @@ _GIT_STATUS_CACHE = "[dim]Git state loading...[/]"
 _GIT_STATUS_CACHE_TS = 0.0
 _GIT_STATUS_TTL_S = 30.0
 _GIT_STATUS_LOCK = threading.Lock()
+_GIT_STATUS_REFRESH_LOCK = threading.Lock()
 _ENGINE_ONLINE_CACHE = None
 _ENGINE_ONLINE_TTL_S = 30.0
 _ENGINE_ONLINE_LOCK = threading.Lock()
+_ENGINE_ONLINE_REFRESH_LOCK = threading.Lock()
 _ACTIVE_MONITOR_APPS = weakref.WeakSet()
+_ACTIVE_MONITOR_APPS_LOCK = threading.Lock()
 PIPELINE_MODE = False
 AI_MODE = False
 TAB_CHOICE = None
@@ -354,21 +357,26 @@ def check_port(host, port, listening=None):
 def engine_online(force=False):
     """A successful Podman host response proves the selected engine is reachable (30s TTL cache)."""
     global _ENGINE_ONLINE_CACHE
-    now = time.monotonic()
-    with _ENGINE_ONLINE_LOCK:
-        if not force and _ENGINE_ONLINE_CACHE is not None and (now - _ENGINE_ONLINE_CACHE[0]) < _ENGINE_ONLINE_TTL_S:
-            return _ENGINE_ONLINE_CACHE[1]
-    online = False
-    try:
-        probe = subprocess.run(["podman", "info", "--format", "json"],
-                               capture_output=True, text=True, timeout=2)
-        info = json.loads(probe.stdout) if probe.returncode == 0 else {}
-        online = isinstance(info, dict) and isinstance(info.get("host"), dict) and bool(info["host"])
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    if not force:
+        with _ENGINE_ONLINE_LOCK:
+            if _ENGINE_ONLINE_CACHE is not None and (time.monotonic() - _ENGINE_ONLINE_CACHE[0]) < _ENGINE_ONLINE_TTL_S:
+                return _ENGINE_ONLINE_CACHE[1]
+    with _ENGINE_ONLINE_REFRESH_LOCK:
+        if not force:
+            with _ENGINE_ONLINE_LOCK:
+                if _ENGINE_ONLINE_CACHE is not None and (time.monotonic() - _ENGINE_ONLINE_CACHE[0]) < _ENGINE_ONLINE_TTL_S:
+                    return _ENGINE_ONLINE_CACHE[1]
         online = False
-    with _ENGINE_ONLINE_LOCK:
-        _ENGINE_ONLINE_CACHE = (time.monotonic(), online)
-    return online
+        try:
+            probe = subprocess.run(["podman", "info", "--format", "json"],
+                                   capture_output=True, text=True, timeout=2)
+            info = json.loads(probe.stdout) if probe.returncode == 0 else {}
+            online = isinstance(info, dict) and isinstance(info.get("host"), dict) and bool(info["host"])
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            online = False
+        with _ENGINE_ONLINE_LOCK:
+            _ENGINE_ONLINE_CACHE = (time.monotonic(), online)
+        return online
 
 def get_services():
     ports = monitor_config().get("ports", {})
@@ -482,7 +490,8 @@ def _bg_update_usb():
         time.sleep(10)
 
 def _should_poll_git():
-    apps = list(_ACTIVE_MONITOR_APPS)
+    with _ACTIVE_MONITOR_APPS_LOCK:
+        apps = list(_ACTIVE_MONITOR_APPS)
     if not apps:
         return True
     return any(app._is_git_polling_active() for app in apps)
@@ -494,33 +503,41 @@ def _resolve_git_dir():
 
 def _resolve_git_status(force=False):
     global _GIT_STATUS_CACHE, _GIT_STATUS_CACHE_TS
-    now = time.monotonic()
-    with _GIT_STATUS_LOCK:
-        if not force and _GIT_STATUS_CACHE_TS > 0.0 and (now - _GIT_STATUS_CACHE_TS) < _GIT_STATUS_TTL_S:
+    if not force:
+        with _GIT_STATUS_LOCK:
+            if _GIT_STATUS_CACHE_TS > 0.0 and (time.monotonic() - _GIT_STATUS_CACHE_TS) < _GIT_STATUS_TTL_S:
+                return _GIT_STATUS_CACHE
+    with _GIT_STATUS_REFRESH_LOCK:
+        if not force:
+            with _GIT_STATUS_LOCK:
+                if _GIT_STATUS_CACHE_TS > 0.0 and (time.monotonic() - _GIT_STATUS_CACHE_TS) < _GIT_STATUS_TTL_S:
+                    return _GIT_STATUS_CACHE
+        d = _resolve_git_dir()
+        if not d:
+            val = "[dim]Git repo not found[/]"
+        else:
+            try:
+                out = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
+                lines = out.splitlines()
+                branch = lines[0].replace("##", "").strip() if lines and "##" in lines[0] else (lines[0].strip() if lines else "unknown")
+                staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
+                mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
+                untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
+                val = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
+            except Exception:
+                val = "[dim]Git state unavailable[/]"
+        with _GIT_STATUS_LOCK:
+            _GIT_STATUS_CACHE = val
+            _GIT_STATUS_CACHE_TS = time.monotonic()
             return _GIT_STATUS_CACHE
-    d = _resolve_git_dir()
-    if not d:
-        val = "[dim]Git repo not found[/]"
-    else:
-        try:
-            out = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
-            lines = out.splitlines()
-            branch = lines[0].replace("##", "").strip() if lines and "##" in lines[0] else (lines[0].strip() if lines else "unknown")
-            staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
-            mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
-            untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
-            val = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
-        except Exception:
-            val = "[dim]Git state unavailable[/]"
-    with _GIT_STATUS_LOCK:
-        _GIT_STATUS_CACHE = val
-        _GIT_STATUS_CACHE_TS = time.monotonic()
-        return _GIT_STATUS_CACHE
 
 def _bg_update_git():
     while True:
-        if _should_poll_git():
-            _resolve_git_status()
+        try:
+            if _should_poll_git():
+                _resolve_git_status()
+        except Exception:
+            pass
         time.sleep(30)
 
 def start_status_collectors():
@@ -642,9 +659,15 @@ def _collect_agent_and_mcp_data():
 def _sample_from_agent_view_snapshot(snapshot):
     if not isinstance(snapshot, dict) or not snapshot:
         return None
-    agents = [{**a, "id": a.get("agent_id", "")} for a in snapshot.get("agents", [])]
+    raw_agents = snapshot.get("agents")
+    agents_list = raw_agents if isinstance(raw_agents, list) else []
+    agents = [{**a, "id": a.get("agent_id", "")} for a in agents_list if isinstance(a, dict)]
+    raw_panes = snapshot.get("panes")
+    panes_list = raw_panes if isinstance(raw_panes, list) else []
     panes = []
-    for p in snapshot.get("panes", []):
+    for p in panes_list:
+        if not isinstance(p, dict):
+            continue
         command = p.get("agent_kind") or p.get("command", "")
         panes.append({
             "socket": p.get("socket", ""),
@@ -655,7 +678,9 @@ def _sample_from_agent_view_snapshot(snapshot):
             "active": not p.get("dead", False) and command not in ("bash", "sh", ""),
             "raw_cmd": p.get("command", ""),
         })
-    return agents, snapshot.get("messages", []), panes
+    raw_messages = snapshot.get("messages")
+    messages = [m for m in raw_messages if isinstance(m, dict)] if isinstance(raw_messages, list) else []
+    return agents, messages, panes
 
 
 def create_metal_layout():
@@ -886,7 +911,8 @@ if TEXTUAL_AVAILABLE:
             self._owned_observation = False
             self.agent_federation = None
             self.enable_agent_federation = observer is None and self.collectors_enabled
-            _ACTIVE_MONITOR_APPS.add(self)
+            with _ACTIVE_MONITOR_APPS_LOCK:
+                _ACTIVE_MONITOR_APPS.add(self)
 
         def _current_active_tab(self):
             if getattr(self, "_active_tab_id", None):
@@ -1143,10 +1169,13 @@ if TEXTUAL_AVAILABLE:
                 return
             if tab_id == "tab-ai":
                 tab_id = "tab-agents"
+            tabs = self.query_one(TabbedContent)
+            if tab_id not in {pane.id for pane in tabs.query(TabPane) if pane.id}:
+                return
             if not self.desktop_panel or focus:
                 self.set_focus(None)
+            tabs.active = tab_id
             self._active_tab_id = tab_id
-            self.query_one(TabbedContent).active = tab_id
             if self.desktop_panel:
                 for button in self.query("#desktop-nav Button"):
                     button.set_class(button.id == "panel-nav-" + tab_id.removeprefix("tab-"), "panel-selected")
@@ -1602,8 +1631,9 @@ if TEXTUAL_AVAILABLE:
             if not self.collectors_enabled or self.desktop_panel or self.client_chooser:
                 return
             target = view or self._current_active_tab()
-            if target:
-                self._active_tab_id = target
+            if target not in {"tab-clients", "tab-agents", "tab-global", "tab-build", "tab-flash"}:
+                return
+            self._active_tab_id = target
             if not self._titles_initialized:
                 self._titles_initialized = True
                 try:
@@ -1960,7 +1990,10 @@ if TEXTUAL_AVAILABLE:
                 if snap_id == self._last_agent_snapshot_id:
                     return False
                 self._last_agent_snapshot_id = snap_id
-                sample = _sample_from_agent_view_snapshot(snapshot)
+                try:
+                    sample = _sample_from_agent_view_snapshot(snapshot)
+                except Exception:
+                    return False
                 if sample is not None:
                     self.apply_agent_events(sample)
                 return True
@@ -2356,7 +2389,8 @@ if TEXTUAL_AVAILABLE:
 
         async def on_unmount(self) -> None:
             self._snapshot_closing = True
-            _ACTIVE_MONITOR_APPS.discard(self)
+            with _ACTIVE_MONITOR_APPS_LOCK:
+                _ACTIVE_MONITOR_APPS.discard(self)
             if self._attachment_task is not None:
                 self._attachment_task.cancel()
                 await asyncio.gather(self._attachment_task, return_exceptions=True)
