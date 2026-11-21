@@ -3,7 +3,7 @@
 # AI-related: src/mios-rs/miosd/src/sessions.rs, usr/share/mios/mios.toml [terminal.sessions], usr/share/doc/mios/keybinds.md, docs/design/mios-global-bindings-final.md
 # Env: MIOSD = the candidate miosd and MIOS_GEN the catalogue producer (each explicit, otherwise built/installed native catalog); MIOSD_OLD = a pre-C-33 miosd for the negative control (optional: the
 # deployed miosd already carries C-33 from main, so it is no control any more).
-import json, os, re, shlex, shutil, socket, subprocess, sys, tempfile, time
+import json, os, re, shlex, shutil, socket, subprocess, sys, tempfile, time, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,10 @@ CAND = candidate()
 GEN = generator()
 OLD = os.environ.get('MIOSD_OLD', '')
 TERMINAL = '/usr/libexec/mios/mios-terminal'
+# The chooser paints the SSOT tabs in place of its three root rows and keeps at most two footer rows
+# (84ae9c524; .devloop/handoff/mios-tui-desktop.json; sessions.rs paint_selector/selector_footer).
+MENU = tomllib.loads((ROOT / 'usr/share/mios/mios.toml').read_text())['terminal']['sessions']['menu']
+CATALOGUE = ('Catalogue Fixture Console', 'Catalogue Fixture Flatpak', 'Catalogue Fixture Missing', 'Catalogue Fixture Native')
 res = []
 
 
@@ -58,6 +62,45 @@ def wait(pred, timeout=6.0):
             return v
         time.sleep(0.1)
     return pred()
+
+
+def box_rows(screen):
+    """Content rows inside the selector border, without the selection mark."""
+    return [line[1:].rstrip('│').strip().removeprefix('›').strip()
+            for line in screen.splitlines() if line.startswith('│')]
+
+
+def tabs_visible(screen):
+    """The SSOT root navigation tabs share one painted row."""
+    pattern = r'\s+'.join(re.escape(tab) for tab in MENU['tabs'])
+    return any(re.match(pattern, row) for row in box_rows(screen))
+
+
+def selector_shown(screen):
+    """Root navigation plus the selector's own help footer row."""
+    return tabs_visible(screen) and any(line.startswith('Enter open') for line in screen.splitlines())
+
+
+def catalogue_rows(screen):
+    """Rows of the local catalogue section, and whether its end (the TUI section) is painted."""
+    rows = box_rows(screen)
+    header = MENU['apps_title'] + ' - local catalogue'
+    if header not in rows:
+        return None, False
+    section = rows[rows.index(header) + 1:]
+    complete = 'TUI apps - this terminal' in section
+    return [row for row in section[:section.index('TUI apps - this terminal')] if row] if complete \
+        else [row for row in section if row], complete
+
+
+def discovered(screen, scenario):
+    """Discovery finished: the catalogue holds exactly the visible fixture apps, never Hidden/NoDisplay."""
+    rows, complete = catalogue_rows(screen)
+    if not rows or 'Catalogue Fixture Hidden' in screen or 'Catalogue Fixture Private' in screen:
+        return False
+    if scenario == 'narrow':  # 44 rows exceed the viewport; the End step counts them.
+        return rows[0].startswith(CATALOGUE[0])
+    return complete and len(rows) == len(CATALOGUE) and all(row.startswith(name) for row, name in zip(rows, CATALOGUE))
 
 
 def copy_executable(source, root, destination):
@@ -234,9 +277,9 @@ def selector(miosd, tmp, tag, keys, scenario=None, width=100, height=30):
         if result.returncode:
             raise RuntimeError(result.stderr)
         capture = lambda: T('capture-pane', '-p', '-t', 'm1').stdout
-        shown = wait(lambda: any(h in capture() for h in ('new here', 'n new')), 15)
+        shown = wait(lambda: selector_shown(capture()), 15)
         if scenario:
-            shown = wait(lambda: ('44 local desktop' if scenario == 'narrow' else '4 local desktop') in capture() and 'Discovering apps' not in capture(), 10)
+            shown = wait(lambda: discovered(capture(), scenario), 10)
         check(f'[{tag}] selector rendered in the private pane', shown, capture().strip()[-300:])
         proof = os.environ.get('MIOS_SELECTOR_PROOF_DIR')
         def save(suffix):
@@ -254,10 +297,20 @@ def selector(miosd, tmp, tag, keys, scenario=None, width=100, height=30):
             else:
                 out = wait(lambda: argv.is_file() and argv.read_text().strip(), 1) or ''
             save(f'after-{index}')
+            if scenario == 'narrow' and key == 'End' and not out:
+                # Apps view footer counts its selectable rows: the three tabs, every catalogue app and the TUIs.
+                screen = capture()
+                rows = box_rows(screen)
+                tuis = rows[rows.index('TUI apps - this terminal') + 1:] if 'TUI apps - this terminal' in rows else []
+                total = 3 + 40 + len(CATALOGUE) + len([row for row in tuis if row])
+                check(f'[{tag}] Apps view holds all {40 + len(CATALOGUE)} discovered catalogue apps',
+                      f'{total}/{total}' in screen.splitlines(), screen)
             if width <= 60 and not out:
                 screen = capture()
-                check(f'[{tag}] narrow menu keeps root navigation and target visible after {key}',
-                      all(label in screen for label in ('Global apps', 'Systems and sessions', 'All apps and sessions', 'Target:', 'Search')))
+                # The target line was removed by design (selector_footer omits target identity); dispatch
+                # checks below pin the exact target-bound launch.
+                check(f'[{tag}] narrow menu keeps root navigation and search visible after {key}',
+                      tabs_visible(screen) and '/ Find' in screen, screen)
             if out:
                 break
         check(f'[{tag}] desktop inventory never executes desktop Exec', not (fixture / 'desktop-exec-was-run').exists())
@@ -338,7 +391,7 @@ def native_tui_client_cases():
                               shlex.join([CAND, 'sessions', '--root', '/']) + '; sleep 120')
                 check(f'[{case}] private native tmux server starts', started.returncode == 0, started.stderr)
                 check(f'[{case}] actual selector menu rendered',
-                      wait(lambda: 'All apps and sessions' in capture(), 15), capture()[-250:])
+                      wait(lambda: selector_shown(capture()), 15), capture()[-250:])
                 for _ in range(attached):
                     attach('owned')
                 if unrelated:
@@ -350,17 +403,19 @@ def native_tui_client_cases():
                 old_foreign = run('list-clients', '-F', '#{session_name}|#{window_id}').stdout
                 run('send-keys', '-t', '=owned:', '-l', '/Private game fixture')
                 check(f'[{case}] real TUI registry row selected',
-                      wait(lambda: 'Private game fixture' in capture() and
-                           'Search editing: Private game fixture' in capture(), 5), capture()[-250:])
+                      wait(lambda: '/ Private game fixture' in capture().splitlines() and
+                           any('Private game fixture' in row for row in box_rows(capture())), 5), capture()[-250:])
                 run('send-keys', '-t', '=owned:', 'Enter')
                 if attached == 1:
                     check(f'[{case}] native wrapper and executor launch the real fixture process',
                           wait(lambda: marker.is_file(), 6), capture()[-250:])
+                    # Window-mode catalogue apps open as centered native floats while [terminal.popups]
+                    # is enabled (9ae67d66d; test-tmux-os.py t11).
                     pane = run('list-panes', '-s', '-t', '=owned:', '-F',
-                               '#{pane_pid}|#{pane_current_command}|#{window_name}').stdout
-                    check(f'[{case}] launched process is alive in its canonical game window',
-                          marker.is_file() and Path('/proc', marker.read_text().strip()).exists()
-                          and '|sleep|Private game fixture' in pane, pane)
+                               '#{pane_pid}|#{pane_current_command}|#{pane_floating_flag}').stdout
+                    pid = marker.read_text().strip() if marker.is_file() else ''
+                    check(f'[{case}] launched process is alive in its canonical native float',
+                          pid and Path('/proc', pid).exists() and f'{pid}|sleep|1' in pane.splitlines(), pane)
                     if unrelated:
                         new_foreign = run('list-clients', '-F', '#{session_name}|#{window_id}').stdout
                         check('other attached session keeps its existing window',
@@ -427,12 +482,12 @@ def main():
         check('ordinary registered MiOS-Mons entry opens through the existing TUI launcher',
               got == '--app fixture-registry-app --console 0', repr(got))
         got = selector(CAND, tmp, 'global-remote',
-              [('/fixture-windows', 'probe required'), ('Enter', 'windows / MiOS-Xbox fixture'),
+              [('/fixture-windows', 'probe required'), ('Enter', 'not installed locally; resolve remotely'),
                ('/Remote App Fixture', 'Launch by name: Remote App Fixture'), 'Enter'], 'remote')
         check('registered Windows system uses the witnessed execution target and requested application name',
               got == 'fixture-windows-session\nRemote App Fixture', repr(got))
         got = selector(CAND, tmp, 'global-remote-local-missing',
-              [('/fixture-windows', 'probe required'), ('Enter', 'windows / MiOS-Xbox fixture'),
+              [('/fixture-windows', 'probe required'), ('Enter', 'not installed locally; resolve remotely'),
                ('/Catalogue Fixture Missing', 'resolve remotely'), 'Enter'], 'remote')
         check('local TryExec absence does not block resolving an app on the selected remote system',
               got == 'fixture-windows-session\nCatalogue Fixture Missing', repr(got))
