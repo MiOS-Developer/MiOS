@@ -1,4 +1,4 @@
-// AI-hint: mios-wobbly -- Compiz-style wobbly windows for Hyprland 0.56 (MiOS original source).
+// AI-hint: mios-wobbly -- Compiz-style wobbly windows for Hyprland 0.57 (MiOS original source).
 // A floating window tagged `mios-wobbly` (window rule `tag = "+mios-wobbly"`) and not `mios-nowobbly`
 // is rendered, while it
 // moves and until it settles, through a Hyprland IWindowTransformer: Hyprland draws the whole window
@@ -21,13 +21,16 @@
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowEffectsController.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/gl/GLFramebuffer.hpp>
 #include <hyprland/src/render/transformer/Transformer.hpp>
+#include <hyprland/src/render/transformer/TransformerList.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/pointer/PointerManager.hpp>
@@ -76,10 +79,6 @@ namespace {
         bool         attached   = false;
         CBox         lastDamage;
         float        paneFade   = 1.0f;
-        // Filled by preWindowRender for the frame being drawn.
-        bool          drawnValid = false;
-        CBox          drawnBox;          // monitor-local logical
-        PHLMONITORREF drawnMonitor;
     };
 
     std::unordered_map<Desktop::View::CWindow*, UP<SWobble>> g_states;
@@ -118,36 +117,48 @@ namespace {
         return t ? t->window() : nullptr;
     }
 
+    bool pinned(const PHLWINDOW& w) {
+        return !!(w->m_state & Desktop::View::WINDOW_STATE_PINNED);
+    }
+
+    // Hyprland 0.57 owns the window's transformers (CWindowEffectsController) and drops every inactive one
+    // (removeInactive, also on its own motion-blur/wobble resets): this transformer is active exactly while the
+    // plugin has it attached, and it declares the deformed extent so the window's output canvas holds the mesh.
     class CWobblyTransformer : public Render::IWindowTransformer {
       public:
         explicit CWobblyTransformer(PHLWINDOWREF w) : m_window(w) {}
-        ~CWobblyTransformer() override {
-            if (g_exiting) // GL teardown during unload is not worth the risk; leak the buffers
-                (void)new std::vector<std::pair<Render::IFramebuffer*, SP<Render::GL::CGLFramebuffer>>>(std::move(m_out));
-        }
 
-        void preWindowRender(CSurfacePassElement::SRenderData* rd) override {
+        const SWobble* state() const {
             const auto it = g_states.find(m_window.get());
-            if (it == g_states.end())
-                return;
-            auto&      s   = *it->second;
-            const auto w   = m_window.lock();
-            const auto mon = rd ? rd->pMonitor.lock() : nullptr;
-            s.drawnValid   = false;
-            if (!w || !mon || g_pHyprRenderer->m_bRenderingSnapshot)
-                return;
-            const auto ws  = w->m_workspace;
-            CBox       box = w->getFullWindowBoundingBox();
-            box.translate((w->m_pinned || !ws ? Vector2D{} : ws->m_renderOffset->value()) + w->m_floatingOffset - mon->m_position);
-            s.drawnBox     = box;
-            s.drawnMonitor = mon;
-            s.drawnValid   = true;
+            return it == g_states.end() ? nullptr : it->second.get();
         }
 
-        SP<Render::IFramebuffer> transform(SP<Render::IFramebuffer> in) override;
+        bool active() const override {
+            const auto s = state();
+            return !g_exiting && s && s->attached;
+        }
 
-        PHLWINDOWREF                                                         m_window;
-        std::vector<std::pair<Render::IFramebuffer*, SP<Render::GL::CGLFramebuffer>>> m_out;
+        // currentBox is the monitor-local logical box Hyprland draws the window at (its full bounding box plus the
+        // workspace and floating offsets, the 0.56 drawnBox); the mesh deviates from simBox by the control points.
+        CBox transformedExtents(const CBox& currentBox) const override {
+            const auto s = state();
+            if (!s || !s->attached)
+                return currentBox;
+            const CBox& b  = s->simBox;
+            double      x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.h;
+            for (int i = 0; i < N; ++i)
+                for (int j = 0; j < N; ++j) {
+                    x0 = std::min(x0, s->P[i][j].x);
+                    y0 = std::min(y0, s->P[i][j].y);
+                    x1 = std::max(x1, s->P[i][j].x);
+                    y1 = std::max(y1, s->P[i][j].y);
+                }
+            return CBox{currentBox.x + (x0 - b.x), currentBox.y + (y0 - b.y), currentBox.w + (x1 - x0) - b.w, currentBox.h + (y1 - y0) - b.h}.expand(3);
+        }
+
+        Render::SWindowTransformBuffer transform(Render::CRenderContext& ctx, const Render::SWindowTransformBuffer& in, const Render::SWindowTransformContext& context) override;
+
+        PHLWINDOWREF m_window;
     };
 
     bool ensureGL() {
@@ -215,61 +226,49 @@ namespace {
         return true;
     }
 
-    SP<Render::IFramebuffer> CWobblyTransformer::transform(SP<Render::IFramebuffer> in) {
-        if (!in || g_exiting || g_cfg.render->value() == 0)
+    Render::SWindowTransformBuffer CWobblyTransformer::transform(Render::CRenderContext& ctx, const Render::SWindowTransformBuffer& in,
+                                                                 const Render::SWindowTransformContext& context) {
+        if (!in.framebuffer || g_exiting || g_cfg.render->value() == 0 || context.standalone || context.renderingSnapshot)
             return in;
-        const auto it = g_states.find(m_window.get());
-        if (it == g_states.end())
+        const auto s = state();
+        if (!s)
             return in;
-        const auto& s   = *it->second;
-        const auto  mon = g_pHyprRenderer->m_renderData.pMonitor.lock();
-        if (!s.drawnValid || !mon || s.drawnMonitor.lock() != mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
+        const auto mon = context.monitor.lock();
+        if (!mon || mon->m_transform != WL_OUTPUT_TRANSFORM_NORMAL)
             return in;
-        const auto inTex = in->getTexture();
-        if (!inTex || !inTex->m_texID)
+        const auto inTex = in.framebuffer->getTexture();
+        if (!inTex || !inTex->m_texID || inTex->m_size.x < 1 || inTex->m_size.y < 1)
             return in;
-        const int fw = (int)in->m_size.x, fh = (int)in->m_size.y;
-        if (fw < 1 || fh < 1 || fw > 16384 || fh > 16384 || !ensureGL())
+        // The output canvas: the plan's output box (the deformed extent on this monitor) in monitor-local pixels, from a
+        // work buffer of the monitor's pool (content and blur matte each take one).
+        const float scale  = mon->m_scale;
+        const CBox  canvas = Render::pixelBoxForLogical(context.outputBox.copy().expand(1.0 / scale), scale);
+        if (canvas.empty() || canvas.w > 16384 || canvas.h > 16384 || !ensureGL())
             return in;
-
-        SP<Render::GL::CGLFramebuffer> out;
-        for (auto it = m_out.begin(); it != m_out.end(); ++it)
-            if (it->first == in.get()) {
-                out = it->second;
-                std::rotate(it, it + 1, m_out.end()); // most recently used last
-                break;
-            }
-        if (!out) {
-            // content + blur matte each frame; when the monitor's work-buffer pool hands out other
-            // buffers, evict the least recently used instead of reallocating every output buffer
-            if (m_out.size() >= 4)
-                m_out.erase(m_out.begin());
-            out = makeShared<Render::GL::CGLFramebuffer>("mios-wobbly");
-            m_out.emplace_back(in.get(), out);
-        }
-        if (!out->isAllocated() || out->m_size != in->m_size) {
-            out->release();
-            if (!out->alloc(fw, fh, in->m_drmFormat != DRM_FORMAT_INVALID ? in->m_drmFormat : DRM_FORMAT_ARGB8888))
-                return in;
-        }
-        out->setImageDescription(in->imageDescription());
+        const auto out   = g_pHyprRenderer->getWorkBuffer(ctx, canvas.size());
+        auto*      glOut = out ? dynamic_cast<Render::GL::CGLFramebuffer*>(out.get()) : nullptr;
+        if (!glOut || !out->isAllocated() || !out->getTexture())
+            return in;
+        const int fw = (int)out->getTexture()->m_size.x, fh = (int)out->getTexture()->m_size.y;
+        if (fw < 1 || fh < 1)
+            return in;
+        const Vector2D inOrigin = in.box.pos(), inSize = inTex->m_size, outOrigin = canvas.pos();
 
         // Mesh: undeformed sample points cover the drawn box; each vertex is displaced by the
         // Bezier patch's deviation from the real box.
         const int   R     = std::clamp((int)g_cfg.grid->value(), 4, 64);
         const bool  flip  = g_cfg.flipY->value() != 0;
-        const float scale = mon->m_scale;
-        const auto  B     = s.drawnBox;
+        const auto  B     = context.currentBox;
         std::vector<float> grid((R + 1) * (R + 1) * 4);
         for (int gy = 0; gy <= R; ++gy) {
             for (int gx = 0; gx <= R; ++gx) {
                 const float u = (float)gx / R, v = (float)gy / R;
-                const Vector2D rest = {s.simBox.x + s.simBox.w * u, s.simBox.y + s.simBox.h * v};
-                const Vector2D d    = patch(s, u, v) - rest;
+                const Vector2D rest = {s->simBox.x + s->simBox.w * u, s->simBox.y + s->simBox.h * v};
+                const Vector2D d    = patch(*s, u, v) - rest;
                 const Vector2D U    = {B.x + B.w * u, B.y + B.h * v};
                 const Vector2D Dd   = U + d;
-                float          tu = U.x * scale / fw, tv = U.y * scale / fh;
-                float          pu = Dd.x * scale / fw, pv = Dd.y * scale / fh;
+                float          tu = (U.x * scale - inOrigin.x) / inSize.x, tv = (U.y * scale - inOrigin.y) / inSize.y;
+                float          pu = (Dd.x * scale - outOrigin.x) / fw, pv = (Dd.y * scale - outOrigin.y) / fh;
                 if (flip) {
                     tv = 1.f - tv;
                     pv = 1.f - pv;
@@ -314,7 +313,7 @@ namespace {
         auto& gl = Render::GL::g_pHyprOpenGL;
         gl->setCapStatus(GL_SCISSOR_TEST, false);
         gl->blend(false);
-        glBindFramebuffer(GL_FRAMEBUFFER, out->getFBID());
+        glBindFramebuffer(GL_FRAMEBUFFER, glOut->getFBID());
         gl->setViewport(0, 0, fw, fh);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
@@ -326,7 +325,7 @@ namespace {
         glBindTexture(GL_TEXTURE_2D, inTex->m_texID);
         glBindSampler(0, g_sampler);
         glUniform1i(g_locTex, 0);
-        const float gain = 1.0f / std::max(s.paneFade, 0.05f);
+        const float gain = 1.0f / std::max(s->paneFade, 0.05f);
         if (g_locGain >= 0)
             glUniform1f(g_locGain, gain);
         glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(tris.size() / 4));
@@ -346,19 +345,19 @@ namespace {
         // frame-pacing counters: the drawn mesh and the model time it shows (the last tick)
         MiosFxStats::draw(MiosFxStats::WOBBLE, mon->m_name, mon->m_refreshRate, MiosFxStats::fnv(grid.data(), grid.size() * sizeof(float)), MiosFxStats::nowMs(),
                           std::chrono::duration<double, std::milli>(g_lastTick.time_since_epoch()).count());
-        return out;
+        return {.framebuffer = out, .box = canvas};
     }
 
     void detach(SWobble& s) {
         if (const auto w = s.window.lock()) {
-            std::erase_if(w->m_transformers, [](const auto& t) { return dynamic_cast<CWobblyTransformer*>(t.get()) != nullptr; });
-            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
+            s.attached = false; // inactive: the transformer list drops it
+            w->effects().transformers()->removeInactive();
+            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(1.f);
             if (s.lastDamage.w > 0)
                 g_pHyprRenderer->damageBox(s.lastDamage);
             g_pHyprRenderer->damageWindow(w);
         }
         s.attached   = false;
-        s.drawnValid = false;
         s.lastDamage = {};
         s.paneFade   = 1.f;
     }
@@ -366,8 +365,9 @@ namespace {
     void attach(SWobble& s, const PHLWINDOW& w) {
         if (s.attached)
             return;
-        w->m_transformers.emplace_back(makeUnique<CWobblyTransformer>(s.window));
-        s.attached = true;
+        s.attached = true; // a detached transformer the list has not dropped yet becomes active again
+        if (!w->effects().transformers()->get<CWobblyTransformer>())
+            w->effects().transformers()->emplace<CWobblyTransformer>(s.window);
     }
 
     MiosWobble::SParams params() {
@@ -427,7 +427,7 @@ namespace {
         for (const auto& w : Desktop::windowState()->windows()) {
             if (!w)
                 continue;
-            const bool eligible = enabled && w->m_isMapped && w->m_isFloating && !w->isHidden() && w->m_workspace && w->m_workspace->isVisible() &&
+            const bool eligible = enabled && w->mapped() && w->isFloating() && !w->isHidden() && w->m_workspace && w->m_workspace->visible() &&
                 !Fullscreen::controller()->isFullscreen(w) && tagged(w) && !MiosLampFx::owns(w.get()); // the lamp outranks the wobble
             auto it = g_states.find(w.get());
             if (!eligible) {
@@ -439,7 +439,7 @@ namespace {
                 continue;
             }
             CBox box = w->getFullWindowBoundingBox();
-            box.translate(w->m_floatingOffset);
+            box.translate(w->presentation().floatingOffset());
             if (box.w < 8 || box.h < 8)
                 continue;
             if (it == g_states.end()) {
@@ -511,10 +511,10 @@ namespace {
             // compensated by 1/paneFade in the shader, so >= 0.4 keeps 8-bit content free of banding (desk-042 (8)).
             const float paneMin = std::clamp((float)g_cfg.paneFade->value(), 0.05f, 1.0f);
             s.paneFade          = paneMin >= 1.0f ? 1.0f : (float)MiosLamp::wobblePaneFade(dev, paneMin, 2.0);
-            w->alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);
+            w->presentation().alpha(Desktop::View::WINDOW_ALPHA_LAYOUT)->setValueAndWarp(s.paneFade);
 
             const auto ws    = w->m_workspace;
-            const auto shift = (w->m_pinned || !ws) ? Vector2D{} : ws->m_renderOffset->value();
+            const auto shift = (pinned(w) || !ws) ? Vector2D{} : ws->m_renderOffset->value();
             ext              = CBox{x0, y0, x1 - x0, y1 - y0}.translate(shift).expand(3);
             CBox damage      = ext;
             if (s.lastDamage.w > 0) {
@@ -564,7 +564,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addConfigValueV2(PHANDLE, v);
     MiosLampFx::init(PHANDLE); // plugin:mios_lamp:*, hl.plugin.mios_lamp.*, `hyprctl mios-lamp`
 
-    g_listeners.push_back(Event::bus()->m_events.render.stage.listen([](eRenderStage stage) {
+    g_listeners.push_back(Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& ev) {
+        const auto stage = ev.stage;
         if (g_exiting || (stage != RENDER_PRE && stage != RENDER_POST))
             return;
         try {
@@ -601,4 +602,8 @@ APICALL EXPORT void PLUGIN_EXIT() {
         if (s->attached)
             detach(*s);
     g_states.clear();
+    // every transformer of this plugin is inactive now (g_exiting); none may outlive the code it runs
+    for (const auto& w : Desktop::windowState()->windows())
+        if (w && w->effects().transformers()->get<CWobblyTransformer>())
+            w->effects().transformers()->removeInactive();
 }
