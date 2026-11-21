@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# AI-hint: Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before.
+# AI-hint: Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before. gce-up's Fedora CoreOS node: its Ignition config bootc-switches the VM to [image].ref.
 # AI-related: .devcontainer/cloud-shell/bootstrap.sh, usr/share/mios/mios.toml, usr/libexec/mios/mios-ai-firstboot, usr/libexec/mios/mios-models-firstboot, usr/libexec/mios/mios-bound-images-firstboot, usr/libexec/mios-flatpak-install
-# AI-functions: TestOverlayRender, TestFirstbootPulls, TestFlatpakInstall, TestCloudScripts, TestSshCert
+# AI-functions: TestOverlayRender, TestFirstbootPulls, TestFlatpakInstall, TestCloudScripts, TestSshCert, TestGceNode
 """Each consumer runs from a copy whose absolute state paths point into a temp
 dir, with network and package tools replaced by stubs that log their calls. The
 SSOT values come from the real resolver (usr/libexec/mios/mios-toml-get) reading
@@ -624,6 +624,269 @@ class TestSshCert(unittest.TestCase):
         tail = body.split("( tailnet )", 1)[1]
         self.assertRegex(tail, r'setsid nohup bash "\$SELF" ssh-cert >> "\$STATE/ssh-cert\.log" 2>&1 < /dev/null &')
 
+
+
+GCE_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID7YQhhJamADFnQC48a+BMbNp2s8OBI7xu7VHOju+Grs test@gce"
+TS_KEY = "tskey-auth-kTESTONLY0CNTRL-0123456789abcdefTESTONLY"
+
+
+@unittest.skipIf(os.name == "nt", "bootstrap.sh is POSIX shell")
+class TestGceNode(unittest.TestCase):
+    """`bootstrap.sh gce-up` makes a Compute Engine VM that BOOTS [image].ref: a Fedora
+    CoreOS boot image whose Ignition config switches it to the MiOS image on first boot.
+    The real bootstrap.sh and resolver run against the checkout's vendor SSOT (or a
+    rewritten copy); gcloud, bootc, rpm-ostree and systemctl are recording stubs."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cloud-gce-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.bin = os.path.join(self.tmp, "bin")
+        self.log = os.path.join(self.tmp, "calls.log")
+        open(self.log, "w").close()
+        with open(SSOT, "rb") as fh:
+            self.ssot = tomllib.load(fh)
+        self.gce = self.ssot["deployment"]["cloud"]["gce"]
+        self.ref = self.ssot["image"]["ref"]
+        self.keys = os.path.join(self.tmp, "authorized_keys")
+        _write(self.keys, "# the coordinator\n" + GCE_KEY + "\n")
+        self.tskey = os.path.join(self.tmp, "tskey")
+        _write(self.tskey, TS_KEY + "\n", 0o600)
+        # gcloud records its argv and keeps a copy of the user-data it was handed.
+        _write(os.path.join(self.bin, "gcloud"),
+               '#!/bin/sh\nprintf "gcloud %s\\n" "$*" >> "$STUB_LOG"\n'
+               'for a in "$@"; do case "$a" in user-data=*) cp "${a#user-data=}" "$STUB_LOG.ign";; esac; done\n',
+               0o755)
+
+    def env(self, vendor=SSOT, **extra):
+        e = {k: v for k, v in os.environ.items() if not k.startswith("MIOS_")}
+        e.update(PATH=self.bin + os.pathsep + os.environ["PATH"], STUB_LOG=self.log,
+                 MIOS_VENDOR_TOML=vendor, MIOS_VENDOR_TOML_D=os.path.join(self.tmp, "none.d"),
+                 MIOS_HOST_TOML=os.path.join(self.tmp, "etc/mios.toml"),
+                 MIOS_HOST_TOML_D=os.path.join(self.tmp, "etc/mios.d"),
+                 MIOS_USER_TOML=os.path.join(self.tmp, "user/mios.toml"),
+                 MIOS_USER_TOML_D=os.path.join(self.tmp, "user/mios.d"),
+                 MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY=os.path.join(self.tmp, "state"))
+        e.update(extra)
+        return e
+
+    def bootstrap(self, *args, **env):
+        return subprocess.run(["bash", BOOTSTRAP, *args], capture_output=True, text=True, env=self.env(**env))
+
+    def ignition(self, **env):
+        r = self.bootstrap("gce-ignition", **env)
+        self.assertEqual(0, r.returncode, r.stderr)
+        return json.loads(r.stdout)
+
+    def vendor_with(self, old, new):
+        with open(SSOT, encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertEqual(1, text.count(old), f"mios.toml no longer holds exactly one {old!r}")
+        path = os.path.join(self.tmp, "vendor.toml")
+        _write(path, text.replace(old, new))
+        return path
+
+    @staticmethod
+    def files(doc):
+        import base64
+        return {f["path"]: (f["mode"], base64.b64decode(f["contents"]["source"].split(",", 1)[1]).decode())
+                for f in doc["storage"]["files"]}
+
+    @staticmethod
+    def units(doc):
+        return {u["name"]: u for u in doc["systemd"]["units"]}
+
+    def test_ssot_boots_fedora_coreos_not_a_container_host(self):
+        self.assertEqual("fedora-coreos-cloud", self.gce["image_project"])
+        self.assertTrue(self.gce["image_family"].startswith("fedora-coreos-"))
+        self.assertNotIn("container", self.gce, "the VM boots the image; it is no podman container host")
+        with open(BOOTSTRAP, encoding="utf-8") as fh:
+            text = fh.read()
+        gce = text[text.index("\ngce_ignition() {"):text.index("\ngce_down() {")]
+        for retired in ("startup-script", "podman", "apt-get", "ubuntu"):
+            self.assertNotIn(retired, gce, "the GCE node boots MiOS; it never runs it in a container")
+
+    def test_ignition_switches_the_node_to_the_ssot_image(self):
+        doc = self.ignition()
+        self.assertEqual({"version": self.gce["ignition_version"]}, doc["ignition"])
+        files, units = self.files(doc), self.units(doc)
+        mode, rebase = files["/etc/mios-cloud/rebase.sh"]
+        self.assertEqual(0o755, mode)
+        self.assertIn("REF=" + shlex.quote(self.ref) + "\n", rebase)
+        self.assertIn('bootc switch "$REF"', rebase)
+        self.assertIn('rpm-ostree rebase "ostree-unverified-registry:$REF"', rebase)
+        r = subprocess.run(["bash", "-n"], input=rebase, capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stderr)
+        unit = units["mios-cloud-rebase.service"]
+        self.assertTrue(unit["enabled"])
+        self.assertIn("ConditionPathExists=!" + self.gce["rebase_stamp"], unit["contents"])
+        self.assertIn("After=network-online.target", unit["contents"])
+        self.assertEqual({"name": "zincati.service", "mask": True}, units["zincati.service"])
+        self.assertIn("bootc status", units["mios-cloud-report.service"]["contents"])
+        self.assertIn("StandardOutput=journal+console", units["mios-cloud-report.service"]["contents"])
+        # Ignition 3.x shape: every file has an absolute path, an int mode and a data URL.
+        for f in doc["storage"]["files"]:
+            self.assertTrue(f["path"].startswith("/") and isinstance(f["mode"], int))
+            self.assertTrue(f["contents"]["source"].startswith("data:;base64,"))
+
+    def run_rebase(self, bootc):
+        """The rendered rebase script under stubs; bootc: 'ok', 'fail' or None (absent)."""
+        rebase = self.files(self.ignition())["/etc/mios-cloud/rebase.sh"][1]
+        stamp = os.path.join(self.tmp, "rebased")
+        self.assertIn("STAMP=" + self.gce["rebase_stamp"] + "\n", rebase)
+        rebase = rebase.replace("STAMP=" + self.gce["rebase_stamp"] + "\n", "STAMP=" + shlex.quote(stamp) + "\n")
+        sbin = os.path.join(self.tmp, "sbin")
+        stub = '#!/bin/sh\nprintf "%s %s\\n" "$(basename "$0")" "$*" >> "$STUB_LOG"\n'
+        for name, rc in (("systemctl", 0), ("rpm-ostree", int(os.environ.get("_RPMOSTREE_RC", "0")))):
+            _write(os.path.join(sbin, name), stub + f"exit {rc}\n", 0o755)
+        if bootc:
+            _write(os.path.join(sbin, "bootc"), stub + ("exit 0\n" if bootc == "ok" else "exit 1\n"), 0o755)
+        elif os.path.exists(os.path.join(sbin, "bootc")):
+            os.unlink(os.path.join(sbin, "bootc"))
+        # A private PATH: the stubs plus only the host tools the script runs, so a host
+        # bootc or rpm-ostree (a Fedora bootc CI container has both) can never leak in.
+        tools = os.path.join(self.tmp, "tools")
+        os.makedirs(tools, exist_ok=True)
+        for name in ("sh", "basename", "dirname", "install"):
+            link = os.path.join(tools, name)
+            if not os.path.lexists(link):
+                os.symlink(shutil.which(name), link)
+        r = subprocess.run([shutil.which("bash"), "-c", rebase], capture_output=True, text=True,
+                           env={"PATH": sbin + os.pathsep + tools, "STUB_LOG": self.log})
+        with open(self.log, encoding="utf-8") as fh:
+            return r, fh.read(), stamp
+
+    def test_rebase_prefers_bootc_and_falls_back_to_rpm_ostree(self):
+        r, calls, stamp = self.run_rebase("ok")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn(f"bootc switch {self.ref}\n", calls)
+        self.assertNotIn("rpm-ostree", calls)
+        self.assertIn("systemctl reboot", calls)
+        with open(stamp) as fh:
+            self.assertEqual(self.ref + "\n", fh.read())
+        for bootc in (None, "fail"):
+            with self.subTest(bootc=bootc):
+                os.unlink(stamp)
+                open(self.log, "w").close()
+                r, calls, stamp = self.run_rebase(bootc)
+                self.assertEqual(0, r.returncode, r.stderr)
+                self.assertIn(f"rpm-ostree rebase ostree-unverified-registry:{self.ref}\n", calls)
+                self.assertIn("systemctl reboot", calls)
+                self.assertTrue(os.path.isfile(stamp))
+
+    def test_a_failed_rebase_neither_stamps_nor_reboots(self):
+        with mock.patch.dict(os.environ, {"_RPMOSTREE_RC": "1"}):
+            r, calls, stamp = self.run_rebase(None)
+        self.assertNotEqual(0, r.returncode)
+        self.assertNotIn("systemctl reboot", calls)
+        self.assertFalse(os.path.exists(stamp), "a failed rebase must stay retryable")
+
+    def test_core_login_gets_only_the_supplied_keys(self):
+        user = self.ignition()["passwd"]["users"]
+        self.assertEqual([{"name": self.gce["ssh_user"]}], user, "no key file -> no keys")
+        user = self.ignition(MIOS_DEPLOYMENT_CLOUD_GCE_SSH_AUTHORIZED_KEYS_FILE=self.keys)["passwd"]["users"]
+        self.assertEqual([{"name": self.gce["ssh_user"], "sshAuthorizedKeys": [GCE_KEY]}], user)
+        _write(self.keys, GCE_KEY + "\nnot a key\n")
+        r = self.bootstrap("gce-ignition", MIOS_DEPLOYMENT_CLOUD_GCE_SSH_AUTHORIZED_KEYS_FILE=self.keys)
+        self.assertNotEqual(0, r.returncode)
+        self.assertIn("not a public key", r.stderr)
+
+    def test_tailnet_key_lands_private_and_is_removed_once_running(self):
+        node_key = self.gce["node_auth_key_file"]
+        doc = self.ignition()
+        self.assertNotIn(node_key, self.files(doc))
+        self.assertNotIn("mios-cloud-authkey-cleanup.service", self.units(doc))
+        self.assertNotIn("auth_key_file", self.files(doc)[self.gce["dropin"]][1])
+
+        doc = self.ignition(MIOS_DEPLOYMENT_CLOUD_GCE_TAILSCALE_AUTH_KEY_FILE=self.tskey)
+        files = self.files(doc)
+        self.assertEqual((0o600, TS_KEY + "\n"), files[node_key])
+        self.assertIn({"path": os.path.dirname(node_key), "mode": 0o700}, doc["storage"]["directories"])
+        self.assertIn(f"auth_key_file = {json.dumps(node_key)}", files[self.gce["dropin"]][1])
+        for path, (_, text) in files.items():
+            if path != node_key:
+                self.assertNotIn(TS_KEY, text, f"the key leaked into {path}")
+        cleanup = self.units(doc)["mios-cloud-authkey-cleanup.service"]
+        self.assertTrue(cleanup["enabled"])
+        self.assertIn("rm -f -- " + node_key, cleanup["contents"])
+        self.assertIn('BackendState', cleanup["contents"])
+        self.assertIn("WantedBy=mios-tailscale-sync.service", cleanup["contents"])
+
+        for bad, mode, why in (("tskey-ok\n", 0o644, "must be mode 0600"),
+                               ("hunter2\n", 0o600, "one tskey- pre-auth key")):
+            with self.subTest(why=why):
+                _write(self.tskey, bad, mode)
+                r = self.bootstrap("gce-ignition", MIOS_DEPLOYMENT_CLOUD_GCE_TAILSCALE_AUTH_KEY_FILE=self.tskey)
+                self.assertNotEqual(0, r.returncode)
+                self.assertIn(why, r.stderr)
+
+    def test_node_dropins_layer_kernel_tailnet_over_the_cloud_overlay(self):
+        files = self.files(self.ignition())
+        cloud, gce = self.ssot["deployment"]["cloud"]["dropin"], self.gce["dropin"]
+        self.assertLess(os.path.basename(cloud), os.path.basename(gce), "the node drop-in must sort last")
+        host_d = os.path.join(self.tmp, "etc/mios.d")
+
+        def get(*key):
+            r = subprocess.run([TOML_GET, *key], capture_output=True, text=True, env=self.env())
+            self.assertEqual(0, r.returncode, r.stderr)
+            return r.stdout.strip()
+        _write(os.path.join(host_d, os.path.basename(cloud)), files[cloud][1])
+        self.assertEqual("userspace", get("tailscale", "mode"), "control: the cloud overlay alone")
+        _write(os.path.join(host_d, os.path.basename(gce)), files[gce][1])
+        self.assertEqual("kernel", get("tailscale", "mode"))
+        self.assertEqual("false", get("tailscale", "shields_up").lower())
+        self.assertEqual("false", get("tailscale.auth_key_mint", "enabled").lower())
+        self.assertEqual("headless", get("blade", "type"), "the cloud overlay still applies")
+
+    def test_pull_secret_is_fetched_on_the_node_never_put_in_metadata(self):
+        rebase = self.files(self.ignition())["/etc/mios-cloud/rebase.sh"][1]
+        self.assertIn("PULL_SECRET=''", rebase)
+        doc = self.ignition(MIOS_DEPLOYMENT_CLOUD_GCE_PULL_SECRET="mios-ghcr-auth")
+        rebase = self.files(doc)["/etc/mios-cloud/rebase.sh"][1]
+        self.assertIn("PULL_SECRET=mios-ghcr-auth\n", rebase)
+        self.assertIn("secretmanager.googleapis.com", rebase)
+        self.assertIn("AUTH_FILE=" + self.gce["auth_file"], rebase)
+        self.assertIn('-H @- ', rebase, "the bearer token goes on stdin, never argv")
+        r = self.bootstrap("gce-ignition", MIOS_DEPLOYMENT_CLOUD_GCE_PULL_SECRET="a/b;rm")
+        self.assertNotEqual(0, r.returncode)
+        self.assertIn("not a Secret Manager secret id", r.stderr)
+
+    def test_gce_up_creates_a_coreos_vm_with_ignition_user_data(self):
+        r = self.bootstrap("gce-up", MIOS_DEPLOYMENT_CLOUD_GCE_TAILSCALE_AUTH_KEY_FILE=self.tskey)
+        self.assertEqual(0, r.returncode, r.stderr)
+        with open(self.log, encoding="utf-8") as fh:
+            argv = shlex.split(fh.read().splitlines()[0])
+        self.assertEqual(["gcloud", "compute", "instances", "create", self.gce["instance"]], argv[:5])
+        for flag, value in (("--image-family", self.gce["image_family"]),
+                            ("--image-project", self.gce["image_project"]),
+                            ("--machine-type", self.gce["machine_type"]),
+                            ("--boot-disk-size", f'{self.gce["boot_disk_gb"]}GB'),
+                            ("--boot-disk-type", self.gce["boot_disk_type"]),
+                            ("--zone", self.gce["zone"])):
+            self.assertEqual(value, argv[argv.index(flag) + 1], flag)
+        meta = argv[argv.index("--metadata-from-file") + 1]
+        self.assertTrue(meta.startswith("user-data="), meta)
+        self.assertNotIn("--scopes", argv, "no pull secret -> default scopes")
+        self.assertNotIn(TS_KEY, " ".join(argv) + r.stdout + r.stderr, "the key is in no argv or log")
+        with open(self.log + ".ign", encoding="utf-8") as fh:
+            self.assertIn(self.gce["node_auth_key_file"], self.files(json.load(fh)))
+        self.assertFalse(os.path.exists(meta.split("=", 1)[1]), "the rendered user-data is removed")
+
+        open(self.log, "w").close()
+        r = self.bootstrap("gce-up", MIOS_DEPLOYMENT_CLOUD_GCE_PULL_SECRET="mios-ghcr-auth")
+        self.assertEqual(0, r.returncode, r.stderr)
+        with open(self.log, encoding="utf-8") as fh:
+            argv = shlex.split(fh.read().splitlines()[0])
+        self.assertEqual("cloud-platform", argv[argv.index("--scopes") + 1])
+
+    def test_gce_up_refuses_a_disk_too_small_for_two_deployments(self):
+        need = 2 * self.ssot["deployment"]["cloud"]["min_free_gb"]
+        r = self.bootstrap("gce-up", MIOS_DEPLOYMENT_CLOUD_GCE_BOOT_DISK_GB=str(need - 1))
+        self.assertNotEqual(0, r.returncode)
+        self.assertIn(f"below the {need} GB", r.stderr)
+        with open(self.log, encoding="utf-8") as fh:
+            self.assertEqual("", fh.read(), "no VM is created")
+        r = self.bootstrap("gce-up", MIOS_DEPLOYMENT_CLOUD_GCE_BOOT_DISK_GB=str(need))
+        self.assertEqual(0, r.returncode, r.stderr)
 
 
 @unittest.skipIf(os.name == "nt", "POSIX build-entry execution contract")

@@ -221,7 +221,7 @@ MIOS_PODS_MIOS_AI_NETWORK	MIOS_BUILD_IMAGES_NETWORK	keep-distinct	# a pod's runt
 MIOS_ADGUARD_VERSION	MIOS_HEADSCALE_VERSION	keep-distinct	# each sidecar image floats its own tag (ADR-0003); headscale can pin a release without adguard
 MIOS_BRANCH	MIOS_DEPLOYMENT_CLOUD_SOURCE_REF	keep-distinct	# the branch the image is built from vs the ref a cloud agent session clones to work on
 MIOS_IDENTITY_HOSTNAME	MIOS_DEPLOYMENT_CLOUD_GCE_INSTANCE	keep-distinct	# the MiOS host's own hostname vs the name of the Compute Engine VM that hosts it
-MIOS_IDENTITY_HOSTNAME	MIOS_DEPLOYMENT_CLOUD_GCE_CONTAINER	keep-distinct	# the MiOS host's own hostname vs the podman container name the GCE startup script runs it under
+MIOS_TAILSCALE_MODE	MIOS_DEPLOYMENT_CLOUD_GCE_OVERLAY_TAILSCALE_MODE	keep-distinct	# the vendor tailscaled mode vs the GCE node drop-in's mode, which undoes the cloud overlay's userspace mode on a VM that has a TUN device
 MIOS_LANES_LIGHT_REASONING_PARSER	MIOS_LANES_IGPU_REASONING_PARSER	keep-distinct	# each lane's reasoning parser follows the model that lane serves; the iGPU lane can change models alone
 MIOS_BLADE_REQUIRES_K3S	MIOS_BLADE_REQUIRES_LLAMA_RPC_SERVER	keep-distinct	# each unit's blade requirement class is its own placement decision; llama-rpc-server can move planes alone
 MIOS_BLADE_REQUIRES_K3S	MIOS_BLADE_REQUIRES_MIOS_HEADSCALE	keep-distinct	# each unit's blade requirement class is its own placement decision; mios-headscale can move planes alone
