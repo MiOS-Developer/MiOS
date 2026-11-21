@@ -21,66 +21,23 @@ mios_log "Qt Adwaita theming provided by usr/lib/environment.d/60-mios-qt-adwait
 
 mios_log "Install Bibata-Modern-Classic cursor"
 
-BIBATA_VER=$( (scurl -sL --connect-timeout 15 --max-time 30 \
-    -H "Accept: application/vnd.github+json" "${MIOS_URL_BIBATA_API:-https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest}" \
-    | grep -m1 '"tag_name"' | sed 's/.*"v\?\([^"]*\)".*/\1/') 2>/dev/null || true)
-
-[[ -n "$BIBATA_VER" ]] || die "Bibata: api.github.com release-latest lookup returned empty"
-record_version bibata "v${BIBATA_VER}" "https://github.com/ful1e5/Bibata_Cursor/releases/tag/v${BIBATA_VER}"
-
-_bibata_dl_default="https://github.com/ful1e5/Bibata_Cursor/releases/download/v{}/Bibata-Modern-Classic.tar.xz"
-BIBATA_URL="${MIOS_URL_BIBATA_DL:-$_bibata_dl_default}"
-BIBATA_URL="${BIBATA_URL//"{}"/${BIBATA_VER}}"
-BIBATA_DIR="/usr/share/icons/Bibata-Modern-Classic"
-mkdir -p /usr/share/icons
-
-BIBATA_OK=0
-_bibata_sum_default="https://github.com/ful1e5/Bibata_Cursor/releases/download/v{}/sha256-{}.txt"
-BIBATA_SUM_URL="${MIOS_URL_BIBATA_SUM:-$_bibata_sum_default}"
-BIBATA_SUM_URL="${BIBATA_SUM_URL//"{}"/${BIBATA_VER}}"
-
+# [build.pins.bibata]: the newest release, proven by GitHub's digest; when that is
+# the pinned release, by the pinned sha256 (the vendored copy, offline). An empty
+# upstream answer bakes the pin by name; an integrity mismatch aborts (exit 3).
 # The upstream tarball's files are uid 1000; as root, plain tar would keep that owner on /usr.
-if [ -f "/usr/share/mios/vendored/cursors/bibata.tar.xz" ]; then
-    mios_log "Found offline vendored bibata.tar.xz, extracting"
-    if tar -xf "/usr/share/mios/vendored/cursors/bibata.tar.xz" -C /usr/share/icons/ --no-same-owner; then
-        BIBATA_OK=1
-    fi
-else
-    for attempt in 1 2 3; do
-        mios_log "Download attempt $attempt/3"
-        if scurl -fSL --connect-timeout 20 --max-time 120 --retry 2 --retry-delay 5 "$BIBATA_URL" -o /tmp/bibata.tar.xz; then
-        if scurl -fsSL --connect-timeout 15 --max-time 30 "$BIBATA_SUM_URL" -o /tmp/bibata.sha256 2>/dev/null; then
-            if (cd /tmp && grep "Bibata-Modern-Classic.tar.xz" bibata.sha256 | sha256sum -c -) 2>/dev/null; then
-                mios_ok "Bibata sha256 verified"
-            else
-                mios_warn "Bibata sha256 mismatch or sidecar format mismatch"
-            fi
-            rm -f /tmp/bibata.sha256
-        else
-            mios_warn "Bibata sha256 sidecar unavailable"
-        fi
-        if tar -xf /tmp/bibata.tar.xz -C /usr/share/icons/ --no-same-owner; then
-            sbom_dir="/usr/share/mios/artifacts/sbom"
-            mkdir -p "$sbom_dir"
-            sha=""
-            if command -v sha256sum >/dev/null 2>&1; then
-                sha="$(sha256sum /tmp/bibata.tar.xz | awk '{print $1}')"
-            fi
-            printf '%s\t%s\t%s\n' "Bibata-Modern-Classic" "${BIBATA_VER}" "${sha:-unknown}" >> "${sbom_dir}/binaries.tsv"
-
-            rm -f /tmp/bibata.tar.xz
-            BIBATA_OK=1
-            break
-        fi
-    fi
-        mios_warn "Attempt $attempt failed, retrying"
-        sleep 5
-    done
-fi
-
-if [ "$BIBATA_OK" -eq 0 ] || [ ! -d "$BIBATA_DIR/cursors" ]; then
-    die "Bibata cursor download FAILED after 3 attempts"
-fi
+# shellcheck source=automation/lib/upstream-latest.sh
+source "${SCRIPT_DIR}/lib/upstream-latest.sh"
+BIBATA_DIR="/usr/share/icons/Bibata-Modern-Classic"
+_bibata_dl="$(mktemp -d)"
+mios_pinned_asset bibata latest "$_bibata_dl" Bibata \
+    || die "Bibata: no verified Bibata-Modern-Classic.tar.xz (see the MIOS-PIN error above)"
+mkdir -p /usr/share/icons
+tar -xf "$mios_pin_file" -C /usr/share/icons/ --no-same-owner \
+    || die "Bibata: ${mios_pin_file##*/} ${mios_pin_version} did not extract"
+rm -rf -- "$_bibata_dl"
+[ -d "$BIBATA_DIR/cursors" ] || die "Bibata: ${mios_pin_version} carries no Bibata-Modern-Classic/cursors"
+mios_record_resolved Bibata-Modern-Classic "v${mios_pin_version}" \
+    "${mios_pin_url} (${mios_pin_source})" "$mios_pin_sha"
 mios_ok "Bibata cursor installed: $(find "$BIBATA_DIR/cursors/" -mindepth 1 -maxdepth 1 | wc -l) cursors"
 
 if [ -d "$BIBATA_DIR/cursors" ]; then

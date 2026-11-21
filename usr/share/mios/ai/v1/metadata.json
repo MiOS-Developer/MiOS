@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4384,
-  "total_metadata_entries": 3514,
-  "total_hints": 3508,
+  "total_files_scanned": 4385,
+  "total_metadata_entries": 3515,
+  "total_hints": 3509,
   "total_functions_indexed": 2299,
-  "total_related_links": 7153,
+  "total_related_links": 7165,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1641,7 +1641,7 @@
     },
     {
       "path": "automation/59-tools.sh",
-      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected (\":latest\" resolved at build time) native code-server with its verified workbench patches and the latest digest-verified Satty release (mios-shot's annotation editor), and installs auxiliary scripts like mios-toggle-headless.",
+      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected native code-server (its [build.pins.code_server] digest, no REST call) with its verified workbench patches and the newest digest-verified Satty release (mios-shot's annotation editor, falling back to [build.pins.satty] by name when GitHub answers empty), and installs auxiliary scripts like mios-toggle-headless.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
@@ -2380,11 +2380,13 @@
     },
     {
       "path": "automation/lib/upstream-latest.sh",
-      "hint": "Build-time \"latest\" resolution for upstream inputs: picks the newest upstream release (mios-bake-plan latest-git / git ls-remote), downloads only what an upstream-published checksum proves (GitHub release asset digest, a release checksums file, or the advertised git object id), aborts the build on any mismatch, and records the resolved version + sha256 as build output (version manifest + SBOM binaries.tsv), never in the SSOT.",
+      "hint": "Build-time \"latest\" resolution for upstream inputs: picks the newest upstream release (mios-bake-plan latest-git / git ls-remote), downloads only what an upstream-published checksum or an SSOT [build.pins] digest proves (GitHub release asset digest, a release checksums file, the advertised git object id), reads the GitHub API through scurl (the mios_github_token build secret when one is mounted), falls back to the [build.pins] release by name (MIOS-PIN-FALLBACK) when upstream answers empty, aborts the build on any mismatch, and records the resolved version + sha256 as build output (version manifest + SBOM binaries.tsv).",
       "related": [
+        "usr/share/mios/mios.toml",
         "automation/25-gpu-cdi-toolkits.sh",
         "automation/49-cosign-policy.sh",
         "automation/56-fonts.sh",
+        "automation/57-gnome.sh",
         "automation/59-tools.sh",
         "automation/64-bake-fan-control.sh",
         "tools/native/mios-bake-plan/src/latest.rs",
@@ -7527,6 +7529,7 @@
         "/usr/libexec/mios/mios-vscode-custom-css",
         "/.devcontainer/Containerfile",
         "/automation/59-tools.sh",
+        "/automation/lib/upstream-latest.sh",
         "/automation/55-native-build.sh",
         "/tools/ci-suites.py",
         "/.devcontainer/setup-devcontainer.sh",
@@ -11504,12 +11507,14 @@
     },
     {
       "path": "tests/test-upstream-latest.sh",
-      "hint": "Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 59-tools (code-server) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, and that a failed integrity check aborts without installing anything.",
+      "hint": "Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 57-gnome (Bibata), 59-tools (code-server, satty) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, that a [build.pins] release bakes with no REST call, that a planted empty GitHub answer bakes the pin by name, that a release with no pin fails by name, and that a failed integrity check aborts without installing anything.",
       "related": [
         "automation/lib/upstream-latest.sh",
+        "usr/share/mios/mios.toml",
         "automation/25-gpu-cdi-toolkits.sh",
         "automation/49-cosign-policy.sh",
         "automation/56-fonts.sh",
+        "automation/57-gnome.sh",
         "automation/59-tools.sh",
         "automation/64-bake-fan-control.sh",
         "tools/native/mios-bake-plan/src/latest.rs"
@@ -12688,7 +12693,8 @@
       "related": [
         "tools/native/Cargo.toml",
         "usr/share/mios/mios.toml",
-        "automation/85-bake-plan.sh"
+        "automation/85-bake-plan.sh",
+        "automation/lib/upstream-latest.sh"
       ],
       "functions": [],
       "doc": null,
@@ -12706,8 +12712,24 @@
     },
     {
       "path": "tools/native/mios-bake-plan/src/main.rs",
-      "hint": "Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).",
+      "hint": "Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git); `refresh-pins` refreshes the [build.pins] digests off the build path.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-bake-plan/src/pins.rs",
+      "hint": "`mios-bake-plan refresh-pins [--check]` refreshes the [build.pins] SSOT digests the image bake proves release assets with (automation/lib/upstream-latest.sh mios_pinned_asset): newest release or the release an SSOT ref names, each asset downloaded and sha256-hashed, cross-checked against GitHub's published digest when GH_TOKEN/GITHUB_TOKEN is set, the vendored copy rewritten. Network-bound and operator-run (`just refresh-pins`), never at build time (Law 12 BAKE-NOT-FETCH).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "automation/lib/upstream-latest.sh",
+        "automation/57-gnome.sh",
+        "automation/59-tools.sh",
+        "Justfile",
+        "tools/native/mios-bake-plan/src/latest.rs"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "slash",

@@ -2184,6 +2184,8 @@ version = "0.3.0"
 dependencies = [
  "mios-resolver",
  "regex",
+ "serde_json",
+ "sha2",
  "toml",
  "walkdir",
 ]

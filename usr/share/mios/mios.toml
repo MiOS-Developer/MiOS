@@ -10149,7 +10149,7 @@ editors = [
   ["satty", "--filename", "{file}", "--output-filename", "{out}", "--copy-command", "wl-copy", "--early-exit", "--actions-on-enter", "save-to-clipboard"],
   ["swappy", "-f", "{file}", "-o", "{out}"],
 ]
-satty_repository = "https://github.com/Satty-org/Satty"   # latest release asset satty-<arch>-unknown-linux-gnu.tar.gz, GitHub digest-verified
+satty_repository = "https://github.com/Satty-org/Satty"   # latest release asset satty-<arch>-unknown-linux-gnu.tar.gz, GitHub digest-verified; [build.pins.satty] is the fallback
 open_command = ["xdg-open"]
 shell_ipc = ["quickshell", "ipc", "--path", "/usr/share/mios/quickshell/Config.qml", "--any-display", "call"]
 slurp = ["slurp", "-d", "-f", "%x %y %w %h"]
@@ -11861,6 +11861,54 @@ searxng = "master"
 ventulusd = "latest"   # MIT fan daemon; newest upstream release tag at bake time (forge releases/latest, else
                        # [build.float] git shapes); MiOS patches that no longer apply fail the bake
 
+# Release assets the bake proves without the GitHub REST API (Law 12 BAKE-NOT-FETCH).
+# The bake still floats to the newest release (git ls-remote, no REST quota); when
+# that IS the pinned version the pinned sha256 proves the download (or the vendored
+# copy) and no API call is made. A newer release needs GitHub's published digest,
+# read with the build's github_token secret when one is mounted; when upstream
+# answers empty the bake falls back to this pin by name (MIOS-PIN-FALLBACK), and a
+# release with neither a digest nor a pin fails by name (MIOS-PIN-MISSING).
+# Refreshed by `just refresh-pins` (mios-bake-plan refresh-pins), never at build time.
+# `repository` (owner/name) or `repository_from` (the SSOT key that already names it);
+# `version_from` names an SSOT ref whose tag is the release (else the newest release);
+# asset `name` may carry {version}; asset tables are keyed by `uname -m` or noarch.
+[build.pins.bibata]
+repository_from = "theme.cursor_linux.source_repo"   # [theme.cursor_linux].theme, read by automation/57-gnome.sh
+tag_prefix = "v"
+version    = "2.0.7"
+
+[build.pins.bibata.assets.noarch]
+name     = "Bibata-Modern-Classic.tar.xz"
+sha256   = "7d3495864e5bbef02f5e77de760b2905903b63c71495a78ef6306d19a3b556d8"
+vendored = "/usr/share/mios/vendored/cursors/bibata.tar.xz"   # baked offline when its sha256 matches
+
+[build.pins.code_server]
+repository   = "coder/code-server"      # read by automation/59-tools.sh
+version_from = "image.sidecars.code_server"   # the bake follows that ref's tag; refresh-pins keeps version equal to it
+tag_prefix   = "v"
+version      = "4.139.1"
+
+[build.pins.code_server.assets.x86_64]
+name   = "code-server-{version}-amd64.rpm"
+sha256 = "e0153c46676e0fc8d789a362b7e64508f99001f63c35521789d0d063ef5d933d"
+
+[build.pins.code_server.assets.aarch64]
+name   = "code-server-{version}-arm64.rpm"
+sha256 = "34e38458bfad5dd68dce20aa3b5d7b89dd9632ac516e109c21fa0ebbb5fca95e"
+
+[build.pins.satty]
+repository_from = "desktop.screenshot.satty_repository"   # mios-shot's editor, read by automation/59-tools.sh
+tag_prefix = "v"
+version    = "0.22.0"
+
+[build.pins.satty.assets.x86_64]
+name   = "satty-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "eb7a028c4a5ce331c2f355add8e2b807a7d697fe4495f7e1965786a4f6bcd5b8"
+
+[build.pins.satty.assets.aarch64]
+name   = "satty-aarch64-unknown-linux-gnu.tar.gz"
+sha256 = "814073f70e7e18390d826f8b60dc429fc904b3abd05f6cae2b00fb8c2b9ea44b"
+
 [build.bake]
 runner_disk_budget_gb = 40
 # Read-only bootc image store for logically bound Quadlets only.
@@ -13273,7 +13321,8 @@ size                = 24   # x11/Xwayland renders cursors at literal px; 16 read
 # Upstream source for the cursor theme. Read by automation/57-gnome.sh
 # (build seeds /usr/share/icons) AND mios-cursor-ensure (runtime self-heal
 # into ~/.local/share/icons when /usr lacks it -- /usr is RO on bootc).
-# archive defaults to "<theme>.tar.xz" off the latest GitHub release tag.
+# archive defaults to "<theme>.tar.xz" off the latest GitHub release tag;
+# [build.pins.bibata] pins the release the build proves offline.
 source_repo         = "ful1e5/Bibata_Cursor"
 
 [theme.font]
@@ -14656,9 +14705,6 @@ MIOS_URL_TERRA_REPO = "https://github.com/terrapkg/subatomic-repos/raw/main/terr
 MIOS_URL_UBLUE_REPO = "https://copr.fedorainfracloud.org/coprs/ublue-os/packages/repo/fedora-${FEDORA_VERSION}/ublue-os-packages-fedora-${FEDORA_VERSION}.repo"
 MIOS_URL_TAILSCALE_REPO = "https://pkgs.tailscale.com/stable/fedora/tailscale.repo"
 MIOS_URL_CROWDSEC_REPO = "https://packagecloud.io/crowdsec/crowdsec/config_file.repo?os=fedora&dist=${FEDORA_VERSION}&source=script"
-MIOS_URL_BIBATA_API = "https://api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest"
-MIOS_URL_BIBATA_DL = "https://github.com/ful1e5/Bibata_Cursor/releases/download/v{}/Bibata-Modern-Classic.tar.xz"
-MIOS_URL_BIBATA_SUM = "https://github.com/ful1e5/Bibata_Cursor/releases/download/v{}/sha256-{}.txt"
 
 [finetune]
 enable          = true
