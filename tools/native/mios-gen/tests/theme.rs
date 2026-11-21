@@ -479,38 +479,58 @@ mod tmux_runtime {
     /// mios-unit-gen is a sibling workspace member the projector shells to; build it once
     /// if the workspace has not produced it yet so the positive control is never skipped.
     fn unit_gen() -> PathBuf {
-        // Cargo places integration-test executables under <profile>/deps, next to
-        // the binaries it built. This follows --target-dir/CARGO_TARGET_DIR and
-        // cross-target profiles without guessing a checkout-local target tree.
-        let profile = std::env::current_exe()
-            .expect("integration test executable")
-            .parent()
-            .and_then(Path::parent)
-            .expect("Cargo profile directory")
-            .to_path_buf();
-        let sibling = profile.join(exe("mios-unit-gen"));
-        if sibling.is_file() {
-            return sibling;
+        // Cargo puts the binaries it built in the profile directory, an ancestor of this
+        // integration-test executable: <profile>/deps/<test> in the classic layout,
+        // <profile>/build/<pkg>/<hash>/out/<test> in the build-dir layout (cargo >= 1.100).
+        // This follows --target-dir/CARGO_TARGET_DIR and cross-target profiles without
+        // guessing a checkout-local target tree.
+        let test_exe = std::env::current_exe().expect("integration test executable");
+        if let Some(p) = test_exe
+            .ancestors()
+            .skip(1)
+            .map(|a| a.join(exe("mios-unit-gen")))
+            .find(|p| p.is_file())
+        {
+            return p;
         }
         let native = repo_root().join("tools/native");
-        let found = |p: &PathBuf| p.is_file();
         for profile in ["debug", "release"] {
             let p = native
                 .join("target")
                 .join(profile)
                 .join(exe("mios-unit-gen"));
-            if found(&p) {
+            if p.is_file() {
                 return p;
             }
         }
-        let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-            .args(["build", "-p", "mios-unit-gen", "--manifest-path"])
+        // Not built yet: build it and take the path cargo reports for the executable,
+        // whatever layout or target directory it uses.
+        let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .args([
+                "build",
+                "-p",
+                "mios-unit-gen",
+                "--message-format=json",
+                "--manifest-path",
+            ])
             .arg(native.join("Cargo.toml"))
-            .status()
+            .stderr(std::process::Stdio::inherit())
+            .output()
             .expect("spawn cargo build -p mios-unit-gen");
-        assert!(status.success(), "building mios-unit-gen failed");
-        let p = sibling;
-        assert!(p.is_file(), "mios-unit-gen missing after build");
+        assert!(out.status.success(), "building mios-unit-gen failed");
+        let built = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|m| {
+                m["reason"] == "compiler-artifact" && m["target"]["name"] == "mios-unit-gen"
+            })
+            .find_map(|m| m["executable"].as_str().map(PathBuf::from));
+        let p = built.expect("cargo reported no mios-unit-gen executable");
+        assert!(
+            p.is_file(),
+            "mios-unit-gen missing after build: {}",
+            p.display()
+        );
         p
     }
 
