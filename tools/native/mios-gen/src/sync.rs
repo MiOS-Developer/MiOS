@@ -129,10 +129,32 @@ fn native(root: &Path, name: &str) -> Result<PathBuf, String> {
     .ok_or_else(|| format!("required native tool {file} missing; build the SSOT native catalog"))
 }
 
+/// Caller `MIOS_*` variables a stage may still inherit. They locate tools; none is a
+/// rendered value. Every other `MIOS_*` in the caller's environment is dropped so a
+/// host's exported tuning can never reach a committed vendor projection.
+const INHERITED_MIOS_VARS: &[&str] = &["MIOS_NATIVE_BIN_DIR"];
+
+/// The caller's `MIOS_*` variables a stage must not inherit.
+fn leaked_mios_vars() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .map(|(name, _)| name)
+        .filter(|name| {
+            name.as_encoded_bytes().starts_with(b"MIOS_")
+                && !INHERITED_MIOS_VARS.iter().any(|kept| name == *kept)
+        })
+        .collect()
+}
+
 impl Context {
     fn command(&self, program: &Path) -> Command {
         let mut command = Command::new(program);
         command.current_dir(&self.root);
+        // Committed projections are vendor-only: the caller's exported host or user
+        // tuning (a MiOS login shell exports the resolved tiers) must not leak in.
+        for name in leaked_mios_vars() {
+            command.env_remove(name);
+        }
+        command.env("XDG_CONFIG_HOME", self.root.join(".mios-absent-xdg"));
         // Keep each generation hermetic to the selected root, including drop-ins.
         for (name, relative) in [
             ("MIOS_ROOT", ""),

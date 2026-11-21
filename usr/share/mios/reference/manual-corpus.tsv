@@ -215,38 +215,39 @@
 .github/workflows/mios-ci.yml	157	157	1	11	86ac90b6bf58	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	159	160	2	26	7e6d12443401	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	164	164	1	12	5f2e648362aa	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	175	177	3	26	caf1572eec44	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	185	188	4	39	d539d0e0e2a9	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	171	172	2	24	e76af0188bc6	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	186	188	3	26	caf1572eec44	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	196	199	4	39	d539d0e0e2a9	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	196	204	9	98	6b7280f004e5	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:6b7280f004e5	98	1
 .github/workflows/mios-ci.yml	208	215	8	59	9084b8acca81	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:9084b8acca81	59	1
-.github/workflows/mios-ci.yml	217	218	2	20	2197d5cdc3a6	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	228	229	2	20	2197d5cdc3a6	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	255	261	7	70	0e4256b66c2a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:0e4256b66c2a	70	1
-.github/workflows/mios-ci.yml	283	284	2	19	7fb2aefb3bfd	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	296	298	3	26	c994d98176da	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	315	315	1	7	73ad13adbb04	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	294	295	2	19	7fb2aefb3bfd	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	307	309	3	26	c994d98176da	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	326	326	1	7	73ad13adbb04	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	328	339	12	97	b896b941f929	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:b896b941f929	97	1
-.github/workflows/mios-ci.yml	332	335	4	46	b180f4dba38e	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	340	343	4	37	7c38b2805db7	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	348	348	1	3	ee573bae3b99	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	343	346	4	46	b180f4dba38e	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	351	354	4	37	7c38b2805db7	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	351	358	8	63	488fc6bcd3a7	MIGRATE	narrative-history		0	usr/share/doc/mios/manual/workflows.md	mios-src:488fc6bcd3a7	63	1
-.github/workflows/mios-ci.yml	357	360	4	35	848f267d9499	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	359	359	1	3	ee573bae3b99	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	368	371	4	35	848f267d9499	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	381	422	42	399	feb6b6ba127c	MIGRATE	narrative-history	adr-candidate	0	usr/share/doc/mios/manual/workflows.md	mios-src:feb6b6ba127c	399	1
-.github/workflows/mios-ci.yml	382	383	2	13	e3ed29c1c18f	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	409	410	2	14	13d188373c0c	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	439	439	1	3	fcb2821bceb3	STAY	inline-scoped		0				0
-.github/workflows/mios-ci.yml	468	470	3	27	65ae042547e9	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	393	394	2	13	e3ed29c1c18f	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	420	421	2	14	13d188373c0c	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	450	450	1	3	fcb2821bceb3	STAY	inline-scoped		0				0
 .github/workflows/mios-ci.yml	469	484	16	152	6ec74752970a	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:6ec74752970a	152	1
-.github/workflows/mios-ci.yml	485	487	3	36	d50346f409d2	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	494	494	1	9	16bd5cfb6a40	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	535	539	5	55	280cbc5ab5e5	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	555	556	2	22	6bb139ae2e2f	STAY	local-scoped		0				0
-.github/workflows/mios-ci.yml	575	577	3	42	3212f4420d42	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	479	481	3	27	65ae042547e9	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	496	498	3	36	d50346f409d2	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	505	505	1	9	16bd5cfb6a40	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	546	550	5	55	280cbc5ab5e5	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	566	567	2	22	6bb139ae2e2f	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	586	588	3	42	3212f4420d42	STAY	midsize-why		0				0
 .github/workflows/mios-ci.yml	592	598	7	72	617b0a013ef0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:617b0a013ef0	72	1
-.github/workflows/mios-ci.yml	617	617	1	10	1b9ee0536773	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	624	631	8	82	9565dcccef24	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:9565dcccef24	82	1
+.github/workflows/mios-ci.yml	628	628	1	10	1b9ee0536773	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	633	639	7	60	32d6ab8c2bce	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:32d6ab8c2bce	60	1
-.github/workflows/mios-ci.yml	635	638	4	46	b180f4dba38e	STAY	midsize-why		0				0
-.github/workflows/mios-ci.yml	653	654	2	22	aee286688ed0	STAY	local-scoped		0				0
+.github/workflows/mios-ci.yml	646	649	4	46	b180f4dba38e	STAY	midsize-why		0				0
+.github/workflows/mios-ci.yml	664	665	2	22	aee286688ed0	STAY	local-scoped		0				0
 .github/workflows/mios-ci.yml	666	671	6	53	c5329a266c25	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/workflows.md	mios-src:c5329a266c25	53	1
 .github/workflows/url-probe.yml	1	1	1	25	f07956f16446	STAY	ai-header		0				0
 .github/workflows/url-probe.yml	15	18	4	47	37daa60d4113	STAY	midsize-why		0				0
@@ -19485,12 +19486,15 @@ tools/native/mios-gen/src/session_scale.rs	398	398	1	5	b6c74aafa8be	STAY	local-s
 tools/native/mios-gen/src/sync.rs	1	2	2	14	252727ca57f4	STAY	ai-header		0				0
 tools/native/mios-gen/src/sync.rs	79	79	1	10	f529a27cc79b	STAY	local-scoped		0				0
 tools/native/mios-gen/src/sync.rs	88	88	1	12	17e8e31f9b2d	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	136	136	1	10	f45536a2b43d	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	143	144	2	23	4d0703a6e95a	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	163	163	1	14	539b3ac1952b	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	272	272	1	13	d132a8f39f8b	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	289	289	1	10	a91cffd2aeb0	STAY	local-scoped		0				0
-tools/native/mios-gen/src/sync.rs	352	353	2	22	d9f32ac47b92	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	132	134	3	39	7ea8bbcd28fc	STAY	midsize-why		0				0
+tools/native/mios-gen/src/sync.rs	137	137	1	10	7f74083ff12b	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	152	153	2	24	57d43f55c3b1	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	158	158	1	10	f45536a2b43d	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	165	166	2	23	4d0703a6e95a	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	185	185	1	14	539b3ac1952b	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	294	294	1	13	d132a8f39f8b	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	311	311	1	10	a91cffd2aeb0	STAY	local-scoped		0				0
+tools/native/mios-gen/src/sync.rs	374	375	2	22	d9f32ac47b92	STAY	local-scoped		0				0
 tools/native/mios-gen/src/terminal.rs	1	3	3	30	743c4d58fc74	STAY	ai-header		0				0
 tools/native/mios-gen/src/terminal.rs	14	16	3	27	938e865c9495	STAY	midsize-why		0				0
 tools/native/mios-gen/src/terminal.rs	74	74	1	5	175424892562	STAY	local-scoped		0				0
@@ -19734,6 +19738,8 @@ tools/native/mios-gen/tests/ssot.rs	1060	1060	1	6	807d454ba466	STAY	local-scoped
 tools/native/mios-gen/tests/ssot.rs	1084	1084	1	7	acbbf0834e34	STAY	local-scoped		0				0
 tools/native/mios-gen/tests/ssot.rs	1113	1113	1	12	6e7f0bcf22c4	STAY	local-scoped		0				0
 tools/native/mios-gen/tests/ssot.rs	1146	1146	1	12	98d67993edc0	STAY	local-scoped		0				0
+tools/native/mios-gen/tests/ssot.rs	1282	1283	2	24	c0aec61aae4d	STAY	local-scoped		0				0
+tools/native/mios-gen/tests/ssot.rs	1332	1332	1	11	19752e69e3b4	STAY	local-scoped		0				0
 tools/native/mios-gen/tests/theme.rs	1	3	3	34	f5f96a8b0b8e	STAY	ai-header		0				0
 tools/native/mios-gen/tests/theme.rs	7	7	1	14	185550cf443a	STAY	local-scoped		0				0
 tools/native/mios-gen/tests/theme.rs	58	58	1	11	8b2fc28cd730	STAY	local-scoped		0				0
@@ -21383,25 +21389,25 @@ tools/native/mios-resolver/src/emit.rs	472	472	1	1	61e627a4f774	STAY	inline-scop
 tools/native/mios-resolver/src/emit.rs	499	500	2	21	aee55a5713c9	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/emit.rs	531	531	1	14	f16344fd174f	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/emit.rs	592	592	1	11	07768ec2d6b8	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	616	619	4	42	452a61ff2829	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:10633ee7f701	42	0
-tools/native/mios-resolver/src/emit.rs	664	665	2	21	c2e7b7fbfa6b	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	706	707	2	19	b36de7607d20	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	745	746	2	17	1dbecfb441e6	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	755	755	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	761	761	1	1	1a6d41bfea15	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	817	817	1	0	2378cc73b854	DROP	banner		0				0
-tools/native/mios-resolver/src/emit.rs	818	818	1	0	2378cc73b854	DROP	banner		0				0
-tools/native/mios-resolver/src/emit.rs	875	875	1	21	4ba3cfe01546	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	893	893	1	7	f948dfdb29f1	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	895	895	1	3	fbf139784509	DROP	commented-out-code		0				0
-tools/native/mios-resolver/src/emit.rs	903	903	1	8	dea96e860d95	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	916	916	1	7	1358c27cc1ee	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	953	956	4	38	6d9d4d172550	STAY	midsize-why		0				0
-tools/native/mios-resolver/src/emit.rs	987	996	10	91	9afb7e775ad6	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:9afb7e775ad6	91	0
-tools/native/mios-resolver/src/emit.rs	1009	1009	1	3	190504696cae	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	1039	1042	4	38	89b3bed154af	STAY	midsize-why		0				0
-tools/native/mios-resolver/src/emit.rs	1051	1051	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	1060	1060	1	1	104eb5a13d5d	DROP	commented-out-code		0				0
+tools/native/mios-resolver/src/emit.rs	619	622	4	42	452a61ff2829	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:10633ee7f701	42	0
+tools/native/mios-resolver/src/emit.rs	667	668	2	21	c2e7b7fbfa6b	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	709	710	2	19	b36de7607d20	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	748	749	2	17	1dbecfb441e6	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	758	758	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	764	764	1	1	1a6d41bfea15	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	820	820	1	0	2378cc73b854	DROP	banner		0				0
+tools/native/mios-resolver/src/emit.rs	821	821	1	0	2378cc73b854	DROP	banner		0				0
+tools/native/mios-resolver/src/emit.rs	878	878	1	21	4ba3cfe01546	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	896	896	1	7	f948dfdb29f1	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	898	898	1	3	fbf139784509	DROP	commented-out-code		0				0
+tools/native/mios-resolver/src/emit.rs	906	906	1	8	dea96e860d95	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	919	919	1	7	1358c27cc1ee	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	956	959	4	38	6d9d4d172550	STAY	midsize-why		0				0
+tools/native/mios-resolver/src/emit.rs	990	999	10	91	9afb7e775ad6	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:9afb7e775ad6	91	0
+tools/native/mios-resolver/src/emit.rs	1012	1012	1	3	190504696cae	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	1042	1045	4	38	89b3bed154af	STAY	midsize-why		0				0
+tools/native/mios-resolver/src/emit.rs	1054	1054	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	1063	1063	1	1	104eb5a13d5d	DROP	commented-out-code		0				0
 tools/native/mios-resolver/src/expand.rs	1	2	2	18	d8d6ba81fe21	STAY	ai-header		0				0
 tools/native/mios-resolver/src/expand.rs	6	8	3	30	72eedf31c403	STAY	midsize-why		0				0
 tools/native/mios-resolver/src/expand.rs	14	14	1	11	f1b63ab22337	STAY	local-scoped		0				0

@@ -1279,6 +1279,88 @@ mod sync {
         );
     }
 
+    /// A stage renders committed vendor projections, so the caller's exported host or
+    /// user tuning and its host/user TOML layers must never reach it.
+    #[test]
+    fn stages_never_inherit_caller_tiers() {
+        let _tree = super::tree_lock();
+        let root = fixture(&format!(
+            "{COPY}[[generation.sync.steps]]\nid='probe'\ncalls=[{{script='probe.py'}}]\n"
+        ));
+        fs::write(
+            root.path().join("probe.py"),
+            "import os\nnames = sorted(n for n in os.environ if n.startswith('MIOS_') or n == 'XDG_CONFIG_HOME')\n\
+             open('output', 'w').write(''.join(f'{n}={os.environ[n]}\\n' for n in names))\n",
+        )
+        .unwrap();
+        let host = tempfile::tempdir().unwrap();
+        let host_toml = host.path().join("mios.toml");
+        fs::write(&host_toml, "[llamacpp]\nlight_threads = 8\n").unwrap();
+        fs::create_dir_all(host.path().join("xdg/mios")).unwrap();
+        fs::copy(&host_toml, host.path().join("xdg/mios/mios.toml")).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_mios-gen"))
+            .args(["sync", "--root"])
+            .arg(root.path())
+            .env("MIOS_LLAMACPP_LIGHT_THREADS", "8")
+            .env(
+                "MIOS_FORGE_RUNNER_IMAGE",
+                "code.forgejo.org/forgejo/runner:13",
+            )
+            .env("MIOS_HOST_TOML", &host_toml)
+            .env("MIOS_HOST_TOML_D", host.path())
+            .env("MIOS_USER_TOML", &host_toml)
+            .env("MIOS_USER_TOML_D", host.path())
+            .env("XDG_CONFIG_HOME", host.path().join("xdg"))
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let seen = fs::read_to_string(root.path().join("output")).unwrap();
+        let canonical = root.path().canonicalize().unwrap();
+        let mut names = Vec::new();
+        for line in seen.lines() {
+            let (name, value) = line.split_once('=').unwrap();
+            names.push(name);
+            assert!(
+                Path::new(value).starts_with(&canonical),
+                "{name} leaked a caller value into a vendor stage: {value}"
+            );
+        }
+        // Exactly the variables sync itself passes; nothing else from the caller.
+        assert_eq!(
+            names,
+            [
+                "MIOS_DRIFT_ROOT",
+                "MIOS_HOST_TOML",
+                "MIOS_HOST_TOML_D",
+                "MIOS_ROOT",
+                "MIOS_TOML",
+                "MIOS_TOML_ROOT",
+                "MIOS_USER_TOML",
+                "MIOS_USER_TOML_D",
+                "MIOS_VENDOR_TOML",
+                "MIOS_VENDOR_TOML_D",
+                "XDG_CONFIG_HOME",
+            ],
+            "{seen}"
+        );
+        for absent in [
+            ".mios-absent-host.toml",
+            ".mios-absent-host.d",
+            ".mios-absent.toml",
+            ".mios-absent.d",
+            ".mios-absent-xdg",
+        ] {
+            assert!(
+                !root.path().join(absent).exists(),
+                "{absent} must stay absent"
+            );
+        }
+    }
+
     #[test]
     fn explicit_native_directory_never_selects_other_platform_artifacts() {
         let _tree = super::tree_lock();
