@@ -1,5 +1,6 @@
-// AI-hint: Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).
+// AI-hint: Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git); `refresh-pins` refreshes the [build.pins] digests off the build path.
 mod latest;
+mod pins;
 
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet};
@@ -225,6 +226,9 @@ fn verify_plan_integrity(
 fn main() {
     let args: Vec<String> = env::args().collect();
     let root = get_root();
+    if args.get(1).map(String::as_str) == Some("refresh-pins") {
+        process::exit(pins::run(&root, &args[2..]));
+    }
     if let Some(code) = latest::dispatch(&args, &root) {
         process::exit(code);
     }

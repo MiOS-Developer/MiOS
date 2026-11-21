@@ -96,6 +96,14 @@ ps-gate:
 sync:
     mios-gen sync --root .
 
+# Refresh [build.pins] (the release assets the bake proves with no GitHub REST
+# call): the newest release or the one an SSOT ref names, every asset downloaded
+# and hashed, checked against GitHub's digest when GH_TOKEN is set, the vendored
+# copy rewritten. Network-bound, so it runs here and never at build time.
+# `just refresh-pins --check` exits 1 when a pin trails upstream.
+refresh-pins *args:
+    MIOS_ROOT="{{justfile_directory()}}" mios-bake-plan refresh-pins {{args}}
+
 # Run the CI/CD pipeline automation suite (01-ingest, 02-distill, 03-build, 04-deploy, 05-run-agy-pipeline-agent).
 cicd:
     @echo "[cicd] Executing full MiOS CI/CD pipeline automation suite..."
