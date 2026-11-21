@@ -141,7 +141,7 @@ class TestRootExtractOwner(unittest.TestCase):
 
     ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     # The Bibata cursor extracts into /usr/share/icons; upstream ships its files as uid 1000.
-    SITES = {"automation/57-gnome.sh": 2, "usr/libexec/mios/mios-cursor-ensure": 1}
+    SITES = {"automation/57-gnome.sh": 1, "usr/libexec/mios/mios-cursor-ensure": 1}
 
     def extracts(self, rel):
         import re
