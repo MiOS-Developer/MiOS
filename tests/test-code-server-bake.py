@@ -1165,8 +1165,7 @@ save()
 
 
 class TestDevcontainerAccountGuard(unittest.TestCase):
-    """A container whose account no longer matches the checkout's vendor [identity].username
-    stops its lifecycle with a rebuild instruction instead of running as a stale account."""
+    """A container whose account differs from the vendor [identity].username stops and asks for a rebuild."""
 
     def _run(self, ssot_user, account, uid="1000", toml=True, inherited_layers=False, native_provider=False):
         source = _read(os.path.join(ROOT, ".devcontainer/boot-mios-systems.sh"))
