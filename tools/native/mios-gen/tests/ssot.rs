@@ -410,11 +410,20 @@ mod pipe_boundaries {
             stdout,
             stderr
         );
+        // The count is the tracked manifest's, not a literal: every new pipe module would
+        // otherwise turn this test red although --check (the thing under test) passed.
+        let manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join("usr/share/mios/pipe-boundaries.manifest.json")).unwrap(),
+        )
+        .unwrap();
+        let modules = manifest["modules"].as_object().unwrap().len();
+        assert!(modules > 0, "the manifest lists no pipe modules");
+        let expected = format!(
+            "usr/share/mios/pipe-boundaries.manifest.json matches the tree ({modules} modules)."
+        );
         assert!(
-            stdout.contains(
-                "usr/share/mios/pipe-boundaries.manifest.json matches the tree (109 modules)."
-            ),
-            "Expected success message not found in stdout: {}",
+            stdout.contains(&expected),
+            "Expected {expected:?} in stdout: {}",
             stdout
         );
 
