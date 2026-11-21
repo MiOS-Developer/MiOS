@@ -9,6 +9,7 @@
     "UI_Verifier"
   ],
   "worktree_root": ".worktrees",
+  "task_id_pattern": "task_[0-9A-HJKMNP-TV-Z]{26}",
   "manifest_path": ".devloop_artifacts/manifest.json",
   "laws": {
     "immutable_root": true,
