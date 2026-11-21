@@ -21383,25 +21383,25 @@ tools/native/mios-resolver/src/emit.rs	472	472	1	1	61e627a4f774	STAY	inline-scop
 tools/native/mios-resolver/src/emit.rs	499	500	2	21	aee55a5713c9	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/emit.rs	531	531	1	14	f16344fd174f	STAY	local-scoped		0				0
 tools/native/mios-resolver/src/emit.rs	592	592	1	11	07768ec2d6b8	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	616	619	4	42	452a61ff2829	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:10633ee7f701	42	0
-tools/native/mios-resolver/src/emit.rs	664	665	2	21	c2e7b7fbfa6b	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	706	707	2	19	b36de7607d20	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	745	746	2	17	1dbecfb441e6	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	755	755	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	761	761	1	1	1a6d41bfea15	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	817	817	1	0	2378cc73b854	DROP	banner		0				0
-tools/native/mios-resolver/src/emit.rs	818	818	1	0	2378cc73b854	DROP	banner		0				0
-tools/native/mios-resolver/src/emit.rs	875	875	1	21	4ba3cfe01546	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	893	893	1	7	f948dfdb29f1	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	895	895	1	3	fbf139784509	DROP	commented-out-code		0				0
-tools/native/mios-resolver/src/emit.rs	903	903	1	8	dea96e860d95	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	916	916	1	7	1358c27cc1ee	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	953	956	4	38	6d9d4d172550	STAY	midsize-why		0				0
-tools/native/mios-resolver/src/emit.rs	987	996	10	91	9afb7e775ad6	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:9afb7e775ad6	91	0
-tools/native/mios-resolver/src/emit.rs	1009	1009	1	3	190504696cae	STAY	local-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	1039	1042	4	38	89b3bed154af	STAY	midsize-why		0				0
-tools/native/mios-resolver/src/emit.rs	1051	1051	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
-tools/native/mios-resolver/src/emit.rs	1060	1060	1	1	104eb5a13d5d	DROP	commented-out-code		0				0
+tools/native/mios-resolver/src/emit.rs	619	622	4	42	452a61ff2829	MIGRATE	midsize-narrative		0	usr/share/doc/mios/manual/src.md	mios-src:10633ee7f701	42	0
+tools/native/mios-resolver/src/emit.rs	667	668	2	21	c2e7b7fbfa6b	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	709	710	2	19	b36de7607d20	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	748	749	2	17	1dbecfb441e6	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	758	758	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	764	764	1	1	1a6d41bfea15	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	820	820	1	0	2378cc73b854	DROP	banner		0				0
+tools/native/mios-resolver/src/emit.rs	821	821	1	0	2378cc73b854	DROP	banner		0				0
+tools/native/mios-resolver/src/emit.rs	878	878	1	21	4ba3cfe01546	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	896	896	1	7	f948dfdb29f1	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	898	898	1	3	fbf139784509	DROP	commented-out-code		0				0
+tools/native/mios-resolver/src/emit.rs	906	906	1	8	dea96e860d95	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	919	919	1	7	1358c27cc1ee	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	956	959	4	38	6d9d4d172550	STAY	midsize-why		0				0
+tools/native/mios-resolver/src/emit.rs	990	999	10	91	9afb7e775ad6	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/src.md	mios-src:9afb7e775ad6	91	0
+tools/native/mios-resolver/src/emit.rs	1012	1012	1	3	190504696cae	STAY	local-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	1042	1045	4	38	89b3bed154af	STAY	midsize-why		0				0
+tools/native/mios-resolver/src/emit.rs	1054	1054	1	3	5ef5c6f3edac	STAY	inline-scoped		0				0
+tools/native/mios-resolver/src/emit.rs	1063	1063	1	1	104eb5a13d5d	DROP	commented-out-code		0				0
 tools/native/mios-resolver/src/expand.rs	1	2	2	18	d8d6ba81fe21	STAY	ai-header		0				0
 tools/native/mios-resolver/src/expand.rs	6	8	3	30	72eedf31c403	STAY	midsize-why		0				0
 tools/native/mios-resolver/src/expand.rs	14	14	1	11	f1b63ab22337	STAY	local-scoped		0				0
@@ -26559,7 +26559,10 @@ usr/lib/mios/agent-pipe/test_mios_agent_tui.py	191	192	2	23	f97fcf7844bd	STAY	lo
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	295	295	1	6	2d4ec7fc086e	STAY	inline-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	335	336	2	18	1eb49a3e7a28	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agent_tui.py	572	572	1	4	f5aa02cb50bd	STAY	inline-scoped		0				0
-usr/lib/mios/agent-pipe/test_mios_agent_tui.py	718	719	2	15	36b3939c087b	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_agent_tui.py	705	710	6	75	c9ab03bf949e	MIGRATE	narrative-history		0				0
+usr/lib/mios/agent-pipe/test_mios_agent_tui.py	725	726	2	15	36b3939c087b	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_agent_tui.py	728	729	2	19	6ddd7025d747	STAY	local-scoped		0				0
+usr/lib/mios/agent-pipe/test_mios_agent_tui.py	739	739	1	8	d3944d6bfdb8	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	1	3	3	19	0ad878d2a0fb	STAY	ai-header		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	4	4	1	7	0f25d134d2f5	STAY	local-scoped		0				0
 usr/lib/mios/agent-pipe/test_mios_agentreg.py	12	14	3	37	d0d117c0fa29	STAY	midsize-why		0				0
