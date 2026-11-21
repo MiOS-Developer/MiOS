@@ -410,10 +410,23 @@ mod pipe_boundaries {
             stdout,
             stderr
         );
+        // The module count comes from the committed manifest, which this check
+        // just verified against the tree: a literal goes stale at every new module.
+        let manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join("usr/share/mios/pipe-boundaries.manifest.json"))
+                .expect("read pipe-boundaries manifest"),
+        )
+        .expect("parse pipe-boundaries manifest");
+        let modules = manifest["modules"]
+            .as_object()
+            .expect("manifest has a modules table")
+            .len();
+        assert!(modules > 0, "manifest lists no modules");
+        let expected = format!(
+            "usr/share/mios/pipe-boundaries.manifest.json matches the tree ({modules} modules)."
+        );
         assert!(
-            stdout.contains(
-                "usr/share/mios/pipe-boundaries.manifest.json matches the tree (109 modules)."
-            ),
+            stdout.contains(&expected),
             "Expected success message not found in stdout: {}",
             stdout
         );
