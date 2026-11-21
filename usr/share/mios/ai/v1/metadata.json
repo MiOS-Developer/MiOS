@@ -4,7 +4,7 @@
   "total_metadata_entries": 3509,
   "total_hints": 3503,
   "total_functions_indexed": 2295,
-  "total_related_links": 7129,
+  "total_related_links": 7130,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -43394,10 +43394,11 @@
     },
     {
       "path": "usr/share/mios/wsl/dot-wslconfig.template",
-      "hint": "Recommended global .wslconfig for MiOS WSL2 host integration.",
+      "hint": "Recommended global .wslconfig for MiOS WSL2 host integration, matching mios.toml [wsl2].",
       "related": [
         "usr/lib/wsl.conf",
-        "usr/lib/wsl-distribution.conf"
+        "usr/lib/wsl-distribution.conf",
+        "usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,

@@ -2092,6 +2092,22 @@
           </fieldset>
 
           <fieldset>
+            <legend>Windows host: MiOS-DEV exposure &amp; WSL networking ([firewall.windows], [wsl2])</legend>
+            <label for="f-wsl2-netmode">wsl2.networking_mode (every .wslconfig writer renders this; NAT is the default, mirrored needs Windows 11 22H2+ and pairs with wsl2.dev_vm.quadlet_network_mode = bridge)</label>
+            <select id="f-wsl2-netmode" data-key="wsl2.networking_mode">
+              <option value="NAT">NAT (localhost forwarding; LAN and tailnet through the host port proxy)</option>
+              <option value="mirrored">mirrored (host NICs mirrored into WSL)</option>
+            </select>
+            <div class="checkbox-row"><input type="checkbox" id="f-wsl2-hostloop" data-key="wsl2.host_address_loopback"><label for="f-wsl2-hostloop">wsl2.host_address_loopback: let Windows and WSL reach each other by the host's own IPv4 addresses (written to [experimental] only under mirrored)</label></div>
+            <label for="f-fwwin-expose">firewall.windows.expose (CSV of [ports] keys MiOS-DEV opens to the LAN and tailnet; never pgvector)</label>
+            <input type="text" id="f-fwwin-expose" data-key="firewall.windows.expose" data-array="csv" placeholder="forge_http,open_webui,hermes,cockpit,llm_light,code_server,guacamole_web">
+            <label for="f-fwwin-profiles">firewall.windows.profiles (CSV: Domain, Private, Public)</label>
+            <input type="text" id="f-fwwin-profiles" data-key="firewall.windows.profiles" data-array="csv" placeholder="Private,Domain">
+            <label for="f-fwwin-remote">firewall.windows.remote_addresses (CSV; LocalSubnet or CIDRs; an operator value can only narrow the vendor scope)</label>
+            <input type="text" id="f-fwwin-remote" data-key="firewall.windows.remote_addresses" data-array="csv" placeholder="LocalSubnet,100.64.0.0/10,fd7a:115c:a1e0::/48">
+          </fieldset>
+
+          <fieldset>
             <legend>MiOS-Xbox VM &amp; Looking Glass ([vm.looking_glass])</legend>
             <label for="f-lg-spice-port">spice_port (VM SPICE server and the client both use it)</label>
             <input type="text" id="f-lg-spice-port" data-key="vm.looking_glass.spice_port" data-type="int" placeholder="5900">

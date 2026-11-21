@@ -80,6 +80,17 @@ open_ports = [
   "ssh_ca",
 ]
 
+# [firewall.windows] -- the Windows-host exposure of MiOS-DEV (Get-MiOS.ps1:
+# WSL Hyper-V firewall rules; build-mios.ps1: Windows Defender rules + portproxy).
+# NOT [firewall].open_ports above: that is the guest firewalld list and carries
+# pgvector, which must never be LAN-exposed. Values are [ports] keys; searxng is
+# omitted (loopback-only listener). Every rule is scoped to remote_addresses;
+# an empty or unscoped list (Any, 0.0.0.0/0, ::/0) opens nothing.
+[firewall.windows]
+expose           = ["forge_http", "open_webui", "hermes", "cockpit", "llm_light", "code_server", "guacamole_web"]
+profiles         = ["Private", "Domain"]
+remote_addresses = ["LocalSubnet", "100.64.0.0/10", "fd7a:115c:a1e0::/48"]   # local subnet + the tailnet (IPv4 CGNAT and IPv6 ULA)
+
 
 
 # ----------------------------------------------------------------------------
@@ -12317,6 +12328,7 @@ firewall             = true         # retain WSL filtering in NAT and mirrored m
 gui_applications     = true
 dns_tunneling        = true
 auto_proxy           = true
+host_address_loopback = true        # .wslconfig [experimental] hostAddressLoopback, written ONLY when the resolved mode is mirrored (Windows 11 22H2+)
 
 [wsl2.desktop_compat]
 gdk_backend     = "x11"     # GTK apps: "x11" (Xwayland) | "wayland"
