@@ -194,14 +194,15 @@ class TestHypr3DCrtPatch(unittest.TestCase):
 
         # Check PiP snapshot unpin fix & sampledBox double precision
         self.assertIn("WAS_PINNED", content, "Patch must save and restore WAS_PINNED around makeSnapshotFB")
-        self.assertIn("window->m_pinned = false;", content, "Patch must unpin window for snapshot rendering")
+        self.assertIn("window->m_state &= ~Desktop::View::WINDOW_STATE_PINNED;", content, "Patch must unpin window for snapshot rendering")
         self.assertIn("fullBox.x + shift.x", content, "Patch must use double precision for sampledBox")
 
         # Check subsurface breadthfirst in bufferIdentity
         self.assertIn("breadthfirst", content, "Patch must traverse subsurfaces in bufferIdentity")
 
         # Check ghostWindows floating/pinned aspect-ratio preservation
-        self.assertIn("!info.floating && !info.window->m_pinned", content, "Patch must preserve floating/pinned size")
+        self.assertIn("!info.floating && !bool(info.window->m_state & Desktop::View::WINDOW_STATE_PINNED)", content,
+                      "Patch must preserve floating/pinned size")
 
         # Check fragment shader curved glass corner SDF
         self.assertIn("vec2 edge_coord = uCrtCurvature != 0 ? sample_coord : v_texcoord;", content,

@@ -3574,6 +3574,8 @@ packages.mcp.pkgs  MIOS_PACKAGES_MCP_PKGS
 packages.mcp.verify_probes  MIOS_PACKAGES_MCP_VERIFY_PROBES
 packages.agent_cli.enable  MIOS_PACKAGES_AGENT_CLI_ENABLE
 packages.agent_cli.pkgs  MIOS_PACKAGES_AGENT_CLI_PKGS
+packages.agent_cli_build.enable  MIOS_PACKAGES_AGENT_CLI_BUILD_ENABLE
+packages.agent_cli_build.pkgs  MIOS_PACKAGES_AGENT_CLI_BUILD_PKGS
 packages.crowdsec.enable  MIOS_PACKAGES_CROWDSEC_ENABLE
 packages.crowdsec.pkgs  MIOS_PACKAGES_CROWDSEC_PKGS
 packages.moby.enable  MIOS_PACKAGES_MOBY_ENABLE

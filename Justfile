@@ -183,6 +183,8 @@ drift-gate:
 # bake-hash`: a MIOS_USER_PASSWORD_HASH the caller exports, or [identity].default_password in the
 # operator's mios.html tier. A vendor/host default or the retired literal refuses, and so does a
 # missing credential: the build fails instead of baking a default. It reaches the bake as a secret.
+# A caller's GITHUB_TOKEN (or GH_TOKEN) reaches it the same way, as the optional mios_github_token
+# secret that authenticates the bake's GitHub API calls; without one they stay anonymous.
 build: preflight flight-status
     _MIOS_CRED="python3 ./usr/libexec/mios/mios-credential"; _MIOS_VENDOR="{{justfile_directory()}}/usr/share/mios/mios.toml"; \
     MIOS_USER_PASSWORD_HASH="$(MIOS_VENDOR_TOML="$_MIOS_VENDOR" $_MIOS_CRED bake-hash)" || { echo "[FAIL] no operator image password (D0): set your own password in mios.html; see the mios-credential error above" >&2; exit 3; }; \
@@ -193,8 +195,10 @@ build: preflight flight-status
         cp -a "$_portal_run"/* .staged-portal/; \
     fi; \
     export MIOS_USER_PASSWORD_HASH; \
+    _gh_tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"; _gh_secret=""; \
+    if [ -n "$_gh_tok" ]; then export GITHUB_TOKEN="$_gh_tok"; _gh_secret="--secret id=mios_github_token,env=GITHUB_TOKEN"; fi; unset _gh_tok; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH $_gh_secret \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
@@ -218,8 +222,10 @@ build-logged: artifact
         cp -a "$_portal_run"/* .staged-portal/; \
     fi; \
     export MIOS_USER_PASSWORD_HASH; \
+    _gh_tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"; _gh_secret=""; \
+    if [ -n "$_gh_tok" ]; then export GITHUB_TOKEN="$_gh_tok"; _gh_secret="--secret id=mios_github_token,env=GITHUB_TOKEN"; fi; unset _gh_tok; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH $_gh_secret \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \
@@ -240,8 +246,10 @@ build-verbose: artifact
         cp -a "$_portal_run"/* .staged-portal/; \
     fi; \
     export MIOS_USER_PASSWORD_HASH; \
+    _gh_tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"; _gh_secret=""; \
+    if [ -n "$_gh_tok" ]; then export GITHUB_TOKEN="$_gh_tok"; _gh_secret="--secret id=mios_github_token,env=GITHUB_TOKEN"; fi; unset _gh_tok; \
     podman build --retry 5 --retry-delay 3s --no-cache --network=host \
-        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH \
+        --secret id=mios_user_password_hash,env=MIOS_USER_PASSWORD_HASH $_gh_secret \
         --build-arg BASE_IMAGE="${MIOS_BASE_IMAGE:-$(usr/libexec/mios/mios-toml-get image base)}" \
         --build-arg MIOS_DESKTOP_FLATPAKS={{env_var_or_default("MIOS_DESKTOP_FLATPAKS", "")}} \
         --build-arg MIOS_IDENTITY_USERNAME="$MIOS_IDENTITY_USERNAME" \

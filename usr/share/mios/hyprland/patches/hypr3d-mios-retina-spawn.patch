@@ -37,7 +37,7 @@ Frame rate, captures and stills are unaffected: placement runs once per window (
 box never takes the tiled capture path.
 
 diff --git a/src/Render/GLScene.cpp b/src/Render/GLScene.cpp
-index dde464c..9897319 100644
+index 822d390..18b9d40 100644
 --- a/src/Render/GLScene.cpp
 +++ b/src/Render/GLScene.cpp
 @@ -1091,8 +1091,27 @@ void hgMaterial() {
@@ -76,7 +76,7 @@ index dde464c..9897319 100644
      m_glassDeco = glGetUniformLocation(m_sceneProgram, "uGlassDeco");
      m_glassWindowAlpha = glGetUniformLocation(m_sceneProgram, "uGlassWindowAlpha");
  
-@@ -3296,6 +3316,7 @@ void GLScene::drawWindows(
+@@ -3300,6 +3320,7 @@ void GLScene::drawWindows(
          glBindTexture(GL_TEXTURE_2D, ordered[i].tex);
          glUniform1i(m_sceneTextured, 1);
          glUniform1i(m_sceneTexSS, m_rq.textureSupersample ? 1 : 0);
@@ -85,7 +85,7 @@ index dde464c..9897319 100644
              // MiOS: a snapshot texture with a mip chain (WindowCapture generates it once
              // per capture) is sampled with ONE trilinear + anisotropic tap; without one
 diff --git a/src/Render/GLScene.hpp b/src/Render/GLScene.hpp
-index dbba3b2..9dd1c51 100644
+index 9e30418..41f6953 100644
 --- a/src/Render/GLScene.hpp
 +++ b/src/Render/GLScene.hpp
 @@ -204,6 +204,7 @@ class GLScene {
@@ -96,7 +96,7 @@ index dbba3b2..9dd1c51 100644
      };
      const SRenderQuality& renderQuality() const { return m_rq; }
      void setRenderQuality(const SRenderQuality& q) {
-@@ -517,6 +518,7 @@ class GLScene {
+@@ -528,6 +529,7 @@ class GLScene {
      int m_glassUV = -1, m_glassViewport = -1;
      int m_glassSurface = -1, m_glassMetrics = -1;
      int m_glassDeco = -1, m_glassWindowAlpha = -1, m_sceneTexMip = -1; // MiOS edge quality
@@ -105,10 +105,10 @@ index dbba3b2..9dd1c51 100644
      SGlassConfig m_glassConfig;
      unsigned int m_discVAO = 0, m_discVBO = 0;
 diff --git a/src/main.cpp b/src/main.cpp
-index c828f93..c1785f4 100644
+index 21ecce0..9f7ab8e 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -173,6 +173,10 @@ struct SViewPose {
+@@ -176,6 +176,10 @@ struct SViewPose {
      // client re-renders at the room's size -- crisp content), on exit back
      // to the 2D box. Empty = never sized in the room.
      CBox box{};
@@ -119,7 +119,7 @@ index c828f93..c1785f4 100644
  };
  
  // Room poses remembered across toggles; keyed by window id, pruned against
-@@ -489,6 +493,98 @@ static float       g_cfgWindowScale   = 0.5f;    // room multiplier on window si
+@@ -507,6 +511,98 @@ static std::unordered_map<std::string, float> g_powerTarget; // hypr3d.power():
  static float       g_cfgSpawnDistance = 5.0f;    // units in front of the camera
  static float       g_cfgWindowDepth   = 0.05f;   // slab thickness, 0 = flat quads
  
@@ -218,10 +218,10 @@ index c828f93..c1785f4 100644
  // --- player -----------------------------------------------------------------
  static float       g_cfgLookInertia   = 0.03f;   // seconds, 0 = off
  static float       g_cfgMoveInertia   = 0.05f;   // seconds, 0 = off
-@@ -1384,22 +1480,27 @@ static void ghostWindows(
+@@ -1409,22 +1505,27 @@ static void ghostWindows(
          // (which belongs to whichever monitor sits at 0,0, or none at all).
          // A dialog (a window with a parent) keeps the size it asked for.
-         if (info.window && !info.window->parent()) {
+         if (info.window && !info.window->backend().parent()) {
 -            const double CX =
 -                mon->m_position.x + mon->m_size.x * 0.5 - g_cfgSpawnWidth * 0.5;
 -            const double CY =
@@ -257,7 +257,7 @@ index c828f93..c1785f4 100644
              g_boxDriven.insert(info.id);
          }
  
-@@ -1794,9 +1895,278 @@ static float fsRawProgress() {
+@@ -1819,9 +1920,278 @@ static float fsRawProgress() {
  // fullscreen animation (its endpoints must match what the room renders, or
  // the transition visibly jumps).
  static float configWindowScale() {
@@ -536,7 +536,7 @@ index c828f93..c1785f4 100644
  static void syncWorld(const PHLMONITOR& mon, float dt) {
      // Deliberately free of side effects on the layout and the renderer. This
      // runs from render.stage, i.e. between the frame's startRenderPass() and
-@@ -1936,7 +2306,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -1961,7 +2331,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
          // Uniform window scale from config, applied to every entity every
          // frame so a runtime change resizes the whole room. The scale is
          // uniform so the captured content never distorts.
@@ -545,7 +545,7 @@ index c828f93..c1785f4 100644
  
          // Seed pose: existing entities own their world position and rotation.
          // Next come the poses remembered from the last 3D session -- positions
-@@ -1993,6 +2363,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2018,6 +2388,10 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              entity.yaw = EXISTING->yaw;
              entity.pitch = EXISTING->pitch;
              entity.roll = EXISTING->roll;
@@ -556,7 +556,7 @@ index c828f93..c1785f4 100644
          }
          else if (const auto POSE = g_savedPoses.find(info.id);
                   POSE != g_savedPoses.end()) {
-@@ -2022,6 +2396,43 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2047,6 +2421,43 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
              entity.yaw   = DIALOG_PARENT->yaw;
              entity.pitch = DIALOG_PARENT->pitch;
              entity.roll  = DIALOG_PARENT->roll;
@@ -600,7 +600,7 @@ index c828f93..c1785f4 100644
          }
          else {
              const auto& CAM = g_scene.camera();
-@@ -2070,7 +2481,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
+@@ -2095,7 +2506,7 @@ static void syncWorld(const PHLMONITOR& mon, float dt) {
                  FSW && Compat::windowId(FSW) == info.id) {
                  const float RAWP = fsRawProgress();
                  const float p = RAWP * RAWP * (3.0f - 2.0f * RAWP);
@@ -609,7 +609,7 @@ index c828f93..c1785f4 100644
                  const float S0 =
                      g_fsPhase == EFullscreenPhase::To2D ? ROOM_S : 1.0f;
                  const float S1 =
-@@ -2748,7 +3159,7 @@ static void applyFullscreenAnimation() {
+@@ -2773,7 +3184,7 @@ static void applyFullscreenAnimation() {
      // otherwise the quad visibly jumps at the handoff frames.
      E->spawnScale = 1.0f;
  
@@ -618,7 +618,7 @@ index c828f93..c1785f4 100644
      const float S0 = A ? ROOM_SCALE : 1.0f;
      const float S1 = A ? 1.0f : ROOM_SCALE;
      const float S = S0 + (S1 - S0) * p; // p is the eased progress
-@@ -2887,13 +3298,22 @@ static bool boxesDiffer(const CBox& A, const CBox& B) {
+@@ -2912,13 +3323,22 @@ static bool boxesDiffer(const CBox& A, const CBox& B) {
  // rectangle is always the live box: the layout owns the real geometry in
  // both modes.
  static void buildEnterMorph(
@@ -642,7 +642,7 @@ index c828f93..c1785f4 100644
  
      for (const auto& info : infos) {
          SViewMorphWin MW;
-@@ -2913,12 +3333,37 @@ static void buildEnterMorph(
+@@ -2938,12 +3358,37 @@ static void buildEnterMorph(
              // layout tree underneath is untouched.
              if (MW.roomPose.box.w > 1.0 && MW.roomPose.box.h > 1.0)
                  MW.boxRoom = MW.roomPose.box;
@@ -680,7 +680,7 @@ index c828f93..c1785f4 100644
          }
  
          MW.animBox = info.window && boxesDiffer(MW.box2D, MW.boxRoom);
-@@ -2998,6 +3443,7 @@ static void beginExit3D() {
+@@ -3023,6 +3468,7 @@ static void beginExit3D() {
          } else {
              MW.roomPose = SViewPose{
                  ENTITY.center, ENTITY.yaw, ENTITY.pitch, ENTITY.roll};
@@ -688,7 +688,7 @@ index c828f93..c1785f4 100644
          }
  
          // The room's real box rides the memory -- the next entry drives the
-@@ -3117,7 +3563,9 @@ static void applyViewMorphWindows(const PHLMONITOR& mon, float s) {
+@@ -3142,7 +3588,9 @@ static void applyViewMorphWindows(const PHLMONITOR& mon, float s) {
          }
  
          // Exact 1:1 on the frustum plane at s=0, the room scale at s=1.
@@ -699,7 +699,7 @@ index c828f93..c1785f4 100644
  
          const auto SP = ScreenProject::project(
              CAM.position, CAM.yaw, CAM.pitch, CAM.mirrorView, g_scene.zoom(),
-@@ -3198,6 +3646,7 @@ static void saveViewPoses() {
+@@ -3223,6 +3671,7 @@ static void saveViewPoses() {
      for (const auto& E : g_world.entities()) {
          SViewPose POSE{E.center, E.yaw, E.pitch, E.roll,
              CBox{E.logicalLeft, E.logicalTop, E.logicalWidth, E.logicalHeight}};
@@ -707,7 +707,7 @@ index c828f93..c1785f4 100644
  
          // A window left fullscreen (no passthrough ran for it): its live box
          // is the monitor -- never a room size. Keep the remembered one.
-@@ -3551,6 +4000,8 @@ static void deactivate3D() {
+@@ -3576,6 +4025,8 @@ static void deactivate3D() {
  
      clearAimFocus();
      g_world.clear();
@@ -716,7 +716,7 @@ index c828f93..c1785f4 100644
      g_renderWindows.clear();
      g_input.reset();
      resetMovementKeys();
-@@ -4743,6 +5194,24 @@ static void dumpStatus() {
+@@ -4845,6 +5296,24 @@ static void dumpStatus() {
      out << "render: scene=" << g_scene.sceneWidth() << "x" << g_scene.sceneHeight()
          << " scale=" << g_scene.sceneScale() << " msaa=" << g_scene.msaaSamples()
          << " fps=" << g_debugFps << "\n";
@@ -741,7 +741,7 @@ index c828f93..c1785f4 100644
      // MiOS edge quality: window texture filtering (mipmaps + anisotropic samples, GPU max).
      out << "texture: mip=" << (g_scene.renderQuality().textureSupersample ? 1 : 0)
          << " aniso=" << g_scene.renderQuality().anisotropy
-@@ -6565,6 +7034,9 @@ static int luaConfig(lua_State* L) {
+@@ -6838,6 +7307,9 @@ static int luaConfig(lua_State* L) {
              return luaL_error(L, "hypr3d.config: render.sharpen must be a number");
          if (!SET_BOOL(idx, "texture_supersample", q.textureSupersample, "render.texture_supersample"))
              return luaL_error(L, "hypr3d.config: render.texture_supersample must be a boolean");
@@ -751,7 +751,7 @@ index c828f93..c1785f4 100644
          // MiOS edge quality: mipmapped window snapshots + anisotropic filtering (1..16 samples).
          {
              float aniso = static_cast<float>(q.anisotropy);
-@@ -6614,6 +7086,44 @@ static int luaConfig(lua_State* L) {
+@@ -6887,6 +7359,44 @@ static int luaConfig(lua_State* L) {
                       "windows.depth"))
              return luaL_error(L, "hypr3d.config: windows.depth must be a number");
  

@@ -110,7 +110,9 @@ build_image_with_retry() {
 log "Building localhost/mios-base"
 build_image_with_retry "localhost/mios-base:latest" "/usr/share/mios/base" \
   --build-arg MIOS_BASE_IMAGE="$BASE" \
-  --build-arg "MIOS_MCP_PACKAGES=${MIOS_MCP_PACKAGES:?SSOT packages unresolved}" --build-context mios=/
+  --build-arg "MIOS_MCP_PACKAGES=${MIOS_MCP_PACKAGES:?SSOT packages unresolved}" \
+  --build-arg "MIOS_AGENT_CLI_BUILD_PACKAGES=${MIOS_AGENT_CLI_BUILD_PACKAGES:?SSOT packages.agent_cli_build unresolved}" \
+  --build-context mios=/
 
 if [[ "${1:-}" == "--base-only" ]]; then
     exit 0

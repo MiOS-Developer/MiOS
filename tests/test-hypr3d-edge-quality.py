@@ -2,8 +2,9 @@
 # AI-hint: Hypr3D edge quality (photo-shoot critic 2026-10-23: "square backdrop wedge outside the radius", "dashed dark
 # rulers / doubled underlines", "dark outlines round light text", "hero slab dim mauve, glass only dims, does not
 # frost", "a window seen through another window's glass stays sharp"). hypr3d-mios-edge-quality.patch:
-#   - the window snapshot is taken as a FOREIGN render (identity render modifier), so hyprglass' pane and edge pass are
-#     not baked into it over black: the client keeps its own opacity and the 3D face composites the desktop's stack
+#   - hyprglass' pane and edge pass are kept out of the window snapshot (a FOREIGN render up to Hyprland 0.56; on 0.57
+#     the snapshot pass is the m_renderingSnapshot one), not baked into it over black: the client keeps its own
+#     opacity and the 3D face composites the desktop's stack
 #     itself (pane over the 3D backdrop with the preset's frost, client, edge pass) -- no luma keying;
 #   - outside the rounded outline only solid decorations (Hyprland's reserved extents) are drawn, never the 2D drop
 #     shadow (its inner edge followed the square client box), and the outline is antialiased over one screen pixel;
@@ -489,7 +490,7 @@ class Static(unittest.TestCase):
 
     def test_patch_carries_the_fixes(self):
         added = patch_lines("+")
-        for needle in ("class CForeignSnapshotScope", "RMOD_TYPE_TRANSLATE", "glGenerateMipmap(GL_TEXTURE_2D)",
+        for needle in ("class CForeignSnapshotScope", "flagged m_renderingSnapshot", "glGenerateMipmap(GL_TEXTURE_2D)",
                        "GL_LINEAR_MIPMAP_LINEAR", "GL_EXT_texture_filter_anisotropic", "uniform int uTexMip;",
                        "min(mn, 1.0 - mx)", "(1.0 + 4.0 * k), mn, mx)", "uniform vec4 uGlassDeco;", "uniform float uGlassWindowAlpha;",
                        "vec4 hgEdgePass(vec2 uv, float cornerSdf)", "float sdW = max(fwidth(sd), 1e-3);",

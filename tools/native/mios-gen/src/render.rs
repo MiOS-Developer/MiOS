@@ -9488,6 +9488,29 @@ pub mod hyprglass_build {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| format!("Missing plugin key {key}"))
     }
+    /// The compositor SRPM's bundled Lua source for the SSOT `lua_version`. A miss names the Lua the
+    /// SRPM does bundle, so a compositor move that bumps Lua says which pin to set.
+    fn lua_archive(sdk: &Path, version: &str) -> Result<PathBuf, String> {
+        let archive = sdk.join(format!("lua-{version}.tar.gz"));
+        if archive.is_file() {
+            return Ok(archive);
+        }
+        let mut bundled: Vec<String> = fs::read_dir(sdk)
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter_map(|n| {
+                n.strip_prefix("lua-")
+                    .and_then(|v| v.strip_suffix(".tar.gz"))
+                    .map(str::to_string)
+            })
+            .collect();
+        bundled.sort();
+        Err(format!(
+            "[desktop.hyprland.hyprglass].lua_version = {version}, but the compositor SRPM bundles Lua {}; set lua_version to the Lua it bundles",
+            if bundled.is_empty() { "none".to_string() } else { bundled.join(", ") }
+        ))
+    }
     fn find(dir: &Path, prefix: &str, suffix: &str, directory: bool) -> Result<PathBuf, String> {
         let paths = fs::read_dir(dir)
             .map_err(|e| e.to_string())?
@@ -9509,23 +9532,28 @@ pub mod hyprglass_build {
         Ok(paths[0].clone())
     }
     // The upstream layer path masks content alpha but computes optical
-    // highlights against a square. Reuse the compositor's live SSOT radius.
+    // highlights against a square. Reuse the compositor's live SSOT radius,
+    // clamped to half the drawn layer box (`box`, render-space pixels).
     fn layer_geometry_source(source: &str) -> Result<String, String> {
         let include = "#include <hyprland/src/render/OpenGL.hpp>";
+        let drawn = "    const CBox box = *layerBox;\n";
         let old = "    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
         let replacement = r#"    float cornerRadius = 0.0f;
     const auto radiusOption = Config::mgr()->getConfigValue("decoration:rounding");
     if (radiusOption.dataptr && radiusOption.type && *radiusOption.type == typeid(Config::INTEGER)) {
         const auto radius = reinterpret_cast<Config::INTEGER* const*>(radiusOption.dataptr);
         cornerRadius = std::clamp(static_cast<float>(**radius) * monitor->m_scale, 0.0f,
-                                 static_cast<float>(std::min(transformBox.w, transformBox.h) * 0.5));
+                                 static_cast<float>(std::min(box.w, box.h) * 0.5));
     }
     // The one corner curve ([theme.shell] corner_power -> decoration:rounding_power): layers, windows and the tab alike.
     float roundingPower = 2.0f;
     const auto powerOption = Config::mgr()->getConfigValue("decoration:rounding_power");
     if (powerOption.dataptr && powerOption.type && *powerOption.type == typeid(Config::FLOAT))
         roundingPower = std::clamp(static_cast<float>(**reinterpret_cast<Config::FLOAT* const*>(powerOption.dataptr)), 2.0f, 10.0f);"#;
-        if source.matches(include).count() != 1 || source.matches(old).count() != 1 {
+        if source.matches(include).count() != 1
+            || source.matches(drawn).count() != 1
+            || source.matches(old).count() != 1
+        {
             return Err("MiOS layer geometry fix (render.rs layer_geometry_source) no longer matches upstream src/GlassLayerSurface.cpp; update its anchor".into());
         }
         Ok(source
@@ -9538,11 +9566,11 @@ pub mod hyprglass_build {
         use super::*;
         #[test]
         fn pinned_layer_fix_reads_live_radius_and_rejects_unreviewed_sources() {
-            let fixture = "#include <hyprland/src/render/OpenGL.hpp>\n    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
+            let fixture = "#include <hyprland/src/render/OpenGL.hpp>\n    const CBox box = *layerBox;\n    float cornerRadius  = 0.0f;\n    float roundingPower = 2.0f;";
             let fixed = layer_geometry_source(fixture).unwrap();
             assert!(fixed.contains("getConfigValue(\"decoration:rounding\")"));
             assert!(fixed.contains("monitor->m_scale"));
-            assert!(fixed.contains("transformBox.h) * 0.5"));
+            assert!(fixed.contains("box.h) * 0.5"));
             assert!(
                 fixed.contains("getConfigValue(\"decoration:rounding_power\")"),
                 "layers follow the one corner curve"
@@ -9553,6 +9581,12 @@ pub mod hyprglass_build {
             )
             .is_err());
             assert!(layer_geometry_source(&(fixture.to_string() + fixture)).is_err());
+            // the clamp names the drawn box: a source without it is refused, not miscompiled
+            assert!(layer_geometry_source(&fixture.replace(
+                "const CBox box = *layerBox;",
+                "const CBox drawn = *layerBox;"
+            ))
+            .is_err());
         }
     }
 
@@ -10011,11 +10045,13 @@ pub mod hyprglass_build {
                     .display()
             ));
         }
-        let lua_name = format!("lua-{}", value(h, "lua_version")?);
-        let archive = sdk.join(format!("{lua_name}.tar.gz"));
-        if !archive.is_file() {
-            return Err(format!("Matching {lua_name} missing from compositor SRPM"));
-        }
+        let archive = lua_archive(sdk, value(h, "lua_version")?)?;
+        let lua_name = archive
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.strip_suffix(".tar.gz"))
+            .ok_or("Invalid Lua archive name")?
+            .to_string();
         command(
             "tar",
             &[
@@ -10285,6 +10321,36 @@ pub mod hyprglass_build {
             "{plugin} {revision} built for Hyprland {installed}: {}\n",
             target.display()
         ))
+    }
+
+    #[cfg(test)]
+    mod lua_archive_tests {
+        use super::lua_archive;
+        use std::fs;
+
+        #[test]
+        fn the_pinned_lua_is_taken_from_the_srpm_sources() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
+            fs::write(dir.path().join("hyprland-0.57.2.tar.gz"), b"x").unwrap();
+            assert_eq!(
+                lua_archive(dir.path(), "5.5.1").unwrap(),
+                dir.path().join("lua-5.5.1.tar.gz")
+            );
+        }
+
+        #[test]
+        fn a_stale_pin_names_the_lua_the_srpm_bundles() {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join("lua-5.5.1.tar.gz"), b"x").unwrap();
+            let err = lua_archive(dir.path(), "5.5.0").unwrap_err();
+            assert!(err.contains("lua_version = 5.5.0"), "{err}");
+            assert!(err.contains("bundles Lua 5.5.1"), "{err}");
+            let empty = tempfile::tempdir().unwrap();
+            assert!(lua_archive(empty.path(), "5.5.1")
+                .unwrap_err()
+                .contains("bundles Lua none"));
+        }
     }
 }
 

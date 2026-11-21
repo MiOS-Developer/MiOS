@@ -118,11 +118,42 @@ pub fn package_spec(data: &Value) -> Result<String, String> {
 
 pub const FIRST_PATCH: usize = 1000;
 
+/// The compositor's plugin SDK headers, as the main package's %files lists them. hyprland.pc stays
+/// deleted: rpm turns its Requires into pkgconfig(aquamarine) and the other vendored libraries, which
+/// no package provides, so the compositor would not install. The plugin builds pass the include
+/// paths themselves and never read it.
+const SDK_FILES: [&str; 1] = ["%{_includedir}/hyprland"];
+
+/// An `rm` line that deletes SDK paths from the buildroot: `Some(None)` drops it (it removed only the
+/// SDK), `Some(Some(line))` keeps it without them, `None` leaves every other line alone.
+fn keep_sdk(line: &str) -> Option<Option<String>> {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    if words.first() != Some(&"rm") {
+        return None;
+    }
+    let is_sdk = |w: &str| {
+        let w = w.trim_end_matches('/');
+        SDK_FILES
+            .iter()
+            .any(|f| w == format!("%{{buildroot}}{f}") || w == format!("$RPM_BUILD_ROOT{f}"))
+    };
+    if !words.iter().any(|w| is_sdk(w)) {
+        return None;
+    }
+    let rest: Vec<&str> = words.iter().copied().filter(|w| !is_sdk(w)).collect();
+    if rest.iter().skip(1).all(|w| w.starts_with('-')) {
+        return Some(None);
+    }
+    let indent = &line[..line.len() - line.trim_start().len()];
+    Some(Some(format!("{indent}{}", rest.join(" "))))
+}
+
 /// Adds the series to the SRPM spec: PatchN tags after the spec's last Patch tag (a spec with none: after the main
 /// package's last Source tag), `%patch -P N -p1` after the spec's own conditional patching in %prep (right after the
 /// %autosetup block), and the release tag on the main Release. An %autosetup without -N applies every declared patch
 /// itself, at its own strip level; with no patches of its own the spec gets -N, so the series is applied exactly once,
 /// explicitly. A spec that lets %autosetup apply its own patches is refused: the series could not be ordered after them.
+/// The plugin SDK headers stay in the rebuilt main package even where the spec strips them.
 pub fn rewrite_spec(spec: &str, names: &[String], tag: &str) -> Result<String, String> {
     let lines: Vec<&str> = spec.lines().collect();
     let release = lines
@@ -168,8 +199,24 @@ pub fn rewrite_spec(spec: &str, names: &[String], tag: &str) -> Result<String, S
             .map(|i| apply_at + i + 1)
             .ok_or("unterminated %if after %autosetup")?;
     }
+    // The plugins build against the installed compositor's SDK; a spec that strips it in %install
+    // (0.57: "Plugin development files, unusable without the vendored headers") keeps it here, and
+    // the main %files owns it. The vendored libraries' headers come from the SRPM at plugin build time.
+    let main_files = lines.iter().position(|l| l.trim_end() == "%files");
+    let owns_sdk = main_files.is_some_and(|f| {
+        lines[f + 1..]
+            .iter()
+            .take_while(|l| !l.starts_with("%files") && !l.starts_with("%changelog"))
+            .any(|l| l.trim_end().trim_end_matches('/') == SDK_FILES[0])
+    });
     let mut out = Vec::new();
     for (i, l) in lines.iter().enumerate() {
+        if let Some(kept) = keep_sdk(l) {
+            if let Some(kept) = kept {
+                out.push(kept);
+            }
+            continue;
+        }
         if i == release {
             out.push(l.replacen("%{?dist}", &format!(".{tag}%{{?dist}}"), 1));
         } else if i == setup && autosetup_applies {
@@ -181,6 +228,10 @@ pub fn rewrite_spec(spec: &str, names: &[String], tag: &str) -> Result<String, S
             for (k, n) in names.iter().enumerate() {
                 out.push(format!("Patch{}:      {n}", FIRST_PATCH + k));
             }
+        }
+        if Some(i) == main_files && !owns_sdk {
+            out.push("# MiOS: the plugin SDK the hyprglass/hypr3d builds compile against".into());
+            out.extend(SDK_FILES.iter().map(|f| (*f).to_owned()));
         }
         if i + 1 == apply_at {
             out.push(
@@ -491,6 +542,47 @@ mod tests {
         assert_eq!(l[setup + 2], "%patch -P 1000 -p1");
         assert_eq!(l[setup + 3], "%patch -P 1001 -p1");
         assert_eq!(out.matches("%patch -P 1000").count(), 1);
+    }
+
+    // The 0.57 spec's %install strips the plugin SDK; the 0.56 spec shipped it in the main %files.
+    const SPEC_SDK: &str = "Release: 1%{?dist}\nSource0: s\n%prep\n%autosetup -n X\n%install\n%cmake_install\n# Plugin development files\nrm -rf %{buildroot}%{_includedir}/hyprland %{buildroot}%{_datadir}/pkgconfig/hyprland.pc\nrm -f %{buildroot}%{_datadir}/x.txt %{buildroot}%{_datadir}/pkgconfig/hyprland.pc\nrm -rf %{buildroot}%{_includedir}/hyprland\n%files\n%{_bindir}/Hyprland\n%files -n hyprlock\n%{_bindir}/hyprlock\n";
+
+    #[test]
+    fn stripped_plugin_sdk_is_kept_in_the_main_package() {
+        let out = rewrite_spec(SPEC_SDK, &[], "m").unwrap();
+        assert!(
+            !out.contains("%{buildroot}%{_includedir}/hyprland"),
+            "{out}"
+        );
+        // hyprland.pc and every other path on an rm line still go: a packaged hyprland.pc requires
+        // pkgconfig(aquamarine) etc., which only the vendored copies provide
+        assert!(
+            out.contains("\nrm -rf %{buildroot}%{_datadir}/pkgconfig/hyprland.pc\n"),
+            "{out}"
+        );
+        assert!(
+            out.contains("\nrm -f %{buildroot}%{_datadir}/x.txt %{buildroot}%{_datadir}/pkgconfig/hyprland.pc\n"),
+            "{out}"
+        );
+        let l: Vec<&str> = out.lines().collect();
+        let files = l.iter().position(|x| *x == "%files").unwrap();
+        let sub = l.iter().position(|x| *x == "%files -n hyprlock").unwrap();
+        let main = &l[files..sub];
+        assert!(main.contains(&"%{_includedir}/hyprland"), "{out}");
+        assert!(
+            !out.contains("\n%{_datadir}/pkgconfig/hyprland.pc"),
+            "{out}"
+        );
+        assert_eq!(out.matches("%{_includedir}/hyprland").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn spec_that_ships_the_sdk_is_left_alone() {
+        let spec = "Release: 1%{?dist}\nSource0: s\n%prep\n%autosetup -n X\n%install\nrm -rf subprojects/udis86\n%files\n%{_bindir}/Hyprland\n%{_includedir}/hyprland/\n%{_datadir}/pkgconfig/hyprland.pc\n";
+        let out = rewrite_spec(spec, &[], "m").unwrap();
+        assert!(out.contains("\nrm -rf subprojects/udis86\n"), "{out}");
+        assert_eq!(out.matches("%{_includedir}/hyprland").count(), 1, "{out}");
+        assert!(!out.contains("# MiOS: the plugin SDK"), "{out}");
     }
 
     #[test]
