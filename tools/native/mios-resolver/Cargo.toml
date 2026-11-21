@@ -13,7 +13,9 @@ mios-ssot-walk = { path = "../mios-ssot-walk" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-toml.workspace = true
+# Document order: a later table must win over an earlier one exactly as in
+# mios_toml.py, whatever other crates a build happens to unify features with.
+toml = { workspace = true, features = ["preserve_order"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

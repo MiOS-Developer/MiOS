@@ -18,6 +18,7 @@ from mios_pipe.routing import portal_edge  # noqa: E402
 
 MODULE = os.path.join(HERE, "mios_pipe", "routing", "portal_edge.py")
 PORTAL = os.path.join(HERE, "mios_pipe", "routing", "portal.py")
+PORTAL_ASSETS = os.path.join(HERE, "mios_pipe", "routing", "portal_assets.py")
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 FIXTURE = os.path.join(ROOT, portal_edge.CSS_GOLDEN)
 PAGE = "<head><style>#terminal-container .terminal{height:calc(100% - 10px);padding:5px}</style></head>"
@@ -119,11 +120,21 @@ class TestPortalEdge(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(os.stat(css).st_mode), 0o640)
 
     def test_portal_lifts_card_padding(self):
+        # The stylesheet lives in portal_assets._PORTAL_STYLE (0754f899 moved it out of portal.py);
+        # portal.py composes it into the page and appends portal_edge's block.
         with open(PORTAL, encoding="utf-8") as fh:
             src = fh.read()
-        self.assertFalse("padding:15px 15px 13px" in src, "portal.py .card still has the literal padding:15px 15px 13px")
-        self.assertTrue("padding:var(--card-pad-top) var(--card-pad-x) var(--card-pad-bottom)" in src, "portal.py .card padding is not --card-pad-*")
-        declared = set(re.findall(r"(--card-pad-[a-z]+):\d+px", src))
+        with open(PORTAL_ASSETS, encoding="utf-8") as fh:
+            assets = fh.read()
+        m = re.search(r'^_PORTAL_STYLE = r"""(.*?)"""', assets, re.S | re.M)
+        self.assertIsNotNone(m, "portal_assets.py defines no _PORTAL_STYLE")
+        css = m.group(1)
+        self.assertTrue('_PORTAL_HTML.replace("__MIOS_PORTAL_STYLE__", _PORTAL_STYLE, 1)' in src,
+                        "portal.py does not compose portal_assets._PORTAL_STYLE into the page")
+        for where, text in (("portal.py", src), ("_PORTAL_STYLE", css)):
+            self.assertFalse("padding:15px 15px 13px" in text, f"{where} .card still has the literal padding:15px 15px 13px")
+        self.assertTrue("padding:var(--card-pad-top) var(--card-pad-x) var(--card-pad-bottom)" in css, "_PORTAL_STYLE .card padding is not --card-pad-*")
+        declared = set(re.findall(r"(--card-pad-[a-z]+):\d+px", css))
         used = set(re.findall(r"var\((--card-pad-[a-z]+)\)", portal_edge.term_css(edge())))
         self.assertTrue(used and used <= declared, (used, declared))
         self.assertTrue("portal_edge.style_block(safe=True)" in src, "_portal_theme_css does not append portal_edge.style_block")

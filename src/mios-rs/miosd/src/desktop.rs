@@ -969,7 +969,18 @@ fn input_service_admitted(
     outer: bool,
 ) -> bool {
     // SAFETY: getuid reads the current account only.
-    let uid = unsafe { libc::getuid() };
+    input_service_admitted_as(unsafe { libc::getuid() }, root, login, no_attach, outer)
+}
+
+/// The admission rule for an explicit account, so it is decided the same way
+/// whichever account runs the check; root is never admitted.
+fn input_service_admitted_as(
+    uid: libc::uid_t,
+    root: &Path,
+    login: Option<&LoginIdentity>,
+    no_attach: bool,
+    outer: bool,
+) -> bool {
     root == Path::new("/")
         && !no_attach
         && outer
@@ -2599,7 +2610,24 @@ canvas_help = "Apps: Alt-Space | Window actions: right-click a border"
 
     #[test]
     fn input_service_start_requires_a_real_host_attach_with_a_verified_login() {
-        let login = login_witness();
+        // An explicit non-root account: the rule must hold even when the suite
+        // itself runs as root (CI's container), which is never admitted.
+        const USER: libc::uid_t = 1000;
+        let input_service_admitted =
+            |root: &Path, login: Option<&LoginIdentity>, no_attach, outer| {
+                input_service_admitted_as(USER, root, login, no_attach, outer)
+            };
+        let mut login = login_witness();
+        login.uid = USER;
+        let mut root_login = login.clone();
+        root_login.uid = 0;
+        assert!(!input_service_admitted_as(
+            0,
+            Path::new("/"),
+            Some(&root_login),
+            false,
+            true
+        ));
         assert!(input_service_admitted(
             Path::new("/"),
             Some(&login),

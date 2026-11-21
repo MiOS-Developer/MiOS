@@ -176,8 +176,9 @@ class TestRootExtractOwner(unittest.TestCase):
                     info = tarfile.TarInfo(name)
                     info.type, info.uid, info.gid, info.mode = kind, 1000, 1000, 0o755
                     tar.addfile(info, io.BytesIO(b"") if kind == tarfile.REGTYPE else None)
-            for flags, owner in (([], 1000), (["--no-same-owner"], 0)):
-                dest = tempfile.mkdtemp(dir=tmp)
+            for i, (flags, owner) in enumerate((([], 1000), (["--no-same-owner"], 0))):
+                dest = os.path.join(tmp, f"dest{i}")
+                os.mkdir(dest)
                 subprocess.run(["tar", "-xf", archive, "-C", dest, *flags], check=True)
                 for sub in ("Theme", "Theme/cursors", "Theme/cursors/left_ptr"):
                     self.assertEqual(os.stat(os.path.join(dest, sub)).st_uid, owner, f"tar {flags}: {sub}")
