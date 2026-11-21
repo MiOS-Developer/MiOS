@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4372,
-  "total_metadata_entries": 3503,
-  "total_hints": 3497,
+  "total_files_scanned": 4373,
+  "total_metadata_entries": 3504,
+  "total_hints": 3498,
   "total_functions_indexed": 2295,
-  "total_related_links": 7110,
+  "total_related_links": 7113,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -8315,6 +8315,19 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-hermes-browser-launch.py",
+      "hint": "Runs mios-hermes-browser start against fake dbus-run-session and flatpak binaries and asserts the argv it execs: flatpak run with --no-documents-portal (the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot succeed under NoNewPrivileges), the profile and runtime dirs shared, the app id, and headless CDP on 127.0.0.1.",
+      "related": [
+        "usr/libexec/mios/mios-hermes-browser",
+        "usr/lib/systemd/system/mios-hermes-browser.service",
+        "usr/lib/systemd/system/mios-hermes-browser-worker.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },

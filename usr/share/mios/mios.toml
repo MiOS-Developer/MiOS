@@ -19319,6 +19319,7 @@ unit = [
     "tests/test-postcheck-kargs.sh",
     "tests/test-bake-user-unit-check.sh",
     "tests/test-ai-tag-loader.py",
+    "tests/test-hermes-browser-launch.py",
     "tests/test-postcheck-unit-execs.sh",
     "tests/test-chrony-ptp-dropin.sh",
     "tests/test-blade-port-wiring.py",
