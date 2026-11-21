@@ -321,7 +321,7 @@ _RANDOM_OK = ("owui",)
 _SURFACE_ENV = {"forge": "MIOS_FORGE_ADMIN_PASSWORD", "owui": "MIOS_OWUI_ADMIN_PASSWORD",
                 "portal": "MIOS_PORTAL_PASSWORD", "ttyd": "MIOS_TTYD_AUTH_PASS"}
 _SURFACE_TOML = {"portal": ("portal", "password"), "ttyd": ("ttyd", "auth_pass")}
-_SURFACE_USER_TOML = {"portal": ("portal", "user"), "ttyd": ("ttyd", "auth_user")}
+_SURFACE_USER_TOML = {"portal": ("portal", "user"), "forge": ("services.forge", "admin_user"), "ttyd": ("ttyd", "auth_user")}
 _OWN_LOGIN = ("ttyd",)                # argv-only consumers: never the shared operator credential
 OWN_GENERATED = "generated"           # tier of an _OWN_LOGIN surface with no own login set
 SECRETS_ENV_NAME = "secrets.env"      # Law 11: <[paths].etc_dir>/secrets.env, 0600 root
@@ -887,6 +887,15 @@ def _apply_forge(data, user, secret, ctx):
         status, _ = _http("PATCH", f"{base}/api/v1/admin/users/{urllib.parse.quote(user)}", token=tok,
                           body={"login_name": user, "source_id": 0, "password": secret,
                                 "must_change_password": False})
+        if status == 400:
+            st_t, toks = _http("GET", f"{base}/api/v1/users/{urllib.parse.quote(user)}/tokens", token=tok)
+            for t in toks if st_t == 200 and isinstance(toks, list) else []:
+                if str((t or {}).get("name") or "") == name:
+                    _http("DELETE", f"{base}/api/v1/users/{urllib.parse.quote(user)}/tokens/{t.get('id')}", token=tok)
+            ctx["no_record"] = True
+            return ("skipped (Forgejo admin PATCH returned HTTP 400 -- operator credential does not meet "
+                    "Forgejo password policy, e.g. >= 8 characters; update ~/.config/mios/mios.toml "
+                    "[identity].default_password to sync Forgejo login)")
         if status != 200:
             return (f"failed (admin PATCH returned HTTP {status}; token {name} is revoked by the next "
                     "run that logs in, and this value is retried only after its backoff)")

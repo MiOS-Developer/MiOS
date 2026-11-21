@@ -11378,6 +11378,7 @@ packages = [
 user = "mios-forge"
 uid  = 816
 gid  = 816
+admin_user      = "mios"       # non-reserved Forgejo admin username matching [identity].name
 ready_timeout_s = 300          # mios-credential apply --wait forge: how long to wait for the API
 initial_repo    = "mios"       # forge-firstboot creates <admin>/<initial_repo> for the deployed root
 home            = "/data/gitea"                # the forgejo CLI's HOME inside the container
@@ -15639,7 +15640,7 @@ Environment = "HOME=/var/lib/mios/llamacpp"
 # NO-HARDCODE: same ${MIOS_PORTS_CPU_NODE} runtime var the Exec resolves via systemd.
 HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_CPU_NODE}/health || exit 1"
 HealthInterval = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 HealthStartPeriod = "120s"
 HealthRetries = "3"
 # ctx-size: 32768 (was 131072). CPU-only (n-gpu-layers 0) granite-8b with a 128k KV
@@ -16048,7 +16049,7 @@ Environment = [
 EnvironmentFile = "/etc/mios/install.env"
 HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/models || exit 1"
 HealthInterval = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 HealthStartPeriod = "60s"
 HealthRetries = "3"
 Exec = "--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORTS_LLM_LIGHT}"
@@ -16574,7 +16575,7 @@ HealthCmd = "python3 -c \"import urllib.request; urllib.request.urlopen('http://
 HealthInterval = "30s"
 HealthRetries = 3
 HealthStartPeriod = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 Image = "localhost/mios-piper:latest"
 Label = [
   "org.opencontainers.image.title=mios-piper",

@@ -10,6 +10,9 @@ Requires=mios-pgvector.service
 
 [Service]
 Type=oneshot
+TimeoutStartSec=300
+Nice=15
+IOSchedulingClass=idle
 EnvironmentFile=-/etc/mios/userenv.sh
 EnvironmentFile=-/etc/mios/install.env
 Environment=PYTHONPATH=/usr/lib/mios/agent-pipe
