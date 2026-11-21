@@ -478,19 +478,29 @@ mod tmux_runtime {
 
     /// mios-unit-gen is a sibling workspace member the projector shells to; build it once
     /// if the workspace has not produced it yet so the positive control is never skipped.
+    /// The mios-unit-gen binary in the Cargo profile directory that holds this test
+    /// executable. The executable sits below that directory at a depth that depends on
+    /// the Cargo release: `<profile>/deps/` until 1.99, `<profile>/build/<pkg>/<hash>/`
+    /// from 1.100. Walk up from it and stop at the target root, which Cargo marks with
+    /// CACHEDIR.TAG. This follows --target-dir/CARGO_TARGET_DIR and cross-target profiles
+    /// without guessing a checkout-local target tree.
+    fn beside_test_exe() -> Option<PathBuf> {
+        let test_exe = std::env::current_exe().expect("integration test executable");
+        for dir in test_exe.ancestors().skip(1) {
+            let candidate = dir.join(exe("mios-unit-gen"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+            if dir.join("CACHEDIR.TAG").is_file() {
+                break;
+            }
+        }
+        None
+    }
+
     fn unit_gen() -> PathBuf {
-        // Cargo places integration-test executables under <profile>/deps, next to
-        // the binaries it built. This follows --target-dir/CARGO_TARGET_DIR and
-        // cross-target profiles without guessing a checkout-local target tree.
-        let profile = std::env::current_exe()
-            .expect("integration test executable")
-            .parent()
-            .and_then(Path::parent)
-            .expect("Cargo profile directory")
-            .to_path_buf();
-        let sibling = profile.join(exe("mios-unit-gen"));
-        if sibling.is_file() {
-            return sibling;
+        if let Some(p) = beside_test_exe() {
+            return p;
         }
         let native = repo_root().join("tools/native");
         let found = |p: &PathBuf| p.is_file();
@@ -509,9 +519,7 @@ mod tmux_runtime {
             .status()
             .expect("spawn cargo build -p mios-unit-gen");
         assert!(status.success(), "building mios-unit-gen failed");
-        let p = sibling;
-        assert!(p.is_file(), "mios-unit-gen missing after build");
-        p
+        beside_test_exe().expect("mios-unit-gen missing after build")
     }
 
     fn python() -> &'static str {
