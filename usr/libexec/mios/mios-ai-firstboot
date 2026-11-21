@@ -40,6 +40,7 @@ if [ ! -e "$_vdir" ] && [ ! -L "$_vdir" ] && [ -w "$(dirname "$_vdir")" ]; then
     ln -s /var/lib/mios/vllm/model "$_vdir" 2>/dev/null || true
 fi
 
+_venv_new=0; _models_new=0
 if [ ! -x "${VENV}/bin/hermes" ]; then
     if ! command -v python3.13 >/dev/null 2>&1; then
         log "Installing python3.13"
@@ -69,7 +70,7 @@ if [ ! -x "${VENV}/bin/hermes" ]; then
             fi
         done
     fi
-    if [ -x "${VENV}/bin/hermes" ]; then log "agent venv ready: ${VENV}"; else log "WARN: agent venv still missing"; fi
+    if [ -x "${VENV}/bin/hermes" ]; then log "agent venv ready: ${VENV}"; _venv_new=1; else log "WARN: agent venv still missing"; fi
 fi
 
 if [ "$PULLS" != false ] && [ ! -f "${MODELS}/.ready" ]; then
@@ -80,6 +81,7 @@ if [ "$PULLS" != false ] && [ ! -f "${MODELS}/.ready" ]; then
     else
         log "WARN: mios-models-firstboot missing; model readiness remains false"
     fi
+    [ -f "${MODELS}/.ready" ] && _models_new=1
 fi
 
 _heavy_engine="${MIOS_AI_HEAVY_ENGINE:-}"
@@ -400,13 +402,26 @@ for a in accounts:
         except Exception:
             pass  # md4 unavailable (OpenSSL 3 legacy provider off): no NT hash is derived
 
+    # One uid per account across runs: the given uid, else the one its alias already
+    # holds, else the next uid no identity row holds yet. The SID is the domain prefix
+    # ($6) plus that uid, so the [agents] rows (no configured uid) get a stable SID.
     sql_identity = """
-    WITH inserted_user AS (
+    WITH resolved AS (
+        SELECT COALESCE(
+            $2::integer,
+            (SELECT c.uid FROM mios_identity.aliases al
+               JOIN mios_identity.canonical_users c ON c.id = al.canonical_id
+              WHERE al.alias_username = $8::text),
+            GREATEST(nextval('uid_alloc')::integer,
+                     (SELECT COALESCE(MAX(uid) + 1, 1000) FROM mios_identity.canonical_users))) AS uid
+    ), inserted_user AS (
         INSERT INTO mios_identity.canonical_users (
             display_name, uid, gid, homedir, shell, sid, profile_path_win,
             email, pronouns, bio, likes, role, job, strengths
         )
-        VALUES ($1, COALESCE($2, nextval('uid_alloc')::integer), COALESCE($3, 1000), $4, $5, $6, $7, $11, $12, $13, $14, $15, $16, $17)
+        SELECT $1::text, r.uid, COALESCE($3::integer, 1000), $4::text, $5::text, $6::text || r.uid, $7::text,
+               $11::text, $12::text, $13::text, $14::text[], $15::text, $16::text, $17::text[]
+        FROM resolved r
         ON CONFLICT (uid) DO UPDATE SET
             display_name = EXCLUDED.display_name,
             gid = EXCLUDED.gid,
@@ -424,17 +439,13 @@ for a in accounts:
         RETURNING id
     )
     INSERT INTO mios_identity.aliases (canonical_id, alias_username, password_hash_sha512, password_hash_ntlm)
-    SELECT id, $8, $9, $10 FROM inserted_user
+    SELECT id, $8::text, $9::text, $10::text FROM inserted_user
     ON CONFLICT (alias_username) DO UPDATE SET
         password_hash_sha512 = EXCLUDED.password_hash_sha512,
         password_hash_ntlm = EXCLUDED.password_hash_ntlm;
     """
     uid_val = a["uid"]
-    sid_val = None
-    if uid_val is not None:
-        sid_val = f"S-1-5-21-3623811015-3361044348-30300820-{uid_val}"
-    else:
-        sid_val = None
+    sid_val = "S-1-5-21-3623811015-3361044348-30300820-"
 
     params_identity = [
         a["display"],
@@ -528,13 +539,21 @@ if [ "$PULLS" != false ] && [ -f "$FBLIST" ] && command -v podman >/dev/null 2>&
     done < "$FBLIST"
 fi
 
-systemctl daemon-reload 2>/dev/null
-for s in mios-gateway-agent mios-agent-pipe; do
-    systemctl reset-failed "${s}" 2>/dev/null
-    systemctl restart --no-block "${s}" 2>/dev/null || true
-done
-systemctl reset-failed mios-llm-light 2>/dev/null
-systemctl restart mios-llm-light 2>/dev/null || true
+# Restart only what this run provisioned. The timer re-runs this script until the
+# sentinel lands, and a run that changed nothing must leave the serving lanes up.
+if [ "$_venv_new" -eq 1 ] || [ "$_models_new" -eq 1 ]; then
+    systemctl daemon-reload 2>/dev/null
+fi
+if [ "$_venv_new" -eq 1 ]; then
+    for s in mios-gateway-agent mios-agent-pipe; do
+        systemctl reset-failed "${s}" 2>/dev/null
+        systemctl restart --no-block "${s}" 2>/dev/null || true
+    done
+fi
+if [ "$_models_new" -eq 1 ]; then
+    systemctl reset-failed mios-llm-light 2>/dev/null
+    systemctl restart mios-llm-light 2>/dev/null || true
+fi
 
 install -d -m 0755 /var/lib/mios 2>/dev/null
 _ggufs_ok=0; [ -f "${MODELS}/.ready" ] && _ggufs_ok=1

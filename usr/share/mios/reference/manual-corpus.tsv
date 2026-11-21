@@ -9098,12 +9098,13 @@ tests/test-cloud-overlay.py	1	4	4	50	8f9232fdb523	STAY	ai-header		0				0
 tests/test-cloud-overlay.py	5	9	5	63	3bcdcac19bdb	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/tests.md	mios-src:3bcdcac19bdb	63	0
 tests/test-cloud-overlay.py	115	115	1	10	fe01adc722ae	STAY	local-scoped		0				0
 tests/test-cloud-overlay.py	122	122	1	16	3141b9f6fbd6	STAY	local-scoped		0				0
-tests/test-cloud-overlay.py	312	312	1	6	22434a280c50	STAY	inline-scoped		0				0
-tests/test-cloud-overlay.py	497	498	2	28	63376adb6957	STAY	midsize-why		0				0
-tests/test-cloud-overlay.py	529	532	4	42	1fbb8ae40753	STAY	midsize-why		0				0
-tests/test-cloud-overlay.py	550	550	1	14	0872fb688f7b	STAY	local-scoped		0				0
-tests/test-cloud-overlay.py	670	671	2	18	8436e2d0c4bc	STAY	local-scoped		0				0
-tests/test-cloud-overlay.py	714	715	2	22	7c87e8d3ec03	STAY	local-scoped		0				0
+tests/test-cloud-overlay.py	258	260	3	38	f5652b685aac	STAY	midsize-why		0				0
+tests/test-cloud-overlay.py	329	329	1	6	22434a280c50	STAY	inline-scoped		0				0
+tests/test-cloud-overlay.py	514	515	2	28	63376adb6957	STAY	midsize-why		0				0
+tests/test-cloud-overlay.py	546	549	4	42	1fbb8ae40753	STAY	midsize-why		0				0
+tests/test-cloud-overlay.py	567	567	1	14	0872fb688f7b	STAY	local-scoped		0				0
+tests/test-cloud-overlay.py	687	688	2	18	8436e2d0c4bc	STAY	local-scoped		0				0
+tests/test-cloud-overlay.py	731	732	2	22	7c87e8d3ec03	STAY	local-scoped		0				0
 tests/test-code-server-bake.py	1	3	3	52	c9787f22a2a4	STAY	ai-header		0				0
 tests/test-code-server-bake.py	36	36	1	7	733e85222f00	STAY	local-scoped		0				0
 tests/test-code-server-bake.py	56	56	1	11	7d30c5c33d23	STAY	local-scoped		0				0
@@ -30498,12 +30499,13 @@ usr/libexec/mios/mios-ai-clear	14	14	1	2	997af383b813	DROP	commented-out-code		0
 usr/libexec/mios/mios-ai-firstboot	1	4	4	46	1390918bcf83	STAY	ai-header		0				0
 usr/libexec/mios/mios-ai-firstboot	17	20	4	49	b0f6fe8730a9	STAY	midsize-why		0				0
 usr/libexec/mios/mios-ai-firstboot	32	33	2	22	ba33cd61d36b	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	58	59	2	21	6bde9a8fee82	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	76	77	2	20	e00a7fa89205	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	90	91	2	24	8a50f7c28410	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	96	97	2	25	45d720e99a56	STAY	local-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	499	499	1	4	fc454d839de9	STAY	inline-scoped		0				0
-usr/libexec/mios/mios-ai-firstboot	501	503	3	27	af77ab8319f3	STAY	midsize-why		0				0
+usr/libexec/mios/mios-ai-firstboot	59	60	2	21	6bde9a8fee82	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ai-firstboot	77	78	2	20	e00a7fa89205	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ai-firstboot	92	93	2	24	8a50f7c28410	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ai-firstboot	98	99	2	25	45d720e99a56	STAY	local-scoped		0				0
+usr/libexec/mios/mios-ai-firstboot	510	510	1	4	fc454d839de9	STAY	inline-scoped		0				0
+usr/libexec/mios/mios-ai-firstboot	512	514	3	27	af77ab8319f3	STAY	midsize-why		0				0
+usr/libexec/mios/mios-ai-firstboot	542	543	2	27	fee0c3a26530	STAY	midsize-why		0				0
 usr/libexec/mios/mios-ai-hint-coverage	1	4	4	20	f986ed5a10ee	STAY	ai-header		0				0
 usr/libexec/mios/mios-ai-hint-coverage	5	27	22	157	70cff22ab361	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/mios.md	mios-src:70cff22ab361	157	0
 usr/libexec/mios/mios-ai-hint-coverage	37	37	1	6	02ccdef962cd	STAY	inline-scoped		0				0
