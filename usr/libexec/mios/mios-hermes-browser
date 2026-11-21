@@ -15,6 +15,10 @@ else
 fi
 APP_ID="${HERMES_BROWSER_APP_ID:-${MIOS_CHROME_FLATPAK_ID:-com.google.ChromeDev}}"
 LOG_FILE="${HERMES_BROWSER_LOG:-/var/lib/mios/hermes-browser/launch.log}"
+# Capability markers role-apply writes ([blade.archetypes], FEATURES=).
+BLADE_D="${BLADE_D:-${MIOS_ETC_DIR:-/etc/mios}/blade.d}"
+CAPABILITY_MARKER="${BLADE_D}/agent-browser"
+BLADE_MARKER="${BLADE_D}/service-plane"
 
 mkdir -p "$PROFILE_DIR" "$(dirname "$LOG_FILE")"
 
@@ -42,6 +46,20 @@ kill_existing() {
 
 SUBCMD="${1:-ensure}"
 
+# A seat (no service-plane) runs the agent browser; a Blade only with the
+# agent-browser capability. The unit's ExecCondition and `ensure` share this.
+browser_allowed() {
+    [[ -e "$CAPABILITY_MARKER" || ! -e "$BLADE_MARKER" ]]
+}
+
+# Exit 3: this host does not run the agent browser; callers report it as such.
+require_capability() {
+    browser_allowed && return 0
+    echo "agent browser disabled on this host: a Blade (${BLADE_MARKER}) without the agent-browser capability" >&2
+    echo "  enable it with FEATURES=agent-browser in /etc/mios/role.conf, then re-run role-apply" >&2
+    exit 3
+}
+
 case "$SUBCMD" in
     status)
         if cdp_responding; then
@@ -51,12 +69,19 @@ case "$SUBCMD" in
         echo "CDP not responding on 127.0.0.1:${CDP_PORT}"
         exit 1
         ;;
+    allowed)
+        # ExecCondition: 0 runs the unit, 1 skips it cleanly.
+        browser_allowed && exit 0
+        echo "agent browser not run on this Blade (no agent-browser capability)"
+        exit 1
+        ;;
     stop)
         kill_existing
         echo "Stopped"
         exit 0
         ;;
     ensure|"")
+        require_capability
         if cdp_responding; then
             echo "CDP already up on 127.0.0.1:${CDP_PORT}"
             exit 0
@@ -74,9 +99,10 @@ case "$SUBCMD" in
         exit 1
         ;;
     start)
+        require_capability
         ;;
     *)
-        echo "Usage: $0 {ensure|status|stop|start}" >&2
+        echo "Usage: $0 {ensure|status|stop|start|allowed}" >&2
         exit 64
         ;;
 esac
