@@ -23,6 +23,7 @@ import threading
 import queue
 import signal
 import stat
+import weakref
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from collections import deque
@@ -107,6 +108,13 @@ else:
 _SYS_INFO_CACHE = None
 _USB_INFO_CACHE = "Scanning USB..."
 _GIT_STATUS_CACHE = "[dim]Git state loading...[/]"
+_GIT_STATUS_CACHE_TS = 0.0
+_GIT_STATUS_TTL_S = 30.0
+_GIT_STATUS_LOCK = threading.Lock()
+_ENGINE_ONLINE_CACHE = None
+_ENGINE_ONLINE_TTL_S = 30.0
+_ENGINE_ONLINE_LOCK = threading.Lock()
+_ACTIVE_MONITOR_APPS = weakref.WeakSet()
 PIPELINE_MODE = False
 AI_MODE = False
 TAB_CHOICE = None
@@ -343,15 +351,24 @@ def check_port(host, port, listening=None):
         except Exception:
             return False
 
-def engine_online():
-    """A successful Podman host response proves the selected engine is reachable."""
+def engine_online(force=False):
+    """A successful Podman host response proves the selected engine is reachable (30s TTL cache)."""
+    global _ENGINE_ONLINE_CACHE
+    now = time.monotonic()
+    with _ENGINE_ONLINE_LOCK:
+        if not force and _ENGINE_ONLINE_CACHE is not None and (now - _ENGINE_ONLINE_CACHE[0]) < _ENGINE_ONLINE_TTL_S:
+            return _ENGINE_ONLINE_CACHE[1]
+    online = False
     try:
         probe = subprocess.run(["podman", "info", "--format", "json"],
                                capture_output=True, text=True, timeout=2)
         info = json.loads(probe.stdout) if probe.returncode == 0 else {}
-        return isinstance(info, dict) and isinstance(info.get("host"), dict) and bool(info["host"])
+        online = isinstance(info, dict) and isinstance(info.get("host"), dict) and bool(info["host"])
     except (OSError, subprocess.TimeoutExpired, ValueError):
-        return False
+        online = False
+    with _ENGINE_ONLINE_LOCK:
+        _ENGINE_ONLINE_CACHE = (time.monotonic(), online)
+    return online
 
 def get_services():
     ports = monitor_config().get("ports", {})
@@ -443,54 +460,68 @@ def get_telemetry():
 
 def _bg_update_usb():
     global _USB_INFO_CACHE
+    if not IS_WINDOWS:
+        _USB_INFO_CACHE = "No USB Drive Detected"
+        return
     while True:
         try:
-            if IS_WINDOWS:
-                cmd = ["powershell.exe", "-NoProfile", "-Command", "Get-Disk | Where-Object BusType -eq 'USB' | Select-Object -First 1 -Property Number, FriendlyName, Size | ConvertTo-Json"]
-                out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=3.0)
-                if out.strip():
-                    data = json.loads(out)
-                    if isinstance(data, dict):
-                        size_gb = int(data.get('Size', 0) / (1024**3))
-                        name = data.get('FriendlyName', 'USB Drive')
-                        _USB_INFO_CACHE = f"D: {name} ({size_gb}GB)"
-                    else:
-                        _USB_INFO_CACHE = "D: USB Drive Detected"
+            cmd = ["powershell.exe", "-NoProfile", "-Command", "Get-Disk | Where-Object BusType -eq 'USB' | Select-Object -First 1 -Property Number, FriendlyName, Size | ConvertTo-Json"]
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=3.0)
+            if out.strip():
+                data = json.loads(out)
+                if isinstance(data, dict):
+                    size_gb = int(data.get('Size', 0) / (1024**3))
+                    name = data.get('FriendlyName', 'USB Drive')
+                    _USB_INFO_CACHE = f"D: {name} ({size_gb}GB)"
                 else:
-                    _USB_INFO_CACHE = "No USB Drive Detected"
+                    _USB_INFO_CACHE = "D: USB Drive Detected"
             else:
                 _USB_INFO_CACHE = "No USB Drive Detected"
         except Exception:
             _USB_INFO_CACHE = "No USB Drive Detected"
         time.sleep(10)
 
+def _should_poll_git():
+    apps = list(_ACTIVE_MONITOR_APPS)
+    if not apps:
+        return True
+    return any(app._is_git_polling_active() for app in apps)
+
 def _resolve_git_dir():
     for c in [os.environ.get("MIOS_ROOT"), os.getcwd(), "/workspaces/MiOS", "/", "/mnt/m", "C:\\MiOS", "C:\\mios-bootstrap"]:
         if c and os.path.isdir(os.path.join(c, ".git")): return c
     return None
 
-def _resolve_git_status():
-    global _GIT_STATUS_CACHE
+def _resolve_git_status(force=False):
+    global _GIT_STATUS_CACHE, _GIT_STATUS_CACHE_TS
+    now = time.monotonic()
+    with _GIT_STATUS_LOCK:
+        if not force and _GIT_STATUS_CACHE_TS > 0.0 and (now - _GIT_STATUS_CACHE_TS) < _GIT_STATUS_TTL_S:
+            return _GIT_STATUS_CACHE
     d = _resolve_git_dir()
     if not d:
-        _GIT_STATUS_CACHE = "[dim]Git repo not found[/]"
+        val = "[dim]Git repo not found[/]"
+    else:
+        try:
+            out = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
+            lines = out.splitlines()
+            branch = lines[0].replace("##", "").strip() if lines and "##" in lines[0] else (lines[0].strip() if lines else "unknown")
+            staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
+            mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
+            untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
+            val = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
+        except Exception:
+            val = "[dim]Git state unavailable[/]"
+    with _GIT_STATUS_LOCK:
+        _GIT_STATUS_CACHE = val
+        _GIT_STATUS_CACHE_TS = time.monotonic()
         return _GIT_STATUS_CACHE
-    try:
-        out = subprocess.check_output(["git", "--no-optional-locks", "status", "--porcelain", "-b"], cwd=d, text=True, timeout=2.0, stderr=subprocess.DEVNULL)
-        lines = out.splitlines()
-        branch = lines[0].replace("##", "").strip() if lines and "##" in lines[0] else (lines[0].strip() if lines else "unknown")
-        staged = sum(1 for l in lines[1:] if l and l[0] not in (" ", "?"))
-        mod = sum(1 for l in lines[1:] if l and l[:2] != "??" and l[1] != " ")
-        untr = sum(1 for l in lines[1:] if l and l[:2] == "??")
-        _GIT_STATUS_CACHE = f"Branch: {branch} | [green]{staged} staged[/] | [yellow]{mod} mod[/] | [dim]{untr} untracked[/]"
-    except Exception:
-        _GIT_STATUS_CACHE = "[dim]Git state unavailable[/]"
-    return _GIT_STATUS_CACHE
 
 def _bg_update_git():
     while True:
-        _resolve_git_status()
-        time.sleep(5)
+        if _should_poll_git():
+            _resolve_git_status()
+        time.sleep(30)
 
 def start_status_collectors():
     """Only the legacy USB/Git widgets need these persistent background loops."""
@@ -507,7 +538,8 @@ def get_usb_drive_info():
     return _USB_INFO_CACHE
 
 def get_git_tree_status():
-    start_status_collectors()
+    if _should_poll_git():
+        start_status_collectors()
     return _GIT_STATUS_CACHE
 
 def get_credentials_text():
@@ -606,6 +638,24 @@ def _collect_agent_and_mcp_data():
         return agents, snapshot.get("messages", []), panes
     except Exception as exc:
         raise RuntimeError("Agent observation unavailable") from exc
+
+def _sample_from_agent_view_snapshot(snapshot):
+    if not isinstance(snapshot, dict) or not snapshot:
+        return None
+    agents = [{**a, "id": a.get("agent_id", "")} for a in snapshot.get("agents", [])]
+    panes = []
+    for p in snapshot.get("panes", []):
+        command = p.get("agent_kind") or p.get("command", "")
+        panes.append({
+            "socket": p.get("socket", ""),
+            "pane": f"{p.get('session', '')}:{p.get('window', '')}:{p.get('pane', '')}",
+            "identity": str(p.get("socket", "")) + ":" + str(p.get("pane", "")),
+            "pid": p.get("pid", 0),
+            "cmd": command,
+            "active": not p.get("dead", False) and command not in ("bash", "sh", ""),
+            "raw_cmd": p.get("command", ""),
+        })
+    return agents, snapshot.get("messages", []), panes
 
 
 def create_metal_layout():
@@ -782,7 +832,7 @@ if TEXTUAL_AVAILABLE:
 
     class MiosMonitorApp(App):
         TITLE = "MiOS Unified System & AI Monitor"
-        refresh_interval = reactive(0.5)
+        refresh_interval = reactive(2.0)
 
         def __init__(self, ui_request=None, ui_mode=None, observer=None, collectors=True,
                      desktop_panel=False, client_chooser=False, root="/", **kwargs):
@@ -805,8 +855,29 @@ if TEXTUAL_AVAILABLE:
             self._attachment_checking = False
             self._attachment_task = None
             self._attachment_stop_task = None
+            self._last_attachment_probe = 0.0
             self.collectors_enabled = collectors and not client_chooser
             self.collectors_started = False
+            self._logs_started = False
+            self._build_started = False
+            self._flash_started = False
+            self._telemetry_started = False
+            self._services_started = False
+            self._agent_events_started = False
+            self._titles_initialized = False
+            self._last_agent_snapshot_id = None
+            if client_chooser:
+                self._active_tab_id = "tab-clients"
+            elif desktop_panel:
+                dv = self.panel_policy["default_view"]
+                self._active_tab_id = "tab-" + ("global" if dv == "system" else dv)
+            else:
+                mode = "agents" if self.ui_mode == "ai" else self.ui_mode
+                tab_choice = "agents" if TAB_CHOICE == "ai" else TAB_CHOICE
+                self._active_tab_id = (
+                    f"tab-{mode}" if mode
+                    else ("tab-agents" if AI_MODE else ("tab-build" if PIPELINE_MODE else (f"tab-{tab_choice}" if tab_choice else "tab-global")))
+                )
             self._snapshot_jobs = set()
             self._snapshot_queues = {}
             self._snapshot_closing = False
@@ -815,6 +886,20 @@ if TEXTUAL_AVAILABLE:
             self._owned_observation = False
             self.agent_federation = None
             self.enable_agent_federation = observer is None and self.collectors_enabled
+            _ACTIVE_MONITOR_APPS.add(self)
+
+        def _current_active_tab(self):
+            if getattr(self, "_active_tab_id", None):
+                return self._active_tab_id
+            try:
+                return self.query_one(TabbedContent).active
+            except Exception:
+                return None
+
+        def _is_git_polling_active(self):
+            if self._collection_paused or self.client_chooser:
+                return False
+            return self._current_active_tab() == "tab-global"
 
         def observe_agents(self):
             if self._collection_paused:
@@ -1060,6 +1145,7 @@ if TEXTUAL_AVAILABLE:
                 tab_id = "tab-agents"
             if not self.desktop_panel or focus:
                 self.set_focus(None)
+            self._active_tab_id = tab_id
             self.query_one(TabbedContent).active = tab_id
             if self.desktop_panel:
                 for button in self.query("#desktop-nav Button"):
@@ -1123,6 +1209,7 @@ if TEXTUAL_AVAILABLE:
         @on(TabbedContent.TabActivated)
         def view_changed(self, event):
             view = event.tab.id.removeprefix("--content-tab-")
+            self._active_tab_id = view
             if self.desktop_panel:
                 # An activation still queued at shutdown must not lay out the pruned DOM.
                 if self.is_running:
@@ -1131,10 +1218,10 @@ if TEXTUAL_AVAILABLE:
             title = {"tab-clients": "Clients", "tab-agents": "Agents & AI", "tab-global": "System",
                      "tab-build": "Build", "tab-flash": "Flash"}.get(view, "Monitor")
             self.query_one("#monitor-title", Static).update(f"MiOS Monitor · {title}")
-            if self.ui_mode and view in {"tab-global", "tab-build", "tab-flash", "tab-agents"}:
-                if view == "tab-global" and (self.size.width < 78 or self.size.height < 26):
+            if self.collectors_enabled and view in {"tab-global", "tab-build", "tab-flash", "tab-agents"}:
+                if view == "tab-global" and self.ui_mode and (self.size.width < 78 or self.size.height < 26):
                     return
-                self.start_collectors()
+                self.start_collectors(view)
 
         def compose(self) -> ComposeResult:
             if self.client_chooser:
@@ -1277,9 +1364,10 @@ if TEXTUAL_AVAILABLE:
             self.apply_responsive_layout(self.size.width, self.size.height)
             mode = "agents" if self.ui_mode == "ai" else self.ui_mode
             initial = f"tab-{mode}" if mode else self.query_one(TabbedContent).active
+            self._active_tab_id = initial
             self.call_after_refresh(self._activate_tab, initial)
             if not self.ui_mode:
-                self.start_collectors()
+                self.start_collectors(initial)
 
         @on(Button.Pressed, "#desktop-nav Button")
         def panel_navigation(self, event):
@@ -1303,6 +1391,11 @@ if TEXTUAL_AVAILABLE:
             if (self._snapshot_closing or not self.desktop_panel or not self.collectors_enabled
                     or self._attachment_task is not None and not self._attachment_task.done()):
                 return
+            if self._collection_paused:
+                backoff = max(float(self.panel_policy.get("poll_s", 10.0)), 15.0)
+                if (time.monotonic() - self._last_attachment_probe) < backoff:
+                    return
+            self._last_attachment_probe = time.monotonic()
             self._attachment_task = asyncio.create_task(self.refresh_desktop_attachment())
             self._attachment_task.add_done_callback(
                 lambda task: None if task.cancelled() else task.exception())
@@ -1342,6 +1435,8 @@ if TEXTUAL_AVAILABLE:
                 self._attachment_checking = False
 
         def collect_panel_view(self, view):
+            if self._collection_paused:
+                return {"paused": True}
             try:
                 if view == "tab-global":
                     return {"data": (get_telemetry(), get_services())}
@@ -1355,6 +1450,8 @@ if TEXTUAL_AVAILABLE:
                 return {"unavailable": True}
 
         def apply_panel_view(self, view, sample):
+            if not sample or sample.get("paused"):
+                return
             if view == "tab-global":
                 summary = self.query_one(SystemSummary)
                 if sample.get("unavailable"):
@@ -1454,33 +1551,90 @@ if TEXTUAL_AVAILABLE:
             self._snapshot_queues[name].put_nowait((collect, apply))
             return True
 
-        def start_collectors(self):
-            if self.collectors_started or not self.collectors_enabled:
-                return
-            self.collectors_started = True
-            self.cpu_history = []
-            self.tailing = True
-            self.journal_procs = []
-            self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True)
-            self.log_thread.start()
-            self.build_log_path = None
-            self.build_log_offset = 0
-            self.build_log_identity = None
-            self.build_log_phase = "-"
-            self.set_interval(1.0, self.refresh_build_log)
+        def _ensure_telemetry_collector(self):
+            if not self._telemetry_started:
+                self._telemetry_started = True
+                if not hasattr(self, "cpu_history"):
+                    self.cpu_history = []
+                self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
+            self.update_telemetry()
+
+        def _ensure_services_collector(self):
+            if not self._services_started:
+                self._services_started = True
+                self.services_timer = self.set_interval(15.0, self.async_update_services)
+            self.async_update_services()
+
+        def _ensure_logs_collector(self):
+            if not self._logs_started:
+                self._logs_started = True
+                self.tailing = True
+                if not hasattr(self, "journal_procs"):
+                    self.journal_procs = []
+                self.log_thread = threading.Thread(target=self.tail_all_logs, daemon=True)
+                self.log_thread.start()
+
+        def _ensure_build_collector(self):
+            if not self._build_started:
+                self._build_started = True
+                self.build_log_path = None
+                self.build_log_offset = 0
+                self.build_log_identity = None
+                self.build_log_phase = "-"
+                self.build_timer = self.set_interval(1.0, self.refresh_build_log)
             self.refresh_build_log()
 
-            self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
-            self.update_telemetry()
-            agent_interval = float(monitor_config().get("terminal", {}).get("monitor", {}).get("agent_poll_s", 5))
-            self.set_interval(agent_interval, self.update_agent_events)
+        def _ensure_flash_collector(self):
+            if not self._flash_started:
+                self._flash_started = True
+                self.tailing = True
+                self.flash_thread = threading.Thread(target=self._stream_flash_log, daemon=True)
+                self.flash_thread.start()
+
+        def _ensure_agent_events_collector(self):
+            if not self._agent_events_started:
+                self._agent_events_started = True
+                agent_interval = float(monitor_config().get("terminal", {}).get("monitor", {}).get("agent_poll_s", 10))
+                self.agent_events_timer = self.set_interval(agent_interval, self.update_agent_events)
             self.update_agent_events()
-            self.set_interval(3.0, self.async_update_services)
-            self.async_update_services()
-            self.update_titles()
-            try:
-                self.apply_responsive_layout(self.size.width, self.size.height)
-            except Exception: pass
+
+        def start_collectors(self, view=None):
+            if not self.collectors_enabled or self.desktop_panel or self.client_chooser:
+                return
+            target = view or self._current_active_tab()
+            if target:
+                self._active_tab_id = target
+            if not self._titles_initialized:
+                self._titles_initialized = True
+                try:
+                    self.update_titles()
+                    self.apply_responsive_layout(self.size.width, self.size.height)
+                except Exception:
+                    pass
+            if target == "tab-clients":
+                return
+            if target == "tab-agents":
+                self._ensure_agent_events_collector()
+            elif target == "tab-global":
+                if self.ui_mode and (self.size.width < 78 or self.size.height < 26):
+                    return
+                self._ensure_logs_collector()
+                self._ensure_telemetry_collector()
+                self._ensure_services_collector()
+            elif target == "tab-build":
+                self._ensure_build_collector()
+                self._ensure_telemetry_collector()
+            elif target == "tab-flash":
+                self._ensure_flash_collector()
+                self._ensure_telemetry_collector()
+            self.collectors_started = any((
+                self._logs_started,
+                self._build_started,
+                self._flash_started,
+                self._telemetry_started,
+                self._services_started,
+                self._agent_events_started,
+            ))
 
         def update_titles(self):
             ms = int(self.refresh_interval * 1000)
@@ -1499,30 +1653,108 @@ if TEXTUAL_AVAILABLE:
         def action_speed_up(self):
             if self.desktop_panel or self.client_chooser:
                 return
-            self.refresh_interval = max(0.1, self.refresh_interval - 0.1)
-            if hasattr(self, "telemetry_timer"):
-                self.telemetry_timer.stop()
-            self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
+            self.refresh_interval = max(0.5, round(self.refresh_interval - 0.1, 2))
+            if self._telemetry_started:
+                if hasattr(self, "telemetry_timer"):
+                    self.telemetry_timer.stop()
+                self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
             self.update_titles()
 
         def action_slow_down(self):
             if self.desktop_panel or self.client_chooser:
                 return
-            self.refresh_interval = min(5.0, self.refresh_interval + 0.1)
-            if hasattr(self, "telemetry_timer"):
-                self.telemetry_timer.stop()
-            self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
+            self.refresh_interval = min(10.0, round(self.refresh_interval + 0.1, 2))
+            if self._telemetry_started:
+                if hasattr(self, "telemetry_timer"):
+                    self.telemetry_timer.stop()
+                self.telemetry_timer = self.set_interval(self.refresh_interval, self.update_telemetry)
             self.update_titles()
+
+        def _find_flash_logs(self):
+            candidates = [
+                r"C:\Windows\Temp\mios-cat-install.log",
+                r"C:\Windows\Temp\mios-cat-flash.log",
+                r"C:\mios-bootstrap\installation\mios-install-live.log",
+                os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-install.log"),
+                os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
+                "/tmp/mios-cat-install.log"
+            ]
+            for d in [r"C:\mios-bootstrap\installation", r"C:\MiOS\logs", r"M:\MiOS\logs"]:
+                if os.path.isdir(d):
+                    candidates.extend(glob.glob(os.path.join(d, "mios-field-*.log")))
+                    candidates.extend(glob.glob(os.path.join(d, "MiOS-Field*.log")))
+                    candidates.extend(glob.glob(os.path.join(d, "mios-cat-*.log")))
+                    candidates.extend(glob.glob(os.path.join(d, "flash-*.log")))
+
+            found = [c for c in dict.fromkeys(candidates) if os.path.exists(c)]
+            found.sort(key=os.path.getmtime, reverse=True)
+            return found
+
+        def _stream_flash_log(self):
+            try:
+                log_box = self.query_one("#log-box", RichLog)
+                flash_log_box = self.query_one("#flash-log-box", RichLog)
+            except Exception:
+                return
+            current_log = None
+            file_obj = None
+
+            while self.tailing:
+                logs = self._find_flash_logs()
+                if not logs:
+                    time.sleep(1)
+                    continue
+
+                newest_log = logs[0]
+                if newest_log != current_log:
+                    current_log = newest_log
+                    if file_obj:
+                        try: file_obj.close()
+                        except Exception: pass
+                    try:
+                        self.call_from_thread(flash_log_box.write, Text(f"Streaming flash log: {os.path.basename(current_log)}", style=SSOT['success']))
+                        file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
+                        for line in deque(file_obj, maxlen=40):
+                            line = line.replace('\x00', '').strip()
+                            if line:
+                                self.call_from_thread(flash_log_box.write, Text(line))
+                        file_obj.seek(0, 2)
+                    except Exception:
+                        file_obj = None
+                        time.sleep(1)
+                        continue
+
+                if not file_obj:
+                    time.sleep(1)
+                    continue
+
+                idle_count = 0
+                while self.tailing and current_log == newest_log:
+                    line = file_obj.readline()
+                    if line:
+                        line = line.replace('\x00', '').strip()
+                        if line:
+                            self.last_flash_log_time = time.time()
+                            self.call_from_thread(flash_log_box.write, Text(line))
+                            self.write_monitor_log(log_box, Text.assemble(("flash ", "dim"), Text(line)))
+                        idle_count = 0
+                    else:
+                        idle_count += 1
+                        time.sleep(0.2)
+                        if idle_count > 10:
+                            idle_count = 0
+                            check_logs = self._find_flash_logs()
+                            if check_logs and check_logs[0] != current_log:
+                                newest_log = check_logs[0]
+                                break
+                            try:
+                                if os.path.getsize(current_log) < file_obj.tell():
+                                    file_obj.seek(0)
+                            except Exception: pass
 
         def tail_all_logs(self):
             log_box = self.query_one("#log-box", RichLog)
             settings = monitor_sources_config()
-            try:
-                flash_log_box = self.query_one("#flash-log-box", RichLog)
-                ai_log_box = self.query_one("#ai-log-box", RichLog)
-            except Exception:
-                flash_log_box = None
-                ai_log_box = None
             def stream_proc(cmd, label):
                 try:
                     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1587,85 +1819,6 @@ if TEXTUAL_AVAILABLE:
                                                   Text(f"[Windows:{channel}] collector: {exc}", style=SSOT['warning']))
                     time.sleep(settings["flush_interval_s"])
 
-            def _find_flash_logs():
-                candidates = [
-                    r"C:\Windows\Temp\mios-cat-install.log",
-                    r"C:\Windows\Temp\mios-cat-flash.log",
-                    r"C:\mios-bootstrap\installation\mios-install-live.log",
-                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-install.log"),
-                    os.path.join(os.environ.get("TEMP", r"C:\Windows\Temp"), "mios-cat-flash.log"),
-                    "/tmp/mios-cat-install.log"
-                ]
-                for d in [r"C:\mios-bootstrap\installation", r"C:\MiOS\logs", r"M:\MiOS\logs"]:
-                    if os.path.isdir(d):
-                        candidates.extend(glob.glob(os.path.join(d, "mios-field-*.log")))
-                        candidates.extend(glob.glob(os.path.join(d, "MiOS-Field*.log")))
-                        candidates.extend(glob.glob(os.path.join(d, "mios-cat-*.log")))
-                        candidates.extend(glob.glob(os.path.join(d, "flash-*.log")))
-
-                found = [c for c in dict.fromkeys(candidates) if os.path.exists(c)]
-                found.sort(key=os.path.getmtime, reverse=True)
-                return found
-
-            def stream_flash_log():
-                if not flash_log_box: return
-                current_log = None
-                file_obj = None
-
-                while self.tailing:
-                    logs = _find_flash_logs()
-                    if not logs:
-                        time.sleep(1)
-                        continue
-
-                    newest_log = logs[0]
-                    if newest_log != current_log:
-                        current_log = newest_log
-                        if file_obj:
-                            try: file_obj.close()
-                            except Exception: pass
-                        try:
-                            self.call_from_thread(flash_log_box.write, Text(f"Streaming flash log: {os.path.basename(current_log)}", style=SSOT['success']))
-                            file_obj = open(current_log, 'r', encoding='utf-8', errors='ignore')
-                            for line in deque(file_obj, maxlen=40):
-                                line = line.replace('\x00', '').strip()
-                                if line:
-                                    self.call_from_thread(flash_log_box.write, Text(line))
-                            file_obj.seek(0, 2)
-                        except Exception:
-                            file_obj = None
-                            time.sleep(1)
-                            continue
-
-                    if not file_obj:
-                        time.sleep(1)
-                        continue
-
-                    idle_count = 0
-                    while self.tailing and current_log == newest_log:
-                        line = file_obj.readline()
-                        if line:
-                            line = line.replace('\x00', '').strip()
-                            if line:
-                                self.last_flash_log_time = time.time()
-                                self.call_from_thread(flash_log_box.write, Text(line))
-                                self.write_monitor_log(log_box, Text.assemble(("flash ", "dim"), Text(line)))
-                            idle_count = 0
-                        else:
-                            idle_count += 1
-                            time.sleep(0.2)
-                            if idle_count > 10:
-                                idle_count = 0
-                                check_logs = _find_flash_logs()
-                                if check_logs and check_logs[0] != current_log:
-                                    newest_log = check_logs[0]
-                                    break
-                                try:
-                                    if os.path.getsize(current_log) < file_obj.tell():
-                                        file_obj.seek(0)
-                                except Exception: pass
-
-            if flash_log_box: threading.Thread(target=stream_flash_log, daemon=True).start()
             # The build log is polled on the UI thread by refresh_build_log.
             # A detached tail thread could die when root merge replaces its log.
             if IS_WINDOWS:
@@ -1695,6 +1848,8 @@ if TEXTUAL_AVAILABLE:
                              "--no-pager", "-o", "short-iso"], "MiOS")
 
         def refresh_build_log(self):
+            if self._collection_paused or self._current_active_tab() != "tab-build":
+                return False
             return self._start_snapshot("build-log", self.collect_build_log, self.apply_build_log)
 
         def collect_build_log(self):
@@ -1778,9 +1933,37 @@ if TEXTUAL_AVAILABLE:
             return sample
 
         def update_telemetry(self):
+            if self._collection_paused or self._current_active_tab() not in {"tab-global", "tab-build", "tab-flash"}:
+                return False
             return self._start_snapshot("telemetry", self.collect_telemetry, self.apply_telemetry)
 
         def update_agent_events(self):
+            if self._collection_paused or self._current_active_tab() != "tab-agents":
+                return False
+            if self.has_class("compact"):
+                return False
+            try:
+                ai_log_box = self.query_one("#ai-log-box", RichLog)
+                if not ai_log_box.display:
+                    return False
+            except Exception:
+                return False
+            try:
+                agent_view = self.query_one(AgentView)
+            except Exception:
+                agent_view = None
+            if agent_view is not None:
+                snapshot = getattr(agent_view, "snapshot", None)
+                if not snapshot:
+                    return False
+                snap_id = id(snapshot)
+                if snap_id == self._last_agent_snapshot_id:
+                    return False
+                self._last_agent_snapshot_id = snap_id
+                sample = _sample_from_agent_view_snapshot(snapshot)
+                if sample is not None:
+                    self.apply_agent_events(sample)
+                return True
             return self._start_snapshot("agent-events", get_agent_and_mcp_data, self.apply_agent_events)
 
         def apply_telemetry(self, sample):
@@ -1857,56 +2040,60 @@ if TEXTUAL_AVAILABLE:
                 ]
             self.query_one("#sys-identity", Static).update("\n".join(t_lines))
 
-            u_lines = [
-                f"[{SSOT['warning']} bold]USB:[/] {get_usb_drive_info()}",
-                f"[{SSOT['success']} bold]GIT:[/] {get_git_tree_status()}"
-            ]
-            self.query_one("#forge-box", Static).update("\n".join(u_lines))
+            active_tab = self._current_active_tab()
+            if active_tab == "tab-global":
+                u_lines = [
+                    f"[{SSOT['warning']} bold]USB:[/] {get_usb_drive_info()}",
+                    f"[{SSOT['success']} bold]GIT:[/] {get_git_tree_status()}"
+                ]
+                self.query_one("#forge-box", Static).update("\n".join(u_lines))
 
-            try:
-                last_log_t = getattr(self, 'last_flash_log_time', None)
-                if last_log_t:
-                    elapsed = int(time.time() - last_log_t)
-                    if elapsed < 15:
-                        status_str = f"[{SSOT['success']} bold]FLASHING IN PROGRESS (Active)[/]"
-                    elif elapsed < 60:
-                        status_str = f"[{SSOT['warning']} bold]FLASHING ACTIVE ({elapsed}s since line)[/]"
+            if active_tab == "tab-flash":
+                try:
+                    last_log_t = getattr(self, 'last_flash_log_time', None)
+                    if last_log_t:
+                        elapsed = int(time.time() - last_log_t)
+                        if elapsed < 15:
+                            status_str = f"[{SSOT['success']} bold]FLASHING IN PROGRESS (Active)[/]"
+                        elif elapsed < 60:
+                            status_str = f"[{SSOT['warning']} bold]FLASHING ACTIVE ({elapsed}s since line)[/]"
+                        else:
+                            status_str = f"[{SSOT['subtle']}]INACTIVE ({elapsed}s ago)[/]"
                     else:
-                        status_str = f"[{SSOT['subtle']}]INACTIVE ({elapsed}s ago)[/]"
-                else:
-                    status_str = f"[{SSOT['subtle']}]Waiting for log stream...[/]"
+                        status_str = f"[{SSOT['subtle']}]Waiting for log stream...[/]"
 
-                flash_lines = [
-                    f"[{SSOT['accent']} bold]MiOS Field USB Builder[/]",
-                    f"[{SSOT['subtle']}]Target Drive:[/] {get_usb_drive_info()}",
-                    f"[{SSOT['subtle']}]Status:[/] {status_str}",
-                    "",
-                    "Real-time compilation & imaging logs stream ->"
-                ]
-                self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
-            except Exception: pass
+                    flash_lines = [
+                        f"[{SSOT['accent']} bold]MiOS Field USB Builder[/]",
+                        f"[{SSOT['subtle']}]Target Drive:[/] {get_usb_drive_info()}",
+                        f"[{SSOT['subtle']}]Status:[/] {status_str}",
+                        "",
+                        "Real-time compilation & imaging logs stream ->"
+                    ]
+                    self.query_one("#flash-stats", Static).update("\n".join(flash_lines))
+                except Exception: pass
 
-            try:
-                last_build_t = getattr(self, "last_build_log_time", None)
-                bpath = getattr(self, "build_log_path", None)
-                phase_str = escape(getattr(self, "build_log_phase", "-")[:38])
-                if last_build_t:
-                    el = int(time.time() - last_build_t)
-                    if el < 20: bstat = f"[{SSOT['success']} bold]BUILDING (active)[/]"
-                    elif el < 120: bstat = f"[{SSOT['warning']} bold]IDLE ({el}s since log)[/]"
-                    else: bstat = f"[{SSOT['subtle']}]NO RECENT OUTPUT ({el}s since log)[/]"
-                else:
-                    bstat = f"[{SSOT['subtle']}]Waiting for build/install...[/]"
-                build_lines = [
-                    f"[{SSOT['accent']} bold]MiOS Build / Install[/]",
-                    f"[{SSOT['subtle']}]Status:[/] {bstat}",
-                    f"[{SSOT['subtle']}]Phase:[/] {phase_str}",
-                    f"[{SSOT['subtle']}]Log:[/] {escape(os.path.basename(bpath)) if bpath else '-'}",
-                    "",
-                    "Live install/build pipeline stream ->",
-                ]
-                self.query_one("#build-stats", Static).update("\n".join(build_lines))
-            except Exception: pass
+            if active_tab == "tab-build":
+                try:
+                    last_build_t = getattr(self, "last_build_log_time", None)
+                    bpath = getattr(self, "build_log_path", None)
+                    phase_str = escape(getattr(self, "build_log_phase", "-")[:38])
+                    if last_build_t:
+                        el = int(time.time() - last_build_t)
+                        if el < 20: bstat = f"[{SSOT['success']} bold]BUILDING (active)[/]"
+                        elif el < 120: bstat = f"[{SSOT['warning']} bold]IDLE ({el}s since log)[/]"
+                        else: bstat = f"[{SSOT['subtle']}]NO RECENT OUTPUT ({el}s since log)[/]"
+                    else:
+                        bstat = f"[{SSOT['subtle']}]Waiting for build/install...[/]"
+                    build_lines = [
+                        f"[{SSOT['accent']} bold]MiOS Build / Install[/]",
+                        f"[{SSOT['subtle']}]Status:[/] {bstat}",
+                        f"[{SSOT['subtle']}]Phase:[/] {phase_str}",
+                        f"[{SSOT['subtle']}]Log:[/] {escape(os.path.basename(bpath)) if bpath else '-'}",
+                        "",
+                        "Live install/build pipeline stream ->",
+                    ]
+                    self.query_one("#build-stats", Static).update("\n".join(build_lines))
+                except Exception: pass
 
         def apply_agent_events(self, sample):
             try:
@@ -1952,6 +2139,8 @@ if TEXTUAL_AVAILABLE:
 
 
         def async_update_services(self):
+            if self._collection_paused or self._current_active_tab() != "tab-global":
+                return False
             return self._start_snapshot("services", get_services, self.apply_services)
 
         def apply_services(self, svcs):
@@ -2167,6 +2356,7 @@ if TEXTUAL_AVAILABLE:
 
         async def on_unmount(self) -> None:
             self._snapshot_closing = True
+            _ACTIVE_MONITOR_APPS.discard(self)
             if self._attachment_task is not None:
                 self._attachment_task.cancel()
                 await asyncio.gather(self._attachment_task, return_exceptions=True)
