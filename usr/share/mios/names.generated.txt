@@ -3505,6 +3505,7 @@ deployment.cloud.builder  MIOS_DEPLOYMENT_CLOUD_BUILDER
 deployment.cloud.source_ref  MIOS_DEPLOYMENT_CLOUD_SOURCE_REF
 deployment.cloud.setup_budget_s  MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S
 deployment.cloud.dropin  MIOS_DEPLOYMENT_CLOUD_DROPIN
+deployment.cloud.wrapper  MIOS_DEPLOYMENT_CLOUD_WRAPPER
 deployment.cloud.min_free_gb  MIOS_DEPLOYMENT_CLOUD_MIN_FREE_GB
 deployment.cloud.build_free_gb  MIOS_DEPLOYMENT_CLOUD_BUILD_FREE_GB
 deployment.cloud.overlay.ai.firstboot_pulls  MIOS_DEPLOYMENT_CLOUD_OVERLAY_AI_FIRSTBOOT_PULLS
