@@ -457,7 +457,7 @@ if ($isAdmin) {
     netsh interface portproxy add    v4tov6 listenaddress=0.0.0.0 listenport=$port connectaddress=::1 connectport=$port | Out-Null
     Ok "portproxy 0.0.0.0:${port} -> [::1]:${port}"
 } else {
-    Warn 'Not elevated -- firewall/portproxy skipped. Re-run as admin or run Setup-MiOSLanPortProxy.ps1.'
+    Warn 'Not elevated -- the AI-node firewall rule and portproxy were skipped. Re-run this script as admin.'
 }
 
 # -- summary -------------------------------------------------------------------
