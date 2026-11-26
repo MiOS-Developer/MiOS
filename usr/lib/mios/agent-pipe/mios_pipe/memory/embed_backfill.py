@@ -61,11 +61,16 @@ def summarize(candidate_count: int, batch_size: int = 50) -> dict:
 import json
 import logging
 import os
+import time
 import asyncio
+from urllib.parse import urlsplit, urlunsplit
 import httpx
 import mios_pg as _mios_pg
 
 log = logging.getLogger("mios-agent-pipe")
+
+MAX_CONSECUTIVE_FAILURES = 5
+DEFAULT_RUN_BUDGET_S = 90.0
 
 PK_MAP = {
     "skill": "id",
@@ -216,9 +221,29 @@ async def embed_text_with_retry(client: httpx.AsyncClient, text: str, url: str, 
             backoff *= 2.0
     return None
 
+async def check_embed_ready(url: str, timeout: float = 5.0) -> bool:
+    parts = urlsplit(url)
+    probe_url = urlunsplit((parts.scheme, parts.netloc, "/v1/models", "", ""))
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(probe_url, timeout=timeout)
+            if r.status_code == 200:
+                return True
+            log.warning("Embeddings readiness probe %s returned HTTP %d; skipping backfill.", probe_url, r.status_code)
+            return False
+    except Exception as e:
+        log.warning("Embeddings readiness probe %s failed (%s); skipping backfill.", probe_url, e)
+        return False
+
 async def run_backfill(current_version: str = "nomic-768-v1") -> dict:
     url, model = get_embed_config()
+    if not await check_embed_ready(url):
+        return {}
+
+    budget_s = float(os.environ.get("MIOS_EMBED_BACKFILL_BUDGET_S") or DEFAULT_RUN_BUDGET_S)
+    started = time.monotonic()
     results = {}
+    consecutive_failures = 0
 
     for table, pk in PK_MAP.items():
         cols_map = {
@@ -276,6 +301,11 @@ async def run_backfill(current_version: str = "nomic-768-v1") -> dict:
         embedded_count = 0
         async with httpx.AsyncClient() as client:
             for row in rows:
+                if budget_s > 0 and (time.monotonic() - started) >= budget_s:
+                    log.info("Embedding backfill time budget (%.1fs) reached; exiting cleanly until next run.", budget_s)
+                    results[table] = embedded_count
+                    return results
+
                 pk_val = row[pk] if isinstance(pk, str) else tuple(row[k] for k in pk)
                 txt = get_text_projection(table, row)
                 if not txt:
@@ -284,7 +314,13 @@ async def run_backfill(current_version: str = "nomic-768-v1") -> dict:
                 vec = await embed_text_with_retry(client, txt, url, model)
                 if vec is None:
                     log.warning("Failed to embed text for %s row %s", table, pk_val)
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        log.warning("Aborting embedding backfill cleanly after %d consecutive failures", consecutive_failures)
+                        results[table] = embedded_count
+                        return results
                     continue
+                consecutive_failures = 0
 
                 where_clause = f"WHERE {pk} = %(id)s" if isinstance(pk, str) else f"WHERE " + " AND ".join(f"{k} = %({k})s" for k in pk)
                 update_query = (

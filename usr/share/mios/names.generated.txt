@@ -5594,6 +5594,7 @@ image.cuda.packages  MIOS_IMAGE_CUDA_PACKAGES
 services.forge.user  MIOS_SERVICES_FORGE_USER
 services.forge.uid  MIOS_SERVICES_FORGE_UID
 services.forge.gid  MIOS_SERVICES_FORGE_GID
+services.forge.admin_user  MIOS_SERVICES_FORGE_ADMIN_USER
 services.forge.ready_timeout_s  MIOS_SERVICES_FORGE_READY_TIMEOUT_S
 services.forge.initial_repo  MIOS_SERVICES_FORGE_INITIAL_REPO
 services.forge.home  MIOS_SERVICES_FORGE_HOME
