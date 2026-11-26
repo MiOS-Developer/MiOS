@@ -181,11 +181,9 @@ Decided by the operator (relayed by the coordinator): (1) Tailscale SaaS, ProxyG
 
 Also decided (question UI): **first server** = the best fsync-gated node, PS5 and X570 stay agents until they pass; **fsync gate** = p99 WAL fsync under 10 ms; **image stores** = air-gap tarballs for the infrastructure set plus the embedded registry mirror (Spegel), accepting two stores.
 
-Answered in free text, **not yet a decision**: ADR-0016 §15.2 (three servers as three logical hosts on one Blade). The operator wrote: "MiOS Images can be run as VMs as well too with Failover". Read here as: logical hosts and nested MiOS images may be VMs, and VMs fail over under Pacemaker (ADR-0017, containers to k3s, VMs to Pacemaker). That does not say whether etcd members may share a Blade. The design's constraint stays: **etcd members must sit in different failure domains**, meaning different physical Blades (VMs on one Blade share that Blade's fate), and a VM-hosted k3s server would itself be a Pacemaker-managed resource whose failover must finish well inside etcd's election timeout or it is treated as a lost member. Whether §15.2 is narrowed is therefore **still open** and is asked again on the PR.
+Decided later (question UI, 2026-11-26): **ADR-0016 §15.2 is narrowed**: etcd members sit on different physical Blades, because VMs on one Blade share that Blade's fate; a VM-hosted k3s server is a Pacemaker-managed resource whose failover must finish inside etcd's election timeout or it counts as a lost member. The **10 front-door grouping in section 4 stands as proposed.** ADR-0031 itself stays `proposed` until the operator accepts it.
 
-Still open:
-- **Q3 ADR-0016 §15.2** as above.
-- **Q14 service front doors:** is the 10-door grouping in section 4 right?
+Nothing else is open at the design level; remaining work is verification of the vendor claims in section 10 and the tasks K3S-01..06.
 
 ## 10. Unverified
 Every tailscale.com page (403, including the 10-service cap): Services limits and naming, operator versions and `tagOwners`, `tailscale serve` limits. Headscale 0.30.0 status. Rook and CloudNativePG. k3s sqlite-to-etcd conversion and 1-of-3 behaviour. WSL2 specifics (section 2 caveats are inference and untested); PR #72's FCOS node (not read). The 23-name catalogue branch. All live-Blade measurements (reported, not re-measured). `k3s-node-selectors.yaml` and manual ch23 (not read). k3s version at time of writing: v1.37.2+k3s1 (GitHub release 3 Nov), docs pages dated 2026-11-19.
