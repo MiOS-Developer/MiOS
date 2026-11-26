@@ -18,7 +18,7 @@ HealthCmd=python3 -c "import urllib.request; urllib.request.urlopen('http://127.
 HealthInterval=30s
 HealthRetries=3
 HealthStartPeriod=30s
-HealthTimeout=10s
+HealthTimeout=30s
 Image=localhost/mios-piper:latest
 Label=org.opencontainers.image.title=mios-piper
 Label=org.opencontainers.image.description="Local piper1-gpl streaming server for MiOS real-time speech synthesis"
