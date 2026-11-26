@@ -1943,7 +1943,7 @@ def check_no_bare_port_literals() -> int:
             for f in fs:
                 if not f.endswith((".py", ".sh", ".ps1") + unit_exts) or "test_" in f:
                     continue
-                if f in ["Setup-MiOSLanPortProxy.ps1", "Heal-MiOSLocalhostForwarding.ps1", "Setup-MiOSLanPortProxy.ps1.bom-bak", "mios-doctor", "net_segmentation.py", "selinux_policy.py", "model_matrix_alloc.py", "editor_config_gen.py", "fastfetch_gen.py", "gnome_extension.py", "status_bar.py"]:
+                if f in ["Setup-MiOSLanPortProxy.ps1", "Heal-MiOSLocalhostForwarding.ps1", "mios-doctor", "net_segmentation.py", "selinux_policy.py", "model_matrix_alloc.py", "editor_config_gen.py", "fastfetch_gen.py", "gnome_extension.py", "status_bar.py"]:
                     continue
                 path = os.path.join(r, f)
                 try:

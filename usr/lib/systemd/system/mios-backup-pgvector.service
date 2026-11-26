@@ -8,6 +8,8 @@ After=network.target mios-pgvector.service
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/etc/mios/userenv.sh
+EnvironmentFile=-/etc/mios/install.env
 ExecStart=/usr/bin/python3 /usr/libexec/mios/db/mios-backup-pgvector.py --retention-days 7
 User=root
 StandardOutput=journal
