@@ -24,7 +24,10 @@ chown -R 1000:1000 /srv/mios/forge 2>/dev/null || true
 # host; only the credential and enable toggles follow the operator's tier), so this script
 # and the reconciler it calls agree; install.env is never read for any of it.
 _get() { "$CRED" get "$1"; }
-admin_user="$("$CRED" identity username --operator)"
+admin_user="$(_get services.forge.admin_user)"
+if [[ -z "$admin_user" ]]; then
+    admin_user="$("$CRED" identity username --operator)"
+fi
 admin_email="$("$CRED" identity email --operator)"
 http_port="$(_get ports.forge_http)"
 loopback="$(_get network.loopback)"
@@ -58,13 +61,24 @@ _log "Forgejo is up on :${http_port}"
 # Create the account with a throwaway random password whose output is discarded (the CLI
 # prints it); mios-credential apply then sets the SSOT value through the admin API, with
 # the password in an HTTP body -- never on a command line, in a log or in a file.
-if _forgejo admin user create \
-        --admin --must-change-password=false \
-        --username "$admin_user" --email "$admin_email" \
-        --random-password >/dev/null 2>&1; then
-    _log "admin user '${admin_user}' (${admin_email}) created"
-else
-    _log "admin create returned non-zero; treating as 'already exists'"
+user_exists=false
+if user_list="$(_forgejo admin user list 2>/dev/null)"; then
+    if printf '%s\n' "$user_list" | awk -v u="$admin_user" 'NR>1 && $2 == u {found=1} END {exit !found}'; then
+        user_exists=true
+        _log "admin user '${admin_user}' already exists"
+    fi
+fi
+if [[ "$user_exists" == false ]]; then
+    create_err=""
+    if create_err="$(_forgejo admin user create \
+            --admin --must-change-password=false \
+            --username "$admin_user" --email "$admin_email" \
+            --random-password 2>&1 >/dev/null)"; then
+        _log "admin user '${admin_user}' (${admin_email}) created"
+    else
+        _log "DEGRADED: failed to create admin user '${admin_user}': ${create_err:-unknown error}"
+        exit 1
+    fi
 fi
 if ! "$CRED" apply --wait --bootstrap forge; then
     _log "DEGRADED: could not apply the SSOT credential to the Forgejo admin; exiting for systemd retry"
