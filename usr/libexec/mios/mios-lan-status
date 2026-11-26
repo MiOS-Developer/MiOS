@@ -8,25 +8,54 @@ set -uo pipefail
 ACTION="${1:-status}"
 SETUP_PS1="${MIOS_LAN_SETUP_PS1:-/usr/libexec/mios/Setup-MiOSLanPortProxy.ps1}"
 
-# SearXNG is not forwarded: its one listener is loopback-only, at mios.toml
-# [ports].searxng (MIOS_PORTS_SEARXNG, from the environment or install.env;
-# only that one name is read from it), so it is listed as LAN-unsupported.
-if [ -z "${MIOS_PORTS_SEARXNG:-}" ] && [ -r "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" ]; then
-    MIOS_PORTS_SEARXNG="$(set +u; set -a; . "${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}" >/dev/null 2>&1; printf '%s' "${MIOS_PORTS_SEARXNG:-}")"
+# Resolve [firewall.windows].expose (MIOS_FIREWALL_WINDOWS_EXPOSE) and each
+# [ports].<key> (MIOS_PORTS_<KEY^^>) from the environment or install.env;
+# SearXNG is not forwarded (loopback-only listener on [ports].searxng /
+# MIOS_PORTS_SEARXNG), so it is always listed as LAN-unsupported.
+_install_env="${MIOS_PATHS_INSTALL_ENV:-/etc/mios/install.env}"
+_read_install_env() {
+    local var_name="$1"
+    [ -r "$_install_env" ] || return 0
+    (
+        set +u
+        set -a
+        # shellcheck source=/dev/null
+        . "$_install_env" >/dev/null 2>&1
+        printf '%s' "${!var_name:-}"
+    )
+}
+
+if [ -z "${MIOS_FIREWALL_WINDOWS_EXPOSE:-}" ]; then
+    MIOS_FIREWALL_WINDOWS_EXPOSE="$(_read_install_env MIOS_FIREWALL_WINDOWS_EXPOSE)"
+fi
+if [ -z "${MIOS_PORTS_SEARXNG:-}" ]; then
+    MIOS_PORTS_SEARXNG="$(_read_install_env MIOS_PORTS_SEARXNG)"
 fi
 
-SERVICES=(
-    "8400 forge"
-    "8200 open-webui"
-    "8900 code-server"
-    "8110 cockpit"
-    "8500 llm-light"
-    "8720 hermes-api"
-    "8210 hermes-dashboard"
-    "8220 guacamole"
-    "8460 ceph-dashboard"
-    "8300 rdp"
-)
+SERVICES=()
+if [ -n "${MIOS_FIREWALL_WINDOWS_EXPOSE:-}" ]; then
+    IFS=',' read -r -a _expose_keys <<< "${MIOS_FIREWALL_WINDOWS_EXPOSE}"
+    for _raw_key in "${_expose_keys[@]}"; do
+        _key="${_raw_key#"${_raw_key%%[![:space:]]*}"}"
+        _key="${_key%"${_key##*[![:space:]]}"}"
+        [ -n "$_key" ] || continue
+        if [ "$_key" = "searxng" ]; then
+            continue
+        fi
+        _var="MIOS_PORTS_${_key^^}"
+        _port="${!_var:-}"
+        if [ -z "$_port" ]; then
+            _port="$(_read_install_env "$_var")"
+        fi
+        if [[ "$_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( _port <= 65535 )); then
+            SERVICES+=("$_port $_key")
+        else
+            echo "mios-lan-status: mios.toml [ports].${_key} does not resolve (${_var} is unset in the environment and install.env); ${_key} omitted" >&2
+        fi
+    done
+else
+    echo "mios-lan-status: mios.toml [firewall.windows].expose does not resolve (MIOS_FIREWALL_WINDOWS_EXPOSE is unset in the environment and install.env)" >&2
+fi
 
 windows_ip() {
     local ip
@@ -46,11 +75,11 @@ for entry in "${SERVICES[@]}"; do
     port="${entry%% *}"
     name="${entry#* }"
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$"; then
-        echo "  OK   :${port}"
+        printf "  OK   :%-5s  %s\n" "$port" "$name"
         listening+=("$port|$name")
         local_count=$((local_count + 1))
     else
-        echo ""
+        printf "  DOWN :%-5s  %s\n" "$port" "$name"
     fi
 done
 
@@ -77,7 +106,7 @@ if [ -r "$SETUP_PS1" ]; then
     echo
     echo "  pwsh -NoProfile -ExecutionPolicy Bypass -File \"$WIN_PS1\""
     echo
-    echo "  (the helper forwards the ${#SERVICES[@]} MiOS ports checked above, not searxng;"
+    echo "  (the helper applies mios.toml [firewall.windows] as build-mios.ps1 Phase 4 does, never searxng;"
     echo "  one-shot, idempotent, self-elevates if the operator forgot Admin)"
 else
     echo "  Setup-MiOSLanPortProxy.ps1 not present at $SETUP_PS1"
@@ -106,10 +135,7 @@ WIN_LAN_HINT="<your-windows-LAN-ip>"
 for entry in "${listening[@]}"; do
     port="${entry%%|*}"
     name="${entry##*|}"
-    scheme="http"
-    [ "$port" = "9090" ] && scheme="https"
-    [ "$port" = "8443" ] && scheme="https"
-    printf "  %s://%s:%s/   (%s)\n" "$scheme" "$WIN_LAN_HINT" "$port" "$name"
+    printf "  http://%s:%s/   (%s)\n" "$WIN_LAN_HINT" "$port" "$name"
 done
 echo
 echo ""

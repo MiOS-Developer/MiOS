@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4384,
+  "total_files_scanned": 4386,
   "total_metadata_entries": 3514,
   "total_hints": 3508,
   "total_functions_indexed": 2299,
-  "total_related_links": 7153,
+  "total_related_links": 7155,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -6618,6 +6618,15 @@
       "related": [],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tests/powershell/LanPortProxy.Tests.ps1",
+      "hint": "Pester unit tests for usr/libexec/mios/Setup-MiOSLanPortProxy.ps1: verifies AST-lifted Phase 4 SSOT alignment, operator-layer confinement, retired-port cleanup, convergence, unelevated UAC relaunch, and planted-defect detection with all Windows/WSL side effects stubbed in TestDrive.",
+      "related": [],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": false
     },
@@ -25433,8 +25442,12 @@
     },
     {
       "path": "usr/libexec/mios/Setup-MiOSLanPortProxy.ps1",
-      "hint": "Configures Windows Firewall and netsh portproxy rules to map physical NIC ports to local WSL containers, enabling LAN-wide access to MiOS services ...",
-      "related": [],
+      "hint": "Re-applies MiOS-DEV's Windows-host LAN exposure on demand, exactly as build-mios.ps1 Phase 4 does: it lifts that script's own [firewall.windows] exposure plan, Defender-rule and portproxy steps out of the build-mios.ps1 beside it and runs them, after removing what older releases left on retired ports.",
+      "related": [
+        "build-mios.ps1",
+        "/usr/share/mios/mios.toml",
+        "/usr/libexec/mios/mios-lan-status"
+      ],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/mios.md",
       "comment_style": "hash",
@@ -43170,17 +43183,6 @@
       "related": [
         "mios-common",
         "mios-wallpaperd"
-      ],
-      "functions": [],
-      "doc": null,
-      "comment_style": "hash",
-      "has_shebang": false
-    },
-    {
-      "path": "usr/share/mios/windows/Setup-MiOSLanPortProxy.ps1",
-      "hint": "Thin shim invoking canonical /usr/libexec/mios/Setup-MiOSLanPortProxy.ps1 with -AiNode switch.",
-      "related": [
-        "/usr/libexec/mios/Setup-MiOSLanPortProxy.ps1"
       ],
       "functions": [],
       "doc": null,

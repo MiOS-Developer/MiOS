@@ -17,21 +17,29 @@ import sys
 import time
 from typing import List, Tuple
 
-# SSOT [ports].pgvector_internal: the in-container listener (host maps 8600->5432).
-DEFAULT_PG_PORT = int(os.environ.get("MIOS_PORTS_PGVECTOR_INTERNAL", "5432"))
+# SSOT [ports].pgvector: host-published listener is 8600 (in-container postgres also listens on 8600).
+DEFAULT_PG_PORT = int(
+    os.environ.get("MIOS_PORTS_PGVECTOR")
+    or os.environ.get("MIOS_PORTS_PGVECTOR_INTERNAL")
+    or "8600"
+)
+DEFAULT_PG_USER = os.environ.get("MIOS_PGVECTOR_USER") or "mios"
+DEFAULT_PG_DB = os.environ.get("MIOS_PGVECTOR_DB") or "mios"
+DEFAULT_PG_CONTAINER = os.environ.get("MIOS_PGVECTOR_CONTAINER") or "mios-pgvector"
 
-def generate_backup_filename(db_name: str = "mios") -> str:
+def generate_backup_filename(db_name: str = DEFAULT_PG_DB) -> str:
     timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%SZ")
     return f"{db_name}_backup_{timestamp}.sql.zst"
 
 def execute_backup(
-    db_name: str = "mios",
+    db_name: str = DEFAULT_PG_DB,
     host: str = "127.0.0.1",
     port: int = DEFAULT_PG_PORT,
-    user: str = "postgres",
+    user: str = DEFAULT_PG_USER,
     output_dir: str = "/var/lib/mios/backups/pgvector",
     zstd_level: int = 3,
     mock: bool = False,
+    container: str = DEFAULT_PG_CONTAINER,
 ) -> str:
     os.makedirs(output_dir, exist_ok=True)
     filename = generate_backup_filename(db_name)
@@ -43,12 +51,32 @@ def execute_backup(
         return target_path
 
     pg_dump = shutil.which("pg_dump")
+    podman = shutil.which("podman")
     zstd = shutil.which("zstd")
 
-    if not pg_dump or not zstd:
-        raise RuntimeError("pg_dump or zstd binary not found on system PATH")
+    if not zstd or (not pg_dump and not podman):
+        raise RuntimeError("zstd and either pg_dump or podman binary are required on system PATH")
 
-    dump_cmd = [pg_dump, "-h", host, "-p", str(port), "-U", user, "-d", db_name, "--clean", "--if-exists"]
+    if pg_dump:
+        dump_cmd = [pg_dump, "-h", host, "-p", str(port), "-U", user, "-d", db_name, "--clean", "--if-exists"]
+    else:
+        dump_cmd = [
+            podman,
+            "exec",
+            container,
+            "pg_dump",
+            "-h",
+            host,
+            "-p",
+            str(port),
+            "-U",
+            user,
+            "--no-password",
+            "-d",
+            db_name,
+            "--clean",
+            "--if-exists",
+        ]
     zstd_cmd = [zstd, f"-{zstd_level}", "--check", "-T0", "-o", target_path]
 
     p1 = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -90,10 +118,11 @@ def enforce_retention(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="MiOS pgvector zstd backup engine")
-    parser.add_argument("--db", default="mios", help="Database name")
+    parser.add_argument("--db", default=DEFAULT_PG_DB, help="Database name")
     parser.add_argument("--host", default="127.0.0.1", help="PostgreSQL host")
     parser.add_argument("--port", type=int, default=DEFAULT_PG_PORT, help="PostgreSQL port")
-    parser.add_argument("--user", default="postgres", help="PostgreSQL user")
+    parser.add_argument("--user", default=DEFAULT_PG_USER, help="PostgreSQL user")
+    parser.add_argument("--container", default=DEFAULT_PG_CONTAINER, help="Podman container fallback when host pg_dump is absent")
     parser.add_argument("--output-dir", default="/var/lib/mios/backups/pgvector", help="Backup storage directory")
     parser.add_argument("--retention-days", type=int, default=7, help="Retention period in days")
     parser.add_argument("--mock", action="store_true", help="Generate mock snapshot for testing")
@@ -108,6 +137,7 @@ def main() -> int:
             user=args.user,
             output_dir=args.output_dir,
             mock=args.mock,
+            container=args.container,
         )
         print(f"[mios-backup-pgvector] Snapshot written: {backup_path}")
         deleted = enforce_retention(output_dir=args.output_dir, retention_days=args.retention_days)
