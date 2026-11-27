@@ -414,7 +414,7 @@ try {
         $seedJson = if ($Seed) { $Seed | ConvertTo-Json -Depth 6 -Compress } else { '' }
 
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
-        $psi.FileName = (Get-Command pwsh.exe).Source
+        $psi.FileName = [System.Environment]::ProcessPath  # the running pwsh, on any OS
         $psi.UseShellExecute = $false
         $psi.RedirectStandardInput = $true
         $psi.RedirectStandardOutput = $true

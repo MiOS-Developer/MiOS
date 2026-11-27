@@ -25,7 +25,24 @@ _LIBEXEC_DIR = os.path.join(_ROOT, "usr", "libexec", "mios")
 _TOOL = os.path.join(_LIBEXEC_DIR, "mios-ipkvm-manager")
 
 # Dynamically import mios-ipkvm-manager
-ipkvm_mod = SourceFileLoader("mios_ipkvm_manager", _TOOL).load_module()
+def _load_source(name, path):
+    """Load a Python source file that has no .py suffix as module `name`.
+
+    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
+    behaviour (register in sys.modules, then execute) with the supported API.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys as _sys
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
+ipkvm_mod = _load_source("mios_ipkvm_manager", _TOOL)
 SecurityError = ipkvm_mod.SecurityError
 validate_target_ip = ipkvm_mod.validate_target_ip
 parse_target = ipkvm_mod.parse_target

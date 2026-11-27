@@ -328,8 +328,25 @@ import unittest
 from importlib.machinery import SourceFileLoader
 
 trtc__HERE = os.path.dirname(os.path.abspath(__file__))
-trtc_mod = SourceFileLoader(
-    "check_rust_test_coverage", os.path.join(trtc__HERE, "check-testhygiene.py")).load_module()
+def _load_source(name, path):
+    """Load a Python source file that has no .py suffix as module `name`.
+
+    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
+    behaviour (register in sys.modules, then execute) with the supported API.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys as _sys
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
+trtc_mod = _load_source(
+    "check_rust_test_coverage", os.path.join(trtc__HERE, "check-testhygiene.py"))
 
 class trtc_TestCheckRustTestCoverage(unittest.TestCase):
     def test_import_and_main_callable(self):

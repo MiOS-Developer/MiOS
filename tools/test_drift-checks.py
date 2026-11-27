@@ -752,10 +752,17 @@ class TestMonitorRegistry(unittest.TestCase):
         self.assertEqual(names, {node.name for node in nodes})
         self.ns = {"os": os, "glob": __import__("glob"), "subprocess": subprocess, "json": json,
                    "socket": socket, "platform": platform, "IS_WINDOWS": False, "__file__": path,
+                   "time": __import__("time"), "threading": __import__("threading"),
                    "layer_paths": mios_toml.layer_paths, "load_merged": mios_toml.load_merged,
                    "process_val": mios_toml.process_val, "mios_colors": mios_toml.colors,
                    "running_wsl_distros": lambda: set(), "_MONITOR_CONFIG_CACHE": None}
-        exec(compile(ast.Module(body=nodes, type_ignores=[]), path, "exec"), self.ns)
+        # The module-level state those functions read (caches, TTLs, locks) comes from the
+        # monitor's own top-level assignments, so a new global needs no copy here.
+        read = {n.id for fn in nodes for n in ast.walk(fn) if isinstance(n, ast.Name)}
+        state = [node for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1
+                 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in read
+                 and node.targets[0].id not in self.ns]
+        exec(compile(ast.Module(body=state + nodes, type_ignores=[]), path, "exec"), self.ns)
 
     def test_registry_uses_layered_categories_and_shared_offset_rules(self):
         import mios_toml
@@ -802,11 +809,27 @@ class TestMonitorRegistry(unittest.TestCase):
     def test_engine_requires_successful_host_json(self):
         for code, value, expected in ((0, '{"host":{"arch":"amd64"}}', True), (1, '{"host":{"arch":"amd64"}}', False),
                                       (0, '{}', False), (0, '[]', False), (0, 'invalid', False)):
+            # Each case is a fresh probe: the monitor caches the answer for its TTL.
+            self.ns["_ENGINE_ONLINE_CACHE"] = None
             with self.subTest(code=code, value=value), self.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], code, value)):
                 self.assertEqual(expected, self.ns["engine_online"]())
         for error in (FileNotFoundError(), subprocess.TimeoutExpired("podman", 2)):
+            self.ns["_ENGINE_ONLINE_CACHE"] = None
             with self.patch.object(subprocess, "run", side_effect=error):
                 self.assertFalse(self.ns["engine_online"]())
+
+    def test_engine_answer_is_cached_for_its_ttl_and_force_reprobes(self):
+        from unittest.mock import Mock
+        self.ns["_ENGINE_ONLINE_CACHE"] = None
+        probe = Mock(return_value=subprocess.CompletedProcess([], 0, '{"host":{"arch":"amd64"}}'))
+        with self.patch.object(subprocess, "run", probe):
+            self.assertTrue(self.ns["engine_online"]())
+        down = Mock(return_value=subprocess.CompletedProcess([], 1, ""))
+        with self.patch.object(subprocess, "run", down):
+            self.assertTrue(self.ns["engine_online"](), "within the TTL the cached answer stands")
+            down.assert_not_called()
+            self.assertFalse(self.ns["engine_online"](force=True), "force probes again")
+            down.assert_called_once()
 
     def test_disabled_invalid_and_closed_ports_are_offline(self):
         from unittest.mock import Mock

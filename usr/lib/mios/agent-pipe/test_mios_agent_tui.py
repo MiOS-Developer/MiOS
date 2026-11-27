@@ -28,7 +28,24 @@ from textual.app import App
 from textual.events import MouseScrollDown
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent
 
-monitor = importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")).load_module()
+def _load_source(name, path):
+    """Load a Python source file that has no .py suffix as module `name`.
+
+    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
+    behaviour (register in sys.modules, then execute) with the supported API.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys as _sys
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
+monitor = _load_source("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py"))
 CLIENTS = [{"name": name, "installed": True, "mcp": name != "aider"}
            for name in ("claude", "codex", "gemini", "copilot", "opencode", "agy", "aider")]
 SNAPSHOT = {"agents": [{"agent_id": "agy:unique", "kind": "agy", "label": "Antigravity · Active Orchestrator", "online": True, "pending": 2},

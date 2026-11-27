@@ -583,8 +583,25 @@ from importlib.machinery import SourceFileLoader
 import subprocess
 
 _SERVER_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-mcp-server")
+def _load_source(name, path):
+    """Load a Python source file that has no .py suffix as module `name`.
+
+    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
+    behaviour (register in sys.modules, then execute) with the supported API.
+    """
+    import importlib.machinery
+    import importlib.util
+    import sys as _sys
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    _sys.modules[name] = module
+    loader.exec_module(module)
+    return module
+
+
 try:
-    _mcp_server_mod = SourceFileLoader("mios_mcp_server", _SERVER_PATH).load_module()
+    _mcp_server_mod = _load_source("mios_mcp_server", _SERVER_PATH)
     _project_agent_card = getattr(_mcp_server_mod, "_project_agent_card", None)
 except Exception:
     _project_agent_card = None
@@ -1260,7 +1277,11 @@ class TestA2AProjectedCard(unittest.TestCase):
             "from unittest.mock import patch\n"
             "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\n"
             "assert not any('agent-pipe' in entry for entry in sys.path)\n"
-            "server = SourceFileLoader('mios_mcp_server', sys.argv[1]).load_module()\n"
+            "_loader = SourceFileLoader('mios_mcp_server', sys.argv[1])\n"
+            "import importlib.util\n"
+            "server = importlib.util.module_from_spec(importlib.util.spec_from_loader('mios_mcp_server', _loader))\n"
+            "sys.modules['mios_mcp_server'] = server\n"
+            "_loader.exec_module(server)\n"
             "key = Ed25519PrivateKey.generate()\n"
             "listing = {'agents': [{'agent_id': 'proof-head', 'kind': 'generic'}]}\n"
             "with patch.object(server, '_agent_relay_call', return_value=listing), \\\n"
