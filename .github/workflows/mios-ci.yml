@@ -116,6 +116,7 @@ jobs:
           # Capture separately: a failed substitution inside dnf's arguments
           # does not make set -e stop before dnf runs with an empty list.
           repos="$(python3 ./tools/ci-suites.py --dnf-repos)"
+          setopts="$(python3 ./tools/ci-suites.py --dnf-setopts)"
           packages="$(python3 ./tools/ci-suites.py --dnf-packages)"
           python_packages="$(python3 ./tools/ci-suites.py --python-packages)"
           set -f
@@ -124,7 +125,7 @@ jobs:
             dnf install -y $repos
           fi
           # shellcheck disable=SC2086
-          dnf install -y --setopt=install_weak_deps=False $packages
+          dnf install -y --setopt=install_weak_deps=False $setopts $packages
           # shellcheck disable=SC2086
           python3 -m pip install --quiet --disable-pip-version-check $python_packages
 

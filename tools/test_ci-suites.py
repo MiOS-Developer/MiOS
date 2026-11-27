@@ -212,6 +212,26 @@ class TestFedoraProvisioning(unittest.TestCase):
             with self.assertRaises(ValueError):
                 MOD.fedora_arguments(_ROOT, fedora, "--dnf-repos")
 
+    def test_repo_includepkgs_become_dnf_setopts(self):
+        fedora = {"repos": [], "package_sets": ["dev"], "packages": [],
+                  "repo_includepkgs": {"vendor-prod": ["tool", "tool-extra"], "other": ["one"]}}
+        self.assertEqual(["--setopt=vendor-prod.includepkgs=tool,tool-extra",
+                          "--setopt=other.includepkgs=one"],
+                         self._args("--dnf-setopts", fedora=fedora))
+        self.assertEqual([], self._args("--dnf-setopts"))
+        for bad in ("not a table", {"vendor": []}, {"vendor": "tool"}, {"vendor": ["two words"]},
+                    {"vendor": ["a,b"]}, {"vendor": ["a=b"]}, {"ven.dor": ["tool"]},
+                    {"--repo": ["tool"]}, {"vendor": ["--nogpgcheck"]}):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                self._args("--dnf-setopts", fedora=dict(fedora, repo_includepkgs=bad))
+
+    def test_shipped_ssot_keeps_dotnet_off_the_microsoft_repo(self):
+        # Microsoft's repo serves only powershell; .NET (dotnet-sdk-8.0 and its
+        # netstandard-targeting-pack) comes from Fedora.
+        setopts = MOD.fedora_arguments(_ROOT, MOD._load(_ROOT), "--dnf-setopts")
+        self.assertEqual(["--setopt=packages-microsoft-com-prod.includepkgs=powershell"], setopts)
+        self.assertIn("dotnet-sdk-8.0", MOD.fedora_arguments(_ROOT, MOD._load(_ROOT), "--dnf-packages"))
+
     def test_empty_repo_list_is_allowed_but_empty_packages_fail(self):
         self.assertEqual([], self._args("--dnf-repos"))
         with self.assertRaises(ValueError):
@@ -245,6 +265,7 @@ class TestFedoraProvisioning(unittest.TestCase):
             py.write_text("#!/bin/sh\n"
                           'case "$*" in\n'
                           '*--dnf-repos) exit 0;;\n'
+                          '*--dnf-setopts) echo --setopt=vendor.includepkgs=tool;;\n'
                           '*--dnf-packages) echo compiler;;\n'
                           '*--python-packages) echo pyflakes;;\n'
                           '*"-m pip install"*) exit 0;;\n'
@@ -258,7 +279,9 @@ class TestFedoraProvisioning(unittest.TestCase):
             result = subprocess.run(["bash", "-c", script], env=env,
                                     capture_output=True, text=True, cwd=_ROOT)
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(["install -y --setopt=install_weak_deps=False compiler"],
+            # The SSOT's per-repo package limits reach the package install.
+            self.assertEqual(["install -y --setopt=install_weak_deps=False "
+                              "--setopt=vendor.includepkgs=tool compiler"],
                              Path(marker).read_text().splitlines())
 
     @unittest.skipIf(os.name == "nt", "POSIX provisioning shell control")

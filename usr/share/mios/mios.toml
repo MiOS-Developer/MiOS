@@ -19430,6 +19430,10 @@ package_sets = ["devcontainer", "tmux-desktop-build"]  # the second builds the s
 # Repo-config RPMs installed before any package. Fedora does not package
 # PowerShell; Microsoft's repository does, floating, as it documents for Fedora.
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
+# The only packages dnf may take from each repo that `repos` adds (repo id -> names). Microsoft's RHEL repo
+# also publishes .NET builds that outrank Fedora's, and rpm on Fedora 45 rejects one of them
+# (netstandard-targeting-pack-2.1: "does not verify: no digest"), so .NET stays Fedora's.
+repo_includepkgs = { "packages-microsoft-com-prod" = ["powershell"] }
 # CI-only extras the harness needs beyond that set: sandbox tests (bubblewrap),
 # composefs sealing (mkcomposefs, composefs-info), unit verification
 # (systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
