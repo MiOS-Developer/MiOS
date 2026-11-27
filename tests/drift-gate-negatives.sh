@@ -5376,6 +5376,21 @@ floor   = true' "more than one profile declares floor"
 package_sections = ["devcontainer"]
 
 [profiles.full]' "does not contain the floor"
+    # Package level: the floor (the core image) declares a package the full image
+    # never installs, because the section carrying it is enable = false. Two edits.
+    python3 - "$toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+for old, new in (('[profiles.core]\n', '[packages.devloop-planted-section]\nenable = false\npkgs = ["devloop-planted-pkg"]\n\n[profiles.core]\n'),
+                 ('package_sections = ["repos", "base",', 'package_sections = ["devloop-planted-section", "repos", "base",')):
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+open(p, "w", encoding="utf-8").write(s)
+PY
+    if _neg_gate check_profile_integrity; then cp "$bak" "$toml"; rm -f "$bak"; die "check_profile_integrity passed with devloop-planted-pkg planted"; fi
+    case "$_NEG_GATE_OUT" in *"devloop-planted-pkg"*) : ;; *) cp "$bak" "$toml"; rm -f "$bak"; die "check_profile_integrity did not name devloop-planted-pkg: $_NEG_GATE_OUT";; esac
+    cp "$bak" "$toml"
     rm -f "$bak"; unset -f _pi_plant
     _neg_gate check_profile_integrity || die "check_profile_integrity failed after restoration: $_NEG_GATE_OUT"
     log "check_profile_integrity negative test passed"

@@ -8640,6 +8640,12 @@ description = "adw-gtk3 theme extension (light variant, kept for apps that auto-
 
 [image]
 ref            = "ghcr.io/mios-developer/mios:latest"
+# The core profile ([profiles.core]) of the SAME pipeline run, published by CI's
+# build-core job beside `ref`. A cloud host whose container store is below
+# [deployment.cloud].min_free_gb but at or above core_min_free_gb runs this
+# instead of `ref` (.devcontainer/cloud-shell/bootstrap.sh preflight); its
+# devcontainer is built FROM it unchanged. Design: docs/research/spike-core-image-profile-cloud.md.
+core_ref       = "ghcr.io/mios-developer/mios:core"
 branch         = "main"
 # Base OCI image. The script auto-picks NVIDIA vs non-NVIDIA at install
 # time based on detected GPU; both variants are listed here so operators
@@ -8722,6 +8728,13 @@ wrapper       = "/usr/local/bin/mios-dev"
 # root Containerfile with MIOS_BAKE_BOUND_IMAGES=0 (the CI validation build) needs
 # build_free_gb more; the full bake with bound images needs a self-managed host.
 min_free_gb   = 80
+# Below min_free_gb the preflight falls back to the core profile ([image].core_ref)
+# when the store holds at least this much: the base image (2.5 GB compressed) plus
+# the core sections' RPMs (912 MiB download, measured 2026-11-21 on fedora-bootc:44),
+# the native catalog and the Rust toolchain, no bound images. An estimate from
+# measured parts until CI's first core bake is measured; the preflight reads it,
+# so correcting it is an SSOT edit. A Claude Code cloud VM measured 57 GB free.
+core_min_free_gb = 25
 build_free_gb = 50
 
 [deployment.cloud.overlay.ai]
@@ -20138,17 +20151,21 @@ default = "full"
 [profiles.core]
 floor            = true
 summary          = "the smallest MiOS that is still MiOS: SSOT, miosd, agent-pipe, the datastore, the verbs"
+# Published as [image].core_ref; the cloud kind takes it where the store cannot
+# hold the full image ([deployment.cloud].core_min_free_gb).
+targets          = ["cloud"]
 package_sections = ["repos", "base", "containers", "build-toolchain", "self-build", "utils", "ai", "critical"]
 phases           = ["system-files-overlay", "materialize-build-ctx", "repos", "locale-theme",
                     "user", "hostname", "subuid-alloc", "generate-quadlets", "render-quadlets",
                     "render-ports", "services", "mios-dropin-fanout", "tools", "finalize",
                     "cleanup", "ssot-lint", "drift-checks", "postcheck"]
 
-# Every image kind is the full image: a devcontainer, Codespace or cloud
-# environment runs [image].ref itself (.devcontainer/Containerfile adds only
-# container wiring), so no kind gets a subset. A cloud deployment skips runtime
-# model pulls and desktop installs by configuration ([deployment.cloud]), not by
-# a different build.
+# Every image kind is the full image by default: a devcontainer, Codespace or
+# cloud environment runs [image].ref itself (.devcontainer/Containerfile adds
+# only container wiring). The one exception is a cloud store too small for it,
+# which runs the core profile's image of the SAME pipeline ([image].core_ref);
+# the rest degrades open. A cloud deployment skips runtime model pulls and
+# desktop installs by configuration ([deployment.cloud]), not by a different build.
 [profiles.full]
 summary = "every enabled section and every registered phase"
 all     = true

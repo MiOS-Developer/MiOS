@@ -1276,7 +1276,8 @@ class TestCloudContainerAccountReuse(unittest.TestCase):
     def _run(self, container_image="sha256:current", account=True, uid="1000", configured="user", config=None):
         source = _read(os.path.join(ROOT, ".devcontainer/cloud-shell/bootstrap.sh"))
         functions = "\n".join(re.search(rf"(?ms)^{name}\(\) \{{.*?^\}}", source).group(0)
-                              for name in ("dc_user", "container_account", "up"))
+                              # selected_ref: up() builds FROM the image the preflight recorded (or [image].ref).
+                              for name in ("dc_user", "container_account", "selected_ref", "up"))
         with tempfile.TemporaryDirectory(prefix="mios-cloud-account-") as tmp:
             fixture = os.path.join(tmp, "devcontainer.json")
             Path(fixture).write_text(json.dumps(

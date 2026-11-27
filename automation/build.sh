@@ -126,6 +126,10 @@ if ! BUILD_PROFILE_SECTIONS="$(MIOS_ROOT="$_mios_root" "$_miosd" build --section
     exit 1
 fi
 export BUILD_PROFILE_SECTIONS
+# The profile this bake IS, for 88-finalize's record in /usr/lib/mios/version
+# (mios-gate image-equivalence reads it back as MIOS_PROFILES_DEFAULT). Empty
+# when none was requested: the record then carries the resolved [profiles].default.
+export BUILD_PROFILE="${_requested_profile}"
 _phase_list="$(mktemp)"
 if ! MIOS_ROOT="$_mios_root" "$_miosd" build --list "${_profile_args[@]}" >"$_phase_list"; then
     printf '[FAIL] Native build registry could not resolve selected profile\n' >&2

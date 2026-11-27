@@ -501,6 +501,175 @@ jobs:
               cosign sign --yes "$tag"
           done <<< "${{ steps.meta.outputs.tags }}"
 
+  # The core profile of the SAME pipeline run ([profiles.core], the floor every
+  # profile contains): the root Containerfile with MIOS_PROFILES_DEFAULT set to
+  # it and no bound images (ruling Q1: only the full image bakes them). Published
+  # as [image].core_ref beside [image].ref; a cloud host whose container store
+  # cannot hold the full image runs this one (.devcontainer/cloud-shell/bootstrap.sh
+  # preflight, [deployment.cloud].core_min_free_gb). Design:
+  # docs/research/spike-core-image-profile-cloud.md.
+  build-core:
+    needs: [drift-gate, portal-artifact]
+    if: ${{ !cancelled() && needs.drift-gate.result == 'success' && needs.portal-artifact.result == 'success' }}
+    runs-on: ubuntu-24.04
+    env:
+      MIOS_VENDOR_TOML: ${{ github.workspace }}/usr/share/mios/mios.toml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Provision the container runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y podman skopeo shellcheck
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_prepare_storage
+
+      - name: Resolve the core profile, its ref and the image tag
+        id: core
+        # Everything from the SSOT: the floor profile's name ([profiles].<p>.floor = true),
+        # the ref it is published as ([image].core_ref) and the tag that ref carries. A
+        # core_ref outside [image].name is a broken SSOT, refused before the bake.
+        run: |
+          set -euo pipefail
+          source ./tools/lib/ci-runtime.sh
+          profile="$(python3 -c '
+          import tomllib
+          p = tomllib.load(open("usr/share/mios/mios.toml", "rb"))["profiles"]
+          print(next(k for k, v in p.items() if isinstance(v, dict) and v.get("floor") is True))')"
+          core_ref="$(./usr/libexec/mios/mios-toml-get --vendor image core_ref)"
+          name="$(./usr/libexec/mios/mios-toml-get --vendor image name)"
+          [[ -n "$profile" && -n "$core_ref" && "$core_ref" == "$name":* ]] \
+              || { echo "::error::SSOT image.core_ref ($core_ref) is not a tag of image.name ($name), or no floor profile" >&2; exit 1; }
+          echo "profile=${profile}" >> "$GITHUB_OUTPUT"
+          echo "core_tag=${core_ref##*:}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$(mios_ci_image_tag .)" >> "$GITHUB_OUTPUT"
+          echo "Building profile ${profile} as ${core_ref}"
+
+      - name: Sign in to the base-image registry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$GH_TOKEN" | sudo podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Download the verified Portal build context
+        # The ctx stage COPYs it for every profile; the portal phase itself is outside core.
+        uses: actions/download-artifact@v4
+        with:
+          name: mios-portal-build-context
+          path: .staged-portal
+
+      - name: Verify the downloaded Portal artifact against this source
+        run: |
+          source tools/lib/ci-runtime.sh
+          mios_ci_verify_portal . .staged-portal
+
+      - name: Build the core OCI image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
+          [[ -n "$BASE_IMAGE" ]] || { echo "::error::SSOT image.base is empty" >&2; exit 1; }
+          SOURCE_DATE_EPOCH=$(git -C "$GITHUB_WORKSPACE" log -1 --format=%ct 2>/dev/null || date +%s)
+          export SOURCE_DATE_EPOCH
+          sudo --preserve-env=GITHUB_TOKEN TMPDIR=/mnt/tmp SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" podman build \
+              --secret id=mios_github_token,env=GITHUB_TOKEN \
+              --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+              --build-arg "MIOS_PROFILES_DEFAULT=${{ steps.core.outputs.profile }}" \
+              --build-arg MIOS_BAKE_BOUND_IMAGES=0 \
+              --build-arg SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" \
+              --device /dev/fuse \
+              --cap-add all \
+              --security-opt seccomp=unconfined \
+              --security-opt apparmor=unconfined \
+              --retry 5 --retry-delay 3s \
+              -f Containerfile \
+              -t "localhost/mios:${{ steps.core.outputs.core_tag }}" \
+              .
+
+      - name: Image is bootc-switchable and records its profile
+        # 88-finalize writes MIOS_PROFILES_DEFAULT into /usr/lib/mios/version; a core
+        # image that claims to be the full one, or claims nothing, is not published.
+        run: |
+          set -euo pipefail
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_verify_bootc_labels "localhost/mios:${{ steps.core.outputs.core_tag }}"
+          recorded="$(sudo podman run --rm --entrypoint cat "localhost/mios:${{ steps.core.outputs.core_tag }}" /usr/lib/mios/version \
+              | sed -n 's/^MIOS_PROFILES_DEFAULT=//p')"
+          [[ "$recorded" == "${{ steps.core.outputs.profile }}" ]] \
+              || { echo "::error::image records profile '${recorded}', built as '${{ steps.core.outputs.profile }}'" >&2; exit 1; }
+          echo "profile recorded: ${recorded}"
+          sudo podman image inspect "localhost/mios:${{ steps.core.outputs.core_tag }}" --format 'core image size: {{.Size}} bytes'
+
+      - name: Resolve the registry tags
+        id: meta
+        if: env.PUBLISH == 'true' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          source ./tools/lib/ci-runtime.sh
+          mios_ci_registry_host . >/dev/null
+          BASE="${MIOS_IMAGE_NAME}"
+          CORE="${{ steps.core.outputs.core_tag }}"
+          TAGS=()
+          if [[ "${{ github.ref }}" == "refs/heads/main" || "${{ github.ref }}" == refs/tags/v* ]]; then
+              TAGS+=("${BASE}:${CORE}")
+          fi
+          TAGS+=("${BASE}:${CORE}-${{ steps.core.outputs.image_tag }}")
+          {
+              echo "tags<<TAGLIST"
+              printf '%s\n' "${TAGS[@]}"
+              echo "TAGLIST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Push the core image
+        if: env.PUBLISH == 'true' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          source ./tools/lib/ci-runtime.sh
+          REG_HOST="$(mios_ci_registry_host .)"
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+              sudo podman login -u "${{ github.actor }}" --password-stdin "${REG_HOST}"
+          while IFS= read -r tag; do
+              [[ -z "$tag" ]] && continue
+              sudo podman tag "localhost/mios:${{ steps.core.outputs.core_tag }}" "$tag"
+              sudo podman push "$tag"
+              echo "Pushed: $tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+      - name: Install cosign
+        if: env.PUBLISH == 'true' && github.event_name != 'pull_request'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign every pushed core tag
+        if: env.PUBLISH == 'true' && github.event_name != 'pull_request'
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          set -euo pipefail
+          source ./tools/lib/ci-runtime.sh
+          REG_HOST="$(mios_ci_registry_host .)"
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+              cosign login "${REG_HOST}" -u "${{ github.actor }}" --password-stdin
+          while IFS= read -r tag; do
+              [[ -z "$tag" ]] && continue
+              cosign sign --yes "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
+
   # Builds the image and checks its MiOS components on every push, alongside
   # drift-gate rather than after it, so a red source gate cannot hide whether
   # the image builds. Publishing stays in `build`, which still needs drift-gate.

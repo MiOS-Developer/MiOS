@@ -2,6 +2,8 @@
 # AI-hint: Two-sided tests for the cloud/container overlay: bootstrap.sh renders [deployment.cloud.overlay] as a host drop-in, the resolver merges it, and the first-boot model pullers and flatpak installer then do nothing; without it they run as before. gce-up's Fedora CoreOS node: its Ignition config bootc-switches the VM to [image].ref.
 # AI-related: .devcontainer/cloud-shell/bootstrap.sh, usr/share/mios/mios.toml, usr/libexec/mios/mios-ai-firstboot, usr/libexec/mios/mios-models-firstboot, usr/libexec/mios/mios-bound-images-firstboot, usr/libexec/mios-flatpak-install
 # AI-functions: TestOverlayRender, TestFirstbootPulls, TestFlatpakInstall, TestCloudScripts, TestSshCert, TestGceNode
+# The preflight's choice between [image].ref and [image].core_ref is two-sided here: planted free-space
+# thresholds pick the full image, the core image, or fail naming both; `status` names the chosen one.
 """Each consumer runs from a copy whose absolute state paths point into a temp
 dir, with network and package tools replaced by stubs that log their calls. The
 SSOT values come from the real resolver (usr/libexec/mios/mios-toml-get) reading
@@ -511,15 +513,30 @@ class TestCloudScripts(unittest.TestCase):
                 self.assertNotIn(ref, text, "the image ref comes from [image].ref")
                 self.assertNotIn("machine-os", text, "every cloud path runs the MiOS image, never the CI harness")
 
-    def test_preflight_measures_the_store_against_the_ssot(self):
-        """Free space in the runtime's store below [deployment.cloud].min_free_gb fails, naming both
-        numbers; a requirement the disk meets passes. Planted values make it two-sided on any disk."""
+    FULL_LINE = "min_free_gb   = 80"
+    CORE_LINE = "core_min_free_gb = 25"
+    BUILD_LINE = "build_free_gb = 50"
+
+    def _plant_thresholds(self, text, full, core, build=None):
+        """The SSOT text with [deployment.cloud]'s three free-space thresholds replaced. Each
+        line is asserted unique so a reworded SSOT fails here instead of planting nothing."""
+        pairs = [(self.FULL_LINE, f"min_free_gb   = {full}"), (self.CORE_LINE, f"core_min_free_gb = {core}")]
+        if build is not None:
+            pairs.append((self.BUILD_LINE, f"build_free_gb = {build}"))
+        for line, planted in pairs:
+            self.assertEqual(1, text.count(line), line)
+            text = text.replace(line, planted)
+        return text
+
+    def _preflight_fixture(self):
+        """A checkout copy, a podman stub reporting a temp store that holds no image, and the
+        env that points bootstrap.sh at them. Returns (fixture root, store, state dir, env, text)."""
         tmp = tempfile.mkdtemp(prefix="cloud-preflight-")
         self.addCleanup(shutil.rmtree, tmp, True)
         store = os.path.join(tmp, "store")
         os.makedirs(store)
         _write(os.path.join(tmp, "bin/podman"),
-               f'#!/bin/sh\ncase "$1" in info) echo "{store}" ;; image) exit 1 ;; esac\n', 0o755)
+               f'#!/bin/sh\ncase "$1" in info) echo "{store}" ;; image|container) exit 1 ;; esac\n', 0o755)
         fx = os.path.join(tmp, "MiOS")
         for rel in (".devcontainer/cloud-shell/bootstrap.sh", "usr/libexec/mios/mios-toml-get",
                     "usr/lib/mios/mios_toml.py"):
@@ -527,25 +544,67 @@ class TestCloudScripts(unittest.TestCase):
             shutil.copy(os.path.join(ROOT, rel), os.path.join(fx, rel))
         with open(SSOT, encoding="utf-8") as fh:
             text = fh.read()
-        line = "min_free_gb   = 80"
-        self.assertEqual(1, text.count(line))
+        state = os.path.join(tmp, "state")
         env = dict(os.environ, PATH=os.path.join(tmp, "bin") + os.pathsep + os.environ["PATH"],
-                   MIOS_DEPLOYMENT_CLOUD_RUNTIME="podman", MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY=os.path.join(tmp, "state"))
+                   MIOS_DEPLOYMENT_CLOUD_RUNTIME="podman", MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY=state)
         env.pop("MIOS_TOML_ROOT", None)
+        return fx, store, state, env, text
+
+    def test_preflight_measures_the_store_against_the_ssot(self):
+        """Free space in the runtime's store below [deployment.cloud].min_free_gb AND
+        core_min_free_gb fails, naming both numbers and both images; a requirement the disk
+        meets passes. Planted values make it two-sided on any disk."""
+        fx, store, state, env, text = self._preflight_fixture()
         for want, rc in ((999999, 1), (0, 0)):
             with self.subTest(want=want):
-                _write(os.path.join(fx, "usr/share/mios/mios.toml"), text.replace(line, f"min_free_gb   = {want}"))
+                _write(os.path.join(fx, "usr/share/mios/mios.toml"), self._plant_thresholds(text, want, want))
                 r = subprocess.run(["bash", os.path.join(fx, ".devcontainer/cloud-shell/bootstrap.sh"), "preflight"],
                                    capture_output=True, text=True, env=env)
                 self.assertEqual(rc, r.returncode, r.stdout + r.stderr)
                 if rc:
                     self.assertIn(f"{want} GB needed", r.stderr)
+                    self.assertIn(f"{want} GB for the core profile", r.stderr)
                     self.assertIn(store, r.stderr)
+                    self.assertTrue(os.path.isfile(os.path.join(state, "preflight.failed")))
+                    self.assertFalse(os.path.exists(os.path.join(state, "image.ref")))
+
+    def test_preflight_picks_the_core_image_when_only_it_fits(self):
+        """Three planted stores: room for the full image picks [image].ref; room for the core
+        profile only picks [image].core_ref and says so; room for neither fails (above). The
+        choice is recorded in $STATE/image.ref and `status` names that image and its profile,
+        so `mios-dev status` says which image a session runs."""
+        with open(SSOT, "rb") as fh:
+            image = tomllib.load(fh)["image"]
+        full_ref, core_ref = image["ref"], image["core_ref"]
+        self.assertNotEqual(full_ref, core_ref)
+        fx, store, state, env, text = self._preflight_fixture()
+        script = os.path.join(fx, ".devcontainer/cloud-shell/bootstrap.sh")
+        cases = (("full", 0, 0, full_ref), ("core-only", 999999, 0, core_ref), ("full-over-core", 0, 999999, full_ref))
+        for name, full, core, want_ref in cases:
+            with self.subTest(name):
+                shutil.rmtree(state, True)
+                _write(os.path.join(fx, "usr/share/mios/mios.toml"), self._plant_thresholds(text, full, core))
+                r = subprocess.run(["bash", script, "preflight"], capture_output=True, text=True, env=env)
+                self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+                with open(os.path.join(state, "image.ref"), encoding="utf-8") as fh:
+                    self.assertEqual(want_ref, fh.read().strip())
+                profile = "core" if want_ref == core_ref else "full"
+                self.assertIn(f"image: {want_ref} (the {profile} profile)", r.stderr)
+                if profile == "core":
+                    self.assertIn("holds the core profile", r.stderr)
+                    self.assertIn(f"not the full image ({full} GB)", r.stderr)
+                s = subprocess.run(["bash", script, "status"], capture_output=True, text=True, env=env)
+                self.assertEqual(3, s.returncode, s.stdout + s.stderr)
+                self.assertIn(f"MiOS image {want_ref} (the {profile} profile) is not pulled", s.stdout)
+                other = full_ref if want_ref == core_ref else core_ref
+                self.assertNotIn(other, s.stdout, "status must name only the chosen image")
 
     def _claude_code_fixture(self, min_free_gb):
-        """A MiOS checkout copy whose SSOT plants min_free_gb, a runtime stub that reports a
-        temp store and holds no image, and tailscale stubs so the tailnet step fails fast
-        and installs nothing. Returns (fixture root, env, stub log, state dir, wrapper)."""
+        """A MiOS checkout copy whose SSOT plants min_free_gb (and the core profile's
+        core_min_free_gb, the same value, so the fallback cannot turn a planted failure
+        into a core pull), a runtime stub that reports a temp store and holds no image,
+        and tailscale stubs so the tailnet step fails fast and installs nothing.
+        Returns (fixture root, env, stub log, state dir, wrapper)."""
         tmp = tempfile.mkdtemp(prefix="cloud-claude-code-")
         self.addCleanup(shutil.rmtree, tmp, True)
         store = os.path.join(tmp, "store")
@@ -564,12 +623,9 @@ class TestCloudScripts(unittest.TestCase):
             shutil.copy(os.path.join(ROOT, rel), os.path.join(fx, rel))
         with open(SSOT, encoding="utf-8") as fh:
             text = fh.read()
-        # Both planted: the builder config adds build_free_gb, and a CI runner's free
+        # All three planted: the builder config adds build_free_gb, and a CI runner's free
         # space must not decide the passing case.
-        for line in ("min_free_gb   = 80", "build_free_gb = 50"):
-            self.assertEqual(1, text.count(line))
-        text = text.replace("min_free_gb   = 80", f"min_free_gb   = {min_free_gb}").replace("build_free_gb = 50", "build_free_gb = 0")
-        _write(os.path.join(fx, "usr/share/mios/mios.toml"), text)
+        _write(os.path.join(fx, "usr/share/mios/mios.toml"), self._plant_thresholds(text, min_free_gb, min_free_gb, 0))
         state = os.path.join(tmp, "state")
         wrapper = os.path.join(tmp, "bin-local/mios-dev")
         env = dict(os.environ, PATH=os.path.join(tmp, "bin") + os.pathsep + os.environ["PATH"], STUB_LOG=log,

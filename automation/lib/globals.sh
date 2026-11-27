@@ -1249,6 +1249,7 @@ _mios_input MIOS_IDENTITY_USERNAME MIOS_USER MIOS_DEFAULT_USER || { return 1 2>/
 [ -n "${MIOS_DEFAULT_USER+x}" ] || MIOS_DEFAULT_USER="${MIOS_IDENTITY_USERNAME:-}"
 : "${MIOS_DEPLOYMENT_CLOUD_BUILDER:=1}"
 : "${MIOS_DEPLOYMENT_CLOUD_BUILD_FREE_GB:=50}"
+: "${MIOS_DEPLOYMENT_CLOUD_CORE_MIN_FREE_GB:=25}"
 : "${MIOS_DEPLOYMENT_CLOUD_DROPIN:=/etc/mios/mios.d/50-cloud.toml}"
 : "${MIOS_DEPLOYMENT_CLOUD_GCE_AUTH_FILE:=/etc/ostree/auth.json}"
 : "${MIOS_DEPLOYMENT_CLOUD_GCE_BOOT_DISK_GB:=250}"
@@ -1288,6 +1289,7 @@ _mios_input MIOS_IDENTITY_USERNAME MIOS_USER MIOS_DEFAULT_USER || { return 1 2>/
 [ -n "${MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_KEYRING+x}" ] || MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_KEYRING='https://pkgs.tailscale.com/stable/{id}/{codename}.noarmor.gpg'
 [ -n "${MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_LIST+x}" ] || MIOS_DEPLOYMENT_CLOUD_TAILNET_APT_LIST='https://pkgs.tailscale.com/stable/{id}/{codename}.tailscale-keyring.list'
 : "${MIOS_DEPLOYMENT_CLOUD_TAILNET_DNF_REPO:=https://pkgs.tailscale.com/stable/fedora/tailscale.repo}"
+: "${MIOS_DEPLOYMENT_CLOUD_WRAPPER:=/usr/local/bin/mios-dev}"
 : "${MIOS_DEPLOYMENT_TARGET_AMI:=false}"
 : "${MIOS_DEPLOYMENT_TARGET_ANACONDA_ISO:=true}"
 : "${MIOS_DEPLOYMENT_TARGET_GCE:=false}"
@@ -4675,6 +4677,7 @@ _mios_input MIOS_ROUTING_PREFILTER_CONVERSATIONAL_BYPASS_MODE MIOS_PREFILTER_CON
 : "${MIOS_PROFILES_CORE_PACKAGE_SECTIONS:=repos,base,containers,build-toolchain,self-build,utils,ai,critical}"
 : "${MIOS_PROFILES_CORE_PHASES:=system-files-overlay,materialize-build-ctx,repos,locale-theme,user,hostname,subuid-alloc,generate-quadlets,render-quadlets,render-ports,services,mios-dropin-fanout,tools,finalize,cleanup,ssot-lint,drift-checks,postcheck}"
 : "${MIOS_PROFILES_CORE_SUMMARY:=the smallest MiOS that is still MiOS: SSOT, miosd, agent-pipe, the datastore, the verbs}"
+: "${MIOS_PROFILES_CORE_TARGETS:=cloud}"
 : "${MIOS_PROFILES_DEFAULT:=full}"
 : "${MIOS_PROFILES_FULL_ALL:=true}"
 : "${MIOS_PROFILES_FULL_SUMMARY:=every enabled section and every registered phase}"

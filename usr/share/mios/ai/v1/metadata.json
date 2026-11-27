@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4386,
-  "total_metadata_entries": 3514,
-  "total_hints": 3508,
-  "total_functions_indexed": 2299,
-  "total_related_links": 7155,
+  "total_files_scanned": 4387,
+  "total_metadata_entries": 3515,
+  "total_hints": 3509,
+  "total_functions_indexed": 2302,
+  "total_related_links": 7166,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -3485,6 +3485,26 @@
       "has_shebang": false
     },
     {
+      "path": "docs/research/spike-core-image-profile-cloud.md",
+      "hint": "Research spike deciding what the MiOS core image profile contains, measuring its size budget against a Claude Code cloud VM's container store, and recording the pipeline, preflight and gate work that ships it.",
+      "related": [
+        "usr/share/mios/mios.toml ([profiles.core] [image].core_ref [deployment.cloud].core_min_free_gb)",
+        "Containerfile",
+        "automation/build.sh",
+        "automation/88-finalize.sh",
+        ".devcontainer/cloud-shell/bootstrap.sh",
+        "src/mios-rs/mios-gate/src/profiles.rs",
+        ".github/workflows/mios-ci.yml",
+        "tests/test-cloud-overlay.py",
+        "tests/drift-gate-negatives.sh",
+        "usr/share/doc/mios/adr/0025-core-image-profile.md"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "xml",
+      "has_shebang": false
+    },
+    {
       "path": "docs/research/spike-vscode-edge-to-edge-terminal.md",
       "hint": "Research spike on why the VS Code edge-to-edge terminal styling kept reverting on remote hosts, and the dotfiles projection fix.",
       "related": [],
@@ -4923,15 +4943,19 @@
     },
     {
       "path": "src/mios-rs/mios-gate/src/profiles.rs",
-      "hint": "Asserts mios.toml [profiles] (ADR-0025) is closed: every profile resolves without a cycle, names only registered phases and real [packages] sections, contains the one floor = true profile, and every profile's targets is a list of image kinds.",
+      "hint": "Asserts mios.toml [profiles] (ADR-0025) is closed: every profile resolves without a cycle, names only registered phases and real [packages] sections, contains the one floor = true profile, every profile's targets is a list of image kinds, and every package the floor declares (its sections' pkgs plus their requires_sections closure) is one every other profile's image installs -- so the core image ([image].core_ref) is a subset of the full one.",
       "related": [
         "usr/share/mios/mios.toml",
         "src/mios-rs/mios-build/src/lib.rs",
+        "automation/lib/packages.sh",
         "automation/98-drift-checks.sh",
         "tests/drift-gate-negatives.sh"
       ],
       "functions": [
-        "check"
+        "check",
+        "Sections::closure",
+        "declared_packages",
+        "installed_packages"
       ],
       "doc": null,
       "comment_style": "slash",

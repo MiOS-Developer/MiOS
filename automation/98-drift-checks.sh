@@ -4882,7 +4882,7 @@ check_profile_integrity() {
     fi
     local out
     if out="$("$bin" profile-integrity --root "$ROOT" 2>&1)"; then
-        echo "[98-drift-checks]   every [profiles] entry resolves over registered phases and real sections, contains the floor, and every target is declared"
+        echo "[98-drift-checks]   every [profiles] entry resolves over registered phases and real sections, contains the floor (whose declared packages every other profile's image installs), and every target is declared"
     else
         _violations_from "" "$out"
     fi
