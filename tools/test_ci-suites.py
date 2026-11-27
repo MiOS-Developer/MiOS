@@ -181,7 +181,7 @@ class TestFedoraProvisioning(unittest.TestCase):
                          self._args("--dnf-packages"))
 
     def test_all_exporter_entrypoints_work_with_the_shipped_ssot(self):
-        for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
+        for option in ("--dnf-repos", "--dnf-options", "--dnf-packages", "--fedora-image"):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(0, MOD.main([option]), option)
             self.assertTrue(out.getvalue().strip(), option)
@@ -217,9 +217,49 @@ class TestFedoraProvisioning(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._args("--dnf-packages", fedora={"repos": [], "package_sets": [], "packages": []})
 
+    def test_repo_excludes_become_scoped_setopts(self):
+        fedora = {"repos": [], "package_sets": ["dev"], "packages": [],
+                  "repo_excludepkgs": {"vendor-prod": ["sdk*", "rt*", "sdk*"],
+                                       "alpha": ["x"]}}
+        self.assertEqual(["--setopt=alpha.excludepkgs=x",
+                          "--setopt=vendor-prod.excludepkgs=sdk*,rt*"],
+                         self._args("--dnf-options", fedora=fedora))
+        self.assertEqual([], self._args("--dnf-options"))
+        for table in ("dotnet*", {"bad id": ["x"]}, {"r": []}, {"r": ["a,b"]},
+                      {"r": ["a=b"]}, {"r": "dotnet*"}, {"-r": ["x"]}):
+            with self.assertRaises(ValueError, msg=repr(table)):
+                self._args("--dnf-options", fedora=dict(fedora, repo_excludepkgs=table))
+
+    def test_shipped_microsoft_repo_cannot_supply_dotnet(self):
+        # The Microsoft repository exists for powershell only; its .NET packs
+        # (netstandard-targeting-pack-2.1 has no digest) must resolve from Fedora.
+        ci = MOD._load(_ROOT)
+        opts = MOD.fedora_arguments(_ROOT, ci, "--dnf-options")
+        ms = [o for o in opts if o.startswith("--setopt=packages-microsoft-com-prod.excludepkgs=")]
+        self.assertEqual(1, len(ms), opts)
+        patterns = ms[0].split("=", 2)[2].split(",")
+        import fnmatch
+        pkgs = MOD.fedora_arguments(_ROOT, ci, "--dnf-packages")
+        for name in ("netstandard-targeting-pack-2.1", "aspnetcore-runtime-8.0",
+                     "dotnet-runtime-10.0", *[p for p in pkgs if p.startswith("dotnet")]):
+            self.assertTrue(any(fnmatch.fnmatchcase(name, p) for p in patterns), name)
+        self.assertFalse(any(fnmatch.fnmatchcase("powershell", p) for p in patterns))
+        self.assertIn("powershell", pkgs)
+
+    def test_check_requires_workflow_to_apply_excludes(self):
+        fedora = MOD._load(_ROOT)["fedora"]
+        wf = Path(_ROOT, ".github/workflows/mios-ci.yml").read_text()
+        self.assertEqual([], MOD.dnf_options_violations(fedora, wf))
+        self.assertEqual([], MOD.dnf_options_violations({}, ""))
+        for mutant in (wf.replace("--dnf-options", "--dnf-gone"),
+                       wf.replace("$options $packages", "$packages")):
+            self.assertEqual(1, len(MOD.dnf_options_violations(fedora, mutant)))
+
     def test_invalid_export_has_no_partial_stdout(self):
-        for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
-            with mock.patch.object(MOD, "_load", return_value={"fedora": {}}), \
+        bad_excludes = {"fedora": {"repo_excludepkgs": {"repo": ["a,b"]}}}
+        for option, ci in (("--dnf-repos", {"fedora": {}}), ("--dnf-packages", {"fedora": {}}),
+                           ("--fedora-image", {"fedora": {}}), ("--dnf-options", bad_excludes)):
+            with mock.patch.object(MOD, "_load", return_value=ci), \
                     contextlib.redirect_stdout(io.StringIO()) as out, \
                     contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertNotEqual(0, MOD.main([option]))
@@ -245,6 +285,7 @@ class TestFedoraProvisioning(unittest.TestCase):
             py.write_text("#!/bin/sh\n"
                           'case "$*" in\n'
                           '*--dnf-repos) exit 0;;\n'
+                          '*--dnf-options) echo --setopt=vendor.excludepkgs=sdk*;;\n'
                           '*--dnf-packages) echo compiler;;\n'
                           '*--python-packages) echo pyflakes;;\n'
                           '*"-m pip install"*) exit 0;;\n'
@@ -258,7 +299,8 @@ class TestFedoraProvisioning(unittest.TestCase):
             result = subprocess.run(["bash", "-c", script], env=env,
                                     capture_output=True, text=True, cwd=_ROOT)
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(["install -y --setopt=install_weak_deps=False compiler"],
+            self.assertEqual(["install -y --setopt=install_weak_deps=False "
+                              "--setopt=vendor.excludepkgs=sdk* compiler"],
                              Path(marker).read_text().splitlines())
 
     @unittest.skipIf(os.name == "nt", "POSIX provisioning shell control")

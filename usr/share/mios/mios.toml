@@ -19432,7 +19432,7 @@ package_sets = ["devcontainer", "tmux-desktop-build"]  # the second builds the s
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
 # CI-only extras the harness needs beyond that set: sandbox tests (bubblewrap),
 # composefs sealing (mkcomposefs, composefs-info), unit verification
-# (systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
+# (systemd-analyze), the lint tier's pwsh and a Fedora-built .NET SDK, and
 # test-ukify-stage's real-compiler tier (ukify + the systemd-boot EFI stub; the
 # image's own kernel is the input), and the real OVMF firmware/descriptor
 # package used by the Xbox firmware regression. A suite that cannot run its live
@@ -19444,11 +19444,24 @@ repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.r
 # (xdg-utils) over isolated XDG dirs whose association caches update-desktop-database
 # (desktop-file-utils) builds.
 # mios-ssh-ca's integration test signs real certificates with ssh-keygen (openssh).
-packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
+# .NET is Fedora's current LTS SDK: Fedora ships no 8.0, and Microsoft's repo may
+# not supply it ([ci.fedora.repo_excludepkgs]); pwsh carries its own runtime.
+packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-10.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
             "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
             "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils",
             "openssh"]
+
+[ci.fedora.repo_excludepkgs]
+# Per-repository package exclusions, keyed by the repo id the [ci.fedora].repos
+# config RPM installs, applied to the package transaction as
+# --setopt=<id>.excludepkgs=... (tools/ci-suites.py --dnf-options). Microsoft's
+# repository supplies only powershell: its .NET packages are refused because
+# its netstandard-targeting-pack-2.1 carries no digest and the job image's rpm
+# rejects it ("does not verify: no digest"). .NET comes from Fedora instead.
+# dnf exits 2 on an id no configured repository matches, so a renamed repo
+# fails the provisioning step rather than silently dropping the exclusion.
+packages-microsoft-com-prod = ["dotnet*", "aspnetcore*", "netstandard*"]
 
 [ci.tiers]
 # Static analysis. No build, no network, no image.

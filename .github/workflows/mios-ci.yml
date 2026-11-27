@@ -106,7 +106,7 @@ jobs:
 
       - name: Provision the analysis toolchain
         # Everything comes from the SSOT: [ci.fedora] names the dnf set (MiOS's
-        # [packages.devcontainer] plus CI-only extras, pwsh from its repo), and
+        # [packages.devcontainer] plus CI-only extras, only pwsh from its repo), and
         # [ci.python] the pip set. pyflakes backs lint-python.sh's undefined-name
         # pass and the rest make agent-pipe/server.py importable; both fail
         # closed under MIOS_DRIFT_REQUIRE_TOOLS=1, so a failed install fails here.
@@ -116,15 +116,23 @@ jobs:
           # Capture separately: a failed substitution inside dnf's arguments
           # does not make set -e stop before dnf runs with an empty list.
           repos="$(python3 ./tools/ci-suites.py --dnf-repos)"
+          # Per-repo excludepkgs: a repo added for one package (powershell)
+          # must not also supply what Fedora ships (.NET).
+          options="$(python3 ./tools/ci-suites.py --dnf-options)"
           packages="$(python3 ./tools/ci-suites.py --dnf-packages)"
           python_packages="$(python3 ./tools/ci-suites.py --python-packages)"
+          # The machine-os /opt is a symlink into /var, which a container does
+          # not populate; RPMs that unpack under /opt (powershell) need its target.
+          if [[ -L /opt && ! -e /opt ]]; then
+            install -d -m 0755 "$(readlink -f /opt)"
+          fi
           set -f
           if [[ -n "$repos" ]]; then
             # shellcheck disable=SC2086
             dnf install -y $repos
           fi
           # shellcheck disable=SC2086
-          dnf install -y --setopt=install_weak_deps=False $packages
+          dnf install -y --setopt=install_weak_deps=False $options $packages
           # shellcheck disable=SC2086
           python3 -m pip install --quiet --disable-pip-version-check $python_packages
 
