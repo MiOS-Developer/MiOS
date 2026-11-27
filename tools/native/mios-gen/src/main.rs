@@ -26,6 +26,7 @@ mod grub;
 mod hypr3d_spawn;
 mod hyprland_build;
 mod tuigreet_build;
+mod usb_storage;
 use render::desktop_boot;
 mod device_forwarding;
 mod global_bindings;
@@ -765,6 +766,15 @@ enum Commands {
     },
 
     /// Renders usr/lib/tuned/profiles/<name>/tuned.conf from mios.toml [host.tuning.profiles]
+    /// Render the USB mass-storage power rule from [hardware.storage_link].usb_storage_autosuspend.
+    #[command(name = "render-usb-storage")]
+    RenderUsbStorage {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Fail when the committed rule is stale instead of writing it.
+        #[arg(long)]
+        check: bool,
+    },
     #[command(name = "render-tuned")]
     RenderTuned {
         /// Repository root directory
@@ -2421,6 +2431,25 @@ fn main() -> ExitCode {
                     }
                     Err((msg, code)) => Err((msg, code)),
                 },
+            )
+        }
+        Commands::RenderUsbStorage { root, check } => {
+            let r = resolve_root(root);
+            (
+                "render-usb-storage",
+                usb_storage::OUTPUT,
+                usb_storage::run(&r, check)
+                    .map(|changed| {
+                        println!(
+                            "[render-usb-storage] {}",
+                            if changed {
+                                "wrote the USB storage power rule"
+                            } else {
+                                "USB storage power rule is current"
+                            }
+                        )
+                    })
+                    .map_err(|message| (message, 1)),
             )
         }
         Commands::RenderTuned { root, check } => {

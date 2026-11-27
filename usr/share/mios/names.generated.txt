@@ -280,6 +280,7 @@ power.ups.driver  MIOS_POWER_UPS_DRIVER
 power.ups.port  MIOS_POWER_UPS_PORT
 power.ups.desc  MIOS_POWER_UPS_DESC
 hardware.storage_link.critical_roles  MIOS_HARDWARE_STORAGE_LINK_CRITICAL_ROLES
+hardware.storage_link.usb_storage_autosuspend  MIOS_HARDWARE_STORAGE_LINK_USB_STORAGE_AUTOSUSPEND
 hardware.storage_link.nvme_bridges  MIOS_HARDWARE_STORAGE_LINK_NVME_BRIDGES
 hardware.ras.corrected_warn_per_boot  MIOS_HARDWARE_RAS_CORRECTED_WARN_PER_BOOT
 hardware.fan_control.enabled  MIOS_HARDWARE_FAN_CONTROL_ENABLED

@@ -2671,6 +2671,11 @@ desc   = "MiOS Uninterruptible Power Supply"
 # bus-power budget. That warns; it fails when the disk carries a critical role.
 [hardware.storage_link]
 critical_roles = ["root", "swap", "journal"]
+# false: no USB mass-storage device (bulk-only or UAS) is runtime-suspended, so a
+# USB disk under root, swap or the journal is never put to sleep under load.
+# Rendered by `mios-gen render-usb-storage` into
+# usr/lib/udev/rules.d/99-mios-usb-storage-power.rules. true keeps the kernel default.
+usb_storage_autosuspend = false
 # USB-to-NVMe bridges by idVendor:idProduct, with the smartctl -d type that
 # reaches the SSD's NVMe SMART log through them.
 nvme_bridges = [
@@ -20601,6 +20606,9 @@ copy = ["etc/wsl.conf", "usr/lib/wsl.conf"]
 [[generation.sync.steps]]
 id = "llamacpp.light-tiers"
 calls = [{ tool = "mios-gen", args = ["light-tiers", "--root", "{root}"] }]
+[[generation.sync.steps]]
+id = "udev.usb-storage"
+calls = [{ tool = "mios-gen", args = ["render-usb-storage", "--root", "{root}"] }]
 [[generation.sync.steps]]
 id = "quadlets.projection"
 calls = [{ tool = "mios-gen", args = ["pod-quadlets", "--root", "{root}"] }]
