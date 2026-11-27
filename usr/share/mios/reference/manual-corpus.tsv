@@ -9249,8 +9249,9 @@ tests/test-code-server-bake.py	1168	1168	1	16	f6b3a7d3eaf3	STAY	local-scoped		0	
 tests/test-code-server-bake.py	1185	1185	1	13	d1ac60bb3b32	STAY	local-scoped		0				0
 tests/test-code-server-bake.py	1200	1202	3	26	57af2c461610	STAY	midsize-why		0				0
 tests/test-code-server-bake.py	1274	1274	1	11	26a1eb85b9d6	STAY	local-scoped		0				0
-tests/test-code-server-bake.py	1364	1365	2	26	2485ba052f43	STAY	midsize-why		0				0
-tests/test-code-server-bake.py	1382	1382	1	15	325312a4c685	STAY	local-scoped		0				0
+tests/test-code-server-bake.py	1279	1279	1	12	7b19831f1f00	STAY	local-scoped		0				0
+tests/test-code-server-bake.py	1365	1366	2	26	2485ba052f43	STAY	midsize-why		0				0
+tests/test-code-server-bake.py	1383	1383	1	15	325312a4c685	STAY	local-scoped		0				0
 tests/test-composefs-seal.sh	1	3	3	18	486666272846	STAY	ai-header		0				0
 tests/test-composefs-seal.sh	27	27	1	3	1ce5f02a6f9f	STAY	inline-scoped		0				0
 tests/test-composefs-seal.sh	85	85	1	13	f1109c5f1799	STAY	local-scoped		0				0
@@ -22858,8 +22859,9 @@ tools/test_ci-suites.py	420	420	1	11	c8612103f0e5	DROP	generated-artifact		0				
 tools/test_ci-suites.py	430	431	2	22	4865a3b0fcb6	DROP	generated-artifact		0				0
 tools/test_ci-suites.py	760	760	1	11	c2f0d2f9e134	DROP	generated-artifact		0				0
 tools/test_ci-suites.py	844	844	1	10	9d0714a914cc	DROP	generated-artifact		0				0
-tools/test_ci-suites.py	938	938	1	12	5813fe8d54a7	DROP	generated-artifact		0				0
-tools/test_ci-suites.py	1035	1035	1	6	13cf0f410305	DROP	generated-artifact		0				0
+tools/test_ci-suites.py	928	929	2	25	444500dd0aed	DROP	generated-artifact		0				0
+tools/test_ci-suites.py	942	942	1	12	5813fe8d54a7	DROP	generated-artifact		0				0
+tools/test_ci-suites.py	1039	1039	1	6	13cf0f410305	DROP	generated-artifact		0				0
 tools/test_configurator_security.py	1	3	3	27	fa1ffa8c1b56	DROP	generated-artifact		0				0
 tools/test_configurator_security.py	127	127	1	13	0fc0adc511b7	DROP	generated-artifact		0				0
 tools/test_configurator_security.py	129	129	1	11	b70983d6b826	DROP	generated-artifact		0				0
