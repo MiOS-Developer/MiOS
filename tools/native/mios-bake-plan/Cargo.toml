@@ -1,5 +1,5 @@
 # AI-hint: Crate manifest for mios-bake-plan -- the native bake-plan / bound-image resolver.
-# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, automation/85-bake-plan.sh
+# AI-related: tools/native/Cargo.toml, usr/share/mios/mios.toml, automation/85-bake-plan.sh, automation/lib/upstream-latest.sh
 [package]
 name = "mios-bake-plan"
 version.workspace = true
@@ -8,5 +8,7 @@ edition.workspace = true
 [dependencies]
 mios-resolver = { path = "../mios-resolver" }
 regex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 toml.workspace = true
 walkdir.workspace = true

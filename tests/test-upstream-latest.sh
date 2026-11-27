@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AI-hint: Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 59-tools (code-server) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, and that a failed integrity check aborts without installing anything.
-# AI-related: automation/lib/upstream-latest.sh, automation/25-gpu-cdi-toolkits.sh, automation/49-cosign-policy.sh, automation/56-fonts.sh, automation/59-tools.sh, automation/64-bake-fan-control.sh, tools/native/mios-bake-plan/src/latest.rs
+# AI-hint: Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 57-gnome (Bibata), 59-tools (code-server, satty) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, that a [build.pins] release bakes with no REST call, that a planted empty GitHub answer bakes the pin by name, that a release with no pin fails by name, and that a failed integrity check aborts without installing anything.
+# AI-related: automation/lib/upstream-latest.sh, usr/share/mios/mios.toml, automation/25-gpu-cdi-toolkits.sh, automation/49-cosign-policy.sh, automation/56-fonts.sh, automation/57-gnome.sh, automation/59-tools.sh, automation/64-bake-fan-control.sh, tools/native/mios-bake-plan/src/latest.rs
 set -euo pipefail
 ROOT="${MIOS_TEST_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SSOT="${MIOS_TEST_SSOT:-$ROOT/usr/share/mios/mios.toml}"
@@ -31,7 +31,7 @@ fi
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
 export GIT_CONFIG_NOSYSTEM=1 HOME="$T/home"; mkdir -p "$HOME"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$T/git/.insteadOf" GIT_CONFIG_VALUE_0="https://github.com/"
-export MIOS_ROOT="$T/root" MIOS_BAKE_PLAN="$PLAN" MIOS_SBOM_DIR="$T/sbom" MIOS_VERSION_MANIFEST="$T/versions.tsv"
+export MIOS_ROOT="$T/root" MIOS_TOML_ROOT="$T/root" MIOS_BAKE_PLAN="$PLAN" MIOS_SBOM_DIR="$T/sbom" MIOS_VERSION_MANIFEST="$T/versions.tsv"
 export MIOS_UL_RETRY_DELAY=0
 # Hermetic: a caller's GitHub token must not leak into the fake forge or the assertions.
 unset GH_TOKEN GITHUB_TOKEN GHCR_TOKEN
@@ -48,6 +48,44 @@ open(sys.argv[2], "w").write(
     "[security.sigstore]\ncosign_major = 2\ncosign_release_url = \"https://github.com/sigstore/cosign/releases/download\"\n"
     "[image.sidecars]\ncode_server = \"ghcr.io/coder/code-server:latest\"\n")
 PY
+# [build.pins] fixtures: payloads first, so the fragment carries their real sha256.
+_pa=amd64; [[ "$(uname -m)" == aarch64 ]] && _pa=arm64
+printf 'cs-rpm-pinned\n' > "$T/cspin"
+printf 'satty-pinned\n' > "$T/sattypin"
+mkdir -p "$T/vendored/cursors"; printf 'bibata-pinned\n' > "$T/vendored/cursors/bibata.tar.xz"
+cat >> "$T/root/usr/share/mios/mios.toml" <<EOF
+[theme.cursor_linux]
+source_repo = "ful1e5/Bibata_Cursor"
+[desktop.screenshot]
+satty_repository = "https://github.com/Satty-org/Satty"
+[build.pins.code_server]
+repository = "coder/code-server"
+tag_prefix = "v"
+version = "4.139.1"
+[build.pins.code_server.assets.$(uname -m)]
+name = "code-server-{version}-${_pa}.rpm"
+sha256 = "$(sha256sum "$T/cspin" | cut -d" " -f1)"
+[build.pins.satty]
+repository_from = "desktop.screenshot.satty_repository"
+tag_prefix = "v"
+version = "0.22.0"
+[build.pins.satty.assets.$(uname -m)]
+name = "satty-$(uname -m)-unknown-linux-gnu.tar.gz"
+sha256 = "$(sha256sum "$T/sattypin" | cut -d" " -f1)"
+[build.pins.bibata]
+repository_from = "theme.cursor_linux.source_repo"
+tag_prefix = "v"
+version = "2.0.7"
+[build.pins.bibata.assets.noarch]
+name = "Bibata-Modern-Classic.tar.xz"
+sha256 = "$(sha256sum "$T/vendored/cursors/bibata.tar.xz" | cut -d" " -f1)"
+vendored = "$T/vendored/cursors/bibata.tar.xz"
+[build.pins.nopin]
+repository = "acme/nopin"
+tag_prefix = "v"
+[build.pins.nopin.assets.noarch]
+name = "nopin-{version}.tar"
+EOF
 
 # Fake forge over HTTPS: URL -> $T/http/<host>/<path>, '?' kept as '__Q__'.
 # <file>.status / .body / .headers override the HTTP answer for -w/-D callers,
@@ -271,7 +309,7 @@ pass "code-server: tampered RPM aborts (exit 3)"
 cp "$T/csrpm" "$T/http/github.com/coder/code-server/releases/download/v4.142.0/code-server-4.142.0-${arch}.rpm"
 
 # A rate-limited API is reported as such (status, GitHub's message, the limit
-# headers), never as a missing digest, and nothing is downloaded.
+# headers), never as a missing digest, and the unproven release is not downloaded.
 _csj="$T/http/api.github.com/repos/coder/code-server/releases/tags/v4.142.0"
 printf '403' > "$_csj.status"
 printf '{"message":"API rate limit exceeded for 203.0.113.7."}' > "$_csj.body"
@@ -283,8 +321,11 @@ grep -qF 'HTTP 403 (API rate limit exceeded for 203.0.113.7.), unauthenticated, 
     || fail "rate limit not reported with status and limit headers: $(cat "$T/err")"
 grep -q 'metadata unavailable from the GitHub API' "$T/err" || fail "rate limit not named as unavailable metadata: $(cat "$T/err")"
 ! grep -q 'publishes no digest' "$T/err" || fail "rate limit misreported as a missing digest: $(cat "$T/err")"
-! grep -q 'releases/download' "$T/curl.log" || fail "asset downloaded without release metadata"
-pass "code-server: API HTTP 403 rate limit reported as such (not 'no digest'), nothing downloaded"
+! grep -q 'releases/download/v4.142.0' "$T/curl.log" || fail "asset downloaded without release metadata"
+# [build.pins]: the rate limit falls back to the pinned 4.139.1 by name; this fixture
+# publishes no pinned asset yet, so the fallback fails too rather than guess.
+grep -q 'MIOS-PIN-FALLBACK: code-server 4.142.0' "$T/err" || fail "rate limit did not fall back to the pin by name: $(cat "$T/err")"
+pass "code-server: API HTTP 403 rate limit reported as such (not 'no digest'), unproven release not downloaded, pin fallback named"
 rm -f "$_csj.status" "$_csj.body" "$_csj.headers"
 
 # A transport failure names curl's error.
@@ -311,12 +352,85 @@ mkdir -p "$T/secrets"; printf 'ghs_TESTTOKEN0123456789\n' > "$T/secrets/mios_git
 printf '403' > "$_csj.status"; printf '{"message":"Forbidden"}' > "$_csj.body"
 : > "$T/curl.headers"
 mkdir -p "$T/csauth"
-set +e; ( SCURL_SECRETS_DIR="$T/secrets"; _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csauth" ) >"$T/out.log" 2>"$T/err"; rc=$?; set -e
+set +e; ( export SCURL_SECRETS_DIR="$T/secrets"; _cs_fetch_rpm "ghcr.io/coder/code-server:latest" "$T/csauth" ) >"$T/out.log" 2>"$T/err"; rc=$?; set -e
 grep -qx 'https://api.github.com/repos/coder/code-server/releases/tags/v4.142.0 Authorization: token ghs_TESTTOKEN0123456789' "$T/curl.headers" \
     || fail "build secret not sent to the GitHub API: $(cat "$T/curl.headers")"
 grep -qF 'HTTP 403 (Forbidden), authenticated' "$T/err" || fail "authenticated call not reported as such: $(cat "$T/err")"
 ! grep -q 'ghs_TESTTOKEN' "$T/err" "$T/out.log" || fail "token leaked into the log"
 pass "code-server: the mios_github_token build secret authenticates the API call and stays out of the log"
 rm -f "$_csj.status" "$_csj.body" "$T/secrets/mios_github_token"
+
+# --- [build.pins]: the pinned release needs no REST call; an empty answer bakes the pin
+arch=amd64; [[ "$(uname -m)" == aarch64 ]] && arch=arm64
+d="$T/http/github.com/coder/code-server/releases/download/v4.139.1"; mkdir -p "$d"
+cp "$T/cspin" "$d/code-server-4.139.1-${arch}.rpm"
+grep -q 'mios_pinned_asset code_server' "$ROOT/automation/59-tools.sh" || fail "59 code-server does not use the pin resolver"
+grep -q 'mios_pinned_asset satty' "$ROOT/automation/59-tools.sh" || fail "59 satty does not use the pin resolver"
+grep -q 'mios_pinned_asset bibata' "$ROOT/automation/57-gnome.sh" || fail "57 does not use the pin resolver"
+! grep -q 'api.github.com' "$ROOT/automation/57-gnome.sh" || fail "57 still calls api.github.com itself"
+# cs_try IMAGE DIR: _cs_fetch_rpm exits on failure, so run it in a subshell and fail by name.
+cs_try() {
+    ( _cs_fetch_rpm "$@" && printf '_cs_version=%q _cs_sha=%q mios_pin_source=%q\n' "$_cs_version" "$_cs_sha" "$mios_pin_source" > "$T/csvars" ) 2>"$T/err" \
+        || fail "_cs_fetch_rpm $1 failed: $(cat "$T/err")"
+    # shellcheck source=/dev/null
+    source "$T/csvars"
+}
+
+: > "$T/curl.log"; mkdir -p "$T/cs1"
+cs_try "ghcr.io/coder/code-server:4.139.1" "$T/cs1"
+[[ "$_cs_version" == 4.139.1 && "$_cs_sha" == "$(sha "$T/cspin")" && "$mios_pin_source" == pin && -f "$T/cs1/code-server-4.139.1-${arch}.rpm" ]] \
+    || fail "code-server pinned release: ${_cs_version:-} ${mios_pin_source:-} $(cat "$T/err")"
+! grep -q 'api.github.com' "$T/curl.log" || fail "pinned code-server release still asked the REST API"
+pass "code-server: the [build.pins] release bakes from the pinned sha256 with no REST call"
+
+# Planted empty lookup: the forge answers 200 with an empty body for every release query.
+_api="$T/http/api.github.com/repos/coder/code-server/releases"
+: > "$_api/latest"; : > "$_api/tags/v4.142.0"
+: > "$T/curl.log"; mkdir -p "$T/cs2"
+cs_try "ghcr.io/coder/code-server:latest" "$T/cs2"
+[[ "$_cs_version" == 4.139.1 && "$_cs_sha" == "$(sha "$T/cspin")" && "$mios_pin_source" == pin ]] \
+    || fail "code-server empty lookup did not bake the pin: ${_cs_version:-} $(cat "$T/err")"
+grep -q 'MIOS-PIN-FALLBACK: code-server 4.142.0' "$T/err" || fail "code-server fallback not named: $(cat "$T/err")"
+! grep -q 'releases/download/v4.142.0' "$T/curl.log" || fail "unproven 4.142.0 RPM was downloaded"
+pass "code-server: planted empty GitHub answer bakes pinned 4.139.1, named MIOS-PIN-FALLBACK"
+
+printf 'evil\n' > "$d/code-server-4.139.1-${arch}.rpm"
+mkdir -p "$T/cs3"; set +e; ( _cs_fetch_rpm "ghcr.io/coder/code-server:4.139.1" "$T/cs3" ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 3 && -z "$(ls -A "$T/cs3")" ]] && grep -q INTEGRITY "$T/err" || fail "pinned code-server tamper not aborted (rc=$rc)"
+pass "code-server: an asset that is not the pinned sha256 aborts (exit 3)"
+
+# Satty: no upstream reachable at all (no git remote, no API) -> the pin.
+d="$T/http/github.com/Satty-org/Satty/releases/download/v0.22.0"; mkdir -p "$d"
+cp "$T/sattypin" "$d/satty-$(uname -m)-unknown-linux-gnu.tar.gz"
+mios_pinned_asset satty latest "$T/sat" satty 2>"$T/err" || fail "satty pin fallback failed: $(cat "$T/err")"
+[[ "$mios_pin_version" == 0.22.0 && "$mios_pin_sha" == "$(sha "$T/sattypin")" ]] || fail "satty pin fallback: $(cat "$T/err")"
+grep -q 'MIOS-PIN-FALLBACK: satty: newest release could not be resolved' "$T/err" || fail "satty fallback not named"
+[[ "$mios_pin_url" == https://github.com/Satty-org/Satty/releases/tag/v0.22.0 ]] || fail "satty release URL: $mios_pin_url"
+pass "satty: unresolvable newest release bakes pinned 0.22.0, named MIOS-PIN-FALLBACK"
+
+# Bibata (57-gnome): newest == pin -> the vendored copy, no network download.
+repo ful1e5/Bibata_Cursor v2.0.6 v2.0.7
+mkdir -p "$T/http/api.github.com/repos/ful1e5/Bibata_Cursor/releases"; : > "$T/http/api.github.com/repos/ful1e5/Bibata_Cursor/releases/latest"
+: > "$T/curl.log"
+mios_pinned_asset bibata latest "$T/bib" Bibata 2>"$T/err" || fail "bibata vendored pin failed: $(cat "$T/err")"
+[[ "$mios_pin_version" == 2.0.7 && "$mios_pin_source" == vendored && -f "$T/bib/Bibata-Modern-Classic.tar.xz" ]] \
+    || fail "bibata vendored pin: ${mios_pin_version:-} ${mios_pin_source:-} $(cat "$T/err")"
+! grep -q 'releases/download' "$T/curl.log" || fail "bibata downloaded despite a matching vendored copy"
+pass "Bibata: empty releases/latest -> ls-remote v2.0.7 == pin -> vendored copy, nothing downloaded"
+printf 'tampered\n' > "$T/vendored/cursors/bibata.tar.xz"
+set +e; ( mios_pinned_asset bibata latest "$T/bib2" Bibata ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 3 ]] && grep -q INTEGRITY "$T/err" || fail "bibata vendored mismatch not aborted (rc=$rc)"
+pass "Bibata: a vendored copy that is not the pinned sha256 aborts (exit 3)"
+
+# No pin to fall back on: the empty answer fails by name and downloads nothing.
+repo acme/nopin v1.0.0
+mkdir -p "$T/http/api.github.com/repos/acme/nopin/releases/tags"; : > "$T/http/api.github.com/repos/acme/nopin/releases/tags/v1.0.0"
+: > "$T/curl.log"
+set +e; ( mios_pinned_asset nopin latest "$T/np" nopin ) >/dev/null 2>"$T/err"; rc=$?; set -e
+[[ $rc -eq 1 && -z "$(ls -A "$T/np" 2>/dev/null)" ]] && grep -q 'MIOS-PIN-MISSING: nopin 1.0.0' "$T/err" \
+    || fail "unpinned empty lookup did not fail by name (rc=$rc): $(cat "$T/err")"
+! grep -q 'releases/download' "$T/curl.log" || fail "unpinned asset downloaded without a digest"
+pass "no pin: an empty GitHub answer fails by name (MIOS-PIN-MISSING, exit 1), nothing downloaded"
+
 
 echo "PASS test-upstream-latest: all consumers resolve latest, record it, and abort on integrity failure"

@@ -1,5 +1,5 @@
 # AI-hint: Hermetic two-sided tests for the code-server workbench bake (mios-vscode-custom-css patch/verify), the OS-pipeline phases that bake it and the toolchain, the dev container that is the MiOS image, and the mios-agents image and builders.
-# AI-related: /usr/libexec/mios/mios-vscode-custom-css, /.devcontainer/Containerfile, /automation/59-tools.sh, /automation/55-native-build.sh, /tools/ci-suites.py, /.devcontainer/setup-devcontainer.sh, /.devcontainer/boot-mios-systems.sh, /usr/share/mios/agents/Containerfile, /usr/libexec/mios/mios-agents-firstboot.sh, /src/mios-rs/miosd/src/main.rs
+# AI-related: /usr/libexec/mios/mios-vscode-custom-css, /.devcontainer/Containerfile, /automation/59-tools.sh, /automation/lib/upstream-latest.sh, /automation/55-native-build.sh, /tools/ci-suites.py, /.devcontainer/setup-devcontainer.sh, /.devcontainer/boot-mios-systems.sh, /usr/share/mios/agents/Containerfile, /usr/libexec/mios/mios-agents-firstboot.sh, /src/mios-rs/miosd/src/main.rs
 # AI-functions: TestCodeServerBake, TestDevcontainerLifecycle, TestDevImageWiring, TestOsImageProvides, TestAgentsContainerfile, TestBuilders
 
 import hashlib
@@ -512,8 +512,10 @@ class TestOsImageProvides(unittest.TestCase):
         mutants = {
             "no verify": sh.replace('mios-vscode-custom-css" verify "${_cs_bake[@]}"', 'mios-vscode-custom-css" true'),
             "masked patch": sh.replace('patch "${_cs_bake[@]}"', 'patch "${_cs_bake[@]}" || true'),
-            "a version literal": sh.replace('"${_cs_dl}/code-server-${_cs_version}-',
-                                            '"${_cs_dl}/code-server-4.139.1-'),
+            "a version literal": sh.replace('dnf install -y "$_cs_rpm"',
+                                            'dnf install -y "${_cs_dl}/code-server-4.139.1-amd64.rpm"'),
+            "an unpinned fetch": sh.replace('mios_pinned_asset code_server "$want"',
+                                            'mios_fetch_gh_release_asset code_server "$want"'),
             "no SSOT pin": sh.replace("_toml_get image.sidecars code_server", "echo ghcr.io/coder/code-server:latest"),
         }
         for name, text in mutants.items():
@@ -590,15 +592,17 @@ class TestOsImageProvides(unittest.TestCase):
 
 
 def code_server_violations(text):
-    """Every way the tools phase fails to bake the SSOT-pinned, patched and verified code-server."""
+    """Every way the tools phase fails to bake the SSOT-pinned ([build.pins] digest), patched and verified code-server."""
     errs = []
     if "set -euo pipefail" not in text:
         errs.append("59-tools.sh: not set -euo pipefail")
-    installs = [ln for ln in text.splitlines() if "dnf install" in ln and ".rpm" in ln]
+    installs = [ln for ln in text.splitlines() if "dnf install" in ln and (".rpm" in ln or "_cs_rpm" in ln)]
     if len(installs) != 1:
         errs.append(f"59-tools.sh: {len(installs)} code-server RPM installs, expected 1")
-    elif not re.search(r"code-server-\$\{_cs_version\}-\$\{_cs_arch\}\.rpm", installs[0]):
-        errs.append("59-tools.sh: the RPM is not named from the SSOT version")
+    elif not re.search(r'dnf install -y "\$_cs_rpm"\s*$', installs[0]):
+        errs.append("59-tools.sh: the RPM installed is not the one [build.pins.code_server] proved")
+    if not re.search(r'(?m)^\s*mios_pinned_asset code_server "\$want"', text):
+        errs.append("59-tools.sh: the RPM is not fetched through [build.pins.code_server]")
     for key in ("image.sidecars code_server", "theme.edge code_server_scrollbar_px", "theme.edge code_server_perimeter_px"):
         if key not in text:
             errs.append(f"59-tools.sh: no read of {key}")
