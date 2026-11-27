@@ -1649,6 +1649,7 @@ RuntimeDirectory = "mios-hermes-browser"
 RuntimeDirectoryMode = "0700"
 StateDirectory = "mios/hermes-browser/profile"
 StateDirectoryMode = "0700"
+ExecCondition = "/usr/libexec/mios/mios-hermes-browser allowed"
 ExecStart = "/usr/libexec/mios/mios-hermes-browser start"
 Restart = "on-failure"
 RestartSec = "5s"
@@ -16761,7 +16762,10 @@ seat_side = [
   "mios-agent-pipe",            # the local front door; MIOS_AI_ENDPOINT points it at a blade
   "mios-ai-legacy-forward",     # compatibility listener for the same local front door
   "hermes-dashboard",           # browser UI
-  "mios-hermes-browser",        # CDP browser the agent tools drive
+  # CDP browser the agent tools drive. A seat runs it; a Blade (service-plane
+  # without agent-browser) does not -- `mios-hermes-browser allowed` is its
+  # ExecCondition and gates `ensure`, so agent tools cannot start it there either.
+  "mios-hermes-browser",
   "mios-hermes-tail",           # journal tail into the UI
   "mios-ttyd-bash",             # browser pty
   "mios-ttyd-powershell",       # browser pty
@@ -16923,7 +16927,11 @@ hybrid     = ["gpu-serving", "controller", "service-plane"]
 compute    = ["gpu-serving", "service-plane"]
 controller = ["controller", "service-plane"]
 headless   = ["service-plane"]
-desktop    = ["service-plane"]
+# agent-browser: the headless ChromeDev (CDP) the Hermes agent tools drive. A seat
+# (no capabilities) runs it; among Blades only a desktop grants it, and any other
+# Blade that should keep it adds FEATURES=agent-browser to /etc/mios/role.conf
+# (or mios.features= on the kernel command line).
+desktop    = ["service-plane", "agent-browser"]
 endpoint   = []
 # Cluster roles. They already shipped mios-k3s-master.target / mios-ha-node.target
 # and role-apply already selected them from a `k3s*`/`ha*` glob -- but they were
@@ -16981,7 +16989,7 @@ mios-enforcer                  = ["service-plane"]   # Tetragon egress quarantin
 # Native (non-Quadlet) long-running units. Same rule: a seat offloads them.
 hermes-worker                  = ["service-plane"]
 mios-searxng                   = ["service-plane"]
-mios-hermes-browser-worker     = ["service-plane"]
+mios-hermes-browser-worker     = ["service-plane", "agent-browser"]
 k3s                            = ["service-plane"]
 mios-account-sync              = ["service-plane"]
 mios-agent-share               = ["service-plane"]   # the inter-agent share: work-side, a seat offloads it
@@ -19493,6 +19501,7 @@ unit = [
     "tests/test-bake-user-unit-check.sh",
     "tests/test-ai-tag-loader.py",
     "tests/test-hermes-browser-launch.py",
+    "tests/test-agent-browser-capability.py",
     "tests/test-postcheck-unit-execs.sh",
     "tests/test-chrony-ptp-dropin.sh",
     "tests/test-blade-port-wiring.py",

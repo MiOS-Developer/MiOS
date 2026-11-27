@@ -18,9 +18,15 @@ WRAPPER = re.search(r"^exec (\S+) -- flatpak run", LAUNCHER.read_text(), re.M).g
 
 
 class HermesBrowserLaunch(unittest.TestCase):
-    def launch(self) -> list[str]:
+    def run_launcher(self, subcmd: str, markers=()):
+        """(completed process, recorded argv or None) for one launcher run on a
+        host whose blade.d holds `markers` (role-apply's capability files)."""
         with tempfile.TemporaryDirectory() as d:
             d = Path(d)
+            blade_d = d / "blade.d"
+            blade_d.mkdir()
+            for m in markers:
+                (blade_d / m).touch()
             bin_dir = d / "bin"
             bin_dir.mkdir()
             record = d / "argv"
@@ -38,9 +44,40 @@ class HermesBrowserLaunch(unittest.TestCase):
                 "HERMES_BROWSER_HEADLESS": "1",
                 "HERMES_BROWSER_APP_ID": "com.example.Browser",
                 "HERMES_BROWSER_CDP_PORT": "9333",
+                "BLADE_D": str(blade_d),
             }
-            subprocess.run(["bash", str(LAUNCHER), "start"], env=env, check=True, timeout=30)
-            return record.read_text().splitlines()
+            p = subprocess.run(
+                ["bash", str(LAUNCHER), subcmd], env=env, timeout=30, capture_output=True, text=True
+            )
+            return p, (record.read_text().splitlines() if record.exists() else None)
+
+    def launch(self) -> list[str]:
+        p, argv = self.run_launcher("start")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return argv
+
+    BLADE = ("service-plane",)
+
+    def test_a_blade_without_the_capability_launches_nothing(self):
+        for subcmd in ("start", "ensure"):
+            p, argv = self.run_launcher(subcmd, self.BLADE)
+            self.assertEqual(p.returncode, 3, f"{subcmd}: {p.stdout}{p.stderr}")
+            self.assertIn("agent browser disabled on this host", p.stderr)
+            self.assertIn("FEATURES=agent-browser", p.stderr)
+            self.assertIsNone(argv, f"{subcmd} started the browser on a Blade")
+
+    def test_allowed_is_the_units_exec_condition(self):
+        # 0 runs the unit, 1 skips it: a seat and a Blade with the capability
+        # run it, a Blade without it does not.
+        for markers, rc in (((), 0), (self.BLADE, 1), (self.BLADE + ("agent-browser",), 0)):
+            p, argv = self.run_launcher("allowed", markers)
+            self.assertEqual(p.returncode, rc, f"{markers}: {p.stdout}{p.stderr}")
+            self.assertIsNone(argv)
+
+    def test_a_blade_with_the_capability_still_starts(self):
+        p, argv = self.run_launcher("start", self.BLADE + ("agent-browser",))
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(argv[:2], ["flatpak", "run"])
 
     def test_start_runs_flatpak_without_the_documents_portal(self):
         argv = self.launch()
