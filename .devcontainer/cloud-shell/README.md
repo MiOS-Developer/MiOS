@@ -29,12 +29,14 @@ privileges needed for `bootc-image-builder` disk artifacts.
 ## Claude Code cloud environment
 
 A Claude Code cloud session runs on a fixed Ubuntu VM, so MiOS reaches it as
-the same dev image Codespaces builds: `claude-code-cloud.sh` builds
-`.devcontainer/Containerfile` (FROM the machine-os mirror every MiOS image
-shares) from MiOS `main` under rootful podman, runs the devcontainer
-lifecycle, and installs `mios-dev`, which enters that image with the session's
-checkouts mounted at the same paths. The generic projection and the dev-loop
-plugin come from the dev-loop toolkit; this file supplies only MiOS's values.
+the same image every other environment runs: `claude-code-cloud.sh` provisions
+the host (the dev-loop toolkit at `/opt/dev-loop`, `agy`), then
+`bootstrap.sh claude-code` installs `mios-dev` (`[deployment.cloud].wrapper`),
+joins the tailnet, checks the container store against
+`[deployment.cloud].min_free_gb`, and pulls `[image].ref` in the background.
+`mios-dev` enters the devcontainer built from that image with the session's
+checkouts mounted at the same paths; until the image is in, it reports the
+pull's progress, or the reason it was never started.
 
 In the environment's settings (environment menu, Edit):
 
@@ -52,10 +54,25 @@ Environment variables:
 CLAUDE_CODE_PLUGIN_DIRS=/opt/dev-loop
 ```
 
-Every `FEDORA_*` value has a default in the script; set one in the environment
-variables only to override it. A cold first build can exceed the setup budget:
-past `FEDORA_SETUP_BUDGET_S` the lifecycle is deferred, `mios-dev` says so, and
-`bash /opt/dev-loop-fedora/cloud-fedora-setup.sh --lifecycle` applies it.
+Every `[deployment.cloud]` value can be overridden per environment as
+`MIOS_DEPLOYMENT_CLOUD_<KEY>` (`MIOS_DEPLOYMENT_CLOUD_RUNTIME`,
+`MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY`, `MIOS_DEPLOYMENT_CLOUD_WRAPPER`,
+`MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S`, ...). The setup script's own output goes
+only to the environment's setup log, so `mios-dev status` is the surface that
+tells a session what happened:
+
+| `mios-dev status` says | meaning |
+|---|---|
+| `pulling for N min, M GB written` | the background pull is running |
+| `is not pulled: the preflight failed: F GB free ..., W GB needed` | the store cannot hold the image; free space or run `bootstrap.sh gce-up` |
+| `the pull failed (exit N)` | the pull died; its log is named |
+| `ready: container ...` | enter it: `mios-dev` |
+
+A Claude Code cloud VM grants a fixed writable allowance (measured: 252 GB disk,
+57 GB free in the podman store), under the 80 GB the 23 GB compressed image
+needs to unpack. There the preflight fails by design, `mios-dev status` says so,
+and the operator's choices are a smaller core image, `bootstrap.sh gce-up`, or
+the in-place MiOS-DEV conversion below.
 
 ### Tailnet enrollment
 

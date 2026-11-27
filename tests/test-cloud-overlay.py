@@ -18,6 +18,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -540,6 +541,77 @@ class TestCloudScripts(unittest.TestCase):
                 if rc:
                     self.assertIn(f"{want} GB needed", r.stderr)
                     self.assertIn(store, r.stderr)
+
+    def _claude_code_fixture(self, min_free_gb):
+        """A MiOS checkout copy whose SSOT plants min_free_gb, a runtime stub that reports a
+        temp store and holds no image, and tailscale stubs so the tailnet step fails fast
+        and installs nothing. Returns (fixture root, env, stub log, state dir, wrapper)."""
+        tmp = tempfile.mkdtemp(prefix="cloud-claude-code-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        store = os.path.join(tmp, "store")
+        os.makedirs(store)
+        log = os.path.join(tmp, "calls.log")
+        _write(os.path.join(tmp, "bin/podman"),
+               '#!/bin/sh\nprintf "podman %s\\n" "$*" >> "$STUB_LOG"\n'
+               f'case "$1" in info) echo "{store}" ;; image|container) exit 1 ;; esac\n', 0o755)
+        for name in ("tailscale", "tailscaled"):
+            _write(os.path.join(tmp, "bin", name), STUB, 0o755)
+        fx = os.path.join(tmp, "MiOS")
+        for rel in (".devcontainer/cloud-shell/bootstrap.sh", ".devcontainer/devcontainer.json",
+                    ".devcontainer/artifact-builder/devcontainer.json", "usr/libexec/mios/mios-toml-get",
+                    "usr/lib/mios/mios_toml.py"):
+            os.makedirs(os.path.dirname(os.path.join(fx, rel)), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), os.path.join(fx, rel))
+        with open(SSOT, encoding="utf-8") as fh:
+            text = fh.read()
+        # Both planted: the builder config adds build_free_gb, and a CI runner's free
+        # space must not decide the passing case.
+        for line in ("min_free_gb   = 80", "build_free_gb = 50"):
+            self.assertEqual(1, text.count(line))
+        text = text.replace("min_free_gb   = 80", f"min_free_gb   = {min_free_gb}").replace("build_free_gb = 50", "build_free_gb = 0")
+        _write(os.path.join(fx, "usr/share/mios/mios.toml"), text)
+        state = os.path.join(tmp, "state")
+        wrapper = os.path.join(tmp, "bin-local/mios-dev")
+        env = dict(os.environ, PATH=os.path.join(tmp, "bin") + os.pathsep + os.environ["PATH"], STUB_LOG=log,
+                   MIOS_DEPLOYMENT_CLOUD_RUNTIME="podman", MIOS_DEPLOYMENT_CLOUD_STATE_DIRECTORY=state,
+                   MIOS_DEPLOYMENT_CLOUD_WRAPPER=wrapper)
+        env.pop("MIOS_TOML_ROOT", None)
+        return fx, env, log, state, wrapper
+
+    @unittest.skipUnless(os.geteuid() == 0, "claude-code provisions as root (tailnet)")
+    def test_claude_code_installs_mios_dev_before_the_preflight(self):
+        """The Claude Code setup degrades open: when the store cannot hold the image the
+        wrapper is still installed, no pull starts, and `status` (what `mios-dev` runs)
+        names the recorded preflight cause with both numbers. With room, the same run
+        installs the wrapper and starts the background pull."""
+        fx, env, log, state, wrapper = self._claude_code_fixture(999999)
+        script = os.path.join(fx, ".devcontainer/cloud-shell/bootstrap.sh")
+        r = subprocess.run(["bash", script, "claude-code"], capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(os.access(wrapper, os.X_OK), "mios-dev must exist although the preflight failed")
+        with open(wrapper, encoding="utf-8") as fh:
+            self.assertIn(f"bash {script} enter", fh.read())
+        self.assertTrue(os.path.isfile(os.path.join(state, "preflight.failed")))
+        with open(log, encoding="utf-8") as fh:
+            self.assertNotIn("podman pull", fh.read(), "a failed preflight must not start the pull")
+        s = subprocess.run(["bash", script, "status"], capture_output=True, text=True, env=env, timeout=60)
+        self.assertEqual(1, s.returncode, s.stdout + s.stderr)
+        self.assertIn("the preflight failed", s.stdout)
+        self.assertIn("999999 GB needed", s.stdout)
+
+        fx, env, log, state, wrapper = self._claude_code_fixture(0)
+        script = os.path.join(fx, ".devcontainer/cloud-shell/bootstrap.sh")
+        r = subprocess.run(["bash", script, "claude-code"], capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertTrue(os.access(wrapper, os.X_OK))
+        self.assertFalse(os.path.exists(os.path.join(state, "preflight.failed")))
+        for _ in range(50):
+            if os.path.exists(os.path.join(state, "pull.rc")):
+                break
+            time.sleep(0.1)
+        with open(log, encoding="utf-8") as fh:
+            self.assertIn("podman pull", fh.read(), "a passed preflight starts the background pull")
+        self.assertIn("pulling", r.stderr)
 
 
 class TestSshCert(unittest.TestCase):

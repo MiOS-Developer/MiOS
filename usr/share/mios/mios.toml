@@ -8713,6 +8713,10 @@ builder         = 1
 source_ref      = "main"
 setup_budget_s  = 240
 dropin        = "/etc/mios/mios.d/50-cloud.toml"
+# The `mios-dev` command the cloud setups install: it enters the devcontainer, and
+# until the image is in it reports why not (bootstrap.sh status). Installed FIRST,
+# before the disk preflight, so a host that cannot hold the image still has it.
+wrapper       = "/usr/local/bin/mios-dev"
 # Free space the container store needs before pulling [image].ref: ~23 GB of
 # compressed layers unpack to ~49 GB, with headroom. A nested `podman build` of the
 # root Containerfile with MIOS_BAKE_BOUND_IMAGES=0 (the CI validation build) needs
