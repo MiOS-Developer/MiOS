@@ -177,6 +177,42 @@ def _tokens(value, name: str) -> list:
     return value
 
 
+_REPO_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]*\Z")
+
+
+def dnf_exclude_options(fed: dict) -> list:
+    """[ci.fedora.repo_excludepkgs] as dnf --setopt=<repo id>.excludepkgs= options.
+
+    A repository added only for one package (Microsoft's, for powershell) must
+    not also win the resolution of packages Fedora ships; the exclusion is
+    scoped to that repo id, so the same names still resolve from Fedora.
+    """
+    table = fed.get("repo_excludepkgs", {})
+    if not isinstance(table, dict):
+        raise ValueError("[ci.fedora.repo_excludepkgs] must be a table")
+    out = []
+    for repo, patterns in sorted(table.items()):
+        if not isinstance(repo, str) or not _REPO_ID.match(repo):
+            raise ValueError(f"[ci.fedora.repo_excludepkgs] has invalid repo id {repo!r}")
+        name = f"[ci.fedora.repo_excludepkgs].{repo}"
+        patterns = _tokens(patterns, name)
+        if not patterns or any("," in p or "=" in p for p in patterns):
+            raise ValueError(f"{name} must list comma-free package patterns")
+        out.append(f"--setopt={repo}.excludepkgs=" + ",".join(dict.fromkeys(patterns)))
+    return out
+
+
+def dnf_options_violations(fed: dict, workflow: str) -> list:
+    """An exclusion the provisioning step never passes to dnf protects nothing."""
+    if not fed.get("repo_excludepkgs"):
+        return []
+    if re.search(r"--dnf-options\)\"\s*$", workflow, re.M) and \
+            re.search(r"^\s*dnf install\b[^\n]*\$options\b[^\n]*\$packages\b", workflow, re.M):
+        return []
+    return ["[ci.fedora.repo_excludepkgs] is set but mios-ci.yml never applies"
+            " ci-suites.py --dnf-options to the package transaction"]
+
+
 def fedora_arguments(root: str, ci: dict, option: str) -> list:
     """Resolve CI provisioning from the vendor package dependency closure."""
     fed = ci.get("fedora")
@@ -187,6 +223,8 @@ def fedora_arguments(root: str, ci: dict, option: str) -> list:
         return _tokens([image], "[ci.fedora].image")
     if option == "--dnf-repos":
         return list(dict.fromkeys(_tokens(fed.get("repos"), "[ci.fedora].repos")))
+    if option == "--dnf-options":
+        return dnf_exclude_options(fed)
     packages = _load_packages(root)
     result, visited = [], set()
 
@@ -420,12 +458,16 @@ def cmd_check(root: str, ci: dict) -> int:
 
     # Restore the provisioning and image contracts alongside suite coverage.
     # A registered tier cannot run when the runner's dependency exporter broke.
-    for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
+    for option in ("--dnf-repos", "--dnf-options", "--dnf-packages", "--fedora-image"):
         try:
             fedora_arguments(root, ci, option)
         except (OSError, ValueError, TypeError) as exc:
             viol.append(f"{option}: {exc}")
     fedora = ci.get("fedora")
+    if isinstance(fedora, dict):
+        wf = os.path.join(root, ".github/workflows/mios-ci.yml")
+        body = Path(wf).read_text(encoding="utf-8") if os.path.isfile(wf) else ""
+        viol.extend(dnf_options_violations(fedora, body))
     want = fedora.get("image") if isinstance(fedora, dict) else None
     if want:
         wf = os.path.join(root, ".github/workflows/mios-ci.yml")
@@ -569,7 +611,7 @@ def main(argv: list) -> int:
         args += list(py.get("packages") or ())
         print(" ".join(args))
         return 0
-    for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
+    for option in ("--dnf-repos", "--dnf-options", "--dnf-packages", "--fedora-image"):
         if option in argv:
             try:
                 args = fedora_arguments(root, ci, option)
@@ -593,7 +635,7 @@ def main(argv: list) -> int:
             return cmd_list(root, ci, argv[i + 1])
         if a.startswith("--tier="):
             return cmd_list(root, ci, a.split("=", 1)[1])
-    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation> | --require-host-cpus",
+    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-options | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation> | --require-host-cpus",
           file=sys.stderr)
     return 2
 
