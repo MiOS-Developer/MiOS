@@ -634,7 +634,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 namespace MiosEntryStub {
     public enum Role { Administrator }
-    public sealed class Identity { public static Identity GetCurrent() { return new Identity(); } }
+    public sealed class Sid { public string Value { get { return "S-1-5-21-1000000000-1000000000-1000000000-1001"; } } }
+    public sealed class Identity {
+        public static Identity GetCurrent() { return new Identity(); }
+        public Sid User { get { return new Sid(); } }
+    }
     public sealed class Principal {
         public static bool Admin;
         public Principal(Identity identity) {}
@@ -664,8 +668,15 @@ function global:Rec([string]$Name, [object[]]$A) {
     $global:calls.Add((@($Name) + @($A | ForEach-Object { if ($_ -is [array]) { $_ -join ',' } else { [string]$_ } })) -join ' ')
 }
 foreach ($n in 'Start-Process', 'Get-NetFirewallRule', 'New-NetFirewallRule', 'Set-NetFirewallRule', 'Remove-NetFirewallRule',
-               'Get-NetFirewallPortFilter', 'Set-NetFirewallPortFilter', 'Set-Service', 'Start-Service') {
+               'Get-NetFirewallPortFilter', 'Set-NetFirewallPortFilter', 'Get-NetFirewallAddressFilter', 'Set-Service', 'Start-Service',
+               'Get-ScheduledTask', 'Register-ScheduledTask', 'Unregister-ScheduledTask', 'New-ScheduledTaskAction',
+               'New-ScheduledTaskTrigger', 'New-ScheduledTaskPrincipal', 'New-ScheduledTaskSettingsSet') {
     Set-Item "function:global:$n" ([scriptblock]::Create("Rec '$n' `$args"))
+}
+function global:New-ScheduledTask { Rec 'New-ScheduledTask' $args; [pscustomobject]@{ SecurityDescriptor = '' } }
+function global:Start-Process {
+    Rec 'Start-Process' $args
+    if (@($args | ForEach-Object { $_ }) -contains '-EncodedCommand') { throw 'The operation was canceled by the user.' }
 }
 function global:netsh { Rec 'netsh' $args; $global:LASTEXITCODE = 0 }
 function global:Get-Service { Rec 'Get-Service' $args; [pscustomobject]@{ Status = 'Running' } }
@@ -1302,7 +1313,10 @@ class TestDefaultConsumers(Base):
                 for key in ("map", "warnings", "hosts", "proxies", "deleted", "probed", "served"):
                     self.assertEqual(base.get(key), again.get(key), key)
         setup_again = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True, MIOS_PORTS_SEARXNG=str(p))
-        self.assertEqual(setup["calls"], setup_again["calls"])
+        # The refresh task's first run is "now + 1 minute": the one call that names the clock.
+        def _calls(got):
+            return [re.sub(r"(New-ScheduledTaskTrigger .*?-At ).*?( -RepetitionInterval )", r"\1<time>\2", c) for c in got["calls"]]
+        self.assertEqual(_calls(setup), _calls(setup_again))
         self.assertEqual(unsupported_notes(setup), unsupported_notes(setup_again))
 
     def test_a_reader_that_fails_to_load_changes_nothing_else(self):
@@ -1342,8 +1356,9 @@ class TestDefaultConsumers(Base):
                             MIOS_PORTS_LLM_LIGHT=llm_light_port)
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
         self.assertEqual(sorted(ports), sorted(got.values()), r.stdout)
-        self.assertIn("the helper applies mios.toml [firewall.windows] as build-mios.ps1 Phase 4 does, never searxng;",
+        self.assertIn("the helper runs build-mios.ps1 Phase 4's mios.toml [firewall.windows] exposure, never searxng;",
                       r.stdout)
+        self.assertIn("as yourself (not as Administrator)", r.stdout)
         self.assertEqual([self.P], lan_loopback(r), r.stdout)
 
     def test_dev_vm_overlay_adds_no_listener(self):
@@ -1417,9 +1432,15 @@ class TestWindowsEntryPoints(Base):
 
     def test_setup_binds_and_runs_as_shipped(self):
         rel = WIN_ENTRIES["setup"][0]
-        # Not elevated, it re-launches itself with no extra arguments.
+        # As the operator it never re-launches itself: Phase 4's own drift check and UAC worker decide, and that
+        # token writes nothing (here the worker's UAC request is declined, or its pipe cannot be built).
         got = windows_entry(self, rel)
-        self.assertEqual([*self.RELAUNCH, got["helper"]], self.relaunch(got))
+        self.assertEqual("", got["err"], got)
+        self.assertEqual([], [c for c in got["calls"] if c.startswith("Start-Process") and got["helper"] in c])
+        self.assertEqual([], [c for c in got["calls"] if c.startswith(("New-NetFirewallRule ", "Set-NetFirewallRule ",
+                              "Remove-NetFirewallRule ", "Register-ScheduledTask ", "Unregister-ScheduledTask "))
+                              or re.match(r"netsh interface portproxy (?:add|set|delete) ", c)])
+        self.assertTrue([h for h in got["hosts"] if h.startswith("  [!] Windows host exposure: ")], got["hosts"])
         # Elevated, the whole body lifts and runs Phase 4 under StrictMode:
         # every [firewall.windows].expose port is forwarded and opened, and
         # SearXNG is named, never forwarded.

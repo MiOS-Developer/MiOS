@@ -102,12 +102,12 @@ if [ -r "$SETUP_PS1" ]; then
     WIN_PS1=$(printf '\\\\wsl.localhost\\%s%s\n' \
         "$(printf '%s' "${WSL_DISTRO_NAME:-podman-MiOS-DEV}")" \
         "${SETUP_PS1//\//\\}")
-    echo "  Open Windows Terminal as Administrator) and paste:"
+    echo "  Open Windows Terminal as yourself (not as Administrator) and paste:"
     echo
     echo "  pwsh -NoProfile -ExecutionPolicy Bypass -File \"$WIN_PS1\""
     echo
-    echo "  (the helper applies mios.toml [firewall.windows] as build-mios.ps1 Phase 4 does, never searxng;"
-    echo "  one-shot, idempotent, self-elevates if the operator forgot Admin)"
+    echo "  (the helper runs build-mios.ps1 Phase 4's mios.toml [firewall.windows] exposure, never searxng;"
+    echo "  idempotent, and it asks for UAC only when the host differs)"
 else
     echo "  Setup-MiOSLanPortProxy.ps1 not present at $SETUP_PS1"
 fi
@@ -119,9 +119,10 @@ if [ "$ACTION" = "--enable" ]; then
         WIN_PATH=$(printf '\\\\\\\\wsl.localhost\\\\%s%s' \
             "${WSL_DISTRO_NAME:-podman-MiOS-DEV}" \
             "${SETUP_PS1//\//\\\\}")
-        mios-windows ps "Start-Process pwsh.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$WIN_PATH' -Verb RunAs" 2>&1
+        # As the operator, never elevated: the helper's Phase 4 reads this account's layers and WSL VM address.
+        mios-windows ps "Start-Process pwsh.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','$WIN_PATH'" 2>&1
         echo
-        echo "  (Triggered UAC on the operator's screen; they must Approve"
+        echo "  (Opened the helper on the operator's screen; it asks for UAC only if the host differs."
         echo "  Re-run 'mios-lan-status' after to verify portproxies landed.)"
     else
         echo "  mios-windows not on PATH, or PS1 not readable"

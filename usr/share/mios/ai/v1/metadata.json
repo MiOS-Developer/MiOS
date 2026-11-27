@@ -6649,7 +6649,7 @@
     },
     {
       "path": "tests/powershell/LanPortProxy.Tests.ps1",
-      "hint": "Pester unit tests for usr/libexec/mios/Setup-MiOSLanPortProxy.ps1: verifies AST-lifted Phase 4 SSOT alignment, operator-layer confinement, retired-port cleanup, convergence, unelevated UAC relaunch, and planted-defect detection with all Windows/WSL side effects stubbed in TestDrive.",
+      "hint": "Pester unit tests for usr/libexec/mios/Setup-MiOSLanPortProxy.ps1: it runs build-mios.ps1 Phase 4's own Invoke-MiosLanExposure as the operator (drift first, then Phase 4's digest-checked UAC worker, never a relaunch of itself), confines the operator layer, cleans retired ports through a delete-only request, converges with Phase 4, and every planted defect is caught; all Windows/WSL side effects are stubbed in TestDrive.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -25540,7 +25540,7 @@
     },
     {
       "path": "usr/libexec/mios/Setup-MiOSLanPortProxy.ps1",
-      "hint": "Re-applies MiOS-DEV's Windows-host LAN exposure on demand, exactly as build-mios.ps1 Phase 4 does: it lifts that script's own [firewall.windows] exposure plan, Defender-rule and portproxy steps out of the build-mios.ps1 beside it and runs them, after removing what older releases left on retired ports.",
+      "hint": "Re-applies MiOS-DEV's Windows-host LAN exposure on demand by running build-mios.ps1 Phase 4's own entry point, Invoke-MiosLanExposure, from the build-mios.ps1 beside it: run as the operator, it measures drift and asks UAC only for Phase 4's worker, then removes what older releases left on retired ports.",
       "related": [
         "build-mios.ps1",
         "/usr/share/mios/mios.toml",
