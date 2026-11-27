@@ -18,24 +18,18 @@ if _LIBEXEC_DIR not in sys.path:
     sys.path.insert(0, _LIBEXEC_DIR)
 
 from importlib.machinery import SourceFileLoader
-def _load_source(name, path):
-    """Load a Python source file that has no .py suffix as module `name`.
+import importlib.util
 
-    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
-    behaviour (register in sys.modules, then execute) with the supported API.
-    """
-    import importlib.machinery
-    import importlib.util
-    import sys as _sys
-    loader = importlib.machinery.SourceFileLoader(name, path)
-    spec = importlib.util.spec_from_loader(name, loader)
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    _sys.modules[name] = module
+    sys.modules[loader.name] = module
     loader.exec_module(module)
     return module
 
-
-mios_gpu_numa = _load_source("mios_gpu_numa", os.path.join(_LIBEXEC_DIR, "mios-gpu-numa"))
+mios_gpu_numa = _load_source(SourceFileLoader("mios_gpu_numa", os.path.join(_LIBEXEC_DIR, "mios-gpu-numa")))
 GpuNumaDiscovery = mios_gpu_numa.GpuNumaDiscovery
 
 

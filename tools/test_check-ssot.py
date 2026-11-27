@@ -64,31 +64,26 @@ def tmti_main():
 import os
 import shutil
 import tempfile
+import importlib.util
+import sys
 import unittest
 from importlib.machinery import SourceFileLoader
 
-tsck__HERE = os.path.dirname(os.path.abspath(__file__))
-tsck__ROOT = os.path.dirname(tsck__HERE)
-def _load_source(name, path):
-    """Load a Python source file that has no .py suffix as module `name`.
 
-    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
-    behaviour (register in sys.modules, then execute) with the supported API.
-    """
-    import importlib.machinery
-    import importlib.util
-    import sys as _sys
-    loader = importlib.machinery.SourceFileLoader(name, path)
-    spec = importlib.util.spec_from_loader(name, loader)
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    _sys.modules[name] = module
+    sys.modules[loader.name] = module
     loader.exec_module(module)
     return module
 
 
-tsck_mod = _load_source(
+tsck__HERE = os.path.dirname(os.path.abspath(__file__))
+tsck__ROOT = os.path.dirname(tsck__HERE)
+tsck_mod = _load_source(SourceFileLoader(
     "check_ssot_consumer_keys",
-    os.path.join(tsck__HERE, "check-ssot.py"))
+    os.path.join(tsck__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -251,8 +246,8 @@ from importlib.machinery import SourceFileLoader
 
 tup__HERE = os.path.dirname(os.path.abspath(__file__))
 tup__ROOT = os.path.dirname(tup__HERE)
-tup_mod = _load_source(
-    "check_unit_projection", os.path.join(tup__HERE, "check-ssot.py"))
+tup_mod = _load_source(SourceFileLoader(
+    "check_unit_projection", os.path.join(tup__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -393,8 +388,8 @@ from importlib.machinery import SourceFileLoader
 
 tpf__HERE = os.path.dirname(os.path.abspath(__file__))
 tpf__ROOT = os.path.dirname(tpf__HERE)
-tpf_mod = _load_source(
-    "check_port_fallbacks", os.path.join(tpf__HERE, "check-ssot.py"))
+tpf_mod = _load_source(SourceFileLoader(
+    "check_port_fallbacks", os.path.join(tpf__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -516,8 +511,8 @@ from importlib.machinery import SourceFileLoader
 
 tpb__HERE = os.path.dirname(os.path.abspath(__file__))
 tpb__ROOT = os.path.dirname(tpb__HERE)
-tpb_mod = _load_source(
-    "check_ports_bound", os.path.join(tpb__HERE, "check-ssot.py"))
+tpb_mod = _load_source(SourceFileLoader(
+    "check_ports_bound", os.path.join(tpb__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -855,8 +850,8 @@ from importlib.machinery import SourceFileLoader
 trs__HERE = os.path.dirname(os.path.abspath(__file__))
 trs__ROOT = os.path.dirname(trs__HERE)
 trs__NOROOT = os.path.join(trs__HERE, "no-such-root")
-trs_mod = _load_source(
-    "check_role_ssot", os.path.join(trs__HERE, "check-ssot.py"))
+trs_mod = _load_source(SourceFileLoader(
+    "check_role_ssot", os.path.join(trs__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -1143,8 +1138,8 @@ from importlib.machinery import SourceFileLoader
 
 tnp__HERE = os.path.dirname(os.path.abspath(__file__))
 tnp__ROOT = os.path.dirname(tnp__HERE)
-tnp_mod = _load_source(
-    "check_node_pool", os.path.join(tnp__HERE, "check-ssot.py"))
+tnp_mod = _load_source(SourceFileLoader(
+    "check_node_pool", os.path.join(tnp__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -1260,8 +1255,8 @@ tbc__ROOT = os.path.dirname(tbc__HERE)
 # A root with no usr/lib/systemd/system: synthetic cases must see only their
 # own declared containers, never the real tree's 18 long-running units.
 tbc__NOROOT = os.path.join(tbc__HERE, "no-such-root")
-tbc_mod = _load_source(
-    "check_blade_coverage", os.path.join(tbc__HERE, "check-ssot.py"))
+tbc_mod = _load_source(SourceFileLoader(
+    "check_blade_coverage", os.path.join(tbc__HERE, "check-ssot.py")))
 
 try:
     import tomllib
@@ -1482,8 +1477,8 @@ from importlib.machinery import SourceFileLoader
 
 tfs__HERE = os.path.dirname(os.path.abspath(__file__))
 tfs__ROOT = os.path.dirname(tfs__HERE)
-tfs_mod = _load_source(
-    "check_fleet_safety", os.path.join(tfs__HERE, "check-ssot.py"))
+tfs_mod = _load_source(SourceFileLoader(
+    "check_fleet_safety", os.path.join(tfs__HERE, "check-ssot.py")))
 
 try:
     import tomllib

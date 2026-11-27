@@ -190,27 +190,20 @@ import sys
 import unittest
 from importlib.machinery import SourceFileLoader
 
-tsu__HERE = os.path.dirname(os.path.abspath(__file__))
-tsu__ROOT = os.path.dirname(tsu__HERE)
-def _load_source(name, path):
-    """Load a Python source file that has no .py suffix as module `name`.
 
-    Python 3.15 removed SourceFileLoader's load_module method; this keeps its
-    behaviour (register in sys.modules, then execute) with the supported API.
-    """
-    import importlib.machinery
-    import importlib.util
-    import sys as _sys
-    loader = importlib.machinery.SourceFileLoader(name, path)
-    spec = importlib.util.spec_from_loader(name, loader)
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    _sys.modules[name] = module
+    sys.modules[loader.name] = module
     loader.exec_module(module)
     return module
 
 
-tsu_mod = _load_source(
-    "check_service_urls", os.path.join(tsu__HERE, "check-runtime.py"))
+tsu__HERE = os.path.dirname(os.path.abspath(__file__))
+tsu__ROOT = os.path.dirname(tsu__HERE)
+tsu_mod = _load_source(SourceFileLoader(
+    "check_service_urls", os.path.join(tsu__HERE, "check-runtime.py")))
 
 try:
     import tomllib

@@ -414,7 +414,9 @@ try {
         $seedJson = if ($Seed) { $Seed | ConvertTo-Json -Depth 6 -Compress } else { '' }
 
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
-        $psi.FileName = [System.Environment]::ProcessPath  # the running pwsh, on any OS
+        # The PowerShell running these tests runs the harness: pwsh.exe on Windows, pwsh on Linux (the CI
+        # drift-gate). A hard-coded 'pwsh.exe' only resolves on Windows.
+        $psi.FileName = [System.Environment]::ProcessPath
         $psi.UseShellExecute = $false
         $psi.RedirectStandardInput = $true
         $psi.RedirectStandardOutput = $true
