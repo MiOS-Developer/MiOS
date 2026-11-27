@@ -15427,8 +15427,8 @@ tests/test-tmux-workspace-hook-storm.py	12	13	2	31	3c7283a41949	STAY	midsize-why
 tests/test-tmux-workspace-hook-storm.py	26	27	2	29	6a2f28e82d0c	STAY	midsize-why		0				0
 tests/test-tmux-workspace-hook-storm.py	39	39	1	18	196e99337702	STAY	local-scoped		0				0
 tests/test-tmux-workspace-hook-storm.py	46	47	2	37	cbbddab8fe8c	STAY	midsize-why		0				0
-tests/test-tmux-workspace-hook-storm.py	98	98	1	9	4c09d8c5905a	STAY	local-scoped		0				0
-tests/test-tmux-workspace-hook-storm.py	125	125	1	6	8219d5afe9fd	STAY	inline-scoped		0				0
+tests/test-tmux-workspace-hook-storm.py	98	99	2	44	3c0402c43887	STAY	midsize-why		0				0
+tests/test-tmux-workspace-hook-storm.py	132	132	1	6	8219d5afe9fd	STAY	inline-scoped		0				0
 tests/test-tmuxos-launcher-live.py	1	10	10	215	f6e20a1ebd27	MIGRATE_HEADER	overlong-hint		0				0
 tests/test-tmuxos-launcher-live.py	60	60	1	17	0d4b5161ead7	STAY	local-scoped		0				0
 tests/test-tmuxos-launcher-live.py	69	70	2	23	56f2a2a45704	STAY	local-scoped		0				0
