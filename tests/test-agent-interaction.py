@@ -108,6 +108,38 @@ class Behaviour(unittest.TestCase):
         self.assertEqual(gen(home=self.home.name).returncode, 0)
         self.assertEqual(before, {n: os.stat(self.path(n)).st_mtime_ns for n in self.clients}, "no rewrite")
 
+    def test_opencode_snapshots_off_and_owned_projection_kept(self):
+        # A per-step git snapshot of a large launch directory (a Windows drive mount) kept every opencode
+        # prompt from reaching the endpoint for hours. The declared value must land without disturbing the
+        # provider and MCP blocks the launcher projects into the same file.
+        self.assertIs(self.clients["opencode"]["values"]["snapshot"], False)
+        p = self.path("opencode")
+        os.makedirs(os.path.dirname(p))
+        owned = {
+            "model": "local/agent",
+            "mcp": {"mios-control": {"type": "local", "enabled": True, "command": ["mios-mcp-server"]}},
+            "provider": {"local": {"name": "Local MiOS", "options": {"baseURL": "http://localhost:1/v1"}}},
+        }
+        with open(p, "w") as f:
+            json.dump(owned, f)
+        self.assertEqual(gen(home=self.home.name).returncode, 0)
+        with open(p) as f:
+            data = json.load(f)
+        self.assertIs(data["snapshot"], False)
+        self.assertEqual({k: data[k] for k in owned}, owned)
+
+    def test_negative_opencode_file_value_does_not_outrank_ssot(self):
+        # The file is a projection target: an operator opts back in through the user-tier SSOT
+        # ([agent_cli.interaction.clients.opencode.values] snapshot = true), not by editing the file.
+        p = self.path("opencode")
+        os.makedirs(os.path.dirname(p))
+        with open(p, "w") as f:
+            json.dump({"snapshot": True}, f)
+        self.assertEqual(gen("--check", home=self.home.name).returncode, 1, "drift is reported")
+        self.assertEqual(gen(home=self.home.name).returncode, 0)
+        with open(p) as f:
+            self.assertIs(json.load(f)["snapshot"], False)
+
     def test_check_writes_nothing_and_fails_on_drift(self):
         r = gen("--check", home=self.home.name)
         self.assertEqual(r.returncode, 1)

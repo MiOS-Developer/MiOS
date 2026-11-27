@@ -4490,6 +4490,15 @@ alternate_screen = "always"
 [agent_cli.interaction.clients.codex.values.mcp_servers.mios-control]
 required = true
 startup_timeout_sec = 10
+# The opencode client takes a git snapshot of its whole working directory before every step. Launched from a
+# Windows drive mount or another large non-repo tree, one snapshot runs for hours and the prompt never reaches
+# MIOS_AI_ENDPOINT. Version control stays the repo's job; an operator re-enables snapshots (and the client's
+# undo) with snapshot = true under this table in the user tier.
+[agent_cli.interaction.clients.opencode]
+path = ".config/opencode/opencode.json"
+format = "json"
+[agent_cli.interaction.clients.opencode.values]
+snapshot = false
 
 [agent_cli.zcode]
 version = "3.15.1"
