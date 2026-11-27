@@ -40784,7 +40784,7 @@
     },
     {
       "path": "usr/share/mios/hyprland/plugins/mios-appmenu/main.cpp",
-      "hint": "mios-appmenu -- the KDE appmenu Wayland protocol (org_kde_kwin_appmenu_manager v2) for Hyprland 0.56 (MiOS",
+      "hint": "mios-appmenu -- the KDE appmenu Wayland protocol (org_kde_kwin_appmenu_manager v2) for Hyprland 0.57 (MiOS",
       "related": [
         "usr/share/mios/hyprland/plugins/mios-appmenu/appmenu.xml",
         "usr/share/mios/hyprland/plugins/mios-appmenu/Makefile"
@@ -40833,7 +40833,7 @@
     },
     {
       "path": "usr/share/mios/hyprland/plugins/mios-pacing/main.cpp",
-      "hint": "mios-pacing -- a per-output compositor frame cap for Hyprland 0.56 (MiOS original source; [desktop.framerate]).",
+      "hint": "mios-pacing -- a per-output compositor frame cap for Hyprland 0.57 (MiOS original source; [desktop.framerate]).",
       "related": [
         "usr/share/mios/hyprland/plugins/mios-pacing/pacing.hpp",
         "usr/share/mios/hyprland/plugins/mios-pacing/Makefile"
@@ -40910,7 +40910,7 @@
     },
     {
       "path": "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.cpp",
-      "hint": "Magic lamp for Hyprland 0.56 (MiOS original source; part of mios-wobbly.so, the one MiOS mesh backend).",
+      "hint": "Magic lamp for Hyprland 0.57 (MiOS original source; part of mios-wobbly.so, the one MiOS mesh backend).",
       "related": [
         "usr/share/mios/hyprland/plugins/mios-wobbly/lamp.hpp",
         "usr/share/mios/hyprland/plugins/mios-wobbly/lampmath.hpp",
@@ -40950,7 +40950,7 @@
     },
     {
       "path": "usr/share/mios/hyprland/plugins/mios-wobbly/main.cpp",
-      "hint": "mios-wobbly -- Compiz-style wobbly windows for Hyprland 0.56 (MiOS original source).",
+      "hint": "mios-wobbly -- Compiz-style wobbly windows for Hyprland 0.57 (MiOS original source).",
       "related": [
         "usr/share/mios/hyprland/plugins/mios-wobbly/Makefile",
         "usr/share/mios/hyprland/plugins/mios-wobbly/wobble_model.hpp",

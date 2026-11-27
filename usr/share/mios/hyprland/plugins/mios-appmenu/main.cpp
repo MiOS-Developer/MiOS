@@ -1,4 +1,4 @@
-// AI-hint: mios-appmenu -- the KDE appmenu Wayland protocol (org_kde_kwin_appmenu_manager v2) for Hyprland 0.56 (MiOS
+// AI-hint: mios-appmenu -- the KDE appmenu Wayland protocol (org_kde_kwin_appmenu_manager v2) for Hyprland 0.57 (MiOS
 // original source; [desktop.hyprland.mios-appmenu]). Hyprland has no global-menu protocol, so Wayland-native toolkits
 // that announce their menubar per surface -- Qt 6 (QDBusMenuBar), Gecko (widget.gtk.global-menu.wayland), Chromium
 // and Electron (ozone/wayland DbusAppmenu) -- either never export it or leave miosd guessing which window a
@@ -15,11 +15,11 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/event/EventBus.hpp>
-#include <hyprland/src/managers/EventManager.hpp>
+#include <hyprland/src/ipc/s2/S2.hpp>
 #include <hyprland/src/protocols/core/Compositor.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/desktop/view/WLSurface.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 
 extern "C" {
 #include "appmenu-server-protocol.h"
@@ -36,7 +36,7 @@ extern "C" {
 namespace {
     HANDLE                           PHANDLE = nullptr;
     wl_global*                       g_global = nullptr;
-    SP<SHyprCtlCommand>              g_cmd;
+    SP<IPC::Socket1::SCommand>       g_cmd;
     std::vector<CHyprSignalListener> g_listeners;
     bool                             g_exiting = false;
 
@@ -72,7 +72,7 @@ namespace {
         if (!surface || !Desktop::windowState())
             return nullptr;
         for (const auto& w : Desktop::windowState()->windows()) {
-            if (!w || w->m_isX11)
+            if (!w || w->backend().isX11())
                 continue;
             const auto WL = w->wlSurface();
             if (WL && WL->resource() == surface)
@@ -82,9 +82,9 @@ namespace {
     }
 
     void post(const std::string& address, const std::string& service, const std::string& path) {
-        if (g_exiting || !g_pEventManager || address.empty())
+        if (g_exiting || address.empty() || !IPC::Socket2::sock())
             return;
-        g_pEventManager->postEvent(SHyprIPCEvent{"miosappmenu", std::format("{},{},{}", address, service, path)});
+        IPC::Socket2::sock()->postEvent({.event = "miosappmenu", .data = std::format("{},{},{}", address, service, path)});
     }
 
     // Announce an entry when its surface belongs to a mapped window (again after a remap or a new address).
@@ -92,7 +92,7 @@ namespace {
         if (e.service.empty())
             return;
         const auto W = windowFor(e.surface.lock());
-        if (!W || !W->m_isMapped)
+        if (!W || !W->mapped())
             return;
         e.announced = addressOf(W);
         post(e.announced, e.service, e.path);
@@ -189,16 +189,16 @@ namespace {
             if (e.service.empty())
                 continue;
             const auto W = windowFor(e.surface.lock());
-            if (!W || !W->m_isMapped)
+            if (!W || !W->mapped())
                 continue;
             out += std::format("{}{{\"address\":\"{}\",\"class\":\"{}\",\"pid\":{},\"client_pid\":{},\"service\":\"{}\",\"path\":\"{}\"}}", first ? "" : ",",
-                               addressOf(W), jsonEscape(W->m_class), W->getPID(), e.clientPid, jsonEscape(e.service), jsonEscape(e.path));
+                               addressOf(W), jsonEscape(W->metadata().appID()), W->backend().pid(), e.clientPid, jsonEscape(e.service), jsonEscape(e.path));
             first = false;
         }
         return out + "]}";
     }
 
-    std::string hyprctl(eHyprCtlOutputFormat, std::string) {
+    IPC::Socket1::SResponse hyprctl(const IPC::Socket1::SRequest&) {
         return tableJson();
     }
 }
@@ -235,7 +235,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
             if (e.announced == ADDR)
                 e.announced.clear(); // closewindow>> already tells listeners; a remap announces again
     }));
-    g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "mios-appmenu", .exact = true, .fn = hyprctl});
+    g_cmd = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{.name = "mios-appmenu", .match = IPC::Socket1::COMMAND_MATCH_EXACT, .handler = hyprctl});
     return {"mios-appmenu", "KDE appmenu protocol: per-window D-Bus menubar addresses for the MiOS top-bar menus", "MiOS", "1.0"};
 }
 
