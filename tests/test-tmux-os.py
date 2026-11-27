@@ -154,7 +154,7 @@ class Harness:
             "MIOS_TERMINAL_TEST_SOCKET": self.inner,
             "MIOS_TERMINAL_TEST_GEN": str(GEN),
             "MIOS_TERMINAL_TEST_MIOSD": str(MIOSD),
-            "MIOS_TMUX_HELPER": "1",  # any workspace-ensure path returns early
+            "TMUXOS_HELPER": "1",  # any workspace-ensure path returns early
             "PATH": f"{self.dir / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
@@ -186,7 +186,7 @@ class Harness:
     def start(self, w=100, h=30):
         self.I("-f", str(self.conf), "new-session", "-d", "-s", "main", "-c", str(self.dir), "-x", str(w), "-y", str(h), "bash --norc --noprofile")
         self.I("set-option", "-g", "default-command", "bash --norc --noprofile")
-        self.I("set-environment", "-g", "MIOS_TMUX_HELPER", "1")
+        self.I("set-environment", "-g", "TMUXOS_HELPER", "1")
 
     def view(self, name="view", term="xterm-256color", w=100, h=30, session="main"):
         before = set(self.clients())

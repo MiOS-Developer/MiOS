@@ -183,7 +183,7 @@ def _flatten(prefix: str, node: dict, out: dict) -> None:
 
 
 def windows_projection(data: dict) -> dict:
-    """The MIOS_RESOLVED_JSON document the PowerShell pipeline overlays (Read-MiosToml).
+    """The resolved-SSOT JSON document the PowerShell pipeline overlays (Read-MiosToml reads its path).
     Validates first, so a missing credential fails HERE on the build host."""
     resolve(data)
     scalars: dict = {}

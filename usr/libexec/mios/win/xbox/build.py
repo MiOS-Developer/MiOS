@@ -42,7 +42,7 @@ import capture as CAP  # noqa: E402
 import spec_coverage as SC  # noqa: E402
 
 mios_toml = render_spec.mios_toml
-SCOPED_ENV = "MIOS_XBOX_BUILD_SCOPED"
+SCOPED_ENV = "XBOX_BUILD_SCOPED"
 WINDOWS_BUILD_DIR = os.path.join(_TREE, "usr", "share", "mios", "windows", "build")
 HEAVY = ("capture", "stage", "service", "gate", "run")
 

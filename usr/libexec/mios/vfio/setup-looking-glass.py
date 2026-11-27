@@ -777,10 +777,9 @@ def guest_commands(cfg: Dict[str, Any], plan: Dict[str, str], chunk: int = 2000)
 
 
 def _winrm_credentials(cfg: Dict[str, Any]) -> tuple:
-    user, password = os.environ.get("MIOS_WINRM_USER"), os.environ.get("MIOS_WINRM_PASSWORD")
-    if user and password:
-        return user, password
-    path = os.environ.get("MIOS_XBOX_ANSWERFILE") or str(cfg["winrm_answerfile"])
+    # The guest login is the SSOT credential rendered into the answer file; the environment
+    # cannot override it (Law 11, same rule as win/xbox/probe.py _credentials).
+    path = os.environ.get("LG_ANSWERFILE") or str(cfg["winrm_answerfile"])
     d = os.path.dirname(path)
     if os.path.isdir(d) and not os.path.isfile(path):
         path = next((os.path.join(d, n) for n in os.listdir(d) if n.lower() == os.path.basename(path).lower()), path)
@@ -788,7 +787,7 @@ def _winrm_credentials(cfg: Dict[str, Any]) -> tuple:
     ns = {"u": "urn:schemas-microsoft-com:unattend"}
     acct = ET.parse(path).find(".//u:LocalAccount", ns)
     if acct is None:
-        raise SystemExit(f"[looking-glass] no LocalAccount in {path}; set MIOS_WINRM_USER / MIOS_WINRM_PASSWORD")
+        raise SystemExit(f"[looking-glass] no LocalAccount in {path}; render the answer file from the SSOT credential")
     user = acct.findtext("u:Name", namespaces=ns)
     password = acct.findtext("u:Password/u:Value", namespaces=ns) or ""
     if (acct.findtext("u:Password/u:PlainText", namespaces=ns) or "").lower() == "false":
@@ -800,14 +799,14 @@ def _winrm_credentials(cfg: Dict[str, Any]) -> tuple:
 
 
 def _winrm_endpoint(cfg: Dict[str, Any], dom: str) -> str:
-    if os.environ.get("MIOS_WINRM_ENDPOINT"):
-        return os.environ["MIOS_WINRM_ENDPOINT"]
+    if os.environ.get("LG_WINRM_ENDPOINT"):
+        return os.environ["LG_WINRM_ENDPOINT"]
     for source in ("lease", "arp", "agent"):
         r = _virsh(cfg, "domifaddr", dom, "--source", source, check=False)
         m = re.search(r"ipv4\s+(\d+\.\d+\.\d+\.\d+)", r.stdout)
         if m:
             return f"http://{m.group(1)}:{int(cfg['winrm_port'])}/wsman"
-    raise SystemExit(f"[looking-glass] no IPv4 address for {dom}; set MIOS_WINRM_ENDPOINT")
+    raise SystemExit(f"[looking-glass] no IPv4 address for {dom}; set LG_WINRM_ENDPOINT")
 
 
 def provision_guest(cfg: Dict[str, Any], dom: str, dry_run: bool = False) -> int:
@@ -821,11 +820,11 @@ def provision_guest(cfg: Dict[str, Any], dom: str, dry_run: bool = False) -> int
     try:
         import winrm  # type: ignore
     except ImportError:
-        py = os.environ.get("MIOS_WINRM_PYTHON") or str(cfg["winrm_python"])
-        if os.access(py, os.X_OK) and not os.environ.get("MIOS_LG_WINRM_REEXEC"):
-            os.environ["MIOS_LG_WINRM_REEXEC"] = "1"  # a venv shares the real interpreter; this stops a loop
+        py = os.environ.get("LG_WINRM_PYTHON") or str(cfg["winrm_python"])
+        if os.access(py, os.X_OK) and not os.environ.get("LG_WINRM_REEXEC"):
+            os.environ["LG_WINRM_REEXEC"] = "1"  # a venv shares the real interpreter; this stops a loop
             os.execv(py, [py, "-I", os.path.abspath(__file__), *sys.argv[1:]])
-        raise SystemExit("[looking-glass] pywinrm is not available (set MIOS_WINRM_PYTHON to an interpreter that has it)")
+        raise SystemExit("[looking-glass] pywinrm is not available (set LG_WINRM_PYTHON to an interpreter that has it)")
     if domain_state(cfg, dom) != "running":
         raise SystemExit(f"[looking-glass] {dom} is not running")
     endpoint = _winrm_endpoint(cfg, dom)

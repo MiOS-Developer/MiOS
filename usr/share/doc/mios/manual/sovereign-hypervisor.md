@@ -44,4 +44,4 @@ In accordance with modern systemd modular libvirt architecture, validates and st
 - `--status`: Queries and reports current state of the KVMFR device, bridge, modular sockets, and sibling domains.
 - `--dry-run`: Simulates the entire sequence, printing commands without modifying system state.
 - `--start`: Executes full pre-flight and boots sibling domains (default behavior).
-- `--mock`: Forces mock hypervisor mode for validation in headless CI or nested container testbeds (`MIOS_MOCK_HYPERVISOR=1`).
+- `--mock`: Forces mock hypervisor mode for validation in headless CI or nested container testbeds (`MOCK_HYPERVISOR=1`).

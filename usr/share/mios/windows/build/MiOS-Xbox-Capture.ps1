@@ -77,32 +77,32 @@ function Invoke-Prepare {
     }
     $defNtuser = Join-Path $env:SystemDrive 'Users\Default\NTUSER.DAT'
     if (Test-Path -LiteralPath $defNtuser) {
-        & reg.exe load 'HKU\MIOS_CAP_DEF' $defNtuser 2>&1 | Out-Null
+        & reg.exe load 'HKU\MiOS_CAP_DEF' $defNtuser 2>&1 | Out-Null
         if (-not $LASTEXITCODE) {
             try {
                 foreach ($sub in @('Software\Microsoft\Windows\CurrentVersion\GamingConfiguration',
                                    'Software\Microsoft\Windows\CurrentVersion\Start')) {
-                    $dk = "Registry::HKEY_USERS\MIOS_CAP_DEF\$sub"
+                    $dk = "Registry::HKEY_USERS\MiOS_CAP_DEF\$sub"
                     if (Test-Path -LiteralPath $dk) { Remove-Item -LiteralPath $dk -Recurse -Force; $neutralized += $dk }
                 }
-                $adv = 'Registry::HKEY_USERS\MIOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+                $adv = 'Registry::HKEY_USERS\MiOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
                 if (Test-Path -LiteralPath $adv) {
                     Set-ItemProperty -LiteralPath $adv -Name 'TaskbarAl' -Value 1 -Type DWord
                     $neutralized += "$adv\TaskbarAl=1"
                 }
-                $usf = 'Registry::HKEY_USERS\MIOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
+                $usf = 'Registry::HKEY_USERS\MiOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
                 if (Test-Path -LiteralPath $usf) {
                     $props = Get-ItemProperty -LiteralPath $usf
                     foreach ($p in @($props.PSObject.Properties)) {
                         if ($p.Name -notlike 'PS*' -and [string]$p.Value -match '^C:\\Users\\[^\\]+\\(.+)$') {
-                            [Microsoft.Win32.Registry]::SetValue("HKEY_USERS\MIOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders", $p.Name, "%USERPROFILE%\$($Matches[1])", [Microsoft.Win32.RegistryValueKind]::ExpandString)
+                            [Microsoft.Win32.Registry]::SetValue("HKEY_USERS\MiOS_CAP_DEF\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders", $p.Name, "%USERPROFILE%\$($Matches[1])", [Microsoft.Win32.RegistryValueKind]::ExpandString)
                             $neutralized += "$usf\$($p.Name)"
                         }
                     }
                 }
             } finally {
                 [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-                for ($u = 0; $u -lt 5; $u++) { & reg.exe unload 'HKU\MIOS_CAP_DEF' 2>&1 | Out-Null; if (-not $LASTEXITCODE) { break }; Start-Sleep -Seconds 1 }
+                for ($u = 0; $u -lt 5; $u++) { & reg.exe unload 'HKU\MiOS_CAP_DEF' 2>&1 | Out-Null; if (-not $LASTEXITCODE) { break }; Start-Sleep -Seconds 1 }
             }
         }
     }

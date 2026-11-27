@@ -2550,10 +2550,17 @@ $script:MIOS_ENDPOINT = if ($env:MIOS_ENDPOINT) { $env:MIOS_ENDPOINT } else { "$
 $script:MIOS_ENHANCED_SESSION_ENABLED = if ($env:MIOS_ENHANCED_SESSION_ENABLED) { $env:MIOS_ENHANCED_SESSION_ENABLED } else { 'true' }
 $script:MIOS_ENHANCED_SESSION_PORT = if ($env:MIOS_ENHANCED_SESSION_PORT) { $env:MIOS_ENHANCED_SESSION_PORT } else { 13389 }
 $script:MIOS_ENHANCED_SESSION_RESOLUTION = if ($env:MIOS_ENHANCED_SESSION_RESOLUTION) { $env:MIOS_ENHANCED_SESSION_RESOLUTION } else { 'auto' }
+$script:MIOS_ENV_MIOS_EMBED_BACKFILL_BUDGET_S = if ($env:MIOS_ENV_MIOS_EMBED_BACKFILL_BUDGET_S) { $env:MIOS_ENV_MIOS_EMBED_BACKFILL_BUDGET_S } else { 90 }
+$script:MIOS_ENV_MIOS_GITHUB_API = if ($env:MIOS_ENV_MIOS_GITHUB_API) { $env:MIOS_ENV_MIOS_GITHUB_API } else { 'https://api.github.com' }
+$script:MIOS_ENV_MIOS_PYPI_JSON = if ($env:MIOS_ENV_MIOS_PYPI_JSON) { $env:MIOS_ENV_MIOS_PYPI_JSON } else { 'https://pypi.org/pypi' }
+$script:MIOS_ENV_MIOS_SBOM_DIR = if ($env:MIOS_ENV_MIOS_SBOM_DIR) { $env:MIOS_ENV_MIOS_SBOM_DIR } else { '/usr/share/mios/artifacts/sbom' }
+$script:MIOS_ENV_MIOS_UL_RETRY_DELAY = if ($env:MIOS_ENV_MIOS_UL_RETRY_DELAY) { $env:MIOS_ENV_MIOS_UL_RETRY_DELAY } else { 8 }
 $script:MIOS_ENV_MIOS_URL_CROWDSEC_REPO = if ($env:MIOS_ENV_MIOS_URL_CROWDSEC_REPO) { $env:MIOS_ENV_MIOS_URL_CROWDSEC_REPO } else { 'https://packagecloud.io/crowdsec/crowdsec/config_file.repo?os=fedora&dist=${FEDORA_VERSION}&source=script' }
+$script:MIOS_ENV_MIOS_URL_IRONRDP = if ($env:MIOS_ENV_MIOS_URL_IRONRDP) { $env:MIOS_ENV_MIOS_URL_IRONRDP } else { 'https://github.com/Devolutions/IronRDP.git' }
 $script:MIOS_ENV_MIOS_URL_TAILSCALE_REPO = if ($env:MIOS_ENV_MIOS_URL_TAILSCALE_REPO) { $env:MIOS_ENV_MIOS_URL_TAILSCALE_REPO } else { 'https://pkgs.tailscale.com/stable/fedora/tailscale.repo' }
 $script:MIOS_ENV_MIOS_URL_TERRA_REPO = if ($env:MIOS_ENV_MIOS_URL_TERRA_REPO) { $env:MIOS_ENV_MIOS_URL_TERRA_REPO } else { 'https://github.com/terrapkg/subatomic-repos/raw/main/terra.repo' }
 $script:MIOS_ENV_MIOS_URL_UBLUE_REPO = if ($env:MIOS_ENV_MIOS_URL_UBLUE_REPO) { $env:MIOS_ENV_MIOS_URL_UBLUE_REPO } else { 'https://copr.fedorainfracloud.org/coprs/ublue-os/packages/repo/fedora-${FEDORA_VERSION}/ublue-os-packages-fedora-${FEDORA_VERSION}.repo' }
+$script:MIOS_ENV_MIOS_URL_VENTULUSD = if ($env:MIOS_ENV_MIOS_URL_VENTULUSD) { $env:MIOS_ENV_MIOS_URL_VENTULUSD } else { 'https://github.com/Plan-B-Development/ventulusd.git' }
 $script:MIOS_PATHS_ETC_DIR = if ($env:MIOS_PATHS_ETC_DIR) { $env:MIOS_PATHS_ETC_DIR } else { Resolve-MiosInput -Canonical 'MIOS_PATHS_ETC_DIR' -Aliases @('MIOS_ETC_DIR') -Default ('/etc/mios') }
 $script:MIOS_ETC_DIR = if ($env:MIOS_ETC_DIR) { $env:MIOS_ETC_DIR } else { "$($script:MIOS_PATHS_ETC_DIR)" }
 $script:MIOS_PATHS_ETC_AI_DIR = if ($env:MIOS_PATHS_ETC_AI_DIR) { $env:MIOS_PATHS_ETC_AI_DIR } else { Resolve-MiosInput -Canonical 'MIOS_PATHS_ETC_AI_DIR' -Aliases @('MIOS_ETC_AI_DIR') -Default ("$($script:MIOS_ETC_DIR)/ai") }

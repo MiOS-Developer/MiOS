@@ -1698,18 +1698,18 @@ fn scoped_options(cfg: &StartConfig, receipt: &mut Receipt, fresh: bool) -> Resu
     for (name, value) in [
         ("MIOS_OMP_THEME", theme),
         ("MIOS_THEME_PROJECTED", "1"),
-        ("MIOS_SESSION_BARE", "1"),
+        ("TMUXOS_SESSION_BARE", "1"),
     ] {
         cfg.tmux(&["set-environment", "-g", name, value])?;
         cfg.tmux(&["set-environment", "-t", &receipt.session, name, value])?;
     }
-    cfg.tmux(&["set-environment", "-gu", "MIOS_TMUX_HELPER"])?;
+    cfg.tmux(&["set-environment", "-gu", "TMUXOS_HELPER"])?;
     cfg.tmux(&[
         "set-environment",
         "-u",
         "-t",
         &receipt.session,
-        "MIOS_TMUX_HELPER",
+        "TMUXOS_HELPER",
     ])?;
     cfg.tmux(&[
         "set-option",
@@ -1948,8 +1948,8 @@ fn reserve_config(cfg: &StartConfig) -> Result<Reservation, String> {
     command
         .env("MIOS_OMP_THEME", cfg.runtime.join("mios.omp.json"))
         .env("MIOS_THEME_PROJECTED", "1")
-        .env("MIOS_SESSION_BARE", "1")
-        .env_remove("MIOS_TMUX_HELPER")
+        .env("TMUXOS_SESSION_BARE", "1")
+        .env_remove("TMUXOS_HELPER")
         .arg("-f")
         .arg(&conf)
         .args([

@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 SBOM_CSV="${ROOT_DIR}/MiOS-SBOM.csv"
-MIOS_LIB_DIR="${ROOT_DIR}/usr/lib/mios"
+SSOT_LIB_DIR="${ROOT_DIR}/usr/lib/mios"
 
 log() {
     echo "[mios-resolve-latest] $*"
@@ -28,11 +28,11 @@ die() {
 # localhost/ refs are skipped: they are built in-image, so no registry can
 # resolve them (the same constraint mios.toml documents for firstboot_tokens).
 ssot_refs() {
-    MIOS_LIB_DIR="${MIOS_LIB_DIR}" MIOS_TOML_ROOT="${ROOT_DIR}" python3 - <<'PY'
+    SSOT_LIB_DIR="${SSOT_LIB_DIR}" MIOS_TOML_ROOT="${ROOT_DIR}" python3 - <<'PY'
 import os
 import sys
 
-sys.path.insert(0, os.environ["MIOS_LIB_DIR"])
+sys.path.insert(0, os.environ["SSOT_LIB_DIR"])
 import mios_toml  # noqa: E402 -- path must be set before the import
 
 sidecars = (mios_toml.load_merged().get("image") or {}).get("sidecars") or {}

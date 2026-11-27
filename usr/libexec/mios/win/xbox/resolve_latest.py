@@ -222,7 +222,7 @@ def _location(r: Response, what: str) -> str:
 
 def _import_mios_toml() -> Any:
     here = os.path.dirname(os.path.abspath(__file__))
-    for libdir in (os.environ.get("MIOS_LIB_DIR", ""), "/usr/lib/mios",
+    for libdir in (os.environ.get("SSOT_LIB_DIR", ""), "/usr/lib/mios",
                    os.path.normpath(os.path.join(here, "..", "..", "..", "..", "lib", "mios"))):
         if libdir and os.path.isfile(os.path.join(libdir, "mios_toml.py")):
             sys.path.insert(0, libdir)
@@ -1065,7 +1065,7 @@ def verify_tree(manifest: Dict[str, Any], artifact: str, root: str) -> int:
 
 
 def _authenticode(path: str, signer: str) -> None:
-    tool = os.environ.get("MIOS_OSSLSIGNCODE") or shutil.which("osslsigncode")
+    tool = os.environ.get("OSSLSIGNCODE") or shutil.which("osslsigncode")
     if not tool:
         raise ResolveError("osslsigncode is required to verify the Authenticode signature (no unverified install)")
     r = subprocess.run([tool, "verify", "-in", path], capture_output=True, text=True, timeout=300)

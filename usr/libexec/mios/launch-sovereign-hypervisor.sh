@@ -34,13 +34,13 @@ LIBVIRT_SOCKETS=(
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MIOS_LIBEXEC="${SCRIPT_DIR}"
-XBOX_XML_DEFAULT="${MIOS_LIBEXEC}/Xbox-Final-NoAutoSelect.xml"
+LIBEXEC_DIR="${SCRIPT_DIR}"
+XBOX_XML_DEFAULT="${LIBEXEC_DIR}/Xbox-Final-NoAutoSelect.xml"
 # shellcheck disable=SC2034
-XBOX_XML_AUTO="${MIOS_LIBEXEC}/Xbox-AutoEnroll.xml"
+XBOX_XML_AUTO="${LIBEXEC_DIR}/Xbox-AutoEnroll.xml"
 XBOX_XML="${XBOX_XML:-$XBOX_XML_DEFAULT}"
 
-MOCK_MODE="${MIOS_MOCK_HYPERVISOR:-0}"
+MOCK_MODE="${MOCK_HYPERVISOR:-0}"
 DRY_RUN=0
 CHECK_ONLY=0
 STATUS_ONLY=0
@@ -63,7 +63,7 @@ Environment Variables:
   KVMFR_DEV               Path to Looking Glass IVSHMEM character device (default: /dev/kvmfr0)
   BRIDGE_IF               Bridge network interface name (default: virbr0)
   LIBVIRT_NET             Libvirt virtual network name (default: default)
-  MIOS_MOCK_HYPERVISOR    Set to 1 for mock testing in container / non-baremetal environments
+  MOCK_HYPERVISOR    Set to 1 for mock testing in container / non-baremetal environments
 EOF
 }
 

@@ -10423,7 +10423,7 @@ containerfile_dir = "/usr/share/mios/shaderglass/winecap-build"
 base_image = "registry.fedoraproject.org/fedora:{fedora_release}"   # {fedora_release} = the Fedora release this host is built on (os-release PLATFORM_ID platform:f<N>; MiOS rebrands VERSION_ID to its own version): the library links the ABI it is loaded with
 packages = ["wine-devel", "pipewire-devel", "glib2-devel", "gcc", "gcc-c++", "make", "pkgconf-pkg-config"]   # winegcc drives g++ even for C (upstream's builder installs g++ too)
 work_root = "/var/lib/mios-build/shaderglass"   # clone, staged tree, image store; $XDG_CACHE_HOME/mios/shaderglass when not writable
-heavy_lock = "/home/mios/mios-desktop-work-1/heavy.lock"   # MIOS_HEAVY_LOCK overrides it for one run
+heavy_lock = "/home/mios/mios-desktop-work-1/heavy.lock"   # HEAVY_LOCK overrides it for one run
 scope_memory_max = "4G"
 container_memory = "3g"
 container_cpus = 4
@@ -14735,6 +14735,14 @@ mios-adguard          = true
 mios-radosgw          = true
 
 [env]
+# Build-time inputs read verbatim by automation/lib/upstream-latest.sh and the bake steps.
+MIOS_URL_VENTULUSD = "https://github.com/Plan-B-Development/ventulusd.git"
+MIOS_URL_IRONRDP = "https://github.com/Devolutions/IronRDP.git"
+MIOS_GITHUB_API = "https://api.github.com"
+MIOS_SBOM_DIR = "/usr/share/mios/artifacts/sbom"
+MIOS_UL_RETRY_DELAY = "8"   # seconds; clone attempt N waits N times this
+MIOS_PYPI_JSON = "https://pypi.org/pypi"   # PyPI JSON API base for usr/share/mios/piper/install-piper.py
+MIOS_EMBED_BACKFILL_BUDGET_S = "90"   # wall-clock seconds one mios-embed-backfill run may spend
 MIOS_URL_TERRA_REPO = "https://github.com/terrapkg/subatomic-repos/raw/main/terra.repo"
 MIOS_URL_UBLUE_REPO = "https://copr.fedorainfracloud.org/coprs/ublue-os/packages/repo/fedora-${FEDORA_VERSION}/ublue-os-packages-fedora-${FEDORA_VERSION}.repo"
 MIOS_URL_TAILSCALE_REPO = "https://pkgs.tailscale.com/stable/fedora/tailscale.repo"
@@ -15929,9 +15937,9 @@ EnvironmentFile = "/etc/mios/install.env"
 Group = "${MIOS_GUACAMOLE_GID:-810}"
 Image = "${MIOS_GUACAMOLE_IMAGE:-docker.io/guacamole/guacamole:latest}"
 Label = [
-  "org.opencontainers.image.url=http://localhost:${MIOS_PORT_GUACAMOLE_WEB:-8220}/guacamole/",
+  "org.opencontainers.image.url=http://localhost:${MIOS_PORTS_GUACAMOLE_WEB:-8220}/guacamole/",
   "org.opencontainers.image.documentation=https://guacamole.apache.org/doc/",
-  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORT_GUACAMOLE_WEB:-8220}/guacamole/"
+  "io.podman_desktop.openInBrowser=http://localhost:${MIOS_PORTS_GUACAMOLE_WEB:-8220}/guacamole/"
 ]
 Pod = "mios-system.pod"
 User = "${MIOS_GUACAMOLE_UID:-810}"
@@ -19064,7 +19072,7 @@ container_memory_swap = "14g"
 container_cpus = 8
 nice = 10
 ionice_class = 3
-heavy_lock = "/home/mios/mios-desktop-work-1/heavy.lock"   # MIOS_HEAVY_LOCK overrides it for one run
+heavy_lock = "/home/mios/mios-desktop-work-1/heavy.lock"   # HEAVY_LOCK overrides it for one run
 work_root = "/var/lib/mios-build/portal"         # project, engine, objdir, ~/.mozbuild, npm cache, image store
 artifact_root = "/var/lib/mios-build/artifacts/mios-portal"  # <ts>/ tarball + manifest.json + logs
 min_free_gb = 40                       # refuse to start (or continue) below this much free space

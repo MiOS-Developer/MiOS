@@ -65,12 +65,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 
 | Status | Records |
 |---|---|
-| pending | 1771 |
+| pending | 1777 |
 | in_progress | 96 |
 | completed | 1901 |
 | incomplete | 20 |
 | cancelled | 21 |
-| total | 3809 |
+| total | 3815 |
 
 48 record(s) carry at least one override.
 
@@ -720,6 +720,12 @@ Each line between the markers that starts with `{` is one override: a JSON objec
 - `task_2276` Cover the reconcile-blade merge classes with adversarial tests -- pending · P1 · size M · depends_on task_2265
 - `task_3406` Wire the placement-failover resolver into role-apply -- completed · P1 · size M
 - `task_3559` P1-12: fleet updates -- staged rollout with a disruption budget, signatures enforced first (WS-BLADE | P1 | M) -- pending · P1 · size M · depends_on task_3536
+- `task_3810` K3S-01: mios-gen k3s projection + k3s-manifest template + drift gate; retire generate-k3s-manifests.* -- pending · P1 · size L
+- `task_3811` K3S-02: package the host venv services (agent-pipe, prefilter, arbiter, mcp, opencode-gateway, daemon-agent) as OCI images -- pending · P1 · size L
+- `task_3812` K3S-03: [k3s.cluster] membership SSOT -- three servers on three SSD Blades, agents elsewhere, one launch path, k3s_api port drift fixed -- pending · P0 · size L
+- `task_3813` K3S-04: tailnet naming -- Tailscale operator ProxyGroup, tag/ACL policy, one-publisher-per-name gate -- pending · P1 · size M
+- `task_3814` K3S-05: stateful strategy (pgvector, forge) -- pin+backup, then replicate; ceph-csi after task_933 -- pending · P2 · size L
+- `task_3815` K3S-06: scrub and rotate token-looking values committed in usr/share/mios/k3s-manifests/*.yaml -- pending · P1 · size S
 
 ### Epic task_3596
 

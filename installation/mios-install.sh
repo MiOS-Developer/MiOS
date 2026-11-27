@@ -997,7 +997,7 @@ write_operator_credential() {
     if [[ -z "${USER_PASSWORD:-}" || "${USER_PASSWORD}" =~ [[:cntrl:]] ]]; then
         log_err "The password is empty or holds a control character: not recorded as the operator credential"; return 1
     fi
-    code="$(cat <<'MIOS_OPERATOR_CREDENTIAL_PY'
+    code="$(cat <<'OPERATOR_CREDENTIAL_PY'
 import copy, json, math, os, re, secrets, stat, sys, tomllib
 
 class Refusal(Exception):
@@ -1241,7 +1241,7 @@ finally:
             pass
     for fd in reversed(opened):
         os.close(fd)
-MIOS_OPERATOR_CREDENTIAL_PY
+OPERATOR_CREDENTIAL_PY
 )"
     if ! printf '%s' "$USER_PASSWORD" | sudo -u "$user" python3 -I -c "$code" "$home"; then
         log_err "The operator credential was not recorded in ${home}/.config/mios/mios.toml"

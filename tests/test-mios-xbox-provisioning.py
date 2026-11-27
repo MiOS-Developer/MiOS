@@ -518,7 +518,7 @@ class TestItem5HostLog(PayloadBase):
 # ---------------------------------------------------------------------------
 
 class TestItem6NoSetupHook(unittest.TestCase):
-    HOOK_RE = re.compile(r"MIOS_SYS\\Setup'?\s+/v\s+(SetupType|CmdLine)", re.I)
+    HOOK_RE = re.compile(r"MiOS_SYS\\Setup'?\s+/v\s+(SetupType|CmdLine)", re.I)
 
     def test_positive_servicing_script_leaves_cmdline_alone(self):
         t = _rd(os.path.join(BUILD_PS, "New-MiOSXboxImage.ps1"))
@@ -532,7 +532,7 @@ class TestItem6NoSetupHook(unittest.TestCase):
         self.assertIn("Setup", C._DENY_KEYS["system"])
 
     def test_negative_hooked_image_is_denied(self):
-        old = "& reg.exe add 'HKLM\\MIOS_SYS\\Setup' /v CmdLine /t REG_SZ /d 'cmd.exe /c C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd' /f"
+        old = "& reg.exe add 'HKLM\\MiOS_SYS\\Setup' /v CmdLine /t REG_SZ /d 'cmd.exe /c C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd' /f"
         self.assertIsNotNone(self.HOOK_RE.search(old))
         obs = C.Observations()
         obs.add_reg("HKEY_LOCAL_MACHINE\\SYSTEM\\Setup", "CmdLine", "sz", "cmd.exe /c C:\\Windows\\Setup\\Scripts\\SetupComplete.cmd", "SYSTEM:1")

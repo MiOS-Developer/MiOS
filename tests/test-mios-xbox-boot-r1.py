@@ -405,7 +405,7 @@ class TestProbeAccount(unittest.TestCase):
 
         def attempt(mod):
             calls = []
-            saved = (sys.executable, os.environ.pop("MIOS_XBOX_PROBE_REEXEC", None), mod.os.execv)
+            saved = (sys.executable, os.environ.pop("XBOX_PROBE_REEXEC", None), mod.os.execv)
             sys.executable = real            # running under the system python the venv links to
             mod.os.execv = lambda path, argv: calls.append(path)
             try:
@@ -413,9 +413,9 @@ class TestProbeAccount(unittest.TestCase):
             finally:
                 sys.executable = saved[0]
                 mod.os.execv = saved[2]
-                os.environ.pop("MIOS_XBOX_PROBE_REEXEC", None)
+                os.environ.pop("XBOX_PROBE_REEXEC", None)
                 if saved[1] is not None:
-                    os.environ["MIOS_XBOX_PROBE_REEXEC"] = saved[1]
+                    os.environ["XBOX_PROBE_REEXEC"] = saved[1]
             return calls
 
         self.assertEqual(attempt(self.new), [venv_py])

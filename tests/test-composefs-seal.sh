@@ -412,7 +412,7 @@ with open(tmp_script, "w", encoding="utf-8") as f:
 env = dict(
     os.environ,
     MIOS_TOML_ROOT=root,
-    MIOS_AUTOMATION_DIR=os.path.join(root, "automation"),
+    AUTOMATION_DIR=os.path.join(root, "automation"),
     COMPOSEFS_CONF=probe_conf,
     SYSTEMD_ETC_DIR=unguarded_etc,
 )

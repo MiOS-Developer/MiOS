@@ -38,7 +38,7 @@ if [[ -z "$BASELINE" || -z "$CANDIDATE" ]]; then
     exit 1
 fi
 
-BENCH_BIN="${MIOS_BENCH_BIN:-/usr/libexec/mios/mios-bench}"
+BENCH_BIN="${DGM_BENCH_BIN:-/usr/libexec/mios/mios-bench}"
 
 if output=$($BENCH_BIN gate "$CANDIDATE" --baseline "$BASELINE" --k "$K" 2>&1); then
     echo "$output"

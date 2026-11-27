@@ -512,7 +512,7 @@ fn ensure_float(merged: &Value, name: &str, parent: &str, cwd: &str) -> Result<(
             "-c",
             cwd,
             "-e",
-            "MIOS_SESSION_BARE=1",
+            "TMUXOS_SESSION_BARE=1",
         ])?;
         tmux(&["set-option", "-t", &target, "@mios-bare", "1"])?;
         tmux(&["set-option", "-t", &target, "@mios-float-parent", parent])?;
@@ -934,7 +934,7 @@ fn new_session(merged: &Value, a: &Args) -> Result<(), String> {
         "-c",
         &cwd,
         "-e",
-        "MIOS_SESSION_BARE=1",
+        "TMUXOS_SESSION_BARE=1",
     ])?;
     tmux(&["set-option", "-t", &format!("={name}:"), "@mios-bare", "1"])?;
     tmux(&["switch-client", "-c", &client, "-t", &format!("={name}")])?;

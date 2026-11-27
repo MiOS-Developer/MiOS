@@ -167,7 +167,7 @@ def expected_design(d: dict) -> dict:
 def bridge_errors(root: Path, d: dict) -> list[str]:
     with tempfile.TemporaryDirectory() as out:
         env = dict(os.environ, MIOS_VENDOR_TOML=str(root / "usr/share/mios/mios.toml"), MIOS_HOST_TOML="/nonexistent",
-                   MIOS_USER_TOML="/nonexistent", MIOS_THEME_OUT_DIR=out, MIOS_LIB_DIR="/usr/lib/mios")
+                   MIOS_USER_TOML="/nonexistent", MIOS_THEME_OUT_DIR=out, SSOT_LIB_DIR="/usr/lib/mios")
         env.pop("MIOS_TOML", None)
         r = subprocess.run(["bash", str(root / "usr/libexec/mios/mios-sync-theme"), "--bridge-only"], env=env,
                            capture_output=True, text=True, timeout=120)

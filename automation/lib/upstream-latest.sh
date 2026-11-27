@@ -44,7 +44,7 @@ mios_ul_pass() {
 
 _mios_ul_bake_plan() {
     local c
-    for c in "${MIOS_BAKE_PLAN:-}" /usr/libexec/mios/mios-bake-plan "$(command -v mios-bake-plan 2>/dev/null || true)"; do
+    for c in "${UL_BAKE_PLAN:-}" /usr/libexec/mios/mios-bake-plan "$(command -v mios-bake-plan 2>/dev/null || true)"; do
         [[ -n "$c" && -x "$c" ]] && { printf '%s' "$c"; return 0; }
     done
     return 1

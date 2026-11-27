@@ -8,11 +8,11 @@ for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/packages.sh"
 
-# MIOS_WAYVNC_DESTDIR stages the install under another root (a dev-container build copied onto a running
-# host); empty for the image build. MIOS_WAYVNC_JOBS caps ninja's parallelism.
-DESTDIR="${MIOS_WAYVNC_DESTDIR:-}"
+# WAYVNC_DESTDIR stages the install under another root (a dev-container build copied onto a running
+# host); empty for the image build. WAYVNC_JOBS caps ninja's parallelism.
+DESTDIR="${WAYVNC_DESTDIR:-}"
 OUT_DIR="$DESTDIR/usr/libexec/mios/wayvnc"
-BUILD_DIR="${MIOS_WAYVNC_BUILD_DIR:-/tmp/wayvnc-upstream-build}"
+BUILD_DIR="${WAYVNC_BUILD_DIR:-/tmp/wayvnc-upstream-build}"
 declare -A REPO=(
     [wayvnc]="https://github.com/any1/wayvnc.git"
     [neatvnc]="https://github.com/any1/neatvnc.git"
@@ -38,7 +38,7 @@ then
     exit 0
 fi
 
-[[ "${MIOS_WAYVNC_SKIP_DEPS:-0}" == 1 ]] || install_packages "wayvnc-build"
+[[ "${WAYVNC_SKIP_DEPS:-0}" == 1 ]] || install_packages "wayvnc-build"
 MISSING=""
 for tool in meson ninja gcc git pkg-config; do
     command -v "$tool" >/dev/null 2>&1 || MISSING="${MISSING}${tool} "
@@ -65,7 +65,7 @@ cd "$BUILD_DIR/wayvnc"
 meson setup build --buildtype=release --prefix=/usr/libexec/mios/wayvnc \
     -Ddefault_library=static -Dman-pages=disabled -Dtests=false \
     -Dneatvnc:examples=false -Dneatvnc:benchmarks=false -Dneatvnc:tests=false
-ninja -C build -j"${MIOS_WAYVNC_JOBS:-$(nproc)}" wayvnc
+ninja -C build -j"${WAYVNC_JOBS:-$(nproc)}" wayvnc
 VERSION="$(./build/wayvnc --version 2>&1 | head -1)"
 [[ -n "$VERSION" ]] || die "wayvnc-upstream: built binary does not run"
 if ldd ./build/wayvnc | grep -Eq 'libneatvnc|libaml|not found'; then

@@ -253,7 +253,7 @@ def main():
         bridge_dir = OUT / f'{LABEL}-bridge'
         r = sh(['bash', str(SYNC), '--bridge-only'],
                env=dict(os.environ, MIOS_VENDOR_TOML=str(SSOT), MIOS_HOST_TOML='/nonexistent',
-                        MIOS_USER_TOML='/nonexistent', MIOS_THEME_OUT_DIR=str(bridge_dir), MIOS_LIB_DIR='/usr/lib/mios'))
+                        MIOS_USER_TOML='/nonexistent', MIOS_THEME_OUT_DIR=str(bridge_dir), SSOT_LIB_DIR='/usr/lib/mios'))
         check('theme bridge generated from the tree SSOT', (bridge_dir / 'theme.json').is_file(), r.stderr[-300:])
         bridge = json.loads((bridge_dir / 'theme.json').read_text())
         shell_env = dict(env, PIPEWIRE_RUNTIME_DIR=UID_RUNTIME, MIOS_THEME_BRIDGE=str(bridge_dir / 'theme.json'),

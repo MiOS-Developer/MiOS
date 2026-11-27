@@ -32,13 +32,13 @@ MIOS_LAYERS="${MIOS_VENDOR_TOML} ${MIOS_HOST_TOML} ${MIOS_USER_TOML}" \
 MIOS_LAYERS_EXPLICIT="${MIOS_LAYERS_EXPLICIT}" \
 MIOS_THEME_OUT_DIR="${OUT_DIR}" \
 MIOS_THEME_CHECK="${CHECK_ONLY}" \
-MIOS_LIB_DIR="$(cd "$(dirname "$0")/../../lib/mios" 2>/dev/null && pwd || echo /usr/lib/mios)" \
+SSOT_LIB_DIR="$(cd "$(dirname "$0")/../../lib/mios" 2>/dev/null && pwd || echo /usr/lib/mios)" \
 python3 - <<'PY'
 import json
 import os
 import sys
 
-sys.path.insert(0, os.environ.get("MIOS_LIB_DIR", "/usr/lib/mios"))
+sys.path.insert(0, os.environ.get("SSOT_LIB_DIR", "/usr/lib/mios"))
 import mios_toml  # the ONE shared layered-mios.toml resolver (no local copy)
 
 layers = os.environ["MIOS_LAYERS"].split()

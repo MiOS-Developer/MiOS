@@ -33,6 +33,7 @@ export GIT_CONFIG_NOSYSTEM=1 HOME="$T/home"; mkdir -p "$HOME"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$T/git/.insteadOf" GIT_CONFIG_VALUE_0="https://github.com/"
 export MIOS_ROOT="$T/root" MIOS_TOML_ROOT="$T/root" MIOS_BAKE_PLAN="$PLAN" MIOS_SBOM_DIR="$T/sbom" MIOS_VERSION_MANIFEST="$T/versions.tsv"
 export MIOS_UL_RETRY_DELAY=0
+export UL_BAKE_PLAN="$PLAN"   # automation/lib/upstream-latest.sh tries this binary first
 # Hermetic: a caller's GitHub token must not leak into the fake forge or the assertions.
 unset GH_TOKEN GITHUB_TOKEN GHCR_TOKEN
 

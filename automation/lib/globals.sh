@@ -2702,10 +2702,17 @@ is *also* a local, self-hosted, agentic AI operating system.
 : "${MIOS_ENHANCED_SESSION_ENABLED:=true}"
 : "${MIOS_ENHANCED_SESSION_PORT:=13389}"
 : "${MIOS_ENHANCED_SESSION_RESOLUTION:=auto}"
+: "${MIOS_ENV_MIOS_EMBED_BACKFILL_BUDGET_S:=90}"
+: "${MIOS_ENV_MIOS_GITHUB_API:=https://api.github.com}"
+: "${MIOS_ENV_MIOS_PYPI_JSON:=https://pypi.org/pypi}"
+: "${MIOS_ENV_MIOS_SBOM_DIR:=/usr/share/mios/artifacts/sbom}"
+: "${MIOS_ENV_MIOS_UL_RETRY_DELAY:=8}"
 [ -n "${MIOS_ENV_MIOS_URL_CROWDSEC_REPO+x}" ] || MIOS_ENV_MIOS_URL_CROWDSEC_REPO='https://packagecloud.io/crowdsec/crowdsec/config_file.repo?os=fedora&dist=${FEDORA_VERSION}&source=script'
+: "${MIOS_ENV_MIOS_URL_IRONRDP:=https://github.com/Devolutions/IronRDP.git}"
 : "${MIOS_ENV_MIOS_URL_TAILSCALE_REPO:=https://pkgs.tailscale.com/stable/fedora/tailscale.repo}"
 : "${MIOS_ENV_MIOS_URL_TERRA_REPO:=https://github.com/terrapkg/subatomic-repos/raw/main/terra.repo}"
 [ -n "${MIOS_ENV_MIOS_URL_UBLUE_REPO+x}" ] || MIOS_ENV_MIOS_URL_UBLUE_REPO='https://copr.fedorainfracloud.org/coprs/ublue-os/packages/repo/fedora-${FEDORA_VERSION}/ublue-os-packages-fedora-${FEDORA_VERSION}.repo'
+: "${MIOS_ENV_MIOS_URL_VENTULUSD:=https://github.com/Plan-B-Development/ventulusd.git}"
 _mios_input MIOS_PATHS_ETC_DIR MIOS_ETC_DIR || { return 1 2>/dev/null || exit 1; }
 : "${MIOS_PATHS_ETC_DIR:=/etc/mios}"
 [ -n "${MIOS_ETC_DIR+x}" ] || MIOS_ETC_DIR="${MIOS_PATHS_ETC_DIR:-}"

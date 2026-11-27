@@ -91,7 +91,7 @@ def _verify(manifest: Dict[str, Any], artifact: str, path: str, member: Optional
     Unsigned artefacts (virtio-win, qemu-ga) carry a sha256 anchor and never an Authenticode claim."""
     integ = ((manifest.get("artifacts") or {}).get(artifact) or {}).get("integrity") or {}
     try:
-        if integ.get("kind") == "authenticode" and not (os.environ.get("MIOS_OSSLSIGNCODE") or shutil.which("osslsigncode")):
+        if integ.get("kind") == "authenticode" and not (os.environ.get("OSSLSIGNCODE") or shutil.which("osslsigncode")):
             if integ.get("size") is None or os.path.getsize(path) != int(integ["size"]):
                 raise RL.ResolveError(f"{os.path.basename(path)}: size {os.path.getsize(path)} != published {integ.get('size')}")
             return "size (signature: worker + guest)"

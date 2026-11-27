@@ -550,7 +550,7 @@ def _agent_tmux_context():
     # Validate the real caller socket, owner, pane and server PID before using
     # its provenance. A marker cannot turn an invalid binding into a valid one.
     context = _human_tmux_context(ambient.rsplit(",", 2)[0], pane)
-    if (os.environ.get("MIOS_TMUX_HELPER") == "1"
+    if (os.environ.get("TMUXOS_HELPER") == "1"
             and os.environ.get("MIOS_TMUX_PRIVATE_SOCKET") == context["socket"]):
         return None
     return context
@@ -763,7 +763,7 @@ class _TmuxBridge:
             self.env.update({"HOME": self.directory.name, "TMUX_TMPDIR": self.socket_dir.name,
                              "NO_COLOR": "1", "TERM": term, "HISTFILE": os.devnull,
                              "MIOS_TMUX_HELPER_PROMPT": prompt,
-                             "MIOS_THEME_PROJECTED": "1", "MIOS_TMUX_HELPER": "1",
+                             "MIOS_THEME_PROJECTED": "1", "TMUXOS_HELPER": "1",
                              "MIOS_OMP_THEME": os.path.join(self.directory.name, "mios.omp.json")})
             # A non-secret pointer connects nested workers to the caller's shared
             # agent registry while HOME and credentials remain private.
@@ -902,7 +902,7 @@ class _TmuxBridge:
                 return physical
             shell_env = " ".join(shlex.quote(f"{k}={v}") for k, v in self.env.items()
                                  if k != "TMUX_TMPDIR")
-            command = 'exec env -i ' + shell_env + ' MIOS_TMUX_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
+            command = 'exec env -i ' + shell_env + ' TMUXOS_HELPER=1 TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc'
             desktop = tmux("display-message", "-p", "-t", ui["pane"],
                            "#{@mios-desktop-enabled}|#{@mios-desktop-workarea-pane}").split("|")
             desktop = len(desktop) == 2 and desktop[0] == "1"
@@ -2776,13 +2776,13 @@ def main() -> int:
             return 0
         socket = os.environ.get("TMUX", "").rsplit(",", 2)[0]
         pane = os.environ.get("TMUX_PANE")
-        if not socket or not pane or os.environ.get("MIOS_TMUX_HELPER") == "1":
+        if not socket or not pane or os.environ.get("TMUXOS_HELPER") == "1":
             return 0
-        # Bare Tmux-OS sessions (mios-terminal --bare) carry MIOS_SESSION_BARE=1 in their session
+        # Bare Tmux-OS sessions (mios-terminal --bare) carry TMUXOS_SESSION_BARE=1 in their session
         # environment; hooks fire with the server's environment, so ask tmux for the pane's session.
-        bare = subprocess.run(["tmux", "-S", socket, "show-environment", "-t", pane, "MIOS_SESSION_BARE"],
+        bare = subprocess.run(["tmux", "-S", socket, "show-environment", "-t", pane, "TMUXOS_SESSION_BARE"],
                               capture_output=True, text=True)
-        if bare.stdout.strip() == "MIOS_SESSION_BARE=1":
+        if bare.stdout.strip() == "TMUXOS_SESSION_BARE=1":
             return 0
         try:
             ui = _human_tmux_context(socket, pane)

@@ -63,7 +63,7 @@ def build(tmp, snippet, auto_attach="true"):
 def run_tty(tmp, env_extra):
     env = {k: v for k, v in os.environ.items()
            if k not in ("TMUX", "STY", "MIOS_MOTD_SHOWN", "MIOS_SKIP_MOTD",
-                        "MIOS_TMUX_HELPER", "MIOS_SESSION_BARE")}
+                        "TMUXOS_HELPER", "TMUXOS_SESSION_BARE")}
     env.update(env_extra)
     log = tmp / "calls.log"
     cmd = ["/bin/bash", "--noprofile", "--norc", "-i", "-c",

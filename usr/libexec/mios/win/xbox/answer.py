@@ -35,7 +35,7 @@ import render_spec  # noqa: E402
 UNS = "urn:schemas-microsoft-com:unattend"
 WCM = "http://schemas.microsoft.com/WMIConfig/2002/State"
 PKT = "31bf3856ad364e35"
-OFFLINE_MOUNT = {"SOFTWARE": "MIOS_SW", "SYSTEM": "MIOS_SYS", "DEFAULT_USER": "MIOS_DEFU"}
+OFFLINE_MOUNT = {"SOFTWARE": "MiOS_SW", "SYSTEM": "MiOS_SYS", "DEFAULT_USER": "MiOS_DEFU"}
 # Well-known local group SIDs (locale-independent membership; the spec names English group names).
 GROUP_SIDS = {"administrators": "S-1-5-32-544", "users": "S-1-5-32-545", "remote desktop users": "S-1-5-32-555",
               "remote management users": "S-1-5-32-580", "performance log users": "S-1-5-32-559"}
@@ -319,7 +319,7 @@ def _reg_str(s: str) -> str:
 
 def render_registry(doc: Dict[str, Any]) -> bytes:
     """REGEDIT5 text of every registry item of the spec (incl. debloat services) under the offline mount
-    names New-MiOSXboxImage loads (HKLM\\MIOS_SW / MIOS_SYS / MIOS_DEFU). kv_field values sharing one
+    names New-MiOSXboxImage loads (HKLM\\MiOS_SW / MiOS_SYS / MiOS_DEFU). kv_field values sharing one
     value are composed into a single 'k=v;' string."""
     keys: Dict[Tuple[str, str], Dict[str, str]] = {}
     order: List[Tuple[str, str]] = []
@@ -355,7 +355,7 @@ def render_registry(doc: Dict[str, Any]) -> bytes:
         put("SYSTEM", f"ControlSet001\\Services\\{svc['name']}", "Start", f"dword:{int(svc['start']):08x}")
     lines = ["Windows Registry Editor Version 5.00", "",
              "; MiOS-Xbox offline registry, rendered by answer.py from xbox-spec.json (one owner per value).",
-             "; Imported by New-MiOSXboxImage.ps1 with the image hives loaded at HKLM\\MIOS_SW / MIOS_SYS / MIOS_DEFU.", ""]
+             "; Imported by New-MiOSXboxImage.ps1 with the image hives loaded at HKLM\\MiOS_SW / MiOS_SYS / MiOS_DEFU.", ""]
     for hive, key in order:
         lines.append(f"[HKEY_LOCAL_MACHINE\\{OFFLINE_MOUNT[hive]}\\{key}]")
         for name, data in keys[(hive, key)].items():

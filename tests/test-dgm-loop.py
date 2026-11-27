@@ -287,7 +287,7 @@ def test_pre_commit_hook():
 
     try:
         hook_env = os.environ.copy()
-        hook_env["MIOS_BENCH_BIN"] = f"{to_bash_path(sys.executable)} {to_bash_path(MIOS_BENCH)}"
+        hook_env["DGM_BENCH_BIN"] = f"{to_bash_path(sys.executable)} {to_bash_path(MIOS_BENCH)}"
         hook_env["PYTHONPATH"] = to_bash_path(_LIB) + (os.pathsep + hook_env["PYTHONPATH"] if "PYTHONPATH" in hook_env else "")
 
         hook_posix = to_bash_path(HOOK_SCRIPT)

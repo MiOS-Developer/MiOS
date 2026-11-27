@@ -707,23 +707,23 @@ class TestMiosTerminalFlags(unittest.TestCase):
         self.assertIn("--session", proc.stdout)
 
     def test_3b_bare_sets_session_bare_env_and_new_does_not(self):
-        """Verify mios-terminal --bare sets MIOS_SESSION_BARE=1 while --new creates a standard session without it."""
+        """Verify mios-terminal --bare sets TMUXOS_SESSION_BARE=1 while --new creates a standard session without it."""
         script = Path("/usr/libexec/mios/mios-terminal").read_text()
         self.assertIn("_mios_bare_opt=0", script)
         self.assertIn("--bare) _mios_new=1; _mios_bare_opt=1;", script)
         self.assertIn("--new) _mios_new=1;", script)
-        self.assertIn("(( _mios_bare_opt )) && _mios_bare=(-e MIOS_SESSION_BARE=1)", script)
+        self.assertIn("(( _mios_bare_opt )) && _mios_bare=(-e TMUXOS_SESSION_BARE=1)", script)
 
     def test_3c_workspace_ensure_skips_bare_session(self):
-        """Verify --workspace-ensure checks MIOS_SESSION_BARE=1 and exits 0 without adopting."""
+        """Verify --workspace-ensure checks TMUXOS_SESSION_BARE=1 and exits 0 without adopting."""
         tmpdir = tempfile.TemporaryDirectory(prefix="adv-bare-ensure-")
         os.chmod(tmpdir.name, 0o700)
         sock = Path(tmpdir.name) / "default"
         try:
-            # Create session with MIOS_SESSION_BARE=1
+            # Create session with TMUXOS_SESSION_BARE=1
             pane = subprocess.check_output(
                 ["tmux", "-S", str(sock), "-f", os.devnull, "new-session", "-d", "-s", "bare-test",
-                 "-e", "MIOS_SESSION_BARE=1", "-P", "-F", "#{pane_id}", "sleep 3600"],
+                 "-e", "TMUXOS_SESSION_BARE=1", "-P", "-F", "#{pane_id}", "sleep 3600"],
                 text=True
             ).strip()
 

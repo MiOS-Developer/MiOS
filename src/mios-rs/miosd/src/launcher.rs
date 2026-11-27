@@ -1040,7 +1040,7 @@ fn into_new_session(i: &Instance, name: &str) -> Vec<Op> {
         "-s",
         name,
         "-e",
-        "MIOS_SESSION_BARE=1",
+        "TMUXOS_SESSION_BARE=1",
         "sleep",
         "30",
     ])];
@@ -1351,7 +1351,7 @@ pub fn options(it: &Item, cfg: &Cfg, ctx: &Ctx, app_argv: Option<(&str, Vec<Stri
                     "-n",
                     label,
                     "-e",
-                    "MIOS_SESSION_BARE=1",
+                    "TMUXOS_SESSION_BARE=1",
                     "--",
                 ]
                 .iter()
@@ -3482,7 +3482,7 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
                     "-s",
                     "pop-bash-2",
                     "-e",
-                    "MIOS_SESSION_BARE=1",
+                    "TMUXOS_SESSION_BARE=1",
                     "sleep",
                     "30"
                 ]
@@ -3663,7 +3663,7 @@ $4\tmios-workspace-%4\t@5\t0\tw\t1\t%7\t1\t0\tworker\t\t\t1\t0
                     "-n",
                     "btop",
                     "-e",
-                    "MIOS_SESSION_BARE=1",
+                    "TMUXOS_SESSION_BARE=1",
                     "--",
                     "btop",
                     "--config",

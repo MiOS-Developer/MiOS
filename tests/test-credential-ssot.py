@@ -558,8 +558,8 @@ class TestFieldMedia(unittest.TestCase):
             self.assertRegex(ks, rf"(?m)^user --name={re.escape(H_USER)} \S+ --iscrypted --password=\$6\$")
             with open(os.path.join(stick, "mios-sysrescue.env"), encoding="ascii") as fh:
                 env = fh.read()
-            self.assertIn(f"MIOS_SR_USER='{H_USER}'", env)      # [field.sysrescue].username "" -> identity
-            self.assertIn(f"MIOS_SR_PASS='{U_PASS}'", env)
+            self.assertIn(f"SR_USER='{H_USER}'", env)      # [field.sysrescue].username "" -> identity
+            self.assertIn(f"SR_PASS='{U_PASS}'", env)
         finally:
             fx.cleanup()
 
@@ -604,7 +604,7 @@ class TestSysrescueAutorun(unittest.TestCase):
                 d = tempfile.mkdtemp(prefix="mios-sr-")
                 try:
                     with open(os.path.join(d, "mios-sysrescue.env"), "w") as fh:
-                        fh.write(f"MIOS_SR_USER='{H_USER}'\nMIOS_SR_PASS='{U_PASS}'\n")
+                        fh.write(f"SR_USER='{H_USER}'\nSR_PASS='{U_PASS}'\n")
                     r = self._run(block, d)
                     self.assertEqual(r.stdout.strip().splitlines()[-1], f"{H_USER}|{U_PASS}")
                     os.unlink(os.path.join(d, "mios-sysrescue.env"))

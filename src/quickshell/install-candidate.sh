@@ -322,8 +322,8 @@ do_install() {
         DONE+=("$kind"$'\t'"$rel")
         journal "$kind"$'\t'"$rel"$'\t'"$digest"
         # test hook (scratch roots only): fail after N renames to prove the undo of a half-committed install
-        if [[ -n $R && -n ${MIOS_QS_INSTALL_FAIL_AFTER:-} && ${#DONE[@]} -ge $MIOS_QS_INSTALL_FAIL_AFTER ]]; then
-            die "MIOS_QS_INSTALL_FAIL_AFTER=$MIOS_QS_INSTALL_FAIL_AFTER reached"
+        if [[ -n $R && -n ${QS_INSTALL_FAIL_AFTER:-} && ${#DONE[@]} -ge $QS_INSTALL_FAIL_AFTER ]]; then
+            die "QS_INSTALL_FAIL_AFTER=$QS_INSTALL_FAIL_AFTER reached"
         fi
     done
     TEMPS=()

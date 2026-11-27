@@ -385,7 +385,7 @@ fn build_winecap(
     std::fs::create_dir_all(&store).map_err(|e| format!("{}: {e}", store.display()))?;
     super::ensure_private_dir(&runroot)?;
     let lock = heavy_lock(
-        std::env::var("MIOS_HEAVY_LOCK").ok().as_deref(),
+        std::env::var("HEAVY_LOCK").ok().as_deref(),
         &b.heavy_lock,
         base,
     );
@@ -464,7 +464,7 @@ fn build_winecap(
     Ok((dll, want, toolchain))
 }
 
-/// The flock file heavy builder steps serialize on: MIOS_HEAVY_LOCK, else the SSOT's heavy_lock, else (that
+/// The flock file heavy builder steps serialize on: HEAVY_LOCK, else the SSOT's heavy_lock, else (that
 /// lock's directory does not exist on this host, so no other heavy job can hold it) <work_root>/heavy.lock.
 pub fn heavy_lock(env: Option<&str>, ssot: &str, work_root: &Path) -> String {
     if let Some(e) = env.filter(|e| e.starts_with('/')) {

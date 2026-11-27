@@ -211,7 +211,7 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
     if !matches!(event, "ensure" | "resize") {
         return Err("workspace hook event must be ensure or resize".into());
     }
-    if std::env::var("MIOS_TMUX_HELPER").ok().as_deref() == Some("1") {
+    if std::env::var("TMUXOS_HELPER").ok().as_deref() == Some("1") {
         return Ok("helper");
     }
     let ambient = std::env::var("TMUX").unwrap_or_default();
@@ -251,11 +251,11 @@ pub fn run(event: &str, head: Option<&str>, socket: Option<&str>) -> Result<&'st
     let Some(flight) = Flight::acquire(&dir, key)? else {
         return Ok("coalesced");
     };
-    // Bare Tmux-OS sessions opt out (their session environment carries MIOS_SESSION_BARE=1).
-    if tmux(&["show-environment", "-t", &pane, "MIOS_SESSION_BARE"])
+    // Bare Tmux-OS sessions opt out (their session environment carries TMUXOS_SESSION_BARE=1).
+    if tmux(&["show-environment", "-t", &pane, "TMUXOS_SESSION_BARE"])
         .ok()
         .as_deref()
-        == Some("MIOS_SESSION_BARE=1")
+        == Some("TMUXOS_SESSION_BARE=1")
     {
         return Ok("bare");
     }

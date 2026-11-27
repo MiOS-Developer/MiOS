@@ -427,7 +427,7 @@ PSEOF
         if [ "$_my_uid" -lt "$_op_uid" ] && [ -S /run/mios-launcher/launcher.sock ]; then
             _target_win="$(wslpath -w "$target" 2>/dev/null)"
             [ -z "$_target_win" ] && _target_win="$target"
-            MIOS_LIB_DIR="$(cd "$(dirname "$0")" && pwd)/../../lib/mios" python3 - "$_target_win" "$@" <<'PYEOF'
+            SSOT_LIB_DIR="$(cd "$(dirname "$0")" && pwd)/../../lib/mios" python3 - "$_target_win" "$@" <<'PYEOF'
 import socket, sys, shlex
 target = sys.argv[1]
 extra_args = sys.argv[2:]
@@ -557,7 +557,7 @@ def _resolve_powershell():
     env = os.environ.get("WINDOWS_POWERSHELL")
     if env:
         return env
-    _lib = os.environ.get("MIOS_LIB_DIR")
+    _lib = os.environ.get("SSOT_LIB_DIR")
     if _lib and _lib not in sys.path:
         sys.path.insert(0, _lib)
     try:

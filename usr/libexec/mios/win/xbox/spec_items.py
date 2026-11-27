@@ -98,7 +98,7 @@ def canon_reg_path(path: str) -> Optional[Tuple[str, str]]:
 
     Handles HKCU, HKU\\<anything> (default-profile mounts, SIDs), HKLM\\SOFTWARE,
     HKLM\\SYSTEM (ControlSet00N -> CurrentControlSet), and offline mounts such as
-    HKLM\\MIOS_SYS / HKLM\\MIOS_SW / HKLM\\DefUser.  PowerShell drive syntax
+    HKLM\\MiOS_SYS / HKLM\\MiOS_SW / HKLM\\DefUser.  PowerShell drive syntax
     (``HKCU:\\``, ``Registry::HKEY_...``) is accepted.  Returns None for an
     unrecognised path."""
     p = path.strip().strip('"').strip("'")

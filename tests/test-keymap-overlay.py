@@ -43,7 +43,7 @@ def keymap(script, vendor_text, tmp, tag, gen=None, user_text=""):
     env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_VENDOR_TOML_D', 'MIOS_USER_TOML_D')}
     env.update(MIOS_VENDOR_TOML=str(d / 'vendor.toml'), MIOS_HOST_TOML=str(d / 'none.toml'),
                MIOS_USER_TOML=str(d / 'user.toml'), MIOS_THEME_OUT_DIR=str(d / 'out'),
-               MIOS_LIB_DIR=str(ROOT / 'usr/lib/mios'), MIOS_GEN=gen or GEN)
+               SSOT_LIB_DIR=str(ROOT / 'usr/lib/mios'), MIOS_GEN=gen or GEN)
     (d / 'out').mkdir()
     r = subprocess.run(['bash', str(script), '--bridge-only'], env=env, capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
@@ -64,7 +64,7 @@ def configured_gen_runs(script, tmp, tag, as_root):
     (d / 'out').mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ('MIOS_TOML', 'MIOS_GEN', 'MIOS_VENDOR_TOML_D', 'MIOS_USER_TOML_D')}
     env.update(MIOS_VENDOR_TOML=str(d / 'vendor.toml'), MIOS_HOST_TOML=str(d / 'none.toml'), MIOS_USER_TOML=str(d / 'user.toml'),
-               MIOS_THEME_OUT_DIR=str(d / 'out'), MIOS_LIB_DIR=str(ROOT / 'usr/lib/mios'))
+               MIOS_THEME_OUT_DIR=str(d / 'out'), SSOT_LIB_DIR=str(ROOT / 'usr/lib/mios'))
     # A root CI container can exercise both uid boundaries without nested user namespaces.
     # The child drops its identity and writes only the private fixture marker/output.
     preexec = None

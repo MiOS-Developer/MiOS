@@ -764,27 +764,27 @@ systemctl reboot
 SH
     )"
     bash -n <<<"$rebase" || die "generated rebase script does not parse"
-    MIOS_IGN_SPEC="$spec" MIOS_IGN_USER="$user" MIOS_IGN_KEYS="$keys" MIOS_IGN_TSKEY="$tskey" \
-    MIOS_IGN_NODEKEY="$nodekey" MIOS_IGN_STAMP="$stamp" MIOS_IGN_REBASE="$rebase" \
-    MIOS_IGN_CLOUD_DROPIN="$cloud_dropin" MIOS_IGN_CLOUD="$cloud" \
-    MIOS_IGN_GCE_DROPIN="$gce_dropin" MIOS_IGN_GCE="$gce" python3 - <<'PY'
+    IGN_SPEC="$spec" IGN_USER="$user" IGN_KEYS="$keys" IGN_TSKEY="$tskey" \
+    IGN_NODEKEY="$nodekey" IGN_STAMP="$stamp" IGN_REBASE="$rebase" \
+    IGN_CLOUD_DROPIN="$cloud_dropin" IGN_CLOUD="$cloud" \
+    IGN_GCE_DROPIN="$gce_dropin" IGN_GCE="$gce" python3 - <<'PY'
 import base64, json, os, sys
 E = os.environ
 def data(text, mode, path):
     return {"path": path, "mode": mode, "overwrite": True,
             "contents": {"source": "data:;base64," + base64.b64encode(text.encode()).decode()}}
 keys = []
-if E["MIOS_IGN_KEYS"]:
-    with open(E["MIOS_IGN_KEYS"], encoding="utf-8") as f:
+if E["IGN_KEYS"]:
+    with open(E["IGN_KEYS"], encoding="utf-8") as f:
         keys = [l.strip() for l in f if l.strip() and not l.lstrip().startswith("#")]
     for k in keys:
         if not k.startswith(("ssh-", "ecdsa-", "sk-")) or len(k.split()) < 2:
             sys.exit("ssh_authorized_keys_file holds a line that is not a public key")
-files = [data(E["MIOS_IGN_CLOUD"] + "\n", 0o644, E["MIOS_IGN_CLOUD_DROPIN"]),
-         data(E["MIOS_IGN_GCE"] + "\n", 0o644, E["MIOS_IGN_GCE_DROPIN"]),
-         data(E["MIOS_IGN_REBASE"] + "\n", 0o755, "/etc/mios-cloud/rebase.sh")]
+files = [data(E["IGN_CLOUD"] + "\n", 0o644, E["IGN_CLOUD_DROPIN"]),
+         data(E["IGN_GCE"] + "\n", 0o644, E["IGN_GCE_DROPIN"]),
+         data(E["IGN_REBASE"] + "\n", 0o755, "/etc/mios-cloud/rebase.sh")]
 dirs = [{"path": "/etc/mios-cloud", "mode": 0o755}]
-node_key = E["MIOS_IGN_NODEKEY"]
+node_key = E["IGN_NODEKEY"]
 units = [
     {"name": "zincati.service", "mask": True},
     {"name": "mios-cloud-rebase.service", "enabled": True, "contents": "\n".join([
@@ -792,7 +792,7 @@ units = [
         "Description=Switch this node to the MiOS image and reboot into it",
         "Wants=network-online.target",
         "After=network-online.target",
-        "ConditionPathExists=!" + E["MIOS_IGN_STAMP"],
+        "ConditionPathExists=!" + E["IGN_STAMP"],
         "StartLimitIntervalSec=0",
         "[Service]",
         "Type=oneshot",
@@ -815,8 +815,8 @@ units = [
         "[Install]",
         "WantedBy=multi-user.target", ""])},
 ]
-if E["MIOS_IGN_TSKEY"]:
-    with open(E["MIOS_IGN_TSKEY"], encoding="utf-8") as f:
+if E["IGN_TSKEY"]:
+    with open(E["IGN_TSKEY"], encoding="utf-8") as f:
         key = f.read().strip()
     if not key.startswith("tskey-") or any(c.isspace() for c in key):
         sys.exit("tailscale_auth_key_file does not hold one tskey- pre-auth key")
@@ -833,10 +833,10 @@ if E["MIOS_IGN_TSKEY"]:
         " | grep -Eq \"\\\"BackendState\\\": *\\\"Running\\\"\" && rm -f -- " + node_key + " || :'",
         "[Install]",
         "WantedBy=mios-tailscale-sync.service", ""])})
-user = {"name": E["MIOS_IGN_USER"]}
+user = {"name": E["IGN_USER"]}
 if keys:
     user["sshAuthorizedKeys"] = keys
-doc = {"ignition": {"version": E["MIOS_IGN_SPEC"]},
+doc = {"ignition": {"version": E["IGN_SPEC"]},
        "passwd": {"users": [user]},
        "storage": {"directories": dirs, "files": files},
        "systemd": {"units": units}}

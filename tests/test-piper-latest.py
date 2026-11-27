@@ -51,7 +51,7 @@ class PiperLatest(unittest.TestCase):
                      {"filename": "piper_tts-1.9.2.tar.gz", "digests": {"sha256": "0" * 64}}]}))
 
     def _run(self, spec="latest"):
-        env = {**os.environ, "MIOS_PYPI_JSON": self.api.as_uri(), "MIOS_PIP": f"{sys.executable} {self.pip}",
+        env = {**os.environ, "MIOS_PYPI_JSON": self.api.as_uri(), "PIPER_PIP": f"{sys.executable} {self.pip}",
                "PIP_LOG": str(self.log), "PIP_WHEEL": str(self.wheel), "PIP_WHEEL_NAME": WHEEL}
         return subprocess.run([sys.executable, str(INSTALLER), spec, str(self.record)],
                               env=env, capture_output=True, text=True, timeout=60)

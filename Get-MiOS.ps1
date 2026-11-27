@@ -2598,7 +2598,7 @@ if (-not $_isAdmin -and $env:MIOS_GETMIOS_RELAUNCHED) {
 }
 if ($_isAdmin) {
     $_ctxError = Get-MiosElevationContextError -CurrentSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) `
-        -OriginSid ([string]$env:MIOS_ORIGIN_SID) -DesktopSids @(Get-MiosDesktopOwnerSids)
+        -OriginSid ([string]$env:ELEVATION_ORIGIN_SID) -DesktopSids @(Get-MiosDesktopOwnerSids)
     if ($_ctxError) {
         throw "Refusing to continue: $_ctxError. MiOS reads the operator's user layer and applies user-scope settings for the account that runs it; run the one-liner from the operator's own administrator-capable account."
     }

@@ -485,8 +485,8 @@ def _reexec_with_winrm(doc: Dict[str, Any], argv: List[str]) -> None:
     # compare the interpreter PATHS, not their realpaths: a venv's bin/python is a symlink to the system python, so
     # realpath() made the venv look like "already running there" and the probe never reached pywinrm (round-1 boot)
     if py and os.path.isfile(py) and os.path.abspath(py) != os.path.abspath(sys.executable) \
-            and os.environ.get("MIOS_XBOX_PROBE_REEXEC") != "1":
-        os.environ["MIOS_XBOX_PROBE_REEXEC"] = "1"
+            and os.environ.get("XBOX_PROBE_REEXEC") != "1":
+        os.environ["XBOX_PROBE_REEXEC"] = "1"
         os.execv(py, [py, "-I", os.path.abspath(__file__), *argv])
 
 

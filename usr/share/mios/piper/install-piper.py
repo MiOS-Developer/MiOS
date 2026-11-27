@@ -31,7 +31,7 @@ def main(argv):
         raise SystemExit(__doc__)
     record = Path(argv[2] if len(argv) > 2 else "/usr/share/piper/MIOS-RESOLVED")
     version, published = _release(argv[1])
-    pip = [sys.executable, "-m", "pip"] if not os.environ.get("MIOS_PIP") else os.environ["MIOS_PIP"].split()
+    pip = [sys.executable, "-m", "pip"] if not os.environ.get("PIPER_PIP") else os.environ["PIPER_PIP"].split()
     with tempfile.TemporaryDirectory() as stage:
         subprocess.run([*pip, "download", "--no-deps", "--only-binary=:all:", "--dest", stage,
                         f"{PROJECT}=={version}"], check=True)

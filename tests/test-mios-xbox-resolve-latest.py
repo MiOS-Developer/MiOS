@@ -355,7 +355,7 @@ class ResolveLatestTest(unittest.TestCase):
         with open(tool, "w") as fh:
             fh.write("#!/bin/sh\necho \"Subject: /C=US/O=$FAKE_SIGNER/CN=$FAKE_SIGNER\"\necho 'Signature verification: ok'\n")
         os.chmod(tool, 0o755)
-        os.environ["MIOS_OSSLSIGNCODE"] = tool
+        os.environ["OSSLSIGNCODE"] = tool
         try:
             os.environ["FAKE_SIGNER"] = "Microsoft Corporation"
             self.assertEqual(rl.verify_file(m, "webview2", f), "authenticode")
@@ -363,7 +363,7 @@ class ResolveLatestTest(unittest.TestCase):
             with self.assertRaisesRegex(rl.ResolveError, "not by"):
                 rl.verify_file(m, "webview2", f)
         finally:
-            for k in ("MIOS_OSSLSIGNCODE", "FAKE_SIGNER"):
+            for k in ("OSSLSIGNCODE", "FAKE_SIGNER"):
                 os.environ.pop(k, None)
 
     # ---------------- negative controls ----------------

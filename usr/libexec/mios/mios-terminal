@@ -226,7 +226,7 @@ if ! tmux -L "${_mios_terminal_config[0]}" has-session -t "=${_mios_terminal_con
         fi
     else
         _mios_bare=()
-        (( _mios_bare_opt )) && _mios_bare=(-e MIOS_SESSION_BARE=1)  # bare Tmux-OS: no workspace/observer panes
+        (( _mios_bare_opt )) && _mios_bare=(-e TMUXOS_SESSION_BARE=1)  # bare Tmux-OS: no workspace/observer panes
         tmux -L "${_mios_terminal_config[0]}" -f "$_mios_runtime/tmux.conf" new-session -d -s "${_mios_terminal_config[1]}" \
             "${_mios_bare[@]}" /bin/bash --noprofile --rcfile /usr/share/mios/tmux/mios-bashrc
         # Bare sessions also carry @mios-bare, so tmux hooks skip them without spawning anything.

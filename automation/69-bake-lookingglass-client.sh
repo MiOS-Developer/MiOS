@@ -8,9 +8,9 @@ for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/packages.sh"
 
-# MIOS_LG_DESTDIR stages the install under another root (a dev-container build copied onto a running
-# host); empty for the image build. MIOS_LG_JOBS caps make's parallelism (default: all CPUs).
-DESTDIR="${MIOS_LG_DESTDIR:-}"
+# LG_DESTDIR stages the install under another root (a dev-container build copied onto a running
+# host); empty for the image build. LG_JOBS caps make's parallelism (default: all CPUs).
+DESTDIR="${LG_DESTDIR:-}"
 LG_REPO="https://github.com/gnif/LookingGlass.git"
 LG_BIN="$DESTDIR/usr/bin/looking-glass-client"
 LG_RECORD="$DESTDIR/usr/share/mios/looking-glass/build.json"
@@ -100,7 +100,7 @@ for attempt in 1 2 3; do
     fi
 
     mios_log "Build looking-glass-client"
-    if ! make -j"${MIOS_LG_JOBS:-$(nproc)}"; then
+    if ! make -j"${LG_JOBS:-$(nproc)}"; then
         mios_warn "Make failed on attempt $attempt"
         sleep $((attempt * 8))
         continue

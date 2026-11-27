@@ -125,12 +125,12 @@ L="$TMP/heavy.lock"
 want 0 "heavy-lock: runs the command under the lock" mios_heavy_lock_exec "$L" true
 ( mios_heavy_lock_exec "$L" sleep 4 ) & holder=$!
 sleep 0.5
-rc=0; MIOS_HEAVY_LOCK_WAIT=1 mios_heavy_lock_exec "$L" true 2>/dev/null || rc=$?
+rc=0; HEAVY_LOCK_WAIT=1 mios_heavy_lock_exec "$L" true 2>/dev/null || rc=$?
 [ "$rc" = 75 ] && ok "heavy-lock: a second heavy job does not start beside the first (75)" || bad "heavy-lock: concurrent job rc=$rc, want 75"
 s=$SECONDS; mios_heavy_lock_exec "$L" true 2>/dev/null; waited=$((SECONDS - s))
 [ "$waited" -ge 2 ] && ok "heavy-lock: an unbounded wait blocks until release (${waited}s)" || bad "heavy-lock: did not block (${waited}s)"
 wait "$holder" 2>/dev/null
-want 1 "heavy-lock: no lock path is an error" env -u MIOS_HEAVY_LOCK bash -c ". '$ROOT/usr/lib/mios/heavy-lock.sh'; mios_heavy_lock_exec ''"
+want 1 "heavy-lock: no lock path is an error" env -u HEAVY_LOCK bash -c ". '$ROOT/usr/lib/mios/heavy-lock.sh'; mios_heavy_lock_exec ''"
 
 # --- artifact-lane policy -------------------------------------------------------------------
 mkproj() { rm -rf "$TMP/p"; mkdir -p "$TMP/p/src/browser/themes" "$TMP/p/configs/common"; : >"$TMP/p/mozconfig"; : >"$TMP/p/configs/common/mozconfig"; }

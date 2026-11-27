@@ -1290,7 +1290,7 @@ class TestAgentTmuxBinding(unittest.TestCase):
         ).strip().split("|")
         self.environment = {
             "TMUX": f"{fields[0]},{fields[1]},0", "TMUX_PANE": fields[2],
-            "MIOS_TMUX_HELPER": "1", "MIOS_TMUX_PRIVATE_SOCKET": fields[0],
+            "TMUXOS_HELPER": "1", "MIOS_TMUX_PRIVATE_SOCKET": fields[0],
         }
 
     def tearDown(self):
@@ -1329,7 +1329,7 @@ class TestAgentTmuxBinding(unittest.TestCase):
                 self.server._agent_tmux_context()
 
     def test_unmarked_interactive_pane_remains_bound(self):
-        for removed in ("MIOS_TMUX_HELPER", "MIOS_TMUX_PRIVATE_SOCKET"):
+        for removed in ("TMUXOS_HELPER", "MIOS_TMUX_PRIVATE_SOCKET"):
             environment = dict(self.environment)
             environment.pop(removed)
             with self.subTest(removed=removed), \

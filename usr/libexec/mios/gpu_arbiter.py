@@ -48,8 +48,8 @@ class QMPClient:
     """Lightweight QMP client for device_add and device_del hotplug operations."""
 
     def __init__(self, qmp_socket: Optional[str] = None, dry_run: bool = False):
-        self.qmp_socket = qmp_socket or os.environ.get("MIOS_QMP_SOCKET", DEFAULT_QMP_SOCKET)
-        self.dry_run = dry_run or (os.environ.get("MIOS_QMP_MOCK", "0") in ("1", "true", "yes"))
+        self.qmp_socket = qmp_socket or os.environ.get("ARBITER_QMP_SOCKET", DEFAULT_QMP_SOCKET)
+        self.dry_run = dry_run or (os.environ.get("ARBITER_QMP_MOCK", "0") in ("1", "true", "yes"))
 
     def send_command(self, payload: Dict[str, Any]) -> Tuple[bool, Optional[Dict[str, Any]]]:
         if self.dry_run:

@@ -40,7 +40,7 @@
 #   FEWER is also a failure: fixing a name must be paid for by tightening this
 #   number in the same commit, which is how a ledger drains instead of settling.
 #
-#!ceiling 414
+#!ceiling 401
 #
 # name	sample location
 MIOS_ADMIT_ENABLE	usr/lib/mios/agent-pipe/server.py:663
@@ -83,7 +83,6 @@ MIOS_BIND_HOST	usr/lib/mios/agent-pipe/server.py:4721
 MIOS_BM25_B	usr/lib/mios/agent-pipe/server.py:3638
 MIOS_BM25_K1	usr/lib/mios/agent-pipe/server.py:3636
 MIOS_BOOTC_ALLOW_REMOTE	usr/libexec/mios/bootc-switch-from-build.sh:29
-MIOS_BOOT_DIR	etc/greenboot/check/required.d/10-uki-promote.sh:6
 MIOS_BROKER_TIMEOUT_S	usr/lib/mios/agent-pipe/mios_dispatch.py:728
 MIOS_BUILDER_MACHINE	build-mios.ps1:4119
 MIOS_CACHE_BUSTED	Get-MiOS.ps1:693
@@ -134,7 +133,6 @@ MIOS_DEV_DRI_DIR	usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh:36
 MIOS_DEV_ENABLE_AI	build-mios.ps1:2712
 MIOS_DEV_ENABLE_RUNNER	build-mios.ps1:2713
 MIOS_DIR	automation/24-cpu-affinity.sh:73
-MIOS_DIRS	Uninstall-MiOS.ps1:191
 MIOS_EFFORT	usr/lib/mios/agent-pipe/server.py:646
 MIOS_EFI	docs/agy/w10-live-boot/live-iso.sh:243
 MIOS_EMBED_COOLDOWN_SECS	usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py:28
@@ -148,7 +146,6 @@ MIOS_FORCE_LEGACY_MIGRATE	build-mios.ps1:424
 MIOS_FORCE_LEGACY_PACKAGES_MD	build-mios.ps1:2457
 MIOS_FORCE_VHDX_MIGRATE	build-mios.ps1:2421
 MIOS_FORGE_ADMIN_PASSWORD	usr/libexec/mios/forge-firstboot.sh:37
-MIOS_FORGE_ADMIN_USER	usr/libexec/mios/forge-firstboot.sh:33
 MIOS_GATE_BIN	automation/98-drift-checks.sh:105
 MIOS_GEN_BIN	tools/sync-generated.sh:6
 MIOS_GETMIOS_FILE_RELAUNCHED	Get-MiOS.ps1:83
@@ -163,10 +160,8 @@ MIOS_GIT_CACHE	build-mios.ps1:2735
 MIOS_GIT_ORIGIN	build-mios.ps1:2733
 MIOS_GLOBAL_CONCURRENCY	usr/lib/mios/agent-pipe/server.py:538
 MIOS_HARDCODE_LINT_BIN	automation/98-drift-checks.sh:541
-MIOS_HARDWARE_DEGRADE_LOG	usr/lib/greenboot/check/wanted.d/20-hardware-degrade.sh:25
 MIOS_HEADLESS	build-mios.ps1:575
 MIOS_HIDPI_SCALE_FACTOR	usr/lib/mios/agent-pipe/server.py:3972
-MIOS_HOST_TMUX	Get-MiOS.ps1:3424
 MIOS_HYBRID_ISO_HEADER	usr/libexec/mios/build/liveiso.py:62
 MIOS_IMG_RECHUNK	tools/lib/generate-sbom.py:85
 MIOS_INGRESS_KEY	usr/lib/mios/agent-pipe/mios_events.py:21
@@ -218,7 +213,6 @@ MIOS_MAX_SOURCES	usr/lib/mios/agent-pipe/server.py:1945
 MIOS_MEMBERSHIP_WATCH	usr/lib/mios/agent-pipe/server.py:3388
 MIOS_MEMBERSHIP_WATCH_INTERVAL	usr/lib/mios/agent-pipe/server.py:3392
 MIOS_MEMGUARD_JUDGE_MODE	usr/lib/mios/agent-pipe/mios_pipe/access/memguard.py:51
-MIOS_MICRO_MODEL	usr/lib/mios/mios_toml.py:458
 MIOS_MIOSD_BIN	automation/01-system-files-overlay.sh:128
 MIOS_MIOSFETCH_CRAWL	usr/share/mios/hermes/plugins/web/miosfetch/provider.py:52
 MIOS_MIOSFETCH_CRAWL_MIN_CHARS	usr/share/mios/hermes/plugins/web/miosfetch/provider.py:18
@@ -228,7 +222,6 @@ MIOS_MOCK_PRIMARY_FENCED	usr/libexec/mios/db/mios-pg-replica.py:65
 MIOS_MODEL_SHA256	usr/share/mios/windows/mios-ai-node.ps1:359
 MIOS_MOK_KEY_B64	automation/generate-mok-key.sh:85
 MIOS_MOK_KEY_PASSWORD	automation/generate-mok-key.sh:27
-MIOS_MONITOR_RUNNING	usr/lib/mios/mios_toml.py:837
 MIOS_MONITOR_SCRIPT	build-mios.ps1:587
 MIOS_MOTD_SHOWN	etc/profile.d/zz-mios-motd.sh:6
 MIOS_MTLS_CN	tools/provision-agent-mtls.py:31
@@ -388,11 +381,6 @@ MIOS_STRESS_LOAD_CEILING	usr/lib/mios/agent-pipe/mios_pipe/scheduler/stress.py:1
 MIOS_STRESS_MODEL	usr/lib/mios/agent-pipe/mios_pipe/scheduler/stress.py:172
 MIOS_STRICT_VERB_ALIASES	usr/lib/mios/agent-pipe/mios_pipe/routing/verbcatalog.py:520
 MIOS_SURFACE_DEFAULT	usr/lib/mios/agent-pipe/server.py:2892
-MIOS_SURFER_APPID	automation/67-bake-surfer.sh:71
-MIOS_SURFER_BINARY	automation/67-bake-surfer.sh:72
-MIOS_SURFER_NAME	automation/67-bake-surfer.sh:69
-MIOS_SURFER_PRODUCT	automation/67-bake-surfer.sh:76
-MIOS_SURFER_VENDOR	automation/67-bake-surfer.sh:70
 MIOS_SWARM_DECOMPOSE_DEFAULT	usr/lib/mios/agent-pipe/server.py:709
 MIOS_SWARM_DECOMPOSE_MIN_WORDS	usr/lib/mios/agent-pipe/server.py:711
 MIOS_SWARM_DEEPEN	usr/lib/mios/agent-pipe/server.py:492
@@ -430,7 +418,6 @@ MIOS_UID	.devcontainer/cloud-shell/codex-cloud.sh:30
 MIOS_UNIFIED	usr/libexec/mios/user-setup.sh:143
 MIOS_UNIFIED_LOG	build-mios.ps1:515
 MIOS_URL_QUICKSHELL	automation/66-bake-quickshell.sh:18
-MIOS_URL_SURFER	automation/67-bake-surfer.sh:14
 MIOS_USERNAME	automation/build-mios.sh:64
 MIOS_VALUE_DUP_BASELINE_BUMP	automation/98-drift-checks.sh:3437
 MIOS_VERB_EMBED_PERSIST	usr/lib/mios/agent-pipe/mios_pipe/routing/toolsearch.py:237

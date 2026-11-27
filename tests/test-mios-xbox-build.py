@@ -314,7 +314,7 @@ class TestPayload(unittest.TestCase):
         self.assertTrue(txt.startswith("Windows Registry Editor Version 5.00"))
         self.assertIn('"TaskbarAl"=dword:00000001', txt)
         self.assertIn('"SearchboxTaskbarMode"=dword:00000000', txt)
-        self.assertIn("[HKEY_LOCAL_MACHINE\\MIOS_DEFU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced]", txt)
+        self.assertIn("[HKEY_LOCAL_MACHINE\\MiOS_DEFU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced]", txt)
         self.assertNotIn('"TaskbarAl"=dword:00000000', txt)
 
     def test_setup_script_bakes_guest_tools_lg_gpu_winrm(self):
@@ -520,7 +520,7 @@ class TestFetch(unittest.TestCase):
         p = os.path.join(self.tmp, "a.msi")
         _wrb(p, b"12345")
         man = {"artifacts": {"qemu_ga": {"integrity": {"kind": "authenticode", "size": 5, "signer": "Red Hat"}}}}
-        old = os.environ.pop("MIOS_OSSLSIGNCODE", None)
+        old = os.environ.pop("OSSLSIGNCODE", None)
         try:
             if shutil.which("osslsigncode"):
                 self.skipTest("osslsigncode present: host verifies the signature")
@@ -531,7 +531,7 @@ class TestFetch(unittest.TestCase):
             self.assertFalse(os.path.exists(p), "an unverified download must be deleted")
         finally:
             if old is not None:
-                os.environ["MIOS_OSSLSIGNCODE"] = old
+                os.environ["OSSLSIGNCODE"] = old
 
     def test_uup_live_set_must_equal_resolved(self):
         _, doc = Fixture.get()

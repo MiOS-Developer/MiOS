@@ -1002,7 +1002,7 @@ def _gpu_spec_findings(it: Dict[str, Any], obs: Observations, tree: Optional[str
     script = os.path.join(tree or _default_root(), it["script"])
     if not os.path.isfile(script):
         return [Finding("missing:gpu.post_setup", f"the tree has no GPU step {it['script']} (windows.xbox.drivers.gpu_step)")]
-    pwsh = os.environ.get("MIOS_PWSH") or shutil.which("pwsh")
+    pwsh = os.environ.get("XBOX_PWSH") or shutil.which("pwsh")
     if not pwsh:
         raise ToolError("pwsh is required to run Read-MiOSGpuSpec on the shipped guest spec (gpu.post_setup)")
     cmd = _GPU_READ_PS.format(script=_ps_literal(script), spec=_ps_literal(spec))

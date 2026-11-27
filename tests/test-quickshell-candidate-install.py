@@ -247,7 +247,7 @@ class TestCandidateInstall(unittest.TestCase):
     def test_failure_after_partial_commit_is_undone(self):
         stage = make_stage(self.tmp)
         for n in ('1', '6'):
-            r = run('install', '--root', self.root, '--stage', stage, env_extra={'MIOS_QS_INSTALL_FAIL_AFTER': n})
+            r = run('install', '--root', self.root, '--stage', stage, env_extra={'QS_INSTALL_FAIL_AFTER': n})
             self.assertNotEqual(r.returncode, 0)
             self.assertIn('partial install undone', r.stderr)
             self.assert_untouched()

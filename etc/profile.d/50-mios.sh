@@ -1360,10 +1360,10 @@ _mios_profile_step() {
 # AI-related: usr/share/mios/mios.toml [terminal.startup], usr/libexec/mios/mios-terminal
 case $- in *i*) ;; *) return 0 ;; esac
 [ -t 0 ] && [ -t 1 ] || return 0
-[ "${MIOS_TMUX_HELPER:-}" != 1 ] || return 0
+[ "${TMUXOS_HELPER:-}" != 1 ] || return 0
 [ -z "${STY:-}" ] || return 0
 [ -z "${MIOS_SKIP_MOTD:-}" ] || return 0
-[ "${MIOS_SESSION_BARE:-}" != 1 ] || return 0  # bare Tmux-OS session (mios-terminal --new): no workspace panes
+[ "${TMUXOS_SESSION_BARE:-}" != 1 ] || return 0  # bare Tmux-OS session (mios-terminal --new): no workspace panes
 if [ -n "${TMUX:-}" ]; then
     # The native single-flight workspace hook ([mcp.agents].binary), never an interpreter per pane: it exits after
     # one tmux query when the window is already laid out for its size.

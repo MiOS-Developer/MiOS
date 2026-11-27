@@ -242,7 +242,7 @@ public static class MiOSOfflineReg {
 
     public static void ImportRegFile(string regPath, string swPath, string sysPath, string defuPath) {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
-            { "MIOS_SW", swPath }, { "MIOS_SYS", sysPath }, { "MIOS_DEFU", defuPath }
+            { "MiOS_SW", swPath }, { "MiOS_SYS", sysPath }, { "MiOS_DEFU", defuPath }
         };
         var hives = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
         try {
@@ -321,10 +321,10 @@ public static class MiOSOfflineReg {
     }
 
     # --- 6. build family + captured Start layout (and flush DISM transaction logs) ----------------
-    & reg.exe load 'HKLM\MIOS_SW' (Join-Path $mount 'Windows\System32\config\SOFTWARE') | Out-Null
+    & reg.exe load 'HKLM\MiOS_SW' (Join-Path $mount 'Windows\System32\config\SOFTWARE') | Out-Null
     if ($LASTEXITCODE) { throw 'cannot load the image SOFTWARE hive' }
-    $hives += 'HKLM\MIOS_SW'
-    $cvKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('MIOS_SW\Microsoft\Windows NT\CurrentVersion', $false)
+    $hives += 'HKLM\MiOS_SW'
+    $cvKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('MiOS_SW\Microsoft\Windows NT\CurrentVersion', $false)
     if (-not $cvKey) { throw 'cannot open the image SOFTWARE CurrentVersion key' }
     try {
         $family = [string]$cvKey.GetValue((Need $x.start.layout_family_source 'start.layout_family_source'), '')
@@ -342,13 +342,13 @@ public static class MiOSOfflineReg {
     $want = [string]($assetIndex.PSObject.Properties | Where-Object { $_.Name -ieq $family } | ForEach-Object { $_.Value.start2_sha256 })
     if (-not (Test-Path -LiteralPath $start2) -or -not $want -or (Get-Sha256 $start2) -ne $want) { throw "Start layout asset of family '$family' missing or altered" }
 
-    & reg.exe load 'HKLM\MIOS_SYS' (Join-Path $mount 'Windows\System32\config\SYSTEM') | Out-Null
+    & reg.exe load 'HKLM\MiOS_SYS' (Join-Path $mount 'Windows\System32\config\SYSTEM') | Out-Null
     if ($LASTEXITCODE) { throw 'cannot load the image SYSTEM hive' }
-    $hives += 'HKLM\MIOS_SYS'
+    $hives += 'HKLM\MiOS_SYS'
     # No SetupType/CmdLine hook (fix-a 6): a generalized image's Setup\CmdLine is Windows Setup's own first-boot
     # command (oobe\windeploy.exe, which drives specialize + OOBE); SetupComplete.cmd already runs as SYSTEM through
     # the normal path (the generic install key is not an OEM key). A hooked image is refused, not "fixed".
-    $setupKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('MIOS_SYS\Setup', $false)
+    $setupKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('MiOS_SYS\Setup', $false)
     if ($setupKey) {
         try { $Result.setup_cmdline = [string]$setupKey.GetValue('CmdLine', ''); $Result.setup_type = [string]$setupKey.GetValue('SetupType', '') } finally { $setupKey.Close() }
         if ($Result.setup_cmdline -match '(?i)SetupComplete|cmd(\.exe)?\s+/c') { throw "the image's Setup\CmdLine is hooked ($($Result.setup_cmdline)); refusing it" }
@@ -358,16 +358,16 @@ public static class MiOSOfflineReg {
     foreach ($r in @($doc.registry)) {
         if ([string]$r.hive -eq 'SYSTEM' -and [string]$r.key -match '^ControlSet001\\Services\\([^\\]+)$') {
             $svcName = $Matches[1]
-            $sk = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("MIOS_SYS\ControlSet001\Services\$svcName", $false)
+            $sk = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey("MiOS_SYS\ControlSet001\Services\$svcName", $false)
             $img = $null
             if ($sk) { try { $img = $sk.GetValue('ImagePath', $null) } finally { $sk.Close() } }
             if (-not $img) { throw "registry item $($r.owner) targets service $svcName, which the image does not register (orphan Services key)" }
         }
     }
     Say 'Setup\CmdLine untouched; every service the registry items target is registered'
-    & reg.exe load 'HKLM\MIOS_DEFU' (Join-Path $mount 'Users\Default\NTUSER.DAT') | Out-Null
+    & reg.exe load 'HKLM\MiOS_DEFU' (Join-Path $mount 'Users\Default\NTUSER.DAT') | Out-Null
     if ($LASTEXITCODE) { throw 'cannot load the Default user hive' }
-    $hives += 'HKLM\MIOS_DEFU'
+    $hives += 'HKLM\MiOS_DEFU'
 } finally {
     [GC]::Collect(); [GC]::WaitForPendingFinalizers()
     $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -388,7 +388,7 @@ public static class MiOSOfflineReg {
     # Re-sync kernel transaction log files (.LOG1/.LOG2) with the newly saved hives
     $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     try {
-        foreach ($pair in @(@('HKLM\MIOS_SW', $swHive), @('HKLM\MIOS_SYS', $sysHive), @('HKLM\MIOS_DEFU', $defuHive))) {
+        foreach ($pair in @(@('HKLM\MiOS_SW', $swHive), @('HKLM\MiOS_SYS', $sysHive), @('HKLM\MiOS_DEFU', $defuHive))) {
             Remove-Item -Path "$($pair[1]).LOG*" -Force -ErrorAction SilentlyContinue
             & reg.exe load $pair[0] $pair[1] >$null 2>$null
             if (-not $LASTEXITCODE) { & reg.exe unload $pair[0] >$null 2>$null }

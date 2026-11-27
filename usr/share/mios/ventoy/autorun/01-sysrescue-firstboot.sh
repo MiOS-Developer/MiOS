@@ -22,9 +22,9 @@ for _env in "$(dirname "$0")/mios-sysrescue.env" /mnt/*/mios-sysrescue.env \
     # shellcheck source=/dev/null  # flash-time render (Render-Sysrescue.ps1), present only on the stick
     if [ -r "$_env" ]; then . "$_env" 2>/dev/null || true; break; fi
 done
-[ -n "${MIOS_SR_USER:-}" ]   && MIOS_USER="$MIOS_SR_USER"
-[ -n "${MIOS_SR_PASS:-}" ]   && { _mios_sysrescue_password="$MIOS_SR_PASS"; ROOT_PASS="$MIOS_SR_PASS"; }
-[ -n "${MIOS_SR_HEADER:-}" ] && MIOS_HEADER="$MIOS_SR_HEADER"
+[ -n "${SR_USER:-}" ]   && MIOS_USER="$SR_USER"
+[ -n "${SR_PASS:-}" ]   && { _mios_sysrescue_password="$SR_PASS"; ROOT_PASS="$SR_PASS"; }
+[ -n "${SR_HEADER:-}" ] && MIOS_HEADER="$SR_HEADER"
 # (2) fall back to a flashed mios.toml if the env was not rendered: [field.sysrescue] first,
 #     then [identity] (username / default_password) -- the same chain Render-Sysrescue uses.
 _toml_get() { # <file> <section> <key> -> value of a "quoted" key inside exactly that [section]

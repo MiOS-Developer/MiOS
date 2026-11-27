@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 def get_hyprland_monitors() -> List[Dict[str, Any]]:
     """Retrieves monitor geometry from hyprctl or environment fallback."""
-    env_json = os.environ.get("MIOS_MONITORS_JSON")
+    env_json = os.environ.get("HYPR_MONITORS_JSON")
     if env_json:
         try:
             return json.loads(env_json)

@@ -9,9 +9,9 @@ for _mlog in "$(dirname "${BASH_SOURCE[0]}")/../usr/lib/mios/log.sh" /usr/lib/mi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/packages.sh"
 
-DESTDIR="${MIOS_QUICKSHELL_DESTDIR:-${DESTDIR:-}}"
+DESTDIR="${QUICKSHELL_DESTDIR:-${DESTDIR:-}}"
 
-if [[ "${MIOS_QUICKSHELL_SKIP_DEPS:-0}" != 1 ]] && command -v install_packages >/dev/null; then
+if [[ "${QUICKSHELL_SKIP_DEPS:-0}" != 1 ]] && command -v install_packages >/dev/null; then
     mios_log "Installing Qt6 build dependencies"
     install_packages "quickshell-build" || mios_log "quickshell-build packages not installable here; using what is present"
 fi

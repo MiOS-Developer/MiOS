@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # MIOS_APPLY_CLASS=bake-only
-# AI-hint: Builds the MiOS native RDP server (src/mios-rdp-server: mios-rdp-server + mios-rdp-priv) against IronRDP's default-branch HEAD, resolved now and never pinned (the resolved commit, the generated Cargo.lock hash and the enabled features are build output in /usr/libexec/mios/rdp-native/build.json and the SBOM), and installs it to /usr/libexec/mios/rdp-native/. Documented static-policy exceptions (rdp-native-design.md 12): both binaries are x86_64-unknown-linux-gnu, dynamically linked (E1 mios-rdp-server: libEGL/libgbm/libxkbcommon + dlopen of the Cisco libopenh264; E2 mios-rdp-priv: libpam). If the build fails nothing is installed (image) or the last good binary stays (MIOS_RDP_DESTDIR host/dev builds), and [remote.rdp].server = "native" falls back to xrdp.
+# AI-hint: Builds the MiOS native RDP server (src/mios-rdp-server: mios-rdp-server + mios-rdp-priv) against IronRDP's default-branch HEAD, resolved now and never pinned (the resolved commit, the generated Cargo.lock hash and the enabled features are build output in /usr/libexec/mios/rdp-native/build.json and the SBOM), and installs it to /usr/libexec/mios/rdp-native/. Documented static-policy exceptions (rdp-native-design.md 12): both binaries are x86_64-unknown-linux-gnu, dynamically linked (E1 mios-rdp-server: libEGL/libgbm/libxkbcommon + dlopen of the Cisco libopenh264; E2 mios-rdp-priv: libpam). If the build fails nothing is installed (image) or the last good binary stays (RDP_DESTDIR host/dev builds), and [remote.rdp].server = "native" falls back to xrdp.
 # AI-related: /usr/libexec/mios/mios-rdp, /usr/lib/systemd/user/mios-rdp-native.service, /usr/lib/systemd/system/mios-rdp-priv.socket, /usr/share/mios/mios.toml, src/mios-rdp-server/
 # AI-doc: usr/share/doc/mios/manual/automation.md
 set -euo pipefail
@@ -19,9 +19,9 @@ command -v mios_err >/dev/null || mios_err() { mios_log "ERROR: $*"; }
 
 get() { MIOS_TOML_ROOT="$ROOT_DIR" "${MIOS_TOML_GET:-$ROOT_DIR/usr/libexec/mios/mios-toml-get}" --vendor "$@"; }
 
-DESTDIR="${MIOS_RDP_DESTDIR:-}"
+DESTDIR="${RDP_DESTDIR:-}"
 OUT_DIR="$DESTDIR/usr/libexec/mios/rdp-native"
-BUILD_DIR="${MIOS_RDP_BUILD_DIR:-/tmp/mios-rdp-server-build}"
+BUILD_DIR="${RDP_BUILD_DIR:-/tmp/mios-rdp-server-build}"
 URL="${MIOS_URL_IRONRDP:-https://github.com/Devolutions/IronRDP.git}"
 SRC="$ROOT_DIR/src/mios-rdp-server"
 [[ -f "$SRC/Cargo.toml" ]] || { mios_err "src/mios-rdp-server missing"; exit 1; }
@@ -32,7 +32,7 @@ SHA="$(git ls-remote "$URL" HEAD | awk '{print $1; exit}')" || true
 SRC_HASH="$(cd "$SRC" && find . -type f \( -name '*.rs' -o -name '*.toml' \) -not -path './target/*' -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
 mios_log "IronRDP HEAD resolves to $SHA; MiOS source ${SRC_HASH:0:12}"
 
-if [[ "${MIOS_RDP_FORCE:-0}" != 1 && -x "$OUT_DIR/mios-rdp-server" && -r "$OUT_DIR/build.json" ]] \
+if [[ "${RDP_FORCE:-0}" != 1 && -x "$OUT_DIR/mios-rdp-server" && -r "$OUT_DIR/build.json" ]] \
    && python3 -I - "$OUT_DIR/build.json" "$SHA" "$SRC_HASH" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -43,7 +43,7 @@ then
     exit 0
 fi
 
-if [[ "${MIOS_RDP_SKIP_DEPS:-0}" != 1 ]] && command -v install_packages >/dev/null; then
+if [[ "${RDP_SKIP_DEPS:-0}" != 1 ]] && command -v install_packages >/dev/null; then
     install_packages "rdp-server-build" || mios_log "rdp-server-build packages not installable here; using what is present"
 fi
 
