@@ -2597,8 +2597,6 @@ if (-not $_isAdmin -and $env:MIOS_GETMIOS_RELAUNCHED) {
     throw 'MIOS_GETMIOS_RELAUNCHED is set in a non-elevated session; refusing to continue. Open a new PowerShell window and re-run the one-liner.'
 }
 if ($_isAdmin) {
-    # Top level runs elevated only in a shell the operator elevated; no relaunch exists to carry an origin here
-    # (the machine worker gets its origin over the pipe). The desktop owner is the one account check this path has.
     $_ctxError = Get-MiosElevationContextError -CurrentSid ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value) `
         -DesktopSids @(Get-MiosDesktopOwnerSids)
     if ($_ctxError) {
