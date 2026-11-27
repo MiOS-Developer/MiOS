@@ -95,13 +95,20 @@ for i in range(60):
     seen_py |= py; seen_rl |= rl
     peak = max(peak, len(py) + len(rl))
     time.sleep(0.05)
-# settle at a final size and let everything finish
+# Settle: one empty census is not quiet, a late resize hook can still fire after it. Leave only after ~1 s of empty
+# censuses with the layout applied at the window size; a hook that never exits runs out the budget and fails below.
+QUIET_CENSUSES = 5
+def layout():
+    return T('display-message', '-p', '-t', 'tmux-os:', '#{window_width}x#{window_height}|#{@mios-workspace-applied}').stdout.strip()
 winsz(160, 48)
 settle_end = time.monotonic() + 20
+quiet = 0
 while time.monotonic() < settle_end:
     drain()
     py, rl = census(); seen_py |= py; seen_rl |= rl; peak = max(peak, len(py) + len(rl))
-    if not py and not rl:
+    size, _, applied = layout().partition('|')
+    quiet = quiet + 1 if not py and not rl and size == applied else 0
+    if quiet >= QUIET_CENSUSES:
         break
     time.sleep(0.2)
 left_py, left_rl = census()
