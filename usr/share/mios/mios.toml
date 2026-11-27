@@ -4402,7 +4402,7 @@ max_receipts = 4096
 max_state_bytes = 2097152
 
 [mcp.agents.observation]
-refresh_s = 2
+refresh_s = 5
 # Receipt window only; agent/session/subagent inventories are never truncated.
 max_rows = 32
 window_name = "MiOS Agents"
@@ -4840,7 +4840,7 @@ session_name = "MiOS-Desktop"
 dock = true
 pane_titles = true
 dock_rows = 2
-dock_refresh_seconds = 1
+dock_refresh_seconds = 5
 dock_item_columns = 16
 command_timeout_ms = 3000
 min_columns = 34
@@ -9920,7 +9920,7 @@ source_repository = "https://github.com/hyprnux/hyprglass.git"
 # Upstream policy (operator 2026-10-16, "latest + fail loudly"): no source_revision pin; the build
 # takes source_repository default-branch HEAD, logs the resolved commit, and fails naming any
 # MiOS patch that no longer applies (mios-gen build-hyprland-plugin refuses a pin).
-lua_version = "5.5.1"   # the Lua the compositor SRPM bundles (hyprland-0.57.2 ships lua-5.5.1.tar.gz); the plugin build refuses any other
+# The private static Lua the plugins link is read from the compositor SRPM spec (its lua-<version>.tar.gz Source).
 build_jobs = 4
 path = "/usr/lib64/mios/hyprglass.so"
 patches = ["usr/share/mios/hyprland/patches/hyprglass-fade-gamma.patch",   # MiOS: fade_gamma option
@@ -11378,6 +11378,7 @@ packages = [
 user = "mios-forge"
 uid  = 816
 gid  = 816
+admin_user      = "mios"       # non-reserved Forgejo admin username matching [identity].name
 ready_timeout_s = 300          # mios-credential apply --wait forge: how long to wait for the API
 initial_repo    = "mios"       # forge-firstboot creates <admin>/<initial_repo> for the deployed root
 home            = "/data/gitea"                # the forgejo CLI's HOME inside the container
@@ -12806,7 +12807,7 @@ rows                = 40      # taller for install output + readme
 
 [terminal.monitor]
 # Native agent observation runs independently of UI rendering cadence.
-agent_poll_s = 5
+agent_poll_s = 10
 windows_backend     = "windows-terminal" # native renderer preserves head/monitor and fullscreen 1+4 layouts
 window_name         = "MiOS-Monitor"
 title               = "MiOS Build Monitor"
@@ -12818,7 +12819,7 @@ worker_split_percent    = 50  # fullscreen right-side worker grid
 default_view = "agents"
 compact_columns = 78
 compact_rows = 12
-poll_s = 5
+poll_s = 10
 overview_columns = 78
 overview_rows = 8 # matches mcp.tmux.workspace.layout.monitor_min_rows so a slim native panel can split Agents/System
 
@@ -15639,7 +15640,7 @@ Environment = "HOME=/var/lib/mios/llamacpp"
 # NO-HARDCODE: same ${MIOS_PORTS_CPU_NODE} runtime var the Exec resolves via systemd.
 HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_CPU_NODE}/health || exit 1"
 HealthInterval = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 HealthStartPeriod = "120s"
 HealthRetries = "3"
 # ctx-size: 32768 (was 131072). CPU-only (n-gpu-layers 0) granite-8b with a 128k KV
@@ -16048,7 +16049,7 @@ Environment = [
 EnvironmentFile = "/etc/mios/install.env"
 HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1/models || exit 1"
 HealthInterval = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 HealthStartPeriod = "60s"
 HealthRetries = "3"
 Exec = "--config /app/config.yaml --listen 0.0.0.0:${MIOS_PORTS_LLM_LIGHT}"
@@ -16574,7 +16575,7 @@ HealthCmd = "python3 -c \"import urllib.request; urllib.request.urlopen('http://
 HealthInterval = "30s"
 HealthRetries = 3
 HealthStartPeriod = "30s"
-HealthTimeout = "10s"
+HealthTimeout = "30s"
 Image = "localhost/mios-piper:latest"
 Label = [
   "org.opencontainers.image.title=mios-piper",
