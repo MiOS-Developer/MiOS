@@ -704,6 +704,30 @@ class Ledger:
     def has(self, surface: str) -> bool:
         return surface in self._load()
 
+    def _initial_path(self, surface: str) -> str:
+        return os.path.join(self.dir, f"{surface}.initial")
+
+    def initial(self, surface: str) -> str:
+        """The throwaway password a first boot created the surface's admin with
+        (<dir>/<surface>.initial, 0600 root), or "" once it has been replaced."""
+        try:
+            with open(self._initial_path(surface), encoding="utf-8") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return ""
+
+    def set_initial(self, surface: str, value: str) -> None:
+        if self.readonly:
+            raise CredentialError("refusing to write a read-only credential ledger")
+        self._load()
+        _atomic(self._initial_path(surface), value, 0o600)
+
+    def clear_initial(self, surface: str) -> None:
+        try:
+            os.unlink(self._initial_path(surface))
+        except FileNotFoundError:
+            pass
+
     def operator_set(self, surface: str) -> bool:
         """True when the value this surface last received was operator-set (its user tier,
         secrets.env or the environment), not a vendor/host default."""
@@ -844,11 +868,35 @@ def _forge_sweep(base: str, user: str, secret: str) -> int:
     return n
 
 
+def _forge_adopt(base: str, user: str, secret: str, initial: str, ledger) -> str:
+    """First boot: forge-firstboot.sh created the admin with a throwaway password and handed
+    it over stdin. Set the operator credential through the admin API, authenticated with the
+    throwaway by basic auth (no token is minted, so a refusal strands nothing), prove the new
+    login, then forget the throwaway. A refusal keeps it, so a corrected value is adopted on
+    the next run."""
+    import urllib.parse
+    st, _ = _http("GET", f"{base}/api/v1/user", basic=(user, initial))
+    if st != 200:
+        ledger.clear_initial("forge")
+        return (f"failed (the first-boot password was rejected with HTTP {st} and is discarded; set the "
+                "Forgejo admin password to the mios.html credential with `forgejo admin user change-password`)")
+    st, _ = _http("PATCH", f"{base}/api/v1/admin/users/{urllib.parse.quote(user)}", basic=(user, initial),
+                  body={"login_name": user, "source_id": 0, "password": secret, "must_change_password": False})
+    if st != 200:
+        return (f"failed (Forgejo refused the operator credential with HTTP {st}, e.g. below its password "
+                "policy; the first-boot password is kept, so a corrected value in mios.html is adopted next run)")
+    st, _ = _http("GET", f"{base}/api/v1/user", basic=(user, secret))
+    if st != 200:
+        return f"failed (Forgejo took the operator credential but its login returned HTTP {st})"
+    ledger.clear_initial("forge")
+    return "changed"
+
+
 def _apply_forge(data, user, secret, ctx):
-    """Require an operator-set credential that already authenticates to Forgejo.
-    Automatic password adoption is disabled: a rejected admin PATCH can strand a
-    CLI-minted token, whose cleanup requires a working password. The first accepted
-    login also creates [services.forge].initial_repo."""
+    """Require an operator-set credential that authenticates to Forgejo. The one exception
+    is first boot: while the throwaway password forge-firstboot.sh created the admin with is
+    on file, a rejected login is answered by _forge_adopt. Nothing ever mints a token. The
+    first accepted login also creates [services.forge].initial_repo."""
     import time as _time
     if not ctx["operator_set"]:
         ctx["no_record"] = True
@@ -867,6 +915,13 @@ def _apply_forge(data, user, secret, ctx):
         ctx["no_record"] = True
         return "skipped (forge not reachable)"
     status, _ = _http("GET", f"{base}/api/v1/user", basic=(user, secret))
+    changed = False
+    initial = ctx["ledger"].initial("forge") if status == 401 else ""
+    if initial:
+        adopted = _forge_adopt(base, user, secret, initial, ctx["ledger"])
+        if adopted != "changed":
+            return adopted
+        status, changed = 200, True
     if status != 200:
         # Keep no_record false so failures use the normal durable retry backoff.
         detail = f"HTTP {status}" if status else "connection unavailable"
@@ -882,7 +937,7 @@ def _apply_forge(data, user, secret, ctx):
                           body={"name": repo, "description": "MiOS deployed root (live working tree of /).",
                                 "private": False, "auto_init": False, "default_branch": "main"})
             ctx["notes"].append(f"forge: initial repo {repo}: " + {201: "created", 409: "exists"}.get(st, f"HTTP {st}"))
-    return "unchanged"
+    return "changed" if changed else "unchanged"
 
 
 _ARGON2 = {"t": 3, "m": 65536, "p": 4, "salt": 16, "len": 32}   # argon2-cffi's RFC 9106 low-memory profile
@@ -1689,7 +1744,7 @@ def _vendor_tier() -> dict:
 
 
 def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootstrap=False,
-          restart=True, log=None, env=None, taken=frozenset(), now=None, base=None) -> int:
+          restart=True, log=None, env=None, taken=frozenset(), now=None, base=None, initial=None) -> int:
     """Reconcile each surface to its SSOT credential. Logs carry only the surface name and
     changed / unchanged / skipped / drift / shadowed / failed -- never a value. A failed
     value is retried only after [security.credential_apply].retry_backoff_s (doubling to
@@ -1722,6 +1777,7 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
     base_s = int(_s(policy.get("retry_backoff_s")) or 0)
     max_s = int(_s(policy.get("retry_backoff_max_s")) or 0)
     ledger = Ledger(_paths(data, "var_credential_apply_dir"), readonly=check)
+    initial = dict(initial or {})          # first-boot throwaway passwords, by surface
     downgraded = []
     for surface in (s for s in surfaces if s in enabled and s not in _OWN_LOGIN + KEY_SURFACES):
         try:
@@ -1735,6 +1791,9 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
         raise CredentialError(f"refusing to move {', '.join(downgraded)} from the operator's credential back to "
                               "the vendor/host default (the operator tier no longer sets one): set a credential "
                               "in mios.html; nothing was changed")
+    if not check:
+        for surface, value in initial.items():
+            ledger.set_initial(surface, value)
     rc = 0
     for surface in surfaces:
         if surface not in enabled:
@@ -1770,7 +1829,7 @@ def apply(surfaces, data: dict, *, check=False, verify=False, wait=False, bootst
                 collides = bool(got["value"]) and got["value"] in shared
             fp = ledger.fingerprint(surface, user, got["value"])
             due = ledger.backoff_until(surface, fp)
-            if due > now and not check:
+            if due > now and not check and surface not in initial:   # a handed-over password is new evidence
                 log(f"{surface}: failed (this value failed before; retried after {int(due - now)} s)")
                 rc = 1
                 continue
