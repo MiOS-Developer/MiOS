@@ -82,14 +82,24 @@ import unittest
 from unittest.mock import patch, AsyncMock, MagicMock
 import mios_pipe.memory.embed_backfill as eb
 
+
+def _ready_client(mock_client_cls, probe_status=200):
+    """An httpx client mock whose /v1/models readiness probe (check_embed_ready) answers probe_status."""
+    client = AsyncMock()
+    mock_client_cls.return_value.__aenter__.return_value = client
+    probe = MagicMock()
+    probe.status_code = probe_status
+    client.get.return_value = probe
+    return client
+
+
 class TestMiosEmbedBackfill(unittest.IsolatedAsyncioTestCase):
 
     @patch("mios_pipe.memory.pg.execute", new_callable=AsyncMock)
     @patch("httpx.AsyncClient")
     async def test_threat_event_backfill(self, mock_client_cls, mock_execute):
         row = {"id": 71, "description": "Network flow anomaly"}
-        client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = client
+        client = _ready_client(mock_client_cls)
         response = MagicMock()
         response.status_code = 200
         response.json.return_value = {"data": [{"embedding": [0.1] * 768}]}
@@ -110,8 +120,7 @@ class TestMiosEmbedBackfill(unittest.IsolatedAsyncioTestCase):
     @patch("mios_pipe.memory.pg.execute", new_callable=AsyncMock)
     @patch("httpx.AsyncClient")
     async def test_threat_event_inference_failure_leaves_pending(self, mock_client_cls, mock_execute):
-        client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = client
+        client = _ready_client(mock_client_cls)
         response = MagicMock()
         response.status_code = 503
         client.post.return_value = response
@@ -179,8 +188,7 @@ class TestMiosEmbedBackfill(unittest.IsolatedAsyncioTestCase):
     @patch("mios_pipe.memory.pg.execute", new_callable=AsyncMock)
     @patch("httpx.AsyncClient")
     async def test_run_backfill_success(self, mock_client_cls, mock_execute):
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client = _ready_client(mock_client_cls)
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -218,8 +226,7 @@ class TestMiosEmbedBackfill(unittest.IsolatedAsyncioTestCase):
     @patch("mios_pipe.memory.pg.execute", new_callable=AsyncMock)
     @patch("httpx.AsyncClient")
     async def test_run_backfill_fail_open(self, mock_client_cls, mock_execute):
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client = _ready_client(mock_client_cls)
 
         mock_client.post.side_effect = Exception("Connection refused")
 
@@ -238,6 +245,16 @@ class TestMiosEmbedBackfill(unittest.IsolatedAsyncioTestCase):
 
         res = await eb.run_backfill("nomic-768-v1")
         self.assertEqual(res.get("skill"), 0)
+
+    @patch("mios_pipe.memory.pg.execute", new_callable=AsyncMock)
+    @patch("httpx.AsyncClient")
+    async def test_unready_embedder_skips_the_backfill(self, mock_client_cls, mock_execute):
+        client = _ready_client(mock_client_cls, probe_status=503)
+        result = await eb.run_backfill("nomic-768-v1")
+        self.assertEqual(result, {})
+        self.assertTrue(client.get.call_args.args[0].endswith("/v1/models"))
+        client.post.assert_not_awaited()
+        mock_execute.assert_not_awaited()
 
 
 def _run_extra_backfill():
