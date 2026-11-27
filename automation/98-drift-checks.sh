@@ -4108,6 +4108,7 @@ main() {
     check_leaked_fixtures
     check_native_twinless
     check_portal_product
+    check_llms_txt
     _assert_read_only "the gate run (re-run each check alone to name the writer)"
 
     set -e
@@ -4579,6 +4580,23 @@ check_manual_generated() {
     echo "[98-drift-checks] generated manual chapters in docs match SSOT output verbatim"
     local out; out="$(cd "$ROOT" && MIOS_ROOT="$ROOT" python3 usr/libexec/mios/mios-manual             --root "$ROOT" render --check 2>&1)" || { _violations_from "" "$out"; return; }
     echo "[98-drift-checks]   $out"
+}
+
+# --- llms.txt follows the llms.txt format (llmstxt.org) ---
+check_llms_txt() {
+    echo "[98-drift-checks] llms.txt follows the llms.txt format (llmstxt.org)"
+    local bin out rc=0
+    bin="$(native_bin mios-template-conform)" || { _violation "mios-template-conform is not built, so llms.txt was not validated -- build it: cd tools/native && cargo build -p mios-template-conform"; return; }
+    out="$("$bin" --llms-txt --root "$ROOT" 2>&1)" || rc=$?
+    # A binary older than --llms-txt ignores the flag and exits 0, so the result line is required.
+    if (( rc == 0 )) && grep -q '^\[llms-txt\] .* conforms to ' <<<"$out"; then
+        echo "[98-drift-checks]   $(grep -m1 '^\[llms-txt\] .* conforms to ' <<<"$out")"
+    elif (( rc == 1 )) && grep -q '^\[llms-txt\] .*: [0-9]* violation' <<<"$out"; then
+        _violations_from "" "$out"
+    else
+        printf '%s\n' "$out" >&2
+        _violation "mios-template-conform --llms-txt exited $rc without a result line, so llms.txt was not validated (output above; a binary older than --llms-txt needs a rebuild: cd tools/native && cargo build -p mios-template-conform)"
+    fi
 }
 
 # --- every pruned comment still lands in a doc ---
