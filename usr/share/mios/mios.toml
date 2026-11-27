@@ -11900,15 +11900,15 @@ sha256 = "34e38458bfad5dd68dce20aa3b5d7b89dd9632ac516e109c21fa0ebbb5fca95e"
 [build.pins.satty]
 repository_from = "desktop.screenshot.satty_repository"   # mios-shot's editor, read by automation/59-tools.sh
 tag_prefix = "v"
-version    = "0.22.0"
+version    = "0.23.0"
 
 [build.pins.satty.assets.x86_64]
 name   = "satty-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "eb7a028c4a5ce331c2f355add8e2b807a7d697fe4495f7e1965786a4f6bcd5b8"
+sha256 = "96bb0951186a86544d6815db88d89895a0f90927431b0a54dbc3d2da2785c1c2"
 
 [build.pins.satty.assets.aarch64]
 name   = "satty-aarch64-unknown-linux-gnu.tar.gz"
-sha256 = "814073f70e7e18390d826f8b60dc429fc904b3abd05f6cae2b00fb8c2b9ea44b"
+sha256 = "b810ec7513f330be1062c39fbe612da767d90afa202396b193d8860ace51c7e7"
 
 [build.bake]
 runner_disk_budget_gb = 40
