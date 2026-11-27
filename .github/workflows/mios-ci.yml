@@ -176,7 +176,18 @@ jobs:
 
       - name: Generated artifacts match the SSOT
         run: |
-          mios-gen sync --root .
+          # Committed projections are vendor-only. Render as a MiOS host would, with
+          # its tuned tiers exported and layered, so a leak into main fails here.
+          host="${RUNNER_TEMP}/mios-host-tier"
+          mkdir -p "${host}/mios.d" "${host}/xdg/mios"
+          printf '[llamacpp]\nlight_threads = 8\n' > "${host}/mios.toml"
+          cp "${host}/mios.toml" "${host}/xdg/mios/mios.toml"
+          MIOS_LLAMACPP_LIGHT_THREADS=8 \
+          MIOS_FORGE_RUNNER_IMAGE=code.forgejo.org/forgejo/runner:13 \
+          MIOS_HOST_TOML="${host}/mios.toml" MIOS_HOST_TOML_D="${host}/mios.d" \
+          MIOS_USER_TOML="${host}/mios.toml" MIOS_USER_TOML_D="${host}/mios.d" \
+          XDG_CONFIG_HOME="${host}/xdg" \
+            mios-gen sync --root .
           if [[ -n "$(git status --porcelain)" ]]; then
             echo "ERROR: generated artifacts differ from what the SSOT renders:" >&2
             git status --porcelain >&2
