@@ -713,10 +713,17 @@ class TestDesktopIdleCollection(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app._collection_paused)
 
     async def test_attachment_poll_coalesces_without_blocking_navigation(self):
+        # The probe holds the attachment check for HOLD seconds. A check run on
+        # the event loop instead of a worker thread stalls the loop for all of
+        # that time, so every bound below is a fraction of HOLD. None is tied to
+        # how long pilot.press waits for the process to go idle: that wait
+        # returns early only on an idle CPU, and the 50 ms poll timer keeps a
+        # busy runner from ever looking idle.
+        HOLD = 10
         entered, release = threading.Event(), threading.Event()
         def probe():
             entered.set()
-            if not release.wait(10):
+            if not release.wait(HOLD):
                 raise RuntimeError("attachment probe not released")
             return False
         app = self.app()
@@ -729,10 +736,19 @@ class TestDesktopIdleCollection(unittest.IsolatedAsyncioTestCase):
                     # Exercise the real on_mount after-refresh callback and
                     # repeated Textual timer callbacks, not a test-created task.
                     self.assertTrue(await asyncio.to_thread(entered.wait, 2))
-                    await asyncio.wait_for(pilot.press("ctrl+f"), 1)
+                    # The loop keeps turning while the check is held: a 10 ms
+                    # sleep returns long before the probe could.
+                    loop = asyncio.get_running_loop()
+                    for _ in range(5):
+                        start = loop.time()
+                        await asyncio.sleep(.01)
+                        self.assertLess(loop.time() - start, HOLD / 20)
+                    await asyncio.wait_for(pilot.press("ctrl+f"), HOLD / 2)
                     self.assertEqual(app.focused.id, "agent-search")
-                    await asyncio.wait_for(pilot.press("f4"), 1)
+                    await asyncio.wait_for(pilot.press("f4"), HOLD / 2)
                     self.assertEqual(app.query_one(TabbedContent).active, "tab-tasks")
+                    # Navigation completed while the probe was still held.
+                    self.assertFalse(release.is_set())
                     await pilot.pause(.15)
                     self.assertEqual(read.call_count, 1)
                     self.assertFalse(app._attachment_task.done())

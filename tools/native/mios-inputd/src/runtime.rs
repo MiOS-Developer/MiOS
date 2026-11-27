@@ -8818,6 +8818,10 @@ mod app_detection {
         std::os::unix::fs::symlink(exe, d.join("exe")).unwrap();
         if let Some(t) = tty {
             std::os::unix::fs::symlink(t, d.join("fd/0")).unwrap();
+            own(&d.join("fd/0"));
+        }
+        for p in [d.join("exe"), d.join("stat"), d.join("fd"), d.clone()] {
+            own(&p);
         }
     }
     struct Tree {
@@ -8851,6 +8855,19 @@ mod app_detection {
             }
             let proc_root = dir.path().join("proc");
             std::fs::create_dir_all(&proc_root).unwrap();
+            for p in [
+                dir.path().to_path_buf(),
+                dir.path().join("home"),
+                dir.path().join("home/.local"),
+                bin.clone(),
+                dir.path().join("opt"),
+                other.clone(),
+                sample.clone(),
+                elsewhere.clone(),
+                proc_root.clone(),
+            ] {
+                own(&p);
+            }
             Self {
                 dir,
                 proc_root,
@@ -8875,8 +8892,27 @@ mod app_detection {
             }
         }
     }
+    /// The bridge uid these tests model. The bridge runs as its session user, never root, and a root bridge would
+    /// collapse the rules apart (`exe` is root-owned, `user_exe` the bridge's own). Under a non-root runner that is
+    /// the real uid. Under root (a CI container), it is FIXTURE_UID, and `own` gives every fixture to it, so the
+    /// ownership checks see real non-root files rather than a stand-in.
+    const FIXTURE_UID: u32 = 4100;
+    fn running_as_root() -> bool {
+        unsafe { libc::getuid() == 0 }
+    }
     fn uid() -> u32 {
-        unsafe { libc::getuid() }
+        if running_as_root() {
+            FIXTURE_UID
+        } else {
+            unsafe { libc::getuid() }
+        }
+    }
+    /// Give a fixture (without following a symlink) to the modelled bridge uid; a no-op when that is already the
+    /// runner's own uid.
+    fn own(path: &Path) {
+        if running_as_root() {
+            std::os::unix::fs::lchown(path, Some(FIXTURE_UID), Some(FIXTURE_UID)).unwrap();
+        }
     }
     #[test]
     fn trust_rules_are_canonical_owned_and_not_writable_by_others() {
@@ -9035,12 +9071,14 @@ mod app_detection {
         // not when the link resolves to a target nobody listed.
         let link = t.sample.with_file_name("mios-mons-link");
         std::os::unix::fs::symlink(&t.sample, &link).unwrap();
+        own(&link);
         let via_link = apps(&[], &[&link]);
         assert_eq!(app_of_pid(&t.proc_root, 10, &via_link, me, &lstat), None);
         entry(&t.proc_root, 12, 1, 12, 12, &link, None);
         assert_eq!(app_of_pid(&t.proc_root, 12, &via_link, me, &lstat), None);
         let stray = t.sample.with_file_name("mios-mons-stray");
         std::os::unix::fs::symlink(&t.elsewhere, &stray).unwrap();
+        own(&stray);
         entry(&t.proc_root, 13, 1, 13, 13, &t.elsewhere, None);
         assert_eq!(
             app_of_pid(&t.proc_root, 13, &apps(&[], &[&stray]), me, &lstat),
@@ -9052,6 +9090,7 @@ mod app_detection {
         assert_eq!(app_of_pid(&t.proc_root, 14, &registered, me, &lstat), None);
         let gone = t.sample.with_file_name("mios-mons-gone");
         std::fs::copy(&t.sample, &gone).unwrap();
+        own(&gone);
         entry(&t.proc_root, 15, 1, 15, 15, &gone, None);
         let gone_app = apps(&[], &[&gone]);
         assert!(app_of_pid(&t.proc_root, 15, &gone_app, me, &lstat).is_some());
