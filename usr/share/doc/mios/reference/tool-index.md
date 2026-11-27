@@ -757,7 +757,7 @@ is generated, its generator is here.
 | `usr/lib/mios/agent-pipe/test_mios_skills.py` | Standalone assert-script unit test for mios_skills (refactor R7 SKILLS-cluster extraction). Pure stdlib, no server.py/DB/network/pytest. |
 | `usr/lib/mios/agent-pipe/test_mios_slo.py` | Standalone assert-script unit test for mios_slo (WS-SCHED-SLO deadline/SLO scheduling core). Pure stdlib, no server.py/pytest. |
 | `usr/lib/mios/agent-pipe/test_mios_smartroute.py` | Standalone assert-script unit test for mios_smartroute (WS-A16 cost/quality SmartRouting). Pure stdlib, no server.py/network/pytest. |
-| `usr/lib/mios/agent-pipe/test_mios_sse.py` | Standalone assert-script unit test for mios_sse (refactor WS R2 leaf extraction). Pure stdlib, no server.py/DB/pytest/FastAPI. |
+| `usr/lib/mios/agent-pipe/test_mios_sse.py` | SSE primitive and real-ASGI deferred-stream tests; no live model or database. |
 | `usr/lib/mios/agent-pipe/test_mios_stress.py` | Standalone unit test for mios_stress logic to verify percentile calculations, request aggregation, throttling logic, and concurrency ramping algori... |
 | `usr/lib/mios/agent-pipe/test_mios_subagent_sandbox.py` | Unit test for mios_subagent_sandbox.py |
 | `usr/lib/mios/agent-pipe/test_mios_surface.py` | Canonical AST surface, atomic projector CLI and declared native generation tests, plus real FastAPI route parity without application lifespan. |

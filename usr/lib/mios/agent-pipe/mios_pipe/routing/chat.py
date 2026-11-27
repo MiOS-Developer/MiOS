@@ -721,36 +721,18 @@ async def _plain_chat_complete(body: dict) -> Any:
 
 
 async def chat_completions_logic(request: Request) -> Any:
-    try:
-        body_bytes = await request.body()
-        body = _loads_lenient(body_bytes.decode("utf-8", errors="replace")) if body_bytes else {}
-    except json.JSONDecodeError:
-        return JSONResponse(
-            content={"error": {"message": "invalid JSON body",
-                               "type": "invalid_request_error"}},
-            status_code=400,
-        )
-
+    from mios_sse import read_chat_request
+    body, error = await read_chat_request(
+        request, loads=_loads_lenient, ingress_key=_INGRESS_KEY,
+        client_tools_passthrough=CLIENT_TOOLS_PASSTHROUGH, has_client_tools=_has_client_tools)
+    if error is not None:
+        return error
     streaming = bool(body.get("stream", False))
     store_response = body.get("store") is not False
-    messages = body.get("messages") or []
-    if not messages or not isinstance(messages, list):
-        return JSONResponse(
-            content={"error": {"message": "you must provide a 'messages' array",
-                               "type": "invalid_request_error",
-                               "param": "messages", "code": None}},
-            status_code=400)
-
+    messages = body["messages"]
     # Explicit tool-free API requests do not enter the agent routing graph or
     # consume pending desktop approvals. The ingress middleware remains in force.
     if str(body.get("tool_choice") or "").strip().lower() == "none":
-        if _INGRESS_KEY:
-            authorization = request.headers.get("authorization") or ""
-            credential = authorization.removeprefix("Bearer ").strip()
-            from mios_pipe.access.authn import _check_inbound_principal
-            if credential != _INGRESS_KEY and not _check_inbound_principal(credential):
-                return JSONResponse(status_code=401, content={"error": {
-                    "message": "unauthorized", "type": "invalid_request_error"}})
         _record_active.set(False)
         _replay_active.set(False)
         return await _plain_chat_complete(body)
@@ -1050,11 +1032,6 @@ async def chat_completions_logic(request: Request) -> Any:
         return await _vision_complete(body, streaming, chat_id, model)
 
     _client_tools_turn = CLIENT_TOOLS_PASSTHROUGH and _has_client_tools(body)
-    if _client_tools_turn and _INGRESS_KEY:
-        _auth = request.headers.get("authorization") or ""
-        if _auth.removeprefix("Bearer ").strip() != _INGRESS_KEY:
-            return JSONResponse(content={"error": {"message": "unauthorized",
-                                "type": "invalid_request_error"}}, status_code=401)
     # Reuse the conservative SSOT parser before route/refine inference. The
     # existing dispatcher still enforces permissions, quotas and desktop policy.
     _exact_action = None
@@ -1704,13 +1681,26 @@ async def responses_api(request: Request) -> Any:
 
 @chat_router.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> Any:
-    """OpenAI Chat Completions route -- the capstone router-brain entrypoint. The
-    router-brain body lives in ``chat_completions_logic`` (same module); this thin
-    handler calls it directly. Every routing-precedence guard/branch lives in the
-    logic function, behaviour-identical.
-    """
-    from mios_sse import disconnect_aware_response
-    return disconnect_aware_response(await chat_completions_logic(request))
+    """Keep streaming clients connected while the routing pipeline is working."""
+    from mios_sse import deferred_chat_response, disconnect_aware_response
+    from mios_sse import read_chat_request
+    body, error = await read_chat_request(
+        request, loads=_loads_lenient, ingress_key=_INGRESS_KEY,
+        client_tools_passthrough=CLIENT_TOOLS_PASSTHROUGH, has_client_tools=_has_client_tools)
+    if error is not None:
+        return error
+    if not body.get("stream"):
+        return disconnect_aware_response(await chat_completions_logic(request))
+    try:
+        interval = float((_toml_section("agent_pipe") or {})["stream_keepalive_s"])
+        return deferred_chat_response(
+            lambda: chat_completions_logic(request), keepalive_s=interval,
+            model=body.get("model") or BACKEND_MODEL,
+            include_usage=bool((body.get("stream_options") or {}).get("include_usage")))
+    except (KeyError, TypeError, ValueError):
+        return JSONResponse(status_code=503, content={"error": {
+            "message": "agent_pipe.stream_keepalive_s must be finite and positive",
+            "type": "server_error", "code": "invalid_stream_config"}})
 
 def _is_tool_free_chat(refined: dict, domain, *, forced: bool = False) -> bool:
     """A conversation needs no executor; advisory domain metadata cannot invent one."""

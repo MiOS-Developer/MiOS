@@ -7880,6 +7880,7 @@ stream_to_reasoning = false
 stream_path = "/var/lib/mios/hermes-tail/frontier/frontier.jsonl"
 
 [agent_pipe]
+stream_keepalive_s = 15  # SSE comments keep clients connected during routing and model waits.
 tool_loop_limit = 20
 reflexion_limit = 2
 tool_max_iters = 15

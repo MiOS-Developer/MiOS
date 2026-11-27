@@ -1337,6 +1337,7 @@
       ],
       "public_symbols": [
         "DisconnectAwareStreamingResponse",
+        "deferred_chat_response",
         "disconnect_aware_response"
       ]
     },

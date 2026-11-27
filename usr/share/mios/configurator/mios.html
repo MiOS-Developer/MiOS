@@ -3101,6 +3101,8 @@
         <input type="text" id="f-ap-backend" data-key="agent_pipe.backend" placeholder="http://localhost:8642/v1">
         <label for="f-ap-backend-model">backend_model (model id to forward as)</label>
         <input type="text" id="f-ap-backend-model" data-key="agent_pipe.backend_model" placeholder="hermes-agent">
+        <label for="f-ap-stream-keepalive">Chat stream keepalive interval (seconds)</label>
+        <input type="number" id="f-ap-stream-keepalive" data-key="agent_pipe.stream_keepalive_s" data-type="int" min="1" step="1">
         <label for="f-ap-enable">enable (master toggle)</label>
         <input type="text" id="f-ap-enable" data-key="agent_pipe.enable" data-type="bool" placeholder="true">
       </fieldset>

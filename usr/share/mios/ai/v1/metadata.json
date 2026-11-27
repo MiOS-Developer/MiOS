@@ -21219,7 +21219,7 @@
     },
     {
       "path": "usr/lib/mios/agent-pipe/test_mios_sse.py",
-      "hint": "Standalone assert-script unit test for mios_sse (refactor WS R2 leaf extraction). Pure stdlib, no server.py/DB/pytest/FastAPI.",
+      "hint": "SSE primitive and real-ASGI deferred-stream tests; no live model or database.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/agent-pipe.md",

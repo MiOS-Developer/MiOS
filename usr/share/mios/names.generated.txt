@@ -3130,6 +3130,7 @@ frontier.agy_effort_flag  MIOS_FRONTIER_AGY_EFFORT_FLAG
 frontier.gemini_effort_flag  MIOS_FRONTIER_GEMINI_EFFORT_FLAG
 frontier.stream_to_reasoning  MIOS_FRONTIER_STREAM_TO_REASONING
 frontier.stream_path  MIOS_FRONTIER_STREAM_PATH
+agent_pipe.stream_keepalive_s  MIOS_AGENT_PIPE_STREAM_KEEPALIVE_S
 agent_pipe.tool_loop_limit  MIOS_AGENT_PIPE_TOOL_LOOP_LIMIT
 agent_pipe.reflexion_limit  MIOS_AGENT_PIPE_REFLEXION_LIMIT
 agent_pipe.tool_max_iters  MIOS_AGENT_PIPE_TOOL_MAX_ITERS

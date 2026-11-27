@@ -5,10 +5,188 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import math
 import os
 import re
 import time
+import uuid
 from typing import Any, Optional
+
+
+async def read_chat_request(request, *, loads, ingress_key, client_tools_passthrough,
+                            has_client_tools):
+    """Validate the body and route-local credentials before streaming headers."""
+    from starlette.responses import JSONResponse
+
+    try:
+        body_bytes = await request.body()
+        body = loads(body_bytes.decode("utf-8", errors="replace")) if body_bytes else {}
+    except json.JSONDecodeError:
+        return None, JSONResponse(
+            content={"error": {"message": "invalid JSON body",
+                               "type": "invalid_request_error"}},
+            status_code=400,
+        )
+
+    if not isinstance(body, dict):
+        return None, JSONResponse(status_code=400, content={"error": {
+            "message": "body must be a JSON object", "type": "invalid_request_error"}})
+    messages = body.get("messages")
+    if not messages or not isinstance(messages, list):
+        return None, JSONResponse(
+            content={"error": {"message": "you must provide a 'messages' array",
+                               "type": "invalid_request_error",
+                               "param": "messages", "code": None}},
+            status_code=400)
+    if body.get("stream_options") is not None and not isinstance(body["stream_options"], dict):
+        return None, JSONResponse(status_code=400, content={"error": {
+            "message": "stream_options must be a JSON object", "type": "invalid_request_error",
+            "param": "stream_options", "code": None}})
+
+    plain = str(body.get("tool_choice") or "").strip().lower() == "none"
+    if ingress_key and (plain or (client_tools_passthrough and has_client_tools(body))):
+        credential = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        allowed = credential == ingress_key
+        if plain and not allowed:
+            from mios_pipe.access.authn import _check_inbound_principal
+            allowed = bool(_check_inbound_principal(credential))
+        if not allowed:
+            return None, JSONResponse(status_code=401, content={"error": {
+                "message": "unauthorized", "type": "invalid_request_error"}})
+    return body, None
+
+
+def _completion_events(response, *, model: str, include_usage: bool):
+    """Preserve a plain completion's choices when a routed reply is not SSE."""
+    if isinstance(response, dict):
+        payload = response
+    else:
+        payload = json.loads(response.body)
+    if not isinstance(payload, dict):
+        raise ValueError("invalid completion object")
+    if "error" in payload or getattr(response, "status_code", 200) >= 400:
+        error = payload.get("error") or {
+            "message": "The chat backend rejected the request",
+            "type": "server_error", "code": getattr(response, "status_code", None),
+        }
+        yield ("data: " + json.dumps({"error": error}) + "\n\n").encode("utf-8")
+        yield _sse_done()
+        return
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("completion has no choices")
+    base = {
+        "id": payload.get("id") or f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        "object": "chat.completion.chunk",
+        "created": payload.get("created", int(time.time())),
+        "model": payload.get("model") or model,
+    }
+    for key in ("system_fingerprint", "service_tier"):
+        if key in payload:
+            base[key] = payload[key]
+    for position, choice in enumerate(choices):
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("completion has no message")
+        delta = dict(message)
+        if isinstance(delta.get("tool_calls"), list):
+            delta["tool_calls"] = [
+                {**call, "index": index} for index, call in enumerate(delta["tool_calls"])
+            ]
+        index = choice.get("index", position)
+        chunk = {**base, "choices": [{"index": index, "delta": delta,
+                                      "finish_reason": None}]}
+        if "logprobs" in choice:
+            chunk["choices"][0]["logprobs"] = choice["logprobs"]
+        yield ("data: " + json.dumps(chunk) + "\n\n").encode("utf-8")
+        chunk["choices"] = [{"index": index, "delta": {},
+                              "finish_reason": choice.get("finish_reason", "stop")}]
+        yield ("data: " + json.dumps(chunk) + "\n\n").encode("utf-8")
+    if include_usage and payload.get("usage") is not None:
+        yield ("data: " + json.dumps({**base, "choices": [], "usage": payload["usage"]})
+               + "\n\n").encode("utf-8")
+    yield _sse_done()
+
+
+def deferred_chat_response(response_factory, *, keepalive_s: float,
+                           model: str, include_usage: bool = False):
+    """Start SSE before routing, retaining one context through planning and output.
+
+    The bounded queue provides backpressure. Only the consumer times out while
+    waiting: a heartbeat never cancels model work. Disconnects cancel the owner
+    task, which closes the returned stream and its background resources.
+    """
+    from starlette.responses import StreamingResponse
+
+    if not math.isfinite(keepalive_s) or keepalive_s <= 0:
+        raise ValueError("stream keepalive interval must be finite and positive")
+
+    async def events():
+        queue = asyncio.Queue(maxsize=1)
+
+        async def produce():
+            response = None
+            try:
+                response = await response_factory()
+                if isinstance(response, StreamingResponse):
+                    async for chunk in response.body_iterator:
+                        await queue.put(chunk)
+                else:
+                    for chunk in _completion_events(response, model=model,
+                                                    include_usage=include_usage):
+                        await queue.put(chunk)
+            finally:
+                close = getattr(getattr(response, "body_iterator", None), "aclose", None)
+                for cleanup in (close, getattr(response, "background", None)):
+                    if cleanup is not None:
+                        try:
+                            await cleanup()
+                        except Exception as exc:
+                            # Cleanup cannot retroactively turn a completed stream
+                            # into another completion/error or expose private data.
+                            logging.getLogger(__name__).warning(
+                                "stream cleanup failed (%s)", type(exc).__name__)
+
+        producer = asyncio.create_task(produce())
+        pending = None
+        try:
+            yield b": keepalive\n\n"
+            while True:
+                if pending is None:
+                    pending = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait(
+                    (pending, producer), timeout=keepalive_s,
+                    return_when=asyncio.FIRST_COMPLETED)
+                if pending.done():
+                    chunk, pending = pending.result(), None
+                    yield chunk
+                elif producer in done:
+                    # Drain any final queued chunk before observing completion.
+                    if not queue.empty():
+                        chunk, pending = await pending, None
+                        yield chunk
+                        continue
+                    await producer
+                    return
+                elif not done:
+                    yield b": keepalive\n\n"
+        except Exception:
+            # Headers have already been sent; failures stay on the SSE wire.
+            # Exception strings may contain upstream credentials or private data.
+            yield b'data: {"error":{"message":"The chat pipeline failed","type":"server_error","code":"pipeline_error"}}\n\n'
+            yield _sse_done()
+        finally:
+            tasks = [producer] + ([pending] if pending is not None else [])
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    return disconnect_aware_response(StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}))
+
 
 def disconnect_aware_response(response):
     """Watch ASGI disconnects even while upstream awaits produce no body events."""
