@@ -1,6 +1,6 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4386,
+  "total_files_scanned": 4385,
   "total_metadata_entries": 3514,
   "total_hints": 3508,
   "total_functions_indexed": 2299,
@@ -34623,7 +34623,7 @@
     },
     {
       "path": "usr/share/doc/mios/adr/0025-core-image-profile.md",
-      "hint": "ADR-0025 declares the core MiOS profile once in mios.toml [profiles] and selects phases and package sections by profile; as amended (A1), every image kind is the full image and the devcontainer is .devcontainer/Containerfile FROM [image].ref plus account wiring, so there is no dev profile.",
+      "hint": "ADR-0025 declares the core MiOS profile once in mios.toml [profiles]; every image kind (OCI, WSL2, devcontainer, cloud projection, Codespace) is the root pipeline run under a profile, and the devcontainer uses the native Dev Containers pattern: devcontainer.json builds the root Containerfile (MiOS) or pulls the CI dev image (mirrors).",
       "related": [
         "usr/share/mios/mios.toml ([profiles] [packages.devcontainer] [build.phases] [variants.entries.mios-dev] [bootstrap.sync])",
         "Containerfile",
