@@ -11058,6 +11058,7 @@ ci.fedora.image  MIOS_CI_FEDORA_IMAGE
 ci.fedora.package_sets  MIOS_CI_FEDORA_PACKAGE_SETS
 ci.fedora.repos  MIOS_CI_FEDORA_REPOS
 ci.fedora.packages  MIOS_CI_FEDORA_PACKAGES
+ci.fedora.repo_excludepkgs.packages-microsoft-com-prod  MIOS_CI_FEDORA_REPO_EXCLUDEPKGS_PACKAGES_MICROSOFT_COM_PROD
 ci.tiers.lint  MIOS_CI_TIERS_LINT
 ci.tiers.unit  MIOS_CI_TIERS_UNIT
 ci.tiers.gate  MIOS_CI_TIERS_GATE
