@@ -10,13 +10,24 @@ import unittest
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch, MagicMock
+import importlib.util
+
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "usr/lib/mios"))
 
-monitor = importlib.machinery.SourceFileLoader(
+monitor = _load_source(importlib.machinery.SourceFileLoader(
     "mios_mon_adversarial", str(ROOT / "usr/libexec/mios/mios-mon.py")
-).load_module()
+))
 
 from textual.app import App
 from textual.css.query import NoMatches
