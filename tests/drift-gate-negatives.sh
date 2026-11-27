@@ -4798,6 +4798,25 @@ test_manual_generated() {
     log "check_manual_generated negative test passed (all three phases)"
 }
 
+test_llms_txt() {
+    log "Testing check_llms_txt"
+    local doc="${ROOT}/llms.txt" backup planted
+    backup="$(mktemp)"; cp "$doc" "$backup"
+    _llms_fail() { cp "$backup" "$doc"; rm -f "$backup"; die "check_llms_txt $1"; }
+    # The defect this file once shipped with: a header tag on line 1 parses as a second H1.
+    { printf '# AI-%s: planted header tag\n' hint; cat "$backup"; } > "$doc"
+    _neg_gate check_llms_txt && _llms_fail "passed despite a header tag parsed as an H1"
+    grep -q 'line 1: .* is a source-header tag, not a heading' <<<"$_NEG_GATE_OUT" || _llms_fail "failed without naming the planted header tag"
+    # Prose under an H2: the reference parser reads every line there as a link item.
+    planted=$(( $(wc -l < "$backup") + 2 ))
+    cp "$backup" "$doc"; printf '\nA prose paragraph under the last H2.\n' >> "$doc"
+    _neg_gate check_llms_txt && _llms_fail "passed despite prose under an H2"
+    grep -qF "line ${planted}: not a" <<<"$_NEG_GATE_OUT" || _llms_fail "failed without naming the planted prose line ${planted}"
+    cp "$backup" "$doc"; rm -f "$backup"
+    _neg_gate check_llms_txt || die "check_llms_txt failed on the restored llms.txt"
+    log "check_llms_txt negative test passed (both phases)"
+}
+
 test_manual_ledger() {
     log "Testing check_manual_ledger"
     python3 "${ROOT}/usr/libexec/mios/mios-manual" --root "$ROOT" ledger --write >/dev/null 2>&1
@@ -6145,6 +6164,7 @@ _run_test test_leaked_fixtures
     _run_test test_blade_reconcile_schema
     _run_test test_docs_ratchet_monotone
     _run_test test_manual_generated
+    _run_test test_llms_txt
     _run_test test_manual_ledger
     _run_test test_comment_landing
     _run_test test_credential_literals

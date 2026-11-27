@@ -86,8 +86,7 @@ WIN_HELPERS = {
 # parameters it declares first as (name, type, default); [] declares none,
 # None too many to pin here (its AST and the binder must still agree).
 WIN_ENTRIES = {
-    "setup": (WIN_HELPERS["setup"], [("AiNode", "SwitchParameter", None)]),
-    "setup-shim": ("usr/share/mios/windows/Setup-MiOSLanPortProxy.ps1", []),
+    "setup": (WIN_HELPERS["setup"], []),
     "heal": (WIN_HELPERS["heal"], []),
     "tailscale": (WIN_HELPERS["tailscale"], [("Method", "String", "'tcp'"), ("DryRun", "SwitchParameter", None),
                                             ("Off", "SwitchParameter", None)]),
@@ -263,9 +262,12 @@ def resolved(stack: Stack, names=RESOLVED_NAMES, **extra) -> dict[str, str | Non
 
 def install_env(stack: Stack, **extra) -> str:
     """An install.env for the bash consumers, carrying what the resolver renders."""
+    expose_raw = resolved(stack, names=("MIOS_FIREWALL_WINDOWS_EXPOSE",), **extra).get("MIOS_FIREWALL_WINDOWS_EXPOSE") or ""
+    expose_vars = tuple(f"MIOS_PORTS_{k.strip().upper()}" for k in expose_raw.split(",") if k.strip())
+    names = (*RESOLVED_NAMES, "MIOS_FIREWALL_WINDOWS_EXPOSE", *expose_vars)
     path = os.path.join(stack.tmp, "install.env")
     with open(path, "w", encoding="utf-8") as fh:
-        for name, value in resolved(stack, **extra).items():
+        for name, value in resolved(stack, names=names, **extra).items():
             if value is not None:
                 fh.write(f"{name}={value}\n")
     return path
@@ -452,17 +454,6 @@ function Index-Of([scriptblock]$Pred) {
 }
 $take = New-Object System.Collections.Generic.List[int]
 switch ($Mode) {
-    'setup' {
-        $take.Add((Index-Of { param($s) $s.Extent.Text -match '^Set-StrictMode' }))
-        $take.Add((Index-Of { param($s) $s -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $s.Name -eq '_MiosPort' }))
-        $b = Index-Of { param($s) $s.Extent.Text -match '^\$portMap\s*=' }
-        $take.Add($b)
-        for ($i = $b + 1; $i -lt $top.Count; $i++) {
-            # The portproxy and firewall loops; the closing display loop only prints.
-            if (($top[$i] -is [System.Management.Automation.Language.ForEachStatementAst] -and $top[$i].Condition.Extent.Text -eq '$portMap' -and
-                 $top[$i].Body.Extent.Text -match 'netsh|NetFirewallRule') -or $top[$i].Extent.Text -match '(?i)searxng') { $take.Add($i) }
-        }
-    }
     'heal' {
         $a = Index-Of { param($s) $s.Extent.Text -match 'mios-common\.ps1' }
         for ($i = $a; $i -lt $top.Count; $i++) { if ($top[$i].Extent.Text -notmatch 'ReadKey') { $take.Add($i) } }
@@ -503,10 +494,6 @@ if ($Preload) { . $Preload }
 $out = [ordered]@{ warnings = @($script:warnings); hosts = @($script:hosts)
     reader = [bool](Get-Command Get-MiosSsotValue -ErrorAction SilentlyContinue) }
 switch ($Mode) {
-    'setup' {
-        $out.map = @($portMap | ForEach-Object { ,@($_.Name, [int]$_.Port) })
-        $out.proxies = @($script:proxies); $out.rules = @($script:rules)
-    }
     'heal' {
         $out.map = @($resolvedPorts.Keys | ForEach-Object { ,@([string]$_, [int]$resolvedPorts[$_]) })
         $out.deleted = @($script:deleted); $out.probed = @($script:probed)
@@ -663,6 +650,16 @@ $acc::Add('Security.Principal.WindowsBuiltInRole', [MiosEntryStub.Role])
 $global:calls = [System.Collections.Generic.List[string]]::new()
 $global:hosts = [System.Collections.Generic.List[string]]::new()
 $global:warnings = [System.Collections.Generic.List[string]]::new()
+function global:Test-Path {
+    param([string]$LiteralPath, [string]$Path, [string]$PathType)
+    $t = if ($LiteralPath) { $LiteralPath } else { $Path }
+    if ($t -and $t -like 'M:\*') { return $false }
+    $fwd = @{}
+    if ($PSBoundParameters.ContainsKey('LiteralPath')) { $fwd['LiteralPath'] = $LiteralPath }
+    if ($PSBoundParameters.ContainsKey('Path')) { $fwd['Path'] = $Path }
+    if ($PSBoundParameters.ContainsKey('PathType')) { $fwd['PathType'] = $PathType }
+    Microsoft.PowerShell.Management\Test-Path @fwd
+}
 function global:Rec([string]$Name, [object[]]$A) {
     $global:calls.Add((@($Name) + @($A | ForEach-Object { if ($_ -is [array]) { $_ -join ',' } else { [string]$_ } })) -join ' ')
 }
@@ -694,14 +691,17 @@ printf '%s %s\n' "$n" "$*" >> "$ENTRY_STUB_LOG"
 case "$n $*" in
   "tailscale.exe status --json") echo '{"Self":{"DNSName":"node.example.invalid."}}' ;;
   "tailscale.exe status") echo '100.64.0.1 node user linux -' ;;
+  "wsl.exe --list --quiet") echo 'podman-MiOS-DEV' ;;
+  *"ip -4 -o addr show eth0"*) echo '2: eth0    inet 192.0.2.10/24 brd 192.0.2.255 scope global eth0' ;;
   wsl.exe*) echo 'LISTEN 0 4096 0.0.0.0:1 0.0.0.0:*' ;;
 esac
 exit 0
 """
-_ENTRY_TREE = (*WIN_HELPERS.values(), WIN_ENTRIES["setup-shim"][0], _COMMON_PS1)
+_ENTRY_TREE = (*WIN_HELPERS.values(), "build-mios.ps1", _COMMON_PS1)
 
 
-def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None, admin: bool = False) -> dict:
+def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None, admin: bool = False,
+                  vendor: str | None = None, user: str = "", **env_extra: str) -> dict:
     """`rel` run whole as shipped, by its own path in a scratch tree shaped
     like the repo (_ENTRY_TREE), `params` bound by name, elevation answering
     `admin`. Returns the recorded calls, console and warning lines, what the
@@ -714,7 +714,7 @@ def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None,
         os.makedirs(os.path.join(tree, os.path.dirname(path)), exist_ok=True)
         shutil.copyfile(os.path.join(_ROOT, path), os.path.join(tree, path))
     with open(os.path.join(tree, "usr", "share", "mios", "mios.toml"), "w", encoding="utf-8") as fh:
-        fh.write(_vendor_text())
+        fh.write(_vendor_text() if vendor is None else vendor)
     stubs = os.path.join(tmp, "bin")
     os.makedirs(stubs)
     for name in ("tailscale.exe", "wsl.exe", "netsh", "netsh.exe", "pwsh.exe"):
@@ -724,13 +724,20 @@ def windows_entry(test: unittest.TestCase, rel: str, params: dict | None = None,
     log = os.path.join(tmp, "external.log")
     open(log, "w", encoding="utf-8").close()
     home = os.path.join(tmp, "home")
+    appdata = os.path.join(tmp, "appdata")
     os.makedirs(os.path.join(home, ".config", "mios"))
+    os.makedirs(os.path.join(appdata, "MiOS"))
+    if user:
+        with open(os.path.join(home, ".config", "mios", "mios.toml"), "w", encoding="utf-8") as fh:
+            fh.write(user)
     script = os.path.join(tmp, "entry.ps1")
     with open(script, "w", encoding="utf-8") as fh:
         fh.write(_PS_ENTRY)
     env = {"PATH": stubs + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8",
-           "HOME": home, "USERPROFILE": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+           "HOME": home, "USERPROFILE": home, "APPDATA": appdata, "SystemDrive": tree,
+           "XDG_CONFIG_HOME": os.path.join(home, ".config"),
            "MIOS_NO_COLOR": "1", "ENTRY_STUB_LOG": log}
+    env.update(env_extra)
     helper = os.path.join(tree, rel)
     cmd = [pwsh, "-NoProfile", "-NonInteractive", "-File", script, "-Helper", helper,
            "-Params", json.dumps(params or {}), "-Admin", "1" if admin else "0"]
@@ -774,17 +781,20 @@ def lan_loopback(r: subprocess.CompletedProcess) -> list[int]:
 
 
 def unsupported_notes(got: dict) -> list[int | None]:
-    """The SearXNG notices a helper printed: tailscale-serve's skip line (its
-    port), or Setup's not-forwarded line (no port: Setup never needs it)."""
+    """The SearXNG notices a helper printed: tailscale-serve's skip line or
+    Setup's Phase 4 Firewall / portproxy notices (both carry the port)."""
     out = []
     for line in got["hosts"]:
         m = re.match(r"^\s+skip\s+searxng\s+:(\d+)\s+\(loopback-only listener, mios\.toml "
                      r"\[ports\]\.searxng; tailnet serve unsupported\)$", line)
         if m:
             out.append(int(m.group(1)))
-        elif re.match(r"^\s+\[-\] searxng: not forwarded -- direct LAN forwarding is unsupported "
-                      r"\(loopback-only listener, mios\.toml \[ports\]\.searxng\)$", line):
-            out.append(None)
+            continue
+        m = re.match(r"^\s+\[\*\] (?:Firewall: no SearXNG LAN rule|portproxy: SearXNG is not forwarded) -- "
+                     r"direct LAN forwarding is unsupported \(loopback-only listener on mios\.toml \[ports\]\.searxng, port (\d+)\)$",
+                     line)
+        if m:
+            out.append(int(m.group(1)))
     return out
 
 
@@ -1259,11 +1269,13 @@ class TestDefaultConsumers(Base):
         self.assertEqual([], [ln for ln in lines if re.search(r"\b\d{4,5}\b", ln)])
 
     def test_windows_forwarding_helpers(self):
-        # As shipped: installation/mios-common.ps1 at the root, no preload, no
-        # injected environment. Heal and tailscale-serve load the reader for
-        # SearXNG alone, in a child scope, so it does not leak.
+        # As shipped: Setup runs whole against build-mios.ps1 Phase 4; Heal and
+        # tailscale-serve load installation/mios-common.ps1 for SearXNG alone,
+        # in a child scope, so it does not leak.
         p = self.P
-        setup, heal, serve = (windows_helper(self, m) for m in ("setup", "heal", "tailscale"))
+        heal, serve = (windows_helper(self, m) for m in ("heal", "tailscale"))
+        setup = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True)
+        self.assertEqual("", setup["err"], setup)
         self.assertEqual((False, False), (heal["reader"], serve["reader"]))
         for mode, got in (("setup", setup), ("heal", heal), ("tailscale", serve)):
             with self.subTest(helper=mode):
@@ -1272,22 +1284,26 @@ class TestDefaultConsumers(Base):
         self.assertEqual(("searxng", p), heal["map"][-1])
         self.assertIn(p, heal["deleted"])
         self.assertIn(f"http://localhost:{p}/", heal["probed"])
-        # Setup and tailscale-serve forward or serve none of it, and say so.
-        for mode, got, note in (("setup", setup, None), ("tailscale", serve, p)):
-            with self.subTest(helper=mode):
-                self.assertEqual([], [x for x in got["map"] if x[0] == "searxng"])
-                self.assertEqual([note], unsupported_notes(got))
-        self.assertNotIn(p, setup["proxies"])
-        self.assertEqual([], [x for x in setup["rules"] if "searxng" in x[0] or x[1] == p])
+        # Setup and tailscale-serve forward or serve none of SearXNG, and say so.
+        self.assertEqual([p, p], unsupported_notes(setup))
+        self.assertEqual([p], unsupported_notes(serve))
+        self.assertEqual([], [x for x in serve["map"] if x[0] == "searxng"])
+        setup_calls = "\n".join(setup["calls"])
+        self.assertEqual([], re.findall(rf"portproxy add .*listenport={p}\b", setup_calls))
+        self.assertEqual([], [c for c in setup["calls"]
+                              if re.search(rf"searxng|\b{p}/tcp", c, re.I)
+                              and not c.startswith(("Remove-NetFirewallRule ", "netsh interface portproxy delete "))])
         self.assertEqual([], [x for x in serve["served"] if f"={p} " in x or x.endswith(f":{p}")])
         # A caller that preloaded the reader, or exported the port, changes nothing.
-        for mode, kw in (("heal", {"preload": True}), ("tailscale", {"preload": True}),
-                         ("setup", {"MIOS_PORTS_SEARXNG": str(p)})):
+        for mode, kw in (("heal", {"preload": True}), ("tailscale", {"preload": True})):
             with self.subTest(helper=mode, extra=sorted(kw)):
                 again = windows_helper(self, mode, **kw)
-                base = {"setup": setup, "heal": heal, "tailscale": serve}[mode]
+                base = {"heal": heal, "tailscale": serve}[mode]
                 for key in ("map", "warnings", "hosts", "proxies", "deleted", "probed", "served"):
                     self.assertEqual(base.get(key), again.get(key), key)
+        setup_again = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True, MIOS_PORTS_SEARXNG=str(p))
+        self.assertEqual(setup["calls"], setup_again["calls"])
+        self.assertEqual(unsupported_notes(setup), unsupported_notes(setup_again))
 
     def test_a_reader_that_fails_to_load_changes_nothing_else(self):
         # Loading the reader for SearXNG cannot stop the rest of the helper.
@@ -1308,20 +1324,26 @@ class TestDefaultConsumers(Base):
         self.assertNotIn("searxng", got, r.stdout)
         self.assertNotIn(self.P, got.values(), r.stdout)
         self.assertEqual([self.P], lan_loopback(r), r.stdout)
-        self.assertEqual(8400, got.get("forge"), r.stdout)
+        self.assertEqual(8400, got.get("forge_http"), r.stdout)
         self.assertNotIn("searxng", r.stderr)
 
     def test_lan_status_matches_setup(self):
-        # What mios-lan-status says the helper forwards is what Setup forwards.
-        setup = windows_helper(self, "setup")
-        ports = [port for _name, port in setup["map"]]
+        # What mios-lan-status checks is what Setup applies via [firewall.windows].
+        setup = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True)
+        self.assertEqual("", setup["err"], setup)
+        ports = [int(p) for p in re.findall(
+            r"^netsh interface portproxy add v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+) ",
+            "\n".join(setup["calls"]), re.M)]
+        self.assertTrue(ports)
         s = self.stack()
-        r, got = lan_status(s, install_env(s), (*ports, self.P), setup=os.path.join(_ROOT, WIN_HELPERS["setup"]))
+        env_p = install_env(s)
+        llm_light_port = resolved(s, names=("MIOS_PORTS_LLM_LIGHT",), MIOS_PORTS_LLM_LIGHT="")["MIOS_PORTS_LLM_LIGHT"]
+        r, got = lan_status(s, env_p, (*ports, self.P), setup=os.path.join(_ROOT, WIN_HELPERS["setup"]),
+                            MIOS_PORTS_LLM_LIGHT=llm_light_port)
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
         self.assertEqual(sorted(ports), sorted(got.values()), r.stdout)
-        m = re.search(r"the helper forwards the (\d+) MiOS ports checked above, not searxng;", r.stdout)
-        self.assertIsNotNone(m, r.stdout)
-        self.assertEqual(len(ports), int(m.group(1)))
+        self.assertIn("the helper applies mios.toml [firewall.windows] as build-mios.ps1 Phase 4 does, never searxng;",
+                      r.stdout)
         self.assertEqual([self.P], lan_loopback(r), r.stdout)
 
     def test_dev_vm_overlay_adds_no_listener(self):
@@ -1392,42 +1414,33 @@ class TestWindowsEntryPoints(Base):
                     self.assertEqual(want, declared)
                 self.assertEqual(sorted((n, t) for n, t, _d in declared), sorted(tuple(x) for x in got["binder"]))
                 self.assertEqual([], [s for s in got["strict"] if s < pb["offset"]])
-        # Setup in particular declares -AiNode before it turns StrictMode on.
-        setup = parsed["setup"]
-        self.assertIsNotNone(setup["param_block"], "Setup has no param block: param() follows a statement")
-        self.assertTrue(setup["strict"])
-        self.assertLess(setup["param_block"]["offset"], min(setup["strict"]))
 
     def test_setup_binds_and_runs_as_shipped(self):
         rel = WIN_ENTRIES["setup"][0]
-        # Not elevated, it re-launches itself, carrying -AiNode exactly when bound.
-        for params in ({"AiNode": True}, {}):
-            with self.subTest(elevated=False, **params):
-                got = windows_entry(self, rel, params)
-                self.assertEqual([*self.RELAUNCH, got["helper"], *(["-AiNode"] if params else [])],
-                                 self.relaunch(got))
-        # The shim hands -AiNode to the canonical helper it ships beside.
-        got = windows_entry(self, WIN_ENTRIES["setup-shim"][0])
-        self.assertEqual([*self.RELAUNCH, os.path.join(got["tree"], rel), "-AiNode"], self.relaunch(got))
-        # Elevated, the whole body runs under StrictMode: every mapped port is
-        # forwarded and opened, -AiNode adds the tailnet bridge, and SearXNG
-        # is named, never forwarded.
-        ports = [port for _name, port in windows_helper(self, "setup")["map"]]
+        # Not elevated, it re-launches itself with no extra arguments.
+        got = windows_entry(self, rel)
+        self.assertEqual([*self.RELAUNCH, got["helper"]], self.relaunch(got))
+        # Elevated, the whole body lifts and runs Phase 4 under StrictMode:
+        # every [firewall.windows].expose port is forwarded and opened, and
+        # SearXNG is named, never forwarded.
+        data = _vendor()
+        stack_id = int(data["ports"].get("stack_id", 0))
+        ports = [int(data["ports"][k]) + stack_id * 10000 for k in data["firewall"]["windows"]["expose"]]
         self.assertTrue(ports)
         self.assertNotIn(self.P, ports)
-        for params in ({"AiNode": True}, {}):
-            with self.subTest(elevated=True, **params):
-                got = windows_entry(self, rel, params, admin=True)
-                self.ran_to_the_key_wait(got)
-                calls = "\n".join(got["calls"])
-                self.assertEqual(ports, [int(p) for p in re.findall(
-                    r"^netsh interface portproxy add v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+) ", calls, re.M)])
-                self.assertEqual(ports, [int(p) for p in re.findall(
-                    r"^New-NetFirewallRule -DisplayName MiOS - \S+ \((\d+)/tcp\) ", calls, re.M)])
-                self.assertEqual(bool(params), "netsh interface portproxy add v4tov6 " in calls)
-                self.assertEqual([None], unsupported_notes(got))
-                self.assertEqual([], [c for c in got["calls"] if re.search(rf"searx|\b{self.P}\b", c, re.I)])
-                self.assertEqual([], got["warnings"])
+        got = windows_entry(self, rel, admin=True)
+        self.assertEqual("", got["err"], got)
+        calls = "\n".join(got["calls"])
+        self.assertEqual(ports, [int(p) for p in re.findall(
+            r"^netsh interface portproxy add v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+) ", calls, re.M)])
+        self.assertEqual(ports, [int(p) for p in re.findall(
+            r"^New-NetFirewallRule -DisplayName MiOS - \S+ \((\d+)/tcp\) ", calls, re.M)])
+        self.assertNotIn("netsh interface portproxy add v4tov6 ", calls)
+        self.assertEqual([self.P, self.P], unsupported_notes(got))
+        self.assertEqual([], [c for c in got["calls"]
+                              if re.search(rf"searx|\b{self.P}\b", c, re.I)
+                              and not c.startswith(("Remove-NetFirewallRule ", "netsh interface portproxy delete "))])
+        self.assertEqual([], got["warnings"])
 
     def test_heal_and_tailscale_enter_as_shipped(self):
         rel = WIN_ENTRIES["heal"][0]
@@ -1547,11 +1560,20 @@ class TestLayeredOverrides(Base):
                 else:
                     self.assertEqual([want], unsupported_notes(got))
                     self.assertEqual([], [x for x in got["served"] if str(want) in x])
-        # No layer makes Setup forward it.
-        got = windows_helper(self, "setup", user=user, MIOS_PORTS_SEARXNG=str(want))
-        self.assertEqual([None], unsupported_notes(got))
-        self.assertEqual([], [x for x in got["map"] if x[0] == "searxng"])
-        self.assertNotIn(want, got["proxies"])
+        # No layer makes Setup forward it; a higher Windows layer moves what Setup names.
+        vendor_moved = re.sub(
+            r"(?m)^(searxng\s*=\s*)\d+",
+            rf"\g<1>{want}",
+            re.sub(r"(?ms)(\[ports\.categories\.webtools\].*?^base\s*=\s*)\d+", rf"\g<1>{want}", _vendor_text(), count=1),
+            count=1,
+        )
+        got = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True, vendor=vendor_moved, user=user,
+                            MIOS_PORTS_SEARXNG=str(want))
+        self.assertEqual("", got["err"], got)
+        self.assertEqual([want, want], unsupported_notes(got))
+        self.assertEqual([], [c for c in got["calls"]
+                              if re.search(rf"portproxy add .*listenport={want}\b|searxng", c, re.I)
+                              and not c.startswith("Remove-NetFirewallRule ")])
 
     def test_lan_status_follows_the_resolved_port(self):
         p = free_port()
@@ -1693,16 +1715,16 @@ class TestMissingSettings(Base):
                 self.assertNotIn(DEFAULT_LISTENER, got.get("deleted", []))
                 self.assertEqual([], [x for x in got.get("probed", []) + got.get("served", [])
                                       if f":{DEFAULT_LISTENER}" in x])
-        # Setup never reads the port, so its output does not change.
-        got = windows_helper(self, "setup", vendor=self.s_vendor)
-        self.assertEqual([], got["warnings"])
-        self.assertEqual([None], unsupported_notes(got))
-        self.assertNotIn(DEFAULT_LISTENER, got["proxies"])
-        self.assertEqual([], [x for x in got["rules"] if "searxng" in x[0]])
+        # Setup reads [ports].searxng only to name and clean it: missing, it warns by key and opens nothing for it.
+        got = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True, vendor=self.s_vendor)
+        self.assertEqual("", got["err"], got)
+        self.assertEqual([], unsupported_notes(got))
+        self.assertTrue(any("[ports].searxng does not resolve" in h for h in got["hosts"]), got["hosts"])
+        self.assertEqual([], [c for c in got["calls"] if re.search(rf"listenport={DEFAULT_LISTENER}\b|searxng", c, re.I)])
 
     def test_windows_helpers_keep_every_other_port(self):
         # SearXNG resolving or not leaves every other entry, and its order, as is.
-        for mode in ("setup", "heal", "tailscale"):
+        for mode in ("heal", "tailscale"):
             with self.subTest(helper=mode):
                 with_it = windows_helper(self, mode)
                 without = windows_helper(self, mode, vendor=self.s_vendor)
@@ -1710,15 +1732,22 @@ class TestMissingSettings(Base):
                 self.assertEqual(len(without["map"]) + (mode == "heal"), len(with_it["map"]))
                 for key in ("proxies", "rules"):
                     self.assertEqual(with_it.get(key), without.get(key), key)
+        with_setup = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True)
+        without_setup = windows_entry(self, WIN_ENTRIES["setup"][0], admin=True, vendor=self.s_vendor)
+        for rx in (r"^netsh interface portproxy add v4tov4 listenaddress=0\.0\.0\.0 listenport=(\d+) ",
+                   r"^New-NetFirewallRule -DisplayName MiOS - \S+ \((\d+)/tcp\) "):
+            self.assertEqual(re.findall(rx, "\n".join(with_setup["calls"]), re.M),
+                             re.findall(rx, "\n".join(without_setup["calls"]), re.M))
 
     def test_lan_status(self):
-        for env_file in (install_env(self.s), None):
+        for env_file, extra in ((install_env(self.s), {}),
+                                (None, {"MIOS_FIREWALL_WINDOWS_EXPOSE": "forge_http", "MIOS_PORTS_FORGE_HTTP": "8400"})):
             with self.subTest(install_env=bool(env_file)):
-                r, got = lan_status(self.s, env_file, (DEFAULT_LISTENER, 8400))
+                r, got = lan_status(self.s, env_file, (DEFAULT_LISTENER, 8400), **extra)
                 self.assertEqual(0, r.returncode, r.stdout + r.stderr)
                 self.assertNotIn("searxng", got, r.stdout)
                 self.assertEqual([], lan_loopback(r), r.stdout)
-                self.assertEqual(8400, got.get("forge"), r.stdout)
+                self.assertEqual(8400, got.get("forge_http"), r.stdout)
                 self.assertIn("[ports].searxng does not resolve", r.stderr)
 
 
@@ -1799,9 +1828,8 @@ class TestScanner(Base):
              'os.environ.get("MIOS_URLS_SEARXNG", "http://localhost:8800")'),
             ("usr/libexec/mios/mios-show-image", 'PROBE_LIST="${MIOS_URLS_SEARXNG%/}"',
              'PROBE_LIST="${MIOS_URLS_SEARXNG:-http://127.0.0.1:8800}"'),
-            (WIN_HELPERS["setup"], "    @{ Port = (_MiosPort 'MIOS_PORTS_LLM_LIGHT'        8500); Name = 'llm-light'   }\n",
-             "    @{ Port = (_MiosPort 'MIOS_PORTS_LLM_LIGHT'        8500); Name = 'llm-light'   }\n"
-             "    @{ Port = (_MiosPort 'MIOS_PORTS_SEARXNG'          8800); Name = 'searxng'     }\n"),
+            (WIN_HELPERS["setup"], "# Retired-port cleanup:",
+             "$x = $env:MIOS_PORTS_SEARXNG; if (-not $x) { $x = 8800 }\n# Retired-port cleanup:"),
             (WIN_HELPERS["heal"], "    @{ Key = 'llm_light'; Default = 8500 },\n",
              "    @{ Key = 'searxng'; Default = 8800 },\n    @{ Key = 'llm_light'; Default = 8500 },\n"),
             (WIN_HELPERS["tailscale"], "Get-PortFromSsot 'MIOS_PORTS_SEARXNG' 'searxng'\n",
@@ -1839,10 +1867,10 @@ class TestScanner(Base):
             ("build-mios.ps1", "            ceph_dashboard   = 8444\n            cockpit          = 8090\n",
              "            ceph_dashboard   = 8444\n            searxng          = 8800\n"
              "            cockpit          = 8090\n"),
-            ("usr/libexec/mios/mios-lan-status", '    "8500 llm-light"\n',
-             '    "8500 llm-light"\n    "8801 searxng"\n'),
-            (WIN_HELPERS["setup"], "    @{ Port = (_MiosPort 'MIOS_PORTS_LLM_LIGHT'        8500); Name = 'llm-light'   }\n",
-             "    @{ Port = 8801; Name = 'searxng' }\n"),
+            ("usr/libexec/mios/mios-lan-status", 'SERVICES=()\n',
+             'SERVICES=("8801 searxng")\n'),
+            (WIN_HELPERS["setup"], "# Retired-port cleanup:",
+             "# searxng = 8801\n# Retired-port cleanup:"),
         ):
             with self.subTest(rel=rel):
                 self.assertIn("port-literal", self.plant(rel, old, new))

@@ -321,7 +321,7 @@ _RANDOM_OK = ("owui",)
 _SURFACE_ENV = {"forge": "MIOS_FORGE_ADMIN_PASSWORD", "owui": "MIOS_OWUI_ADMIN_PASSWORD",
                 "portal": "MIOS_PORTAL_PASSWORD", "ttyd": "MIOS_TTYD_AUTH_PASS"}
 _SURFACE_TOML = {"portal": ("portal", "password"), "ttyd": ("ttyd", "auth_pass")}
-_SURFACE_USER_TOML = {"portal": ("portal", "user"), "ttyd": ("ttyd", "auth_user")}
+_SURFACE_USER_TOML = {"portal": ("portal", "user"), "forge": ("services.forge", "admin_user"), "ttyd": ("ttyd", "auth_user")}
 _OWN_LOGIN = ("ttyd",)                # argv-only consumers: never the shared operator credential
 OWN_GENERATED = "generated"           # tier of an _OWN_LOGIN surface with no own login set
 SECRETS_ENV_NAME = "secrets.env"      # Law 11: <[paths].etc_dir>/secrets.env, 0600 root
@@ -829,19 +829,9 @@ def _forge_base(data: dict) -> str:
     return f"http://{host}:{port}" if ":" not in host else f"http://[{host}]:{port}"
 
 
-def _forge_exec(data: dict) -> list:
-    unit = _s(_sect(data, "units").get("forge")).strip()
-    forge = _sect(data, "services.forge")
-    home, ini = _s(forge.get("home")).strip(), _s(forge.get("app_ini")).strip()
-    if not unit or not home or not ini:
-        raise _missing("units.forge / services.forge.home / services.forge.app_ini", "forge surface")
-    ctr = unit[:-len(".service")] if unit.endswith(".service") else unit
-    return ["podman", "exec", "-e", f"HOME={home}", ctr, "forgejo", "--config", ini]
-
-
 def _forge_sweep(base: str, user: str, secret: str) -> int:
-    """Revoke every TOKEN_PREFIX token of the admin (a PATCH that failed leaves its own),
-    authenticated with the now-working password. Returns how many were revoked."""
+    """Revoke legacy TOKEN_PREFIX tokens using the working admin password.
+    Returns how many were revoked."""
     import urllib.parse
     status, toks = _http("GET", f"{base}/api/v1/users/{urllib.parse.quote(user)}/tokens", basic=(user, secret))
     n = 0
@@ -855,10 +845,11 @@ def _forge_sweep(base: str, user: str, secret: str) -> int:
 
 
 def _apply_forge(data, user, secret, ctx):
-    """Only an operator-set credential replaces forge-firstboot's generated password; the
-    first one taken also creates [services.forge].initial_repo."""
+    """Require an operator-set credential that already authenticates to Forgejo.
+    Automatic password adoption is disabled: a rejected admin PATCH can strand a
+    CLI-minted token, whose cleanup requires a working password. The first accepted
+    login also creates [services.forge].initial_repo."""
     import time as _time
-    import urllib.parse
     if not ctx["operator_set"]:
         ctx["no_record"] = True
         return "skipped (no operator-set credential: the Forgejo admin keeps its own password)"
@@ -876,21 +867,11 @@ def _apply_forge(data, user, secret, ctx):
         ctx["no_record"] = True
         return "skipped (forge not reachable)"
     status, _ = _http("GET", f"{base}/api/v1/user", basic=(user, secret))
-    changed = False
     if status != 200:
-        name = f"{TOKEN_PREFIX}{int(_time.time())}"
-        res = _run(_forge_exec(data) + ["admin", "user", "generate-access-token", "--username", user,
-                                        "--token-name", name, "--scopes", "write:admin", "--raw"])
-        tok = (res.stdout or "").strip().splitlines()[-1].strip() if res.returncode == 0 and res.stdout.strip() else ""
-        if not tok:
-            return "failed (could not mint an admin token through the forgejo CLI)"
-        status, _ = _http("PATCH", f"{base}/api/v1/admin/users/{urllib.parse.quote(user)}", token=tok,
-                          body={"login_name": user, "source_id": 0, "password": secret,
-                                "must_change_password": False})
-        if status != 200:
-            return (f"failed (admin PATCH returned HTTP {status}; token {name} is revoked by the next "
-                    "run that logs in, and this value is retried only after its backoff)")
-        changed = True
+        # Keep no_record false so failures use the normal durable retry backoff.
+        detail = f"HTTP {status}" if status else "connection unavailable"
+        return (f"failed (Forgejo credential authentication returned {detail}; check the configured "
+                "login and Forgejo password policy; automatic password adoption is disabled)")
     swept = _forge_sweep(base, user, secret)
     if swept:
         ctx["notes"].append(f"forge: revoked {swept} {TOKEN_PREFIX}* token(s)")
@@ -901,7 +882,7 @@ def _apply_forge(data, user, secret, ctx):
                           body={"name": repo, "description": "MiOS deployed root (live working tree of /).",
                                 "private": False, "auto_init": False, "default_branch": "main"})
             ctx["notes"].append(f"forge: initial repo {repo}: " + {201: "created", 409: "exists"}.get(st, f"HTTP {st}"))
-    return "changed" if changed else "unchanged"
+    return "unchanged"
 
 
 _ARGON2 = {"t": 3, "m": 65536, "p": 4, "salt": 16, "len": 32}   # argon2-cffi's RFC 9106 low-memory profile
