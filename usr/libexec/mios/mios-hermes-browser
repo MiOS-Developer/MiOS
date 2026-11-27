@@ -101,7 +101,12 @@ if [[ "$HEADLESS" == "1" ]]; then
     CHROME_ARGS=(--headless=new "${CHROME_ARGS[@]}")
 fi
 
+# --no-documents-portal: a CDP browser driven by an agent never hands host files
+# through the sandbox, and the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot
+# succeed under the unit's NoNewPrivileges=true (fusermount3 is setuid), so
+# starting it only logs "Can't mount path .../doc" on every launch.
 exec dbus-run-session -- flatpak run \
+    --no-documents-portal \
     --filesystem="$PROFILE_DIR" \
     --filesystem="${XDG_RUNTIME_DIR:-/tmp}" \
     "$APP_ID" \
