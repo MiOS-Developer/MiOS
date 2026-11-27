@@ -84,3 +84,38 @@ fn a_second_floor_and_no_floor_are_findings() {
         "{text}"
     );
 }
+
+#[test]
+fn a_floor_package_the_full_image_never_installs_is_a_finding() {
+    // The floor names a section whose packages the `all` profile skips (enable = false):
+    // a core image that would carry a package the full image lacks.
+    let planted = BASE
+        .replace(
+            "[packages.s]\npkgs = []",
+            "[packages.s]\npkgs = [\"kept\"]\n[packages.z]\nenable = false\npkgs = [\"zz-planted-pkg\"]",
+        )
+        .replace("package_sections = [\"s\"]", "package_sections = [\"s\", \"z\"]");
+    let (code, text) = run(&planted);
+    assert_ne!(code, 0, "{text}");
+    assert!(text.contains("zz-planted-pkg"), "{text}");
+    assert!(text.contains("enable = false"), "{text}");
+    // The same section enabled is a bigger core the full image also installs: clean.
+    let (code, text) = run(&planted.replace("enable = false\n", ""));
+    assert_eq!(code, 0, "{text}");
+}
+
+#[test]
+fn a_required_section_is_part_of_the_floor_closure() {
+    // requires_sections pulls a section's packages in, as packages.sh does. Enabled,
+    // the dependency's packages count for both images: clean. Disabled, packages.sh
+    // refuses the parent section outright, so the gate names the pair.
+    let required = BASE.replace(
+        "[packages.s]\npkgs = []",
+        "[packages.s]\npkgs = []\nrequires_sections = [\"q\"]\n[packages.q]\npkgs = [\"qq-dep-pkg\"]",
+    );
+    let (code, text) = run(&required);
+    assert_eq!(code, 0, "{text}");
+    let (code, text) = run(&required.replace("[packages.q]\n", "[packages.q]\nenable = false\n"));
+    assert_ne!(code, 0, "{text}");
+    assert!(text.contains("requires disabled section \"q\""), "{text}");
+}

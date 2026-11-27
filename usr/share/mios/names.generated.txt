@@ -3473,6 +3473,7 @@ desktop.color_scheme  MIOS_DESKTOP_COLOR_SCHEME
 desktop.flatpaks  MIOS_DESKTOP_FLATPAKS
 desktop.apps  MIOS_DESKTOP_APPS
 image.ref  MIOS_IMAGE_REF
+image.core_ref  MIOS_IMAGE_CORE_REF
 image.branch  MIOS_IMAGE_BRANCH
 image.base  MIOS_IMAGE_BASE
 image.base_nvidia  MIOS_IMAGE_BASE_NVIDIA
@@ -3507,6 +3508,7 @@ deployment.cloud.setup_budget_s  MIOS_DEPLOYMENT_CLOUD_SETUP_BUDGET_S
 deployment.cloud.dropin  MIOS_DEPLOYMENT_CLOUD_DROPIN
 deployment.cloud.wrapper  MIOS_DEPLOYMENT_CLOUD_WRAPPER
 deployment.cloud.min_free_gb  MIOS_DEPLOYMENT_CLOUD_MIN_FREE_GB
+deployment.cloud.core_min_free_gb  MIOS_DEPLOYMENT_CLOUD_CORE_MIN_FREE_GB
 deployment.cloud.build_free_gb  MIOS_DEPLOYMENT_CLOUD_BUILD_FREE_GB
 deployment.cloud.overlay.ai.firstboot_pulls  MIOS_DEPLOYMENT_CLOUD_OVERLAY_AI_FIRSTBOOT_PULLS
 deployment.cloud.overlay.desktop.runtime_installs  MIOS_DEPLOYMENT_CLOUD_OVERLAY_DESKTOP_RUNTIME_INSTALLS
@@ -11219,6 +11221,7 @@ spec.parity.equal  MIOS_SPEC_PARITY_EQUAL
 profiles.default  MIOS_PROFILES_DEFAULT
 profiles.core.floor  MIOS_PROFILES_CORE_FLOOR
 profiles.core.summary  MIOS_PROFILES_CORE_SUMMARY
+profiles.core.targets  MIOS_PROFILES_CORE_TARGETS
 profiles.core.package_sections  MIOS_PROFILES_CORE_PACKAGE_SECTIONS
 profiles.core.phases  MIOS_PROFILES_CORE_PHASES
 profiles.full.summary  MIOS_PROFILES_FULL_SUMMARY

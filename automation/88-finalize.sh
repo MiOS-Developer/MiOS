@@ -39,6 +39,7 @@ cat > ${MIOS_USR_DIR}/version <<EOF
 MIOS_VERSION=${MIOS_VERSION}
 MIOS_BASE=ucore-hci-stable-nvidia
 MIOS_BUILT=${MIOS_BUILT}
+MIOS_PROFILES_DEFAULT=${BUILD_PROFILE:-${MIOS_PROFILES_DEFAULT:-full}}
 EOF
 ln -sf ${MIOS_USR_DIR}/version ${MIOS_USR_DIR}/mios-version
 

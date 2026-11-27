@@ -38,6 +38,22 @@ joins the tailnet, checks the container store against
 checkouts mounted at the same paths; until the image is in, it reports the
 pull's progress, or the reason it was never started.
 
+### The core profile when the store is too small
+
+A store below `min_free_gb` but at or above `[deployment.cloud].core_min_free_gb`
+gets the **core profile** instead: `[image].core_ref`, the same root
+`Containerfile` and `automation/` run under `mios.toml [profiles.core]` (the floor
+every profile contains: SSOT, miosd, agent-pipe, the resolver and native tools,
+podman, the toolchains; no bound images, GGUF weights, desktop, GPU lanes or
+flatpaks, which degrade open at runtime). CI's `build-core` job publishes it
+beside `[image].ref`, and `mios-gate profile-integrity` keeps its package set a
+subset of the full image's. The preflight records its choice in
+`$STATE/image.ref`; `pull`, `up`, `enter` and `status` read it, and
+`.devcontainer/Containerfile` builds unchanged `FROM` either ref. Below both
+thresholds the preflight fails naming both numbers, as before. The image itself
+says what it is: `/usr/lib/mios/version` carries `MIOS_PROFILES_DEFAULT=<profile>`.
+Design and measurements: `docs/research/spike-core-image-profile-cloud.md`.
+
 In the environment's settings (environment menu, Edit):
 
 Setup script:
@@ -63,16 +79,18 @@ tells a session what happened:
 
 | `mios-dev status` says | meaning |
 |---|---|
+| `MiOS image <ref> (the full profile) ...` / `(the core profile) ...` | every line names the image the preflight chose and its profile |
 | `pulling for N min, M GB written` | the background pull is running |
-| `is not pulled: the preflight failed: F GB free ..., W GB needed` | the store cannot hold the image; free space or run `bootstrap.sh gce-up` |
+| `is not pulled: the preflight failed: F GB free ..., W GB needed ..., C GB for the core profile` | the store holds neither image; free space or run `bootstrap.sh gce-up` |
 | `the pull failed (exit N)` | the pull died; its log is named |
 | `ready: container ...` | enter it: `mios-dev` |
 
 A Claude Code cloud VM grants a fixed writable allowance (measured: 252 GB disk,
 57 GB free in the podman store), under the 80 GB the 23 GB compressed image
-needs to unpack. There the preflight fails by design, `mios-dev status` says so,
-and the operator's choices are a smaller core image, `bootstrap.sh gce-up`, or
-the in-place MiOS-DEV conversion below.
+needs to unpack. There the preflight chooses the core profile (operator decision
+2026-11-21: a core image from the one pipeline, not a GCE VM and not an in-place
+conversion), `mios-dev status` says so, and `bootstrap.sh gce-up` or the in-place
+MiOS-DEV conversion below remain for hosts under `core_min_free_gb` too.
 
 ### Tailnet enrollment
 

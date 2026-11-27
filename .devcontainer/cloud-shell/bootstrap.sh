@@ -5,7 +5,10 @@
 #
 # Every environment runs the SAME image: .devcontainer/Containerfile is FROM
 # [image].ref and adds only container wiring, so building it is a pull of the
-# MiOS image plus one small layer. The container's user, workspace, env, mounts,
+# MiOS image plus one small layer. A store too small for the full image but big
+# enough for the core profile ([image].core_ref, the same pipeline run under
+# [profiles.core]) gets that instead: the preflight chooses, records the choice
+# in $STATE/image.ref, and every later mode (pull, up, enter, status) reads it. The container's user, workspace, env, mounts,
 # privilege and lifecycle are read from the devcontainer.json (never restated):
 # the main one, or with --builder the artifact-builder one (privileged, with its
 # own container store, for `podman build` of MiOS and disk artifacts).
@@ -13,8 +16,8 @@
 #   bootstrap.sh up [--builder]        preflight, pull, build, start, lifecycle
 #   bootstrap.sh enter [CMD...]        run CMD (or a login shell) in it, same $PWD
 #   bootstrap.sh status                image, pull progress and container readiness
-#   bootstrap.sh preflight [--builder] free space in the container store vs the SSOT
-#   bootstrap.sh pull [--background]   pull [image].ref
+#   bootstrap.sh preflight [--builder] free space in the container store vs the SSOT; picks full or core
+#   bootstrap.sh pull [--background]   pull the image the preflight chose ([image].ref or core_ref)
 #   bootstrap.sh overlay [--apply]     the [deployment.cloud] drop-in (print or write)
 #   bootstrap.sh install               Google / Oracle Cloud Shell launcher
 #   bootstrap.sh tailnet               this host's own tailnet node (userspace, mesh only)
@@ -145,27 +148,57 @@ platform_hint() {
     fi
 }
 
+# The image this host runs: what the preflight recorded, else [image].ref. The
+# record outlives the setup script, so pull, up, enter and status agree with it.
+selected_ref() {
+    if [[ -f "$STATE/image.ref" ]]; then cat "$STATE/image.ref"; else need image ref; fi
+}
+
+# The profile an image ref is: "core" for [image].core_ref, "full" otherwise.
+ref_profile() { [[ "$1" == "$(need image core_ref)" ]] && echo core || echo full; }
+
 # Free space in the container store against [deployment.cloud] (pull, plus a
 # nested build with --builder). An image already present needs no pull space.
-# The verdict is recorded in $STATE/preflight.failed (removed when it passes), so
-# `status` -- and the `mios-dev` wrapper -- can say why the image never arrived
-# long after the setup script that ran this has exited.
+# The full image ([image].ref) needs min_free_gb; a store below that but at or
+# above core_min_free_gb gets the core profile ([image].core_ref) instead: the
+# same pipeline's smaller image, with everything beyond the core degrading open
+# at runtime. Below both the preflight fails, naming both numbers. The chosen
+# ref lands in $STATE/image.ref; the verdict in $STATE/preflight.failed (removed
+# when it passes), so `status` -- and the `mios-dev` wrapper -- can say which
+# image this host runs, or why none arrived, long after this script has exited.
 preflight() {
-    local ref want store free why
-    ref="$(need image ref)"
-    want=0
-    image_present "$ref" || want="$(need deployment.cloud min_free_gb)"
-    [[ "$BUILDER" == 1 ]] && want=$((want + $(need deployment.cloud build_free_gb)))
+    local full core ref want want_full want_core build store free why
+    full="$(need image ref)"; core="$(need image core_ref)"
+    build=0; [[ "$BUILDER" == 1 ]] && build="$(need deployment.cloud build_free_gb)"
     store="$(store_path)" || die "$RT cannot report its storage path"
     free=$(( $(free_kb "$store") / 1048576 ))
     install -d -m 0755 "$STATE"
+    if image_present "$full"; then
+        ref="$full"; want="$build"
+    elif image_present "$core"; then
+        ref="$core"; want="$build"
+    else
+        want_full=$(( $(need deployment.cloud min_free_gb) + build ))
+        want_core=$(( $(need deployment.cloud core_min_free_gb) + build ))
+        if (( free >= want_full )); then
+            ref="$full"; want="$want_full"
+        elif (( free >= want_core )); then
+            ref="$core"; want="$want_core"
+            log "preflight: ${free} GB free in ${store} holds the core profile (${want_core} GB), not the full image (${want_full} GB): choosing ${core}"
+        else
+            why="${free} GB free in ${store} (the ${RT} store), ${want_full} GB needed for ${full}$([[ "$BUILDER" == 1 ]] && echo ' and a nested build') ([deployment.cloud].min_free_gb$([[ "$BUILDER" == 1 ]] && echo ' + build_free_gb')), ${want_core} GB for the core profile ${core} ([deployment.cloud].core_min_free_gb). $(platform_hint)"
+            printf '%s\n' "$why" > "$STATE/preflight.failed"
+            die "$why"
+        fi
+    fi
     if (( free < want )); then
-        why="${free} GB free in ${store} (the ${RT} store), ${want} GB needed for ${ref}$([[ "$BUILDER" == 1 ]] && echo ' and a nested build') ([deployment.cloud].min_free_gb$([[ "$BUILDER" == 1 ]] && echo ' + build_free_gb')). $(platform_hint)"
+        why="${free} GB free in ${store} (the ${RT} store), ${want} GB needed for a nested build beside ${ref} ([deployment.cloud].build_free_gb). $(platform_hint)"
         printf '%s\n' "$why" > "$STATE/preflight.failed"
         die "$why"
     fi
+    printf '%s\n' "$ref" > "$STATE/image.ref"
     rm -f "$STATE/preflight.failed"
-    log "preflight: ${free} GB free in ${store}, ${want} GB needed"
+    log "preflight: ${free} GB free in ${store}, ${want} GB needed; image: ${ref} (the $(ref_profile "$ref") profile)"
 }
 
 pull_running() { [[ -f "$STATE/pull.pid" ]] && kill -0 "$(cat "$STATE/pull.pid")" 2>/dev/null; }
@@ -174,11 +207,11 @@ pull_running() { [[ -f "$STATE/pull.pid" ]] && kill -0 "$(cat "$STATE/pull.pid")
 # space recorded so `status` can report progress after this script has exited.
 pull_image() {
     local ref store
-    ref="$(need image ref)"
+    ref="$(selected_ref)"
     image_present "$ref" && { log "$ref is already in the $RT store"; return 0; }
     install -d -m 0755 "$STATE"
     if [[ "${1:-}" != --background ]]; then
-        log "pulling $ref (about 23 GB compressed)"
+        log "pulling $ref (the $(ref_profile "$ref") profile)"
         "$RT" pull "$ref"
         return
     fi
@@ -197,35 +230,37 @@ container_name() { basename "$(need image dev_local_tag)" | cut -d: -f1; }
 
 # 0 ready, 3 not yet (pulling or not started), 1 failed (the pull, or the preflight
 # that stopped it: this host cannot hold the image until the recorded cause is gone).
+# Every line names the image this host runs and its profile (full or core).
 status() {
-    local ref dev name started kb store
-    ref="$(need image ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
+    local ref dev name started kb store shown
+    ref="$(selected_ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
+    shown="${ref} (the $(ref_profile "$ref") profile)"
     if ! image_present "$ref"; then
         if pull_running; then
             read -r started kb store < "$STATE/pull.start"
-            printf 'MiOS image %s: pulling for %s min, %s GB written to %s so far (log %s)\n' "$ref" \
+            printf 'MiOS image %s: pulling for %s min, %s GB written to %s so far (log %s)\n' "$shown" \
                 $(( ($(date +%s) - started) / 60 )) $(( (kb - $(free_kb "$store")) / 1048576 )) "$store" "$STATE/pull.log"
             return 3
         fi
         if [[ -f "$STATE/pull.rc" && "$(cat "$STATE/pull.rc")" != 0 ]]; then
-            printf 'MiOS image %s: the pull failed (exit %s):\n' "$ref" "$(cat "$STATE/pull.rc")"
+            printf 'MiOS image %s: the pull failed (exit %s):\n' "$shown" "$(cat "$STATE/pull.rc")"
             tail -n 5 "$STATE/pull.log" 2>/dev/null
             return 1
         fi
         if [[ -f "$STATE/preflight.failed" ]]; then
             printf 'MiOS image %s is not pulled: the preflight failed: %s\nWhen that is fixed, run: bash %s up\n' \
-                "$ref" "$(cat "$STATE/preflight.failed")" "$SELF"
+                "$shown" "$(cat "$STATE/preflight.failed")" "$SELF"
             return 1
         fi
-        printf 'MiOS image %s is not pulled; run: bash %s up\n' "$ref" "$SELF"
+        printf 'MiOS image %s is not pulled; run: bash %s up\n' "$shown" "$SELF"
         return 3
     fi
     if [[ "$("$RT" container inspect -f '{{.State.Running}}' "$name" 2>/dev/null)" == true ]]; then
-        printf 'ready: container %s runs %s (from %s)\n' "$name" "$dev" "$ref"
+        printf 'ready: container %s runs %s (from %s)\n' "$name" "$dev" "$shown"
         [[ -f "$STATE/lifecycle.failed" ]] && printf 'lifecycle: %s\n' "$(cat "$STATE/lifecycle.failed")"
         return 0
     fi
-    printf 'MiOS image %s is present; container %s is not running: bash %s up\n' "$ref" "$name" "$SELF"
+    printf 'MiOS image %s is present; container %s is not running: bash %s up\n' "$shown" "$name" "$SELF"
     return 3
 }
 
@@ -288,12 +323,13 @@ ca_bundle() {
 up() {
     local ref dev name user wsf wsroot primary uid gid repo src ca line target canonical selected_image container_image
     require_root_checkout; select_runtime; select_config
-    ref="$(need image ref)"; dev="$(need image dev_local_tag)"; name="$(container_name)"
+    dev="$(need image dev_local_tag)"; name="$(container_name)"
     user="$(dc_user)"; wsf="$(dc_json workspaceFolder)"
     canonical="$(ssot --vendor identity username)"
     [[ -n "$user" && "$user" != root && -n "$wsf" ]] || die "$CONFIG needs a non-root build.args.MIOS_IDENTITY_USERNAME and workspaceFolder"
     [[ "$user" == "$canonical" ]] || die "$CONFIG build.args.MIOS_IDENTITY_USERNAME differs from [identity].username; re-project the devcontainer before rebuilding"
     preflight
+    ref="$(selected_ref)"
     pull_image
     "$RT" build --build-arg "MIOS_IMAGE_REF=$ref" --build-arg "MIOS_IDENTITY_USERNAME=$user" \
         -f "$ROOT/.devcontainer/Containerfile" -t "$dev" "$ROOT/.devcontainer" >&2
@@ -393,7 +429,7 @@ enter() {
     require_root_checkout; select_runtime; select_config
     status >/dev/null || rc=$?
     if [[ $rc -ne 0 ]]; then
-        image_present "$(need image ref)" || { status; exit 3; }
+        image_present "$(selected_ref)" || { status; exit 3; }
         log "the MiOS image is in; bringing the devcontainer up (the first time runs its lifecycle)"
         ( up ) >&2 || true
         status >/dev/null || { status; exit 3; }
