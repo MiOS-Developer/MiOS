@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4387,
-  "total_metadata_entries": 3515,
-  "total_hints": 3509,
+  "total_files_scanned": 4393,
+  "total_metadata_entries": 3521,
+  "total_hints": 3515,
   "total_functions_indexed": 2302,
-  "total_related_links": 7166,
+  "total_related_links": 7190,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -1641,7 +1641,7 @@
     },
     {
       "path": "automation/59-tools.sh",
-      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected (\":latest\" resolved at build time) native code-server with its verified workbench patches and the latest digest-verified Satty release (mios-shot's annotation editor), and installs auxiliary scripts like mios-toggle-headless.",
+      "hint": "Sets executable permissions for the core mios- CLI tools, bakes the SSOT-selected native code-server (its [build.pins.code_server] digest, no REST call) with its verified workbench patches and the newest digest-verified Satty release (mios-shot's annotation editor, falling back to [build.pins.satty] by name when GitHub answers empty), and installs auxiliary scripts like mios-toggle-headless.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/automation.md",
@@ -2380,11 +2380,13 @@
     },
     {
       "path": "automation/lib/upstream-latest.sh",
-      "hint": "Build-time \"latest\" resolution for upstream inputs: picks the newest upstream release (mios-bake-plan latest-git / git ls-remote), downloads only what an upstream-published checksum proves (GitHub release asset digest, a release checksums file, or the advertised git object id), aborts the build on any mismatch, and records the resolved version + sha256 as build output (version manifest + SBOM binaries.tsv), never in the SSOT.",
+      "hint": "Build-time \"latest\" resolution for upstream inputs: picks the newest upstream release (mios-bake-plan latest-git / git ls-remote), downloads only what an upstream-published checksum or an SSOT [build.pins] digest proves (GitHub release asset digest, a release checksums file, the advertised git object id), reads the GitHub API through scurl (the mios_github_token build secret when one is mounted), falls back to the [build.pins] release by name (MIOS-PIN-FALLBACK) when upstream answers empty, aborts the build on any mismatch, and records the resolved version + sha256 as build output (version manifest + SBOM binaries.tsv).",
       "related": [
+        "usr/share/mios/mios.toml",
         "automation/25-gpu-cdi-toolkits.sh",
         "automation/49-cosign-policy.sh",
         "automation/56-fonts.sh",
+        "automation/57-gnome.sh",
         "automation/59-tools.sh",
         "automation/64-bake-fan-control.sh",
         "tools/native/mios-bake-plan/src/latest.rs",
@@ -6647,7 +6649,7 @@
     },
     {
       "path": "tests/powershell/LanPortProxy.Tests.ps1",
-      "hint": "Pester unit tests for usr/libexec/mios/Setup-MiOSLanPortProxy.ps1: verifies AST-lifted Phase 4 SSOT alignment, operator-layer confinement, retired-port cleanup, convergence, unelevated UAC relaunch, and planted-defect detection with all Windows/WSL side effects stubbed in TestDrive.",
+      "hint": "Pester unit tests for usr/libexec/mios/Setup-MiOSLanPortProxy.ps1: it runs build-mios.ps1 Phase 4's own Invoke-MiosLanExposure as the operator (drift first, then Phase 4's digest-checked UAC worker, never a relaunch of itself), confines the operator layer, cleans retired ports through a delete-only request, converges with Phase 4, and every planted defect is caught; all Windows/WSL side effects are stubbed in TestDrive.",
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/tests.md",
@@ -6967,6 +6969,20 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-agent-browser-capability.py",
+      "hint": "Asserts the agent browser stays off a Blade unless it has the agent-browser capability: only the desktop archetype grants it, the worker browser requires it in [blade.requires] (its generated drop-in conditions on the marker), the primary stays seat_side with `mios-hermes-browser allowed` as its ExecCondition in the SSOT and the rendered unit, and mios-cdp-fetch reports a disabled host at once instead of polling a port nothing will open.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/share/mios/dropins/blade-agent-browser.conf",
+        "usr/libexec/mios/mios-hermes-browser",
+        "usr/libexec/mios/mios-cdp-fetch"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -7560,6 +7576,7 @@
         "/usr/libexec/mios/mios-vscode-custom-css",
         "/.devcontainer/Containerfile",
         "/automation/59-tools.sh",
+        "/automation/lib/upstream-latest.sh",
         "/automation/55-native-build.sh",
         "/tools/ci-suites.py",
         "/.devcontainer/setup-devcontainer.sh",
@@ -8411,6 +8428,19 @@
       ],
       "functions": [],
       "doc": null,
+      "comment_style": "hash",
+      "has_shebang": true
+    },
+    {
+      "path": "tests/test-hermes-browser-launch.py",
+      "hint": "Runs mios-hermes-browser start against a stub session-bus wrapper and asserts the argv it execs: flatpak run with --no-documents-portal (the portal's FUSE mount at $XDG_RUNTIME_DIR/doc cannot succeed under NoNewPrivileges), the profile and runtime dirs shared, the app id, and headless CDP on 127.0.0.1.",
+      "related": [
+        "usr/libexec/mios/mios-hermes-browser",
+        "usr/lib/systemd/system/mios-hermes-browser.service",
+        "usr/lib/systemd/system/mios-hermes-browser-worker.service"
+      ],
+      "functions": [],
+      "doc": "usr/share/doc/mios/manual/tests.md",
       "comment_style": "hash",
       "has_shebang": true
     },
@@ -11537,12 +11567,14 @@
     },
     {
       "path": "tests/test-upstream-latest.sh",
-      "hint": "Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 59-tools (code-server) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, and that a failed integrity check aborts without installing anything.",
+      "hint": "Hermetic two-sided tests for build-time latest resolution (automation/lib/upstream-latest.sh) and its consumers 25-gpu-cdi-toolkits, 49-cosign-policy, 56-fonts, 57-gnome (Bibata), 59-tools (code-server, satty) and 64-bake-fan-control: mocked forge (fake curl + file:// git remotes) inside a user+net+mount namespace, so no network is reachable; proves the newest release is resolved and recorded as build output, that a [build.pins] release bakes with no REST call, that a planted empty GitHub answer bakes the pin by name, that a release with no pin fails by name, and that a failed integrity check aborts without installing anything.",
       "related": [
         "automation/lib/upstream-latest.sh",
+        "usr/share/mios/mios.toml",
         "automation/25-gpu-cdi-toolkits.sh",
         "automation/49-cosign-policy.sh",
         "automation/56-fonts.sh",
+        "automation/57-gnome.sh",
         "automation/59-tools.sh",
         "automation/64-bake-fan-control.sh",
         "tools/native/mios-bake-plan/src/latest.rs"
@@ -12721,7 +12753,8 @@
       "related": [
         "tools/native/Cargo.toml",
         "usr/share/mios/mios.toml",
-        "automation/85-bake-plan.sh"
+        "automation/85-bake-plan.sh",
+        "automation/lib/upstream-latest.sh"
       ],
       "functions": [],
       "doc": null,
@@ -12739,8 +12772,24 @@
     },
     {
       "path": "tools/native/mios-bake-plan/src/main.rs",
-      "hint": "Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git).",
+      "hint": "Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git); `refresh-pins` refreshes the [build.pins] digests off the build path.",
       "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-bake-plan/src/pins.rs",
+      "hint": "`mios-bake-plan refresh-pins [--check]` refreshes the [build.pins] SSOT digests the image bake proves release assets with (automation/lib/upstream-latest.sh mios_pinned_asset): newest release or the release an SSOT ref names, each asset downloaded and sha256-hashed, cross-checked against GitHub's published digest when GH_TOKEN/GITHUB_TOKEN is set, the vendored copy rewritten. Network-bound and operator-run (`just refresh-pins`), never at build time (Law 12 BAKE-NOT-FETCH).",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "automation/lib/upstream-latest.sh",
+        "automation/57-gnome.sh",
+        "automation/59-tools.sh",
+        "Justfile",
+        "tools/native/mios-bake-plan/src/latest.rs"
+      ],
       "functions": [],
       "doc": null,
       "comment_style": "slash",
@@ -13848,6 +13897,19 @@
         "build_rpm",
         "vendor_inventory"
       ],
+      "doc": null,
+      "comment_style": "slash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-gen/src/usb_storage.rs",
+      "hint": "`mios-gen render-usb-storage` -- renders usr/lib/udev/rules.d/99-mios-usb-storage-power.rules from [hardware.storage_link].usb_storage_autosuspend: false keeps every USB mass-storage device (BOT or UAS interface) at power/control=on so the disk under root, swap or the journal is never runtime-suspended; true renders a rule file with no rule. --check fails on a stale or hand-edited rule file.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "usr/lib/udev/rules.d/99-mios-usb-storage-power.rules",
+        "src/mios-rs/mios-probe/src/storage.rs"
+      ],
+      "functions": [],
       "doc": null,
       "comment_style": "slash",
       "has_shebang": false
@@ -25271,6 +25333,18 @@
       "has_shebang": false
     },
     {
+      "path": "usr/lib/udev/rules.d/99-mios-usb-storage-power.rules",
+      "hint": "GENERATED by `mios-gen render-usb-storage` from mios.toml [hardware.storage_link].usb_storage_autosuspend -- do not edit; edit the SSOT.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "tools/native/mios-gen/src/usb_storage.rs"
+      ],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
       "path": "usr/lib/usbguard/usbguard-daemon.conf",
       "hint": "Configures the usbguard daemon to manage USB device authorization, defining policy enforcement for existing/new devices, rule file paths, and audit logging for the MiOS security subsystem.",
       "related": [],
@@ -25466,7 +25540,7 @@
     },
     {
       "path": "usr/libexec/mios/Setup-MiOSLanPortProxy.ps1",
-      "hint": "Re-applies MiOS-DEV's Windows-host LAN exposure on demand, exactly as build-mios.ps1 Phase 4 does: it lifts that script's own [firewall.windows] exposure plan, Defender-rule and portproxy steps out of the build-mios.ps1 beside it and runs them, after removing what older releases left on retired ports.",
+      "hint": "Re-applies MiOS-DEV's Windows-host LAN exposure on demand by running build-mios.ps1 Phase 4's own entry point, Invoke-MiosLanExposure, from the build-mios.ps1 beside it: run as the operator, it measures drift and asks UAC only for Phase 4's worker, then removes what older releases left on retired ports.",
       "related": [
         "build-mios.ps1",
         "/usr/share/mios/mios.toml",
@@ -40253,6 +40327,15 @@
     {
       "path": "usr/share/mios/dropins/bare-metal-only.conf",
       "hint": "Configures the MiOS service to execute exclusively on physical hardware by enforcing a ConditionVirtualization=no check, preventing deployment in VM or container environments.",
+      "related": [],
+      "functions": [],
+      "doc": null,
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/share/mios/dropins/blade-agent-browser.conf",
+      "hint": "GENERATED systemd capability drop-in for MiOS (WS-BLADE). DO NOT EDIT -- regenerate via mios-unit-gen blade-dropins.",
       "related": [],
       "functions": [],
       "doc": null,
