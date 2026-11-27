@@ -925,7 +925,11 @@ sys.exit({status})
     def test_all_download_consumers_use_the_shared_verifier(self):
         workflow = Path(_ROOT, ".github/workflows/mios-ci.yml").read_text()
         blocks = workflow.split("      - name: Verify the downloaded Portal artifact against this source\n")[1:]
-        self.assertEqual(len(blocks), 3)
+        # Every job that downloads the Portal artifact verifies it: build, build-core (the core
+        # profile bake; the ctx stage COPYs .staged-portal for every profile) and smoke-test.
+        downloads = workflow.count("      - name: Download the verified Portal build context\n")
+        self.assertEqual(downloads, 4)
+        self.assertEqual(len(blocks), downloads)
         for block in blocks:
             script = block.split("      - ", 1)[0]
             self.assertIn("source tools/lib/ci-runtime.sh", script)
