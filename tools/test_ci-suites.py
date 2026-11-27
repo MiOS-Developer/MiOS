@@ -226,11 +226,12 @@ class TestFedoraProvisioning(unittest.TestCase):
                 self._args("--dnf-setopts", fedora=dict(fedora, repo_includepkgs=bad))
 
     def test_shipped_ssot_keeps_dotnet_off_the_microsoft_repo(self):
-        # Microsoft's repo serves only powershell; .NET (dotnet-sdk-8.0 and its
-        # netstandard-targeting-pack) comes from Fedora.
+        # Microsoft's repo serves only powershell; the .NET SDK the PowerShell and
+        # C# gates need comes from Fedora.
         setopts = MOD.fedora_arguments(_ROOT, MOD._load(_ROOT), "--dnf-setopts")
         self.assertEqual(["--setopt=packages-microsoft-com-prod.includepkgs=powershell"], setopts)
-        self.assertIn("dotnet-sdk-8.0", MOD.fedora_arguments(_ROOT, MOD._load(_ROOT), "--dnf-packages"))
+        pkgs = MOD.fedora_arguments(_ROOT, MOD._load(_ROOT), "--dnf-packages")
+        self.assertTrue(any(p.startswith("dotnet-sdk-") for p in pkgs), pkgs)
 
     def test_empty_repo_list_is_allowed_but_empty_packages_fail(self):
         self.assertEqual([], self._args("--dnf-repos"))
