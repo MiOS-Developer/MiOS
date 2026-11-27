@@ -58,9 +58,11 @@ until _is_forge_up; do
 done
 _log "Forgejo is up on :${http_port}"
 
-# Create the account with a throwaway random password whose output is discarded (the CLI
-# prints it); mios-credential apply then sets the SSOT value through the admin API, with
-# the password in an HTTP body -- never on a command line, in a log or in a file.
+# Create the account with a throwaway random password. The CLI prints it on stdout; it stays
+# in this shell's memory and reaches mios-credential over a pipe from the printf builtin, and
+# apply moves the admin from it to the SSOT value through the admin API (the password in an
+# HTTP body). It is never on a command line, in a log or in install.env. On an existing
+# account apply logs in with the SSOT value alone.
 user_exists=false
 if user_list="$(_forgejo admin user list 2>/dev/null)"; then
     if printf '%s\n' "$user_list" | awk -v u="$admin_user" 'NR>1 && $2 == u {found=1} END {exit !found}'; then
@@ -68,19 +70,34 @@ if user_list="$(_forgejo admin user list 2>/dev/null)"; then
         _log "admin user '${admin_user}' already exists"
     fi
 fi
+initial_pw=""
 if [[ "$user_exists" == false ]]; then
-    create_err=""
-    if create_err="$(_forgejo admin user create \
+    create_out=""
+    if create_out="$(_forgejo admin user create \
             --admin --must-change-password=false \
             --username "$admin_user" --email "$admin_email" \
-            --random-password 2>&1 >/dev/null)"; then
+            --random-password 2>&1)"; then
+        initial_pw="$(printf '%s\n' "$create_out" | sed -n "s/^generated random password is '\(.*\)'\$/\1/p" | head -n 1)"
         _log "admin user '${admin_user}' (${admin_email}) created"
     else
-        _log "DEGRADED: failed to create admin user '${admin_user}': ${create_err:-unknown error}"
+        create_out="$(printf '%s\n' "$create_out" | grep -v '^generated random password is ' | tail -n 3)"
+        _log "DEGRADED: failed to create admin user '${admin_user}': ${create_out:-unknown error}"
+        exit 1
+    fi
+    unset create_out
+    if [[ -z "$initial_pw" ]]; then
+        _log "DEGRADED: the forgejo CLI printed no generated password; exiting for systemd retry"
         exit 1
     fi
 fi
-if ! "$CRED" apply --wait --bootstrap forge; then
+apply_rc=0
+if [[ -n "$initial_pw" ]]; then
+    printf '%s\n' "$initial_pw" | "$CRED" apply --wait --bootstrap --initial-password-stdin forge || apply_rc=$?
+    unset initial_pw
+else
+    "$CRED" apply --wait --bootstrap forge || apply_rc=$?
+fi
+if (( apply_rc != 0 )); then
     _log "DEGRADED: could not apply the SSOT credential to the Forgejo admin; exiting for systemd retry"
     exit 1
 fi

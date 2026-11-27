@@ -750,8 +750,15 @@ class TestMonitorRegistry(unittest.TestCase):
                  "engine_online", "get_services", "load_ssot_colors", "running_wsl_distros"}
         nodes = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
         self.assertEqual(names, {node.name for node in nodes})
+        # engine_online's TTL cache and its locks are module globals: take their assignments from the same
+        # source, so the harness follows mios-mon instead of a hand-copied value.
+        engine_state = [node for node in tree.body if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id.startswith("_ENGINE_ONLINE_") for target in node.targets)]
+        self.assertTrue(engine_state, "mios-mon.py defines engine_online's _ENGINE_ONLINE_* state")
+        nodes = engine_state + nodes
         self.ns = {"os": os, "glob": __import__("glob"), "subprocess": subprocess, "json": json,
-                   "socket": socket, "platform": platform, "IS_WINDOWS": False, "__file__": path,
+                   "socket": socket, "platform": platform, "time": __import__("time"),
+                   "threading": __import__("threading"), "IS_WINDOWS": False, "__file__": path,
                    "layer_paths": mios_toml.layer_paths, "load_merged": mios_toml.load_merged,
                    "process_val": mios_toml.process_val, "mios_colors": mios_toml.colors,
                    "running_wsl_distros": lambda: set(), "_MONITOR_CONFIG_CACHE": None}
@@ -803,10 +810,11 @@ class TestMonitorRegistry(unittest.TestCase):
         for code, value, expected in ((0, '{"host":{"arch":"amd64"}}', True), (1, '{"host":{"arch":"amd64"}}', False),
                                       (0, '{}', False), (0, '[]', False), (0, 'invalid', False)):
             with self.subTest(code=code, value=value), self.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], code, value)):
-                self.assertEqual(expected, self.ns["engine_online"]())
+                # force: each case probes afresh instead of reading the previous case's 30 s cached answer.
+                self.assertEqual(expected, self.ns["engine_online"](force=True))
         for error in (FileNotFoundError(), subprocess.TimeoutExpired("podman", 2)):
             with self.patch.object(subprocess, "run", side_effect=error):
-                self.assertFalse(self.ns["engine_online"]())
+                self.assertFalse(self.ns["engine_online"](force=True))
 
     def test_disabled_invalid_and_closed_ports_are_offline(self):
         from unittest.mock import Mock

@@ -327,9 +327,19 @@ import os
 import unittest
 from importlib.machinery import SourceFileLoader
 
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
 trtc__HERE = os.path.dirname(os.path.abspath(__file__))
-trtc_mod = SourceFileLoader(
-    "check_rust_test_coverage", os.path.join(trtc__HERE, "check-testhygiene.py")).load_module()
+trtc_mod = _load_source(SourceFileLoader(
+    "check_rust_test_coverage", os.path.join(trtc__HERE, "check-testhygiene.py")))
 
 class trtc_TestCheckRustTestCoverage(unittest.TestCase):
     def test_import_and_main_callable(self):
