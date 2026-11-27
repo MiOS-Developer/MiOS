@@ -244,3 +244,4 @@
 243	check_leaked_fixtures	no transient test fixtures or dump files are committed in git
 244	check_native_twinless	every native miosd drift Check with no bash twin in main() runs in this gate
 245	check_portal_product	MiOS-Portal spec, rendered product tree, scoped Gecko linkage exception and phase header verified
+246	check_llms_txt	llms.txt follows the llms.txt format (llmstxt.org)
