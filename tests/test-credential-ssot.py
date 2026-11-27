@@ -1803,7 +1803,7 @@ class _FakeForgejo(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/v1/user":
             return self._reply(200 if basic_ok else 401)
         if self.command == "PATCH" and self.path == f"/api/v1/admin/users/{st['user']}":
-            if kind == "token" and who == "fixture-token-0001":
+            if basic_ok or (kind == "token" and who == "fixture-token-0001"):   # a site admin's basic auth
                 if st.get("patch_code", 200) != 200:
                     return self._reply(st["patch_code"])
                 st["password"] = body.get("password", "")
@@ -1905,7 +1905,8 @@ retry_backoff_max_s = 86400
 enabled = false
 '''
 
-    def _apply(self, *args, password=OP_PASS, operator=None, argon2=True, extra=None, popen=False, edited=False):
+    def _apply(self, *args, password=OP_PASS, operator=None, argon2=True, extra=None, popen=False, edited=False,
+               stdin=None):
         vendor = _envfile(self.d, "vendor.toml", self._vendor(), 0o644)
         user = os.path.join(self.d, "u.toml")
         want = operator if operator is not None else (
@@ -1931,7 +1932,7 @@ enabled = false
             return subprocess.Popen([sys.executable, self.runner, "apply", *args], env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return subprocess.run([sys.executable, self.runner, "apply", *args], env=env,
-                              capture_output=True, text=True, timeout=120)
+                              capture_output=True, text=True, timeout=120, input=stdin)
 
     def _recorded(self):
         if not os.path.exists(self.calls):
@@ -1965,36 +1966,115 @@ enabled = false
         # Positive control: ordinary direct HTTP still reaches the endpoint.
         self.assertEqual(mc._http("GET", base + "/api/v1/version")[0], 200)
 
-    def test_positive_forge_patch_sweep_then_noop_then_verify_repairs(self):
+    def test_positive_forge_login_sweep_then_noop_then_verify_fails_closed(self):
+        # The operator credential already authenticates: apply logs in, sweeps the legacy
+        # mios-credential-apply-* token and bootstraps the repo, without any CLI mint or PATCH.
+        _FakeForgejo.state["password"] = OP_PASS
         r = self._apply("forge")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("forge: changed", r.stderr)
-        self.assertEqual(_FakeForgejo.state["password"], OP_PASS)
-        self.assertEqual(self._mints(), 1)
+        self.assertIn("forge: unchanged", r.stderr)
+        self.assertIn("forge: revoked 1", r.stderr)
+        self.assertIn("forge: initial repo mios: created", r.stderr)
+        self.assertEqual((self._mints(), _FakeForgejo.state["patches"]), (0, 0))
         self.assertEqual([t["name"] for t in _FakeForgejo.state["tokens"]], ["laptop"],
                          "a leftover mios-credential-apply-* token survived, or another token was revoked")
         self._assert_private(r)
-        n = len(self._recorded())
+        n, seen = len(self._recorded()), len(_FakeForgejo.state["requests"])
         r = self._apply("forge")
         self.assertIn("forge: unchanged", r.stderr)
         self.assertEqual(len(self._recorded()), n, "an unchanged credential re-ran the forge CLI")
+        self.assertEqual(len(_FakeForgejo.state["requests"]), seen, "an unchanged credential re-contacted Forgejo")
         _FakeForgejo.state["password"] = "fixture-recreated-db"        # the forge DB was recreated
         r = self._apply("--verify", "forge")
-        self.assertIn("forge: changed", r.stderr)
-        self.assertEqual((_FakeForgejo.state["password"], _FakeForgejo.state["patches"]), (OP_PASS, 2))
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: failed (Forgejo credential authentication returned HTTP 401", r.stderr)
+        self.assertEqual((_FakeForgejo.state["password"], _FakeForgejo.state["patches"], self._mints()),
+                         ("fixture-recreated-db", 0, 0), "a rejected login adopted the password")
         self._assert_private(r)
 
     def test_negative_forge_failure_backs_off_instead_of_minting_again(self):
-        _FakeForgejo.state["patch_code"] = 422                         # e.g. below MIN_PASSWORD_LENGTH
+        # Forgejo still holds its own password: the operator value is refused, never adopted.
         r = self._apply("forge")
-        self.assertIn("forge: failed (admin PATCH returned HTTP 422", r.stderr)
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: failed (Forgejo credential authentication returned HTTP 401", r.stderr)
+        self.assertNotIn("/api/v1/user/repos", [q["path"] for q in _FakeForgejo.state["requests"]])
         r = self._apply("forge")
         self.assertIn("retried after", r.stderr)
-        self.assertEqual(self._mints(), 1, "a failed value minted another admin token on the next run")
-        _FakeForgejo.state["patch_code"] = 200
+        self.assertEqual((self._mints(), _FakeForgejo.state["patches"]), (0, 0),
+                         "a failed value minted an admin token or patched the admin")
+        self.assertEqual(_FakeForgejo.state["password"], "fixture-old-pass")
+        _FakeForgejo.state["password"] = "fixture-changed-in-mios-html"   # set in Forgejo and mios.html alike
         r = self._apply("forge", password="fixture-changed-in-mios-html")   # a new value: no backoff
-        self.assertIn("forge: changed", r.stderr)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: unchanged", r.stderr)
         self.assertIn("revoked", r.stderr)
+
+    def _initial_file(self):
+        return os.path.join(self.d, "var", "ledger", "forge.initial")
+
+    def test_positive_first_boot_moves_the_admin_from_its_throwaway_to_the_operator_credential(self):
+        throwaway = "fixture-first-boot-throwaway"
+        _FakeForgejo.state["password"] = throwaway                     # forge-firstboot.sh just created it
+        r = self._apply("--wait", "--bootstrap", "--initial-password-stdin", "forge", stdin=throwaway + "\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: changed", r.stderr)
+        self.assertEqual((_FakeForgejo.state["password"], _FakeForgejo.state["patches"], self._mints()),
+                         (OP_PASS, 1, 0), "the admin was not moved by one basic-auth PATCH, or a token was minted")
+        self.assertIn("forge: initial repo mios: created", r.stderr)
+        self.assertFalse(os.path.exists(self._initial_file()), "the throwaway outlived its adoption")
+        self._assert_private(r)
+        self._assert_private(r, secret=throwaway)
+        r = self._apply("forge")                                       # the timer's plain run afterwards
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: unchanged", r.stderr)
+        self.assertEqual(_FakeForgejo.state["patches"], 1)
+
+    def test_negative_a_policy_refusal_keeps_the_throwaway_for_a_corrected_value(self):
+        throwaway = "fixture-first-boot-throwaway"
+        _FakeForgejo.state.update(password=throwaway, patch_code=422)  # e.g. below MIN_PASSWORD_LENGTH
+        r = self._apply("--bootstrap", "--initial-password-stdin", "forge", stdin=throwaway + "\n")
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: failed (Forgejo refused the operator credential with HTTP 422", r.stderr)
+        self.assertEqual(_FakeForgejo.state["password"], throwaway)
+        self.assertEqual(stat.S_IMODE(os.stat(self._initial_file()).st_mode), 0o600)
+        self.assertNotIn("/api/v1/user/repos", [q["path"] for q in _FakeForgejo.state["requests"]])
+        self._assert_private(r, secret=throwaway)
+        _FakeForgejo.state["patch_code"] = 200
+        r = self._apply("forge", password="fixture-long-enough-now")  # the timer, after mios.html is fixed
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: changed", r.stderr)
+        self.assertEqual(_FakeForgejo.state["password"], "fixture-long-enough-now")
+        self.assertFalse(os.path.exists(self._initial_file()))
+        self.assertEqual(self._mints(), 0)
+
+    def test_a_handed_over_throwaway_is_not_held_back_by_an_earlier_failure(self):
+        throwaway = "fixture-first-boot-throwaway"
+        _FakeForgejo.state["password"] = throwaway
+        r = self._apply("forge")                         # the timer ran first: 401, value backed off
+        self.assertIn("forge: failed (Forgejo credential authentication returned HTTP 401", r.stderr)
+        self.assertIn("retried after", self._apply("forge").stderr)
+        r = self._apply("--bootstrap", "--initial-password-stdin", "forge", stdin=throwaway + "\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: changed", r.stderr)
+        self.assertEqual(_FakeForgejo.state["password"], OP_PASS)
+
+    def test_negative_a_rejected_throwaway_is_discarded_and_nothing_is_patched(self):
+        r = self._apply("--initial-password-stdin", "forge", stdin="fixture-not-the-password\n")
+        self.assertNotEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: failed (the first-boot password was rejected with HTTP 401", r.stderr)
+        self.assertEqual((_FakeForgejo.state["password"], _FakeForgejo.state["patches"]), ("fixture-old-pass", 0))
+        self.assertFalse(os.path.exists(self._initial_file()))
+
+    def test_negative_initial_password_stdin_is_refused_unless_well_formed(self):
+        for args, stdin in ((("--initial-password-stdin", "forge"), ""),
+                            (("--initial-password-stdin", "forge"), "a\x1bb\n"),
+                            (("--initial-password-stdin", "portal"), "fixture-x\n"),
+                            (("--initial-password-stdin", "--check", "forge"), "fixture-x\n")):
+            with self.subTest(args=args, stdin=stdin):
+                r = self._apply(*args, stdin=stdin)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertFalse(os.path.exists(self._initial_file()))
+        self.assertEqual(_FakeForgejo.state["patches"], 0)
 
     def test_negative_forge_refuses_random(self):
         r = self._apply("forge", password="__random__")
@@ -2339,6 +2419,7 @@ enabled = false
                 self.assertEqual(restarts(before), [])
 
     def test_clearing_the_operator_credential_never_downgrades_a_surface(self):
+        _FakeForgejo.state["password"] = OP_PASS                       # Forgejo accepts the operator's login
         r = self._apply("portal", "forge")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(_FakeForgejo.state["password"], OP_PASS)
@@ -2351,6 +2432,7 @@ enabled = false
             self.assertEqual(self._portal_pw(), OP_PASS, f"{kind}: the Portal moved to the vendor default")
             self.assertEqual(_FakeForgejo.state["password"], OP_PASS, f"{kind}: Forgejo moved to the vendor default")
             self.assertNotIn(V_DEFAULT, r.stdout + r.stderr)
+        _FakeForgejo.state["password"] = "fixture-next-operator"
         r = self._apply("portal", "forge", password="fixture-next-operator")      # a NEW credential still moves
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self._portal_pw(), "fixture-next-operator")
@@ -2366,9 +2448,15 @@ enabled = false
         self.assertEqual(_FakeForgejo.state["password"], "fixture-old-pass", "Forgejo moved to the vendor default")
         self.assertEqual(_FakeForgejo.state["patches"], 0)
         self.assertNotIn("/api/v1/user/repos", [q["path"] for q in _FakeForgejo.state["requests"]])
-        r = self._apply("forge")                           # the operator sets one: the timer's plain run
-        self.assertIn("forge: changed", r.stderr)
-        self.assertEqual(_FakeForgejo.state["password"], OP_PASS)
+        r = self._apply("forge")                           # the operator sets one Forgejo does not accept
+        self.assertIn("forge: failed (Forgejo credential authentication returned HTTP 401", r.stderr)
+        self.assertEqual((_FakeForgejo.state["password"], _FakeForgejo.state["patches"]), ("fixture-old-pass", 0),
+                         "Forgejo adopted an operator value it never accepted")
+        self.assertNotIn("/api/v1/user/repos", [q["path"] for q in _FakeForgejo.state["requests"]])
+        _FakeForgejo.state["password"] = "fixture-aligned"  # the Forgejo login, set to the operator's value
+        r = self._apply("forge", password="fixture-aligned")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("forge: unchanged", r.stderr)
         self.assertIn("forge: initial repo mios: created", r.stderr, "the first value did not bootstrap the repo")
 
     def test_installer_records_the_typed_password_as_the_operator_credential(self):
@@ -2405,9 +2493,10 @@ enabled = false
             self.assertNotIn(typed, m.group(0))
         with open(path, encoding="utf-8") as fh:
             tier = fh.read()
+        _FakeForgejo.state["password"] = typed                  # the Forgejo login the operator typed
         r = self._apply("forge", operator=tier)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(_FakeForgejo.state["password"], typed, "forge did not follow the installer's credential")
+        self.assertIn("forge: unchanged", r.stderr, "forge did not log in with the installer's credential")
 
     def _tier(self):
         with open(os.path.join(self.d, "u.toml"), encoding="utf-8") as fh:
@@ -3008,8 +3097,14 @@ class TestInstallEnvCarriesNoCredential(unittest.TestCase):
         # via the API body -- never install.env, a literal, a file, argv or git-URL userinfo.
         with open(os.path.join(ROOT, "usr", "libexec", "mios", "forge-firstboot.sh"), encoding="utf-8") as fh:
             s = fh.read()
-        self.assertIn('"$CRED" apply --wait --bootstrap forge', s)
-        self.assertIn("--random-password >/dev/null 2>&1", s)
+        self.assertIn('"$CRED" apply --wait --bootstrap forge', s)       # an existing account
+        # A new account: the CLI prints the throwaway on stdout; it reaches apply only through
+        # the printf builtin's pipe, and a failure log drops that line.
+        self.assertIn("printf '%s\\n' \"$initial_pw\" | \"$CRED\" apply --wait --bootstrap --initial-password-stdin forge", s)
+        self.assertIn("grep -v '^generated random password is '", s)
+        self.assertIn("unset initial_pw", s)
+        self.assertEqual(len(re.findall(r"\$initial_pw", s)), 3,
+                         "the throwaway is read beyond its check, its hand-over and its emptiness test")
         for bad in ("/etc/mios/install.env", "source ", "MIOS_IDENTITY_DEFAULT_PASSWORD", "--password ", "admin_password",
                     "curl -sS -u", "openssl rand", "admin-password"):
             self.assertNotIn(bad, s, f"forge-firstboot.sh carries {bad!r}")

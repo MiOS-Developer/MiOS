@@ -18,6 +18,17 @@ import unittest
 import urllib.error
 import urllib.request
 from importlib.machinery import SourceFileLoader
+import importlib.util
+
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -25,7 +36,7 @@ _LIBEXEC_DIR = os.path.join(_ROOT, "usr", "libexec", "mios")
 _TOOL = os.path.join(_LIBEXEC_DIR, "mios-ipkvm-manager")
 
 # Dynamically import mios-ipkvm-manager
-ipkvm_mod = SourceFileLoader("mios_ipkvm_manager", _TOOL).load_module()
+ipkvm_mod = _load_source(SourceFileLoader("mios_ipkvm_manager", _TOOL))
 SecurityError = ipkvm_mod.SecurityError
 validate_target_ip = ipkvm_mod.validate_target_ip
 parse_target = ipkvm_mod.parse_target
