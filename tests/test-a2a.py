@@ -584,7 +584,11 @@ import subprocess
 
 _SERVER_PATH = os.path.join(_ROOT, "usr", "libexec", "mios", "mios-mcp-server")
 try:
-    _mcp_server_mod = SourceFileLoader("mios_mcp_server", _SERVER_PATH).load_module()
+    _loader = SourceFileLoader("mios_mcp_server", _SERVER_PATH)
+    # Python 3.15 removed SourceFileLoader.load_module(); load through a spec instead.
+    _mcp_server_mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.name, _loader))
+    sys.modules[_loader.name] = _mcp_server_mod
+    _loader.exec_module(_mcp_server_mod)
     _project_agent_card = getattr(_mcp_server_mod, "_project_agent_card", None)
 except Exception:
     _project_agent_card = None
@@ -1255,12 +1259,16 @@ class TestA2AProjectedCard(unittest.TestCase):
     def test_card_projects_without_agent_pipe_on_the_path(self):
         # `mios agents --card` runs the server with only usr/lib/mios on sys.path.
         probe = (
+            "import importlib.util\n"
             "import sys\n"
             "from importlib.machinery import SourceFileLoader\n"
             "from unittest.mock import patch\n"
             "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\n"
             "assert not any('agent-pipe' in entry for entry in sys.path)\n"
-            "server = SourceFileLoader('mios_mcp_server', sys.argv[1]).load_module()\n"
+            "loader = SourceFileLoader('mios_mcp_server', sys.argv[1])\n"
+            "server = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))\n"
+            "sys.modules[loader.name] = server\n"
+            "loader.exec_module(server)\n"
             "key = Ed25519PrivateKey.generate()\n"
             "listing = {'agents': [{'agent_id': 'proof-head', 'kind': 'generic'}]}\n"
             "with patch.object(server, '_agent_relay_call', return_value=listing), \\\n"

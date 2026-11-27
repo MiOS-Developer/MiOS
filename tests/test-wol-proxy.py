@@ -17,6 +17,17 @@ import unittest
 import urllib.error
 import urllib.request
 from importlib.machinery import SourceFileLoader
+import importlib.util
+
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.normpath(os.path.join(_HERE, ".."))
@@ -25,7 +36,7 @@ _TOOL = os.path.join(_LIBEXEC_DIR, "mios-wol-proxy")
 _SERVICE = os.path.join(_ROOT, "usr", "lib", "systemd", "system", "mios-wol-proxy.service")
 
 # Dynamically import mios-wol-proxy
-wol_proxy_mod = SourceFileLoader("mios_wol_proxy", _TOOL).load_module()
+wol_proxy_mod = _load_source(SourceFileLoader("mios_wol_proxy", _TOOL))
 build_magic_packet = wol_proxy_mod.build_magic_packet
 verify_packet = wol_proxy_mod.verify_packet
 parse_mac = wol_proxy_mod.parse_mac

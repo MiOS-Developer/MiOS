@@ -27,8 +27,19 @@ from mios_agent_tui import AgentView, InventoryDetails, SystemSummary, clean, pe
 from textual.app import App
 from textual.events import MouseScrollDown
 from textual.widgets import Button, DataTable, Input, Static, TabbedContent
+import importlib.util
 
-monitor = importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")).load_module()
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+
+monitor = _load_source(importlib.machinery.SourceFileLoader("mios_monitor_test", str(ROOT / "usr/libexec/mios/mios-mon.py")))
 CLIENTS = [{"name": name, "installed": True, "mcp": name != "aider"}
            for name in ("claude", "codex", "gemini", "copilot", "opencode", "agy", "aider")]
 SNAPSHOT = {"agents": [{"agent_id": "agy:unique", "kind": "agy", "label": "Antigravity · Active Orchestrator", "online": True, "pending": 2},
