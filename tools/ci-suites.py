@@ -177,27 +177,6 @@ def _tokens(value, name: str) -> list:
     return value
 
 
-def _repo_includepkgs(table) -> list:
-    """[ci.fedora].repo_includepkgs as dnf --setopt tokens: each listed repo serves only its listed packages."""
-    if not isinstance(table, dict):
-        raise ValueError("[ci.fedora].repo_includepkgs must be a table of repo id -> package list")
-    out = []
-    for repo, pkgs in table.items():
-        name = f"[ci.fedora].repo_includepkgs.{repo}"
-        names = _tokens(pkgs, name)
-        if not names:
-            raise ValueError(f"{name} is empty")
-        _tokens([repo], name)
-        # dnf reads "<repo>.includepkgs=<a>,<b>": a dot in the id, or ',' / '=' anywhere, would change it.
-        if any(c in repo for c in ".,="):
-            raise ValueError(f"{name}: {repo!r} is not a plain repo id")
-        for pkg in names:
-            if any(c in pkg for c in ",="):
-                raise ValueError(f"{name}: {pkg!r} is not a plain package name")
-        out.append(f"--setopt={repo}.includepkgs={','.join(names)}")
-    return out
-
-
 def fedora_arguments(root: str, ci: dict, option: str) -> list:
     """Resolve CI provisioning from the vendor package dependency closure."""
     fed = ci.get("fedora")
@@ -208,8 +187,6 @@ def fedora_arguments(root: str, ci: dict, option: str) -> list:
         return _tokens([image], "[ci.fedora].image")
     if option == "--dnf-repos":
         return list(dict.fromkeys(_tokens(fed.get("repos"), "[ci.fedora].repos")))
-    if option == "--dnf-setopts":
-        return _repo_includepkgs(fed.get("repo_includepkgs", {}))
     packages = _load_packages(root)
     result, visited = [], set()
 
@@ -443,7 +420,7 @@ def cmd_check(root: str, ci: dict) -> int:
 
     # Restore the provisioning and image contracts alongside suite coverage.
     # A registered tier cannot run when the runner's dependency exporter broke.
-    for option in ("--dnf-repos", "--dnf-setopts", "--dnf-packages", "--fedora-image"):
+    for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
         try:
             fedora_arguments(root, ci, option)
         except (OSError, ValueError, TypeError) as exc:
@@ -592,7 +569,7 @@ def main(argv: list) -> int:
         args += list(py.get("packages") or ())
         print(" ".join(args))
         return 0
-    for option in ("--dnf-repos", "--dnf-setopts", "--dnf-packages", "--fedora-image"):
+    for option in ("--dnf-repos", "--dnf-packages", "--fedora-image"):
         if option in argv:
             try:
                 args = fedora_arguments(root, ci, option)
@@ -616,7 +593,7 @@ def main(argv: list) -> int:
             return cmd_list(root, ci, argv[i + 1])
         if a.startswith("--tier="):
             return cmd_list(root, ci, a.split("=", 1)[1])
-    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-setopts | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation> | --require-host-cpus",
+    print("usage: ci-suites.py --tier <name> | --check | --python-packages | --dnf-repos | --dnf-packages | --fedora-image | --tool-skips | --suite-timeout | --require-cpus <allocation> | --require-host-cpus",
           file=sys.stderr)
     return 2
 

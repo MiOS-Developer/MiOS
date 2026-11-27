@@ -19430,10 +19430,6 @@ package_sets = ["devcontainer", "tmux-desktop-build"]  # the second builds the s
 # Repo-config RPMs installed before any package. Fedora does not package
 # PowerShell; Microsoft's repository does, floating, as it documents for Fedora.
 repos = ["https://packages.microsoft.com/config/rhel/9/packages-microsoft-prod.rpm"]
-# The only packages dnf may take from each repo that `repos` adds (repo id -> names). Microsoft's RHEL repo
-# also publishes .NET, and rpm on Fedora 45 rejects its netstandard-targeting-pack-2.1 ("does not verify: no
-# digest"), so .NET comes from Fedora: its newest SDK below (Fedora 45 ships no .NET 8).
-repo_includepkgs = { "packages-microsoft-com-prod" = ["powershell"] }
 # CI-only extras the harness needs beyond that set: sandbox tests (bubblewrap),
 # composefs sealing (mkcomposefs, composefs-info), unit verification
 # (systemd-analyze), the lint tier's pwsh and the analyzer's .NET runtime, and
@@ -19448,7 +19444,7 @@ repo_includepkgs = { "packages-microsoft-com-prod" = ["powershell"] }
 # (xdg-utils) over isolated XDG dirs whose association caches update-desktop-database
 # (desktop-file-utils) builds.
 # mios-ssh-ca's integration test signs real certificates with ssh-keygen (openssh).
-packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-11.0", "powershell",
+packages = ["bubblewrap", "composefs", "systemd", "python3-pillow", "dotnet-sdk-8.0", "powershell",
             "systemd-ukify", "systemd-boot-unsigned", "lua", "edk2-ovmf",
             "quickshell", "qt6-qtdeclarative-devel", "python3-gobject",
             "perl-hivex", "wimlib-utils", "glib2", "xdg-utils", "desktop-file-utils",

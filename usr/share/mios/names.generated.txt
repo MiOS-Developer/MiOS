@@ -11059,7 +11059,6 @@ ci.powershell.modules.Pester  MIOS_CI_POWERSHELL_MODULES_PESTER
 ci.fedora.image  MIOS_CI_FEDORA_IMAGE
 ci.fedora.package_sets  MIOS_CI_FEDORA_PACKAGE_SETS
 ci.fedora.repos  MIOS_CI_FEDORA_REPOS
-ci.fedora.repo_includepkgs.packages-microsoft-com-prod  MIOS_CI_FEDORA_REPO_INCLUDEPKGS_PACKAGES_MICROSOFT_COM_PROD
 ci.fedora.packages  MIOS_CI_FEDORA_PACKAGES
 ci.tiers.lint  MIOS_CI_TIERS_LINT
 ci.tiers.unit  MIOS_CI_TIERS_UNIT
