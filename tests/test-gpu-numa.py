@@ -18,7 +18,18 @@ if _LIBEXEC_DIR not in sys.path:
     sys.path.insert(0, _LIBEXEC_DIR)
 
 from importlib.machinery import SourceFileLoader
-mios_gpu_numa = SourceFileLoader("mios_gpu_numa", os.path.join(_LIBEXEC_DIR, "mios-gpu-numa")).load_module()
+import importlib.util
+
+
+def _load_source(loader):
+    """Execute a SourceFileLoader's file as a module: Python 3.15 removed load_module()."""
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[loader.name] = module
+    loader.exec_module(module)
+    return module
+
+mios_gpu_numa = _load_source(SourceFileLoader("mios_gpu_numa", os.path.join(_LIBEXEC_DIR, "mios-gpu-numa")))
 GpuNumaDiscovery = mios_gpu_numa.GpuNumaDiscovery
 
 
