@@ -254,6 +254,23 @@ class TestFirstbootPulls(Harness):
         self.assertFalse(os.path.exists(os.path.join(self.state, ".ai-firstboot-done")),
                          "the stubbed unavailable database must not retire firstboot")
 
+    def test_ai_firstboot_restarts_only_what_it_provisioned(self):
+        # The first run fetches the models, so it restarts the light lane but not the
+        # agent services, whose venv was already there. The retry the timer makes while
+        # the database stays down provisions nothing and must restart nothing.
+        r = self.ai_firstboot()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        first = self.calls()
+        self.assertIn("systemctl restart mios-llm-light", first)
+        self.assertNotIn("mios-agent-pipe", first)
+        open(self.log, "w").close()
+        r = self.ai_firstboot()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        retry = self.calls()
+        self.assertNotIn("systemctl restart", retry)
+        self.assertNotIn("daemon-reload", retry)
+        self.assertFalse(os.path.exists(os.path.join(self.state, ".ai-firstboot-done")))
+
     def test_with_overlay_ai_firstboot_pulls_nothing(self):
         self.apply_overlay()
         r = self.ai_firstboot()
