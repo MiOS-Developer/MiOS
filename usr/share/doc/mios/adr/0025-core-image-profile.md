@@ -1,4 +1,4 @@
-<!-- AI-hint: ADR-0025 declares the core MiOS profile once in mios.toml [profiles]; every image kind (OCI, WSL2, devcontainer, cloud projection, Codespace) is the root pipeline run under a profile, and the devcontainer uses the native Dev Containers pattern: devcontainer.json builds the root Containerfile (MiOS) or pulls the CI dev image (mirrors). -->
+<!-- AI-hint: ADR-0025 declares the core MiOS profile once in mios.toml [profiles] and selects phases and package sections by profile; as amended (A1), every image kind is the full image and the devcontainer is .devcontainer/Containerfile FROM [image].ref plus account wiring, so there is no dev profile. -->
 <!-- AI-related: usr/share/mios/mios.toml ([profiles] [packages.devcontainer] [build.phases] [variants.entries.mios-dev] [bootstrap.sync]), Containerfile, .devcontainer/Containerfile, automation/build.sh, automation/lib/packages.sh, src/mios-rs/mios-build/src/lib.rs, tools/native/mios-resolver, usr/libexec/mios/seed-db-config.py, tools/drift-checks.py -->
 ---
 adr: 0025
@@ -18,8 +18,51 @@ superseded_by: []
 
 ## Status
 
-proposed — 2026-09-26. Design only: no lane below is implemented by this
-record. Q1-Q4 were decided by the operator (see "Operator decisions").
+proposed, amended. Q1-Q4 were decided by the operator (see "Operator
+decisions"). Lanes L1, L2, L3 and L5 are implemented (PR #43). Main then took
+the devcontainer and cloud half of the design in a different direction
+(bf01c73, 018ba45). Amendment A1 records that direction; where A1 and the
+original text below disagree, A1 holds.
+
+## Amendment A1: every image kind is the full image
+
+What the tree implements, read from main:
+
+- **Two profiles, no `dev`.** `[profiles]` declares `core` (`floor = true`) and
+  `full` (`all = true`). `full` lists every image kind in `targets`: `oci`,
+  `wsl2`, `devcontainer`, `cloud` and `codespace` (`usr/share/mios/mios.toml`
+  `[profiles.full]`). No image kind gets a subset. `core` remains the floor that
+  `check_profile_integrity` enforces, and `miosd build --list --profile core`
+  still selects it.
+- **The devcontainer is the image plus wiring.** `.devcontainer/devcontainer.json`
+  builds `.devcontainer/Containerfile`, which is `FROM ${MIOS_IMAGE_REF}`
+  (default `[image].ref`) plus account and tmpfiles wiring and nothing else.
+  `[build.images.devcontainer]` passes the image the same run just built, so
+  the devcontainer never layers on an older registry copy.
+- **The dev userspace ships in the image.** `[packages.devcontainer]` is
+  installed by the repos phase in every full image, with its declared
+  `requires_sections`. It is no longer a separate list.
+- **The cloud budget is configuration, not a profile.** `[deployment.cloud]`
+  carries `setup_budget_s` and the free-space floors (`min_free_gb`,
+  `build_free_gb`). A cloud session pulls `[image].ref` itself and skips runtime
+  model pulls and desktop installs by that configuration, not through a
+  different build.
+
+What this replaces in the original decision:
+
+| Original text | Status |
+|---|---|
+| D1 `[profiles.dev]`, the `dev-userspace` phase, `core.base`/`services`/`seeds`/`budget_*` | not adopted |
+| D2: devcontainer builds the root `Containerfile` with `MIOS_PROFILE`; `.devcontainer/Containerfile` retired; Features supply the user | superseded: the wiring Containerfile stays and stays in `[bootstrap.sync].mirror_files` |
+| D2: mirrors pull a CI `dev` tag | superseded: mirrors carry the same byte-identical `.devcontainer/Containerfile` |
+| D3: CI publishes a `dev`-profile tag | superseded: the published artifact is `[image].ref` |
+| D3: post-start extender under `budget_seconds` | superseded by `[deployment.cloud]` |
+| D6: `check_devcontainer_projection`; mirror test asserting a `dev` tag | not built: no projected `MIOS_PROFILE` value exists to gate |
+| D1/D2 profile resolution, phase and section selection; D5 seeding; D6 `check_profile_integrity` | implemented (PR #43) |
+
+Lane status: L1, L2, L3 and L5 are done. L4 (devcontainer-native) and L7
+(mirrors) are superseded by A1. L6 (cloud degrade-open) is open, scoped to
+`[deployment.cloud]` rather than to a profile.
 
 ## Context
 
@@ -104,7 +147,7 @@ limit the same pipeline yields the core first and the rest degrades open.
 
 ## Decision
 
-### D1. The core profile is declared once: `mios.toml [profiles]`
+### D1. The core profile is declared once: `mios.toml [profiles]` (amended by A1)
 
 A new top-level table. A profile is a named, closed selection over the
 pipeline's own units — package sections, phases, services, seeds — and may
@@ -153,7 +196,7 @@ every other profile. `[variants.entries.<v>]` gains `profile = "<name>"`
 inverts: it is now installed by the `dev-userspace` phase. `[packages.dev_overlay]`
 (R6) is the natural `full`-minus-desktop overlay and is left alone by this ADR.
 
-### D2. Every image kind is the root pipeline run under a profile
+### D2. Every image kind is the root pipeline run under a profile (amended by A1)
 
 - **One selector, `MIOS_PROFILE`.** Emitted by the resolver (Law 9 — one
   canonical name, referenced ⊆ emitted), defaulting to `[profiles].default`.
@@ -191,7 +234,7 @@ inverts: it is now installed by the `dev-userspace` phase. `[packages.dev_overla
 - **WSL2 / MiOS-DEV** is the OCI image built with the profiles that list `wsl2`; the WSL
   artifact is a format of that image, as today.
 
-### D3. The cloud projection: core first, the rest degrades open
+### D3. The cloud projection: core first, the rest degrades open (amended by A1)
 
 - **Prefer pull over build.** CI publishes the `dev`-profile image as an OCI tag
   of the same image ref (`[image].ref` + a profile suffix); the cloud setup pulls
@@ -256,7 +299,7 @@ hosts the runtime capability view the agents see.
   resolution, and a -dev-loop test fails if a literal package list reappears.
 - Every new gate gets a negative in `tests/drift-gate-negatives.sh`.
 
-### D7. Lane plan (not implemented in this round)
+### D7. Lane plan (status in A1)
 
 Ownership is exclusive; `mios.toml` has exactly one owner. Order:
 L1 → (L2, L3, L5 in parallel) → L4 → (L6, L7).
@@ -306,10 +349,12 @@ L1 → (L2, L3, L5 in parallel) → L4 → (L6, L7).
 - **Q1 core base image — decided: `fedora-bootc`.** Small and bootc-lintable, so
   Law 4's final `bootc container lint` holds for every profile with no waiver.
 - **Q3 cloud delivery — decided: pull a CI-published `dev` tag, cold build as
-  fallback.**
+  fallback.** Re-decided by A1: the cloud pulls `[image].ref` itself.
 - **Q4 datastore without systemd — decided: `postgresql-server` + `pgvector`
   from RPM under a small supervisor** in the container image kinds; the
   `mios-pgvector` Quadlet stays the datastore where systemd runs.
 - **Q2 devcontainer shape — decided: native upstream patterns.** The Dev
   Containers spec's own `build` (MiOS) and `image` (mirrors) keys and upstream
-  Features; no rendered shim and no second Containerfile (see D2).
+  Features; no rendered shim and no second Containerfile (see D2). Re-decided
+  by A1 (bf01c73): the devcontainer is `.devcontainer/Containerfile` `FROM
+  [image].ref` plus account wiring.
