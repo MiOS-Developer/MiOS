@@ -315,6 +315,8 @@ pub struct Facts {
     pub active_b: f64,
     pub reasoning: bool,
     pub kind: String,
+    /// The base-model lineage; the cpu-node mixes it against the heavy lane's pick.
+    pub family: String,
 }
 
 pub fn gguf_facts(data: &Value) -> Result<BTreeMap<String, Facts>, String> {
@@ -336,6 +338,7 @@ pub fn gguf_facts(data: &Value) -> Result<BTreeMap<String, Facts>, String> {
                     .and_then(Value::as_bool)
                     .ok_or_else(|| format!("{ctx}.reasoning must be a boolean"))?,
                 kind: text(row, "kind", &ctx)?,
+                family: text(row, "family", &ctx)?,
             },
         );
     }
@@ -352,12 +355,15 @@ pub struct TierEntry {
     pub need_mib: u64,
     pub min_ram_mib: u64,
     pub enable: bool,
+    /// [llamacpp.gguf."<model_file>"].family.
+    pub family: String,
 }
 
 pub fn tier_entries(data: &Value, lane: &str) -> Result<Vec<TierEntry>, String> {
     let rows = at(data, &["llamacpp", "tiers", lane])
         .and_then(Value::as_array)
         .ok_or_else(|| format!("missing [[llamacpp.tiers.{lane}]]"))?;
+    let facts = gguf_facts(data)?;
     rows.iter()
         .enumerate()
         .map(|(i, row)| {
@@ -371,6 +377,10 @@ pub fn tier_entries(data: &Value, lane: &str) -> Result<Vec<TierEntry>, String> 
             {
                 return Err(format!("{ctx}.model_file must name one GGUF file"));
             }
+            let family = facts
+                .get(&model_file)
+                .map(|f| f.family.clone())
+                .ok_or_else(|| format!("{ctx}: {model_file} has no [llamacpp.gguf] facts row"))?;
             Ok(TierEntry {
                 name: text(row, "name", &ctx)?,
                 model_file,
@@ -382,6 +392,7 @@ pub fn tier_entries(data: &Value, lane: &str) -> Result<Vec<TierEntry>, String> 
                     None => 0,
                 },
                 enable: row.get("enable").and_then(Value::as_bool).unwrap_or(true),
+                family,
             })
         })
         .collect()
@@ -760,7 +771,7 @@ fn choose(
     budget: u64,
     ram: u64,
     present: &dyn Fn(&str) -> bool,
-    avoid: Option<&str>,
+    beside: Option<&TierEntry>,
     pin: &str,
     mut notes: Vec<String>,
 ) -> LaneChoice {
@@ -797,16 +808,37 @@ fn choose(
             e.enable && e.min_ram_mib <= ram && e.need_mib <= budget && present(&e.model_file)
         })
         .collect();
+    // Beside another lane's pick: the last fitting row of a different family, else the last
+    // that at least avoids its GGUF, else the last that fits.
+    let other_family = |e: &&&TierEntry| beside.is_none_or(|b| e.family != b.family);
+    let other_file = |e: &&&TierEntry| beside.is_none_or(|b| e.model_file != b.model_file);
     let pick = fits
         .iter()
         .rev()
-        .find(|e| Some(e.model_file.as_str()) != avoid)
+        .find(other_family)
+        .or_else(|| fits.iter().rev().find(other_file))
         .or_else(|| fits.last())
         .map(|e| TierEntry::clone(e));
     if let Some(e) = pick {
+        if let Some(b) = beside {
+            let skipped: Vec<&str> = fits
+                .iter()
+                .rev()
+                .take_while(|f| f.name != e.name)
+                .map(|f| f.name.as_str())
+                .collect();
+            if !skipped.is_empty() {
+                notes.push(format!(
+                    "mixing families beside {} ({}): passed over {}",
+                    b.name,
+                    b.family,
+                    skipped.join(", ")
+                ));
+            }
+        }
         notes.push(format!(
-            "picked {} ({}, {} ctx, {} KV): needs {} of {budget} MiB",
-            e.name, e.model_file, e.context, e.cache_type, e.need_mib
+            "picked {} ({}, {}, {} ctx, {} KV): needs {} of {budget} MiB",
+            e.name, e.model_file, e.family, e.context, e.cache_type, e.need_mib
         ));
         return done(Some(e), false, notes);
     }
@@ -911,14 +943,13 @@ pub fn plan(
         "RAM {ram} MiB: cpu_node_memory_high {high} MiB; RAM - light lane max {light_max} - host reserve {} - APU GPU lane {gpu_use} = {left} MiB; budget {budget} MiB",
         policy.host_reserve_mib
     )];
-    let avoid = heavy.entry.as_ref().map(|e| e.model_file.clone());
     let cpu_node = choose(
         "cpu_node",
         &tier_entries(data, "cpu_node")?,
         budget,
         ram,
         present,
-        avoid.as_deref(),
+        heavy.entry.as_ref(),
         &pin("cpu_node"),
         notes,
     );
@@ -1312,6 +1343,7 @@ mod tier_tests {
             active_b,
             reasoning,
             kind: "chat".into(),
+            family: "x".into(),
         };
         // sub-4B non-reasoning and <= 2B-active MoE: Q8_0
         assert!(floor
@@ -1394,23 +1426,113 @@ mod tier_tests {
             gpu: gpu(GpuKind::Cuda, 8192, 0, false),
         };
         let p = plan(&d, &m, &all_present).unwrap();
-        // heavy: 8192 - 1792 = 6400 -> gpu-6g (4847)
-        // cpu: min(65% = 10380, 15970 - 25% 3992 - 2560) = 9418 -> ram-16g Qwen3.5-4B Q8_0 128k (7318);
-        //      the 8B rows (9482, 9514) need more than a 16 GB spec
+        // heavy: 8192 - 1792 = 6400 -> gpu-6g, Qwen3.5-4B Q4_K_M 64k (4847), family qwen
+        // cpu: min(65% = 10380, 15970 - 25% 3992 - 2560) = 9418. Fitting rows: ram-floor (lfm),
+        //      ram-6g and ram-12g (granite), ram-16g (qwen, 7318); the 8B rows (9482, 9514) need
+        //      more than a 16 GB spec. ram-16g is qwen like the heavy lane, so the family mix
+        //      takes ram-12g, Granite 4.2 3B Q8_0 64k (6945).
         assert_eq!(
             pick(&p),
-            (Some("gpu-6g".into()), Some("ram-16g".into())),
+            (Some("gpu-6g".into()), Some("ram-12g".into())),
             "{:?}",
             p
         );
         assert_eq!(p.heavy.budget_mib, 6400);
         assert_eq!(p.cpu_node.budget_mib, 9418);
-        let cpu = p.cpu_node.entry.as_ref().unwrap();
-        assert_eq!(
-            (cpu.model_file.as_str(), cpu.context),
-            ("Qwen3.5-4B-Q8_0.gguf", 131072)
+        let (heavy, cpu) = (
+            p.heavy.entry.as_ref().unwrap(),
+            p.cpu_node.entry.as_ref().unwrap(),
         );
-        assert_ne!(p.heavy.entry.as_ref().unwrap().model_file, cpu.model_file);
+        assert_eq!(
+            (cpu.model_file.as_str(), cpu.context, cpu.family.as_str()),
+            ("granite-4.2-3b-Q8_0.gguf", 65536, "granite")
+        );
+        assert_eq!(heavy.family, "qwen");
+        assert!(
+            p.cpu_node
+                .notes
+                .iter()
+                .any(|n| n.contains("passed over ram-16g")),
+            "{:?}",
+            p.cpu_node.notes
+        );
+    }
+
+    #[test]
+    fn a_16gb_spec_without_a_qwen_heavy_lane_serves_qwen35_on_the_cpu_node() {
+        // The same 16 GB spec with no heavy lane: nothing to mix against, so the biggest
+        // fitting row wins.
+        let d = with_engine("vllm");
+        let m = Measured {
+            ram_mib: 15970,
+            gpu: None,
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        assert_eq!(pick(&p), (None, Some("ram-16g".into())), "{:?}", p);
+    }
+
+    fn row(name: &str, file: &str, family: &str, need_mib: u64) -> TierEntry {
+        TierEntry {
+            name: name.into(),
+            model_file: file.into(),
+            context: 32768,
+            cache_type: "q8_0".into(),
+            need_mib,
+            min_ram_mib: 0,
+            enable: true,
+            family: family.into(),
+        }
+    }
+
+    #[test]
+    fn the_cpu_node_mixes_families_then_avoids_the_gguf_then_takes_what_fits() {
+        let (a, b, c) = (
+            row("a", "lfm.gguf", "lfm", 1000),
+            row("b", "q8.gguf", "qwen", 2000),
+            row("c", "q4.gguf", "qwen", 3000),
+        );
+        let heavy = row("h", "q4.gguf", "qwen", 1);
+        let name = |entries: &[TierEntry], beside: Option<&TierEntry>, pin: &str| {
+            choose(
+                "cpu_node",
+                entries,
+                9999,
+                99999,
+                &all_present,
+                beside,
+                pin,
+                vec![],
+            )
+            .entry
+            .map(|e| e.name)
+        };
+        let all = [a.clone(), b.clone(), c.clone()];
+        // Nothing beside: the last fitting row.
+        assert_eq!(name(&all, None, ""), Some("c".into()));
+        // Beside a qwen heavy pick: the last fitting row of another family.
+        assert_eq!(name(&all, Some(&heavy), ""), Some("a".into()));
+        // Only qwen rows fit: the last one that is not the heavy lane's own GGUF.
+        assert_eq!(
+            name(&[b.clone(), c.clone()], Some(&heavy), ""),
+            Some("b".into())
+        );
+        // Only the heavy lane's own GGUF fits: still served, the lane keeps tools.
+        assert_eq!(name(&[c.clone()], Some(&heavy), ""), Some("c".into()));
+        // A pin wins over the mix.
+        assert_eq!(name(&all, Some(&heavy), "b"), Some("b".into()));
+        // A row too big for the budget is never the mix's answer.
+        let big = [row("a", "lfm.gguf", "lfm", 99_999), b, c];
+        assert_eq!(name(&big, Some(&heavy), ""), Some("b".into()));
+    }
+
+    #[test]
+    fn every_tier_row_has_a_family() {
+        let d = vendor();
+        for lane in ["heavy", "cpu_node", "micro", "embed"] {
+            for e in tier_entries(&d, lane).unwrap() {
+                assert!(!e.family.is_empty(), "{lane}.{}", e.name);
+            }
+        }
     }
 
     #[test]
@@ -1509,7 +1631,8 @@ mod tier_tests {
             gpu: gpu(GpuKind::Cuda, 24564, 0, false),
         };
         let p = plan(&d, &m, &all_present).unwrap();
-        // heavy: 22772 -> gpu-24g (gpt-oss 128k); the cpu-node would pick gpt-oss too, so it takes ram-20g
+        // heavy: 22772 -> gpu-24g (gpt-oss 128k); the cpu-node's biggest fit, ram-32g, is gpt-oss
+        // too, so the family mix takes ram-20g (LFM2.5-8B-A1B, lfm)
         assert_eq!(
             pick(&p),
             (Some("gpu-24g".into()), Some("ram-20g".into())),

@@ -8137,75 +8137,90 @@ embed_floor_rank = 8
 # The facts the floor is judged on, one row per GGUF a lane can serve (file name as it
 # sits under models_dir). params_b = total parameters (billions), active_b = active
 # per token (MoE; defaults to params_b), reasoning = the chat template thinks,
-# kind = chat | embedding | vision. Verified against each Hugging Face repo.
+# kind = chat | embedding | vision, family = the base-model lineage (a fine-tune keeps
+# its base's: Holo1.5 is Qwen2.5-VL), which the cpu-node mixes against the heavy
+# lane's pick. Verified against each Hugging Face repo.
 [llamacpp.gguf."lfm2-700m.gguf"]
 quant = "Q8_0"
 params_b = 0.74
 reasoning = false
 kind = "chat"
+family = "lfm"
 [llamacpp.gguf."qwen2.5-coder-1.5b-instruct-q8_0.gguf"]
 quant = "Q8_0"
 params_b = 1.78
 reasoning = false
 kind = "chat"
+family = "qwen"
 [llamacpp.gguf."granite-4.1-8b.gguf"]
 quant = "Q4_K_M"
 params_b = 8.79
 reasoning = false
 kind = "chat"
+family = "granite"
 [llamacpp.gguf."embeddinggemma-300m-qat-q8_0.gguf"]
 quant = "Q8_0"
 params_b = 0.30
 reasoning = false
 kind = "embedding"
+family = "gemma"
 [llamacpp.gguf."embeddinggemma-2-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 0.27
 reasoning = false
 kind = "embedding"
+family = "gemma"
 [llamacpp.gguf."holo1.5-7b.gguf"]
 quant = "Q4_K_M"
 params_b = 7.62
 reasoning = false
 kind = "vision"
+family = "qwen"
 [llamacpp.gguf."Qwen3.5-4B-Q4_K_M.gguf"]
 quant = "Q4_K_M"
 params_b = 4.21
 reasoning = true
 kind = "chat"
+family = "qwen"
 [llamacpp.gguf."Qwen3.5-4B-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 4.21
 reasoning = true
 kind = "chat"
+family = "qwen"
 [llamacpp.gguf."granite-4.2-3b-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 3.66
 reasoning = true
 kind = "chat"
+family = "granite"
 [llamacpp.gguf."LFM3-1.7B-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 1.73
 reasoning = true
 kind = "chat"
+family = "lfm"
 [llamacpp.gguf."LFM2.5-8B-A1B-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 8.47
 active_b = 1.5
 reasoning = true
 kind = "chat"
+family = "lfm"
 [llamacpp.gguf."gpt-oss-20b-MXFP4.gguf"]
 quant = "MXFP4"
 params_b = 20.91
 active_b = 3.6
 reasoning = true
 kind = "chat"
+family = "gpt-oss"
 [llamacpp.gguf."Qwen3.6-35B-A3B-Q8_0.gguf"]
 quant = "Q8_0"
 params_b = 34.66
 active_b = 3.0
 reasoning = true
 kind = "chat"
+family = "qwen"
 
 # ---- Model tiers -----------------------------------------------------------------
 # Each single-model lane (the dGPU/APU heavy lane, mios-cpu-node) picks its GGUF,
@@ -8234,7 +8249,10 @@ kind = "chat"
 # on the measured 8.6 GB at 32k with q4_0 KV on the 14G PS5, plus the q8_0 delta.
 # min_ram_mib is MemTotal, which sits below a host's nominal size (a 16 GB WSL VM
 # reads ~15970 MiB), so a row for an N GiB class asks for about 7/8 of N GiB.
-# The cpu_node avoids the GGUF the heavy lane already serves when another row fits.
+# Mixing: among the cpu_node rows that fit, the last one whose family differs from
+# the heavy lane's pick wins, so the two lanes never share one lineage's blind spots
+# while another family fits; failing that, the last one that at least avoids the
+# heavy lane's GGUF; failing that, the last one that fits.
 # A host pins a row by name in its own tier ([llamacpp.tier_pin]).
 [llamacpp.tier_policy]
 host_reserve_mib = 2560
@@ -8303,7 +8321,7 @@ cache_type = "q8_0"
 need_mib = 6945
 min_ram_mib = 12288
 [[llamacpp.tiers.cpu_node]]
-name = "ram-16g"         # a 16 GB spec (the X570's MiOS-DEV VM): dense 4B reasoning at 128k
+name = "ram-16g"         # a 16 GB spec with no Qwen heavy lane: dense 4B reasoning at 128k
 model_file = "Qwen3.5-4B-Q8_0.gguf"
 context = 131072
 cache_type = "q8_0"

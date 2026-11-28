@@ -69,6 +69,9 @@ class TestSpeculativeDecodingConfig(unittest.TestCase):
                 need = floor["small_floor_rank"] if small and not f["reasoning"] else floor["large_floor_rank"]
             return floor["quant_rank"].get(f["quant"], 0) >= need
 
+        for file, f in facts.items():
+            # The cpu-node mixes model families against the heavy lane's pick.
+            self.assertTrue(isinstance(f.get("family"), str) and f["family"], f"{file}: no family")
         for model, entry in self._models().items():
             file = entry["cmd"].split("--model", 1)[1].split()[0].rsplit("/", 1)[-1]
             self.assertIn(file, facts, f"{model}: no [llamacpp.gguf] row for {file}")
