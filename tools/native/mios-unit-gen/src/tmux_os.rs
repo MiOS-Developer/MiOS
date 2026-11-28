@@ -1077,6 +1077,11 @@ pub(crate) fn render_tmux_keys(
         .iter()
         .map(|b| (b.key.clone(), b.command.clone()))
         .collect();
+    // A menu row bound to a gated key keeps that key's tmux version gate in its own table.
+    let gates: BTreeMap<String, String> = binds
+        .iter()
+        .filter_map(|b| b.gate.clone().map(|g| (b.key.clone(), g)))
+        .collect();
 
     out += &format!("set -g @mios-managed-pane '{MANAGED_PANE}'\n");
 
@@ -1377,11 +1382,21 @@ pub(crate) fn render_tmux_keys(
                 ItemTarget::Command(c) => c.clone(),
                 ItemTarget::Menu(id) => opener(id)?,
             };
+            let gate = match &item.target {
+                ItemTarget::Bound => gates.get(&item.key),
+                _ => None,
+            };
+            if let Some(v) = gate {
+                out += &format!("%if \"#{{>=:#{{version}},{v}}}\"\n");
+            }
             out += &format!(
                 "bind-key -N {} -T {table} {} {command}\n",
                 quote(&item.label),
                 tmux_key(&item.key)
             );
+            if gate.is_some() {
+                out += "%endif\n";
+            }
         }
     }
 
@@ -2059,6 +2074,17 @@ mod tests {
     fn floats_are_version_gated_and_managed_panes_refuse_layout_keys() {
         let conf = render(&ssot()).unwrap();
         assert!(conf.contains("%if \"#{>=:#{version},3.7}\"\nbind-key -N \"New floating pane (keeps the directory)\" '*' if-shell -F '#{||:#{@mios-workspace-head}"));
+        // The menu table row bound to the same key keeps the gate: older tmux has no floating panes.
+        let lines: Vec<&str> = conf.lines().collect();
+        let row = lines
+            .iter()
+            .position(|l| l.contains(" -T mios-menu-root '*' "))
+            .expect("the root menu binds the floating-pane row");
+        assert_eq!(
+            (lines[row - 1], lines[row + 1]),
+            ("%if \"#{>=:#{version},3.7}\"", "%endif"),
+            "the root menu float row is version-gated"
+        );
         assert!(
             conf.contains("--float new --client #{q:client_name}"),
             "shared runtime geometry"
