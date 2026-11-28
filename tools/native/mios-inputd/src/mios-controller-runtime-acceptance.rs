@@ -4,6 +4,8 @@ use super::*;
 use crate::router::{Axis, Event, EV_ABS, EV_KEY};
 use std::sync::{Arc, Mutex};
 
+// Every caller is #[ignore]d unless the sealed-dev-acceptance feature is on (Cargo.toml
+// [features]). The feature only opts in; this hash pin is still the refusal once it is.
 fn isolated() -> bool {
     let hash = Command::new("/usr/bin/sha256sum")
         .arg("/usr/bin/tmux")
@@ -316,6 +318,10 @@ fn assert_balanced(events: &[Event], code: u16) {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_six_pending_boundaries_cancel_old_members() {
     if isolated() {
         return;
@@ -358,6 +364,10 @@ fn frozen_six_pending_boundaries_cancel_old_members() {
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_six_neutralization_boundaries_balance_real_sinks() {
     if isolated() {
         return;
@@ -514,6 +524,10 @@ fn failed_app_action(key: &str, id: &str) {
     );
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_mon_menu_failed_ipc_has_no_fallback() {
     if isolated() {
         return;
@@ -521,6 +535,10 @@ fn frozen_mon_menu_failed_ipc_has_no_fallback() {
     failed_app_action("o", "v3-mon-menu-ipc-failure");
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_mon_pause_failed_ipc_has_no_fallback() {
     if isolated() {
         return;
@@ -528,6 +546,10 @@ fn frozen_mon_pause_failed_ipc_has_no_fallback() {
     failed_app_action("p", "v3-mon-pause-ipc-failure");
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn unsupported_app_control_has_no_pty_or_keyboard_fallback() {
     if isolated() {
         return;
@@ -546,6 +568,10 @@ fn unsupported_app_control_has_no_pty_or_keyboard_fallback() {
         .any(|r| r["kind"] == "app-key" && r["ok"] == false));
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_stale_application_and_process_witnesses_reject_late_jobs() {
     if isolated() {
         return;
@@ -592,6 +618,10 @@ fn frozen_stale_application_and_process_witnesses_reject_late_jobs() {
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn frozen_capture_transaction_failure_and_login_revocation_have_explicit_errors() {
     if isolated() {
         return;
@@ -638,6 +668,10 @@ fn frozen_capture_transaction_failure_and_login_revocation_have_explicit_errors(
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn same_pad_late_overlap_both_orders_global_contexts_and_capture() {
     if isolated() {
         return;
@@ -698,6 +732,10 @@ fn same_pad_late_overlap_both_orders_global_contexts_and_capture() {
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn split_pad_stick_clicks_never_form_a_global_capture_chord() {
     if isolated() {
         return;
@@ -720,6 +758,10 @@ fn split_pad_stick_clicks_never_form_a_global_capture_chord() {
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn strict_on_pinned_capture_rejects_a_to_b_using_actual_native_worker() {
     if isolated() {
         return;
@@ -820,6 +862,10 @@ fn strict_on_pinned_capture_rejects_a_to_b_using_actual_native_worker() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_assigned_session_worker_refuses_failed_app_ipc_without_shell_fallback() {
     if isolated() {
         return;

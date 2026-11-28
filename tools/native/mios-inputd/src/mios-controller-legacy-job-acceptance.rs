@@ -33,6 +33,10 @@ fn legacy_scope(mode: &str, focus: &ContextSnapshot, cfg: &GlobalConfig) -> Acti
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_legacy_tmux_worker_rejects_revoked_expired_and_aba_jobs() {
     if isolated() {
         return;
@@ -123,6 +127,10 @@ fn actual_legacy_tmux_worker_rejects_revoked_expired_and_aba_jobs() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_legacy_lua_worker_rejects_revoked_expired_and_aba_jobs() {
     if isolated() {
         return;

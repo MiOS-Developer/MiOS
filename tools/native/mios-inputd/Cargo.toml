@@ -5,6 +5,14 @@ name = "mios-inputd"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+# Test builds only. The controller acceptance tests in src/mios-controller-*-acceptance.rs
+# are ignored without this feature and report why. Only the sealed MiOS-DEV harness
+# enables it; enabled, isolated() still asserts the pinned C95 tmux backend and fails
+# on any other host.
+sealed-dev-acceptance = []
+
 [dependencies]
 mios-resolver = { path = "../mios-resolver" }
 serde.workspace = true
