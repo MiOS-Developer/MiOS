@@ -164,6 +164,8 @@ disable mios-ceph.service
 disable mios-headscale.service
 disable mios-k3s.service
 disable mios-llm-heavy.service
+# Static oneshot the heavy unit Requires before each start (its image drop-in); never on its own.
+disable mios-heavy-engine.service
 disable mios-llm-worker@.service
 disable mios-radosgw.service
 # Forge bootstrap: admin user + initial repo + runner registration token

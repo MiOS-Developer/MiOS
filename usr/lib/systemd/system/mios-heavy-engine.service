@@ -1,0 +1,12 @@
+# AI-hint: Projects the image of the GPU the auto heavy engine resolves to (CUDA or Vulkan) as a Quadlet drop-in before the heavy lane starts.
+# AI-related: tools/native/mios-gen/src/gpu_topology.rs, usr/share/containers/systemd/mios-llm-heavy.container
+[Unit]
+Description='MiOS' heavy engine image projection
+After=mios-cdi-detect.service
+Wants=mios-cdi-detect.service
+Before=mios-llm-heavy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=no
+ExecStart=/usr/bin/mios-gen model-tier --root / --lane heavy --image-dropin --apply --reload
