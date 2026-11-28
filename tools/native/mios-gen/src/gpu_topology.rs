@@ -1735,8 +1735,326 @@ fn heavy_vulkan_drivers(vk: &Value) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// The CUDA heavy engine's WSL transport ([llamacpp.heavy_wsl]): the paravirtual GPU
+/// node and the Windows driver store stand in for a PCI identity. Ported from the
+/// light lane's verified dxg checks (mios-wsl-light-cuda).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeavyWsl {
+    pub node: PathBuf,
+    pub lib_dir: PathBuf,
+    /// Relative to lib_dir.
+    pub libcuda: PathBuf,
+    pub cdi_dir: PathBuf,
+    /// The one CDI device name a WSL spec serves.
+    pub selector: String,
+}
+
+fn wsl_rooted_path(table: &Value, key: &str) -> Result<PathBuf, String> {
+    let value = light_string(table, key)?;
+    let path = Path::new(value);
+    if !path.is_absolute()
+        || path == Path::new("/")
+        || !value
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "llamacpp.heavy_wsl.{key} must be one absolute rooted path"
+        ));
+    }
+    Ok(path.to_path_buf())
+}
+
+/// [llamacpp.heavy_wsl], validated: a node directly under /dev, rooted directories and a
+/// libcuda path that cannot leave lib_dir.
+pub fn heavy_wsl(data: &Value) -> Result<HeavyWsl, String> {
+    let wsl = data
+        .get("llamacpp")
+        .and_then(|l| l.get("heavy_wsl"))
+        .ok_or("missing [llamacpp.heavy_wsl]")?;
+    let node = wsl_rooted_path(wsl, "device_node")?;
+    if node.parent() != Some(Path::new("/dev")) {
+        return Err("llamacpp.heavy_wsl.device_node must be a node directly under /dev".into());
+    }
+    let lib_dir = wsl_rooted_path(wsl, "lib_dir")?;
+    let libcuda = PathBuf::from(light_string(wsl, "libcuda")?);
+    if !libcuda
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+        || !libcuda
+            .to_string_lossy()
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+    {
+        return Err("llamacpp.heavy_wsl.libcuda must be a relative path inside lib_dir".into());
+    }
+    let cdi_dir = wsl_rooted_path(wsl, "cdi_dir")?;
+    let selector = light_string(wsl, "selector")?;
+    if !selector
+        .bytes()
+        .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+    {
+        return Err("llamacpp.heavy_wsl.selector must be one CDI device name".into());
+    }
+    Ok(HeavyWsl {
+        node,
+        lib_dir,
+        libcuda,
+        cdi_dir,
+        selector: selector.into(),
+    })
+}
+
+/// Whether this root is a WSL guest by the transport's own node (present in any form:
+/// a forged one is then refused by the proof, never silently sent down the PCI path).
+pub fn heavy_wsl_present(root: &Path, wsl: &HeavyWsl) -> bool {
+    wsl.node
+        .strip_prefix("/")
+        .is_ok_and(|node| fs::symlink_metadata(root.join(node)).is_ok())
+}
+
+#[cfg(unix)]
+fn misc_major(devices: &str) -> Result<u32, String> {
+    let mut character = false;
+    for line in devices.lines().map(str::trim) {
+        match line {
+            "Character devices:" => character = true,
+            "Block devices:" => character = false,
+            _ if character => {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.len() == 2 && fields[1] == "misc" {
+                    return fields[0]
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| "invalid misc character major registration".into());
+                }
+            }
+            _ => {}
+        }
+    }
+    Err("misc character major is not registered".into())
+}
+
+/// A world read/write node needs no group; otherwise grant its group, never root's.
+#[cfg(unix)]
+fn dxg_access(node: &Path, mode: u32, gid: u32) -> Result<(String, Option<u32>), String> {
+    let path = node.display().to_string();
+    if mode & 0o006 == 0o006 {
+        Ok((path, None))
+    } else if mode & 0o060 == 0o060 && gid != 0 {
+        Ok((path, Some(gid)))
+    } else {
+        Err(format!(
+            "WSL GPU node {path} grants read/write to neither everyone nor a non-root group"
+        ))
+    }
+}
+
+/// Bind the node to the kernel's misc registration and libcuda to the driver store: a
+/// forged node, a stray library or a redirected store fails here.
+#[cfg(unix)]
+fn wsl_dxg_device(root: &Path, wsl: &HeavyWsl) -> Result<(String, Option<u32>), String> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let rooted = |path: &Path| root.join(path.strip_prefix("/").unwrap_or(path));
+    let name = wsl
+        .node
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("invalid WSL GPU node name")?;
+    let metadata = fs::metadata(rooted(&wsl.node))
+        .map_err(|e| format!("WSL GPU node {} is unavailable: {e}", wsl.node.display()))?;
+    if !metadata.file_type().is_char_device() {
+        return Err("WSL GPU node is not a character device".into());
+    }
+    let devices = fs::read_to_string(root.join("proc/devices"))
+        .map_err(|e| format!("kernel character registrations are unavailable: {e}"))?;
+    let kernel = fs::read_to_string(root.join("sys/class/misc").join(name).join("dev"))
+        .map_err(|e| format!("WSL GPU misc registration is unreadable: {e}"))?;
+    let (major, minor) = (
+        rustix::fs::major(metadata.rdev()),
+        rustix::fs::minor(metadata.rdev()),
+    );
+    if major != misc_major(&devices)? || kernel.trim() != format!("{major}:{minor}") {
+        return Err("WSL GPU node does not match its kernel misc registration".into());
+    }
+    let lib_dir = fs::canonicalize(rooted(&wsl.lib_dir))
+        .map_err(|e| format!("WSL driver library directory is unavailable: {e}"))?;
+    let libcuda = fs::canonicalize(lib_dir.join(&wsl.libcuda))
+        .map_err(|e| format!("WSL libcuda is unavailable: {e}"))?;
+    if !libcuda.starts_with(&lib_dir) {
+        return Err("WSL libcuda resolves outside the driver library directory".into());
+    }
+    let mut stream =
+        fs::File::open(&libcuda).map_err(|e| format!("WSL libcuda is unreadable: {e}"))?;
+    let mut magic = [0u8; 4];
+    if !stream.metadata().map_err(|e| e.to_string())?.is_file()
+        || stream.read_exact(&mut magic).is_err()
+        || &magic != b"\x7fELF"
+    {
+        return Err("WSL libcuda is not an ELF shared object".into());
+    }
+    dxg_access(&wsl.node, metadata.mode(), metadata.gid())
+}
+
+#[cfg(not(unix))]
+fn wsl_dxg_device(_root: &Path, wsl: &HeavyWsl) -> Result<(String, Option<u32>), String> {
+    Err(format!(
+        "WSL CUDA admission reads the {} node's Linux metadata, which needs a Unix host",
+        wsl.node.display()
+    ))
+}
+
+/// The host paths a CDI edit list names: deviceNodes (hostPath, else path) or mounts.
+fn cdi_host_paths<'a>(edits: &[Option<&'a Json>], list: &str) -> Vec<&'a str> {
+    edits
+        .iter()
+        .flatten()
+        .filter_map(|edit| edit.get(list).and_then(Json::as_array))
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .get("hostPath")
+                .or_else(|| entry.get("path"))
+                .and_then(Json::as_str)
+        })
+        .collect()
+}
+
+/// The one spec in cdi_dir, named in [gpu.cdi.nvidia].specs, that serves `selection`
+/// with the verified node and mounts the driver store. Podman resolves the same spec
+/// when it injects the unit's AddDevice.
+fn wsl_cdi_spec(
+    root: &Path,
+    data: &Value,
+    wsl: &HeavyWsl,
+    selection: &str,
+) -> Result<PathBuf, String> {
+    let (kind, name) = selection
+        .split_once('=')
+        .ok_or("invalid configured NVIDIA CDI selection")?;
+    if kind.is_empty()
+        || !kind
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(&c))
+        || name.is_empty()
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+    {
+        return Err("invalid configured NVIDIA CDI selection".into());
+    }
+    let specs = data
+        .get("gpu")
+        .and_then(|g| g.get("cdi"))
+        .and_then(|c| c.get("nvidia"))
+        .and_then(|c| c.get("specs"))
+        .and_then(Value::as_array)
+        .ok_or("gpu.cdi.nvidia.specs must be a list of spec file names")?;
+    let dir = root.join(wsl.cdi_dir.strip_prefix("/").map_err(|e| e.to_string())?);
+    let mut served = Vec::new();
+    for spec in specs {
+        let file = spec
+            .as_str()
+            .filter(|f| {
+                !f.is_empty()
+                    && !f.starts_with('.')
+                    && f.bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+            })
+            .ok_or("gpu.cdi.nvidia.specs must name plain spec files")?;
+        let path = dir.join(file);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => return Err(format!("refusing non-regular CDI spec {}", path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "CDI spec {} is unreadable: {error}",
+                    path.display()
+                ))
+            }
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|e| format!("CDI spec {} is unreadable: {e}", path.display()))?;
+        let document: Json = serde_yaml::from_str(&text)
+            .map_err(|e| format!("CDI spec {} does not parse: {e}", path.display()))?;
+        if document.get("kind").and_then(Json::as_str) != Some(kind) {
+            continue;
+        }
+        let devices: Vec<Json> = document
+            .get("devices")
+            .and_then(Json::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|device| device.get("name").and_then(Json::as_str) == Some(name))
+            .cloned()
+            .collect();
+        match devices.len() {
+            0 => {}
+            1 => served.push((path, document, devices[0].clone())),
+            _ => {
+                return Err(format!(
+                    "CDI spec {} declares {selection} more than once",
+                    path.display()
+                ))
+            }
+        }
+    }
+    let (path, document, device) = match served.len() {
+        1 => served.remove(0),
+        0 => {
+            return Err(format!(
+                "no CDI spec in {} serves {selection}; mios-cdi-detect writes the WSL spec there (systemctl restart mios-cdi-detect)",
+                wsl.cdi_dir.display()
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "several CDI specs in {} declare {selection}; podman refuses conflicting definitions",
+                wsl.cdi_dir.display()
+            ))
+        }
+    };
+    if document
+        .get("cdiVersion")
+        .and_then(Json::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!("CDI spec {} has no cdiVersion", path.display()));
+    }
+    let edits = [device.get("containerEdits"), document.get("containerEdits")];
+    let node = wsl.node.to_string_lossy().into_owned();
+    if !cdi_host_paths(&edits, "deviceNodes").contains(&node.as_str()) {
+        return Err(format!(
+            "CDI spec {} serves {selection} without {node}; it is not a WSL GPU spec",
+            path.display()
+        ));
+    }
+    let store = cdi_host_paths(&edits, "mounts").into_iter().any(|mount| {
+        let mount = Path::new(mount);
+        mount.starts_with(&wsl.lib_dir)
+            && !mount
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+    });
+    if !store {
+        return Err(format!(
+            "CDI spec {} does not mount the WSL driver store {}",
+            path.display(),
+            wsl.lib_dir.display()
+        ));
+    }
+    Ok(path)
+}
+
 /// Read-only admission for the canonical heavy llama.cpp engines. CUDA reuses the
 /// kernel-bound CUDA validator; Vulkan reuses the light lane's render-node validator.
+/// On a WSL guest ([llamacpp.heavy_wsl].device_node exists) the PCI/UUID proof is
+/// replaced, never supplemented, by the dxg node, driver store and CDI spec proof.
 /// "auto" is admitted as the engine of the GPU kind it detects ([llamacpp.heavy_auto]).
 /// Neither writes or activates the light lane.
 pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
@@ -1864,6 +2182,40 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
             json!({"engine":engine,"unit":"mios-llm-heavy.service","backend":"vulkan",
             "device":"Vulkan0","gpu_layers":"all","image":image,"pci":gpu.pci,"driver":gpu.driver,
             "render_node":format!("/{}", node.display()),"device_gid":device.gid,"model":alias,
+            "weights":weights,"slots":slots,"context":llama["heavy_context"],
+            "threads":llama["heavy_threads"],"changed":false}),
+        );
+    }
+    // CUDA on a WSL guest: no PCI GPU and no /proc/driver/nvidia, so the dxg node, the
+    // driver store and the WSL CDI spec are the proof. The node's presence picks this
+    // path; a forged node fails the proof instead of falling back to PCI.
+    let wsl = heavy_wsl(data)?;
+    if heavy_wsl_present(root, &wsl) {
+        let selection = data
+            .get("gpu")
+            .and_then(|g| g.get("cdi"))
+            .and_then(|c| c.get("nvidia"))
+            .and_then(|c| c.get("device"))
+            .and_then(Value::as_str)
+            .ok_or("gpu.cdi.nvidia.device is missing")?;
+        if selection.split_once('=').map(|(_, name)| name) != Some(wsl.selector.as_str()) {
+            return Err(format!(
+                "on WSL gpu.cdi.nvidia.device must select {:?}, the one device a WSL CDI spec serves (it is {selection:?})",
+                wsl.selector
+            ));
+        }
+        let (node, gid) = wsl_dxg_device(root, &wsl)?;
+        let spec = wsl_cdi_spec(root, data, &wsl, selection)?;
+        let image = data
+            .get("image")
+            .and_then(|i| i.get("sidecars"))
+            .and_then(|s| s.get("llm_heavy_llamacpp"))
+            .and_then(Value::as_str)
+            .ok_or("image.sidecars.llm_heavy_llamacpp is missing")?;
+        return Ok(
+            json!({"engine":engine,"unit":"mios-llm-heavy.service","backend":"cuda","transport":"dxg",
+            "device":"CUDA0","gpu_layers":"all","image":image,"resource":Json::Null,"pci":Json::Null,
+            "cdi_device":selection,"cdi_spec":spec,"device_node":node,"device_gid":gid,"model":alias,
             "weights":weights,"slots":slots,"context":llama["heavy_context"],
             "threads":llama["heavy_threads"],"changed":false}),
         );
@@ -2437,8 +2789,14 @@ mod tests {
         data["llamacpp"]["heavy_gpu_resource"] = Value::String("accelerator".into());
         data["gpu"]["cdi"]["nvidia"]["device"] =
             Value::String("nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555".into());
+        seed_heavy_payload(root.path(), &data);
+        (root, data)
+    }
+
+    /// The heavy GGUF and its declared cache/slot directories under a fixture root.
+    fn seed_heavy_payload(root: &Path, data: &Value) {
         let llama = &data["llamacpp"];
-        let models = root.path().join(
+        let models = root.join(
             llama["models_dir"]
                 .as_str()
                 .unwrap()
@@ -2450,7 +2808,7 @@ mod tests {
             b"GGUF\x03\0\0\0fixture",
         )
         .unwrap();
-        let slots = root.path().join(
+        let slots = root.join(
             llama["heavy_slot_dir"]
                 .as_str()
                 .unwrap()
@@ -2458,6 +2816,53 @@ mod tests {
         );
         fs::create_dir_all(slots.join("cache")).unwrap();
         fs::create_dir_all(slots.join("slots")).unwrap();
+    }
+
+    /// The spec mios-cdi-detect writes on a WSL host without nvidia-ctk (MiOS-DEV's
+    /// /run/cdi/wsl2-nvidia.yaml), read from the producer so the two cannot drift apart.
+    fn detect_wsl_spec() -> String {
+        let detect = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../usr/libexec/mios/mios-cdi-detect"),
+        )
+        .unwrap();
+        let body = detect.split("<<'WSLCDI'\n").nth(1).unwrap();
+        format!("{}\n", body.split("\nWSLCDI\n").next().unwrap())
+    }
+
+    /// A WSL guest as MiOS-DEV has it: /dev/dxg (a harmless /dev/null inode standing in for
+    /// the 10:258 misc node), its misc registration, an ELF libcuda in the driver store and
+    /// the WSL CDI spec in /run/cdi -- and no PCI, DRM or /proc/driver/nvidia.
+    fn heavy_wsl_fixture() -> (tempfile::TempDir, Value) {
+        use std::os::unix::fs::MetadataExt;
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        let rdev = fs::metadata("/dev/null").unwrap().rdev();
+        let (major, minor) = (rustix::fs::major(rdev), rustix::fs::minor(rdev));
+        fs::create_dir_all(r.join("dev")).unwrap();
+        symlink("/dev/null", r.join("dev/dxg")).unwrap();
+        fs::create_dir_all(r.join("proc")).unwrap();
+        fs::write(
+            r.join("proc/devices"),
+            format!("Character devices:\n{major} misc\n\nBlock devices:\n8 sd\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(r.join("sys/class/misc/dxg")).unwrap();
+        fs::write(
+            r.join("sys/class/misc/dxg/dev"),
+            format!("{major}:{minor}\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(r.join("usr/lib/wsl/lib")).unwrap();
+        fs::write(
+            r.join("usr/lib/wsl/lib/libcuda.so.1"),
+            b"\x7fELF\x02\x01\x01fixture",
+        )
+        .unwrap();
+        fs::create_dir_all(r.join("run/cdi")).unwrap();
+        fs::write(r.join("run/cdi/wsl2-nvidia.yaml"), detect_wsl_spec()).unwrap();
+        let mut data = ssot();
+        data["ai"]["heavy_engine"] = Value::String("auto".into());
+        seed_heavy_payload(r, &data);
         (root, data)
     }
 
@@ -2636,6 +3041,193 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn heavy_wsl_admits_a_verified_dxg_host_without_pci() {
+        let (root, data) = heavy_wsl_fixture();
+        let r = root.path();
+        assert!(!r.join("sys/bus/pci").exists() && !r.join("proc/driver/nvidia").exists());
+        assert_eq!(
+            data["gpu"]["cdi"]["nvidia"]["device"].as_str(),
+            Some("nvidia.com/gpu=all")
+        );
+        let prior = data.clone();
+        for engine in ["auto", "llamacpp"] {
+            let mut d = data.clone();
+            d["ai"]["heavy_engine"] = Value::String(engine.into());
+            let result = heavy_backend_plan(r, &d).unwrap();
+            assert_eq!(result["engine"], "llamacpp", "{engine}");
+            assert_eq!(result["backend"], "cuda");
+            assert_eq!(result["transport"], "dxg");
+            assert_eq!(result["device"], "CUDA0");
+            assert_eq!(result["device_node"], "/dev/dxg");
+            assert_eq!(result["cdi_device"], "nvidia.com/gpu=all");
+            assert!(result["cdi_spec"]
+                .as_str()
+                .unwrap()
+                .ends_with("run/cdi/wsl2-nvidia.yaml"));
+            // /dev/null, like MiOS-DEV's dxg, is world read/write: no group to add.
+            assert!(result["device_gid"].is_null());
+            assert!(result["pci"].is_null() && result["resource"].is_null());
+            assert_eq!(
+                result["image"],
+                data["image"]["sidecars"]["llm_heavy_llamacpp"]
+                    .as_str()
+                    .unwrap()
+            );
+        }
+        assert_eq!(data, prior);
+        assert!(!r.join("etc").exists());
+        // The spec nvidia-ctk writes in WSL mode (node on the device, driver-store files
+        // mounted globally, JSON) serves the same device.
+        let ctk = json!({"cdiVersion":"0.5.0","kind":"nvidia.com/gpu",
+            "devices":[{"name":"all","containerEdits":{"deviceNodes":[{"path":"/dev/dxg"}]}}],
+            "containerEdits":{"mounts":[
+                {"hostPath":"/usr/lib/wsl/drivers/nv_dispi.inf_amd64_fixture/libcuda.so.1.1",
+                 "containerPath":"/usr/lib/wsl/drivers/nv_dispi.inf_amd64_fixture/libcuda.so.1.1",
+                 "options":["ro","nosuid","nodev","bind"]}]}});
+        fs::remove_file(r.join("run/cdi/wsl2-nvidia.yaml")).unwrap();
+        fs::write(r.join("run/cdi/nvidia-wsl.yaml"), ctk.to_string()).unwrap();
+        let result = heavy_backend_plan(r, &data).unwrap();
+        assert!(result["cdi_spec"]
+            .as_str()
+            .unwrap()
+            .ends_with("run/cdi/nvidia-wsl.yaml"));
+    }
+
+    #[test]
+    fn heavy_wsl_rejects_forged_node_driver_store_and_cdi_proofs() {
+        for fault in 0..17 {
+            let (root, data) = heavy_wsl_fixture();
+            heavy_backend_plan(root.path(), &data).unwrap();
+            let r = root.path();
+            let lib = r.join("usr/lib/wsl/lib/libcuda.so.1");
+            let spec = r.join("run/cdi/wsl2-nvidia.yaml");
+            let edit = |from: &str, to: &str| {
+                let text = fs::read_to_string(&spec).unwrap();
+                assert!(text.contains(from), "{from}");
+                fs::write(&spec, text.replace(from, to)).unwrap();
+            };
+            match fault {
+                // A forged node: a regular file, or one that is not the kernel's misc dxg.
+                0 => {
+                    fs::remove_file(r.join("dev/dxg")).unwrap();
+                    fs::write(r.join("dev/dxg"), "not a character node").unwrap();
+                }
+                1 => fs::write(r.join("proc/devices"), "Character devices:\n999 misc\n").unwrap(),
+                2 => fs::write(r.join("proc/devices"), "Character devices:\n1 mem\n").unwrap(),
+                3 => fs::write(r.join("sys/class/misc/dxg/dev"), "10:999\n").unwrap(),
+                4 => fs::remove_dir_all(r.join("sys/class/misc/dxg")).unwrap(),
+                // A missing or non-ELF libcuda, or one outside the driver store.
+                5 => fs::remove_file(&lib).unwrap(),
+                6 => fs::write(&lib, "#!/bin/sh\n").unwrap(),
+                7 => {
+                    fs::write(r.join("libcuda.so.1"), b"\x7fELF\x02\x01\x01outside").unwrap();
+                    fs::remove_file(&lib).unwrap();
+                    symlink(r.join("libcuda.so.1"), &lib).unwrap();
+                }
+                // A missing CDI spec (the post-boot loss seen on MiOS-DEV).
+                8 => fs::remove_file(&spec).unwrap(),
+                // A non-WSL spec: bare-metal nodes and libraries, no dxg.
+                9 => fs::write(
+                    &spec,
+                    "cdiVersion: \"0.6.0\"\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n    containerEdits:\n      deviceNodes:\n        - path: /dev/nvidia0\n        - path: /dev/nvidiactl\n      mounts:\n        - hostPath: /usr/lib64/libcuda.so.1\n          containerPath: /usr/lib64/libcuda.so.1\n",
+                )
+                .unwrap(),
+                // dxg but no driver store mount, or a store mount that escapes it.
+                10 => edit("hostPath: /usr/lib/wsl", "hostPath: /opt/wsl"),
+                11 => edit("hostPath: /usr/lib/wsl", "hostPath: /usr/lib/wsl/../../etc"),
+                // A symlinked, duplicated, unparseable or other-vendor spec.
+                12 => {
+                    fs::rename(&spec, r.join("wsl2-nvidia.yaml")).unwrap();
+                    symlink(r.join("wsl2-nvidia.yaml"), &spec).unwrap();
+                }
+                13 => fs::copy(&spec, r.join("run/cdi/nvidia-wsl.yaml")).map(drop).unwrap(),
+                14 => fs::write(&spec, "cdiVersion: [unterminated\n").unwrap(),
+                15 => edit("kind: nvidia.com/gpu", "kind: amd.com/gpu"),
+                // The spec serves another device name, not the configured selector.
+                _ => edit("name: all", "name: \"0\""),
+            }
+            assert!(
+                heavy_backend_plan(root.path(), &data).is_err(),
+                "accepted WSL heavy proof fault {fault}"
+            );
+        }
+    }
+
+    #[test]
+    fn heavy_wsl_accepts_only_its_selector_and_only_listed_specs() {
+        let (root, data) = heavy_wsl_fixture();
+        for selection in [
+            "nvidia.com/gpu=0",
+            "nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555",
+            "amd.com/gpu=all",
+            "nvidia.com/gpu",
+            "nvidia.com/gpu=all --privileged",
+            "=all",
+            "",
+        ] {
+            let mut invalid = data.clone();
+            invalid["gpu"]["cdi"]["nvidia"]["device"] = Value::String(selection.into());
+            assert!(
+                heavy_backend_plan(root.path(), &invalid).is_err(),
+                "accepted {selection:?}"
+            );
+        }
+        let mut unlisted = data.clone();
+        unlisted["gpu"]["cdi"]["nvidia"]["specs"] =
+            Value::Array(vec![Value::String("nvidia.yaml".into())]);
+        assert!(heavy_backend_plan(root.path(), &unlisted).is_err());
+        let mut escaping = data.clone();
+        escaping["gpu"]["cdi"]["nvidia"]["specs"] =
+            Value::Array(vec![Value::String("../cdi/wsl2-nvidia.yaml".into())]);
+        assert!(heavy_backend_plan(root.path(), &escaping).is_err());
+        for (key, value) in [
+            ("device_node", "/tmp/dxg"),
+            ("device_node", "/dev/../etc/dxg"),
+            ("lib_dir", "/"),
+            ("lib_dir", "usr/lib/wsl"),
+            ("libcuda", "../lib/libcuda.so.1"),
+            ("libcuda", "/usr/lib/wsl/lib/libcuda.so.1"),
+            ("cdi_dir", "run/cdi"),
+            ("selector", "all --privileged"),
+        ] {
+            let mut invalid = data.clone();
+            invalid["llamacpp"]["heavy_wsl"][key] = Value::String(value.into());
+            assert!(
+                heavy_backend_plan(root.path(), &invalid).is_err(),
+                "accepted heavy_wsl.{key}={value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_metal_heavy_cuda_admission_is_unchanged_by_the_wsl_transport() {
+        // No dxg node: the exact-UUID PCI proof, which still refuses the WSL selector.
+        let (root, data) = heavy_cuda_fixture();
+        let result = heavy_backend_plan(root.path(), &data).unwrap();
+        assert_eq!(result["pci"], "0000:09:00.0");
+        assert!(result.get("transport").is_none());
+        assert_eq!(
+            result["cdi_device"],
+            "nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555"
+        );
+        let mut all = data.clone();
+        all["gpu"]["cdi"]["nvidia"]["device"] = Value::String("nvidia.com/gpu=all".into());
+        assert!(heavy_backend_plan(root.path(), &all).is_err());
+        // A forged dxg on bare metal takes the WSL proof and fails it; it never falls back.
+        fs::write(root.path().join("dev/dxg"), "forged").unwrap();
+        assert!(heavy_backend_plan(root.path(), &data).is_err());
+    }
+
+    #[test]
+    fn wsl_dxg_access_grants_a_group_only_when_needed_and_never_root() {
+        let node = Path::new("/dev/dxg");
+        assert_eq!(dxg_access(node, 0o20666, 0).unwrap().1, None);
+        assert_eq!(dxg_access(node, 0o20660, 44).unwrap().1, Some(44));
+        assert!(dxg_access(node, 0o20660, 0).is_err());
+        assert!(dxg_access(node, 0o20600, 44).is_err());
     }
 
     #[test]

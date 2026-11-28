@@ -8402,15 +8402,32 @@ resource = ""
 # How the "detect" engine ([ai].heavy_engine = "auto") finds the host's GPU at every
 # start of the heavy lane: the first kind in `prefer` the host has picks the backend.
 #   cuda    any path of cuda_nodes exists (the bare-metal NVIDIA driver's control node),
-#           or every path of wsl_cuda does (WSL's GPU paravirtual device and the Windows
-#           NVIDIA driver's CUDA library; dxg alone is any vendor's GPU)
+#           or [llamacpp.heavy_wsl]'s device_node and libcuda both do (WSL's GPU
+#           paravirtual device and the Windows NVIDIA driver's CUDA library; dxg alone
+#           is any vendor's GPU)
 #   vulkan  an [llamacpp.heavy_vulkan] render node
 # Neither: the lane's ExecCondition skips the unit. The admission that follows is the
-# pinned engine's own (exact CUDA device, or the verified render node).
+# pinned engine's own: the exact CUDA device on PCI, the verified dxg transport on WSL,
+# or the verified render node.
 [llamacpp.heavy_auto]
 prefer = ["cuda", "vulkan"]
 cuda_nodes = ["/dev/nvidiactl"]
-wsl_cuda = ["/dev/dxg", "/usr/lib/wsl/lib/libcuda.so.1"]
+
+# The CUDA heavy engine's WSL transport. WSL has no PCI GPU: the GPU is device_node,
+# the paravirtual dxg node, and the Windows driver store is lib_dir. The admission
+# takes this transport whenever device_node exists and then requires, failing closed:
+# device_node a character device matching its kernel misc registration; libcuda an
+# ELF shared object that resolves inside lib_dir; and exactly one spec in cdi_dir,
+# named in [gpu.cdi.nvidia].specs, that serves [gpu.cdi.nvidia].device with
+# device_node and mounts lib_dir. [gpu.cdi.nvidia].device must select `selector`, the
+# one device a WSL spec serves; that selector is refused on PCI, which needs a UUID.
+# mios-cdi-detect writes the spec; the heavy unit Wants it before every start.
+[llamacpp.heavy_wsl]
+device_node = "/dev/dxg"
+lib_dir = "/usr/lib/wsl"
+libcuda = "lib/libcuda.so.1"
+cdi_dir = "/run/cdi"
+selector = "all"
 
 [enhanced_session]
 enabled    = true
@@ -16391,7 +16408,8 @@ TimeoutStartSec = "600s"
 
 [containers.mios-llm-heavy.Unit]
 After = "network-online.target mios-cdi-detect.service mios-webtools-firstboot.service"
-Wants = "network-online.target"
+# mios-cdi-detect writes the CDI spec the CUDA admission reads from /run/cdi.
+Wants = "network-online.target mios-cdi-detect.service"
 
 [containers.mios-llm-heavy.engine]
 select = "ai.heavy_engine"

@@ -553,14 +553,14 @@ fn heavy_engine(data: &Value) -> &str {
         .unwrap_or("")
 }
 
-/// [llamacpp.heavy_auto]: the GPU kinds "detect" tries, in order, and the CUDA signals.
+/// [llamacpp.heavy_auto]: the GPU kinds "detect" tries, in order, and the bare-metal CUDA
+/// signal; WSL's comes from [llamacpp.heavy_wsl] (its node and its libcuda both exist).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HeavyAuto {
     pub prefer: Vec<GpuKind>,
     /// Bare metal: any of these exists (the NVIDIA driver's control node).
     pub cuda_nodes: Vec<String>,
-    /// WSL: all of these exist (the GPU paravirtual device and the Windows CUDA library).
-    pub wsl_cuda: Vec<String>,
+    pub wsl: crate::gpu_topology::HeavyWsl,
 }
 
 impl HeavyAuto {
@@ -586,7 +586,7 @@ impl HeavyAuto {
         Ok(HeavyAuto {
             prefer,
             cuda_nodes: paths("cuda_nodes")?,
-            wsl_cuda: paths("wsl_cuda")?,
+            wsl: crate::gpu_topology::heavy_wsl(data)?,
         })
     }
 }
@@ -596,8 +596,9 @@ fn exists_under(root: &Path, path: &str) -> bool {
 }
 
 /// The first [llamacpp.heavy_auto].prefer GPU kind this host has: CUDA when a bare-metal NVIDIA
-/// control node exists or every WSL CUDA path does, Vulkan when an [llamacpp.heavy_vulkan]
-/// render node does. None: the "detect" engine has no GPU here.
+/// control node exists or WSL's GPU node and Windows CUDA library both do, Vulkan when an
+/// [llamacpp.heavy_vulkan] render node does. None: the "detect" engine has no GPU here.
+/// Presence only: the admission that follows proves the device.
 pub fn detect_heavy_kind(
     root: &Path,
     data: &Value,
@@ -607,9 +608,10 @@ pub fn detect_heavy_kind(
     for kind in &auto.prefer {
         let has = match kind {
             GpuKind::Cuda => {
+                let libcuda = auto.wsl.lib_dir.join(&auto.wsl.libcuda);
                 auto.cuda_nodes.iter().any(|p| exists_under(root, p))
-                    || (!auto.wsl_cuda.is_empty()
-                        && auto.wsl_cuda.iter().all(|p| exists_under(root, p)))
+                    || (exists_under(root, &auto.wsl.node.to_string_lossy())
+                        && exists_under(root, &libcuda.to_string_lossy()))
             }
             GpuKind::Vulkan => crate::gpu_topology::heavy_vulkan_gpu(root, data, host)?.is_some(),
         };
@@ -1117,15 +1119,28 @@ pub fn run_model_tier(root: &Path, lane: &str, apply: bool) -> Result<Json, Stri
         let device = field("render_node")
             .or_else(|| field("cdi_device"))
             .ok_or("the heavy admission named no device")?;
-        let gid = admission
-            .get("device_gid")
-            .and_then(Json::as_u64)
-            .ok_or("the heavy admission named no device group")?;
+        // A device every user may open (WSL's world read/write dxg) needs no group: the
+        // unit then adds the SSOT default, the unprivileged nobody group.
+        let gid = match admission.get("device_gid") {
+            Some(Json::Null) => {
+                let dotted = keys
+                    .get("device_gid")
+                    .ok_or("llamacpp.tier_lanes.heavy.keys.device_gid is missing")?;
+                at(&data, &dotted.split('.').collect::<Vec<_>>())
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| format!("{dotted} must be a group id string"))?
+                    .to_owned()
+            }
+            other => other
+                .and_then(Json::as_u64)
+                .ok_or("the heavy admission named no device group")?
+                .to_string(),
+        };
         let llama_device =
             field("device").ok_or("the heavy admission named no llama.cpp device")?;
         let image = field("image").ok_or("the heavy admission named no engine image")?;
         extra.push(("device", device));
-        extra.push(("device_gid", gid.to_string()));
+        extra.push(("device_gid", gid));
         extra.push(("llama_device", llama_device));
         extra.push(("image", image));
     }

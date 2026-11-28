@@ -196,8 +196,23 @@ class TestSeatActivatesNothing(unittest.TestCase):
         auto = self.d["llamacpp"]["heavy_auto"]
         self.assertEqual(auto["prefer"][0], "cuda")
         self.assertTrue(set(auto["prefer"]) <= set(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"].values()))
-        self.assertIn("/dev/dxg", auto["wsl_cuda"])
         self.assertIn("auto", self.d["images"]["mios-llm-heavy"]["engine"])
+
+    def test_wsl_heavy_cuda_reads_the_spec_mios_cdi_detect_writes(self):
+        # WSL has no PCI GPU: the admission proves dxg, the driver store and a WSL CDI spec,
+        # which mios-cdi-detect writes to /run/cdi, so the heavy unit pulls it in.
+        wsl = self.d["llamacpp"]["heavy_wsl"]
+        self.assertEqual(wsl["device_node"], "/dev/dxg")
+        self.assertEqual(wsl["selector"], self.d["gpu"]["cdi"]["nvidia"]["device"].split("=", 1)[1])
+        unit = self.d["containers"]["mios-llm-heavy"]["Unit"]
+        self.assertIn("mios-cdi-detect.service", unit["Wants"].split())
+        self.assertIn("mios-cdi-detect.service", unit["After"].split())
+        with open(os.path.join(_ROOT, "usr/libexec/mios/mios-cdi-detect"), encoding="utf-8") as fh:
+            detect = fh.read()
+        specs = self.d["gpu"]["cdi"]["nvidia"]["specs"]
+        for written in ("nvidia-wsl.yaml", "wsl2-nvidia.yaml"):
+            self.assertIn(f"{wsl['cdi_dir']}/{written}", detect)
+            self.assertIn(written, specs)
 
     def test_every_required_capability_is_grantable(self):
         granted = set()
