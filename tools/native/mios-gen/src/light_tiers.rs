@@ -1160,8 +1160,8 @@ pub fn run_model_tier(root: &Path, lane: &str, apply: bool) -> Result<Json, Stri
     );
     let changed = apply && write_atomic(&target, &contents)?;
     Ok(
-        json!({"lane": lane, "measured": {"ram_mib": measured.ram_mib,
-        "gpu": measured.gpu.as_ref().map(|g| json!({"kind": format!("{:?}", g.kind),
+        json!({"lane": lane, "measured": {"ram_mib": plan.measured.ram_mib,
+        "gpu": plan.measured.gpu.as_ref().map(|g| json!({"kind": format!("{:?}", g.kind),
             "vram_mib": g.vram_mib, "gtt_mib": g.gtt_mib, "apu": g.apu}))},
         "choice": choice.to_json(), "admission": admission, "env_file": target,
         "contents": contents, "changed": changed}),
