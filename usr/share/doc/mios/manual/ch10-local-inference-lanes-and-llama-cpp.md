@@ -1,4 +1,4 @@
-<!-- AI-hint: Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies, the tool-safe floor, and the per-host model tiers each lane picks at start. -->
+<!-- AI-hint: Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies, the tool-safe floor, the per-host model tiers each lane picks at start from the host's spec'd RAM, and the heavy engine detected per host. -->
 
 # Chapter 10: Local Inference Lanes and llama.cpp
 
@@ -170,14 +170,34 @@ kind) are in `[llamacpp.gguf."<file>"]`, one row per GGUF.
 The heavy lane and `mios-cpu-node` serve one GGUF each. Each lane's `ExecStartPre`
 runs `mios-gen model-tier --lane heavy|cpu-node --apply`, which:
 
-1. measures the host;
+1. measures the host: its spec'd RAM and, for the heavy lane, the GPU of the engine
+   it resolves to;
 2. takes the last row of `[[llamacpp.tiers.<lane>]]` that is enabled, has its
    GGUF on disk, has a `min_ram_mib` the host's RAM reaches, and has a `need_mib`
    within the lane's budget;
 3. for the heavy lane, runs the heavy admission on that row: the GGUF, slots, and
    the exact CUDA device or the verified Vulkan render node;
 4. writes the row to `/run/mios/model-tier/<lane>.env`
-   (`[llamacpp.tier_policy].env_dir`).
+   (`[llamacpp.tier_policy].env_dir`), and for the heavy lane the admitted device,
+   its group, llama.cpp's `--device` and the engine image.
+
+The vendor heavy engine is `auto`: one llama.cpp unit that finds the host's GPU at
+every start (`[llamacpp.heavy_auto]`). It takes the first kind in `prefer` the host
+has:
+
+| Host | Signal | Engine |
+|---|---|---|
+| Bare-metal NVIDIA | `/dev/nvidiactl` (the driver's control node) | `llamacpp` (CUDA) |
+| WSL with an NVIDIA Windows driver | `/dev/dxg` and `/usr/lib/wsl/lib/libcuda.so.1` | `llamacpp` (CUDA) |
+| AMD APU or card | an amdgpu render node (`[llamacpp.heavy_vulkan]`) | `llamacpp-vulkan` |
+| None of these | | no heavy lane |
+
+The unit's `ExecCondition` (`mios-gen model-tier --lane heavy --probe`) exits 1 when
+the host has none, so systemd skips the unit instead of failing it, and the CPU
+lanes keep serving. `/dev/dxg` alone is not enough: WSL exposes it for any vendor's
+GPU. A host can still pin the engine in its own tier: `llamacpp` or
+`llamacpp-vulkan` takes effect at the unit's next start, while `vllm` or `sglang`
+need an image built with that engine.
 
 The unit reads that file after `install.env`, and the model, context and KV
 references are `[generator].placeholders`, so systemd expands them at start. One
@@ -194,6 +214,14 @@ every host serves on demand. Their `micro` and `embed` tier rows are declared fo
 the floor check and sizing; a host does not swap them.
 
 ### Budgets
+
+RAM is the RAM MiOS specs for the host, read as `MemTotal`: a bare-metal Blade's
+installed RAM, or a WSL VM's `.wslconfig` `memory=`, which `Get-MiOS.ps1` and
+`build-mios.ps1` render from `[bootstrap.dev_vm]` (`memory_mb`, else host RAM minus
+`[bootstrap.dev_vm.host_reserve]`: the larger of `memory_gb` (8) and `memory_pct`
+(50%)). It is never `MemAvailable`. A pick follows the spec, and the lanes' memory
+bounds (`cpu_node_memory_high`/`_max`, the light lane's `memory_max`) keep it safe,
+whatever happens to be free when the lane starts.
 
 All values are in MiB and measured at each start:
 
@@ -226,15 +254,25 @@ Heavy lane (CUDA `llamacpp` or Vulkan `llamacpp-vulkan` engine):
 | `ram-floor` | `LFM3-1.7B-Q8_0.gguf` | 32768 | q8_0 | 2273 | - |
 | `ram-6g` | `granite-4.2-3b-Q8_0.gguf` | 32768 | q8_0 | 5482 | - |
 | `ram-12g` | `granite-4.2-3b-Q8_0.gguf` | 65536 | q8_0 | 6945 | 12288 |
-| `ram-16g-dense` | `granite-4.1-8b.gguf` (Q4_K_M) | 32768 | q8_0 | 9482 | 16384 |
-| `ram-16g` | `LFM2.5-8B-A1B-Q8_0.gguf` | 65536 | q8_0 | 9514 | 16384 |
+| `ram-16g` | `Qwen3.5-4B-Q8_0.gguf` | 131072 | q8_0 | 7318 | 14336 |
+| `ram-20g-dense` | `granite-4.1-8b.gguf` (Q4_K_M) | 32768 | q8_0 | 9482 | 16384 |
+| `ram-20g` | `LFM2.5-8B-A1B-Q8_0.gguf` | 65536 | q8_0 | 9514 | 16384 |
 | `ram-32g` | `gpt-oss-20b-MXFP4.gguf` | 65536 | q8_0 | 13288 | 28672 |
 | `ram-64g` | `Qwen3.6-35B-A3B-Q8_0.gguf` | 65536 | q8_0 | 36859 | 57344 |
 
-Light-lane helpers: the micro is `lfm2-700m.gguf` (LFM2-700M Q8_0), which also backs
-`mios-micro` and `micro`, with `lfm3:1.7b` as the opt-in alternative. The embedders
-are EmbeddingGemma-300m QAT Q8_0 (`nomic-embed-text`) and EmbeddingGemma 2 Q8_0
-(`embeddinggemma2:270m`).
+`min_ram_mib` is compared with `MemTotal`, which sits below a host's nominal size (a
+16 GB WSL VM reads about 15970 MiB), so a row for an N GiB class asks for about 7/8
+of N GiB. The 8B rows therefore need more than a 16 GB spec.
+
+Light-lane helpers: the micro lane (`[ai].micro_model`) is `lfm2-700m.gguf`
+(LFM2-700M Q8_0), with `lfm3:1.7b` as the opt-in alternative. `mios-micro:1.5b`,
+`mios-micro` and `micro` are Qwen2.5-Coder-1.5B-Instruct at Q8_0, 8k, resident: it
+emits native OpenAI JSON tool calls, which LFM2's Pythonic format does not. The
+embedders are EmbeddingGemma-300m QAT Q8_0 (`nomic-embed-text`) and EmbeddingGemma 2
+Q8_0 (`embeddinggemma2:270m`). On a 14G Blade the CPU light lane's `memory_max` is
+3482 MiB: `mios-micro` (about 2226) plus `lfm2:700m` (about 1165) fit at about 3391;
+an embedding call on top makes the kernel reclaim the mmap'd GGUF page cache, which
+is slower but kills nothing.
 
 Two models need particular care. gpt-oss uses the Harmony parser, so clients must
 send `reasoning_content` back on every tool-call turn. Qwen3.6-35B-A3B has 3B
@@ -258,6 +296,7 @@ so the digests here are provenance, not pins.
 | `gpt-oss-20b-MXFP4.gguf` | `ggml-org/gpt-oss-20b-GGUF` @ `41e8a94d` | 12109566624 | `27cd6c432c7672cb812a92f611cf3ba7bbc35928262bb1e1253ff4ee6ae35901` | Apache-2.0 | `gpt-oss` |
 | `Qwen3.6-35B-A3B-Q8_0.gguf` | `ggml-org/Qwen3.6-35B-A3B-GGUF` @ `52f9f9b8` | 36903139616 | `f189cedbe18dc524dd74014b23431081262bc9fcc57c18fec7a7a25149246570` | Apache-2.0 | `qwen35moe` |
 | `embeddinggemma-2-Q8_0.gguf` | `ggml-org/embeddinggemma-2-GGUF` @ `6ea3e3a3` | 309855456 | `2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135` | Apache-2.0 | `gemma-embedding2` |
+| `qwen2.5-coder-1.5b-instruct-q8_0.gguf` | `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF` @ `f86cb2c1` | 1894532160 | `507de59046601282ba768a9789900e6ccf60ed93ddf346730b7c68eb0715bc47` | Apache-2.0 | `qwen2` |
 
 Nemotron-3.5-Bolt-E4B (`nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB`, Q4_K_M, 6180446208
 bytes, OpenMDW-1.1) meets the floor for its class: 8B total, dense, so Q4_K_M. It
@@ -270,12 +309,19 @@ The arithmetic below is taken from the `light_tiers` tests:
 
 | Host | Heavy lane | cpu-node |
 |---|---|---|
-| X570 MiOS-DEV: 8 GB RTX 3060 Ti, 24 GB VM | 8192 - 1792 = 6400 → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k | min(15622, 24034 - 6008 - 2560) = 15466 → `ram-16g`, LFM2.5-8B-A1B Q8_0, 64k |
+| X570 MiOS-DEV at its MiOS spec: 8 GB RTX 3060 Ti, 16 GB VM (MemTotal about 15970) | 8192 - 1792 = 6400 → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k | min(10380, 15970 - 3992 - 2560) = 9418 → `ram-16g`, Qwen3.5-4B Q8_0, 128k |
+| X570 MiOS-DEV as it runs now: the VM hand-set to 24 GB | as above | min(15622, 24034 - 6008 - 2560) = 15466 → `ram-20g`, LFM2.5-8B-A1B Q8_0, 64k |
 | PS5, CPU only (no Vulkan lane yet) | none | min(9055, 13931 - 3482 - 2560) = 7889 → `ram-12g`, Granite 4.2 3B Q8_0, 64k; never the dense 8B |
 | PS5 APU: gfx1013, 1 GiB VRAM + 6.8 GiB GTT, 13.6 GiB | min(7989, 0.40 x 13931 = 5572) → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k on Vulkan | min(9055, 13931 - 3482 - 2560 - 4847) = 3042 → `ram-floor`, LFM3-1.7B Q8_0, 32k |
 | B550: Renoir Vega APU, 30.7 GiB | min(16220, 12566) → `gpu-10g`, Qwen3.5-4B Q8_0, 128k on Vulkan | min(20420, 31416 - 7854 - 2560 - 7318) = 13684 → `ram-32g`, gpt-oss-20b, 64k |
 | 64 GB CPU host | none | min(41795, 45665) → `ram-64g`, Qwen3.6-35B-A3B Q8_0, 64k |
-| 24 GB dGPU host, 32 GB RAM | 24564 - 1792 = 22772 → `gpu-24g`, gpt-oss-20b, 128k | 20865 fits `ram-32g`, but that is the heavy lane's GGUF, so `ram-16g` |
+| 24 GB dGPU host, 32 GB RAM | 24564 - 1792 = 22772 → `gpu-24g`, gpt-oss-20b, 128k | 20865 fits `ram-32g`, but that is the heavy lane's GGUF, so `ram-20g` |
+
+The X570 is a 32 GB host, so MiOS specs its VM at `memory=16GB` (32 minus the larger
+of 8 and 50% of 32). Its live `.wslconfig` says `memory=24GB`, set by hand, which
+leaves Windows about 8 GB. Apply the spec on the Windows host: rerun `Get-MiOS.ps1`
+(it reconciles `memory=`), or set `memory=16GB` under `[wsl2]` and run
+`wsl --shutdown`. Until then the VM reads 24 GB and its cpu-node takes `ram-20g`.
 
 On the PS5 APU everything stays inside 13.6 GiB with no swap: light lane at most
 3482, GPU lane 4847, cpu-node 2273 and host reserve 2560 come to 13162 MiB, and no
@@ -287,11 +333,12 @@ GiB available, so audit what holds the rest before relying on the full split.
 
 Every host fetches every GGUF any tier or map entry can select. That is the
 operator's choice: the vendor `[[ai.firstboot_models]]` list carries all of them,
-about 72 GB on top of the baked set. A 14G console Blade writes all of it to its
+about 74 GB on top of the baked set. A 14G console Blade writes all of it to its
 USB-2 root, which is the same disk its freezes started on, so run its first fetch
 (`mios models sync`) while it is idle. Until a lane's tier GGUF is on disk, the lane
-serves its static keys. For the cpu-node those are the dense 8B at 32k with q8_0 KV,
-about 9.3 GiB, which is more than a 14G Blade's `cpu_node_memory_high` allows.
+serves its static keys. For the cpu-node those are the tool-safe floor, LFM3-1.7B
+Q8_0 at 32k (about 2.2 GiB), which is baked into the image (`[llamacpp].bake_models`),
+so every host, a fresh 14G Blade included, serves tools from first boot.
 
 ### Pinning and overriding a tier
 
@@ -306,8 +353,9 @@ heavy = ""
 host_reserve_mib = 4096    # a VM that also runs the agent stack and builds keeps more back
 
 [ai]
-heavy_engine = "llamacpp-vulkan"   # an AMD APU or card: PS5, B550
-# heavy_engine = "llamacpp"        # an NVIDIA card: X570 MiOS-DEV
+# The vendor "auto" detects the GPU at start; pin only to override it.
+# heavy_engine = "llamacpp-vulkan"   # serve on the AMD render node
+# heavy_engine = "llamacpp"          # serve on the NVIDIA card
 
 [routing]
 # The model router advertises router_ctx on every route. Raise it to 65536 only once
@@ -326,6 +374,15 @@ cpu-node` without `--apply` prints the plan and its arithmetic without writing.
 - No one has run Vulkan inference on the PS5's gfx1013 (`vulkaninfo` has not been
   run there) or on the B550's Vega. The Vulkan engine fails closed without an amdgpu
   render node.
+- The `auto` unit relies on systemd expanding `${MIOS_LLAMACPP_HEAVY_*}` in the
+  Quadlet's `Image=`, `AddDevice=` and `GroupAdd=` at start; no host has run it yet.
+- On WSL, `auto` detects the NVIDIA GPU, but the CUDA admission it then runs needs a
+  PCI-bound NVIDIA device and an exact UUID CDI name, which WSL's dxg path does not
+  have. The unit then fails at its `ExecStartPre` and `Restart=` retries it; today
+  MiOS-DEV's `headless` role keeps the unit off.
+- The mios-micro OCI image still ships its Qwen2.5-Coder-1.5B Q4_K_M file under
+  `/models-micro`, below the floor and no longer served. The mios-micro repository
+  should publish the Q8_0, or the mount should go.
 - Both Blades resolve to the vendor `hybrid` archetype, which grants
   `gpu-serving`. MiOS-DEV is demoted to `headless` on WSL by `usr/lib/mios/blade.sh`,
   so its heavy unit's `gpu-serving` gate needs the role work on its own branch.
