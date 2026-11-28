@@ -18,13 +18,14 @@ models:
   # The qwen35-arch block is gone upstream: Qwen3.5 ('qwen35') and Qwen3.6
   # ('qwen35moe') load on mainline llama.cpp through the native GATED_DELTA_NET op
   # (PR #19468), present in the b12464 CPU and b12602 CUDA lane images. The
-  # Qwen-monoculture rule still stands, so the Qwen entries below are opt-in picks,
-  # never the vendor brain. Which host serves which entry is a host-tier choice
-  # (manual chapter 10, "Per-node model picks").
-  # KV RULE: every chat entry runs symmetric q8_0 K/V. A 4-bit KV cache measurably
-  # flips tool-call decisions (llama.cpp docs/function-calling.md warns on -ctk q4_0),
-  # so q4_0 is never the fix for a tight box -- pick a hybrid-attention model instead
-  # (Qwen3.5/3.6 GDN, LFM2.5/LFM3 conv: 64k of q8_0 KV costs 0.4-1.1 GiB).
+  # Qwen-monoculture rule still stands, so the Qwen entries below are tier picks,
+  # never the vendor brain. Which lane serves which GGUF on a host is that host's model
+  # tier (manual chapter 10, "Model tiers").
+  # KV RULE: every chat entry runs symmetric q8_0 K/V ([llamacpp.tool_safe], gated by
+  # check_tool_safe_floor). A 4-bit KV cache measurably flips tool-call decisions
+  # (llama.cpp docs/function-calling.md warns on -ctk q4_0), so q4_0 is never the fix
+  # for a tight box -- pick a hybrid-attention model instead (Qwen3.5/3.6 GDN, LFM2.5/
+  # LFM3 conv: 64k of q8_0 KV costs 0.4-1.1 GiB).
   # micro_cpu (always-warm classify/expand/gate). fleet modernization:
   # qwen3:1.7b -> Liquid AI LFM2-700M (LiquidAI/LFM2-700M-GGUF). Dense 'lfm2' arch is
   # MERGED in mainline llama.cpp (PR #14620, ~b6709) -- NOT the qwen35 trap; verified
@@ -36,9 +37,17 @@ models:
   # offloadable; NEVER asymmetric k!=v -> issue #20866 CPU-fallback). The qwen3:1.7b
   # alias keeps every pipeline-emitted micro name resolving onto the new model.
   # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
+  # TOOL-SAFE: lfm2-700m.gguf is LFM2-700M at Q8_0, the [llamacpp.tool_safe] small floor
+  # for a sub-1B non-reasoning micro. It also backs the mios-micro names: their old
+  # entry ran the mios-micro image's Qwen2.5-Coder-1.5B at Q4_K_M, below that floor,
+  # as a second always-resident micro. One micro GGUF in RAM is what lets the light
+  # lane's helpers fit a 14G Blade's 25% bound next to its GPU and CPU lanes.
   "lfm2:700m":
     aliases:
       - qwen3:1.7b
+      - mios-micro:1.5b
+      - mios-micro
+      - micro
     cmd: >
       /app/llama-server --model /models/lfm2-700m.gguf
       --port ${PORT} --host 127.0.0.1
@@ -48,27 +57,6 @@ models:
       --slot-save-path /var/lib/mios/llamacpp/slots --jinja
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
-
-  # mios-micro:1.5b -- dedicated MiOS miniature model (Qwen2.5-Coder-1.5B base, Apache-2.0).
-  # Sub-250ms resident model providing native OpenAI JSON tool-calling and structured outputs
-  # for mios-log-watcher, mios-cron-director, prefilter, and mios-micro-llm CLI.
-  # The GGUF is the file the mios-micro OCI image ships at /models/<gguf_file> (its
-  # Containerfile GGUF_FILE, pinned in that repo's pyproject [tool.mios-micro.package]),
-  # mounted here at /models-micro. The old mios-micro-1.5b.gguf name was never in the
-  # image, so every request for this entry failed to load.
-  "mios-micro:1.5b":
-    aliases:
-      - mios-micro
-      - micro
-    cmd: >
-      /app/llama-server --model /models-micro/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
-      --port ${PORT} --host 127.0.0.1
-      --ctx-size 8192 --parallel 1 --cache-reuse 256
-      --n-gpu-layers 999 --flash-attn on
-      --cache-type-k q8_0 --cache-type-v q8_0
-      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
-    proxy: "http://127.0.0.1:${PORT}"
-    ttl: -1
 
   # light_brain + coder -- IBM Granite 4.1 8B Instruct (dense). fleet
   # modernization: the served chat/reasoning GGUF moves from gemma4:12b to Granite 4.1
@@ -127,21 +115,20 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
-  # ── per-node picks (opt-in; every arch below loads on stock llama-server) ──
-  # Selected per host, never by the vendor tier. A CPU-only host's CPU-tier map
-  # drops every agent-class entry below ([llamacpp.light_cpu_tier].drop); such a host
-  # serves its pick through mios-cpu-node (cpu_node_model_file), and the dGPU heavy
-  # lane serves its pick through heavy_model_file. The GGUF reaches a host through
-  # that host's [[ai.firstboot_models]] list: name = the --model file, source = the
-  # Hugging Face resolve/main URL of the repo named in the comment (the fetcher
-  # resolves the commit and LFS sha256 itself). Agent entries: --jinja, symmetric
-  # q8_0 K/V and 65536 context (Hermes needs ~64k). The hybrid-attention entries
-  # carry no --cache-reuse: recurrent/conv state cannot be shifted, and llama-server
-  # disables reuse for such models anyway.
+  # ── model-tier picks (every arch below loads on stock llama-server) ─────────
+  # Each runs at a [llamacpp.tool_safe] quant with symmetric q8_0 K/V and --jinja.
+  # The heavy lane and mios-cpu-node serve these GGUFs per host through their model
+  # tiers ([[llamacpp.tiers.heavy]], [[llamacpp.tiers.cpu_node]]) under the stable
+  # served names (mios-heavy, mios-agent-cpu and every granite4.1:8b alias); the
+  # entries here make each one callable by name on a GPU-tier light lane. A CPU-only
+  # host's CPU-tier map drops the agent-class entries ([llamacpp.light_cpu_tier].drop).
+  # Every GGUF is in the vendor [[ai.firstboot_models]], so every host has them. The
+  # hybrid-attention entries carry no --cache-reuse: recurrent/conv state cannot be
+  # shifted, and llama-server disables reuse for such models anyway.
   #
-  # Qwen3.5-4B (Apache-2.0; 'qwen35' dense GDN hybrid, 1 in 4 layers full attention,
-  # 262k native). dGPU heavy-lane pick for an 8 GB card: ~2.8 GiB weights + ~1.1 GiB
-  # of 64k q8_0 KV leaves the heavy lane's 1024 MiB fit margin intact. Tool calls are
+  # Qwen3.5-4B (Apache-2.0; 'qwen35' dense GDN hybrid, reasoning, 262k native). Dense
+  # 4B + reasoning: the floor is Q4_K_M, which the 8 GB GPU and console-APU tiers use;
+  # bigger GPU tiers serve its Q8_0 (Qwen3.5-4B-Q8_0.gguf) at 128k. Tool calls are
   # Qwen3-Coder XML (llama.cpp's qwen3_coder handler). A thinking model: keep >= 64k.
   # GGUF ggml-org/Qwen3.5-4B-GGUF, file Qwen3.5-4B-Q4_K_M.gguf (3032091584 bytes).
   "qwen3.5:4b-q4_K_M":
@@ -158,18 +145,17 @@ models:
     ttl: 300
 
   # LFM2.5-8B-A1B (Liquid AI, LFM Open License v1.0 -- commercial terms not yet
-  # reviewed; 'lfm2moe' conv hybrid, 8.3B total / 1.5B active, 128k native). CPU-node
-  # pick for a DDR4 box: it reads about a fifth of a dense 8B's weight bytes per token,
-  # and 64k of q8_0 KV is ~0.4 GiB. Tool calls are Pythonic
-  # <|tool_call_start|>[f(a=1)]<|tool_call_end|>, which llama.cpp's LFM2.5 handler
-  # maps to OpenAI tool_calls; it backs NO agent alias until a host's JSON tool_calls
-  # smoke test through --jinja passes.
-  # GGUF LiquidAI/LFM2.5-8B-A1B-GGUF, file LFM2.5-8B-A1B-Q4_K_M.gguf (5155564768 bytes).
+  # reviewed; 'lfm2moe' conv hybrid, 8.5B total / 1.5B active, 128k native). A MoE
+  # with <= 2B active: Q8_0. The 16G-RAM cpu-node tier: it reads about a fifth of a
+  # dense 8B's weight bytes per token, and 64k of q8_0 KV is ~0.4 GiB. Tool calls are
+  # Pythonic <|tool_call_start|>[f(a=1)]<|tool_call_end|>, which llama.cpp's LFM2.5
+  # handler maps to OpenAI tool_calls; confirm with a JSON tool_calls smoke test.
+  # GGUF LiquidAI/LFM2.5-8B-A1B-GGUF, file LFM2.5-8B-A1B-Q8_0.gguf (9010195680 bytes).
   "lfm2.5:8b-a1b":
     aliases:
       - lfm2.5-8b-a1b
     cmd: >
-      /app/llama-server --model /models/LFM2.5-8B-A1B-Q4_K_M.gguf
+      /app/llama-server --model /models/LFM2.5-8B-A1B-Q8_0.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 65536 --parallel 1
       --flash-attn on
@@ -179,16 +165,15 @@ models:
     ttl: 300
 
   # Granite 4.2 3B (IBM, Apache-2.0; dense 'granite', every layer attends, built-in
-  # thinking, 131k native). The low-risk drop-in: same family and template path as
-  # granite-4.1. Pick for a small CPU node or a second device; as a 64k fallback it
-  # runs on mios-cpu-node or the heavy lane, which set their own context. Served here
-  # at 32k because its dense KV is 80 KiB/token (64k of q8_0 is ~2.7 GiB).
-  # GGUF ibm-granite/granite-4.2-3b-GGUF, file granite-4.2-3b-Q4_K_M.gguf (2244011552 bytes).
+  # thinking, 131k native). Sub-4B: Q8_0. Same family and template path as granite-4.1;
+  # the 6G and 12G cpu-node tiers (32k and 64k). Served here at 32k because its dense KV
+  # is 80 KiB/token (64k of q8_0 is ~2.7 GiB).
+  # GGUF ibm-granite/granite-4.2-3b-GGUF, file granite-4.2-3b-Q8_0.gguf (3892651552 bytes).
   "granite4.2:3b":
     aliases:
       - granite-4.2-3b
     cmd: >
-      /app/llama-server --model /models/granite-4.2-3b-Q4_K_M.gguf
+      /app/llama-server --model /models/granite-4.2-3b-Q8_0.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 32768 --parallel 1 --cache-reuse 256
       --flash-attn on
@@ -199,18 +184,17 @@ models:
 
   # LFM3-1.7B (Liquid AI, LFM Open License v1.0; 'lfm3' tri-hybrid of short convs,
   # sliding-window and global attention, 256k native; post-trained for agent harnesses
-  # including Hermes Agent). Successor candidate for lfm2:700m on the micro/router job:
-  # under 2B active stays interactive inside the light lane's two-core quota. Tool
-  # calls are Qwen3-Coder-style XML (llama.cpp's qwen3_coder handler). The vendor warns
-  # against agentic coding or long multi-step reasoning. [ai].micro_model stays
-  # lfm2:700m until a host's JSON tool_calls smoke test passes. Micro lane: 32k, EXEMPT
-  # from the 128k chat mandate.
-  # GGUF LiquidAI/LFM3-1.7B-GGUF, file LFM3-1.7B-Q4_K_M.gguf (1099627808 bytes).
+  # including Hermes Agent). Sub-4B: Q8_0. The tool-safe floor of the cpu-node tiers
+  # (every node keeps tools, a 14G APU's CPU lane included) and the opt-in micro
+  # ([ai].micro_model = "lfm3:1.7b"). Tool calls are Qwen3-Coder-style XML (llama.cpp's
+  # qwen3_coder handler); the vendor warns against agentic coding or long multi-step
+  # reasoning. Micro lane: 32k, EXEMPT from the 128k chat mandate.
+  # GGUF LiquidAI/LFM3-1.7B-GGUF, file LFM3-1.7B-Q8_0.gguf (1846238496 bytes).
   "lfm3:1.7b":
     aliases:
       - lfm3-1.7b
     cmd: >
-      /app/llama-server --model /models/LFM3-1.7B-Q4_K_M.gguf
+      /app/llama-server --model /models/LFM3-1.7B-Q8_0.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 32768 --parallel 1
       --flash-attn on
@@ -219,18 +203,17 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
-  # Qwen3.6-35B-A3B (Apache-2.0; 'qwen35moe' GDN MoE, 35B total / 3B active, 262k
-  # native). The strongest sub-40B agent and coder; the pick for the one Blade with
-  # ~30 GiB of RAM, as coding agent and council chair on its mios-cpu-node: ~21.5 GiB
-  # at 64k, so the CPU tier drops it from this lane. Unsloth's dynamic UD-Q4_K_M;
-  # ggml-org/Qwen3.6-35B-A3B-GGUF Qwen3.6-35B-A3B-Q4_K_M.gguf is the plain quant,
-  # ~1.5 GiB smaller. Tool calls are Qwen3-Coder XML (llama.cpp's qwen3_coder handler).
-  # GGUF unsloth/Qwen3.6-35B-A3B-GGUF, file Qwen3.6-35B-A3B-UD-Q4_K_M.gguf (22134528992 bytes).
-  "qwen3.6:35b-a3b":
+  # gpt-oss-20b (Apache-2.0; 'gpt-oss' MoE, 20.9B total / 3.6B active, half sliding
+  # window, 131k native) in its native MXFP4, which meets any floor. The 32G-RAM
+  # cpu-node tier and the 16-24 GB GPU tiers. Its parser is Harmony: clients MUST send
+  # reasoning_content back on every tool-call turn, or a malformed channel header gets
+  # the turn rejected (llama.cpp #27720).
+  # GGUF ggml-org/gpt-oss-20b-GGUF, file gpt-oss-20b-MXFP4.gguf (12109566624 bytes).
+  "gpt-oss:20b":
     aliases:
-      - qwen3.6-35b-a3b
+      - gpt-oss-20b
     cmd: >
-      /app/llama-server --model /models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      /app/llama-server --model /models/gpt-oss-20b-MXFP4.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 65536 --parallel 1
       --flash-attn on
@@ -239,16 +222,34 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
-  # NVIDIA-Nemotron-3.5-Bolt-E4B -- DISABLED (commented out below). A GPU-lane pick for
-  # a ~13 GiB shared-memory APU once that lane exists; Gemma-4-E4B lineage, the best
-  # call-discipline scores in its class (When2Call, RelyToolBench). Verified: NVIDIA's
-  # own GGUF nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB, file
+  # Qwen3.6-35B-A3B (Apache-2.0; 'qwen35moe' GDN MoE, 35B total / 3B active, reasoning,
+  # 262k native). The strongest sub-40B agent and coder. 3B active is caution
+  # territory, so it serves only at Q8_0 (~36 GiB at 64k): the 64G-RAM cpu-node tier;
+  # the CPU tier drops it from this lane. Tool calls are Qwen3-Coder XML.
+  # GGUF ggml-org/Qwen3.6-35B-A3B-GGUF, file Qwen3.6-35B-A3B-Q8_0.gguf (36903139616 bytes).
+  "qwen3.6:35b-a3b":
+    aliases:
+      - qwen3.6-35b-a3b
+    cmd: >
+      /app/llama-server --model /models/Qwen3.6-35B-A3B-Q8_0.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 65536 --parallel 1
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # NVIDIA-Nemotron-3.5-Bolt-E4B -- DISABLED (commented out below). Gemma-4-E4B
+  # lineage, the best call-discipline scores in its class (When2Call, RelyToolBench).
+  # Verified: NVIDIA's own GGUF nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB, file
   # Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf (6180446208 bytes, OpenMDW-1.1, 'gemma4' arch,
-  # 64k native). Held because (1) its target lane, the console APU's GPU over Vulkan,
-  # is not deployable yet: that Blade ships only the CPU llama-swap image, its USB-2
-  # root disk awaits replacement and its Vulkan stack is unprobed; and (2) the Q4_K_M is
-  # ~5.8 GiB, ~1.1 GiB above the estimate the lane was sized on, so ~7.1 GiB at 64k
-  # inside the ~7.8 GiB GPU-mappable pool is unproven. Uncomment once both hold.
+  # 64k native). Its class (8B total, dense) meets the floor at Q4_K_M, but it does not
+  # fit the GPU tier it was meant for: ~5.8 GiB of weights + ~0.5 GiB of 64k q8_0 KV +
+  # 0.8 GiB compute is ~7.1 GiB, against the 14G console APU's ~5.4 GiB GPU budget
+  # (0.40 x 13.6 GiB, next to its CPU lane and light lane); at 32k it is still ~6.8 GiB.
+  # Uncomment, add its [llamacpp.gguf] row and a [[llamacpp.tiers.heavy]] row only for
+  # a GPU tier that fits it.
   # "nemotron3.5-bolt:e4b":
   #   aliases:
   #     - nemotron-3.5-bolt-e4b
@@ -367,6 +368,5 @@ groups:
       - "granite4.1:8b"
       - "lfm2:700m"
       - "nomic-embed-text"
-      - "mios-micro:1.5b"
       - "lfm3:1.7b"
       - "embeddinggemma2:270m"

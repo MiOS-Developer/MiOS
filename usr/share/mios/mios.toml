@@ -7989,14 +7989,15 @@ cpu_node_threads = 14
 # it only once CPU RAM headroom is proven against cpu_node_memory_max below.
 cpu_node_model_file = "granite-4.1-8b.gguf"
 cpu_node_context    = 32768
-# Symmetric K and V cache type of the mios-cpu-node lane (--cache-type-k/-v). q8_0
-# is the target on every chat lane: a 4-bit KV cache flips tool-call decisions. The
-# vendor value stays q4_0 for one host: the dense 8B above at 32k measured 62% of the
-# 14G PS5 at q4_0, and q8_0 adds ~1.25 GiB, past cpu_node_memory_high, which then
-# reclaims the mmap'd GGUF over that Blade's USB-2 root. A host that moves its node
-# to a hybrid-attention GGUF sets q8_0 with it (manual chapter 10, "Per-node model
-# picks"); flip this once no Blade's node serves the dense 8B.
-cpu_node_cache_type = "q4_0"
+# Symmetric K and V cache type of the mios-cpu-node lane (--cache-type-k/-v), within
+# [llamacpp.tool_safe].chat_kv: a 4-bit KV cache flips tool-call decisions. The three
+# cpu_node_* keys above are the lane's static fallback; at every start the lane's
+# model tier ([[llamacpp.tiers.cpu_node]]) overrides them for the host it runs on, and
+# no tier row puts the dense 8B on a 14G Blade. Until a tier GGUF is on disk the
+# fallback serves: the dense 8B at 32k with q8_0 KV needs ~9.3 GiB, above
+# cpu_node_memory_high on a 14G Blade, so such a Blade finishes its first-boot model
+# fetch before relying on this lane.
+cpu_node_cache_type = "q8_0"
 # cgroup memory bounds of the mios-cpu-node unit, as systemd percentages of
 # physical RAM so one value fits a 14G Blade and a 64G workstation. High throttles
 # and reclaims (the mmap'd GGUF page cache first); Max OOM-kills only the node,
@@ -8024,7 +8025,15 @@ heavy_ubatch_size = 512
 heavy_parallel = 1
 # Symmetric K/V type. Keep q8_0: a 4-bit KV cache degrades tool calling, so a VRAM
 # shortfall is met with a smaller or hybrid-attention heavy_model_file, not q4_0.
+# The heavy_* model, context and KV keys are the static fallback; the lane's model
+# tier ([[llamacpp.tiers.heavy]]) overrides them per host at every start.
 heavy_cache_type = "q8_0"
+# The Vulkan engine's verified render node and its group, written by the lane's model
+# tier at start, never set by hand. These defaults only keep the unit's references
+# defined: a node that does not exist and the unprivileged nobody group, so a start
+# that somehow skipped the tier's admission fails closed instead of guessing a device.
+heavy_render_node = "/dev/dri/none"
+heavy_render_gid = "65534"
 heavy_slot_dir = "/var/lib/mios/llamacpp/heavy"
 # Logical and physical token batch limits inherited by every light server child.
 # Keep the physical batch no larger than the logical batch. Server integer bounds apply.
@@ -8036,7 +8045,11 @@ light_backend = "cpu"
 light_gpu_profile = "auto"
 # Select gpu.resources.<id> independently of the desktop profile; empty preserves legacy selection.
 light_gpu_resource = ""
-bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
+# The image bake (and, on a host without a baked seed, the required first-boot set).
+# lfm2-700m.gguf is LFM2-700M at Q8_0: a sub-1B non-reasoning micro needs the
+# [llamacpp.tool_safe] small floor. The local name is unchanged, so every served
+# path stays; a host with the older Q4_K_M file re-fetches it under the same name.
+bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q8_0.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
 
 
 [llamacpp.light_runtime]
@@ -8088,7 +8101,254 @@ config = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 [llamacpp.light_cpu_tier]
 peer = "cpu-node"
 peer_model = "granite4.1:8b"
-drop = ["qwen3-vl:4b", "qwen3.5:4b-q4_K_M", "lfm2.5:8b-a1b", "granite4.2:3b", "qwen3.6:35b-a3b"]
+drop = ["qwen3-vl:4b", "qwen3.5:4b-q4_K_M", "lfm2.5:8b-a1b", "granite4.2:3b", "qwen3.6:35b-a3b", "gpt-oss:20b"]
+
+# ---- Tool-safe floor -----------------------------------------------------------
+# Every lane that serves tools meets this floor on every host; `mios-gen tool-safe
+# --check` (drift check check_tool_safe_floor) fails the build on any lane, tier row
+# or model-map entry below it. A 4-bit KV cache flips tool-call decisions (llama.cpp
+# docs/function-calling.md warns on -ctk q4_0), and 2-3 bit weights break them.
+#   chat_kv   KV types a chat/agent lane may use: symmetric, 8-bit or wider.
+#   embed_kv  KV types an embedding lane may use.
+#   quant_rank  the weight formats tools may run on, by effective bits; a quant that is
+#             not listed (IQ1/IQ2/IQ3, Q2_K, Q3_K, ...) is below every floor.
+#   native    a model's own trained format, which meets any floor (gpt-oss MXFP4).
+#   A model that is dense with >= large_min_params_b total, or a reasoning model,
+#   needs large_floor_rank (Q4_K_M). One under large_min_params_b, or a MoE with at
+#   most small_max_active_b active, that runs non-reasoning tool calls needs
+#   small_floor_rank (Q8_0). Embedding models need embed_floor_rank.
+[llamacpp.tool_safe]
+chat_kv = ["q8_0", "f16"]
+embed_kv = ["f16", "q8_0"]
+quant_rank = { Q4_K_M = 4, Q4_K_L = 4, Q5_K_M = 5, Q6_K = 6, Q8_0 = 8, BF16 = 16, F16 = 16 }
+native = ["MXFP4"]
+large_min_params_b = 4.0
+small_max_active_b = 2.0
+large_floor_rank = 4
+small_floor_rank = 8
+embed_floor_rank = 8
+
+# The facts the floor is judged on, one row per GGUF a lane can serve (file name as it
+# sits under models_dir). params_b = total parameters (billions), active_b = active
+# per token (MoE; defaults to params_b), reasoning = the chat template thinks,
+# kind = chat | embedding | vision. Verified against each Hugging Face repo.
+[llamacpp.gguf."lfm2-700m.gguf"]
+quant = "Q8_0"
+params_b = 0.74
+reasoning = false
+kind = "chat"
+[llamacpp.gguf."granite-4.1-8b.gguf"]
+quant = "Q4_K_M"
+params_b = 8.79
+reasoning = false
+kind = "chat"
+[llamacpp.gguf."embeddinggemma-300m-qat-q8_0.gguf"]
+quant = "Q8_0"
+params_b = 0.30
+reasoning = false
+kind = "embedding"
+[llamacpp.gguf."embeddinggemma-2-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 0.27
+reasoning = false
+kind = "embedding"
+[llamacpp.gguf."holo1.5-7b.gguf"]
+quant = "Q4_K_M"
+params_b = 7.62
+reasoning = false
+kind = "vision"
+[llamacpp.gguf."Qwen3.5-4B-Q4_K_M.gguf"]
+quant = "Q4_K_M"
+params_b = 4.21
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."Qwen3.5-4B-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 4.21
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."granite-4.2-3b-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 3.66
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."LFM3-1.7B-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 1.73
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."LFM2.5-8B-A1B-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 8.47
+active_b = 1.5
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."gpt-oss-20b-MXFP4.gguf"]
+quant = "MXFP4"
+params_b = 20.91
+active_b = 3.6
+reasoning = true
+kind = "chat"
+[llamacpp.gguf."Qwen3.6-35B-A3B-Q8_0.gguf"]
+quant = "Q8_0"
+params_b = 34.66
+active_b = 3.0
+reasoning = true
+kind = "chat"
+
+# ---- Model tiers -----------------------------------------------------------------
+# Each single-model lane (the dGPU/APU heavy lane, mios-cpu-node) picks its GGUF,
+# context and KV type per host at every start: `mios-gen model-tier --lane <lane>
+# --apply` (the lane's ExecStartPre) measures the host, takes the LAST row of the
+# lane's table that is enabled, whose GGUF is on disk, whose min_ram_mib the host's
+# RAM reaches and whose need_mib fits the lane's budget, and writes its values to
+# <env_dir>/<lane>.env, an EnvironmentFile the unit reads after install.env. Rows
+# are ordered from the tool-safe floor upward: a bigger host moves to more precision,
+# a bigger model or a longer context; a smaller one to a smaller model, never below
+# the floor. When nothing fits, the first row (the floor) still serves, so every
+# node keeps tools; when no row's GGUF is on disk, the lane keeps its SSOT keys.
+# Budgets (MiB), measured at start:
+#   heavy, dGPU   VRAM (nvidia-smi, WSL's /usr/lib/wsl/lib copy included) - vram_reserve_mib
+#   heavy, APU    min(VRAM carve-out + GTT, apu_gpu_ram_fraction x RAM) (amdgpu sysfs);
+#                 an amdgpu device with at most apu_max_vram_mib of VRAM is an APU
+#   cpu_node      min(cpu_node_memory_high of RAM, RAM - the CPU light lane's
+#                 memory_max - host_reserve_mib - the APU GPU lane's need)
+# need_mib = GGUF bytes + q8_0 KV at the row's context + recurrent/sliding state +
+# a compute allowance (0.8 GiB GPU, 0.3-0.9 GiB CPU); the dense-8B row is calibrated
+# on the measured 8.6 GB at 32k with q4_0 KV on the 14G PS5, plus the q8_0 delta.
+# The cpu_node avoids the GGUF the heavy lane already serves when another row fits.
+# A host pins a row by name in its own tier ([llamacpp.tier_pin]).
+[llamacpp.tier_policy]
+host_reserve_mib = 2560
+vram_reserve_mib = 1792
+apu_gpu_ram_fraction = 0.40
+apu_max_vram_mib = 4096
+env_dir = "/run/mios/model-tier"
+nvidia_smi = ["/usr/lib/wsl/lib/nvidia-smi", "/usr/bin/nvidia-smi"]
+
+# Empty = automatic. A row name pins that row on this host (a host-tier choice).
+[llamacpp.tier_pin]
+heavy = ""
+cpu_node = ""
+
+# Which SSOT keys a lane's row overrides (their canonical MIOS_* names go into the
+# lane's env file), and which heavy engines run on which GPU kind.
+[llamacpp.tier_lanes.heavy]
+keys = { model_file = "llamacpp.heavy_model_file", context = "llamacpp.heavy_context", cache_type = "llamacpp.heavy_cache_type", render_node = "llamacpp.heavy_render_node", render_gid = "llamacpp.heavy_render_gid" }
+engines = { llamacpp = "cuda", llamacpp-vulkan = "vulkan" }
+
+[llamacpp.tier_lanes.cpu_node]
+keys = { model_file = "llamacpp.cpu_node_model_file", context = "llamacpp.cpu_node_context", cache_type = "llamacpp.cpu_node_cache_type" }
+
+[[llamacpp.tiers.heavy]]
+name = "gpu-6g"          # 8 GB dGPU (~6.2 GiB usable) or a 13.6 GiB console APU
+model_file = "Qwen3.5-4B-Q4_K_M.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 4847
+[[llamacpp.tiers.heavy]]
+name = "gpu-10g"         # 12 GB dGPU or a ~30 GiB APU share
+model_file = "Qwen3.5-4B-Q8_0.gguf"
+context = 131072
+cache_type = "q8_0"
+need_mib = 7318
+[[llamacpp.tiers.heavy]]
+name = "gpu-16g"         # 16 GB dGPU; gpt-oss: Harmony parser, round-trip reasoning_content
+model_file = "gpt-oss-20b-MXFP4.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 13185
+[[llamacpp.tiers.heavy]]
+name = "gpu-24g"         # 24 GB dGPU
+model_file = "gpt-oss-20b-MXFP4.gguf"
+context = 131072
+cache_type = "q8_0"
+need_mib = 14104
+
+[[llamacpp.tiers.cpu_node]]
+name = "ram-floor"       # the tool-safe floor: any host, or the CPU lane of a 14G APU
+model_file = "LFM3-1.7B-Q8_0.gguf"
+context = 32768
+cache_type = "q8_0"
+need_mib = 2273
+[[llamacpp.tiers.cpu_node]]
+name = "ram-6g"
+model_file = "granite-4.2-3b-Q8_0.gguf"
+context = 32768
+cache_type = "q8_0"
+need_mib = 5482
+[[llamacpp.tiers.cpu_node]]
+name = "ram-12g"         # 14G CPU-only Blade (the PS5 before its GPU lane)
+model_file = "granite-4.2-3b-Q8_0.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 6945
+min_ram_mib = 12288
+[[llamacpp.tiers.cpu_node]]
+name = "ram-16g-dense"   # the vendor brain at q8_0 KV; never on a 14G Blade
+model_file = "granite-4.1-8b.gguf"
+context = 32768
+cache_type = "q8_0"
+need_mib = 9482
+min_ram_mib = 16384
+[[llamacpp.tiers.cpu_node]]
+name = "ram-16g"         # MoE, 1.5B active: ~1/5 the bytes per token of a dense 8B
+model_file = "LFM2.5-8B-A1B-Q8_0.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 9514
+min_ram_mib = 16384
+[[llamacpp.tiers.cpu_node]]
+name = "ram-32g"         # native MXFP4; Harmony parser, round-trip reasoning_content
+model_file = "gpt-oss-20b-MXFP4.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 13288
+min_ram_mib = 28672
+[[llamacpp.tiers.cpu_node]]
+name = "ram-64g"         # 3B active is caution territory: Q8_0 only
+model_file = "Qwen3.6-35B-A3B-Q8_0.gguf"
+context = 65536
+cache_type = "q8_0"
+need_mib = 36859
+min_ram_mib = 57344
+
+# The light lane's helpers are llama-swap map entries every host serves on demand,
+# so their rows are declared for the floor check and sizing, not swapped per host.
+[[llamacpp.tiers.micro]]
+name = "micro-floor"     # backs lfm2:700m, mios-micro and micro
+model_file = "lfm2-700m.gguf"
+context = 32768
+cache_type = "q8_0"
+need_mib = 1165
+[[llamacpp.tiers.micro]]
+name = "micro-lfm3"      # opt-in micro via [ai].micro_model = "lfm3:1.7b"
+model_file = "LFM3-1.7B-Q8_0.gguf"
+context = 32768
+cache_type = "q8_0"
+need_mib = 2273
+
+[[llamacpp.tiers.embed]]
+name = "embed-floor"     # backs nomic-embed-text (768-d)
+model_file = "embeddinggemma-300m-qat-q8_0.gguf"
+context = 8192
+cache_type = "f16"
+need_mib = 570
+[[llamacpp.tiers.embed]]
+name = "embed-gemma2"    # embeddinggemma2:270m; re-embedding needed to back nomic-embed-text
+model_file = "embeddinggemma-2-Q8_0.gguf"
+context = 8192
+cache_type = "f16"
+need_mib = 552
+
+# The heavy lane's Vulkan engine (ai.heavy_engine = "llamacpp-vulkan"), for AMD APUs
+# and cards ROCm does not cover (gfx1013, Renoir Vega): llama.cpp's Vulkan build on the
+# render node of the first DRM device bound to one of `drivers` (or `resource`'s PCI).
+# Admission fails closed when there is none; the CPU lanes keep serving.
+[llamacpp.heavy_vulkan]
+image_key = "llm_light_vulkan"
+drivers = ["amdgpu"]
+resource = ""
 
 [enhanced_session]
 enabled    = true
@@ -8406,7 +8666,9 @@ effort              = "max"
 smartroute_enable   = false
 smartroute_budget   = 0.0       # per-day cost cap for paid remote escalation (0 = unlimited)
 package_registry    = false
-# THE engine of the ONE heavy dGPU lane, mios-llm-heavy: "vllm" | "sglang" | "llamacpp".
+# THE engine of the ONE heavy GPU lane, mios-llm-heavy: "vllm" | "sglang" | "llamacpp" (CUDA)
+# | "llamacpp-vulkan" (AMD APU/GPU over Vulkan, [llamacpp.heavy_vulkan]). Both llama.cpp
+# engines pick their GGUF per host from [[llamacpp.tiers.heavy]].
 # mios-gen renders [containers.mios-llm-heavy.engine.<this>] (and the .image
 # twin) into the lane's Quadlet; the engine tunables are [ai.vllm] / [ai.sglang]
 # and the per-engine surface settings [lanes.<this>]. Runtime LoRA
@@ -8458,7 +8720,7 @@ api_key             = ""
 mcp_registry        = "/usr/share/mios/ai/v1/mcp.json"
 system_prompt_file  = ""                # optional override; empty = use canonical
 prompt_shortcut     = "@"
-bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired as the vendor brain (Qwen-monoculture); the qwen35 llama.cpp block that also retired them is gone upstream, and the per-node picks (Qwen3.5-4B, Qwen3.6-35B-A3B, LFM2.5-8B-A1B, Granite 4.2 3B, LFM3-1.7B) are opt-in host-tier choices, not baked. mios-* tags blob-share the brain base.
+bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired as the vendor brain (Qwen-monoculture); the qwen35 llama.cpp block that also retired them is gone upstream, and the model-tier picks (Qwen3.5-4B, LFM2.5-8B-A1B, Granite 4.2 3B, LFM3-1.7B, gpt-oss-20b, Qwen3.6-35B-A3B) are served per host by [[llamacpp.tiers.*]] and fetched on every host by [[ai.firstboot_models]], not baked. mios-* tags blob-share the brain base.
 # Recommended floor for the default model. granite4.1:3b is a dense
 # 3 B model at q4_K_M (~2.5 GB on disk, ~4 GB resident). Sits inside
 # the 8 GB usable budget on a 12 GB / 8-core box. Auto-pick promotes
@@ -8487,7 +8749,7 @@ ram_gb  = 8
 
 [[ai.catalog]]
 id      = "lfm2:700m"
-label   = "LFM2 700M (Liquid AI, dense, ~0.7 GB, micro/CPU classify lane)"
+label   = "LFM2 700M (Liquid AI, dense, Q8_0 ~0.8 GB, micro/CPU classify lane; also backs mios-micro)"
 ram_gb  = 4
 
 [[ai.catalog]]
@@ -8495,33 +8757,40 @@ id      = "mistral-magistral-small-2509"
 label   = "Magistral Small 2509 (Mistral, dense 24B reasoning, AWQ ~14 GB, heavy dGPU lane; needs a 24 GB GPU no current fleet host has)"
 ram_gb  = 24
 
-# Per-node picks: served names in mios-llm-light.yaml, each an opt-in a host selects
-# in its own tier (manual chapter 10, "Per-node model picks"). ram_gb is the memory
-# the model needs at its served context with symmetric q8_0 KV, rounded up.
+# Model-tier picks: served names in mios-llm-light.yaml, each at a [llamacpp.tool_safe] quant.
+# The heavy lane and mios-cpu-node serve them per host through their model tiers
+# ([[llamacpp.tiers.*]], manual chapter 10, "Model tiers"); a name here can also be
+# chosen directly as [ai].model. ram_gb is the memory the model needs at its served
+# context with symmetric q8_0 KV, rounded up.
 [[ai.catalog]]
 id      = "qwen3.5:4b-q4_K_M"
-label   = "Qwen3.5 4B (Qwen, dense GDN hybrid, Q4_K_M ~3.0 GB, 64k; 8 GB dGPU heavy-lane pick)"
+label   = "Qwen3.5 4B (Qwen, dense GDN hybrid, reasoning, Q4_K_M ~3.0 GB, 64k; 8 GB GPU / console APU tier)"
 ram_gb  = 6
 
 [[ai.catalog]]
 id      = "lfm2.5:8b-a1b"
-label   = "LFM2.5 8B-A1B (Liquid AI, conv-hybrid MoE 1.5B active, Q4_K_M ~5.2 GB, 64k; CPU-node pick, JSON tool-call test pending)"
-ram_gb  = 6
+label   = "LFM2.5 8B-A1B (Liquid AI, conv-hybrid MoE 1.5B active, Q8_0 ~9.0 GB, 64k; 16G-RAM cpu-node tier)"
+ram_gb  = 10
 
 [[ai.catalog]]
 id      = "granite4.2:3b"
-label   = "Granite 4.2 3B (IBM, dense, Q4_K_M ~2.2 GB, 32k here; small-node and fallback pick)"
-ram_gb  = 4
+label   = "Granite 4.2 3B (IBM, dense, Q8_0 ~3.9 GB, 32k here; 6-12G-RAM cpu-node tiers)"
+ram_gb  = 6
 
 [[ai.catalog]]
 id      = "lfm3:1.7b"
-label   = "LFM3 1.7B (Liquid AI, conv/attention tri-hybrid, Q4_K_M ~1.1 GB, 32k; micro/router candidate, JSON tool-call test pending)"
-ram_gb  = 2
+label   = "LFM3 1.7B (Liquid AI, conv/attention tri-hybrid, Q8_0 ~1.8 GB, 32k; tool-safe floor of the cpu-node and micro tiers)"
+ram_gb  = 3
+
+[[ai.catalog]]
+id      = "gpt-oss:20b"
+label   = "gpt-oss 20B (MoE 3.6B active, native MXFP4 ~12.1 GB, 64k; 32G-RAM cpu-node and 16-24 GB GPU tiers; Harmony tool parser)"
+ram_gb  = 14
 
 [[ai.catalog]]
 id      = "qwen3.6:35b-a3b"
-label   = "Qwen3.6 35B-A3B (Qwen, GDN MoE 3B active, UD-Q4_K_M ~22.1 GB, 64k; 32 GB-RAM CPU-node coding agent)"
-ram_gb  = 24
+label   = "Qwen3.6 35B-A3B (Qwen, GDN MoE 3B active, Q8_0 ~36.9 GB, 64k; 64G-RAM cpu-node tier)"
+ram_gb  = 40
 
 [ai.host_thresholds]
 mid_vram_gb       = 8                             # >= this -> auto-promote to mid_ram_model
@@ -11359,7 +11628,12 @@ non_addressable = [
 # [generator] -- Quadlet & manifest generator configuration
 # ----------------------------------------------------------------------------
 [generator]
-placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FEDORA"]
+# Left as ${NAME} for systemd to expand at start, never baked at render: the model
+# tier rewrites them per host in <[llamacpp.tier_policy].env_dir>/<lane>.env.
+placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FEDORA",
+  "MIOS_LLAMACPP_CPU_NODE_MODEL_FILE", "MIOS_LLAMACPP_CPU_NODE_CONTEXT", "MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE",
+  "MIOS_LLAMACPP_HEAVY_MODEL_FILE", "MIOS_LLAMACPP_HEAVY_CONTEXT", "MIOS_LLAMACPP_HEAVY_CACHE_TYPE",
+  "MIOS_LLAMACPP_HEAVY_RENDER_NODE", "MIOS_LLAMACPP_HEAVY_RENDER_GID"]
 
 [versions]
 fedora                   = "45"   # the base image's Fedora release; 05-repos.sh refuses a build where they differ
@@ -15489,6 +15763,9 @@ select = "ai.heavy_engine"
 [images.mios-llm-heavy.engine.llamacpp.Image]
 Image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
 
+[images.mios-llm-heavy.engine.llamacpp-vulkan.Image]
+Image = "${MIOS_LLM_LIGHT_VULKAN_IMAGE}"
+
 [images.mios-llm-heavy.engine.vllm.Image]
 Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
 
@@ -15702,7 +15979,10 @@ HealthRetries = "3"
 # ring is the Unhealthy-on-boot bloat (huge RAM KV even at q4_0); 32768 matches the
 # light lane + the VRAM/KV co-fit finding. Raise once CPU RAM headroom is proven.
 # K and V both come from the one [llamacpp].cpu_node_cache_type, so they stay symmetric.
-Exec = "--model /models/${MIOS_LLAMACPP_CPU_NODE_MODEL_FILE:-granite-4.1-8b.gguf} --host 0.0.0.0 --port ${MIOS_PORTS_CPU_NODE:-8510} --ctx-size ${MIOS_LLAMACPP_CPU_NODE_CONTEXT:-32768} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE:-q4_0} --cache-type-v ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE:-q4_0} --parallel 1 --threads ${MIOS_LLAMACPP_CPU_NODE_THREADS:-14} --n-gpu-layers 0 --jinja --alias ${MIOS_NODES_LOCAL_CPU_MODEL} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}"
+# Model, context and KV are [generator].placeholders, expanded by systemd at start from
+# install.env and then the lane's model-tier env file, so one image serves the GGUF
+# each host's tier picks ([[llamacpp.tiers.cpu_node]]); systemd has no ${X:-default}.
+Exec = "--model /models/${MIOS_LLAMACPP_CPU_NODE_MODEL_FILE} --host 0.0.0.0 --port ${MIOS_PORTS_CPU_NODE:-8510} --ctx-size ${MIOS_LLAMACPP_CPU_NODE_CONTEXT} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE} --parallel 1 --threads ${MIOS_LLAMACPP_CPU_NODE_THREADS:-14} --n-gpu-layers 0 --jinja --alias ${MIOS_NODES_LOCAL_CPU_MODEL} --slot-save-path ${MIOS_LLAMACPP_SLOT_DIR:-/var/lib/mios/llamacpp/slots}"
 Group = "${MIOS_SERVICES_LLAMACPP_GID:-827}"
 Image = "${MIOS_LLM_LIGHT_CPU_IMAGE}"
 Label = "org.opencontainers.image.title=mios-cpu-node"
@@ -15718,7 +15998,14 @@ WantedBy = "multi-user.target default.target"
 
 [containers.mios-cpu-node.Service]
 Delegate = "yes"
-EnvironmentFile = "/etc/mios/install.env"
+# The model tier is written before every start and read after install.env, so its
+# values win. A failed pick is ignored ("-"): this always-on lane then serves its
+# static [llamacpp] cpu_node_* keys rather than not starting.
+EnvironmentFile = [
+  "/etc/mios/install.env",
+  "-${MIOS_LLAMACPP_TIER_POLICY_ENV_DIR}/cpu-node.env"
+]
+ExecStartPre = "-/usr/bin/mios-gen model-tier --root / --lane cpu-node --apply"
 MemoryHigh = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_HIGH:-65%}"
 MemoryMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_MAX:-75%}"
 MemorySwapMax = "${MIOS_LLAMACPP_CPU_NODE_MEMORY_SWAP_MAX:-512M}"
@@ -15728,7 +16015,8 @@ TimeoutStartSec = "1800s"
 
 [containers.mios-cpu-node.Unit]
 After = "network-online.target mios-webtools-firstboot.service"
-ConditionPathExists = "/usr/share/mios/llamacpp/models/${MIOS_LLAMACPP_CPU_NODE_MODEL_FILE:-granite-4.1-8b.gguf}"
+# The verified model set, not one file: the GGUF this host serves is picked at start.
+ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
 Description = "'MiOS' CPU inference node (always-on / gaming-immune last-resort lane)"
 Wants = "network-online.target"
 
@@ -16013,9 +16301,11 @@ WantedBy = "multi-user.target default.target"
 
 [containers.mios-llm-heavy.Service]
 Delegate = "yes"
+# The llama.cpp engines read their per-host model tier last, so its values win.
 EnvironmentFile = [
   "/etc/mios/install.env",
-  "-/run/mios/gpu-numa.env"
+  "-/run/mios/gpu-numa.env",
+  "-${MIOS_LLAMACPP_TIER_POLICY_ENV_DIR}/heavy.env"
 ]
 Restart = "on-failure"
 RestartSec = "15"
@@ -16081,12 +16371,51 @@ DropCapability = "ALL"
 NoNewPrivileges = true
 ReadOnly = true
 
+# Picks this host's [[llamacpp.tiers.heavy]] row, then runs the heavy admission on it
+# (GGUF, slots, the exact CUDA device) and writes the lane's env file. A failure stops
+# the start: the heavy lane fails closed and the CPU lanes keep serving.
 [containers.mios-llm-heavy.engine.llamacpp.Service]
-ExecStartPre = "/usr/bin/mios-gen heavy-backend"
+ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
 
 [containers.mios-llm-heavy.engine.llamacpp.Unit]
 Description = "'MiOS' heavy lane, llama.cpp CUDA engine (local GGUF, OpenAI /v1)"
-ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/${MIOS_LLAMACPP_HEAVY_MODEL_FILE}"
+# The verified model set; the GGUF itself is picked and checked at start.
+ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
+
+# Vulkan llama.cpp: the same lane on an AMD APU or card ([llamacpp.heavy_vulkan]), e.g.
+# the 14G console Blade's gfx1013 and a Renoir Vega iGPU, which ROCm does not cover.
+# The render node and its group come from the model tier's admission at start
+# (placeholders, expanded by systemd), never from a static device list.
+[containers.mios-llm-heavy.engine.llamacpp-vulkan.Container]
+AddDevice = "${MIOS_LLAMACPP_HEAVY_RENDER_NODE}"
+GroupAdd = "${MIOS_LLAMACPP_HEAVY_RENDER_GID}"
+Entrypoint = "/app/llama-server"
+Exec = "--model /models/${MIOS_LLAMACPP_HEAVY_MODEL_FILE} --alias ${MIOS_NODES_LOCAL_HEAVY_MODEL} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY} --device Vulkan0 --n-gpu-layers all --ctx-size ${MIOS_LLAMACPP_HEAVY_CONTEXT} --threads ${MIOS_LLAMACPP_HEAVY_THREADS} --batch-size ${MIOS_LLAMACPP_HEAVY_BATCH_SIZE} --ubatch-size ${MIOS_LLAMACPP_HEAVY_UBATCH_SIZE} --parallel ${MIOS_LLAMACPP_HEAVY_PARALLEL} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --slot-save-path ${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/slots --jinja"
+Image = "${MIOS_LLM_LIGHT_VULKAN_IMAGE}"
+User = "${MIOS_LLAMACPP_UID}"
+Group = "${MIOS_LLAMACPP_GID}"
+Environment = [
+ "HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}",
+ "XDG_CACHE_HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/cache"
+]
+Volume = [
+ "${MIOS_LLAMACPP_MODELS_DIR}:/models:ro",
+ "${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:Z"
+]
+HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_LLM_HEAVY}/health || exit 1"
+HealthInterval = "30s"
+HealthRetries = 3
+HealthStartPeriod = "300s"
+DropCapability = "ALL"
+NoNewPrivileges = true
+ReadOnly = true
+
+[containers.mios-llm-heavy.engine.llamacpp-vulkan.Service]
+ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
+
+[containers.mios-llm-heavy.engine.llamacpp-vulkan.Unit]
+Description = "'MiOS' heavy lane, llama.cpp Vulkan engine (AMD APU/GPU, local GGUF, OpenAI /v1)"
+ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
 
 [containers.mios-llm-light.Container]
 # Static /usr data stays at its image label. Firstboot labels verified mutable
@@ -19419,12 +19748,47 @@ exclude = ["usr/share/mios/vendored/*", "usr/lib/bootc/bound-images.d/*"]
 # Keys are the fetcher's contract (usr/libexec/mios/mios-models-firstboot): name + source; sha256 only for
 # a non-Hugging-Face source (no published digest). A Hugging Face source resolves the current commit + LFS
 # sha256 from the HF revision API, fetches resolve/<commit>/..., verifies, and records <models>/models.tsv.
-# Every host fetches every entry, so this vendor list holds only what every host serves. A per-node
-# pick (the opt-in entries of mios-llm-light.yaml) is declared in that host's own tier: a host-tier
-# [[ai.firstboot_models]] list REPLACES this one (arrays do not merge), so it repeats lfm2-700m.gguf.
-# Ready-to-apply host lists: manual chapter 10, "Per-node model picks"; then `mios models sync`.
+# EVERY HOST FETCHES EVERY ENTRY (operator's choice): the vendor list carries every GGUF any
+# lane's model tier ([[llamacpp.tiers.*]]) or the light model map can select, so each host's tier
+# picker always finds its row on disk, about 72 GB in all on top of the baked set. A 14G console
+# Blade writes all of it to its USB-2 root, which is slow and the root its freezes came from, so
+# run its first fetch while it is idle. Entries are optional and degrade open: one that fails only
+# leaves its tier rows unselectable. Nemotron-3.5-Bolt-E4B stays out while its map entry is disabled.
+# lfm2-700m.gguf is the micro at Q8_0 (also in [llamacpp].bake_models, so the fetch set is one list).
 name   = "lfm2-700m.gguf"
-source = "https://huggingface.co/LiquidAI/LFM2-700M-GGUF/resolve/main/LFM2-700M-Q4_K_M.gguf"
+source = "https://huggingface.co/LiquidAI/LFM2-700M-GGUF/resolve/main/LFM2-700M-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "Qwen3.5-4B-Q4_K_M.gguf"
+source = "https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"
+
+[[ai.firstboot_models]]
+name   = "Qwen3.5-4B-Q8_0.gguf"
+source = "https://huggingface.co/ggml-org/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "granite-4.2-3b-Q8_0.gguf"
+source = "https://huggingface.co/ibm-granite/granite-4.2-3b-GGUF/resolve/main/granite-4.2-3b-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "LFM3-1.7B-Q8_0.gguf"
+source = "https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF/resolve/main/LFM3-1.7B-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "LFM2.5-8B-A1B-Q8_0.gguf"
+source = "https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-GGUF/resolve/main/LFM2.5-8B-A1B-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "embeddinggemma-2-Q8_0.gguf"
+source = "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/main/embeddinggemma-2-Q8_0.gguf"
+
+[[ai.firstboot_models]]
+name   = "gpt-oss-20b-MXFP4.gguf"
+source = "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf"
+
+[[ai.firstboot_models]]
+name   = "Qwen3.6-35B-A3B-Q8_0.gguf"
+source = "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-Q8_0.gguf"
 
 # The suite registry: every publisher runs this list and only this list.
 # Before it existed the two ran different sets and thirteen suites ran
