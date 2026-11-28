@@ -1,10 +1,10 @@
 # AI-hint: MiOS mios-llm-heavy image. (WS-7 pods-as-SSOT).
 # DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [images.mios-llm-heavy] in mios.toml.
 # /usr/share/containers/systemd/mios-llm-heavy.image
-# Engine: vllm (selected by [ai].heavy_engine; declared engines: llamacpp, sglang, vllm).
+# Engine: auto (selected by [ai].heavy_engine; declared engines: auto, llamacpp, llamacpp-vulkan, sglang, vllm).
 
 [Image]
-Image=docker.io/vllm/vllm-openai:latest
+Image=ghcr.io/mostlygeek/llama-swap:cuda
 
 [Service]
 TimeoutStartSec=3600

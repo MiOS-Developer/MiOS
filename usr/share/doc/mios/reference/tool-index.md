@@ -350,7 +350,7 @@ is generated, its generator is here.
 | `tools/test_native_generator_dispatch.py` | Exercise real native management/generator dispatch without retired Python scripts. |
 | `tools/test_rdp_priv_unit.py` | mios-rdp-priv@.service must keep CAP_SYS_PTRACE in its bounding set (TLS-KEY reads the caller's /proc/<pid>/exe, owned by the operator) while ptrace(2) stays outside its syscall filter. |
 | `tools/test_read-ssot-key.py` | Sibling test for tools/read-ssot-key.py; proves an absent key exits non-zero instead of printing a default. |
-| `tools/test_routing_security.py` | Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact. |
+| `tools/test_routing_security.py` | Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact; pin the model router's advertised context to SSOT... |
 | `tools/test_sync-bootstrap.py` | Real native bootstrap-sync CLI fixtures prove read-only checks, convergence, confinement and fail-closed dispatch. |
 | `tools/test_sync-dotfiles.py` | Hermetic fixtures for sync-dotfiles.py: ADR-0024 prune and --check both ways, surface mode kept, empty partition fails loud, forwardPorts/containerEnv projected from [ports] keys and resolved MIOS_*... |
 | `tools/test_templates_golden.py` | Golden fixture test runner for mios-new template generator across all 20 template types. |

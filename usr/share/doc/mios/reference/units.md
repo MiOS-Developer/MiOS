@@ -121,7 +121,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-libexec-perms.service` | `usr/lib/systemd/system` | MiOS': enforce exec perms (go+rX) on /usr/libexec/mios |
 | `mios-libvirtd-setup.service` | `usr/lib/systemd/system` | MiOS' first-boot libvirtd wiring |
 | `mios-light-backend.service` | `usr/lib/systemd/system` | MiOS' validated light inference backend projection |
-| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated) |
+| `mios-llm-heavy.container` | `usr/share/containers/systemd` | MiOS' heavy lane, llama.cpp on the GPU detected at start (CUDA or Vulkan, local GGUF, OpenAI /v1) |
 | `mios-llm-light.container` | `usr/share/containers/systemd` | MiOS' LLM-Light (llama.cpp multi-model + KV-paging lane, served via the upstream llama-swap proxy, FOSS) |
 | `mios-llm-worker@.container` | `usr/share/containers/systemd` | MiOS' swarm worker %i (single-model llama-server, FOSS) |
 | `mios-log-archiver.service` | `usr/lib/systemd/system` | MiOS Structured Parquet Log Archiver and Vector Indexer |

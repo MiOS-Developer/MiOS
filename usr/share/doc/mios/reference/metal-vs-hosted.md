@@ -143,8 +143,9 @@ Exactly what it carries and never loads — derived from `[llamacpp].bake_models
 | Baked payload | Source |
 |---|---|
 | `granite-4.1-8b.gguf` | `unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf` |
-| `lfm2-700m.gguf` | `LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q4_K_M.gguf` |
+| `lfm2-700m.gguf` | `LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q8_0.gguf` |
 | `embeddinggemma-300m-qat-q8_0.gguf` | `ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf` |
+| `LFM3-1.7B-Q8_0.gguf` | `LiquidAI/LFM3-1.7B-GGUF:LFM3-1.7B-Q8_0.gguf` |
 
 Whether that is right is an operator decision, recorded in ADR-0016 Decision 6, not a defect: giving a seat a micro local lane would trade "offload *all* services" for a degraded-but-alive floor.
 

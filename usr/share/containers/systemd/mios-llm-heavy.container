@@ -1,17 +1,20 @@
 # AI-hint: MiOS mios-llm-heavy container. (WS-7 pods-as-SSOT).
 # DO NOT EDIT -- regenerate via tools/generate-pod-quadlets.py from [containers.mios-llm-heavy] in mios.toml.
 # /usr/share/containers/systemd/mios-llm-heavy.container
-# Engine: vllm (selected by [ai].heavy_engine; declared engines: llamacpp, sglang, vllm).
+# Engine: auto (selected by [ai].heavy_engine; declared engines: auto, llamacpp, llamacpp-vulkan, sglang, vllm).
 
 [Unit]
-After=network-online.target mios-cdi-detect.service mios-webtools-firstboot.service
-ConditionPathExists=/var/lib/mios/vllm/model/config.json
-Description='MiOS' heavy lane, vLLM engine (OpenAI /v1, PagedAttention + APC; gated)
-Wants=network-online.target
+After=network-online.target mios-cdi-detect.service mios-heavy-engine.service mios-webtools-firstboot.service
+ConditionPathExists=/usr/share/mios/llamacpp/models/.ready
+Description='MiOS' heavy lane, llama.cpp on the GPU detected at start (CUDA or Vulkan, local GGUF, OpenAI /v1)
+Requires=mios-heavy-engine.service
+Wants=network-online.target mios-cdi-detect.service
 
 [Container]
-AddDevice=nvidia.com/gpu=all
+AddDevice=${MIOS_LLAMACPP_HEAVY_DEVICE}
 ContainerName=mios-llm-heavy
+DropCapability=ALL
+Entrypoint=/app/llama-server
 Environment=HF_HUB_OFFLINE=1
 Environment=TRANSFORMERS_OFFLINE=1
 Environment=DO_NOT_TRACK=1
@@ -20,22 +23,26 @@ Environment=XDG_CACHE_HOME=/tmp/.cache
 Environment=GLOO_SOCKET_IFNAME=lo
 Environment=NCCL_SOCKET_IFNAME=lo
 Environment=HOME=/tmp
-Environment=VLLM_NO_USAGE_STATS=1
-Environment=VLLM_WSL2_ENABLE_PIN_MEMORY=1
-Environment=VLLM_USE_V2_MODEL_RUNNER=0
-Environment=VLLM_CACHE_DIR=/tmp/.cache
-Environment=FLASHINFER_WORKSPACE_DIR=/tmp/.cache
-Environment=TRITON_CACHE_DIR=/tmp/.cache
-Environment=VLLM_HOST_IP=127.0.0.1
-Exec=--model /models --served-model-name mios-heavy --host 0.0.0.0 --port 8520 --gpu-memory-utilization 0.85 --max-model-len 262144 --kv-cache-dtype fp8 --load-format auto --enable-prefix-caching --enforce-eager --enable-auto-tool-choice --tool-call-parser hermes
-Group=815
-Image=docker.io/vllm/vllm-openai:latest
+Environment=HOME=/var/lib/mios/llamacpp/heavy
+Environment=XDG_CACHE_HOME=/var/lib/mios/llamacpp/heavy/cache
+Exec=--model /models/${MIOS_LLAMACPP_HEAVY_MODEL_FILE} --alias mios-heavy --host 0.0.0.0 --port 8520 --device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB} --ctx-size ${MIOS_LLAMACPP_HEAVY_CONTEXT} --threads 4 --batch-size 2048 --ubatch-size 512 --parallel 1 --flash-attn on --cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --slot-save-path /var/lib/mios/llamacpp/heavy/slots --jinja
+GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
+Group=827
+GroupAdd=${MIOS_LLAMACPP_HEAVY_DEVICE_GID}
+HealthCmd=curl -fsS http://localhost:8520/health || exit 1
+HealthInterval=30s
+HealthRetries=3
+HealthStartPeriod=300s
+Image=ghcr.io/mostlygeek/llama-swap:cuda
 Label=org.opencontainers.image.title=mios-llm-heavy
 Label=org.opencontainers.image.url=http://localhost:8520/v1/models
 Label=io.podman_desktop.openInBrowser=http://localhost:8520/v1/models
+NoNewPrivileges=true
 Pod=mios-ai.pod
-User=0
-Volume=/var/lib/mios/vllm/model:/models:ro,Z
+ReadOnly=true
+User=827
+Volume=/usr/share/mios/llamacpp/models:/models:ro
+Volume=/var/lib/mios/llamacpp/heavy:/var/lib/mios/llamacpp/heavy:Z
 
 [Install]
 WantedBy=multi-user.target default.target
@@ -44,6 +51,10 @@ WantedBy=multi-user.target default.target
 Delegate=yes
 EnvironmentFile=/etc/mios/install.env
 EnvironmentFile=-/run/mios/gpu-numa.env
+EnvironmentFile=-/run/mios/model-tier/heavy.env
+ExecCondition=/usr/bin/mios-gen model-tier --root / --lane heavy --probe
+ExecStartPre=-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi
+ExecStartPre=/usr/bin/mios-gen model-tier --root / --lane heavy --apply
 Restart=on-failure
 RestartSec=15
 TimeoutStartSec=600s

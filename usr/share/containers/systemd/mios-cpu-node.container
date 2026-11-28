@@ -4,7 +4,7 @@
 
 [Unit]
 After=network-online.target mios-webtools-firstboot.service
-ConditionPathExists=/usr/share/mios/llamacpp/models/granite-4.1-8b.gguf
+ConditionPathExists=/usr/share/mios/llamacpp/models/.ready
 Description='MiOS' CPU inference node (always-on / gaming-immune last-resort lane)
 Wants=network-online.target
 
@@ -12,7 +12,7 @@ Wants=network-online.target
 ContainerName=mios-cpu-node
 Entrypoint=/app/llama-server
 Environment=HOME=/var/lib/mios/llamacpp
-Exec=--model /models/granite-4.1-8b.gguf --host 0.0.0.0 --port 8510 --ctx-size 32768 --flash-attn on --cache-type-k q4_0 --cache-type-v q4_0 --parallel 1 --threads 14 --n-gpu-layers 0 --jinja --alias mios-agent-cpu --slot-save-path /var/lib/mios/llamacpp/slots
+Exec=--model /models/${MIOS_LLAMACPP_CPU_NODE_MODEL_FILE} --host 0.0.0.0 --port 8510 --ctx-size ${MIOS_LLAMACPP_CPU_NODE_CONTEXT} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE} --parallel 1 --threads 14 --n-gpu-layers 0 --jinja --alias mios-agent-cpu --slot-save-path /var/lib/mios/llamacpp/slots
 GlobalArgs=--storage-opt=additionalimagestore=/usr/lib/bootc/storage
 Group=827
 HealthCmd=curl -fsS http://localhost:8510/health || exit 1
@@ -33,6 +33,8 @@ WantedBy=multi-user.target default.target
 [Service]
 Delegate=yes
 EnvironmentFile=/etc/mios/install.env
+EnvironmentFile=-/run/mios/model-tier/cpu-node.env
+ExecStartPre=-/usr/bin/mios-gen model-tier --root / --lane cpu-node --apply
 MemoryHigh=65%
 MemoryMax=75%
 MemorySwapMax=512M

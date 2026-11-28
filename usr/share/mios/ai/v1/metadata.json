@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4386,
+  "total_files_scanned": 4388,
   "total_metadata_entries": 3514,
   "total_hints": 3508,
   "total_functions_indexed": 2299,
-  "total_related_links": 7155,
+  "total_related_links": 7157,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -7665,7 +7665,7 @@
     },
     {
       "path": "tests/test-cpu-node-memory.py",
-      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file, context window and symmetric K/V cache type are the SSOT cpu_node_model_file/cpu_node_context/cpu_node_cache_type.",
+      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file, context window and symmetric K/V type are expanded at start from the lane's model tier (read after install.env), and every tier row's KV meets the tool-safe floor.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/containers/systemd/mios-cpu-node.container"
@@ -13592,12 +13592,13 @@
     },
     {
       "path": "tools/native/mios-gen/src/light_tiers.rs",
-      "hint": "`mios-gen light-tiers` -- generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node (the resident mios-cpu-node), the entries in drop are removed, and every other model, group and top-level key is carried over unchanged. --check fails when the committed map is stale.",
+      "hint": "Model tiers of the inference lanes. `mios-gen light-tiers` generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node, the entries in drop are removed, everything else is carried over (--check fails when the committed map is stale). `mios-gen model-tier --lane heavy|cpu-node` measures the host (its spec'd RAM as MemTotal, dGPU VRAM, APU VRAM+GTT), picks the lane's [[llamacpp.tiers.<lane>]] row that fits its budget and writes it to the lane's EnvironmentFile; for [ai].heavy_engine = \"auto\" it detects the GPU ([llamacpp.heavy_auto]: NVIDIA -> CUDA, amdgpu render node -> Vulkan) and `--probe` exits 1 when there is none. `mios-gen tool-safe --check` fails when any lane, tier row or model-map entry is below the [llamacpp.tool_safe] floor.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/mios/llamacpp/mios-llm-light.yaml",
         "usr/share/mios/llamacpp/mios-llm-light-cpu.yaml",
-        "tools/native/mios-gen/src/gpu_topology.rs"
+        "tools/native/mios-gen/src/gpu_topology.rs",
+        "usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md"
       ],
       "functions": [],
       "doc": null,
@@ -16252,11 +16253,12 @@
     },
     {
       "path": "tools/test_routing_security.py",
-      "hint": "Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact.",
+      "hint": "Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact; pin the model router's advertised context to SSOT [routing].router_ctx.",
       "related": [
         "usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py",
         "usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py",
-        "usr/libexec/mios/mios-model-router"
+        "usr/libexec/mios/mios-model-router",
+        "usr/share/mios/mios.toml"
       ],
       "functions": [],
       "doc": null,
@@ -36622,7 +36624,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md",
-      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies, and the per-node model picks as host-tier fragments.",
+      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies, the tool-safe floor, the per-host model tiers each lane picks at start from the host's spec'd RAM, and the heavy engine detected per host.",
       "related": [],
       "functions": [],
       "doc": null,
