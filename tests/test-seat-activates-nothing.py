@@ -147,10 +147,25 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertEqual(engine["Container"]["Entrypoint"], "/app/llama-server")
         self.assertIn("--device CUDA0 --n-gpu-layers all", engine["Container"]["Exec"])
         self.assertIn("${MIOS_NODES_LOCAL_HEAVY_MODEL}", engine["Container"]["Exec"])
-        self.assertEqual(engine["Service"]["ExecStartPre"], "/usr/bin/mios-gen heavy-backend")
+        # The model tier picks this host's heavy row, then runs the heavy admission on it.
+        self.assertEqual(engine["Service"]["ExecStartPre"],
+                         "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
         self.assertEqual(heavy["Container"]["ContainerName"], "mios-llm-heavy")
         self.assertIn("gpu-serving", _caps(self.d["blade"]["requires"]["mios-llm-heavy"]))
         self.assertEqual(set(heavy["engine"]), set(self.d["images"]["mios-llm-heavy"]["engine"]))
+
+    def test_the_vulkan_heavy_engine_serves_an_apu_on_its_render_node(self):
+        heavy = self.d["containers"]["mios-llm-heavy"]
+        engine = heavy["engine"]["llamacpp-vulkan"]
+        self.assertIn("--device Vulkan0 --n-gpu-layers all", engine["Container"]["Exec"])
+        self.assertIn("--flash-attn on", engine["Container"]["Exec"])
+        self.assertEqual(engine["Container"]["AddDevice"], "${MIOS_LLAMACPP_HEAVY_RENDER_NODE}")
+        self.assertEqual(engine["Container"]["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_RENDER_GID}")
+        self.assertEqual(engine["Service"]["ExecStartPre"],
+                         "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
+        self.assertEqual(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"]["llamacpp-vulkan"], "vulkan")
+        for name in ("MIOS_LLAMACPP_HEAVY_RENDER_NODE", "MIOS_LLAMACPP_HEAVY_RENDER_GID"):
+            self.assertIn(name, self.d["generator"]["placeholders"])
 
     def test_every_required_capability_is_grantable(self):
         granted = set()

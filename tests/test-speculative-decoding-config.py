@@ -47,6 +47,42 @@ class TestSpeculativeDecodingConfig(unittest.TestCase):
             v = argv[argv.index("--cache-type-v") + 1]
             self.assertEqual((k, v), ("q8_0", "q8_0"), model)
 
+    def test_every_served_gguf_and_tier_row_meets_the_tool_safe_floor(self):
+        # Independent of mios-gen tool-safe (check_tool_safe_floor): the same SSOT rule,
+        # so a sub-floor quant fails here even where no native build is available.
+        import tomllib
+        with open(os.path.join(_ROOT, "usr", "share", "mios", "mios.toml"), "rb") as f:
+            ssot = tomllib.load(f)
+        llama = ssot["llamacpp"]
+        floor, facts = llama["tool_safe"], llama["gguf"]
+
+        def meets(file):
+            f = facts[file]
+            if f["quant"] in floor["native"]:
+                return True
+            if f["kind"] == "embedding":
+                need = floor["embed_floor_rank"]
+            else:
+                active = f.get("active_b", f["params_b"])
+                small = (f["params_b"] < floor["large_min_params_b"]
+                         or (active < f["params_b"] and active <= floor["small_max_active_b"]))
+                need = floor["small_floor_rank"] if small and not f["reasoning"] else floor["large_floor_rank"]
+            return floor["quant_rank"].get(f["quant"], 0) >= need
+
+        for model, entry in self._models().items():
+            file = entry["cmd"].split("--model", 1)[1].split()[0].rsplit("/", 1)[-1]
+            self.assertIn(file, facts, f"{model}: no [llamacpp.gguf] row for {file}")
+            self.assertTrue(meets(file), f"{model}: {file} is below the tool-safe floor")
+        fetched = ({r["name"] for r in ssot["ai"]["firstboot_models"]}
+                   | {e.split("=", 1)[0].strip() for e in llama["bake_models"].split(",")})
+        for lane, rows in llama["tiers"].items():
+            kv = floor["embed_kv"] if lane == "embed" else floor["chat_kv"]
+            for row in rows:
+                where = f"llamacpp.tiers.{lane}.{row['name']}"
+                self.assertIn(row["cache_type"], kv, where)
+                self.assertTrue(meets(row["model_file"]), where)
+                self.assertIn(row["model_file"], fetched, f"{where}: no host can fetch it")
+
     def test_tool_calling_entries_render_through_jinja(self):
         # Every chat entry except the inert vision-grounding lane parses tool calls.
         for model, entry in self._models().items():

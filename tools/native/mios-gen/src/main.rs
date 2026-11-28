@@ -90,6 +90,26 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Pick this host's model tier for a single-model lane ([[llamacpp.tiers.<lane>]]) from its
+    /// measured RAM/VRAM; the heavy lane also runs its admission. With --apply, write the lane's env file.
+    ModelTier {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// heavy or cpu-node
+        #[arg(long)]
+        lane: String,
+        /// Atomically write <[llamacpp.tier_policy].env_dir>/<lane>.env; otherwise plan only.
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Fail when any lane, tier row or light model-map entry is below the [llamacpp.tool_safe] floor.
+    ToolSafe {
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Accepted like the other gates' flag; this verb never writes.
+        #[arg(long)]
+        check: bool,
+    },
     /// Plan or apply the light inference backend from validated GPU metadata.
     LightBackend {
         #[arg(long)]
@@ -2696,6 +2716,30 @@ fn main() -> ExitCode {
                             } else {
                                 "CPU-tier model map is current"
                             }
+                        )
+                    })
+                    .map_err(|message| (message, 1)),
+            )
+        }
+        Commands::ModelTier { root, lane, apply } => {
+            let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            (
+                "model-tier",
+                "<[llamacpp.tier_policy].env_dir>/<lane>.env",
+                light_tiers::run_model_tier(&root, &lane, apply)
+                    .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1)),
+            )
+        }
+        Commands::ToolSafe { root, check: _ } => {
+            let r = resolve_root(root);
+            (
+                "tool-safe",
+                "[llamacpp.tool_safe] floor",
+                light_tiers::run_tool_safe(&r)
+                    .map(|rows| {
+                        println!(
+                            "[tool-safe] the lanes, {rows} tier row(s) and the light model map meet the [llamacpp.tool_safe] floor"
                         )
                     })
                     .map_err(|message| (message, 1)),

@@ -1,8 +1,10 @@
-// AI-hint: `mios-gen light-tiers` -- generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node (the resident mios-cpu-node), the entries in drop are removed, and every other model, group and top-level key is carried over unchanged. --check fails when the committed map is stale.
-// AI-related: usr/share/mios/mios.toml, usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/mios/llamacpp/mios-llm-light-cpu.yaml, tools/native/mios-gen/src/gpu_topology.rs
+// AI-hint: Model tiers of the inference lanes. `mios-gen light-tiers` generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node, the entries in drop are removed, everything else is carried over (--check fails when the committed map is stale). `mios-gen model-tier --lane heavy|cpu-node` measures the host (RAM, dGPU VRAM, APU VRAM+GTT), picks the lane's [[llamacpp.tiers.<lane>]] row that fits its budget and writes it to the lane's EnvironmentFile. `mios-gen tool-safe --check` fails when any lane, tier row or model-map entry is below the [llamacpp.tool_safe] floor.
+// AI-related: usr/share/mios/mios.toml, usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/mios/llamacpp/mios-llm-light-cpu.yaml, tools/native/mios-gen/src/gpu_topology.rs, usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde_json::{json, Value as Json};
 use serde_yaml::{Mapping, Value as Yaml};
 use toml::Value;
 
@@ -174,6 +176,1220 @@ pub fn run(root: &Path, check: bool) -> Result<bool, String> {
     }
     fs::write(&out, want).map_err(|e| format!("{}: {e}", out.display()))?;
     Ok(true)
+}
+
+// ===== Model tiers and the tool-safe floor ==========================================
+
+fn at<'a>(v: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    path.iter().try_fold(v, |cur, key| cur.get(*key))
+}
+
+fn number(v: &Value) -> Option<f64> {
+    v.as_float().or_else(|| v.as_integer().map(|i| i as f64))
+}
+
+fn text(t: &Value, key: &str, ctx: &str) -> Result<String, String> {
+    t.get(key)
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{ctx}.{key} must be a nonempty string"))
+}
+
+fn real(t: &Value, key: &str, ctx: &str) -> Result<f64, String> {
+    t.get(key)
+        .and_then(number)
+        .ok_or_else(|| format!("{ctx}.{key} must be a number"))
+}
+
+fn count(t: &Value, key: &str, ctx: &str) -> Result<u64, String> {
+    t.get(key)
+        .and_then(Value::as_integer)
+        .filter(|v| *v >= 0)
+        .map(|v| v as u64)
+        .ok_or_else(|| format!("{ctx}.{key} must be a non-negative integer"))
+}
+
+fn strings(t: &Value, key: &str, ctx: &str) -> Result<Vec<String>, String> {
+    let bad = || format!("{ctx}.{key} must be a string array");
+    t.get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(bad)?
+        .iter()
+        .map(|v| v.as_str().map(str::to_owned).ok_or_else(bad))
+        .collect()
+}
+
+/// [llamacpp.tool_safe]: the floor every lane that serves tools must meet.
+#[derive(Debug, Clone)]
+pub struct Floor {
+    pub chat_kv: Vec<String>,
+    pub embed_kv: Vec<String>,
+    pub quant_rank: BTreeMap<String, i64>,
+    pub native: Vec<String>,
+    pub large_min_params_b: f64,
+    pub small_max_active_b: f64,
+    pub large_floor_rank: i64,
+    pub small_floor_rank: i64,
+    pub embed_floor_rank: i64,
+}
+
+impl Floor {
+    pub fn from_ssot(data: &Value) -> Result<Floor, String> {
+        const CTX: &str = "llamacpp.tool_safe";
+        let t = at(data, &["llamacpp", "tool_safe"]).ok_or("missing [llamacpp.tool_safe]")?;
+        let ranks = t
+            .get("quant_rank")
+            .and_then(Value::as_table)
+            .ok_or("llamacpp.tool_safe.quant_rank must map quant names to ranks")?;
+        let mut quant_rank = BTreeMap::new();
+        for (quant, rank) in ranks {
+            let rank = rank
+                .as_integer()
+                .filter(|r| *r > 0)
+                .ok_or_else(|| format!("{CTX}.quant_rank.{quant} must be a positive integer"))?;
+            quant_rank.insert(quant.clone(), rank);
+        }
+        let rank = |key: &str| -> Result<i64, String> {
+            t.get(key)
+                .and_then(Value::as_integer)
+                .filter(|v| *v > 0)
+                .ok_or_else(|| format!("{CTX}.{key} must be a positive integer"))
+        };
+        Ok(Floor {
+            chat_kv: strings(t, "chat_kv", CTX)?,
+            embed_kv: strings(t, "embed_kv", CTX)?,
+            quant_rank,
+            native: strings(t, "native", CTX)?,
+            large_min_params_b: real(t, "large_min_params_b", CTX)?,
+            small_max_active_b: real(t, "small_max_active_b", CTX)?,
+            large_floor_rank: rank("large_floor_rank")?,
+            small_floor_rank: rank("small_floor_rank")?,
+            embed_floor_rank: rank("embed_floor_rank")?,
+        })
+    }
+
+    /// The lowest quant rank this model may serve tools at.
+    pub fn required_rank(&self, f: &Facts) -> i64 {
+        if f.kind == "embedding" {
+            return self.embed_floor_rank;
+        }
+        let moe = f.active_b < f.params_b;
+        let small =
+            f.params_b < self.large_min_params_b || (moe && f.active_b <= self.small_max_active_b);
+        if small && !f.reasoning {
+            self.small_floor_rank
+        } else {
+            self.large_floor_rank
+        }
+    }
+
+    /// None when the weights meet the floor, else why they do not.
+    pub fn quant_violation(&self, file: &str, f: &Facts) -> Option<String> {
+        if self.native.iter().any(|n| *n == f.quant) {
+            return None;
+        }
+        let need = self.required_rank(f);
+        match self.quant_rank.get(&f.quant) {
+            None => Some(format!(
+                "{file}: quant {} is not on the tool-safe ladder ([llamacpp.tool_safe].quant_rank)",
+                f.quant
+            )),
+            Some(rank) if *rank < need => Some(format!(
+                "{file}: quant {} (rank {rank}) is below the tool-safe floor (rank {need}) for a {} {}B{} model",
+                f.quant,
+                if f.reasoning { "reasoning" } else { "non-reasoning" },
+                f.params_b,
+                if f.active_b < f.params_b { format!(" ({}B active)", f.active_b) } else { String::new() }
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// [llamacpp.gguf."<file>"]: what the floor is judged on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Facts {
+    pub quant: String,
+    pub params_b: f64,
+    pub active_b: f64,
+    pub reasoning: bool,
+    pub kind: String,
+}
+
+pub fn gguf_facts(data: &Value) -> Result<BTreeMap<String, Facts>, String> {
+    let rows = at(data, &["llamacpp", "gguf"])
+        .and_then(Value::as_table)
+        .ok_or("missing [llamacpp.gguf] facts")?;
+    let mut out = BTreeMap::new();
+    for (file, row) in rows {
+        let ctx = format!("llamacpp.gguf.\"{file}\"");
+        let params_b = real(row, "params_b", &ctx)?;
+        out.insert(
+            file.clone(),
+            Facts {
+                quant: text(row, "quant", &ctx)?,
+                params_b,
+                active_b: row.get("active_b").and_then(number).unwrap_or(params_b),
+                reasoning: row
+                    .get("reasoning")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| format!("{ctx}.reasoning must be a boolean"))?,
+                kind: text(row, "kind", &ctx)?,
+            },
+        );
+    }
+    Ok(out)
+}
+
+/// One row of [[llamacpp.tiers.<lane>]].
+#[derive(Debug, Clone, PartialEq)]
+pub struct TierEntry {
+    pub name: String,
+    pub model_file: String,
+    pub context: u64,
+    pub cache_type: String,
+    pub need_mib: u64,
+    pub min_ram_mib: u64,
+    pub enable: bool,
+}
+
+pub fn tier_entries(data: &Value, lane: &str) -> Result<Vec<TierEntry>, String> {
+    let rows = at(data, &["llamacpp", "tiers", lane])
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing [[llamacpp.tiers.{lane}]]"))?;
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let ctx = format!("llamacpp.tiers.{lane}[{i}]");
+            let model_file = text(row, "model_file", &ctx)?;
+            if !model_file.ends_with(".gguf")
+                || model_file.starts_with('.')
+                || !model_file
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+            {
+                return Err(format!("{ctx}.model_file must name one GGUF file"));
+            }
+            Ok(TierEntry {
+                name: text(row, "name", &ctx)?,
+                model_file,
+                context: count(row, "context", &ctx)?,
+                cache_type: text(row, "cache_type", &ctx)?,
+                need_mib: count(row, "need_mib", &ctx)?,
+                min_ram_mib: match row.get("min_ram_mib") {
+                    Some(_) => count(row, "min_ram_mib", &ctx)?,
+                    None => 0,
+                },
+                enable: row.get("enable").and_then(Value::as_bool).unwrap_or(true),
+            })
+        })
+        .collect()
+}
+
+/// [llamacpp.tier_policy]: reserves and shares the budgets are computed with.
+#[derive(Debug, Clone)]
+pub struct Policy {
+    pub host_reserve_mib: u64,
+    pub vram_reserve_mib: u64,
+    pub apu_gpu_ram_fraction: f64,
+    pub apu_max_vram_mib: u64,
+    pub env_dir: PathBuf,
+    pub nvidia_smi: Vec<String>,
+}
+
+impl Policy {
+    pub fn from_ssot(data: &Value) -> Result<Policy, String> {
+        const CTX: &str = "llamacpp.tier_policy";
+        let t = at(data, &["llamacpp", "tier_policy"]).ok_or("missing [llamacpp.tier_policy]")?;
+        let fraction = real(t, "apu_gpu_ram_fraction", CTX)?;
+        if !(0.0..=1.0).contains(&fraction) {
+            return Err(format!("{CTX}.apu_gpu_ram_fraction must be within 0..1"));
+        }
+        let env_dir = PathBuf::from(text(t, "env_dir", CTX)?);
+        if !env_dir.is_absolute()
+            || env_dir
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(format!("{CTX}.env_dir must be an absolute path"));
+        }
+        Ok(Policy {
+            host_reserve_mib: count(t, "host_reserve_mib", CTX)?,
+            vram_reserve_mib: count(t, "vram_reserve_mib", CTX)?,
+            apu_gpu_ram_fraction: fraction,
+            apu_max_vram_mib: count(t, "apu_max_vram_mib", CTX)?,
+            env_dir,
+            nvidia_smi: strings(t, "nvidia_smi", CTX)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuKind {
+    Cuda,
+    Vulkan,
+}
+
+/// The GPU the heavy lane's engine serves on, as measured at start.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuMeasure {
+    pub kind: GpuKind,
+    pub vram_mib: u64,
+    /// GPU-mappable system RAM (amdgpu GTT); 0 for a dGPU.
+    pub gtt_mib: u64,
+    /// Shares the host's RAM pool (an APU): its use comes out of the CPU lanes' budget.
+    pub apu: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Measured {
+    pub ram_mib: u64,
+    pub gpu: Option<GpuMeasure>,
+}
+
+/// MemTotal of /proc/meminfo, in MiB.
+pub fn meminfo_total_mib(meminfo: &str) -> Option<u64> {
+    meminfo.lines().find_map(|line| {
+        let mut words = line.strip_prefix("MemTotal:")?.split_whitespace();
+        let kib: u64 = words.next()?.parse().ok()?;
+        (words.next() == Some("kB")).then_some(kib / 1024)
+    })
+}
+
+/// The largest memory.total `nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits` prints (MiB).
+pub fn nvidia_total_mib(output: &str) -> Option<u64> {
+    output
+        .lines()
+        .filter_map(|l| l.trim().parse::<u64>().ok())
+        .max()
+}
+
+/// A systemd memory bound ("65%", "512M", "8G", bytes) resolved against the host's RAM, in MiB.
+pub fn bound_mib(bound: &str, ram_mib: u64) -> Option<u64> {
+    let b = bound.trim();
+    if let Some(pct) = b.strip_suffix('%') {
+        let pct: f64 = pct.trim().parse().ok()?;
+        return (pct > 0.0 && pct <= 100.0).then(|| (ram_mib as f64 * pct / 100.0) as u64);
+    }
+    let split = b.find(|c: char| !c.is_ascii_digit()).unwrap_or(b.len());
+    let (digits, unit) = b.split_at(split);
+    let n: u64 = digits.parse().ok()?;
+    let bytes = match unit {
+        "" => n,
+        "K" => n << 10,
+        "M" => n << 20,
+        "G" => n << 30,
+        "T" => n << 40,
+        _ => return None,
+    };
+    Some(bytes >> 20)
+}
+
+/// [llamacpp.tier_lanes.heavy].engines: which GPU kind a heavy engine runs on (None: not a llama.cpp engine).
+pub fn heavy_engine_kind(data: &Value, engine: &str) -> Result<Option<GpuKind>, String> {
+    let engines = at(data, &["llamacpp", "tier_lanes", "heavy", "engines"])
+        .and_then(Value::as_table)
+        .ok_or("llamacpp.tier_lanes.heavy.engines must map heavy engines to cuda or vulkan")?;
+    match engines.get(engine).and_then(Value::as_str) {
+        None => Ok(None),
+        Some("cuda") => Ok(Some(GpuKind::Cuda)),
+        Some("vulkan") => Ok(Some(GpuKind::Vulkan)),
+        Some(other) => Err(format!(
+            "llamacpp.tier_lanes.heavy.engines.{engine} = {other:?}: use cuda or vulkan"
+        )),
+    }
+}
+
+fn heavy_engine(data: &Value) -> &str {
+    at(data, &["ai", "heavy_engine"])
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn sysfs_mib(path: &Path) -> Option<u64> {
+    fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|bytes| bytes >> 20)
+}
+
+/// NVIDIA VRAM from nvidia-smi (on the live root only: it asks the driver).
+fn cuda_measure(root: &Path, policy: &Policy) -> Option<GpuMeasure> {
+    if root != Path::new("/") {
+        return None;
+    }
+    for smi in &policy.nvidia_smi {
+        let Ok(out) = std::process::Command::new(smi)
+            .args(["--query-gpu=memory.total", "--format=csv,noheader,nounits"])
+            .output()
+        else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        if let Some(mib) = nvidia_total_mib(&String::from_utf8_lossy(&out.stdout)) {
+            return Some(GpuMeasure {
+                kind: GpuKind::Cuda,
+                vram_mib: mib,
+                gtt_mib: 0,
+                apu: false,
+            });
+        }
+    }
+    None
+}
+
+/// The AMD device the Vulkan engine would serve on, sized from amdgpu sysfs (VRAM carve-out + GTT).
+fn vulkan_measure(
+    root: &Path,
+    data: &Value,
+    policy: &Policy,
+) -> Result<Option<GpuMeasure>, String> {
+    let dri = root.join("dev/dri");
+    let sys = root.join("sys/class/drm");
+    let host = crate::gpu_topology::Host {
+        dri: &dri,
+        sys: &sys,
+    };
+    let Some(gpu) = crate::gpu_topology::heavy_vulkan_gpu(root, data, &host)? else {
+        return Ok(None);
+    };
+    let card = gpu
+        .card
+        .file_name()
+        .ok_or("the Vulkan GPU has no DRM card name")?;
+    let device = sys.join(card).join("device");
+    let vram_mib = sysfs_mib(&device.join("mem_info_vram_total"))
+        .ok_or_else(|| format!("{}: amdgpu mem_info_vram_total is unreadable", gpu.pci))?;
+    let gtt_mib = sysfs_mib(&device.join("mem_info_gtt_total")).unwrap_or(0);
+    Ok(Some(GpuMeasure {
+        kind: GpuKind::Vulkan,
+        vram_mib,
+        gtt_mib,
+        apu: vram_mib <= policy.apu_max_vram_mib,
+    }))
+}
+
+/// RAM, and the GPU of the selected heavy engine, as this host has them now.
+pub fn measure(root: &Path, data: &Value, policy: &Policy) -> Result<Measured, String> {
+    let meminfo = fs::read_to_string(root.join("proc/meminfo"))
+        .map_err(|e| format!("cannot read /proc/meminfo: {e}"))?;
+    let ram_mib = meminfo_total_mib(&meminfo).ok_or("/proc/meminfo has no MemTotal in kB")?;
+    let gpu = match heavy_engine_kind(data, heavy_engine(data))? {
+        Some(GpuKind::Cuda) => cuda_measure(root, policy),
+        Some(GpuKind::Vulkan) => vulkan_measure(root, data, policy)?,
+        None => None,
+    };
+    Ok(Measured { ram_mib, gpu })
+}
+
+/// One lane's pick, with the arithmetic that led to it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LaneChoice {
+    pub lane: String,
+    pub entry: Option<TierEntry>,
+    pub budget_mib: u64,
+    pub pinned: bool,
+    pub notes: Vec<String>,
+}
+
+impl LaneChoice {
+    pub fn to_json(&self) -> Json {
+        json!({"lane": self.lane, "budget_mib": self.budget_mib, "pinned": self.pinned,
+            "entry": self.entry.as_ref().map(|e| json!({"name": e.name, "model_file": e.model_file,
+                "context": e.context, "cache_type": e.cache_type, "need_mib": e.need_mib})),
+            "arithmetic": self.notes})
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choose(
+    lane: &str,
+    entries: &[TierEntry],
+    budget: u64,
+    ram: u64,
+    present: &dyn Fn(&str) -> bool,
+    avoid: Option<&str>,
+    pin: &str,
+    mut notes: Vec<String>,
+) -> LaneChoice {
+    let done = |entry: Option<TierEntry>, pinned: bool, notes: Vec<String>| LaneChoice {
+        lane: lane.to_owned(),
+        entry,
+        budget_mib: budget,
+        pinned,
+        notes,
+    };
+    if !pin.is_empty() {
+        match entries.iter().find(|e| e.name == pin) {
+            Some(e) if e.enable && present(&e.model_file) => {
+                notes.push(format!("pinned to {} by [llamacpp.tier_pin]", e.name));
+                return done(Some(e.clone()), true, notes);
+            }
+            Some(e) => notes.push(format!(
+                "pin {} ignored: {}",
+                e.name,
+                if e.enable {
+                    "its GGUF is not on disk"
+                } else {
+                    "the row is disabled"
+                }
+            )),
+            None => notes.push(format!(
+                "pin {pin} names no [[llamacpp.tiers.{lane}]] row; ignored"
+            )),
+        }
+    }
+    let fits: Vec<&TierEntry> = entries
+        .iter()
+        .filter(|e| {
+            e.enable && e.min_ram_mib <= ram && e.need_mib <= budget && present(&e.model_file)
+        })
+        .collect();
+    let pick = fits
+        .iter()
+        .rev()
+        .find(|e| Some(e.model_file.as_str()) != avoid)
+        .or_else(|| fits.last())
+        .map(|e| TierEntry::clone(e));
+    if let Some(e) = pick {
+        notes.push(format!(
+            "picked {} ({}, {} ctx, {} KV): needs {} of {budget} MiB",
+            e.name, e.model_file, e.context, e.cache_type, e.need_mib
+        ));
+        return done(Some(e), false, notes);
+    }
+    let floor = entries
+        .iter()
+        .find(|e| e.enable && present(&e.model_file))
+        .cloned();
+    match &floor {
+        Some(e) => notes.push(format!(
+            "no row fits {budget} MiB; serving the tool-safe floor {} ({} MiB) so the lane keeps tools",
+            e.name, e.need_mib
+        )),
+        None => notes.push("no enabled row's GGUF is on disk; the lane keeps its SSOT keys".into()),
+    }
+    done(floor, false, notes)
+}
+
+/// Both single-model lanes' picks for a measured host.
+#[derive(Debug, Clone)]
+pub struct Plan {
+    pub measured: Measured,
+    pub heavy: LaneChoice,
+    pub cpu_node: LaneChoice,
+}
+
+pub fn plan(
+    data: &Value,
+    measured: &Measured,
+    present: &dyn Fn(&str) -> bool,
+) -> Result<Plan, String> {
+    let policy = Policy::from_ssot(data)?;
+    let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
+    let pin = |lane: &str| {
+        at(llama, &["tier_pin", lane])
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let ram = measured.ram_mib;
+    let mut notes = Vec::new();
+    let budget = match &measured.gpu {
+        Some(g) if g.apu => {
+            let mappable = g.vram_mib + g.gtt_mib;
+            let share = (ram as f64 * policy.apu_gpu_ram_fraction) as u64;
+            notes.push(format!(
+                "APU: GPU-mappable {mappable} MiB (VRAM {} + GTT {}); RAM share {} x {ram} = {share} MiB",
+                g.vram_mib, g.gtt_mib, policy.apu_gpu_ram_fraction
+            ));
+            Some(mappable.min(share))
+        }
+        Some(g) => {
+            let usable = g.vram_mib.saturating_sub(policy.vram_reserve_mib);
+            notes.push(format!(
+                "dGPU: VRAM {} - reserve {} = {usable} MiB",
+                g.vram_mib, policy.vram_reserve_mib
+            ));
+            Some(usable)
+        }
+        None => {
+            notes.push(format!(
+                "no GPU for heavy engine {:?}: the heavy lane does not serve",
+                heavy_engine(data)
+            ));
+            None
+        }
+    };
+    let heavy = match budget {
+        Some(budget) => choose(
+            "heavy",
+            &tier_entries(data, "heavy")?,
+            budget,
+            ram,
+            present,
+            None,
+            &pin("heavy"),
+            notes,
+        ),
+        None => LaneChoice {
+            lane: "heavy".into(),
+            entry: None,
+            budget_mib: 0,
+            pinned: false,
+            notes,
+        },
+    };
+    let high = bound_mib(&text(llama, "cpu_node_memory_high", "llamacpp")?, ram)
+        .ok_or("llamacpp.cpu_node_memory_high is not a memory bound")?;
+    let light_max = at(llama, &["light_backends", "cpu", "memory_max"])
+        .and_then(Value::as_str)
+        .and_then(|b| bound_mib(b, ram))
+        .unwrap_or(0);
+    let gpu_use = match (&measured.gpu, &heavy.entry) {
+        (Some(g), Some(e)) if g.apu => e.need_mib,
+        _ => 0,
+    };
+    let left = ram
+        .saturating_sub(light_max)
+        .saturating_sub(policy.host_reserve_mib)
+        .saturating_sub(gpu_use);
+    let budget = high.min(left);
+    let notes = vec![format!(
+        "RAM {ram} MiB: cpu_node_memory_high {high} MiB; RAM - light lane max {light_max} - host reserve {} - APU GPU lane {gpu_use} = {left} MiB; budget {budget} MiB",
+        policy.host_reserve_mib
+    )];
+    let avoid = heavy.entry.as_ref().map(|e| e.model_file.clone());
+    let cpu_node = choose(
+        "cpu_node",
+        &tier_entries(data, "cpu_node")?,
+        budget,
+        ram,
+        present,
+        avoid.as_deref(),
+        &pin("cpu_node"),
+        notes,
+    );
+    Ok(Plan {
+        measured: measured.clone(),
+        heavy,
+        cpu_node,
+    })
+}
+
+/// [llamacpp.tier_lanes.<lane>].keys: the SSOT keys a lane's row overrides.
+fn lane_keys(data: &Value, lane: &str) -> Result<BTreeMap<String, String>, String> {
+    let keys = at(data, &["llamacpp", "tier_lanes", lane, "keys"])
+        .and_then(Value::as_table)
+        .ok_or_else(|| format!("missing llamacpp.tier_lanes.{lane}.keys"))?;
+    keys.iter()
+        .map(|(field, dotted)| {
+            dotted
+                .as_str()
+                .map(|d| (field.clone(), d.to_owned()))
+                .ok_or_else(|| {
+                    format!("llamacpp.tier_lanes.{lane}.keys.{field} must be a dotted SSOT key")
+                })
+        })
+        .collect()
+}
+
+fn set_dotted(data: &mut Value, dotted: &str, value: Value) -> Result<(), String> {
+    let mut parts: Vec<&str> = dotted.split('.').collect();
+    let last = parts.pop().ok_or("empty SSOT key")?;
+    let mut cur = data;
+    for part in parts {
+        cur = cur
+            .get_mut(part)
+            .ok_or_else(|| format!("{dotted}: [{part}] is missing"))?;
+    }
+    cur.as_table_mut()
+        .ok_or_else(|| format!("{dotted}: parent is not a table"))?
+        .insert(last.to_owned(), value);
+    Ok(())
+}
+
+/// The lane's env file: the row's values under the canonical MIOS_* names of the keys it overrides.
+pub fn env_contents(
+    data: &Value,
+    choice: &LaneChoice,
+    extra: &[(&str, String)],
+) -> Result<String, String> {
+    let keys = lane_keys(data, &choice.lane)?;
+    let mut out = format!(
+        "# AI-hint: Model tier of the {} lane, written by `mios-gen model-tier` from [[llamacpp.tiers.{}]] at every start; never edit.\n",
+        choice.lane, choice.lane
+    );
+    let key = |field: &str| {
+        keys.get(field)
+            .map(|d| mios_resolver::names::canonical_name(d))
+            .ok_or_else(|| {
+                format!(
+                    "llamacpp.tier_lanes.{}.keys.{field} is missing",
+                    choice.lane
+                )
+            })
+    };
+    if let Some(e) = &choice.entry {
+        for (field, value) in [
+            ("model_file", e.model_file.clone()),
+            ("context", e.context.to_string()),
+            ("cache_type", e.cache_type.clone()),
+        ] {
+            out.push_str(&format!("{}={value}\n", key(field)?));
+        }
+    }
+    for (field, value) in extra.iter() {
+        let field: &str = field;
+        if value.is_empty()
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+        {
+            return Err(format!("{field} value {value:?} is not a bare env value"));
+        }
+        out.push_str(&format!("{}={value}\n", key(field)?));
+    }
+    Ok(out)
+}
+
+fn write_atomic(target: &Path, contents: &str) -> Result<bool, String> {
+    use std::io::Write;
+    if fs::read_to_string(target).ok().as_deref() == Some(contents) {
+        return Ok(false);
+    }
+    let parent = target.parent().ok_or("env file has no parent")?;
+    fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    tmp.write_all(contents.as_bytes())
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tmp.as_file()
+            .set_permissions(fs::Permissions::from_mode(0o644))
+            .map_err(|e| e.to_string())?;
+    }
+    tmp.as_file().sync_all().map_err(|e| e.to_string())?;
+    tmp.persist(target).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// `mios-gen model-tier --lane heavy|cpu-node [--apply]`: measure, pick, admit (heavy), write.
+pub fn run_model_tier(root: &Path, lane: &str, apply: bool) -> Result<Json, String> {
+    let lane = match lane {
+        "heavy" => "heavy",
+        "cpu-node" | "cpu_node" => "cpu_node",
+        other => {
+            return Err(format!(
+                "unknown tier lane {other:?}: use heavy or cpu-node"
+            ))
+        }
+    };
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let policy = Policy::from_ssot(&data)?;
+    let measured = measure(root, &data, &policy)?;
+    let models_dir = text(
+        data.get("llamacpp").ok_or("missing [llamacpp]")?,
+        "models_dir",
+        "llamacpp",
+    )?;
+    let models = root.join(models_dir.trim_start_matches('/'));
+    let present = |file: &str| models.join(file).is_file();
+    let plan = plan(&data, &measured, &present)?;
+    let choice = if lane == "heavy" {
+        &plan.heavy
+    } else {
+        &plan.cpu_node
+    };
+    let mut extra: Vec<(&str, String)> = Vec::new();
+    let mut admission = Json::Null;
+    if lane == "heavy" {
+        let entry = choice.entry.as_ref().ok_or_else(|| {
+            format!(
+                "the heavy lane has no tool-safe tier for this host ({}); it does not start and the CPU lanes keep serving",
+                choice.notes.join("; ")
+            )
+        })?;
+        let keys = lane_keys(&data, "heavy")?;
+        let mut overlaid = data.clone();
+        for (field, value) in [
+            ("model_file", Value::String(entry.model_file.clone())),
+            ("context", Value::Integer(entry.context as i64)),
+            ("cache_type", Value::String(entry.cache_type.clone())),
+        ] {
+            let dotted = keys
+                .get(field)
+                .ok_or_else(|| format!("llamacpp.tier_lanes.heavy.keys.{field} is missing"))?;
+            set_dotted(&mut overlaid, dotted, value)?;
+        }
+        admission = crate::gpu_topology::heavy_backend_plan(root, &overlaid)?;
+        if let Some(node) = admission.get("render_node").and_then(Json::as_str) {
+            extra.push(("render_node", node.to_owned()));
+        }
+        if admission.get("backend").and_then(Json::as_str) == Some("vulkan") {
+            let gid = admission
+                .get("device_gid")
+                .and_then(Json::as_u64)
+                .ok_or("Vulkan admission returned no render group")?;
+            extra.push(("render_gid", gid.to_string()));
+        }
+    }
+    let contents = env_contents(&data, choice, &extra)?;
+    let target = root.join(
+        policy
+            .env_dir
+            .join(format!("{}.env", lane.replace('_', "-")))
+            .strip_prefix("/")
+            .map_err(|e| e.to_string())?,
+    );
+    let changed = apply && write_atomic(&target, &contents)?;
+    Ok(
+        json!({"lane": lane, "measured": {"ram_mib": measured.ram_mib,
+        "gpu": measured.gpu.as_ref().map(|g| json!({"kind": format!("{:?}", g.kind),
+            "vram_mib": g.vram_mib, "gtt_mib": g.gtt_mib, "apu": g.apu}))},
+        "choice": choice.to_json(), "admission": admission, "env_file": target,
+        "contents": contents, "changed": changed}),
+    )
+}
+
+/// Every KV type, quant and fetch the [llamacpp.tool_safe] floor rules on, judged.
+pub fn tool_safe_violations(data: &Value, source_map: &str) -> Result<Vec<String>, String> {
+    let floor = Floor::from_ssot(data)?;
+    let facts = gguf_facts(data)?;
+    let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
+    let mut out = Vec::new();
+    for key in ["cpu_node_cache_type", "heavy_cache_type"] {
+        let kv = text(llama, key, "llamacpp")?;
+        if !floor.chat_kv.contains(&kv) {
+            out.push(format!(
+                "llamacpp.{key} = {kv:?} is below the chat KV floor {:?}",
+                floor.chat_kv
+            ));
+        }
+    }
+    let mut fetched: Vec<String> = at(data, &["ai", "firstboot_models"])
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| r.get("name").and_then(Value::as_str).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(spec) = llama.get("bake_models").and_then(Value::as_str) {
+        fetched.extend(
+            spec.split(',')
+                .filter_map(|e| e.split('=').next())
+                .map(|n| n.trim().to_owned())
+                .filter(|n| !n.is_empty()),
+        );
+    }
+    let judge =
+        |out: &mut Vec<String>, what: &str, file: &str, embedding: bool| match facts.get(file) {
+            None => out.push(format!("{what}: {file} has no [llamacpp.gguf] facts row")),
+            Some(f) => {
+                if (f.kind == "embedding") != embedding {
+                    out.push(format!("{what}: {file} is a {} model", f.kind));
+                }
+                if let Some(v) = floor.quant_violation(file, f) {
+                    out.push(format!("{what}: {v}"));
+                }
+            }
+        };
+    let lanes = at(data, &["llamacpp", "tiers"])
+        .and_then(Value::as_table)
+        .ok_or("missing [llamacpp.tiers]")?;
+    for lane in lanes.keys() {
+        let embedding = lane == "embed";
+        let allowed = if embedding {
+            &floor.embed_kv
+        } else {
+            &floor.chat_kv
+        };
+        for e in tier_entries(data, lane)? {
+            let what = format!("llamacpp.tiers.{lane}.{}", e.name);
+            if !allowed.contains(&e.cache_type) {
+                out.push(format!(
+                    "{what}: KV {} is below the floor {allowed:?}",
+                    e.cache_type
+                ));
+            }
+            judge(&mut out, &what, &e.model_file, embedding);
+            if e.enable && !fetched.contains(&e.model_file) {
+                out.push(format!(
+                    "{what}: {} is in neither [[ai.firstboot_models]] nor [llamacpp].bake_models, so no host can select it",
+                    e.model_file
+                ));
+            }
+        }
+    }
+    let map: Yaml =
+        serde_yaml::from_str(source_map).map_err(|e| format!("source model map: {e}"))?;
+    let models = map
+        .get("models")
+        .and_then(Yaml::as_mapping)
+        .ok_or("source model map has no models mapping")?;
+    for (name, model) in models {
+        let name = name.as_str().unwrap_or("?");
+        let Some(cmd) = model.get("cmd").and_then(Yaml::as_str) else {
+            out.push(format!("model map {name}: no cmd"));
+            continue;
+        };
+        let argv: Vec<&str> = cmd.split_whitespace().collect();
+        let arg = |flag: &str| {
+            argv.iter()
+                .position(|a| *a == flag)
+                .and_then(|i| argv.get(i + 1))
+                .copied()
+        };
+        let embedding = argv.contains(&"--embedding");
+        let (k, v) = (arg("--cache-type-k"), arg("--cache-type-v"));
+        if k != v {
+            out.push(format!("model map {name}: asymmetric KV {k:?}/{v:?}"));
+        }
+        if !embedding {
+            match k {
+                Some(kv) if floor.chat_kv.iter().any(|a| a == kv) => {}
+                other => out.push(format!(
+                    "model map {name}: KV {other:?} is below the chat floor {:?}",
+                    floor.chat_kv
+                )),
+            }
+        } else if let Some(kv) = k {
+            if !floor.embed_kv.iter().any(|a| a == kv) {
+                out.push(format!(
+                    "model map {name}: embedding KV {kv} is below {:?}",
+                    floor.embed_kv
+                ));
+            }
+        }
+        match arg("--model").and_then(|m| m.rsplit('/').next()) {
+            Some(file) => judge(&mut out, &format!("model map {name}"), file, embedding),
+            None => out.push(format!("model map {name}: no --model")),
+        }
+    }
+    Ok(out)
+}
+
+/// `mios-gen tool-safe --check`: Err lists every violation (the vendor tree; the floor is vendor policy).
+pub fn run_tool_safe(root: &Path) -> Result<usize, String> {
+    let ssot = root.join("usr/share/mios/mios.toml");
+    let data: Value =
+        toml::from_str(&fs::read_to_string(&ssot).map_err(|e| format!("{}: {e}", ssot.display()))?)
+            .map_err(|e| format!("{}: {e}", ssot.display()))?;
+    let config = text(
+        data.get("llamacpp").ok_or("missing [llamacpp]")?,
+        "config",
+        "llamacpp",
+    )?;
+    let map_path = root.join(config.trim_start_matches('/'));
+    let source =
+        fs::read_to_string(&map_path).map_err(|e| format!("{}: {e}", map_path.display()))?;
+    let violations = tool_safe_violations(&data, &source)?;
+    if violations.is_empty() {
+        let entries = at(&data, &["llamacpp", "tiers"])
+            .and_then(Value::as_table)
+            .map(|t| t.values().filter_map(Value::as_array).map(Vec::len).sum())
+            .unwrap_or(0);
+        Ok(entries)
+    } else {
+        Err(violations.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    fn vendor() -> Value {
+        include_str!("../../../../usr/share/mios/mios.toml")
+            .parse()
+            .unwrap()
+    }
+
+    fn all_present(_: &str) -> bool {
+        true
+    }
+
+    fn pick(plan: &Plan) -> (Option<String>, Option<String>) {
+        (
+            plan.heavy.entry.as_ref().map(|e| e.name.clone()),
+            plan.cpu_node.entry.as_ref().map(|e| e.name.clone()),
+        )
+    }
+
+    fn with_engine(engine: &str) -> Value {
+        let mut d = vendor();
+        d["ai"]["heavy_engine"] = Value::String(engine.into());
+        d
+    }
+
+    fn gpu(kind: GpuKind, vram_mib: u64, gtt_mib: u64, apu: bool) -> Option<GpuMeasure> {
+        Some(GpuMeasure {
+            kind,
+            vram_mib,
+            gtt_mib,
+            apu,
+        })
+    }
+
+    #[test]
+    fn the_shipped_ssot_and_model_map_meet_the_tool_safe_floor() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let n = run_tool_safe(&root).unwrap_or_else(|v| panic!("tool-safe violations:\n{v}"));
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn floor_rules_by_model_class() {
+        let floor = Floor::from_ssot(&vendor()).unwrap();
+        let f = |quant: &str, params_b: f64, active_b: f64, reasoning: bool| Facts {
+            quant: quant.into(),
+            params_b,
+            active_b,
+            reasoning,
+            kind: "chat".into(),
+        };
+        // sub-4B non-reasoning and <= 2B-active MoE: Q8_0
+        assert!(floor
+            .quant_violation("x", &f("Q4_K_M", 1.5, 1.5, false))
+            .is_some());
+        assert!(floor
+            .quant_violation("x", &f("Q8_0", 1.5, 1.5, false))
+            .is_none());
+        assert!(floor
+            .quant_violation("x", &f("Q6_K", 8.5, 1.5, false))
+            .is_some());
+        // dense >= 4B or reasoning: Q4_K_M; never IQ2/Q3_K
+        assert!(floor
+            .quant_violation("x", &f("Q4_K_M", 8.8, 8.8, false))
+            .is_none());
+        assert!(floor
+            .quant_violation("x", &f("Q4_K_M", 4.2, 4.2, true))
+            .is_none());
+        assert!(floor
+            .quant_violation("x", &f("Q3_K_M", 8.8, 8.8, false))
+            .is_some());
+        assert!(floor
+            .quant_violation("x", &f("IQ2_M", 35.0, 3.0, true))
+            .is_some());
+        // a model's native format meets any floor
+        assert!(floor
+            .quant_violation("x", &f("MXFP4", 20.9, 3.6, true))
+            .is_none());
+    }
+
+    #[test]
+    fn a_planted_q4_kv_lane_or_sub_floor_quant_is_named() {
+        let mut d = vendor();
+        let map = include_str!("../../../../usr/share/mios/llamacpp/mios-llm-light.yaml");
+        d["llamacpp"]["cpu_node_cache_type"] = Value::String("q4_0".into());
+        // a sub-1B non-reasoning micro at 4-bit: below its Q8_0 floor
+        d["llamacpp"]["gguf"]["lfm2-700m.gguf"]["quant"] = Value::String("Q4_K_M".into());
+        let v = tool_safe_violations(&d, map).unwrap();
+        assert!(v.iter().any(|m| m.contains("cpu_node_cache_type")), "{v:?}");
+        assert!(
+            v.iter()
+                .any(|m| m.contains("lfm2-700m.gguf") && m.contains("below")),
+            "{v:?}"
+        );
+        let planted = map.replace(
+            "--cache-type-k q8_0 --cache-type-v q8_0",
+            "--cache-type-k q4_0 --cache-type-v q4_0",
+        );
+        let v = tool_safe_violations(&vendor(), &planted).unwrap();
+        assert!(
+            v.iter()
+                .any(|m| m.starts_with("model map") && m.contains("q4_0")),
+            "{v:?}"
+        );
+    }
+
+    #[test]
+    fn bounds_and_meters_parse() {
+        assert_eq!(bound_mib("65%", 13931), Some(9055));
+        assert_eq!(bound_mib("512M", 1), Some(512));
+        assert_eq!(bound_mib("8G", 1), Some(8192));
+        assert_eq!(bound_mib("lots", 1), None);
+        assert_eq!(
+            meminfo_total_mib("MemTotal:       14266132 kB\nMemFree: 1 kB\n"),
+            Some(13931)
+        );
+        assert_eq!(nvidia_total_mib("8192\n"), Some(8192));
+        assert_eq!(nvidia_total_mib("24564\n8192\n"), Some(24564));
+    }
+
+    // Acceptance hosts. MiB throughout; the arithmetic is in each plan's notes.
+
+    #[test]
+    fn x570_mios_dev_8gb_dgpu_and_24gb_vm() {
+        let d = with_engine("llamacpp");
+        let m = Measured {
+            ram_mib: 24034,
+            gpu: gpu(GpuKind::Cuda, 8192, 0, false),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // heavy: 8192 - 1792 = 6400 -> gpu-6g (4847); cpu: min(15622, 24034-6008-2560) = 15466 -> ram-16g
+        assert_eq!(
+            pick(&p),
+            (Some("gpu-6g".into()), Some("ram-16g".into())),
+            "{:?}",
+            p
+        );
+        assert_eq!(p.heavy.budget_mib, 6400);
+        assert_eq!(p.cpu_node.budget_mib, 15466);
+    }
+
+    #[test]
+    fn ps5_cpu_only_never_selects_the_dense_8b() {
+        let d = with_engine("vllm");
+        let m = Measured {
+            ram_mib: 13931,
+            gpu: None,
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // cpu: min(9055, 13931-3482-2560) = 7889 -> ram-12g (6945); ram-16g-dense needs 16 GiB of RAM
+        assert_eq!(pick(&p), (None, Some("ram-12g".into())), "{:?}", p);
+        assert!(p.cpu_node.entry.as_ref().unwrap().need_mib <= bound_mib("65%", 13931).unwrap());
+    }
+
+    #[test]
+    fn ps5_apu_serves_on_gpu_and_cpu_inside_its_ram() {
+        let d = with_engine("llamacpp-vulkan");
+        let m = Measured {
+            ram_mib: 13931,
+            gpu: gpu(GpuKind::Vulkan, 1024, 6965, true),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // GPU: min(7989, 0.40 x 13931 = 5572) -> gpu-6g (4847)
+        // CPU: min(9055, 13931-3482-2560-4847 = 3042) -> ram-floor LFM3 (2273)
+        assert_eq!(
+            pick(&p),
+            (Some("gpu-6g".into()), Some("ram-floor".into())),
+            "{:?}",
+            p
+        );
+        let total = 3482
+            + p.heavy.entry.as_ref().unwrap().need_mib
+            + p.cpu_node.entry.as_ref().unwrap().need_mib
+            + 2560;
+        assert!(total <= 13931, "{total}");
+        assert_ne!(
+            p.heavy.entry.unwrap().model_file,
+            p.cpu_node.entry.unwrap().model_file
+        );
+    }
+
+    #[test]
+    fn b550_renoir_apu_serves_on_igpu_and_cpu() {
+        let d = with_engine("llamacpp-vulkan");
+        let m = Measured {
+            ram_mib: 31416,
+            gpu: gpu(GpuKind::Vulkan, 512, 15708, true),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // GPU: min(16220, 12566) -> gpu-10g (7318); CPU: min(20420, 31416-7854-2560-7318 = 13684) -> ram-32g (13288)
+        assert_eq!(
+            pick(&p),
+            (Some("gpu-10g".into()), Some("ram-32g".into())),
+            "{:?}",
+            p
+        );
+    }
+
+    #[test]
+    fn a_64gb_cpu_host_serves_qwen36_at_q8() {
+        let d = with_engine("vllm");
+        let m = Measured {
+            ram_mib: 64300,
+            gpu: None,
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        assert_eq!(pick(&p), (None, Some("ram-64g".into())), "{:?}", p);
+    }
+
+    #[test]
+    fn a_24gb_dgpu_host_avoids_loading_one_gguf_twice() {
+        let d = with_engine("llamacpp");
+        let m = Measured {
+            ram_mib: 32100,
+            gpu: gpu(GpuKind::Cuda, 24564, 0, false),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // heavy: 22772 -> gpu-24g (gpt-oss 128k); the cpu-node would pick gpt-oss too, so it takes ram-16g
+        assert_eq!(
+            pick(&p),
+            (Some("gpu-24g".into()), Some("ram-16g".into())),
+            "{:?}",
+            p
+        );
+    }
+
+    #[test]
+    fn every_acceptance_pick_meets_the_floor() {
+        let d = vendor();
+        let floor = Floor::from_ssot(&d).unwrap();
+        let facts = gguf_facts(&d).unwrap();
+        for lane in ["heavy", "cpu_node"] {
+            for e in tier_entries(&d, lane).unwrap() {
+                assert!(floor.chat_kv.contains(&e.cache_type), "{}", e.name);
+                assert!(
+                    floor
+                        .quant_violation(&e.model_file, &facts[&e.model_file])
+                        .is_none(),
+                    "{}",
+                    e.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_ggufs_fall_back_to_the_floor_then_to_the_ssot_keys() {
+        let d = with_engine("vllm");
+        let m = Measured {
+            ram_mib: 13931,
+            gpu: None,
+        };
+        let only_floor = |f: &str| f == "LFM3-1.7B-Q8_0.gguf";
+        let p = plan(&d, &m, &only_floor).unwrap();
+        assert_eq!(p.cpu_node.entry.as_ref().unwrap().name, "ram-floor");
+        let none = |_: &str| false;
+        let p = plan(&d, &m, &none).unwrap();
+        assert!(p.cpu_node.entry.is_none());
+        let env = env_contents(&d, &p.cpu_node, &[]).unwrap();
+        assert!(!env.contains("MIOS_LLAMACPP_CPU_NODE_MODEL_FILE="), "{env}");
+    }
+
+    #[test]
+    fn a_pin_wins_and_the_env_file_carries_canonical_names() {
+        let mut d = with_engine("vllm");
+        d["llamacpp"]["tier_pin"]["cpu_node"] = Value::String("ram-6g".into());
+        let m = Measured {
+            ram_mib: 64300,
+            gpu: None,
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        assert!(p.cpu_node.pinned);
+        let env = env_contents(&d, &p.cpu_node, &[]).unwrap();
+        assert!(
+            env.contains("MIOS_LLAMACPP_CPU_NODE_MODEL_FILE=granite-4.2-3b-Q8_0.gguf\n"),
+            "{env}"
+        );
+        assert!(
+            env.contains("MIOS_LLAMACPP_CPU_NODE_CONTEXT=32768\n"),
+            "{env}"
+        );
+        assert!(
+            env.contains("MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE=q8_0\n"),
+            "{env}"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -1700,17 +1700,53 @@ pub fn reconcile_light_backend(root: &Path, apply: bool, reload: bool) -> Result
     Ok(plan.to_json(changed))
 }
 
-/// Read-only admission for the canonical heavy llama.cpp engine. Reuse the
-/// kernel-bound CUDA validator, without writing or activating the light lane.
+/// The AMD device the heavy lane's Vulkan engine serves on: [llamacpp.heavy_vulkan].resource's
+/// PCI when set, else the first DRM device bound to one of its drivers that has a render node.
+pub fn heavy_vulkan_gpu(root: &Path, data: &Value, host: &Host) -> Result<Option<Gpu>, String> {
+    let vk = data
+        .get("llamacpp")
+        .and_then(|l| l.get("heavy_vulkan"))
+        .ok_or("missing [llamacpp.heavy_vulkan]")?;
+    let drivers = heavy_vulkan_drivers(vk)?;
+    let resource = vk.get("resource").and_then(Value::as_str).unwrap_or("");
+    let wanted = if resource.is_empty() {
+        None
+    } else {
+        Some(resource_pci(root, data, resource)?)
+    };
+    Ok(inventory(host).into_iter().find(|g| {
+        g.render.is_some()
+            && drivers.contains(&g.driver)
+            && wanted.as_ref().is_none_or(|pci| *pci == g.pci)
+    }))
+}
+
+fn heavy_vulkan_drivers(vk: &Value) -> Result<Vec<String>, String> {
+    vk.get("drivers")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+        .ok_or("llamacpp.heavy_vulkan.drivers must be a nonempty string array")?
+        .iter()
+        .map(|v| {
+            v.as_str().map(str::to_owned).ok_or_else(|| {
+                "llamacpp.heavy_vulkan.drivers must be a nonempty string array".to_string()
+            })
+        })
+        .collect()
+}
+
+/// Read-only admission for the canonical heavy llama.cpp engines. CUDA reuses the
+/// kernel-bound CUDA validator; Vulkan reuses the light lane's render-node validator.
+/// Neither writes or activates the light lane.
 pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
-    if data
+    let engine = data
         .get("ai")
         .and_then(|v| v.get("heavy_engine"))
         .and_then(Value::as_str)
-        != Some("llamacpp")
-    {
-        return Err("heavy-backend requires ai.heavy_engine=llamacpp".into());
-    }
+        .unwrap_or("");
+    let kind = crate::light_tiers::heavy_engine_kind(data, engine)?.ok_or_else(|| {
+        format!("heavy-backend requires a llama.cpp heavy engine (ai.heavy_engine is {engine:?})")
+    })?;
     let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
     for key in [
         "heavy_threads",
@@ -1742,11 +1778,12 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
         );
     }
     let cache = light_string(llama, "heavy_cache_type")?;
-    if !matches!(
-        cache,
-        "f16" | "q8_0" | "q4_0" | "q4_1" | "q5_0" | "q5_1" | "iq4_nl"
-    ) {
-        return Err("heavy_cache_type must name a supported symmetric K/V type".into());
+    let floor = crate::light_tiers::Floor::from_ssot(data)?;
+    if !floor.chat_kv.iter().any(|kv| kv == cache) {
+        return Err(format!(
+            "heavy_cache_type {cache:?} is below the tool-safe KV floor {:?} ([llamacpp.tool_safe].chat_kv)",
+            floor.chat_kv
+        ));
     }
     let alias = data
         .get("nodes")
@@ -1793,6 +1830,41 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
         if !directory.is_dir() {
             return Err(format!("heavy cache/slot directory {} is missing; apply the declared tmpfiles configuration", directory.display()));
         }
+    }
+    if kind == crate::light_tiers::GpuKind::Vulkan {
+        // Fail closed: no eligible render node means no heavy lane; the CPU lanes keep serving.
+        let vk = llama
+            .get("heavy_vulkan")
+            .ok_or("missing [llamacpp.heavy_vulkan]")?;
+        let drivers = heavy_vulkan_drivers(vk)?;
+        let dri = root.join("dev/dri");
+        let sys = root.join("sys/class/drm");
+        let host = Host {
+            dri: &dri,
+            sys: &sys,
+        };
+        let gpu = heavy_vulkan_gpu(root, data, &host)?.ok_or(
+            "no render node on an eligible Vulkan driver ([llamacpp.heavy_vulkan].drivers): the heavy lane does not start",
+        )?;
+        let device = light_render_device(&gpu, &host, &drivers)?;
+        let node = device
+            .path
+            .strip_prefix(root)
+            .map_err(|_| "render node escapes the selected root")?;
+        let image_key = light_string(vk, "image_key")?;
+        let image = data
+            .get("image")
+            .and_then(|i| i.get("sidecars"))
+            .and_then(|s| s.get(image_key))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("image.sidecars.{image_key} is missing"))?;
+        return Ok(
+            json!({"engine":engine,"unit":"mios-llm-heavy.service","backend":"vulkan",
+            "device":"Vulkan0","gpu_layers":"all","image":image,"pci":gpu.pci,"driver":gpu.driver,
+            "render_node":format!("/{}", node.display()),"device_gid":device.gid,"model":alias,
+            "weights":weights,"slots":slots,"context":llama["heavy_context"],
+            "threads":llama["heavy_threads"],"changed":false}),
+        );
     }
     let mut projected = data.clone();
     for (target, source) in [
@@ -2448,6 +2520,41 @@ mod tests {
         assert!(heavy_backend_plan(root.path(), &data)
             .unwrap_err()
             .contains("driver"));
+    }
+
+    #[test]
+    fn heavy_vulkan_picks_the_amd_render_node_and_never_the_nvidia_one() {
+        let d = fixture();
+        let (dri, sys) = fixture_host(d.path());
+        let host = Host {
+            dri: &dri,
+            sys: &sys,
+        };
+        let data = ssot();
+        let gpu = heavy_vulkan_gpu(d.path(), &data, &host).unwrap().unwrap();
+        assert_eq!(gpu.pci, "0000:7a:00.0");
+        assert_eq!(gpu.driver, "amdgpu");
+        assert!(gpu.render.as_ref().unwrap().ends_with("renderD128"));
+        let mut other = data.clone();
+        other["llamacpp"]["heavy_vulkan"]["drivers"] =
+            Value::Array(vec![Value::String("i915".into())]);
+        assert!(heavy_vulkan_gpu(d.path(), &other, &host).unwrap().is_none());
+    }
+
+    #[test]
+    fn heavy_vulkan_fails_closed_without_an_eligible_render_node() {
+        let (root, mut data) = heavy_cuda_fixture();
+        data["ai"]["heavy_engine"] = Value::String("llamacpp-vulkan".into());
+        let err = heavy_backend_plan(root.path(), &data).unwrap_err();
+        assert!(err.contains("does not start"), "{err}");
+    }
+
+    #[test]
+    fn heavy_admission_refuses_a_kv_cache_below_the_tool_safe_floor() {
+        let (root, mut data) = heavy_cuda_fixture();
+        data["llamacpp"]["heavy_cache_type"] = Value::String("q4_0".into());
+        let err = heavy_backend_plan(root.path(), &data).unwrap_err();
+        assert!(err.contains("tool-safe"), "{err}");
     }
 
     fn cuda_fixture_plan(root: &Path, data: &Value) -> Result<LightBackendPlan, String> {
