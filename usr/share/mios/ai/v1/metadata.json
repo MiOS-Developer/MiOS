@@ -7665,7 +7665,7 @@
     },
     {
       "path": "tests/test-cpu-node-memory.py",
-      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file and context window are the SSOT cpu_node_model_file/cpu_node_context.",
+      "hint": "Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file, context window and symmetric K/V cache type are the SSOT cpu_node_model_file/cpu_node_context/cpu_node_cache_type.",
       "related": [
         "usr/share/mios/mios.toml",
         "usr/share/containers/systemd/mios-cpu-node.container"
@@ -10978,7 +10978,7 @@
     },
     {
       "path": "tests/test-speculative-decoding-config.py",
-      "hint": "Automated unit test suite for WS-AI speculative decoding multi-model lane configuration.",
+      "hint": "Automated unit test suite for WS-AI speculative decoding multi-model lane configuration, and the light model map's invariants: unique served names, symmetric q8_0 KV on every chat entry, --jinja on every tool-calling entry.",
       "related": [
         "usr/share/mios/llamacpp/mios-llm-light.yaml",
         "usr/share/containers/systemd/mios-llm-heavy.container"
@@ -36622,7 +36622,7 @@
     },
     {
       "path": "usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md",
-      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies.",
+      "hint": "Chapter 10: Local Inference Lanes and llama.cpp. Covers llama-swap model residency, explicit llama.cpp slot persistence and verified compute routing on the `llm_light` port. Maps GPU context management, prompt template bindings, and model formats. Documents model map configuration file and resource optimization strategies, and the per-node model picks as host-tier fragments.",
       "related": [],
       "functions": [],
       "doc": null,

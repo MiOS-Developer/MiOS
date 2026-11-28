@@ -14,14 +14,28 @@ models:
     - mios-micro
     - micro
     cmd: |
-      /app/llama-server --model /models-micro/models/mios-micro-1.5b.gguf --port ${PORT} --host 127.0.0.1 --ctx-size 8192 --parallel 1 --cache-reuse 256 --n-gpu-layers 999 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+      /app/llama-server --model /models-micro/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf --port ${PORT} --host 127.0.0.1 --ctx-size 8192 --parallel 1 --cache-reuse 256 --n-gpu-layers 999 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 --slot-save-path /var/lib/mios/llamacpp/slots --jinja
     proxy: http://127.0.0.1:${PORT}
     ttl: -1
+  embeddinggemma2:270m:
+    aliases:
+    - embeddinggemma-2
+    cmd: |
+      /app/llama-server --model /models/embeddinggemma-2-Q8_0.gguf --port ${PORT} --host 127.0.0.1 --ctx-size 8192 --batch-size 2048 --ubatch-size 2048 --embedding --pooling mean --n-gpu-layers 999 --parallel 4
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 600
   nomic-embed-text:
     cmd: |
       /app/llama-server --model /models/embeddinggemma-300m-qat-q8_0.gguf --port ${PORT} --host 127.0.0.1 --ctx-size 8192 --batch-size 2048 --ubatch-size 2048 --embedding --pooling mean --n-gpu-layers 999 --parallel 4
     proxy: http://127.0.0.1:${PORT}
     ttl: 600
+  lfm3:1.7b:
+    aliases:
+    - lfm3-1.7b
+    cmd: |
+      /app/llama-server --model /models/LFM3-1.7B-Q4_K_M.gguf --port ${PORT} --host 127.0.0.1 --ctx-size 32768 --parallel 1 --flash-attn on --cache-type-k q8_0 --cache-type-v q8_0 --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: http://127.0.0.1:${PORT}
+    ttl: 300
 groups:
   resident:
     swap: false
@@ -30,6 +44,8 @@ groups:
     - lfm2:700m
     - nomic-embed-text
     - mios-micro:1.5b
+    - lfm3:1.7b
+    - embeddinggemma2:270m
 peers:
   cpu-node:
     proxy: http://127.0.0.1:8510
