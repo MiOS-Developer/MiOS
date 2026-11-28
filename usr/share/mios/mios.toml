@@ -8062,12 +8062,14 @@ config = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 # light-tiers` (a sync step). On a CPU-only host the light lane and
 # mios-cpu-node would each load their own copy of the same 8B GGUF; here the
 # lane forwards peer_model and every alias of it to the node instead (a
-# llama-swap peer on [ports].cpu_node), drops the entries that load a 7B-class
-# GGUF into RAM, and keeps the rest unchanged.
+# llama-swap peer on [ports].cpu_node), drops the entries that load an
+# agent-class (3B and up) GGUF into RAM, and keeps the rest unchanged. Within the
+# lane's 20%/25% bound those would starve or OOM the resident helpers; a CPU-only
+# host serves its agent pick through mios-cpu-node (cpu_node_model_file) instead.
 [llamacpp.light_cpu_tier]
 peer = "cpu-node"
 peer_model = "granite4.1:8b"
-drop = ["federated:32b", "qwen3-vl:4b"]
+drop = ["federated:32b", "qwen3-vl:4b", "qwen3.5:4b-q4_K_M", "lfm2.5:8b-a1b", "granite4.2:3b", "qwen3.6:35b-a3b"]
 
 [enhanced_session]
 enabled    = true
@@ -8430,14 +8432,14 @@ agent_install_dir   = "/usr/lib/mios/agents/hermes-agent"
 # Inference backend Hermes-Agent forwards to. mios-llm-light's
 # OpenAI-compatible surface; swap to vllm / another llama.cpp lane by editing this.
 hermes_backend_url  = "http://localhost:${MIOS_PORTS_LLM_LIGHT}/v1"   # mios-llm-light (ALL llama.cpp, OpenAI /v1)
-model               = "granite4.1:8b"   # IBM Granite 4.1 8B (dense 'granite' arch, mainline llama.cpp, 131K ctx, --jinja tool-calls). Replaces qwen3.5:4b (BLOCKED on mainline llama.cpp -> the gemma4:12b fallback). Family-diversity: first non-Qwen brain. Served by mios-llm-light :${MIOS_PORTS_LLM_LIGHT} (see mios-llm-light.yaml).
+model               = "granite4.1:8b"   # IBM Granite 4.1 8B (dense 'granite' arch, mainline llama.cpp, 131K ctx, --jinja tool-calls). Replaces qwen3.5:4b (then BLOCKED on mainline llama.cpp -> the gemma4:12b fallback; qwen35 loads on mainline now). Family-diversity: first non-Qwen brain. Served by mios-llm-light :${MIOS_PORTS_LLM_LIGHT} (see mios-llm-light.yaml).
 stack_model         = "granite4.1:8b"
 embed_model         = "nomic-embed-text"   # served NAME unchanged (768d); backing GGUF swapped to EmbeddingGemma-300m QAT in mios-llm-light.yaml (zero pgvector migration)
 api_key             = ""
 mcp_registry        = "/usr/share/mios/ai/v1/mcp.json"
 system_prompt_file  = ""                # optional override; empty = use canonical
 prompt_shortcut     = "@"
-bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired (Qwen-monoculture + qwen35 blocked on llama.cpp). mios-* tags blob-share the brain base.
+bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired as the vendor brain (Qwen-monoculture); the qwen35 llama.cpp block that also retired them is gone upstream, and the per-node picks (Qwen3.5-4B, Qwen3.6-35B-A3B, LFM2.5-8B-A1B, Granite 4.2 3B, LFM3-1.7B) are opt-in host-tier choices, not baked. mios-* tags blob-share the brain base.
 # Recommended floor for the default model. granite4.1:3b is a dense
 # 3 B model at q4_K_M (~2.5 GB on disk, ~4 GB resident). Sits inside
 # the 8 GB usable budget on a 12 GB / 8-core box. Auto-pick promotes
@@ -8472,6 +8474,34 @@ ram_gb  = 4
 [[ai.catalog]]
 id      = "mistral-magistral-small-2509"
 label   = "Magistral Small 2509 (Mistral, dense 24B reasoning, AWQ ~14 GB, heavy dGPU lane)"
+ram_gb  = 24
+
+# Per-node picks: served names in mios-llm-light.yaml, each an opt-in a host selects
+# in its own tier (manual chapter 10, "Per-node model picks"). ram_gb is the memory
+# the model needs at its served context with symmetric q8_0 KV, rounded up.
+[[ai.catalog]]
+id      = "qwen3.5:4b-q4_K_M"
+label   = "Qwen3.5 4B (Qwen, dense GDN hybrid, Q4_K_M ~3.0 GB, 64k; 8 GB dGPU heavy-lane pick)"
+ram_gb  = 6
+
+[[ai.catalog]]
+id      = "lfm2.5:8b-a1b"
+label   = "LFM2.5 8B-A1B (Liquid AI, conv-hybrid MoE 1.5B active, Q4_K_M ~5.2 GB, 64k; CPU-node pick, JSON tool-call test pending)"
+ram_gb  = 6
+
+[[ai.catalog]]
+id      = "granite4.2:3b"
+label   = "Granite 4.2 3B (IBM, dense, Q4_K_M ~2.2 GB, 32k here; small-node and fallback pick)"
+ram_gb  = 4
+
+[[ai.catalog]]
+id      = "lfm3:1.7b"
+label   = "LFM3 1.7B (Liquid AI, conv/attention tri-hybrid, Q4_K_M ~1.1 GB, 32k; micro/router candidate, JSON tool-call test pending)"
+ram_gb  = 2
+
+[[ai.catalog]]
+id      = "qwen3.6:35b-a3b"
+label   = "Qwen3.6 35B-A3B (Qwen, GDN MoE 3B active, UD-Q4_K_M ~22.1 GB, 64k; 32 GB-RAM CPU-node coding agent)"
 ram_gb  = 24
 
 [ai.host_thresholds]
@@ -19363,6 +19393,10 @@ exclude = ["usr/share/mios/vendored/*", "usr/lib/bootc/bound-images.d/*"]
 # Keys are the fetcher's contract (usr/libexec/mios/mios-models-firstboot): name + source; sha256 only for
 # a non-Hugging-Face source (no published digest). A Hugging Face source resolves the current commit + LFS
 # sha256 from the HF revision API, fetches resolve/<commit>/..., verifies, and records <models>/models.tsv.
+# Every host fetches every entry, so this vendor list holds only what every host serves. A per-node
+# pick (the opt-in entries of mios-llm-light.yaml) is declared in that host's own tier: a host-tier
+# [[ai.firstboot_models]] list REPLACES this one (arrays do not merge), so it repeats lfm2-700m.gguf.
+# Ready-to-apply host lists: manual chapter 10, "Per-node model picks"; then `mios models sync`.
 name   = "lfm2-700m.gguf"
 source = "https://huggingface.co/LiquidAI/LFM2-700M-GGUF/resolve/main/LFM2-700M-Q4_K_M.gguf"
 

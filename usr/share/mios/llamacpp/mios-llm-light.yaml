@@ -15,6 +15,16 @@ models:
   # is needed any more; every served arch here loads on stock llama-server.
   # The fleet is now FAMILY-DIVERSE (IBM Granite + Liquid AI + Google + H Company)
   # and 128k-on-every-chat-lane via symmetric q8_0 quantized KV cache + flash-attn.
+  # The qwen35-arch block is gone upstream: Qwen3.5 ('qwen35') and Qwen3.6
+  # ('qwen35moe') load on mainline llama.cpp through the native GATED_DELTA_NET op
+  # (PR #19468), present in the b12464 CPU and b12602 CUDA lane images. The
+  # Qwen-monoculture rule still stands, so the Qwen entries below are opt-in picks,
+  # never the vendor brain. Which host serves which entry is a host-tier choice
+  # (manual chapter 10, "Per-node model picks").
+  # KV RULE: every chat entry runs symmetric q8_0 K/V. A 4-bit KV cache measurably
+  # flips tool-call decisions (llama.cpp docs/function-calling.md warns on -ctk q4_0),
+  # so q4_0 is never the fix for a tight box -- pick a hybrid-attention model instead
+  # (Qwen3.5/3.6 GDN, LFM2.5/LFM3 conv: 64k of q8_0 KV costs 0.4-1.1 GiB).
   # micro_cpu (always-warm classify/expand/gate). fleet modernization:
   # qwen3:1.7b -> Liquid AI LFM2-700M (LiquidAI/LFM2-700M-GGUF). Dense 'lfm2' arch is
   # MERGED in mainline llama.cpp (PR #14620, ~b6709) -- NOT the qwen35 trap; verified
@@ -112,6 +122,141 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
+  # ── per-node picks (opt-in; every arch below loads on stock llama-server) ──
+  # Selected per host, never by the vendor tier. A CPU-only host's CPU-tier map
+  # drops every agent-class entry below ([llamacpp.light_cpu_tier].drop); such a host
+  # serves its pick through mios-cpu-node (cpu_node_model_file), and the dGPU heavy
+  # lane serves its pick through heavy_model_file. The GGUF reaches a host through
+  # that host's [[ai.firstboot_models]] list: name = the --model file, source = the
+  # Hugging Face resolve/main URL of the repo named in the comment (the fetcher
+  # resolves the commit and LFS sha256 itself). Agent entries: --jinja, symmetric
+  # q8_0 K/V and 65536 context (Hermes needs ~64k). The hybrid-attention entries
+  # carry no --cache-reuse: recurrent/conv state cannot be shifted, and llama-server
+  # disables reuse for such models anyway.
+  #
+  # Qwen3.5-4B (Apache-2.0; 'qwen35' dense GDN hybrid, 1 in 4 layers full attention,
+  # 262k native). dGPU heavy-lane pick for an 8 GB card: ~2.8 GiB weights + ~1.1 GiB
+  # of 64k q8_0 KV leaves the heavy lane's 1024 MiB fit margin intact. Tool calls are
+  # Qwen3-Coder XML (llama.cpp's qwen3_coder handler). A thinking model: keep >= 64k.
+  # GGUF ggml-org/Qwen3.5-4B-GGUF, file Qwen3.5-4B-Q4_K_M.gguf (3032091584 bytes).
+  "qwen3.5:4b-q4_K_M":
+    aliases:
+      - qwen3.5-4b
+    cmd: >
+      /app/llama-server --model /models/Qwen3.5-4B-Q4_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 65536 --parallel 1
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # LFM2.5-8B-A1B (Liquid AI, LFM Open License v1.0 -- commercial terms not yet
+  # reviewed; 'lfm2moe' conv hybrid, 8.3B total / 1.5B active, 128k native). CPU-node
+  # pick for a DDR4 box: it reads about a fifth of a dense 8B's weight bytes per token,
+  # and 64k of q8_0 KV is ~0.4 GiB. Tool calls are Pythonic
+  # <|tool_call_start|>[f(a=1)]<|tool_call_end|>, which llama.cpp's LFM2.5 handler
+  # maps to OpenAI tool_calls; it backs NO agent alias until a host's JSON tool_calls
+  # smoke test through --jinja passes.
+  # GGUF LiquidAI/LFM2.5-8B-A1B-GGUF, file LFM2.5-8B-A1B-Q4_K_M.gguf (5155564768 bytes).
+  "lfm2.5:8b-a1b":
+    aliases:
+      - lfm2.5-8b-a1b
+    cmd: >
+      /app/llama-server --model /models/LFM2.5-8B-A1B-Q4_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 65536 --parallel 1
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # Granite 4.2 3B (IBM, Apache-2.0; dense 'granite', every layer attends, built-in
+  # thinking, 131k native). The low-risk drop-in: same family and template path as
+  # granite-4.1. Pick for a small CPU node or a second device; as a 64k fallback it
+  # runs on mios-cpu-node or the heavy lane, which set their own context. Served here
+  # at 32k because its dense KV is 80 KiB/token (64k of q8_0 is ~2.7 GiB).
+  # GGUF ibm-granite/granite-4.2-3b-GGUF, file granite-4.2-3b-Q4_K_M.gguf (2244011552 bytes).
+  "granite4.2:3b":
+    aliases:
+      - granite-4.2-3b
+    cmd: >
+      /app/llama-server --model /models/granite-4.2-3b-Q4_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 32768 --parallel 1 --cache-reuse 256
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # LFM3-1.7B (Liquid AI, LFM Open License v1.0; 'lfm3' tri-hybrid of short convs,
+  # sliding-window and global attention, 256k native; post-trained for agent harnesses
+  # including Hermes Agent). Successor candidate for lfm2:700m on the micro/router job:
+  # under 2B active stays interactive inside the light lane's two-core quota. Tool
+  # calls are Qwen3-Coder-style XML (llama.cpp's qwen3_coder handler). The vendor warns
+  # against agentic coding or long multi-step reasoning. [ai].micro_model stays
+  # lfm2:700m until a host's JSON tool_calls smoke test passes. Micro lane: 32k, EXEMPT
+  # from the 128k chat mandate.
+  # GGUF LiquidAI/LFM3-1.7B-GGUF, file LFM3-1.7B-Q4_K_M.gguf (1099627808 bytes).
+  "lfm3:1.7b":
+    aliases:
+      - lfm3-1.7b
+    cmd: >
+      /app/llama-server --model /models/LFM3-1.7B-Q4_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 32768 --parallel 1
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # Qwen3.6-35B-A3B (Apache-2.0; 'qwen35moe' GDN MoE, 35B total / 3B active, 262k
+  # native). The strongest sub-40B agent and coder; the pick for the one Blade with
+  # ~30 GiB of RAM, as coding agent and council chair on its mios-cpu-node: ~21.5 GiB
+  # at 64k, so the CPU tier drops it from this lane. Unsloth's dynamic UD-Q4_K_M;
+  # ggml-org/Qwen3.6-35B-A3B-GGUF Qwen3.6-35B-A3B-Q4_K_M.gguf is the plain quant,
+  # ~1.5 GiB smaller. Tool calls are Qwen3-Coder XML (llama.cpp's qwen3_coder handler).
+  # GGUF unsloth/Qwen3.6-35B-A3B-GGUF, file Qwen3.6-35B-A3B-UD-Q4_K_M.gguf (22134528992 bytes).
+  "qwen3.6:35b-a3b":
+    aliases:
+      - qwen3.6-35b-a3b
+    cmd: >
+      /app/llama-server --model /models/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 65536 --parallel 1
+      --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 300
+
+  # NVIDIA-Nemotron-3.5-Bolt-E4B -- DISABLED (commented out below). A GPU-lane pick for
+  # a ~13 GiB shared-memory APU once that lane exists; Gemma-4-E4B lineage, the best
+  # call-discipline scores in its class (When2Call, RelyToolBench). Verified: NVIDIA's
+  # own GGUF nvidia/NVIDIA-Nemotron-3.5-Bolt-E4B-4GB, file
+  # Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf (6180446208 bytes, OpenMDW-1.1, 'gemma4' arch,
+  # 64k native). Held because (1) its target lane, the console APU's GPU over Vulkan,
+  # is not deployable yet: that Blade ships only the CPU llama-swap image, its USB-2
+  # root disk awaits replacement and its Vulkan stack is unprobed; and (2) the Q4_K_M is
+  # ~5.8 GiB, ~1.1 GiB above the estimate the lane was sized on, so ~7.1 GiB at 64k
+  # inside the ~7.8 GiB GPU-mappable pool is unproven. Uncomment once both hold.
+  # "nemotron3.5-bolt:e4b":
+  #   aliases:
+  #     - nemotron-3.5-bolt-e4b
+  #   cmd: >
+  #     /app/llama-server --model /models/Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf
+  #     --port ${PORT} --host 127.0.0.1
+  #     --ctx-size 65536 --parallel 1
+  #     --flash-attn on
+  #     --cache-type-k q8_0 --cache-type-v q8_0
+  #     --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+  #   proxy: "http://127.0.0.1:${PORT}"
+  #   ttl: 300
+
   # ── embeddings (replaces the legacy embed lane; OpenAI /v1/embeddings) ──
   # fleet modernization: nomic-embed-text -> Google EmbeddingGemma-300m QAT
   # (ggml-org/embeddinggemma-300m-qat-q8_0-GGUF). 768d NATIVE = exact pgvector
@@ -133,6 +278,25 @@ models:
     # SWAP-induced 429); this fixes the CONCURRENCY-induced one.
     cmd: >
       /app/llama-server --model /models/embeddinggemma-300m-qat-q8_0.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 8192 --batch-size 2048 --ubatch-size 2048 --embedding --pooling mean --n-gpu-layers 999 --parallel 4
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: 600
+
+  # EmbeddingGemma 2, text path only (Google, Apache-2.0; 'gemma-embedding2', the 271M
+  # non-causal text model; its GGUF declares pooling_type mean and a 768-d output, the
+  # pgvector width, Matryoshka down to 128). Much stronger on code retrieval than the
+  # EmbeddingGemma-300m behind nomic-embed-text, so it suits tool shortlisting and
+  # nearest-lane routing over /v1/embeddings. A SEPARATE served name on purpose:
+  # re-pointing nomic-embed-text at it changes the vector space, so that swap is an
+  # operator migration ([pgvector].emb_version bump + backfill re-embed), never a
+  # default. The vision/audio towers ship as mmproj files and are not loaded.
+  # GGUF ggml-org/embeddinggemma-2-GGUF, file embeddinggemma-2-Q8_0.gguf (309855456 bytes).
+  "embeddinggemma2:270m":
+    aliases:
+      - embeddinggemma-2
+    cmd: >
+      /app/llama-server --model /models/embeddinggemma-2-Q8_0.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 8192 --batch-size 2048 --ubatch-size 2048 --embedding --pooling mean --n-gpu-layers 999 --parallel 4
     proxy: "http://127.0.0.1:${PORT}"
@@ -191,6 +355,12 @@ models:
 # = ~6.7G, far inside the 4090's 24G. Vision (qwen3-vl, inert/gated) stays in the
 # implicit default group and swaps in on demand (exclusive), evicting this group
 # only when actually used. No more swap-contention 429 on the hot chat+embed path.
+# The opt-in helpers (lfm3:1.7b micro, embeddinggemma2:270m embedder) join the group
+# because their job is to answer DURING a chat turn; they load only when a host asks
+# for them. The opt-in agent picks stay in the default group, like vision. On a
+# 14G CPU-only Blade the CPU-tier lane is bounded to 25% of RAM (~3.4 GiB): the
+# resident trio (~2.8 GiB, estimated from live RSS) leaves room for the 0.3 GiB embedder but
+# not for lfm3:1.7b beside lfm2:700m, so such a Blade keeps lfm2:700m as its micro.
 groups:
   resident:
     swap: false
@@ -200,3 +370,5 @@ groups:
       - "lfm2:700m"
       - "nomic-embed-text"
       - "mios-micro:1.5b"
+      - "lfm3:1.7b"
+      - "embeddinggemma2:270m"
