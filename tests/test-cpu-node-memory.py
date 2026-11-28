@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AI-hint: Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file and context window are the SSOT cpu_node_model_file/cpu_node_context.
+# AI-hint: Asserts the mios-cpu-node inference unit carries cgroup memory bounds from SSOT [llamacpp].cpu_node_memory_high/_max (percent of RAM, High below Max, Max below the whole box), so one CPU inference node cannot starve a small Blade into a freeze; its model file, context window and symmetric K/V cache type are the SSOT cpu_node_model_file/cpu_node_context/cpu_node_cache_type.
 # AI-related: usr/share/mios/mios.toml, usr/share/containers/systemd/mios-cpu-node.container
 # AI-doc: usr/share/doc/mios/manual/tests.md
 import re
@@ -49,6 +49,16 @@ class CpuNodeMemory(unittest.TestCase):
         self.assertEqual(argv[argv.index("--ctx-size") + 1], str(self.cfg["cpu_node_context"]))
         cond = [l.split("=", 1)[1] for l in self.text.splitlines() if l.startswith("ConditionPathExists=")]
         self.assertEqual(cond, [f"{self.cfg['models_dir']}/{self.cfg['cpu_node_model_file']}"])
+
+    def test_kv_cache_type_is_the_ssot_value_for_both_k_and_v(self):
+        # One SSOT key drives both flags, so the lane can never go asymmetric
+        # (k != v falls back to CPU attention upstream) or drift from the SSOT.
+        execs = [l.split("=", 1)[1] for l in self.text.splitlines() if l.startswith("Exec=")]
+        argv = execs[0].split()
+        want = self.cfg["cpu_node_cache_type"]
+        self.assertIn(want, {"f16", "q8_0", "q4_0"})
+        self.assertEqual(argv[argv.index("--cache-type-k") + 1], want)
+        self.assertEqual(argv[argv.index("--cache-type-v") + 1], want)
 
     def test_bounds_leave_the_host_headroom(self):
         high = pct(self.cfg["cpu_node_memory_high"])

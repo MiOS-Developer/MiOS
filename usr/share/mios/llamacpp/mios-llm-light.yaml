@@ -52,12 +52,16 @@ models:
   # mios-micro:1.5b -- dedicated MiOS miniature model (Qwen2.5-Coder-1.5B base, Apache-2.0).
   # Sub-250ms resident model providing native OpenAI JSON tool-calling and structured outputs
   # for mios-log-watcher, mios-cron-director, prefilter, and mios-micro-llm CLI.
+  # The GGUF is the file the mios-micro OCI image ships at /models/<gguf_file> (its
+  # Containerfile GGUF_FILE, pinned in that repo's pyproject [tool.mios-micro.package]),
+  # mounted here at /models-micro. The old mios-micro-1.5b.gguf name was never in the
+  # image, so every request for this entry failed to load.
   "mios-micro:1.5b":
     aliases:
       - mios-micro
       - micro
     cmd: >
-      /app/llama-server --model /models-micro/models/mios-micro-1.5b.gguf
+      /app/llama-server --model /models-micro/models/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
       --port ${PORT} --host 127.0.0.1
       --ctx-size 8192 --parallel 1 --cache-reuse 256
       --n-gpu-layers 999 --flash-attn on
@@ -83,7 +87,8 @@ models:
   # note: avoid CUDA 13.2 (gibberish-output bug). --jinja MANDATORY for tool_calls.
   # 128k FIT: symmetric q8_0 K+V quantized KV cache + flash-attn on (GPU-offloadable;
   # NEVER asymmetric k!=v -> issue #20866 ~40x CPU-fallback). Low-end 8GB profile:
-  # drop --cache-type-k/-v to q4_0 in the /etc overlay.
+  # keep q8_0 (see the KV RULE above) and serve a hybrid-attention entry instead of
+  # this dense 8B, whose 64k q8_0 KV alone is ~5.3 GiB.
   # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
   "granite4.1:8b":
     # Alias every legacy/role model name the pipeline still emits (incl. the old
@@ -327,21 +332,14 @@ models:
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
 
-  # ── federated RPC model route (cross-lane dGPU + iGPU layer sharding) ────────
-  "federated:32b":
-    aliases:
-      - mios-federated
-      - federated
-    cmd: >
-      /app/llama-server --model /models/granite-4.1-8b.gguf
-      --port ${PORT} --host 127.0.0.1
-      --rpc 127.0.0.1:8540 --split-mode layer --tensor-split 24,4
-      --ctx-size 32768 --parallel 1 --cache-reuse 256
-      --flash-attn auto
-      --cache-type-k q8_0 --cache-type-v q8_0
-      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
-    proxy: "http://127.0.0.1:${PORT}"
-    ttl: 300
+  # ── federated RPC model route: RETIRED ───────────────────────────────────────
+  # federated:32b (aliases mios-federated, federated) sharded the 8B's layers across
+  # the dGPU and the iGPU rpc-server (--rpc, --split-mode layer, --tensor-split). It
+  # failed on every request: no fleet host runs the RPC backend it needs, and
+  # upstream describes llama.cpp RPC as proof-of-concept, fragile and insecure, with
+  # the slowest node gating every token. Larger models are reached by routing over
+  # one-model-per-node lanes instead. llama-rpc-server and the Windows iGPU lane are
+  # unchanged; only this served route is gone.
 
 # ── CO-RESIDENT GROUP ("explain the logs" exposed it) ──────
 # Default llama-swap is single-active: only ONE model resident, the rest swapped

@@ -53,6 +53,31 @@ except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
 
+def _ssot() -> dict:
+    with open(_SSOT_PATH, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def _served_entries() -> dict:
+    """The light lane's source model map: served model id -> llama-swap entry."""
+    import yaml
+    path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
+    with open(path, "r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh)["models"]
+
+
+def _served_argvs() -> list:
+    return [entry["cmd"].split() for entry in _served_entries().values()]
+
+
+def _served_names() -> set:
+    names = set()
+    for model, entry in _served_entries().items():
+        names.add(model)
+        names.update(entry.get("aliases") or [])
+    return names
+
+
 def _rpc_launch_block() -> str:
     """The Rpc branch of the script's run section, from its `if` to its `else`."""
     with open(_IGPU_SCRIPT_PATH, "r", encoding="utf-8", errors="ignore") as fh:
@@ -548,24 +573,17 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         self.assertIn("rpc-server.exe", content.lower())
 
     def test_f4_02_coordinator_rpc_flag_assembly(self):
-        """F4.2: Coordinator receives properly formatted --rpc 127.0.0.1:8540 flag in llama-swap."""
-        llama_swap_path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
-        with open(llama_swap_path, "r", encoding="utf-8") as fh:
-            content = fh.read()
-        self.assertIn("--rpc 127.0.0.1:8540", content, "llama-swap.yaml must configure --rpc 127.0.0.1:8540")
+        """F4.2: No served llama-swap route dials the RPC backend: the federated route is retired."""
+        # The coordinator route (--rpc to the iGPU rpc-server) failed on every request,
+        # so it was retired; the rpc-server itself (F4.1) is unchanged.
+        for argv in _served_argvs():
+            self.assertNotIn("--rpc", argv, "a served model map entry still dials the RPC backend")
 
     def test_f4_03_layer_split_ratio_syntax_and_distribution(self):
-        """F4.3: Validates layer splitting flags in llama-swap.yaml: --split-mode layer --tensor-split 24,4."""
-        llama_swap_path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
-        with open(llama_swap_path, "r", encoding="utf-8") as fh:
-            content = fh.read()
-        self.assertIn("--split-mode layer", content)
-        m = re.search(r"--tensor-split\s+(\d+),(\d+)", content)
-        self.assertIsNotNone(m, "--tensor-split dGPU,iGPU must be declared in llama-swap.yaml")
-        dgpu_layers, igpu_layers = int(m.group(1)), int(m.group(2))
-        self.assertEqual(dgpu_layers, 24)
-        self.assertEqual(igpu_layers, 4)
-        self.assertEqual(dgpu_layers + igpu_layers, 28)
+        """F4.3: No served route shards layers across lanes (--split-mode / --tensor-split)."""
+        for argv in _served_argvs():
+            self.assertNotIn("--tensor-split", argv)
+            self.assertNotIn("--split-mode", argv)
 
     def test_f4_04_rpc_wire_protocol_handshake(self):
         """F4.4: TCP socket connects to EphemeralRpcServer and receives valid RPC ack."""
@@ -578,12 +596,10 @@ class TestTier1FeatureCoverage(unittest.TestCase):
         self.assertTrue(resp.startswith(b"RPC1"))
 
     def test_f4_05_unified_logical_endpoint_delegation(self):
-        """F4.5: Federated sharded lanes sit transparently behind single OpenAI API gateway."""
-        llama_swap_path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
-        with open(llama_swap_path, "r", encoding="utf-8") as fh:
-            content = fh.read()
-        self.assertIn("federated:32b", content, "federated:32b route must be declared")
-        self.assertIn("mios-federated", content, "mios-federated alias must be declared")
+        """F4.5: The retired federated route and its aliases are no longer served names."""
+        served = _served_names()
+        for name in ("federated:32b", "mios-federated", "federated"):
+            self.assertNotIn(name, served, f"retired route {name} is still served")
 
     # --- F5: Vulkan Cooperative Matrix Fallback ---
     def test_f5_01_coopmat2_extension_detection(self):
@@ -947,16 +963,12 @@ class TestTier2BoundaryAndCornerCases(unittest.TestCase):
             s2.close()
 
     def test_b4_04_tensor_split_sum_exceeding_layers(self):
-        """B4.4: Validates tensor-split syntax and layer distribution logic from SSOT configuration."""
-        llama_swap_path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
-        with open(llama_swap_path, "r", encoding="utf-8") as fh:
-            cfg = fh.read()
-        m = re.search(r"--tensor-split\s+(\d+),(\d+)", cfg)
-        self.assertIsNotNone(m, "--tensor-split dGPU,iGPU must be declared in llama-swap.yaml")
-        split_dgpu, split_igpu = int(m.group(1)), int(m.group(2))
-        self.assertGreater(split_dgpu, 0)
-        self.assertGreater(split_igpu, 0)
-        self.assertEqual(split_dgpu + split_igpu, 28)
+        """B4.4: The CPU-tier map carries no tensor split either, and drops no retired route."""
+        tier = _ssot()["llamacpp"]["light_cpu_tier"]
+        self.assertNotIn("federated:32b", tier["drop"], "drop names a route the source map no longer has")
+        cpu_map = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "mios-llm-light-cpu.yaml")
+        with open(cpu_map, "r", encoding="utf-8") as fh:
+            self.assertIsNone(re.search(r"--tensor-split\s+\d", fh.read()))
 
     def test_b4_05_empty_rpc_host_port_string(self):
         """B4.5: Empty --rpc argument fails validation."""
@@ -1304,18 +1316,13 @@ class TestTier4RealWorldScenarios(unittest.TestCase):
         self.assertLess(elapsed, 5.0, "iGPU subtask turn must complete in under 5 seconds")
 
     def test_scenario_2_heavy_context_reasoning_over_federated_rpc_lane(self):
-        """Scenario 2: Heavy Context Reasoning over Federated RPC Sharded Lane.
-        Simulates multi-lane model routing: coordinator splits model layers across dGPU (24)
-        and iGPU (4), queries model list, and verifies pipeline parallelism readiness.
+        """Scenario 2: Heavy-context reasoning routes over one-model-per-node lanes.
+        The federated route that split layers across dGPU and iGPU is retired, so the
+        served map carries no RPC sharding; the rpc-server still answers its handshake
+        and the coordinator still lists models.
         """
-        # Validate layer split parameters from real SSOT
-        llama_swap_path = os.path.join(_ROOT, "usr", "share", "mios", "llamacpp", "llama-swap.yaml")
-        with open(llama_swap_path, "r", encoding="utf-8") as fh:
-            cfg = fh.read()
-        m = re.search(r"--tensor-split\s+(\d+),(\d+)", cfg)
-        self.assertIsNotNone(m, "--tensor-split dGPU,iGPU must be declared in llama-swap.yaml")
-        split_dgpu, split_igpu = int(m.group(1)), int(m.group(2))
-        self.assertEqual(split_dgpu + split_igpu, 28)
+        for argv in _served_argvs():
+            self.assertNotIn("--rpc", argv)
 
         # Check RPC connectivity
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
