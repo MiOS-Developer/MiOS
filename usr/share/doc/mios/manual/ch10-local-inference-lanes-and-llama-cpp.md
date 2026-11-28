@@ -179,7 +179,7 @@ runs `mios-gen model-tier --lane heavy|cpu-node --apply`, which:
    the exact CUDA device or the verified Vulkan render node;
 4. writes the row to `/run/mios/model-tier/<lane>.env`
    (`[llamacpp.tier_policy].env_dir`), and for the heavy lane the admitted device,
-   its group, llama.cpp's `--device` and the engine image.
+   its group and llama.cpp's `--device`.
 
 The vendor heavy engine is `auto`: one llama.cpp unit that finds the host's GPU at
 every start (`[llamacpp.heavy_auto]`). It takes the first kind in `prefer` the host
@@ -198,6 +198,16 @@ lanes keep serving. `/dev/dxg` alone is not enough: WSL exposes it for any vendo
 GPU. A host can still pin the engine in its own tier: `llamacpp` or
 `llamacpp-vulkan` takes effect at the unit's next start, while `vllm` or `sglang`
 need an image built with that engine.
+
+The heavy unit is a bootc-bound Quadlet. bootc pulls every bound `Image=` at upgrade,
+so the image can never be a runtime placeholder: the unit names the CUDA image. Before
+each start, `mios-heavy-engine.service` (`mios-gen model-tier --lane heavy
+--image-dropin --apply --reload`) runs, because the unit `Requires` it. It writes
+`[llamacpp.tier_policy].heavy_dropin`, a Quadlet drop-in whose `Image=` is the image
+of the GPU the engine resolves to (the Vulkan image on an AMD host). It reloads
+systemd only when the drop-in changed, the same pattern as the light lane's
+`mios-light-backend.service`. Both images are in `[build.bake].core`, so either one
+starts offline from bootc's read-only store.
 
 On WSL the CUDA admission cannot use its bare-metal proof (a PCI-bound GPU and an
 exact UUID CDI name), because WSL has neither. Whenever `[llamacpp.heavy_wsl]`'s
@@ -428,7 +438,8 @@ cpu-node` without `--apply` prints the plan and its arithmetic without writing.
   run there) or on the B550's Vega. The Vulkan engine fails closed without an amdgpu
   render node.
 - The `auto` unit relies on systemd expanding `${MIOS_LLAMACPP_HEAVY_*}` in the
-  Quadlet's `Image=`, `AddDevice=` and `GroupAdd=` at start; no host has run it yet.
+  Quadlet's `AddDevice=`, `GroupAdd=` and `Exec=` at start, and on the image drop-in
+  taking effect for the start that follows its reload; no host has run it yet.
 - The WSL CUDA admission and the `--ensure-cdi` re-run have run only against
   fixtures shaped like MiOS-DEV's `/dev/dxg` (10:258, mode 666), its libcuda and its
   `wsl2-nvidia.yaml`. Auto layers with `--fit-target` have not been loaded on the
