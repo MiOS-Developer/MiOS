@@ -2,6 +2,10 @@
 // AI-related: runtime::TmuxClient, runtime::ActionWorker, tmux_capture::observe
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached_focus_refresh() {
     if isolated() {
         return;
@@ -129,6 +133,10 @@ fn actual_legacy_tmux_worker_rejects_reused_tty_start_and_instance_before_cached
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_legacy_lua_worker_uses_remaining_queue_budget_for_reply() {
     if isolated() {
         return;

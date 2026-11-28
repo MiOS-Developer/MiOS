@@ -1,5 +1,9 @@
 // AI-hint: Additional cfg(test) late-job coverage; no hardware or live login operations.
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_action_workers_drop_expired_and_aba_jobs_before_any_sink() {
     if isolated() {
         return;
@@ -57,6 +61,10 @@ fn actual_action_workers_drop_expired_and_aba_jobs_before_any_sink() {
     }
 }
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_session_worker_drops_expired_jobs_but_delivers_fresh_positive_control() {
     if isolated() {
         return;

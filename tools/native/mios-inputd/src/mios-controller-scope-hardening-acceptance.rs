@@ -68,6 +68,10 @@ fn hardening_scope(client: Option<TmuxClient>) -> ContextSnapshot {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_login_worker_obeys_authoritative_generation_while_manifest_stays_old() {
     if isolated() {
         return;
@@ -160,6 +164,10 @@ fn actual_login_worker_obeys_authoritative_generation_while_manifest_stays_old()
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_legacy_worker_checks_client_swap_without_epoch_or_generation_change() {
     if isolated() {
         return;
@@ -212,6 +220,10 @@ fn actual_legacy_worker_checks_client_swap_without_epoch_or_generation_change() 
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_page_up_worker_rechecks_login_between_query_and_effect() {
     if isolated() {
         return;
@@ -258,6 +270,10 @@ fn actual_page_up_worker_rechecks_login_between_query_and_effect() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_window_lua_and_edge_focus_refuse_live_compositor_window_or_pid_change() {
     if isolated() {
         return;
@@ -359,6 +375,10 @@ fn actual_window_lua_and_edge_focus_refuse_live_compositor_window_or_pid_change(
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_worker_cancel_after_connect_prevents_lua_and_zoom_request_bytes() {
     if isolated() {
         return;
@@ -424,6 +444,10 @@ fn actual_worker_cancel_after_connect_prevents_lua_and_zoom_request_bytes() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_worker_reload_cannot_extend_the_enqueued_scope_deadline() {
     if isolated() {
         return;
@@ -453,6 +477,10 @@ fn actual_worker_reload_cannot_extend_the_enqueued_scope_deadline() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_login_worker_rechecks_generation_after_inspect_before_key_send() {
     if isolated() {
         return;
@@ -546,6 +574,10 @@ fn actual_login_worker_rechecks_generation_after_inspect_before_key_send() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_action_worker_drop_cancels_received_and_queued_lua_without_dispatch() {
     if isolated() {
         return;
@@ -634,6 +666,10 @@ fn actual_action_worker_drop_cancels_received_and_queued_lua_without_dispatch() 
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "sealed-dev-acceptance"),
+    ignore = "sealed MiOS-DEV only; opt in with --features sealed-dev-acceptance"
+)]
 fn actual_graphical_discovery_enriches_and_pins_the_c95_client_instance() {
     if isolated() {
         return;
