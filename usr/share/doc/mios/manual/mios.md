@@ -7489,3 +7489,18 @@ tells mios-inputd which nodes a session owns so it can stop routing them to the 
 input into the session's compositor (the session compositor itself reads only its parent window's Wayland seat).
 
 <!-- mios-src:f98a33cfb7dc from usr/share/mios/mios.toml:18746-18750 -->
+
+### Compiled-output cache for the slow from-source bakes...
+
+Compiled-output cache for the slow from-source bakes (mios-bake-plan cache). It changes
+where a bake gets its compiled output, never what the image carries (Law 12): a hit
+installs the stored output the way the build would have, and a miss, an entry that fails
+its sha256 check, or a build with no cache mounted at `dir` compiles from source as before.
+Only the mios-ci.yml smoke-test mounts one (podman build -v), so other builds never read it.
+A unit's key is the sha256 of `schema`, its `script` and `inputs` (paths or one-segment
+globs under the source root), the files its `inputs_from` keys list, the values of its
+`ssot` keys, the installed NEVRA of `toolchain` and of every package in `rpms` and the
+lists `rpms_from` names, and the upstream commit its script resolves from [build.bake_refs].
+A pin bump, an edited script or input, or a newer compiler or library is a miss.
+
+<!-- mios-src:22e05a42c109 from usr/share/mios/mios.toml:11898-11907 -->

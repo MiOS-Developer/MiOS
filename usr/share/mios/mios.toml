@@ -11895,6 +11895,44 @@ searxng = "master"
 ventulusd = "latest"   # MIT fan daemon; newest upstream release tag at bake time (forge releases/latest, else
                        # [build.float] git shapes); MiOS patches that no longer apply fail the bake
 
+# Compiled-output cache for the slow from-source bakes (mios-bake-plan cache). It changes
+# where a bake gets its compiled output, never what the image carries (Law 12): a hit
+# installs the stored output the way the build would have, and a miss, an entry that fails
+# its sha256 check, or a build with no cache mounted at `dir` compiles from source as before.
+# Only the mios-ci.yml smoke-test mounts one (podman build -v), so other builds never read it.
+# A unit's key is the sha256 of `schema`, its `script` and `inputs` (paths or one-segment
+# globs under the source root), the files its `inputs_from` keys list, the values of its
+# `ssot` keys, the installed NEVRA of `toolchain` and of every package in `rpms` and the
+# lists `rpms_from` names, and the upstream commit its script resolves from [build.bake_refs].
+# A pin bump, an edited script or input, or a newer compiler or library is a miss.
+[build.bake_cache]
+dir = "/var/tmp/mios-bake-cache"
+schema = 1   # raise to drop every stored entry at once
+toolchain = ["gcc", "gcc-c++", "binutils", "glibc-devel", "cmake", "ninja-build", "make"]
+
+# The patched compositor RPMs that mios-gen build-hyprland writes to --out. Keyed on the stock
+# release it rebuilds: Fedora issues a new one whenever a library it links changes soname, and
+# a stored RPM that fails to install is rebuilt from source.
+[build.bake_cache.units.hyprland]
+script = "automation/65-bake-hyprland.sh"
+inputs = ["tools/native/mios-gen/src/hyprland_build.rs"]
+inputs_from = ["desktop.hyprland.compositor.patches"]
+ssot = ["desktop.hyprland.compositor", "desktop.hyprland.hyprglass.hyprland_version"]
+rpms = ["hyprland"]
+
+# The quickshell install tree. It links Qt's private API, so every build dependency's NEVRA is
+# part of the key.
+[build.bake_cache.units.quickshell]
+script = "automation/66-bake-quickshell.sh"
+inputs = ["src/quickshell/check-update-groups.py", "src/quickshell/patches/*.patch"]
+ssot = ["build.bake_refs.quickshell"]
+rpms_from = ["packages.quickshell-build.pkgs"]
+
+[build.bake_cache.units.lookingglass]
+script = "automation/69-bake-lookingglass-client.sh"
+ssot = ["build.bake_refs.lookingglass"]
+rpms_from = ["packages.looking-glass-build.pkgs"]
+
 # Release assets the bake proves without the GitHub REST API (Law 12 BAKE-NOT-FETCH).
 # The bake still floats to the newest release (git ls-remote, no REST quota); when
 # that IS the pinned version the pinned sha256 proves the download (or the vendored
@@ -19488,6 +19526,12 @@ max_leaked_fixtures = 0
 # 48 -> 47: four new two-sided tests, less five the tightened
 # argument-position coverage predicate correctly re-counted.
 max_checks_without_negative = 44
+
+[ci.smoke]
+# Minutes the smoke-test image build may run. GitHub stops a hosted-runner job at six
+# hours, so the build stops first and the job can still store what it compiled
+# ([build.bake_cache]); the run then fails by name, not cancelled with no verdict.
+build_timeout_minutes = 330
 
 [ci.artifacts]
 # Disk formats the artifact-boot job (.github/workflows/mios-ci.yml) builds and

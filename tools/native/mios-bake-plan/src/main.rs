@@ -1,4 +1,5 @@
 // AI-hint: Rust bake-plan generator (task_1190 / Law 14). Projects plan.d/*.list and bound-images.tsv from mios.toml SSOT, and resolves floating refs at bake time (latest-image / latest-git); `refresh-pins` refreshes the [build.pins] digests off the build path.
+mod cache;
 mod latest;
 mod pins;
 
@@ -230,6 +231,9 @@ fn main() {
         process::exit(pins::run(&root, &args[2..]));
     }
     if let Some(code) = latest::dispatch(&args, &root) {
+        process::exit(code);
+    }
+    if let Some(code) = cache::dispatch(&args, &root) {
         process::exit(code);
     }
     let integrity = args.iter().any(|a| a == "--check-integrity");

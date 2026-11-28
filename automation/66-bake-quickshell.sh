@@ -26,7 +26,24 @@ mios_log "Quickshell pin ref: ${PIN_REF}"
 BUILD_DIR="/tmp/quickshell-build"
 QUICKSHELL_OK=""
 
+# [build.bake_cache.units.quickshell]: keyed, after the build dependencies are installed, on the
+# upstream object(s) PIN_REF names; a hit lays the stored install tree over DESTDIR.
+_bake_cache=/usr/libexec/mios/mios-bake-plan
+_qs_url="${MIOS_URL_QUICKSHELL:-https://github.com/quickshell-mirror/quickshell.git}"
+_qs_commit="$(git ls-remote "$_qs_url" "refs/tags/${PIN_REF}" "refs/heads/${PIN_REF}" | awk '{print $1}' | paste -sd, -)" || _qs_commit=""
+[[ -n "$_qs_commit" || ! "$PIN_REF" =~ ^[0-9a-f]{40}$ ]] || _qs_commit="$PIN_REF"
+_qs_key=""
+if [[ "$_qs_commit" =~ ^[0-9a-f]{40}(,[0-9a-f]{40})*$ ]]; then
+    _qs_key="$("$_bake_cache" cache key quickshell --root "${SCRIPT_DIR}/.." \
+        --ref "url=${_qs_url}" --ref "ref=${PIN_REF}" --ref "commit=${_qs_commit}")" || _qs_key=""
+fi
+if [[ -n "$_qs_key" ]] && "$_bake_cache" cache restore quickshell "$_qs_key" "${DESTDIR:-/}" --root "${SCRIPT_DIR}/.." \
+    && [[ -x "${DESTDIR}/usr/bin/quickshell" ]]; then
+    QUICKSHELL_OK=1
+fi
+
 for attempt in 1 2 3; do
+    [[ -z "$QUICKSHELL_OK" ]] || break
     mios_log "Compilation attempt $attempt/3"
     cd /tmp
     rm -rf "$BUILD_DIR"
@@ -104,6 +121,13 @@ EOF
        (DESTDIR="$DESTDIR" cmake --install . 2>/dev/null || make install DESTDIR="$DESTDIR"); then
         if [[ -x "${DESTDIR}/usr/bin/quickshell" || -x /usr/bin/quickshell ]]; then
             QUICKSHELL_OK=1
+            if [[ -n "$_qs_key" ]]; then
+                _qs_keep="$(mktemp -d)"
+                DESTDIR="$_qs_keep" cmake --install . >/dev/null \
+                    && "$_bake_cache" cache save quickshell "$_qs_key" "$_qs_keep" --root "${SCRIPT_DIR}/.." \
+                    || mios_warn "Quickshell install tree not stored in the bake cache"
+                rm -rf -- "$_qs_keep"
+            fi
             break
         fi
     fi

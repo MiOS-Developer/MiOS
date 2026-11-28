@@ -535,6 +535,8 @@ class TestNativeProjectionTools(unittest.TestCase):
         sudo = self.tool(self.bins, "sudo")
         sudo.write_text('#!/bin/sh\nprintf "%s\n" "$*" > "$BUILD_MARKER"\n')
         env = dict(os.environ, BUILD_MARKER=str(marker),
+                   BAKE_CACHE_HOST="/runner/temp/mios-bake-cache",
+                   BAKE_CACHE_MOUNT="/var/tmp/mios-bake-cache",
                    PATH=str(self.bins) + os.pathsep + os.environ["PATH"])
         for output in ["exit 7", "exit 0", "echo registry.example/base:stable"]:
             reader.write_text("#!/bin/sh\n" + output + "\n")
@@ -546,6 +548,16 @@ class TestNativeProjectionTools(unittest.TestCase):
             else:
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("BASE_IMAGE=registry.example/base:stable", marker.read_text())
+                # The slow bakes read and store their compiled outputs through this mount.
+                self.assertIn("--volume /runner/temp/mios-bake-cache:/var/tmp/mios-bake-cache:rw",
+                              marker.read_text())
+        # Without the resolved cache step the build never starts on an unmounted path.
+        marker.unlink()
+        bare = {k: v for k, v in env.items() if not k.startswith("BAKE_CACHE_")}
+        result = subprocess.run(["bash", "-c", script], cwd=self.root,
+                                env=bare, capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(marker.exists())
 
     def test_fedora_rustup_init_bootstrap_is_required_before_native_build(self):
         fixture = self.root / "source"

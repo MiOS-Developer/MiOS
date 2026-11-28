@@ -18,8 +18,24 @@ install_packages_strict "hyprland" "hyprland" "$_hl_package"
 _hl_rpms="$(mktemp -d)"
 _hl_before="$(mktemp)"
 rpm -qa --qf '%{NAME}\n' | sort -u > "$_hl_before"
-/usr/libexec/mios/mios-gen build-hyprland --root / --out "$_hl_rpms"
-dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm
+# [build.bake_cache.units.hyprland]: the RPMs this rebuild consumes, keyed on the stock release it rebuilds.
+# A stored RPM that fails to install is rebuilt from source like any miss.
+_bake_cache=/usr/libexec/mios/mios-bake-plan
+_hl_key="$("$_bake_cache" cache key hyprland --root "${SCRIPT_DIR}/..")" || _hl_key=""
+if ! { [[ -n "$_hl_key" ]] && "$_bake_cache" cache restore hyprland "$_hl_key" "$_hl_rpms" --root "${SCRIPT_DIR}/.." \
+        && dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm; }; then
+    rm -rf -- "$_hl_rpms" && _hl_rpms="$(mktemp -d)"
+    /usr/libexec/mios/mios-gen build-hyprland --root / --out "$_hl_rpms"
+    dnf -y install "$_hl_rpms"/hyprland-[0-9]*.rpm
+    if [[ -n "$_hl_key" ]]; then
+        _hl_keep="$(mktemp -d)"
+        mkdir -p "$_hl_keep/source"
+        cp -- "$_hl_rpms"/hyprland-[0-9]*.rpm "$_hl_keep/" && cp -- "$_hl_rpms"/source/*.src.rpm "$_hl_keep/source/" \
+            && "$_bake_cache" cache save hyprland "$_hl_key" "$_hl_keep" --root "${SCRIPT_DIR}/.." \
+            || mios_warn "Patched compositor RPMs not stored in the bake cache"
+        rm -rf -- "$_hl_keep"
+    fi
+fi
 mapfile -t _hl_added < <(rpm -qa --qf '%{NAME}\n' | sort -u | comm -13 "$_hl_before" - | grep -vx 'hyprland')
 if ((${#_hl_added[@]})); then dnf -y remove --noautoremove "${_hl_added[@]}"; fi
 rm -f -- "$_hl_before"
