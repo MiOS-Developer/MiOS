@@ -103,8 +103,14 @@ jobs:
         # same green as a run that compared the two repositories, which is how
         # they drifted: eighteen shared files had diverged unnoticed.
         run: |
-          git clone --depth 1 https://github.com/mios-dev/mios-bootstrap.git \
-              "${RUNNER_TEMP}/mios-bootstrap"
+          url=https://github.com/mios-dev/mios-bootstrap.git
+          ref=main
+          branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+          if [ -n "$branch" ] && git ls-remote --exit-code --heads "$url" "$branch" >/dev/null; then
+            ref="$branch"
+          fi
+          echo "mios-bootstrap ref: ${ref}"
+          git clone --depth 1 --branch "$ref" "$url" "${RUNNER_TEMP}/mios-bootstrap"
           echo "MIOS_BOOTSTRAP_ROOT=${RUNNER_TEMP}/mios-bootstrap" >> "$GITHUB_ENV"
 
       - name: Static analysis tier

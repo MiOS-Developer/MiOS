@@ -230,6 +230,12 @@ WantedBy = "multi-user.target"
 comment = "# AI-hint: Keeps rasdaemon to hosts with their own machine-check and EDAC sources: a container or WSL has none, so the daemon would only fail to open tracefs there.\n# AI-related: rasdaemon.service, mios-ras-check.service, usr/lib/systemd/system-preset/90-mios.preset"
 ConditionVirtualization = "!container"
 
+[units."dev-binderfs.mount.d/10-mios-wsl2.conf".Unit]
+ConditionVirtualization = "!wsl"
+
+[units."dkms.service.d/10-mios-wsl2.conf".Unit]
+ConditionVirtualization = "!wsl"
+
 [units."mios-ras-check.service".Unit]
 comment = "# AI-hint: Oneshot running `mios-probe ras`: counts this boot's corrected hardware errors (kernel MCE notices, EDAC ce_count) against [hardware.ras].corrected_warn_per_boot and fails on any uncorrected EDAC error; rasdaemon keeps the per-event record.\n# AI-related: /usr/bin/mios-probe, src/mios-rs/mios-probe/src/ras.rs, mios-ras-check.timer, rasdaemon.service"
 Description = "'MiOS' hardware error check"

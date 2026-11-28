@@ -4445,6 +4445,8 @@ units.mios-storage-link.service.Service.NoNewPrivileges  MIOS_UNITS_MIOS_STORAGE
 units.mios-storage-link.service.Install.WantedBy  MIOS_UNITS_MIOS_STORAGE_LINK_SERVICE_INSTALL_WANTEDBY
 units.rasdaemon.service.d/10-mios.conf.Unit.comment  MIOS_UNITS_RASDAEMON_SERVICE_D_10_MIOS_CONF_UNIT_COMMENT
 units.rasdaemon.service.d/10-mios.conf.Unit.ConditionVirtualization  MIOS_UNITS_RASDAEMON_SERVICE_D_10_MIOS_CONF_UNIT_CONDITIONVIRTUALIZATION
+units.dev-binderfs.mount.d/10-mios-wsl2.conf.Unit.ConditionVirtualization  MIOS_UNITS_DEV_BINDERFS_MOUNT_D_10_MIOS_WSL2_CONF_UNIT_CONDITIONVIRTUALIZATION
+units.dkms.service.d/10-mios-wsl2.conf.Unit.ConditionVirtualization  MIOS_UNITS_DKMS_SERVICE_D_10_MIOS_WSL2_CONF_UNIT_CONDITIONVIRTUALIZATION
 units.mios-ras-check.service.Unit.comment  MIOS_UNITS_MIOS_RAS_CHECK_SERVICE_UNIT_COMMENT
 units.mios-ras-check.service.Unit.Description  MIOS_UNITS_MIOS_RAS_CHECK_SERVICE_UNIT_DESCRIPTION
 units.mios-ras-check.service.Unit.After  MIOS_UNITS_MIOS_RAS_CHECK_SERVICE_UNIT_AFTER
