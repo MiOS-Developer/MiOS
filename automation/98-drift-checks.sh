@@ -3781,6 +3781,19 @@ check_globals_generated() {
     fi
 }
 
+# --- every lane, tier row and light model-map entry meets the [llamacpp.tool_safe] floor ---
+check_tool_safe_floor() {
+    # A 4-bit KV cache flips tool-call decisions and 2-3 bit weights break them; the
+    # floor's values live in the SSOT, so this only relays the native verdict.
+    echo "[98-drift-checks] every lane, tier row and light model-map entry meets the [llamacpp.tool_safe] floor"
+    local bin out; bin="$(native_bin mios-gen "${MIOS_GEN_BIN:-}")" || { _violation "$_GEN_MISSING"; return; }
+    if out="$("$bin" tool-safe --root "$ROOT" --check 2>&1)"; then
+        echo "[98-drift-checks]   $out"
+    else
+        _violations_from "check_tool_safe_floor: " "$out"
+    fi
+}
+
 # --- the [generation.sync] copy stages hold their sources' bytes (sync.rs's own projection) ---
 check_sync_copies() {
     local bin out
@@ -3896,6 +3909,7 @@ main() {
     check_userenv_parity
     check_globals_ports
     check_globals_image_parity
+    check_tool_safe_floor
     check_dag_integrity
     check_names_registry
     check_drift_projection

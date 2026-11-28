@@ -4087,6 +4087,39 @@ PYEOF
     log "check_ai_metadata_fresh negative test passed"
 }
 
+test_tool_safe_floor() {
+    log "Testing check_tool_safe_floor"
+    # The defect: the cpu-node's q4_0 KV cache was a literal no gate looked at, and a
+    # 4-bit KV cache flips tool-call decisions. Planting q4_0 in the SSOT must fail, naming it.
+    local toml="${ROOT}/usr/share/mios/mios.toml"
+    local bak; bak="$(mktemp)"; cp "$toml" "$bak"
+
+    python3 - "$toml" <<'PYEOF'
+import sys
+p = sys.argv[1]
+with open(p, "r", encoding="utf-8", newline="") as fh:
+    t = fh.read()
+out = t.replace('cpu_node_cache_type = "q8_0"', 'cpu_node_cache_type = "q4_0"', 1)
+assert out != t, "the plant did not land -- [llamacpp].cpu_node_cache_type moved"
+with open(p, "w", encoding="utf-8", newline="") as fh:
+    fh.write(out)
+PYEOF
+
+    if _neg_gate check_tool_safe_floor; then
+        cp "$bak" "$toml"; rm -f "$bak"
+        die "check_tool_safe_floor passed with a q4_0 cpu-node KV cache"
+    fi
+    if [[ "$_NEG_GATE_OUT" != *"cpu_node_cache_type"* ]]; then
+        cp "$bak" "$toml"; rm -f "$bak"
+        printf '%s\n' "$_NEG_GATE_OUT" >&2
+        die "check_tool_safe_floor failed but did not name cpu_node_cache_type"
+    fi
+
+    cp "$bak" "$toml"; rm -f "$bak"
+    _neg_gate check_tool_safe_floor || { printf '%s\n' "$_NEG_GATE_OUT" >&2; die "check_tool_safe_floor failed after restoration"; }
+    log "check_tool_safe_floor negative test passed"
+}
+
 test_sync_copies() {
     log "Testing check_sync_copies"
     # The defect: sync.rs writes the [generation.sync] copy stages itself, and no
@@ -6074,6 +6107,7 @@ _run_test test_ci_suite_coverage
 _run_test test_cargo_manifest_generated
 _run_test test_ai_metadata_fresh
 _run_test test_sync_copies
+_run_test test_tool_safe_floor
 _run_test test_tracked_readable
 _run_test test_leaked_fixtures
     _run_test test_fleet_safety
