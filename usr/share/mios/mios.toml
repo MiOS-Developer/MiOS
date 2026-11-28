@@ -2935,6 +2935,9 @@ enable   = true
 [gpu.cdi.nvidia]
 device = "nvidia.com/gpu=all"
 specs  = ["nvidia.yaml", "nvidia-wsl.yaml", "wsl2-nvidia.yaml"]
+# What writes the specs. The CUDA heavy lane re-runs it before each start when no
+# listed spec is in [llamacpp.heavy_wsl].cdi_dir (mios-gen model-tier --ensure-cdi).
+producer = "/usr/libexec/mios/mios-cdi-detect"
 
 [gpu.cdi.amd]
 device = "amd.com/gpu=all"
@@ -16479,11 +16482,15 @@ DropCapability = "ALL"
 NoNewPrivileges = true
 ReadOnly = true
 
-# Picks this host's [[llamacpp.tiers.heavy]] row, then runs the heavy admission on it
-# (GGUF, slots, the exact CUDA device) and writes the lane's env file. A failure stops
-# the start: the heavy lane fails closed and the CPU lanes keep serving.
+# Before each start: when no [gpu.cdi.nvidia].specs file is in /run/cdi (a spec lost
+# after boot), re-run its producer, mios-cdi-detect; a present spec costs one stat and
+# no re-run. Then pick this host's [[llamacpp.tiers.heavy]] row, run the heavy admission
+# on it (GGUF, slots, the exact CUDA device or the WSL dxg proof) and write the lane's
+# env file. A failed admission stops the start: the heavy lane fails closed and the CPU
+# lanes keep serving. Both run as root: the unit has no [Service] User=, and the
+# Container's User= is the container's, given to podman.
 [containers.mios-llm-heavy.engine.llamacpp.Service]
-ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
+ExecStartPre = ["-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi", "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"]
 
 [containers.mios-llm-heavy.engine.llamacpp.Unit]
 Description = "'MiOS' heavy lane, llama.cpp CUDA engine (local GGUF, OpenAI /v1)"
@@ -16556,7 +16563,9 @@ ReadOnly = true
 # No GPU of any [llamacpp.heavy_auto] kind: the probe exits 1, systemd skips the unit
 # (inactive, not failed, never restarted), and the CPU lanes keep serving.
 ExecCondition = "/usr/bin/mios-gen model-tier --root / --lane heavy --probe"
-ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
+# As the CUDA engine: re-run the CDI producer when no listed spec is present (only on
+# a CUDA host), then admit. Root, like every step of this system unit.
+ExecStartPre = ["-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi", "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"]
 
 [containers.mios-llm-heavy.engine.auto.Unit]
 Description = "'MiOS' heavy lane, llama.cpp on the GPU detected at start (CUDA or Vulkan, local GGUF, OpenAI /v1)"

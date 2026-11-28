@@ -147,9 +147,9 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertEqual(engine["Container"]["Entrypoint"], "/app/llama-server")
         self.assertIn("--device CUDA0 --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", engine["Container"]["Exec"])
         self.assertIn("${MIOS_NODES_LOCAL_HEAVY_MODEL}", engine["Container"]["Exec"])
-        # The model tier picks this host's heavy row, then runs the heavy admission on it.
-        self.assertEqual(engine["Service"]["ExecStartPre"],
-                         "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
+        # Re-run the CDI producer if no listed spec is present, then pick this host's heavy
+        # row and run the heavy admission on it.
+        self.assertEqual(engine["Service"]["ExecStartPre"], ["-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi", "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"])
         self.assertEqual(heavy["Container"]["ContainerName"], "mios-llm-heavy")
         self.assertIn("gpu-serving", _caps(self.d["blade"]["requires"]["mios-llm-heavy"]))
         self.assertEqual(set(heavy["engine"]), set(self.d["images"]["mios-llm-heavy"]["engine"]))
@@ -183,8 +183,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertIn("--cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE}", c["Exec"])
         self.assertEqual(engine["Service"]["ExecCondition"],
                          "/usr/bin/mios-gen model-tier --root / --lane heavy --probe")
-        self.assertEqual(engine["Service"]["ExecStartPre"],
-                         "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
+        self.assertEqual(engine["Service"]["ExecStartPre"], ["-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi", "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"])
         self.assertNotEqual(c["User"], "0")
         placeholders = self.d["generator"]["placeholders"]
         lane_keys = self.d["llamacpp"]["tier_lanes"]["heavy"]["keys"]
@@ -230,6 +229,32 @@ class TestSeatActivatesNothing(unittest.TestCase):
         for written in ("nvidia-wsl.yaml", "wsl2-nvidia.yaml"):
             self.assertIn(f"{wsl['cdi_dir']}/{written}", detect)
             self.assertIn(written, specs)
+
+    def test_the_cuda_heavy_lane_reruns_the_cdi_producer_before_each_start(self):
+        # A spec lost after boot comes back unattended: before the admission, the CUDA
+        # engines re-run mios-cdi-detect when no listed spec is in /run/cdi. The step is
+        # "-": a failed re-run leaves the admission to fail closed. The Vulkan engine uses
+        # no CDI spec, so it has no such step.
+        producer = self.d["gpu"]["cdi"]["nvidia"]["producer"]
+        with open(os.path.join(_ROOT, "usr/lib/systemd/system/mios-cdi-detect.service"), encoding="utf-8") as fh:
+            unit = fh.read()
+        self.assertIn(f"\nExecStart={producer}\n", unit)
+        self.assertTrue(os.path.isfile(os.path.join(_ROOT, producer.lstrip("/"))), producer)
+        heavy = self.d["containers"]["mios-llm-heavy"]
+        for name in ("auto", "llamacpp"):
+            steps = heavy["engine"][name]["Service"]["ExecStartPre"]
+            self.assertEqual(steps[0], "-/usr/bin/mios-gen model-tier --root / --lane heavy --ensure-cdi", name)
+            self.assertTrue(steps[1].endswith("--lane heavy --apply"), name)
+        vulkan = heavy["engine"]["llamacpp-vulkan"]["Service"]["ExecStartPre"]
+        self.assertNotIn("--ensure-cdi", str(vulkan))
+        # Every step runs as root, which writing /run/cdi needs: the system unit sets no
+        # [Service] User=; the Container User= is the container's, handed to podman.
+        self.assertNotIn("User", heavy.get("Service", {}))
+        for name in ("auto", "llamacpp"):
+            self.assertNotIn("User", heavy["engine"][name].get("Service", {}), name)
+            self.assertIn("User", heavy["engine"][name]["Container"], name)
+        # A system Quadlet, not a rootless per-user one ([quadlets.scope].user).
+        self.assertNotIn("mios-llm-heavy", self.d["quadlets"]["scope"]["user"])
 
     def test_every_required_capability_is_grantable(self):
         granted = set()

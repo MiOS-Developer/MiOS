@@ -105,6 +105,10 @@ enum Commands {
         /// has none (the "auto" unit's ExecCondition, so systemd skips it), 255 on an error.
         #[arg(long, conflicts_with = "apply")]
         probe: bool,
+        /// Heavy lane only: when no [gpu.cdi.nvidia].specs file is in the CDI directory on a
+        /// CUDA host, run the specs' producer once (a step before the admission).
+        #[arg(long, conflicts_with_all = ["apply", "probe"])]
+        ensure_cdi: bool,
     },
     /// Fail when any lane, tier row or light model-map entry is below the [llamacpp.tool_safe] floor.
     ToolSafe {
@@ -2730,9 +2734,18 @@ fn main() -> ExitCode {
             lane,
             apply,
             probe,
+            ensure_cdi,
         } => {
             let root = root.unwrap_or_else(|| PathBuf::from("/"));
-            let outcome = if probe {
+            let outcome = if ensure_cdi {
+                if lane != "heavy" {
+                    Err(("--ensure-cdi applies to --lane heavy only".to_string(), 1))
+                } else {
+                    gpu_topology::run_ensure_heavy_cdi(&root)
+                        .map(|report| println!("{report}"))
+                        .map_err(|message| (message, 1))
+                }
+            } else if probe {
                 if lane != "heavy" {
                     Err(("--probe applies to --lane heavy only".to_string(), 255))
                 } else {

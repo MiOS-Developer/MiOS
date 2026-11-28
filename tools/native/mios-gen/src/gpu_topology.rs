@@ -2278,6 +2278,94 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
     )
 }
 
+/// `mios-gen model-tier --lane heavy --ensure-cdi`, before every start of the CUDA heavy
+/// engine: when no [gpu.cdi.nvidia].specs file is in [llamacpp.heavy_wsl].cdi_dir (a
+/// spec lost after boot), run their producer ([gpu.cdi.nvidia].producer) once. A present
+/// spec costs one lookup per name and no re-run; a host whose heavy engine is not CUDA is
+/// left alone. It proves nothing: the admission after it still fails closed on a bad spec.
+pub fn ensure_heavy_cdi(
+    root: &Path,
+    data: &Value,
+    run: &mut dyn FnMut(&Path) -> Result<(), String>,
+) -> Result<Json, String> {
+    match crate::light_tiers::resolve_heavy_engine(root, data)? {
+        Some((_, crate::light_tiers::GpuKind::Cuda)) => {}
+        _ => {
+            return Ok(
+                json!({"action":"none","reason":"the heavy engine is not CUDA on this host"}),
+            )
+        }
+    }
+    let wsl = heavy_wsl(data)?;
+    let nvidia = data
+        .get("gpu")
+        .and_then(|g| g.get("cdi"))
+        .and_then(|c| c.get("nvidia"))
+        .ok_or("missing [gpu.cdi.nvidia]")?;
+    let dir = root.join(wsl.cdi_dir.strip_prefix("/").map_err(|e| e.to_string())?);
+    let present = || -> Result<Option<PathBuf>, String> {
+        for spec in nvidia
+            .get("specs")
+            .and_then(Value::as_array)
+            .ok_or("gpu.cdi.nvidia.specs must be a list of spec file names")?
+        {
+            let file = spec
+                .as_str()
+                .filter(|f| {
+                    !f.is_empty()
+                        && !f.starts_with('.')
+                        && f.bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+                .ok_or("gpu.cdi.nvidia.specs must name plain spec files")?;
+            if fs::symlink_metadata(dir.join(file)).is_ok() {
+                return Ok(Some(dir.join(file)));
+            }
+        }
+        Ok(None)
+    };
+    if let Some(spec) = present()? {
+        return Ok(json!({"action":"none","spec":spec}));
+    }
+    let producer = light_string(nvidia, "producer")?;
+    let path = Path::new(producer);
+    if !path.is_absolute()
+        || !producer
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err("gpu.cdi.nvidia.producer must be one absolute program path".into());
+    }
+    let rooted = root.join(path.strip_prefix("/").map_err(|e| e.to_string())?);
+    if !rooted.is_file() {
+        return Err(format!("CDI producer {producer} is missing"));
+    }
+    run(&rooted)?;
+    Ok(json!({"action":"regenerated","producer":producer,"spec":present()?}))
+}
+
+/// [`ensure_heavy_cdi`] on the live root, running the producer as this (root) unit step.
+pub fn run_ensure_heavy_cdi(root: &Path) -> Result<Json, String> {
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let live = root == Path::new("/");
+    ensure_heavy_cdi(root, &data, &mut |producer| {
+        if !live {
+            return Err(format!("{} runs only on the live root", producer.display()));
+        }
+        let status = std::process::Command::new(producer)
+            .status()
+            .map_err(|e| format!("cannot run {}: {e}", producer.display()))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("{} failed: {status}", producer.display()))
+        }
+    })
+}
+
 pub fn report_heavy_backend(root: &Path) -> Result<Json, String> {
     let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
     heavy_backend_plan(root, &data)
@@ -3309,6 +3397,119 @@ mod tests {
             heavy_backend_plan(wsl_root.path(), &margin).unwrap()["fit_target_mib"],
             1536
         );
+    }
+
+    /// The verified WSL host plus the CDI producer program the unit's first step may run.
+    fn heavy_wsl_producer_fixture() -> (tempfile::TempDir, Value, PathBuf) {
+        let (root, data) = heavy_wsl_fixture();
+        let producer = root.path().join(
+            data["gpu"]["cdi"]["nvidia"]["producer"]
+                .as_str()
+                .unwrap()
+                .trim_start_matches('/'),
+        );
+        fs::create_dir_all(producer.parent().unwrap()).unwrap();
+        fs::write(&producer, "#!/bin/sh\n").unwrap();
+        (root, data, producer)
+    }
+
+    #[test]
+    fn ensure_cdi_reruns_the_producer_only_when_no_listed_spec_is_present() {
+        let (root, data, producer) = heavy_wsl_producer_fixture();
+        let r = root.path();
+        let spec = r.join("run/cdi/wsl2-nvidia.yaml");
+        let mut runs: Vec<PathBuf> = Vec::new();
+        // A present spec costs no re-run.
+        let report = ensure_heavy_cdi(r, &data, &mut |p| {
+            runs.push(p.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(report["action"], "none");
+        assert!(runs.is_empty());
+        // A spec lost after boot: the producer runs once and writes it back, and the
+        // admission that follows passes again.
+        let text = fs::read_to_string(&spec).unwrap();
+        fs::remove_file(&spec).unwrap();
+        assert!(heavy_backend_plan(r, &data).is_err());
+        let report = ensure_heavy_cdi(r, &data, &mut |p| {
+            runs.push(p.to_path_buf());
+            fs::write(&spec, &text).map_err(|e| e.to_string())
+        })
+        .unwrap();
+        assert_eq!(report["action"], "regenerated");
+        assert_eq!(runs, vec![producer.clone()]);
+        assert!(report["spec"]
+            .as_str()
+            .unwrap()
+            .ends_with("run/cdi/wsl2-nvidia.yaml"));
+        heavy_backend_plan(r, &data).unwrap();
+        // The producer writes nothing usable: reported, and the admission still fails closed.
+        fs::remove_file(&spec).unwrap();
+        let report = ensure_heavy_cdi(r, &data, &mut |_| Ok(())).unwrap();
+        assert_eq!(report["action"], "regenerated");
+        assert!(report["spec"].is_null());
+        assert!(heavy_backend_plan(r, &data).is_err());
+        // A failing producer is an error (the unit's step ignores it; the admission decides).
+        assert!(ensure_heavy_cdi(r, &data, &mut |_| Err("exit 1".into())).is_err());
+        // A present but non-WSL spec is not re-run, and the admission refuses it.
+        fs::write(
+            &spec,
+            "cdiVersion: \"0.6.0\"\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n    containerEdits:\n      deviceNodes:\n        - path: /dev/nvidia0\n",
+        )
+        .unwrap();
+        let mut reran = false;
+        let report = ensure_heavy_cdi(r, &data, &mut |_| {
+            reran = true;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(report["action"], "none");
+        assert!(!reran);
+        assert!(heavy_backend_plan(r, &data).is_err());
+    }
+
+    #[test]
+    fn ensure_cdi_leaves_non_cuda_hosts_alone_and_refuses_a_bad_producer() {
+        // No GPU, or only an AMD render node: the heavy engine is not CUDA, nothing runs.
+        let bare = tempfile::tempdir().unwrap();
+        let mut auto = ssot();
+        auto["ai"]["heavy_engine"] = Value::String("auto".into());
+        let d = fixture();
+        for root in [bare.path(), d.path()] {
+            let report = ensure_heavy_cdi(root, &auto, &mut |_| {
+                panic!("ran the CDI producer on a host whose heavy engine is not CUDA")
+            })
+            .unwrap();
+            assert_eq!(report["action"], "none");
+        }
+        // A missing or malformed producer is refused before anything runs.
+        let (root, data, producer) = heavy_wsl_producer_fixture();
+        fs::remove_file(root.path().join("run/cdi/wsl2-nvidia.yaml")).unwrap();
+        let mut ran = false;
+        for value in [
+            "usr/libexec/mios/mios-cdi-detect",
+            "/usr/libexec/../bin/sh",
+            "/tmp/x; id",
+        ] {
+            let mut bad = data.clone();
+            bad["gpu"]["cdi"]["nvidia"]["producer"] = Value::String(value.into());
+            assert!(
+                ensure_heavy_cdi(root.path(), &bad, &mut |_| {
+                    ran = true;
+                    Ok(())
+                })
+                .is_err(),
+                "accepted producer {value:?}"
+            );
+        }
+        fs::remove_file(&producer).unwrap();
+        assert!(ensure_heavy_cdi(root.path(), &data, &mut |_| {
+            ran = true;
+            Ok(())
+        })
+        .is_err());
+        assert!(!ran);
     }
 
     #[test]
