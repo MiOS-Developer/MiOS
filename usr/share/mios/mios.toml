@@ -5742,6 +5742,14 @@ socket_dir = "mios-inputd/vpad"      # under XDG_RUNTIME_DIR: <pad>.sock (contro
 
 [routing]
 router_enable = true   # master switch; false = legacy full-surface behaviour
+# Context window mios-model-router advertises for every logical model on its /v1/models
+# (context_length, max_model_len, max_context_length, context_window). Hermes sizes its
+# prompt from it, so it must not exceed what EVERY lane behind a route serves: the light
+# lane's micro model and the vendor cpu-node serve 32k. A host raises it to 65536 in its
+# own tier once every lane behind its Hermes routes serves 64k. Canonical name
+# MIOS_ROUTING_ROUTER_CTX; the resolver also emits it as MIOS_ROUTER_CTX, the name the
+# router read before (value-aliases.tsv: derive), so both always carry this value.
+router_ctx = 16384
 
 # Trailing courtesy/location phrases the agent-pipe fast-path (_deterministic_action_
 # route) STRIPS from a launch target so the app name is clean and the launch stays

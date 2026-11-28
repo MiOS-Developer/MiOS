@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-# AI-hint: Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact.
-# AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py, usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py, usr/libexec/mios/mios-model-router
+# AI-hint: Execute actual relay handler bodies with faulting clients to prove exception details remain server-side while success responses remain intact; pin the model router's advertised context to SSOT [routing].router_ctx.
+# AI-related: usr/lib/mios/agent-pipe/mios_pipe/routing/chat.py, usr/lib/mios/agent-pipe/mios_pipe/routing/vision.py, usr/libexec/mios/mios-model-router, usr/share/mios/mios.toml
 import ast
 import asyncio
 import json
 import logging
+import sys
+import tomllib
 import types
 import unittest
 from pathlib import Path
@@ -72,6 +74,46 @@ class TestRelayErrors(unittest.TestCase):
                 self.assertNotIn(CANARY, str(response.content))
                 if failure:
                     self.assertIn('unavailable', response.content['error']['message'])
+
+
+def function(path, name):
+    """One top-level def from a service file, executed alone (no service imports)."""
+    tree = ast.parse((ROOT / path).read_text(encoding='utf-8'))
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    env = {}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[node], type_ignores=[])), str(path), 'exec'), env)
+    return env[name]
+
+
+class TestAdvertisedContext(unittest.TestCase):
+    """[routing].router_ctx reaches the router by its canonical name, and the old name still works."""
+
+    def setUp(self):
+        self.ctx = function('usr/libexec/mios/mios-model-router', '_advertised_context')
+        with open(ROOT / 'usr/share/mios/mios.toml', 'rb') as fh:
+            self.ssot = tomllib.load(fh)['routing']['router_ctx']
+
+    def test_the_resolver_emits_the_canonical_and_the_derived_name(self):
+        sys.path.insert(0, str(ROOT / 'usr/lib/mios'))
+        import mios_toml
+        exports = mios_toml.emit_exports(mios_toml.vendor_tree(str(ROOT)))
+        self.assertEqual(mios_toml.canonical_name('routing.router_ctx'), 'MIOS_ROUTING_ROUTER_CTX')
+        self.assertEqual(exports['MIOS_ROUTING_ROUTER_CTX'], str(self.ssot))
+        self.assertEqual(exports['MIOS_ROUTER_CTX'], str(self.ssot))
+
+    def test_a_bare_run_advertises_the_vendor_ssot_value(self):
+        self.assertEqual(self.ctx({}), self.ssot)
+
+    def test_the_canonical_name_wins_over_the_derived_alias(self):
+        self.assertEqual(self.ctx({'MIOS_ROUTING_ROUTER_CTX': '65536', 'MIOS_ROUTER_CTX': '8192'}), 65536)
+
+    def test_the_old_name_still_reaches_the_router(self):
+        self.assertEqual(self.ctx({'MIOS_ROUTER_CTX': '32768'}), 32768)
+
+    def test_an_unusable_value_falls_back_instead_of_crashing(self):
+        for bad in ('', '0', '-5', 'many', '1.5', ' '):
+            self.assertEqual(self.ctx({'MIOS_ROUTING_ROUTER_CTX': bad}), self.ssot, bad)
+
 
 if __name__ == '__main__':
     unittest.main()

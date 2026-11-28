@@ -28,6 +28,7 @@ Logical models:
 Background health probe every 8s; per-lane 30s cooldown on error; SSE passthrough.
 Response carries X-MiOS-Lane / X-MiOS-Model so you can SEE which node served.
 Override lanes via MIOS_ROUTER_DEPLOYMENTS (JSON). Port via MIOS_ROUTER_PORT.
+Advertised context: SSOT [routing].router_ctx (MIOS_ROUTING_ROUTER_CTX).
 """
 import os, time, json, asyncio, re, subprocess
 import logging
@@ -41,7 +42,24 @@ log = logging.getLogger("mios-model-router")
 PORT = int(os.environ.get("MIOS_PORTS_MODEL_ROUTER", os.environ.get("MIOS_ROUTER_PORT", "8645")))
 COOLDOWN_S = float(os.environ.get("MIOS_ROUTER_COOLDOWN_S", "30"))
 PROBE_S = float(os.environ.get("MIOS_ROUTER_PROBE_S", "8"))
-CTX = int(os.environ.get("MIOS_ROUTER_CTX", "16384"))
+
+
+def _advertised_context(environ):
+    """SSOT [routing].router_ctx: the context every logical model advertises.
+
+    install.env carries it under its canonical name MIOS_ROUTING_ROUTER_CTX and under
+    MIOS_ROUTER_CTX, the resolver's derived alias and the name this router read
+    before, which is still honoured when only it is set. A missing or unusable value
+    falls back to the vendor default; tools/test_routing_security.py pins that literal
+    to the SSOT so the two cannot drift."""
+    for name in ("MIOS_ROUTING_ROUTER_CTX", "MIOS_ROUTER_CTX"):
+        value = str(environ.get(name, "")).strip()
+        if value.isdigit() and int(value) > 0:
+            return int(value)
+    return 16384
+
+
+CTX = _advertised_context(os.environ)
 
 
 def _gateway():
