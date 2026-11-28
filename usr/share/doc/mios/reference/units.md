@@ -102,6 +102,7 @@ This document is derived directly from the systemd unit files in the repository.
 | `mios-headless.target` | `usr/lib/systemd/system` | MiOS' Headless Role |
 | `mios-headscale-firstboot.service` | `usr/lib/systemd/system` | MiOS' Headscale mesh VPN coordinator first-boot config generator |
 | `mios-headscale.container` | `usr/share/containers/systemd` | MiOS' Headscale Mesh VPN Control Plane Coordinator |
+| `mios-heavy-engine.service` | `usr/lib/systemd/system` | MiOS' heavy engine image projection |
 | `mios-hermes-browser-worker.service` | `usr/lib/systemd/system` | MiOS' Hermes-Browser-Worker (ChromeDev CDP :9223 for the worker) |
 | `mios-hermes-browser.service` | `usr/lib/systemd/system` | MiOS' Hermes-Browser (ChromeDev w/ CDP for Hermes-Agent) |
 | `mios-hermes-firstboot.service` | `usr/lib/systemd/system` | MiOS' Hermes-Agent first-boot config + key generation |
@@ -241,5 +242,5 @@ This document is derived directly from the systemd unit files in the repository.
 | `var-lib-nfs-rpc_pipefs.mount` | `usr/lib/systemd/system` | RPC Pipe File System |
 | `ventulusd.service` | `usr/lib/systemd/system` | Ventulus Fan Control Daemon |
 
-<!-- derived from tracked unit files (233 unit(s)) -->
+<!-- derived from tracked unit files (234 unit(s)) -->
 <!-- /MIOS-GEN:units -->

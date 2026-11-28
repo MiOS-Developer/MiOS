@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4388,
-  "total_metadata_entries": 3514,
-  "total_hints": 3508,
+  "total_files_scanned": 4389,
+  "total_metadata_entries": 3515,
+  "total_hints": 3509,
   "total_functions_indexed": 2299,
-  "total_related_links": 7157,
+  "total_related_links": 7159,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -23473,6 +23473,18 @@
       "related": [],
       "functions": [],
       "doc": "usr/share/doc/mios/manual/system.md",
+      "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "usr/lib/systemd/system/mios-heavy-engine.service",
+      "hint": "Projects the image of the GPU the auto heavy engine resolves to (CUDA or Vulkan) as a Quadlet drop-in before the heavy lane starts.",
+      "related": [
+        "tools/native/mios-gen/src/gpu_topology.rs",
+        "usr/share/containers/systemd/mios-llm-heavy.container"
+      ],
+      "functions": [],
+      "doc": null,
       "comment_style": "hash",
       "has_shebang": false
     },

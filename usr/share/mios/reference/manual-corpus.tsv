@@ -28726,6 +28726,7 @@ usr/lib/systemd/system/mios-ha-bootstrap.service	14	19	6	50	ef3c6fb82a88	MIGRATE
 usr/lib/systemd/system/mios-ha-node.target	1	2	2	29	df57d1fe6fb3	STAY	ai-header		0				0
 usr/lib/systemd/system/mios-headless.target	1	2	2	28	b76174c6e8f5	STAY	ai-header		0				0
 usr/lib/systemd/system/mios-headscale-firstboot.service	1	2	2	20	983caa3e1881	STAY	ai-header		0				0
+usr/lib/systemd/system/mios-heavy-engine.service	1	2	2	28	ce7468ddae13	STAY	ai-header		0				0
 usr/lib/systemd/system/mios-hermes-browser-worker.service	1	2	2	38	8873c6e19ee0	STAY	ai-header		0	usr/share/doc/mios/manual/_harvest/system.md	mios-src:8873c6e19ee0	38	0
 usr/lib/systemd/system/mios-hermes-browser-worker.service	4	13	10	70	f52ed5f6cec0	MIGRATE	narrative-rationale		0	usr/share/doc/mios/manual/system.md	mios-src:f52ed5f6cec0	70	0
 usr/lib/systemd/system/mios-hermes-browser-worker.service	30	32	3	31	376568c838a9	STAY	midsize-why		0				0
