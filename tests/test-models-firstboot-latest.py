@@ -445,7 +445,10 @@ esac
                 ("vllm", "false", "", ""), ("vllm", "true", "", "synthetic/weights"),
                 ("vllm", "false", "operator/selected", "operator/selected"),
                 ("llamacpp", "true", "", ""),
-                ("llamacpp", "true", "operator/stale-hf-repository", "")]:
+                ("llamacpp", "true", "operator/stale-hf-repository", ""),
+                ("llamacpp-vulkan", "true", "operator/stale-hf-repository", ""),
+                ("auto", "true", "operator/stale-hf-repository", ""),
+                ("sglang", "false", "operator/selected", "operator/selected")]:
             result = subprocess.run(["bash", "-c", selection + '\nprintf "%s" "$VLLM_MODEL"'],
                 env={**os.environ, "MIOS_TOML_GET": str(getter),
                      "MIOS_VLLM_BAKE_MODEL": explicit, "MIOS_TEST_HEAVY_ENABLED": enabled,

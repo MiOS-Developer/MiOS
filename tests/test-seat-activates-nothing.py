@@ -159,13 +159,45 @@ class TestSeatActivatesNothing(unittest.TestCase):
         engine = heavy["engine"]["llamacpp-vulkan"]
         self.assertIn("--device Vulkan0 --n-gpu-layers all", engine["Container"]["Exec"])
         self.assertIn("--flash-attn on", engine["Container"]["Exec"])
-        self.assertEqual(engine["Container"]["AddDevice"], "${MIOS_LLAMACPP_HEAVY_RENDER_NODE}")
-        self.assertEqual(engine["Container"]["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_RENDER_GID}")
+        self.assertEqual(engine["Container"]["AddDevice"], "${MIOS_LLAMACPP_HEAVY_DEVICE}")
+        self.assertEqual(engine["Container"]["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}")
         self.assertEqual(engine["Service"]["ExecStartPre"],
                          "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
         self.assertEqual(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"]["llamacpp-vulkan"], "vulkan")
-        for name in ("MIOS_LLAMACPP_HEAVY_RENDER_NODE", "MIOS_LLAMACPP_HEAVY_RENDER_GID"):
+        for name in ("MIOS_LLAMACPP_HEAVY_DEVICE", "MIOS_LLAMACPP_HEAVY_DEVICE_GID"):
             self.assertIn(name, self.d["generator"]["placeholders"])
+
+    def test_the_vendor_heavy_engine_detects_the_gpu_at_start(self):
+        # "auto" is one llama.cpp unit for every GPU kind: the model tier detects the GPU,
+        # admits it and writes every hardware-specific value; no GPU skips the unit.
+        self.assertEqual(self.d["ai"]["heavy_engine"], "auto")
+        self.assertEqual(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"]["auto"], "detect")
+        heavy = self.d["containers"]["mios-llm-heavy"]
+        engine = heavy["engine"]["auto"]
+        c = engine["Container"]
+        self.assertEqual(c["AddDevice"], "${MIOS_LLAMACPP_HEAVY_DEVICE}")
+        self.assertEqual(c["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}")
+        self.assertEqual(c["Image"], "${MIOS_LLAMACPP_HEAVY_IMAGE}")
+        self.assertIn("--device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers all", c["Exec"])
+        self.assertIn("--flash-attn on", c["Exec"])
+        self.assertIn("--cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE}", c["Exec"])
+        self.assertEqual(engine["Service"]["ExecCondition"],
+                         "/usr/bin/mios-gen model-tier --root / --lane heavy --probe")
+        self.assertEqual(engine["Service"]["ExecStartPre"],
+                         "/usr/bin/mios-gen model-tier --root / --lane heavy --apply")
+        self.assertNotEqual(c["User"], "0")
+        placeholders = self.d["generator"]["placeholders"]
+        lane_keys = self.d["llamacpp"]["tier_lanes"]["heavy"]["keys"]
+        for field in ("device", "device_gid", "llama_device", "image"):
+            dotted = lane_keys[field]
+            section, key = dotted.split(".", 1)
+            self.assertIn(key, self.d[section], dotted)
+            self.assertIn("MIOS_" + dotted.replace(".", "_").upper(), placeholders, dotted)
+        auto = self.d["llamacpp"]["heavy_auto"]
+        self.assertEqual(auto["prefer"][0], "cuda")
+        self.assertTrue(set(auto["prefer"]) <= set(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"].values()))
+        self.assertIn("/dev/dxg", auto["wsl_cuda"])
+        self.assertIn("auto", self.d["images"]["mios-llm-heavy"]["engine"])
 
     def test_every_required_capability_is_grantable(self):
         granted = set()

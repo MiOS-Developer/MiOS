@@ -8026,12 +8026,16 @@ heavy_parallel = 1
 # The heavy_* model, context and KV keys are the static fallback; the lane's model
 # tier ([[llamacpp.tiers.heavy]]) overrides them per host at every start.
 heavy_cache_type = "q8_0"
-# The Vulkan engine's verified render node and its group, written by the lane's model
-# tier at start, never set by hand. These defaults only keep the unit's references
-# defined: a node that does not exist and the unprivileged nobody group, so a start
-# that somehow skipped the tier's admission fails closed instead of guessing a device.
-heavy_render_node = "/dev/dri/none"
-heavy_render_gid = "65534"
+# The admitted GPU of the llama.cpp heavy engines, written by the lane's model tier at
+# start, never set by hand: the device Podman adds (an exact NVIDIA CDI name or a
+# verified render node), its group, llama.cpp's --device and the engine image. These
+# defaults only keep the unit's references defined: a node that does not exist, the
+# unprivileged nobody group and no llama.cpp device, so a start that somehow skipped
+# the tier's admission fails closed instead of guessing a device.
+heavy_device = "/dev/dri/none"
+heavy_device_gid = "65534"
+heavy_llama_device = "none"
+heavy_image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
 heavy_slot_dir = "/var/lib/mios/llamacpp/heavy"
 # Logical and physical token batch limits inherited by every light server child.
 # Keep the physical batch no larger than the logical batch. Server integer bounds apply.
@@ -8248,8 +8252,8 @@ cpu_node = ""
 # Which SSOT keys a lane's row overrides (their canonical MIOS_* names go into the
 # lane's env file), and which heavy engines run on which GPU kind.
 [llamacpp.tier_lanes.heavy]
-keys = { model_file = "llamacpp.heavy_model_file", context = "llamacpp.heavy_context", cache_type = "llamacpp.heavy_cache_type", render_node = "llamacpp.heavy_render_node", render_gid = "llamacpp.heavy_render_gid" }
-engines = { llamacpp = "cuda", llamacpp-vulkan = "vulkan" }
+keys = { model_file = "llamacpp.heavy_model_file", context = "llamacpp.heavy_context", cache_type = "llamacpp.heavy_cache_type", device = "llamacpp.heavy_device", device_gid = "llamacpp.heavy_device_gid", llama_device = "llamacpp.heavy_llama_device", image = "llamacpp.heavy_image" }
+engines = { llamacpp = "cuda", llamacpp-vulkan = "vulkan", auto = "detect" }
 
 [llamacpp.tier_lanes.cpu_node]
 keys = { model_file = "llamacpp.cpu_node_model_file", context = "llamacpp.cpu_node_context", cache_type = "llamacpp.cpu_node_cache_type" }
@@ -8376,6 +8380,19 @@ need_mib = 552
 image_key = "llm_light_vulkan"
 drivers = ["amdgpu"]
 resource = ""
+
+# How the "detect" engine ([ai].heavy_engine = "auto") finds the host's GPU at every
+# start of the heavy lane: the first kind in `prefer` the host has picks the backend.
+#   cuda    any path of cuda_nodes exists (the bare-metal NVIDIA driver's control node),
+#           or every path of wsl_cuda does (WSL's GPU paravirtual device and the Windows
+#           NVIDIA driver's CUDA library; dxg alone is any vendor's GPU)
+#   vulkan  an [llamacpp.heavy_vulkan] render node
+# Neither: the lane's ExecCondition skips the unit. The admission that follows is the
+# pinned engine's own (exact CUDA device, or the verified render node).
+[llamacpp.heavy_auto]
+prefer = ["cuda", "vulkan"]
+cuda_nodes = ["/dev/nvidiactl"]
+wsl_cuda = ["/dev/dxg", "/usr/lib/wsl/lib/libcuda.so.1"]
 
 [enhanced_session]
 enabled    = true
@@ -8693,15 +8710,20 @@ effort              = "max"
 smartroute_enable   = false
 smartroute_budget   = 0.0       # per-day cost cap for paid remote escalation (0 = unlimited)
 package_registry    = false
-# THE engine of the ONE heavy GPU lane, mios-llm-heavy: "vllm" | "sglang" | "llamacpp" (CUDA)
-# | "llamacpp-vulkan" (AMD APU/GPU over Vulkan, [llamacpp.heavy_vulkan]). Both llama.cpp
-# engines pick their GGUF per host from [[llamacpp.tiers.heavy]].
+# THE engine of the ONE heavy GPU lane, mios-llm-heavy: "auto" | "llamacpp" (CUDA) |
+# "llamacpp-vulkan" (AMD APU/GPU over Vulkan, [llamacpp.heavy_vulkan]) | "vllm" | "sglang".
+# "auto" (the vendor default) renders one llama.cpp unit that detects the host's GPU at
+# every start ([llamacpp.heavy_auto]): NVIDIA (the bare-metal driver, or WSL's dxg with
+# the Windows CUDA library) -> CUDA, an amdgpu render node -> Vulkan, neither -> no heavy
+# lane. A host pins "llamacpp" or "llamacpp-vulkan" in its own tier and the same unit
+# honours it at the next start; "vllm"/"sglang" need an image built with that engine.
+# The llama.cpp engines pick their GGUF per host from [[llamacpp.tiers.heavy]].
 # mios-gen renders [containers.mios-llm-heavy.engine.<this>] (and the .image
 # twin) into the lane's Quadlet; the engine tunables are [ai.vllm] / [ai.sglang]
 # and the per-engine surface settings [lanes.<this>]. Runtime LoRA
 # ([converge.inference].vllm_*) needs "vllm". Env MIOS_AGENT_PIPE_HEAVY_ENGINE
 # may still set the agent-pipe route to "light" (skip the heavy lane).
-heavy_engine        = "vllm"
+heavy_engine        = "auto"
 # WS-A16 remote-core escalation: when "on", any REMOTE [nodes.*] endpoint becomes
 # a first-class TRAILING lane in the resolver -- local lanes are still preferred
 # (LiteLLM order-based fallback: local-first), and a remote core is reached only
@@ -11665,7 +11687,8 @@ non_addressable = [
 placeholders             = ["FEDORA_VERSION", "MIOS_VERSION", "MIOS_VERSIONS_FEDORA",
   "MIOS_LLAMACPP_CPU_NODE_MODEL_FILE", "MIOS_LLAMACPP_CPU_NODE_CONTEXT", "MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE",
   "MIOS_LLAMACPP_HEAVY_MODEL_FILE", "MIOS_LLAMACPP_HEAVY_CONTEXT", "MIOS_LLAMACPP_HEAVY_CACHE_TYPE",
-  "MIOS_LLAMACPP_HEAVY_RENDER_NODE", "MIOS_LLAMACPP_HEAVY_RENDER_GID"]
+  "MIOS_LLAMACPP_HEAVY_DEVICE", "MIOS_LLAMACPP_HEAVY_DEVICE_GID", "MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE",
+  "MIOS_LLAMACPP_HEAVY_IMAGE"]
 
 [versions]
 fedora                   = "45"   # the base image's Fedora release; 05-repos.sh refuses a build where they differ
@@ -15798,6 +15821,11 @@ Image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
 [images.mios-llm-heavy.engine.llamacpp-vulkan.Image]
 Image = "${MIOS_LLM_LIGHT_VULKAN_IMAGE}"
 
+# "auto" serves the CUDA or the Vulkan image, picked at start; both are in
+# [build.bake].core, so this twin only re-pulls the CUDA one.
+[images.mios-llm-heavy.engine.auto.Image]
+Image = "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}"
+
 [images.mios-llm-heavy.engine.vllm.Image]
 Image = "${MIOS_VLLM_IMAGE:-docker.io/vllm/vllm-openai:latest}"
 
@@ -16419,8 +16447,8 @@ ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
 # The render node and its group come from the model tier's admission at start
 # (placeholders, expanded by systemd), never from a static device list.
 [containers.mios-llm-heavy.engine.llamacpp-vulkan.Container]
-AddDevice = "${MIOS_LLAMACPP_HEAVY_RENDER_NODE}"
-GroupAdd = "${MIOS_LLAMACPP_HEAVY_RENDER_GID}"
+AddDevice = "${MIOS_LLAMACPP_HEAVY_DEVICE}"
+GroupAdd = "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}"
 Entrypoint = "/app/llama-server"
 Exec = "--model /models/${MIOS_LLAMACPP_HEAVY_MODEL_FILE} --alias ${MIOS_NODES_LOCAL_HEAVY_MODEL} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY} --device Vulkan0 --n-gpu-layers all --ctx-size ${MIOS_LLAMACPP_HEAVY_CONTEXT} --threads ${MIOS_LLAMACPP_HEAVY_THREADS} --batch-size ${MIOS_LLAMACPP_HEAVY_BATCH_SIZE} --ubatch-size ${MIOS_LLAMACPP_HEAVY_UBATCH_SIZE} --parallel ${MIOS_LLAMACPP_HEAVY_PARALLEL} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --slot-save-path ${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/slots --jinja"
 Image = "${MIOS_LLM_LIGHT_VULKAN_IMAGE}"
@@ -16447,6 +16475,43 @@ ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
 
 [containers.mios-llm-heavy.engine.llamacpp-vulkan.Unit]
 Description = "'MiOS' heavy lane, llama.cpp Vulkan engine (AMD APU/GPU, local GGUF, OpenAI /v1)"
+ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
+
+[containers.mios-llm-heavy.engine.auto.Container]
+# One unit for every GPU kind: the model tier detects the host's GPU at start and
+# writes the device (a CDI name or a render node), its group, llama.cpp's --device
+# and the engine image into the lane's env file; all four are [generator].placeholders.
+AddDevice = "${MIOS_LLAMACPP_HEAVY_DEVICE}"
+GroupAdd = "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}"
+Entrypoint = "/app/llama-server"
+Exec = "--model /models/${MIOS_LLAMACPP_HEAVY_MODEL_FILE} --alias ${MIOS_NODES_LOCAL_HEAVY_MODEL} --host 0.0.0.0 --port ${MIOS_PORTS_LLM_HEAVY} --device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers all --ctx-size ${MIOS_LLAMACPP_HEAVY_CONTEXT} --threads ${MIOS_LLAMACPP_HEAVY_THREADS} --batch-size ${MIOS_LLAMACPP_HEAVY_BATCH_SIZE} --ubatch-size ${MIOS_LLAMACPP_HEAVY_UBATCH_SIZE} --parallel ${MIOS_LLAMACPP_HEAVY_PARALLEL} --flash-attn on --cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --slot-save-path ${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/slots --jinja"
+Image = "${MIOS_LLAMACPP_HEAVY_IMAGE}"
+User = "${MIOS_LLAMACPP_UID}"
+Group = "${MIOS_LLAMACPP_GID}"
+Environment = [
+ "HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}",
+ "XDG_CACHE_HOME=${MIOS_LLAMACPP_HEAVY_SLOT_DIR}/cache"
+]
+Volume = [
+ "${MIOS_LLAMACPP_MODELS_DIR}:/models:ro",
+ "${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:${MIOS_LLAMACPP_HEAVY_SLOT_DIR}:Z"
+]
+HealthCmd = "curl -fsS http://localhost:${MIOS_PORTS_LLM_HEAVY}/health || exit 1"
+HealthInterval = "30s"
+HealthRetries = 3
+HealthStartPeriod = "300s"
+DropCapability = "ALL"
+NoNewPrivileges = true
+ReadOnly = true
+
+[containers.mios-llm-heavy.engine.auto.Service]
+# No GPU of any [llamacpp.heavy_auto] kind: the probe exits 1, systemd skips the unit
+# (inactive, not failed, never restarted), and the CPU lanes keep serving.
+ExecCondition = "/usr/bin/mios-gen model-tier --root / --lane heavy --probe"
+ExecStartPre = "/usr/bin/mios-gen model-tier --root / --lane heavy --apply"
+
+[containers.mios-llm-heavy.engine.auto.Unit]
+Description = "'MiOS' heavy lane, llama.cpp on the GPU detected at start (CUDA or Vulkan, local GGUF, OpenAI /v1)"
 ConditionPathExists = "${MIOS_LLAMACPP_MODELS_DIR}/.ready"
 
 [containers.mios-llm-light.Container]
