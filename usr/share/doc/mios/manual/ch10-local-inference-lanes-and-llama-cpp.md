@@ -217,6 +217,35 @@ fails closed on any mismatch:
 The heavy unit `Wants` and starts after `mios-cdi-detect.service`, which writes the
 spec. These checks are ported from the light lane's verified dxg checks.
 
+The spec has been seen to disappear from `/run/cdi` after boot, and
+`mios-cdi-detect` is a oneshot that stays active, so `Wants` alone would not bring
+it back. The CUDA engines' first start step is therefore
+`-mios-gen model-tier --lane heavy --ensure-cdi`:
+
+- when no `[gpu.cdi.nvidia].specs` file is in `/run/cdi` on a CUDA host, it runs
+  `[gpu.cdi.nvidia].producer` (`/usr/libexec/mios/mios-cdi-detect`) once;
+- a present spec costs one lookup per listed name and no re-run;
+- a Vulkan or GPU-less host is left alone;
+- the step is `-`, so a failed re-run leaves the admission to fail closed.
+
+Like every step of this system unit, it runs as root, which writing `/run/cdi`
+needs. The unit sets no `[Service] User=`; its `[Container] User=` is the
+container's user, which Quadlet hands to podman.
+
+Layers and the free-memory margin come from the SSOT, and llama.cpp spells them
+`--n-gpu-layers` and `--fit-target` at both b12464 and b12602:
+
+| Key | Vendor value | What it does |
+|---|---|---|
+| `[llamacpp].heavy_gpu_layers` | `all` | every layer on a dedicated dGPU or APU |
+| `[llamacpp.heavy_wsl].gpu_layers` | `auto` | lets `--fit` (on by default) size layers against free memory, since Windows draws its desktop on the same GPU |
+| `[llamacpp].heavy_fit_target_mib` | `1024` | the MiB `--fit` leaves free (llama.cpp's own default) |
+
+The admission writes the values it chose to the lane's env file, and every llama.cpp
+heavy engine renders `--n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target
+${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}`. The context is always set, so `--fit` only
+ever moves layers.
+
 The unit reads that file after `install.env`, and the model, context and KV
 references are `[generator].placeholders`, so systemd expands them at start. One
 image therefore serves whatever each host's tier picks. The served names clients
@@ -400,11 +429,10 @@ cpu-node` without `--apply` prints the plan and its arithmetic without writing.
   render node.
 - The `auto` unit relies on systemd expanding `${MIOS_LLAMACPP_HEAVY_*}` in the
   Quadlet's `Image=`, `AddDevice=` and `GroupAdd=` at start; no host has run it yet.
-- The WSL CUDA admission has run only against fixtures shaped like MiOS-DEV's
-  `/dev/dxg` (10:258, mode 666), its libcuda and its `wsl2-nvidia.yaml`. Its spec has
-  been seen to disappear from `/run/cdi` after boot. `mios-cdi-detect` is a oneshot
-  that stays active, so the unit's `Wants` runs it only once per boot. A lost spec
-  makes the admission fail closed until `systemctl restart mios-cdi-detect`.
+- The WSL CUDA admission and the `--ensure-cdi` re-run have run only against
+  fixtures shaped like MiOS-DEV's `/dev/dxg` (10:258, mode 666), its libcuda and its
+  `wsl2-nvidia.yaml`. Auto layers with `--fit-target` have not been loaded on the
+  X570's 8 GB card.
 - The cpu-node plans as if the heavy lane serves whenever the host has its GPU. On
   MiOS-DEV, whose `headless` role keeps the heavy unit off today, it still mixes
   against the heavy lane's pick.
