@@ -719,14 +719,51 @@ jobs:
           source tools/lib/ci-runtime.sh
           mios_ci_verify_portal . .staged-portal
 
+      - name: Resolve the bake cache
+        # [build.bake_cache] names where the bake reads and writes compiled outputs and the
+        # schema that prefixes every cache key; [ci.smoke] budgets the build step so the
+        # store steps below still run inside GitHub's six-hour job limit.
+        id: bake_cache
+        run: |
+          set -euo pipefail
+          get() { ./usr/libexec/mios/mios-toml-get --vendor "$@"; }
+          mount="$(get build.bake_cache dir)"
+          schema="$(get build.bake_cache schema)"
+          minutes="$(get ci.smoke build_timeout_minutes)"
+          [[ "$mount" == /* && "$schema" =~ ^[0-9]+$ && "$minutes" =~ ^[1-9][0-9]*$ ]] \
+              || { echo "::error::[build.bake_cache] dir/schema or [ci.smoke] build_timeout_minutes is malformed" >&2; exit 1; }
+          host="${RUNNER_TEMP}/mios-bake-cache"
+          mkdir -p "$host"
+          {
+              echo "host=${host}"
+              echo "mount=${mount}"
+              echo "prefix=mios-bake-cache-s${schema}-"
+              echo "build_minutes=${minutes}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore the bake cache
+        # The newest cache of this branch, else of the base branch. A cold cache restores
+        # nothing and every bake compiles from source.
+        id: bake_cache_restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.bake_cache.outputs.host }}
+          key: ${{ steps.bake_cache.outputs.prefix }}${{ github.run_id }}
+          restore-keys: ${{ steps.bake_cache.outputs.prefix }}
+
       - name: Smoke build
         # The Containerfile's final layer runs bootc container lint.
         # GitHub API calls inside the bake (release digests, latest-release lookups)
         # authenticate with this job's token as a build secret: a tmpfs file for the
         # one RUN step, never a layer, build-arg or log line. Unauthenticated, the
         # shared runner IP's 60 requests/hour run out mid-build.
+        timeout-minutes: ${{ fromJSON(steps.bake_cache.outputs.build_minutes) }}
+        # The bake cache is a bind mount for RUN steps only, never part of a layer: the
+        # slow bakes read their compiled outputs from it and store fresh ones in it.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BAKE_CACHE_HOST: ${{ steps.bake_cache.outputs.host }}
+          BAKE_CACHE_MOUNT: ${{ steps.bake_cache.outputs.mount }}
         run: |
           set -euo pipefail
           BASE_IMAGE="$(./usr/libexec/mios/mios-toml-get --vendor image base)"
@@ -734,8 +771,44 @@ jobs:
           sudo --preserve-env=GITHUB_TOKEN TMPDIR=/mnt/tmp podman build --device /dev/fuse --cap-add all \
               --secret id=mios_github_token,env=GITHUB_TOKEN \
               --security-opt seccomp=unconfined --security-opt apparmor=unconfined \
+              --volume "${BAKE_CACHE_HOST}:${BAKE_CACHE_MOUNT}:rw" \
               --build-arg "BASE_IMAGE=$BASE_IMAGE" \
               --build-arg MIOS_BAKE_BOUND_IMAGES=0 -t mios:smoke -f Containerfile .
+
+      - name: List what the bake cache holds
+        # Also after a failed, cancelled or timed-out build: whatever a cold build finished
+        # compiling is kept. Entries are written whole or not at all; a dot-name is a
+        # half-written entry or an unsaved key and is dropped.
+        id: bake_cache_list
+        if: always() && steps.bake_cache.outputs.host != ''
+        env:
+          BAKE_CACHE_HOST: ${{ steps.bake_cache.outputs.host }}
+          BAKE_CACHE_PREFIX: ${{ steps.bake_cache.outputs.prefix }}
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" "$BAKE_CACHE_HOST"
+          find "$BAKE_CACHE_HOST" -mindepth 2 -maxdepth 2 -name '.*' -exec rm -rf {} +
+          entries="$(find "$BAKE_CACHE_HOST" -mindepth 2 -maxdepth 2 -type d -printf '%P\n' | LC_ALL=C sort)"
+          count=0
+          if [[ -n "$entries" ]]; then
+              while IFS= read -r entry; do echo "bake cache entry: ${entry}"; done <<<"$entries"
+              count="$(wc -l <<<"$entries")"
+          else
+              echo "The bake cache holds no entries"
+          fi
+          sum="$(printf '%s\n' "$entries" | sha256sum | cut -c1-32)"
+          echo "key=${BAKE_CACHE_PREFIX}${sum}" >> "$GITHUB_OUTPUT"
+          echo "entries=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Store the bake cache
+        # A run that restored this exact set of entries has nothing new to store.
+        if: >-
+          always() && steps.bake_cache_list.outputs.entries != '' && steps.bake_cache_list.outputs.entries != '0'
+          && steps.bake_cache_list.outputs.key != steps.bake_cache_restore.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.bake_cache.outputs.host }}
+          key: ${{ steps.bake_cache_list.outputs.key }}
 
       - name: Image runs and carries the MiOS components
         run: bash ./tests/bake-smoke.sh mios:smoke

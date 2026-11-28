@@ -363,19 +363,32 @@ _law5_dirs=(
     /etc/mios/ai
 )
 _law5_pattern='https?://(api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.cohere\.|api\.mistral\.|api\.cline\.bot|api\.cursor\.com|api\.githubcopilot\.com)'
-_law5_hits=""
-for d in "${_law5_dirs[@]}"; do
-    [[ -d "$d" ]] || continue
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        active=$(sed -E '/^[[:space:]]*(#|\/\/)/d' "$f")
-        if printf '%s\n' "$active" | grep -qE "$_law5_pattern"; then
-            _law5_hits+="$f"$'\n'
+_dead_lane_pattern=':11434'
+# One read of each file serves this check and the :11434 one below. Comment lines (#, //) do not
+# count; each hit prints its check and the file. A sed and a grep per file took about 20 minutes a
+# check on the full image. The patterns reach awk through ENVIRON, which applies no escape processing.
+_law5_scan="$(
+    for d in "${_law5_dirs[@]}"; do
+        if [[ -d "$d" ]]; then
+            find "$d" -type f \( -name '*.container' -o -name '*.service' \
+                -o -name '*.json' -o -name '*.toml' -o -name '*.conf' -o -name '*.yaml' \
+                -o -name '*.yml' \) -print0 2>/dev/null || true
         fi
-    done < <(find "$d" -type f \( -name '*.container' -o -name '*.service' \
-        -o -name '*.json' -o -name '*.toml' -o -name '*.conf' -o -name '*.yaml' \
-        -o -name '*.yml' \) 2>/dev/null)
-done
+    done | LC_ALL=C LAW5_URL_PATTERN="$_law5_pattern" LAW5_LANE_PATTERN="$_dead_lane_pattern" xargs -0 -r awk '
+        FNR == 1 { url = 0; lane = 0 }
+        /^[[:space:]]*(#|\/\/)/ { next }
+        !url && $0 ~ ENVIRON["LAW5_URL_PATTERN"] { url = 1; print "url\t" FILENAME }
+        !lane && $0 ~ ENVIRON["LAW5_LANE_PATTERN"] { lane = 1; print "lane\t" FILENAME }
+        url && lane { nextfile }'
+)" || die "UNIFIED-AI-REDIRECTS: the active-config scan could not read every file"
+_law5_hits=""
+_dead_lane_hits=""
+while IFS=$'\t' read -r _scan_kind _scan_file; do
+    case "$_scan_kind" in
+        url) _law5_hits+="$_scan_file"$'\n' ;;
+        lane) _dead_lane_hits+="$_scan_file"$'\n' ;;
+    esac
+done <<<"$_law5_scan"
 if [[ -n "$_law5_hits" ]]; then
     printf '%s' "$_law5_hits" >&2
     die "UNIFIED-AI-REDIRECTS: vendor cloud URL found in active config"
@@ -383,20 +396,6 @@ fi
 mios_ok "No vendor URLs in active config"
 
 mios_log "Validate UNIFIED-AI-REDIRECTS: no retired :11434 lane in active config"
-_dead_lane_pattern=':11434'
-_dead_lane_hits=""
-for d in "${_law5_dirs[@]}"; do
-    [[ -d "$d" ]] || continue
-    while IFS= read -r f; do
-        [[ -f "$f" ]] || continue
-        active=$(sed -E '/^[[:space:]]*(#|\/\/)/d' "$f")
-        if printf '%s\n' "$active" | grep -qE "$_dead_lane_pattern"; then
-            _dead_lane_hits+="$f"$'\n'
-        fi
-    done < <(find "$d" -type f \( -name '*.container' -o -name '*.service' \
-        -o -name '*.conf' -o -name '*.json' -o -name '*.toml' -o -name '*.yaml' \
-        -o -name '*.yml' \) 2>/dev/null)
-done
 if [[ -n "$_dead_lane_hits" ]]; then
     printf '%s' "$_dead_lane_hits" >&2
     die "UNIFIED-AI-REDIRECTS: retired :11434 lane in active config"

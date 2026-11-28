@@ -1,10 +1,10 @@
 {
   "format": "openai_strict_schema_v1",
-  "total_files_scanned": 4393,
-  "total_metadata_entries": 3521,
-  "total_hints": 3515,
-  "total_functions_indexed": 2302,
-  "total_related_links": 7190,
+  "total_files_scanned": 4394,
+  "total_metadata_entries": 3522,
+  "total_hints": 3516,
+  "total_functions_indexed": 2309,
+  "total_related_links": 7195,
   "entries": [
     {
       "path": ".agents/COORDINATION.md",
@@ -12759,6 +12759,29 @@
       "functions": [],
       "doc": null,
       "comment_style": "hash",
+      "has_shebang": false
+    },
+    {
+      "path": "tools/native/mios-bake-plan/src/cache.rs",
+      "hint": "`mios-bake-plan cache key|restore|save`: the compiled-output cache of the slow from-source bakes ([build.bake_cache]). The key hashes every input, a restore proves every file first, and any fault is a miss, never a failed bake.",
+      "related": [
+        "usr/share/mios/mios.toml",
+        "automation/65-bake-hyprland.sh",
+        "automation/66-bake-quickshell.sh",
+        "automation/69-bake-lookingglass-client.sh",
+        ".github/workflows/mios-ci.yml"
+      ],
+      "functions": [
+        "dispatch",
+        "Config::load",
+        "material",
+        "key_of",
+        "save",
+        "restore",
+        "explain_miss"
+      ],
+      "doc": null,
+      "comment_style": "slash",
       "has_shebang": false
     },
     {

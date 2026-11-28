@@ -53,7 +53,31 @@ install_packages "looking-glass-build"
 BUILD_DIR="/tmp/LookingGlass-build"
 LG_OK=""
 LG_VERSION=""
+# The version upstream builds report counts commits from the newest release tag, so it is part of what
+# the commit builds into.
+LG_TAG="$(git ls-remote --tags --refs "$LG_REPO" | awk -F/ '{print $3}' | grep -E '^B[0-9]+(\.[0-9]+)*$' | sort -V | tail -1 || true)"
+
+# [build.bake_cache.units.lookingglass]: keyed, after the build dependencies are installed, on the
+# resolved commit and that tag; a hit installs the stored client exactly as a build does.
+_bake_cache=/usr/libexec/mios/mios-bake-plan
+_lg_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+_lg_key_sha="$LG_SHA"
+_lg_key="$("$_bake_cache" cache key lookingglass --root "$_lg_root" --ref "repo=${LG_REPO}" --ref "ref=${LG_REF}" \
+    --ref "commit=${_lg_key_sha}" --ref "release_tag=${LG_TAG:-none}")" || _lg_key=""
+_lg_out="$(mktemp -d)"
+if [[ -n "$_lg_key" ]] && _lg_meta="$("$_bake_cache" cache restore lookingglass "$_lg_key" "$_lg_out" --root "$_lg_root")"; then
+    LG_VERSION="$(sed -n 's/^version=//p' <<<"$_lg_meta")"
+    if [[ -n "$LG_VERSION" && -x "$_lg_out/looking-glass-client" ]] \
+        && install -Dm0755 "$_lg_out/looking-glass-client" "$LG_BIN" && [[ -x "$LG_BIN" ]]; then
+        LG_OK=1
+    else
+        LG_VERSION=""
+    fi
+fi
+rm -rf -- "$_lg_out"
+
 for attempt in 1 2 3; do
+    [[ -z "$LG_OK" ]] || break
     mios_log "Compile attempt $attempt/3"
     cd /                 # leave any prior attempt's build dir BEFORE removing it -- otherwise the
     rm -rf "$BUILD_DIR"  # next git clone runs from a deleted CWD ("Unable to read current working directory").
@@ -69,7 +93,6 @@ for attempt in 1 2 3; do
     LG_SHA="$(git rev-parse HEAD)"
     # The version upstream builds report (git describe --tags --abbrev=10). A shallow clone has no tags:
     # deepen only back to the newest release tag and count the commits since it.
-    LG_TAG="$(git ls-remote --tags --refs "$LG_REPO" | awk -F/ '{print $3}' | grep -E '^B[0-9]+(\.[0-9]+)*$' | sort -V | tail -1 || true)"
     LG_VERSION="$(git rev-parse --short=10 HEAD)"
     if [[ -n "$LG_TAG" ]] && git fetch -q --shallow-exclude="$LG_TAG" origin "$_fref" 2>/dev/null; then
         _n="$(git rev-list --count HEAD)"
@@ -110,6 +133,14 @@ for attempt in 1 2 3; do
     install -Dm0755 looking-glass-client "$LG_BIN"
     if [[ -x "$LG_BIN" ]]; then
         LG_OK=1
+        # Only the commit the key names: upstream can move between the lookup and the clone.
+        if [[ -n "$_lg_key" && "$LG_SHA" == "$_lg_key_sha" ]]; then
+            _lg_keep="$(mktemp -d)"
+            install -m0755 looking-glass-client "$_lg_keep/" \
+                && "$_bake_cache" cache save lookingglass "$_lg_key" "$_lg_keep" --root "$_lg_root" --meta "version=${LG_VERSION}" \
+                || mios_warn "Looking Glass client not stored in the bake cache"
+            rm -rf -- "$_lg_keep"
+        fi
         break
     fi
 done
