@@ -1747,6 +1747,23 @@ pub struct HeavyWsl {
     pub cdi_dir: PathBuf,
     /// The one CDI device name a WSL spec serves.
     pub selector: String,
+    /// --n-gpu-layers on this transport (the GPU also drives the Windows desktop).
+    pub gpu_layers: String,
+}
+
+/// --n-gpu-layers: all, a positive count, or auto for llama.cpp's --fit sizing (b12602
+/// common/arg.cpp: -ngl/--gpu-layers/--n-gpu-layers take an exact number, auto or all).
+fn gpu_layers_value(table: &Value, key: &str, owner: &str) -> Result<String, String> {
+    let layers = table.get(key).and_then(Value::as_str).unwrap_or("");
+    let count = !layers.is_empty()
+        && layers.bytes().all(|c| c.is_ascii_digit())
+        && layers.parse::<u32>().is_ok_and(|n| n > 0);
+    if !matches!(layers, "auto" | "all") && !count {
+        return Err(format!(
+            "{owner}.{key} must be auto, all or a positive integer"
+        ));
+    }
+    Ok(layers.into())
 }
 
 fn wsl_rooted_path(table: &Value, key: &str) -> Result<PathBuf, String> {
@@ -1805,6 +1822,7 @@ pub fn heavy_wsl(data: &Value) -> Result<HeavyWsl, String> {
         libcuda,
         cdi_dir,
         selector: selector.into(),
+        gpu_layers: gpu_layers_value(wsl, "gpu_layers", "llamacpp.heavy_wsl")?,
     })
 }
 
@@ -2151,6 +2169,10 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
             return Err(format!("heavy cache/slot directory {} is missing; apply the declared tmpfiles configuration", directory.display()));
         }
     }
+    // --n-gpu-layers and the --fit margin (MiB, a positive 32-bit integer like the
+    // server's own int arguments); the WSL transport takes its own layer setting below.
+    let layers = gpu_layers_value(llama, "heavy_gpu_layers", "llamacpp")?;
+    let fit_target = light_batch_size(llama, "heavy_fit_target_mib")?;
     if kind == crate::light_tiers::GpuKind::Vulkan {
         // Fail closed: no eligible render node means no heavy lane; the CPU lanes keep serving.
         let vk = llama
@@ -2180,7 +2202,7 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
             .ok_or_else(|| format!("image.sidecars.{image_key} is missing"))?;
         return Ok(
             json!({"engine":engine,"unit":"mios-llm-heavy.service","backend":"vulkan",
-            "device":"Vulkan0","gpu_layers":"all","image":image,"pci":gpu.pci,"driver":gpu.driver,
+            "device":"Vulkan0","gpu_layers":layers,"fit_target_mib":fit_target,"image":image,"pci":gpu.pci,"driver":gpu.driver,
             "render_node":format!("/{}", node.display()),"device_gid":device.gid,"model":alias,
             "weights":weights,"slots":slots,"context":llama["heavy_context"],
             "threads":llama["heavy_threads"],"changed":false}),
@@ -2214,7 +2236,7 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
             .ok_or("image.sidecars.llm_heavy_llamacpp is missing")?;
         return Ok(
             json!({"engine":engine,"unit":"mios-llm-heavy.service","backend":"cuda","transport":"dxg",
-            "device":"CUDA0","gpu_layers":"all","image":image,"resource":Json::Null,"pci":Json::Null,
+            "device":"CUDA0","gpu_layers":wsl.gpu_layers,"fit_target_mib":fit_target,"image":image,"resource":Json::Null,"pci":Json::Null,
             "cdi_device":selection,"cdi_spec":spec,"device_node":node,"device_gid":gid,"model":alias,
             "weights":weights,"slots":slots,"context":llama["heavy_context"],
             "threads":llama["heavy_threads"],"changed":false}),
@@ -2250,7 +2272,7 @@ pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
     }
     Ok(
         json!({"engine":"llamacpp","unit":"mios-llm-heavy.service","backend":"cuda",
-        "device":"CUDA0","gpu_layers":"all","image":cfg.image,"resource":resource,"pci":pci,
+        "device":"CUDA0","gpu_layers":layers,"fit_target_mib":fit_target,"image":cfg.image,"resource":resource,"pci":pci,
         "cdi_device":cdi,"device_gid":gid,"model":alias,"weights":weights,"slots":slots,
         "context":llama["heavy_context"],"threads":llama["heavy_threads"],"changed":false}),
     )
@@ -3062,6 +3084,9 @@ mod tests {
             assert_eq!(result["transport"], "dxg");
             assert_eq!(result["device"], "CUDA0");
             assert_eq!(result["device_node"], "/dev/dxg");
+            // The WSL GPU also drives the Windows desktop: auto layers, --fit's margin free.
+            assert_eq!(result["gpu_layers"], "auto");
+            assert_eq!(result["fit_target_mib"], 1024);
             assert_eq!(result["cdi_device"], "nvidia.com/gpu=all");
             assert!(result["cdi_spec"]
                 .as_str()
@@ -3209,6 +3234,8 @@ mod tests {
         let result = heavy_backend_plan(root.path(), &data).unwrap();
         assert_eq!(result["pci"], "0000:09:00.0");
         assert!(result.get("transport").is_none());
+        assert_eq!(result["gpu_layers"], "all");
+        assert_eq!(result["fit_target_mib"], 1024);
         assert_eq!(
             result["cdi_device"],
             "nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555"
@@ -3219,6 +3246,69 @@ mod tests {
         // A forged dxg on bare metal takes the WSL proof and fails it; it never falls back.
         fs::write(root.path().join("dev/dxg"), "forged").unwrap();
         assert!(heavy_backend_plan(root.path(), &data).is_err());
+    }
+
+    #[test]
+    fn heavy_gpu_layers_and_fit_target_are_validated_on_every_transport() {
+        let (pci_root, pci) = heavy_cuda_fixture();
+        let (wsl_root, wsl) = heavy_wsl_fixture();
+        for layers in [
+            "0",
+            "-1",
+            "+4",
+            "",
+            "auto --device none",
+            "all\nAddDevice=/dev/kfd",
+        ] {
+            let mut invalid = pci.clone();
+            invalid["llamacpp"]["heavy_gpu_layers"] = Value::String(layers.into());
+            assert!(
+                heavy_backend_plan(pci_root.path(), &invalid).is_err(),
+                "accepted heavy_gpu_layers={layers:?}"
+            );
+            let mut invalid = wsl.clone();
+            invalid["llamacpp"]["heavy_wsl"]["gpu_layers"] = Value::String(layers.into());
+            assert!(
+                heavy_backend_plan(wsl_root.path(), &invalid).is_err(),
+                "accepted heavy_wsl.gpu_layers={layers:?}"
+            );
+        }
+        let mut integer = pci.clone();
+        integer["llamacpp"]["heavy_gpu_layers"] = Value::Integer(33);
+        assert!(heavy_backend_plan(pci_root.path(), &integer).is_err());
+        for layers in ["auto", "all", "33"] {
+            let mut valid = pci.clone();
+            valid["llamacpp"]["heavy_gpu_layers"] = Value::String(layers.into());
+            assert_eq!(
+                heavy_backend_plan(pci_root.path(), &valid).unwrap()["gpu_layers"],
+                layers
+            );
+            let mut valid = wsl.clone();
+            valid["llamacpp"]["heavy_wsl"]["gpu_layers"] = Value::String(layers.into());
+            assert_eq!(
+                heavy_backend_plan(wsl_root.path(), &valid).unwrap()["gpu_layers"],
+                layers
+            );
+        }
+        for target in [
+            Value::Integer(0),
+            Value::Integer(-1),
+            Value::Integer(i64::from(i32::MAX) + 1),
+            Value::String("1024".into()),
+        ] {
+            let mut invalid = wsl.clone();
+            invalid["llamacpp"]["heavy_fit_target_mib"] = target.clone();
+            assert!(
+                heavy_backend_plan(wsl_root.path(), &invalid).is_err(),
+                "accepted heavy_fit_target_mib={target:?}"
+            );
+        }
+        let mut margin = wsl.clone();
+        margin["llamacpp"]["heavy_fit_target_mib"] = Value::Integer(1536);
+        assert_eq!(
+            heavy_backend_plan(wsl_root.path(), &margin).unwrap()["fit_target_mib"],
+            1536
+        );
     }
 
     #[test]

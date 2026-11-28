@@ -1139,10 +1139,18 @@ pub fn run_model_tier(root: &Path, lane: &str, apply: bool) -> Result<Json, Stri
         let llama_device =
             field("device").ok_or("the heavy admission named no llama.cpp device")?;
         let image = field("image").ok_or("the heavy admission named no engine image")?;
+        // --n-gpu-layers (all, a count, or auto for --fit) and --fit's free-memory margin.
+        let layers = field("gpu_layers").ok_or("the heavy admission named no GPU layer setting")?;
+        let fit_target = admission
+            .get("fit_target_mib")
+            .and_then(Json::as_u64)
+            .ok_or("the heavy admission named no --fit-target margin")?;
         extra.push(("device", device));
         extra.push(("device_gid", gid));
         extra.push(("llama_device", llama_device));
         extra.push(("image", image));
+        extra.push(("gpu_layers", layers));
+        extra.push(("fit_target_mib", fit_target.to_string()));
     }
     let contents = env_contents(&data, choice, &extra)?;
     let target = root.join(
@@ -1723,18 +1731,18 @@ mod tier_tests {
                 ("device_gid", "39".into()),
                 ("llama_device", "CUDA0".into()),
                 ("image", "ghcr.io/mostlygeek/llama-swap:cuda".into()),
+                ("gpu_layers", "auto".into()),
+                ("fit_target_mib", "1024".into()),
             ],
         )
         .unwrap();
         for line in [
-            "MIOS_LLAMACPP_HEAVY_DEVICE=nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555
-",
-            "MIOS_LLAMACPP_HEAVY_DEVICE_GID=39
-",
-            "MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE=CUDA0
-",
-            "MIOS_LLAMACPP_HEAVY_IMAGE=ghcr.io/mostlygeek/llama-swap:cuda
-",
+            "MIOS_LLAMACPP_HEAVY_DEVICE=nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555\n",
+            "MIOS_LLAMACPP_HEAVY_DEVICE_GID=39\n",
+            "MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE=CUDA0\n",
+            "MIOS_LLAMACPP_HEAVY_IMAGE=ghcr.io/mostlygeek/llama-swap:cuda\n",
+            "MIOS_LLAMACPP_HEAVY_GPU_LAYERS=auto\n",
+            "MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB=1024\n",
         ] {
             assert!(env.contains(line), "{env}");
         }

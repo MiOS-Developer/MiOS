@@ -145,7 +145,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         heavy = self.d["containers"]["mios-llm-heavy"]
         engine = heavy["engine"]["llamacpp"]
         self.assertEqual(engine["Container"]["Entrypoint"], "/app/llama-server")
-        self.assertIn("--device CUDA0 --n-gpu-layers all", engine["Container"]["Exec"])
+        self.assertIn("--device CUDA0 --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", engine["Container"]["Exec"])
         self.assertIn("${MIOS_NODES_LOCAL_HEAVY_MODEL}", engine["Container"]["Exec"])
         # The model tier picks this host's heavy row, then runs the heavy admission on it.
         self.assertEqual(engine["Service"]["ExecStartPre"],
@@ -157,7 +157,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
     def test_the_vulkan_heavy_engine_serves_an_apu_on_its_render_node(self):
         heavy = self.d["containers"]["mios-llm-heavy"]
         engine = heavy["engine"]["llamacpp-vulkan"]
-        self.assertIn("--device Vulkan0 --n-gpu-layers all", engine["Container"]["Exec"])
+        self.assertIn("--device Vulkan0 --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", engine["Container"]["Exec"])
         self.assertIn("--flash-attn on", engine["Container"]["Exec"])
         self.assertEqual(engine["Container"]["AddDevice"], "${MIOS_LLAMACPP_HEAVY_DEVICE}")
         self.assertEqual(engine["Container"]["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}")
@@ -178,7 +178,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertEqual(c["AddDevice"], "${MIOS_LLAMACPP_HEAVY_DEVICE}")
         self.assertEqual(c["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}")
         self.assertEqual(c["Image"], "${MIOS_LLAMACPP_HEAVY_IMAGE}")
-        self.assertIn("--device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers all", c["Exec"])
+        self.assertIn("--device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", c["Exec"])
         self.assertIn("--flash-attn on", c["Exec"])
         self.assertIn("--cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE}", c["Exec"])
         self.assertEqual(engine["Service"]["ExecCondition"],
@@ -188,7 +188,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertNotEqual(c["User"], "0")
         placeholders = self.d["generator"]["placeholders"]
         lane_keys = self.d["llamacpp"]["tier_lanes"]["heavy"]["keys"]
-        for field in ("device", "device_gid", "llama_device", "image"):
+        for field in ("device", "device_gid", "llama_device", "image", "gpu_layers", "fit_target_mib"):
             dotted = lane_keys[field]
             section, key = dotted.split(".", 1)
             self.assertIn(key, self.d[section], dotted)
@@ -197,6 +197,23 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertEqual(auto["prefer"][0], "cuda")
         self.assertTrue(set(auto["prefer"]) <= set(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"].values()))
         self.assertIn("auto", self.d["images"]["mios-llm-heavy"]["engine"])
+
+    def test_heavy_gpu_layers_and_fit_margin_come_from_the_ssot(self):
+        # A dedicated dGPU or APU keeps every layer on the device; the WSL transport, whose
+        # GPU also drives the Windows desktop, lets llama.cpp --fit size them with a margin.
+        llama = self.d["llamacpp"]
+        self.assertEqual(llama["heavy_gpu_layers"], "all")
+        self.assertEqual(llama["heavy_wsl"]["gpu_layers"], "auto")
+        self.assertIsInstance(llama["heavy_fit_target_mib"], int)
+        self.assertGreater(llama["heavy_fit_target_mib"], 0)
+        engines = self.d["containers"]["mios-llm-heavy"]["engine"]
+        for name in ("auto", "llamacpp", "llamacpp-vulkan"):
+            argv = engines[name]["Container"]["Exec"].split()
+            self.assertNotIn("all", argv, name)
+            self.assertEqual(argv[argv.index("--n-gpu-layers") + 1], "${MIOS_LLAMACPP_HEAVY_GPU_LAYERS}", name)
+            self.assertEqual(argv[argv.index("--fit-target") + 1], "${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", name)
+        for name in ("MIOS_LLAMACPP_HEAVY_GPU_LAYERS", "MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB"):
+            self.assertIn(name, self.d["generator"]["placeholders"])
 
     def test_wsl_heavy_cuda_reads_the_spec_mios_cdi_detect_writes(self):
         # WSL has no PCI GPU: the admission proves dxg, the driver store and a WSL CDI spec,
