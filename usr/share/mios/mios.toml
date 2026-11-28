@@ -7984,19 +7984,17 @@ config     = "/usr/share/mios/llamacpp/mios-llm-light.yaml"
 # (was a DEAD ${MIOS_LLAMACPP_CPU_NODE_THREADS} placeholder, never in the render allowlist).
 cpu_node_threads = 14
 # GGUF (under models_dir) and context window of the mios-cpu-node lane, rendered
-# into its Quadlet Exec and ConditionPathExists. Context was cut from 131072: a
-# CPU-only 8B with a 128k q4_0 KV ring was the Unhealthy-on-boot RAM bloat. Raise
-# it only once CPU RAM headroom is proven against cpu_node_memory_max below.
-cpu_node_model_file = "granite-4.1-8b.gguf"
+# into its Quadlet Exec as systemd-expanded placeholders. The static fallback is the
+# tool-safe floor row (ram-floor): LFM3-1.7B at Q8_0, 32k, which is in bake_models
+# below, so every host serves it from first boot (~2.2 GiB, inside a 14G Blade's
+# cpu_node_memory_high) before its first-boot fetch lands the bigger tier GGUFs.
+cpu_node_model_file = "LFM3-1.7B-Q8_0.gguf"
 cpu_node_context    = 32768
 # Symmetric K and V cache type of the mios-cpu-node lane (--cache-type-k/-v), within
 # [llamacpp.tool_safe].chat_kv: a 4-bit KV cache flips tool-call decisions. The three
 # cpu_node_* keys above are the lane's static fallback; at every start the lane's
 # model tier ([[llamacpp.tiers.cpu_node]]) overrides them for the host it runs on, and
-# no tier row puts the dense 8B on a 14G Blade. Until a tier GGUF is on disk the
-# fallback serves: the dense 8B at 32k with q8_0 KV needs ~9.3 GiB, above
-# cpu_node_memory_high on a 14G Blade, so such a Blade finishes its first-boot model
-# fetch before relying on this lane.
+# no tier row puts the dense 8B on a 14G Blade.
 cpu_node_cache_type = "q8_0"
 # cgroup memory bounds of the mios-cpu-node unit, as systemd percentages of
 # physical RAM so one value fits a 14G Blade and a 64G workstation. High throttles
@@ -8049,7 +8047,9 @@ light_gpu_resource = ""
 # lfm2-700m.gguf is LFM2-700M at Q8_0: a sub-1B non-reasoning micro needs the
 # [llamacpp.tool_safe] small floor. The local name is unchanged, so every served
 # path stays; a host with the older Q4_K_M file re-fetches it under the same name.
-bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q8_0.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf"
+# LFM3-1.7B-Q8_0.gguf (1846238496 bytes) is the tool-safe floor every host has from
+# first boot: the cpu-node's static fallback and its ram-floor tier row.
+bake_models = "granite-4.1-8b.gguf=unsloth/granite-4.1-8b-GGUF:granite-4.1-8b-Q4_K_M.gguf,lfm2-700m.gguf=LiquidAI/LFM2-700M-GGUF:LFM2-700M-Q8_0.gguf,embeddinggemma-300m-qat-q8_0.gguf=ggml-org/embeddinggemma-300m-qat-q8_0-GGUF:embeddinggemma-300m-qat-Q8_0.gguf,LFM3-1.7B-Q8_0.gguf=LiquidAI/LFM3-1.7B-GGUF:LFM3-1.7B-Q8_0.gguf"
 
 
 [llamacpp.light_runtime]
@@ -8214,6 +8214,11 @@ kind = "chat"
 # a bigger model or a longer context; a smaller one to a smaller model, never below
 # the floor. When nothing fits, the first row (the floor) still serves, so every
 # node keeps tools; when no row's GGUF is on disk, the lane keeps its SSOT keys.
+# RAM below is the RAM MiOS specs for the host, read as MemTotal: a bare-metal Blade's
+# installed RAM, or a WSL VM's .wslconfig memory= that Get-MiOS.ps1 / build-mios.ps1
+# render from [bootstrap.dev_vm] (memory_mb, else host RAM - [bootstrap.dev_vm.
+# host_reserve]). Never MemAvailable: a pick follows the spec and the lanes' memory
+# bounds keep it safe, not whatever happens to be free when the lane starts.
 # Budgets (MiB), measured at start:
 #   heavy, dGPU   VRAM (nvidia-smi, WSL's /usr/lib/wsl/lib copy included) - vram_reserve_mib
 #   heavy, APU    min(VRAM carve-out + GTT, apu_gpu_ram_fraction x RAM) (amdgpu sysfs);
@@ -8223,6 +8228,8 @@ kind = "chat"
 # need_mib = GGUF bytes + q8_0 KV at the row's context + recurrent/sliding state +
 # a compute allowance (0.8 GiB GPU, 0.3-0.9 GiB CPU); the dense-8B row is calibrated
 # on the measured 8.6 GB at 32k with q4_0 KV on the 14G PS5, plus the q8_0 delta.
+# min_ram_mib is MemTotal, which sits below a host's nominal size (a 16 GB WSL VM
+# reads ~15970 MiB), so a row for an N GiB class asks for about 7/8 of N GiB.
 # The cpu_node avoids the GGUF the heavy lane already serves when another row fits.
 # A host pins a row by name in its own tier ([llamacpp.tier_pin]).
 [llamacpp.tier_policy]
@@ -8292,14 +8299,21 @@ cache_type = "q8_0"
 need_mib = 6945
 min_ram_mib = 12288
 [[llamacpp.tiers.cpu_node]]
-name = "ram-16g-dense"   # the vendor brain at q8_0 KV; never on a 14G Blade
+name = "ram-16g"         # a 16 GB spec (the X570's MiOS-DEV VM): dense 4B reasoning at 128k
+model_file = "Qwen3.5-4B-Q8_0.gguf"
+context = 131072
+cache_type = "q8_0"
+need_mib = 7318
+min_ram_mib = 14336
+[[llamacpp.tiers.cpu_node]]
+name = "ram-20g-dense"   # the vendor brain at q8_0 KV; needs more than a 16 GB spec
 model_file = "granite-4.1-8b.gguf"
 context = 32768
 cache_type = "q8_0"
 need_mib = 9482
 min_ram_mib = 16384
 [[llamacpp.tiers.cpu_node]]
-name = "ram-16g"         # MoE, 1.5B active: ~1/5 the bytes per token of a dense 8B
+name = "ram-20g"         # MoE, 1.5B active: ~1/5 the bytes per token of a dense 8B
 model_file = "LFM2.5-8B-A1B-Q8_0.gguf"
 context = 65536
 cache_type = "q8_0"
@@ -8733,7 +8747,7 @@ api_key             = ""
 mcp_registry        = "/usr/share/mios/ai/v1/mcp.json"
 system_prompt_file  = ""                # optional override; empty = use canonical
 prompt_shortcut     = "@"
-bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired as the vendor brain (Qwen-monoculture); the qwen35 llama.cpp block that also retired them is gone upstream, and the model-tier picks (Qwen3.5-4B, LFM2.5-8B-A1B, Granite 4.2 3B, LFM3-1.7B, gpt-oss-20b, Qwen3.6-35B-A3B) are served per host by [[llamacpp.tiers.*]] and fetched on every host by [[ai.firstboot_models]], not baked. mios-* tags blob-share the brain base.
+bake_models         = "granite4.1:8b,lfm2:700m,nomic-embed-text,mios-agent,mios-agent-cpu,mios-hermes,mios-hermes-cpu,mios-opencode,mios-sys-agent"   # family-diverse fleet: Granite 4.1 8B (IBM) = brain+coder (one served GGUF, mainline llama.cpp), LFM2-700M (Liquid AI) = micro, nomic-embed-text NAME = EmbeddingGemma-300m QAT (Google, 768d, backing GGUF swapped in mios-llm-light.yaml). qwen3.5:4b/qwen3:1.7b/qwen2.5-coder:7b retired as the vendor brain (Qwen-monoculture); the qwen35 llama.cpp block that also retired them is gone upstream, and the model-tier picks (Qwen3.5-4B, LFM2.5-8B-A1B, Granite 4.2 3B, gpt-oss-20b, Qwen3.6-35B-A3B) are served per host by [[llamacpp.tiers.*]] and fetched on every host by [[ai.firstboot_models]], not baked; only the floor pick LFM3-1.7B is also in [llamacpp].bake_models. mios-* tags blob-share the brain base.
 # Recommended floor for the default model. granite4.1:3b is a dense
 # 3 B model at q4_K_M (~2.5 GB on disk, ~4 GB resident). Sits inside
 # the 8 GB usable budget on a 12 GB / 8-core box. Auto-pick promotes
@@ -8782,12 +8796,12 @@ ram_gb  = 24
 # context with symmetric q8_0 KV, rounded up.
 [[ai.catalog]]
 id      = "qwen3.5:4b-q4_K_M"
-label   = "Qwen3.5 4B (Qwen, dense GDN hybrid, reasoning, Q4_K_M ~3.0 GB, 64k; 8 GB GPU / console APU tier)"
+label   = "Qwen3.5 4B (Qwen, dense GDN hybrid, reasoning, Q4_K_M ~3.0 GB, 64k; 8 GB GPU / console APU tier; its Q8_0 serves the 12 GB GPU and 16 GB-spec cpu-node tiers)"
 ram_gb  = 6
 
 [[ai.catalog]]
 id      = "lfm2.5:8b-a1b"
-label   = "LFM2.5 8B-A1B (Liquid AI, conv-hybrid MoE 1.5B active, Q8_0 ~9.0 GB, 64k; 16G-RAM cpu-node tier)"
+label   = "LFM2.5 8B-A1B (Liquid AI, conv-hybrid MoE 1.5B active, Q8_0 ~9.0 GB, 64k; 20G+ RAM cpu-node tier)"
 ram_gb  = 10
 
 [[ai.catalog]]
@@ -19768,11 +19782,11 @@ exclude = ["usr/share/mios/vendored/*", "usr/lib/bootc/bound-images.d/*"]
 # sha256 from the HF revision API, fetches resolve/<commit>/..., verifies, and records <models>/models.tsv.
 # EVERY HOST FETCHES EVERY ENTRY (operator's choice): the vendor list carries every GGUF any
 # lane's model tier ([[llamacpp.tiers.*]]) or the light model map can select, so each host's tier
-# picker always finds its row on disk, about 72 GB in all on top of the baked set. A 14G console
+# picker always finds its row on disk, about 74 GB in all on top of the baked set. A 14G console
 # Blade writes all of it to its USB-2 root, which is slow and the root its freezes came from, so
 # run its first fetch while it is idle. Entries are optional and degrade open: one that fails only
 # leaves its tier rows unselectable. Nemotron-3.5-Bolt-E4B stays out while its map entry is disabled.
-# lfm2-700m.gguf is the micro at Q8_0 (also in [llamacpp].bake_models, so the fetch set is one list).
+# lfm2-700m.gguf and LFM3-1.7B-Q8_0.gguf are also in [llamacpp].bake_models, so the fetch set is one list.
 name   = "lfm2-700m.gguf"
 source = "https://huggingface.co/LiquidAI/LFM2-700M-GGUF/resolve/main/LFM2-700M-Q8_0.gguf"
 
