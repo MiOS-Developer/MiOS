@@ -199,6 +199,24 @@ GPU. A host can still pin the engine in its own tier: `llamacpp` or
 `llamacpp-vulkan` takes effect at the unit's next start, while `vllm` or `sglang`
 need an image built with that engine.
 
+On WSL the CUDA admission cannot use its bare-metal proof (a PCI-bound GPU and an
+exact UUID CDI name), because WSL has neither. Whenever `[llamacpp.heavy_wsl]`'s
+`device_node` exists, it takes the WSL proof instead, never as a fallback, and
+fails closed on any mismatch:
+
+- `/dev/dxg` is a character device whose major is the kernel's `misc` registration
+  and whose number matches `/sys/class/misc/dxg/dev`;
+- `lib/libcuda.so.1` resolves inside `/usr/lib/wsl` and is an ELF shared object;
+- exactly one spec in `/run/cdi` named in `[gpu.cdi.nvidia].specs`
+  (`wsl2-nvidia.yaml` from `mios-cdi-detect`, or `nvidia-wsl.yaml` from
+  `nvidia-ctk --mode=wsl`) serves `[gpu.cdi.nvidia].device` with `/dev/dxg` and
+  mounts the driver store;
+- the device selects `all` (`[llamacpp.heavy_wsl].selector`), the one device a WSL
+  spec serves. Only WSL accepts `all`; PCI still needs the UUID.
+
+The heavy unit `Wants` and starts after `mios-cdi-detect.service`, which writes the
+spec. These checks are ported from the light lane's verified dxg checks.
+
 The unit reads that file after `install.env`, and the model, context and KV
 references are `[generator].placeholders`, so systemd expands them at start. One
 image therefore serves whatever each host's tier picks. The served names clients
@@ -233,8 +251,13 @@ All values are in MiB and measured at each start:
 
 Each row's `need_mib` is GGUF bytes, plus q8_0 KV at its context, plus recurrent or
 sliding-window state, plus a compute allowance. The dense-8B row is calibrated on
-the 8.6 GB measured at 32k with q4_0 KV on the 14G PS5, plus the q8_0 delta. When
-another row fits, the cpu-node avoids the GGUF the heavy lane already holds.
+the 8.6 GB measured at 32k with q4_0 KV on the 14G PS5, plus the q8_0 delta.
+
+The cpu-node mixes model families with the heavy lane. Each GGUF's facts row carries
+its `family`, the base-model lineage (a fine-tune keeps its base's). Among the rows
+that fit, the cpu-node takes the last one whose family differs from the heavy lane's
+pick. Failing that, it takes the last one that at least avoids the heavy lane's
+GGUF, and failing that, the last one that fits. A pin overrides all of this.
 
 ### Tier tables
 
@@ -309,13 +332,14 @@ The arithmetic below is taken from the `light_tiers` tests:
 
 | Host | Heavy lane | cpu-node |
 |---|---|---|
-| X570 MiOS-DEV at its MiOS spec: 8 GB RTX 3060 Ti, 16 GB VM (MemTotal about 15970) | 8192 - 1792 = 6400 → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k | min(10380, 15970 - 3992 - 2560) = 9418 → `ram-16g`, Qwen3.5-4B Q8_0, 128k |
+| X570 MiOS-DEV at its MiOS spec: 8 GB RTX 3060 Ti, 16 GB VM (MemTotal about 15970) | 8192 - 1792 = 6400 → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k | min(10380, 15970 - 3992 - 2560) = 9418. `ram-16g` (Qwen3.5-4B Q8_0, 7318) fits but is Qwen like the heavy lane, so `ram-12g`, Granite 4.2 3B Q8_0, 64k (6945) |
+| A 16 GB spec with no heavy lane | none | 9418 → `ram-16g`, Qwen3.5-4B Q8_0, 128k |
 | X570 MiOS-DEV as it runs now: the VM hand-set to 24 GB | as above | min(15622, 24034 - 6008 - 2560) = 15466 → `ram-20g`, LFM2.5-8B-A1B Q8_0, 64k |
 | PS5, CPU only (no Vulkan lane yet) | none | min(9055, 13931 - 3482 - 2560) = 7889 → `ram-12g`, Granite 4.2 3B Q8_0, 64k; never the dense 8B |
 | PS5 APU: gfx1013, 1 GiB VRAM + 6.8 GiB GTT, 13.6 GiB | min(7989, 0.40 x 13931 = 5572) → `gpu-6g`, Qwen3.5-4B Q4_K_M, 64k on Vulkan | min(9055, 13931 - 3482 - 2560 - 4847) = 3042 → `ram-floor`, LFM3-1.7B Q8_0, 32k |
 | B550: Renoir Vega APU, 30.7 GiB | min(16220, 12566) → `gpu-10g`, Qwen3.5-4B Q8_0, 128k on Vulkan | min(20420, 31416 - 7854 - 2560 - 7318) = 13684 → `ram-32g`, gpt-oss-20b, 64k |
 | 64 GB CPU host | none | min(41795, 45665) → `ram-64g`, Qwen3.6-35B-A3B Q8_0, 64k |
-| 24 GB dGPU host, 32 GB RAM | 24564 - 1792 = 22772 → `gpu-24g`, gpt-oss-20b, 128k | 20865 fits `ram-32g`, but that is the heavy lane's GGUF, so `ram-20g` |
+| 24 GB dGPU host, 32 GB RAM | 24564 - 1792 = 22772 → `gpu-24g`, gpt-oss-20b, 128k | 20865 fits `ram-32g`, but that is gpt-oss like the heavy lane, so `ram-20g`, LFM2.5-8B-A1B |
 
 The X570 is a 32 GB host, so MiOS specs its VM at `memory=16GB` (32 minus the larger
 of 8 and 50% of 32). Its live `.wslconfig` says `memory=24GB`, set by hand, which
@@ -376,10 +400,14 @@ cpu-node` without `--apply` prints the plan and its arithmetic without writing.
   render node.
 - The `auto` unit relies on systemd expanding `${MIOS_LLAMACPP_HEAVY_*}` in the
   Quadlet's `Image=`, `AddDevice=` and `GroupAdd=` at start; no host has run it yet.
-- On WSL, `auto` detects the NVIDIA GPU, but the CUDA admission it then runs needs a
-  PCI-bound NVIDIA device and an exact UUID CDI name, which WSL's dxg path does not
-  have. The unit then fails at its `ExecStartPre` and `Restart=` retries it; today
-  MiOS-DEV's `headless` role keeps the unit off.
+- The WSL CUDA admission has run only against fixtures shaped like MiOS-DEV's
+  `/dev/dxg` (10:258, mode 666), its libcuda and its `wsl2-nvidia.yaml`. Its spec has
+  been seen to disappear from `/run/cdi` after boot. `mios-cdi-detect` is a oneshot
+  that stays active, so the unit's `Wants` runs it only once per boot. A lost spec
+  makes the admission fail closed until `systemctl restart mios-cdi-detect`.
+- The cpu-node plans as if the heavy lane serves whenever the host has its GPU. On
+  MiOS-DEV, whose `headless` role keeps the heavy unit off today, it still mixes
+  against the heavy lane's pick.
 - The mios-micro OCI image still ships its Qwen2.5-Coder-1.5B Q4_K_M file under
   `/models-micro`, below the floor and no longer served. The mios-micro repository
   should publish the Q8_0, or the mount should go.
