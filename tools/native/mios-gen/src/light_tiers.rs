@@ -1,4 +1,4 @@
-// AI-hint: Model tiers of the inference lanes. `mios-gen light-tiers` generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node, the entries in drop are removed, everything else is carried over (--check fails when the committed map is stale). `mios-gen model-tier --lane heavy|cpu-node` measures the host (RAM, dGPU VRAM, APU VRAM+GTT), picks the lane's [[llamacpp.tiers.<lane>]] row that fits its budget and writes it to the lane's EnvironmentFile. `mios-gen tool-safe --check` fails when any lane, tier row or model-map entry is below the [llamacpp.tool_safe] floor.
+// AI-hint: Model tiers of the inference lanes. `mios-gen light-tiers` generates the CPU-tier llama-swap model map from the light lane's source map ([llamacpp].config): [llamacpp.light_cpu_tier].peer_model and its aliases move to a llama-swap peer on [ports].cpu_node, the entries in drop are removed, everything else is carried over (--check fails when the committed map is stale). `mios-gen model-tier --lane heavy|cpu-node` measures the host (its spec'd RAM as MemTotal, dGPU VRAM, APU VRAM+GTT), picks the lane's [[llamacpp.tiers.<lane>]] row that fits its budget and writes it to the lane's EnvironmentFile; for [ai].heavy_engine = "auto" it detects the GPU ([llamacpp.heavy_auto]: NVIDIA -> CUDA, amdgpu render node -> Vulkan) and `--probe` exits 1 when there is none. `mios-gen tool-safe --check` fails when any lane, tier row or model-map entry is below the [llamacpp.tool_safe] floor.
 // AI-related: usr/share/mios/mios.toml, usr/share/mios/llamacpp/mios-llm-light.yaml, usr/share/mios/llamacpp/mios-llm-light-cpu.yaml, tools/native/mios-gen/src/gpu_topology.rs, usr/share/doc/mios/manual/ch10-local-inference-lanes-and-llama-cpp.md
 use std::collections::BTreeMap;
 use std::fs;
@@ -486,25 +486,170 @@ pub fn bound_mib(bound: &str, ram_mib: u64) -> Option<u64> {
     Some(bytes >> 20)
 }
 
-/// [llamacpp.tier_lanes.heavy].engines: which GPU kind a heavy engine runs on (None: not a llama.cpp engine).
-pub fn heavy_engine_kind(data: &Value, engine: &str) -> Result<Option<GpuKind>, String> {
-    let engines = at(data, &["llamacpp", "tier_lanes", "heavy", "engines"])
-        .and_then(Value::as_table)
-        .ok_or("llamacpp.tier_lanes.heavy.engines must map heavy engines to cuda or vulkan")?;
-    match engines.get(engine).and_then(Value::as_str) {
-        None => Ok(None),
-        Some("cuda") => Ok(Some(GpuKind::Cuda)),
-        Some("vulkan") => Ok(Some(GpuKind::Vulkan)),
-        Some(other) => Err(format!(
-            "llamacpp.tier_lanes.heavy.engines.{engine} = {other:?}: use cuda or vulkan"
-        )),
+/// How a llama.cpp heavy engine finds its GPU ([llamacpp.tier_lanes.heavy].engines).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeavyBackend {
+    /// A pinned engine: it serves on this GPU kind or not at all.
+    Fixed(GpuKind),
+    /// "detect" ([ai].heavy_engine = "auto"): the first [llamacpp.heavy_auto].prefer kind the host has.
+    Detect,
+}
+
+fn gpu_kind(name: &str) -> Option<GpuKind> {
+    match name {
+        "cuda" => Some(GpuKind::Cuda),
+        "vulkan" => Some(GpuKind::Vulkan),
+        _ => None,
     }
+}
+
+fn engines(data: &Value) -> Result<&toml::map::Map<String, Value>, String> {
+    at(data, &["llamacpp", "tier_lanes", "heavy", "engines"])
+        .and_then(Value::as_table)
+        .ok_or_else(|| {
+            "llamacpp.tier_lanes.heavy.engines must map heavy engines to cuda, vulkan or detect"
+                .to_string()
+        })
+}
+
+/// [llamacpp.tier_lanes.heavy].engines: how a heavy engine finds its GPU (None: not a llama.cpp engine).
+pub fn heavy_engine_backend(data: &Value, engine: &str) -> Result<Option<HeavyBackend>, String> {
+    match engines(data)?.get(engine).and_then(Value::as_str) {
+        None => Ok(None),
+        Some("detect") => Ok(Some(HeavyBackend::Detect)),
+        Some(other) => gpu_kind(other)
+            .map(|k| Some(HeavyBackend::Fixed(k)))
+            .ok_or_else(|| {
+                format!(
+                    "llamacpp.tier_lanes.heavy.engines.{engine} = {other:?}: use cuda, vulkan or detect"
+                )
+            }),
+    }
+}
+
+/// The pinned engine that serves a GPU kind (the one [llamacpp.tier_lanes.heavy].engines maps to it).
+pub fn engine_for_kind(data: &Value, kind: GpuKind) -> Result<String, String> {
+    engines(data)?
+        .iter()
+        .find(|(_, v)| v.as_str().and_then(gpu_kind) == Some(kind))
+        .map(|(k, _)| k.clone())
+        .ok_or_else(|| format!("no [llamacpp.tier_lanes.heavy].engines entry serves {kind:?}"))
 }
 
 fn heavy_engine(data: &Value) -> &str {
     at(data, &["ai", "heavy_engine"])
         .and_then(Value::as_str)
         .unwrap_or("")
+}
+
+/// [llamacpp.heavy_auto]: the GPU kinds "detect" tries, in order, and the CUDA signals.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeavyAuto {
+    pub prefer: Vec<GpuKind>,
+    /// Bare metal: any of these exists (the NVIDIA driver's control node).
+    pub cuda_nodes: Vec<String>,
+    /// WSL: all of these exist (the GPU paravirtual device and the Windows CUDA library).
+    pub wsl_cuda: Vec<String>,
+}
+
+impl HeavyAuto {
+    pub fn from_ssot(data: &Value) -> Result<HeavyAuto, String> {
+        const CTX: &str = "llamacpp.heavy_auto";
+        let t = at(data, &["llamacpp", "heavy_auto"]).ok_or("missing [llamacpp.heavy_auto]")?;
+        let prefer = strings(t, "prefer", CTX)?
+            .iter()
+            .map(|k| {
+                gpu_kind(k).ok_or_else(|| format!("{CTX}.prefer: {k:?} is not cuda or vulkan"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if prefer.is_empty() {
+            return Err(format!("{CTX}.prefer must name at least one GPU kind"));
+        }
+        let paths = |key: &str| -> Result<Vec<String>, String> {
+            let list = strings(t, key, CTX)?;
+            if list.iter().any(|p| !p.starts_with('/') || p.contains("..")) {
+                return Err(format!("{CTX}.{key} must list absolute paths"));
+            }
+            Ok(list)
+        };
+        Ok(HeavyAuto {
+            prefer,
+            cuda_nodes: paths("cuda_nodes")?,
+            wsl_cuda: paths("wsl_cuda")?,
+        })
+    }
+}
+
+fn exists_under(root: &Path, path: &str) -> bool {
+    root.join(path.trim_start_matches('/')).exists()
+}
+
+/// The first [llamacpp.heavy_auto].prefer GPU kind this host has: CUDA when a bare-metal NVIDIA
+/// control node exists or every WSL CUDA path does, Vulkan when an [llamacpp.heavy_vulkan]
+/// render node does. None: the "detect" engine has no GPU here.
+pub fn detect_heavy_kind(
+    root: &Path,
+    data: &Value,
+    host: &crate::gpu_topology::Host,
+) -> Result<Option<GpuKind>, String> {
+    let auto = HeavyAuto::from_ssot(data)?;
+    for kind in &auto.prefer {
+        let has = match kind {
+            GpuKind::Cuda => {
+                auto.cuda_nodes.iter().any(|p| exists_under(root, p))
+                    || (!auto.wsl_cuda.is_empty()
+                        && auto.wsl_cuda.iter().all(|p| exists_under(root, p)))
+            }
+            GpuKind::Vulkan => crate::gpu_topology::heavy_vulkan_gpu(root, data, host)?.is_some(),
+        };
+        if has {
+            return Ok(Some(*kind));
+        }
+    }
+    Ok(None)
+}
+
+/// The llama.cpp heavy engine this host runs and its GPU kind: a pinned engine as configured,
+/// "detect" as the engine of the GPU kind found. None: [ai].heavy_engine is not a llama.cpp
+/// engine, or it detects and the host has no GPU it can serve on.
+pub fn resolve_heavy_engine_on(
+    root: &Path,
+    data: &Value,
+    host: &crate::gpu_topology::Host,
+) -> Result<Option<(String, GpuKind)>, String> {
+    let engine = heavy_engine(data);
+    match heavy_engine_backend(data, engine)? {
+        None => Ok(None),
+        Some(HeavyBackend::Fixed(kind)) => Ok(Some((engine.to_owned(), kind))),
+        Some(HeavyBackend::Detect) => match detect_heavy_kind(root, data, host)? {
+            Some(kind) => Ok(Some((engine_for_kind(data, kind)?, kind))),
+            None => Ok(None),
+        },
+    }
+}
+
+/// [`resolve_heavy_engine_on`] against the root's own /dev/dri and /sys/class/drm.
+pub fn resolve_heavy_engine(
+    root: &Path,
+    data: &Value,
+) -> Result<Option<(String, GpuKind)>, String> {
+    let dri = root.join("dev/dri");
+    let sys = root.join("sys/class/drm");
+    resolve_heavy_engine_on(
+        root,
+        data,
+        &crate::gpu_topology::Host {
+            dri: &dri,
+            sys: &sys,
+        },
+    )
+}
+
+/// `mios-gen model-tier --lane heavy --probe` (the auto unit's ExecCondition): the engine and GPU
+/// kind the heavy lane would serve on, or None when this host has no GPU for it.
+pub fn probe_heavy(root: &Path) -> Result<Option<(String, GpuKind)>, String> {
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    resolve_heavy_engine(root, &data)
 }
 
 fn sysfs_mib(path: &Path) -> Option<u64> {
@@ -574,12 +719,14 @@ fn vulkan_measure(
     }))
 }
 
-/// RAM, and the GPU of the selected heavy engine, as this host has them now.
+/// The host's spec'd RAM, and the GPU of the heavy engine it resolves to. RAM is MemTotal: the
+/// RAM MiOS specs for the host (a Blade's installed RAM, a WSL VM's rendered .wslconfig memory=),
+/// never MemAvailable, so a pick follows the spec and the lanes' memory bounds keep it safe.
 pub fn measure(root: &Path, data: &Value, policy: &Policy) -> Result<Measured, String> {
     let meminfo = fs::read_to_string(root.join("proc/meminfo"))
         .map_err(|e| format!("cannot read /proc/meminfo: {e}"))?;
     let ram_mib = meminfo_total_mib(&meminfo).ok_or("/proc/meminfo has no MemTotal in kB")?;
-    let gpu = match heavy_engine_kind(data, heavy_engine(data))? {
+    let gpu = match resolve_heavy_engine(root, data)?.map(|(_, kind)| kind) {
         Some(GpuKind::Cuda) => cuda_measure(root, policy),
         Some(GpuKind::Vulkan) => vulkan_measure(root, data, policy)?,
         None => None,
@@ -846,10 +993,13 @@ pub fn env_contents(
     }
     for (field, value) in extra.iter() {
         let field: &str = field;
+        // Law 10 bare value: an image reference (":", "@") and a CDI name ("=") are safe under
+        // systemd EnvironmentFile=, bash source and podman --env-file; whitespace, quotes,
+        // "$", "`" and "#" never are.
         if value.is_empty()
             || !value
                 .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"/._-".contains(&c))
+                .all(|c| c.is_ascii_alphanumeric() || b"/._-:=@".contains(&c))
         {
             return Err(format!("{field} value {value:?} is not a bare env value"));
         }
@@ -929,16 +1079,24 @@ pub fn run_model_tier(root: &Path, lane: &str, apply: bool) -> Result<Json, Stri
             set_dotted(&mut overlaid, dotted, value)?;
         }
         admission = crate::gpu_topology::heavy_backend_plan(root, &overlaid)?;
-        if let Some(node) = admission.get("render_node").and_then(Json::as_str) {
-            extra.push(("render_node", node.to_owned()));
-        }
-        if admission.get("backend").and_then(Json::as_str) == Some("vulkan") {
-            let gid = admission
-                .get("device_gid")
-                .and_then(Json::as_u64)
-                .ok_or("Vulkan admission returned no render group")?;
-            extra.push(("render_gid", gid.to_string()));
-        }
+        // What the "auto" unit's placeholders need, whichever backend was admitted: the device
+        // Podman adds (the verified render node, or the exact CUDA CDI name), its group,
+        // llama.cpp's --device and the engine image.
+        let field = |key: &str| admission.get(key).and_then(Json::as_str).map(str::to_owned);
+        let device = field("render_node")
+            .or_else(|| field("cdi_device"))
+            .ok_or("the heavy admission named no device")?;
+        let gid = admission
+            .get("device_gid")
+            .and_then(Json::as_u64)
+            .ok_or("the heavy admission named no device group")?;
+        let llama_device =
+            field("device").ok_or("the heavy admission named no llama.cpp device")?;
+        let image = field("image").ok_or("the heavy admission named no engine image")?;
+        extra.push(("device", device));
+        extra.push(("device_gid", gid.to_string()));
+        extra.push(("llama_device", llama_device));
+        extra.push(("image", image));
     }
     let contents = env_contents(&data, choice, &extra)?;
     let target = root.join(
@@ -1227,14 +1385,18 @@ mod tier_tests {
     // Acceptance hosts. MiB throughout; the arithmetic is in each plan's notes.
 
     #[test]
-    fn x570_mios_dev_8gb_dgpu_and_24gb_vm() {
+    fn x570_mios_dev_at_its_mios_spec_16gb_vm() {
+        // MiOS specs the X570's WSL VM at memory=16GB: 32 GB host - max(8, 50% of 32) =
+        // 16 ([bootstrap.dev_vm.host_reserve]); such a VM reads MemTotal ~15970 MiB.
         let d = with_engine("llamacpp");
         let m = Measured {
-            ram_mib: 24034,
+            ram_mib: 15970,
             gpu: gpu(GpuKind::Cuda, 8192, 0, false),
         };
         let p = plan(&d, &m, &all_present).unwrap();
-        // heavy: 8192 - 1792 = 6400 -> gpu-6g (4847); cpu: min(15622, 24034-6008-2560) = 15466 -> ram-16g
+        // heavy: 8192 - 1792 = 6400 -> gpu-6g (4847)
+        // cpu: min(65% = 10380, 15970 - 25% 3992 - 2560) = 9418 -> ram-16g Qwen3.5-4B Q8_0 128k (7318);
+        //      the 8B rows (9482, 9514) need more than a 16 GB spec
         assert_eq!(
             pick(&p),
             (Some("gpu-6g".into()), Some("ram-16g".into())),
@@ -1242,6 +1404,32 @@ mod tier_tests {
             p
         );
         assert_eq!(p.heavy.budget_mib, 6400);
+        assert_eq!(p.cpu_node.budget_mib, 9418);
+        let cpu = p.cpu_node.entry.as_ref().unwrap();
+        assert_eq!(
+            (cpu.model_file.as_str(), cpu.context),
+            ("Qwen3.5-4B-Q8_0.gguf", 131072)
+        );
+        assert_ne!(p.heavy.entry.as_ref().unwrap().model_file, cpu.model_file);
+    }
+
+    #[test]
+    fn x570_mios_dev_over_its_spec_at_24gb() {
+        // The live VM is hand-set to 24 GB, over the 16 GB MiOS spec: the pick follows the
+        // VM it is given, which is why the spec is applied on the Windows host.
+        let d = with_engine("llamacpp");
+        let m = Measured {
+            ram_mib: 24034,
+            gpu: gpu(GpuKind::Cuda, 8192, 0, false),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        // cpu: min(15622, 24034-6008-2560) = 15466 -> ram-20g LFM2.5-8B-A1B (9514)
+        assert_eq!(
+            pick(&p),
+            (Some("gpu-6g".into()), Some("ram-20g".into())),
+            "{:?}",
+            p
+        );
         assert_eq!(p.cpu_node.budget_mib, 15466);
     }
 
@@ -1253,7 +1441,7 @@ mod tier_tests {
             gpu: None,
         };
         let p = plan(&d, &m, &all_present).unwrap();
-        // cpu: min(9055, 13931-3482-2560) = 7889 -> ram-12g (6945); ram-16g-dense needs 16 GiB of RAM
+        // cpu: min(9055, 13931-3482-2560) = 7889 -> ram-12g (6945); ram-16g and up need a 16 GB spec
         assert_eq!(pick(&p), (None, Some("ram-12g".into())), "{:?}", p);
         assert!(p.cpu_node.entry.as_ref().unwrap().need_mib <= bound_mib("65%", 13931).unwrap());
     }
@@ -1321,10 +1509,10 @@ mod tier_tests {
             gpu: gpu(GpuKind::Cuda, 24564, 0, false),
         };
         let p = plan(&d, &m, &all_present).unwrap();
-        // heavy: 22772 -> gpu-24g (gpt-oss 128k); the cpu-node would pick gpt-oss too, so it takes ram-16g
+        // heavy: 22772 -> gpu-24g (gpt-oss 128k); the cpu-node would pick gpt-oss too, so it takes ram-20g
         assert_eq!(
             pick(&p),
-            (Some("gpu-24g".into()), Some("ram-16g".into())),
+            (Some("gpu-24g".into()), Some("ram-20g".into())),
             "{:?}",
             p
         );
@@ -1346,6 +1534,77 @@ mod tier_tests {
                     e.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_static_cpu_node_fallback_is_the_baked_tool_safe_floor() {
+        let d = vendor();
+        let llama = &d["llamacpp"];
+        let floor = &tier_entries(&d, "cpu_node").unwrap()[0];
+        assert_eq!(floor.name, "ram-floor");
+        assert_eq!(
+            llama["cpu_node_model_file"].as_str(),
+            Some(floor.model_file.as_str())
+        );
+        assert_eq!(
+            llama["cpu_node_context"].as_integer(),
+            Some(floor.context as i64)
+        );
+        assert_eq!(
+            llama["cpu_node_cache_type"].as_str(),
+            Some(floor.cache_type.as_str())
+        );
+        let baked = llama["bake_models"].as_str().unwrap();
+        assert!(
+            baked
+                .split(',')
+                .any(|e| e.split('=').next() == Some(floor.model_file.as_str())),
+            "{baked}"
+        );
+        // Fits a 14G Blade before its first fetch: inside cpu_node_memory_high.
+        assert!(floor.need_mib <= bound_mib("65%", 13931).unwrap());
+    }
+
+    #[test]
+    fn heavy_env_values_take_image_and_cdi_references_and_refuse_shell_text() {
+        let d = vendor();
+        let m = Measured {
+            ram_mib: 15970,
+            gpu: gpu(GpuKind::Cuda, 8192, 0, false),
+        };
+        let p = plan(&d, &m, &all_present).unwrap();
+        let env = env_contents(
+            &d,
+            &p.heavy,
+            &[
+                (
+                    "device",
+                    "nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555".into(),
+                ),
+                ("device_gid", "39".into()),
+                ("llama_device", "CUDA0".into()),
+                ("image", "ghcr.io/mostlygeek/llama-swap:cuda".into()),
+            ],
+        )
+        .unwrap();
+        for line in [
+            "MIOS_LLAMACPP_HEAVY_DEVICE=nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555
+",
+            "MIOS_LLAMACPP_HEAVY_DEVICE_GID=39
+",
+            "MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE=CUDA0
+",
+            "MIOS_LLAMACPP_HEAVY_IMAGE=ghcr.io/mostlygeek/llama-swap:cuda
+",
+        ] {
+            assert!(env.contains(line), "{env}");
+        }
+        for bad in ["$(id)", "a b", "x#y", "`id`", "\"q\""] {
+            assert!(
+                env_contents(&d, &p.heavy, &[("image", bad.into())]).is_err(),
+                "{bad}"
+            );
         }
     }
 

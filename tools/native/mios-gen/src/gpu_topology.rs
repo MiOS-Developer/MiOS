@@ -1737,16 +1737,18 @@ fn heavy_vulkan_drivers(vk: &Value) -> Result<Vec<String>, String> {
 
 /// Read-only admission for the canonical heavy llama.cpp engines. CUDA reuses the
 /// kernel-bound CUDA validator; Vulkan reuses the light lane's render-node validator.
+/// "auto" is admitted as the engine of the GPU kind it detects ([llamacpp.heavy_auto]).
 /// Neither writes or activates the light lane.
 pub fn heavy_backend_plan(root: &Path, data: &Value) -> Result<Json, String> {
-    let engine = data
+    let configured = data
         .get("ai")
         .and_then(|v| v.get("heavy_engine"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let kind = crate::light_tiers::heavy_engine_kind(data, engine)?.ok_or_else(|| {
-        format!("heavy-backend requires a llama.cpp heavy engine (ai.heavy_engine is {engine:?})")
+    let (resolved, kind) = crate::light_tiers::resolve_heavy_engine(root, data)?.ok_or_else(|| {
+        format!("heavy-backend requires a llama.cpp heavy engine and a GPU it serves on (ai.heavy_engine is {configured:?})")
     })?;
+    let engine = resolved.as_str();
     let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
     for key in [
         "heavy_threads",
@@ -2555,6 +2557,102 @@ mod tests {
         data["llamacpp"]["heavy_cache_type"] = Value::String("q4_0".into());
         let err = heavy_backend_plan(root.path(), &data).unwrap_err();
         assert!(err.contains("tool-safe"), "{err}");
+    }
+
+    /// [ai].heavy_engine = "auto" on each host shape: no GPU, WSL dxg without and with the
+    /// Windows NVIDIA CUDA library, an AMD render node, a bare-metal NVIDIA driver too, a pin.
+    #[test]
+    fn auto_detects_cuda_vulkan_or_no_heavy_lane_and_a_pin_still_wins() {
+        use crate::light_tiers::GpuKind;
+        fn auto_on(root: &Path, data: &Value, dri: &Path, sys: &Path) -> Option<(String, GpuKind)> {
+            crate::light_tiers::resolve_heavy_engine_on(root, data, &Host { dri, sys }).unwrap()
+        }
+        fn want(engine: &str, kind: GpuKind) -> Option<(String, GpuKind)> {
+            Some((engine.to_string(), kind))
+        }
+        let mut data = ssot();
+        data["ai"]["heavy_engine"] = Value::String("auto".into());
+
+        // No GPU at all: no heavy lane (the unit's ExecCondition skips it).
+        let bare = tempfile::tempdir().unwrap();
+        let (dri, sys) = (
+            bare.path().join("dev/dri"),
+            bare.path().join("sys/class/drm"),
+        );
+        assert_eq!(auto_on(bare.path(), &data, &dri, &sys), None);
+        // WSL's dxg alone is any vendor's GPU (an AMD or Intel Windows host): still no CUDA.
+        fs::create_dir_all(bare.path().join("dev")).unwrap();
+        fs::write(bare.path().join("dev/dxg"), "").unwrap();
+        assert_eq!(auto_on(bare.path(), &data, &dri, &sys), None);
+        // WSL with the Windows NVIDIA driver's CUDA library: CUDA (the X570's MiOS-DEV).
+        fs::create_dir_all(bare.path().join("usr/lib/wsl/lib")).unwrap();
+        fs::write(bare.path().join("usr/lib/wsl/lib/libcuda.so.1"), "").unwrap();
+        assert_eq!(
+            auto_on(bare.path(), &data, &dri, &sys),
+            want("llamacpp", GpuKind::Cuda)
+        );
+
+        // An amdgpu render node and no NVIDIA driver (the PS5, the B550): Vulkan.
+        let d = fixture();
+        let (dri, sys) = fixture_host(d.path());
+        assert_eq!(
+            auto_on(d.path(), &data, &dri, &sys),
+            want("llamacpp-vulkan", GpuKind::Vulkan)
+        );
+        // The bare-metal NVIDIA driver loaded as well: CUDA, first in [llamacpp.heavy_auto].prefer.
+        fs::create_dir_all(d.path().join("dev")).unwrap();
+        fs::write(d.path().join("dev/nvidiactl"), "").unwrap();
+        assert_eq!(
+            auto_on(d.path(), &data, &dri, &sys),
+            want("llamacpp", GpuKind::Cuda)
+        );
+        let mut vulkan_first = data.clone();
+        vulkan_first["llamacpp"]["heavy_auto"]["prefer"] = Value::Array(vec![
+            Value::String("vulkan".into()),
+            Value::String("cuda".into()),
+        ]);
+        assert_eq!(
+            auto_on(d.path(), &vulkan_first, &dri, &sys),
+            want("llamacpp-vulkan", GpuKind::Vulkan)
+        );
+        // A host pin wins over detection; a vLLM/SGLang pin is not a llama.cpp lane.
+        let mut pinned = data.clone();
+        pinned["ai"]["heavy_engine"] = Value::String("llamacpp-vulkan".into());
+        assert_eq!(
+            auto_on(d.path(), &pinned, &dri, &sys),
+            want("llamacpp-vulkan", GpuKind::Vulkan)
+        );
+        pinned["ai"]["heavy_engine"] = Value::String("vllm".into());
+        assert_eq!(auto_on(d.path(), &pinned, &dri, &sys), None);
+        // A prefer entry that is not a GPU kind is an SSOT error, not a silent skip.
+        let mut bad = data.clone();
+        bad["llamacpp"]["heavy_auto"]["prefer"] = Value::Array(vec![Value::String("rocm".into())]);
+        assert!(crate::light_tiers::resolve_heavy_engine_on(
+            d.path(),
+            &bad,
+            &Host {
+                dri: &dri,
+                sys: &sys
+            }
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn auto_admits_the_detected_cuda_gpu_and_refuses_a_host_without_one() {
+        let (root, mut data) = heavy_cuda_fixture();
+        data["ai"]["heavy_engine"] = Value::String("auto".into());
+        let err = heavy_backend_plan(root.path(), &data).unwrap_err();
+        assert!(err.contains("a GPU it serves on"), "{err}");
+        fs::write(root.path().join("dev/nvidiactl"), "").unwrap();
+        let result = heavy_backend_plan(root.path(), &data).unwrap();
+        assert_eq!(result["engine"], "llamacpp");
+        assert_eq!(result["backend"], "cuda");
+        assert_eq!(result["device"], "CUDA0");
+        assert_eq!(
+            result["cdi_device"],
+            "nvidia.com/gpu=GPU-11111111-2222-3333-4444-555555555555"
+        );
     }
 
     fn cuda_fixture_plan(root: &Path, data: &Value) -> Result<LightBackendPlan, String> {

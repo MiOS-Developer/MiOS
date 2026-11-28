@@ -101,6 +101,10 @@ enum Commands {
         /// Atomically write <[llamacpp.tier_policy].env_dir>/<lane>.env; otherwise plan only.
         #[arg(long)]
         apply: bool,
+        /// Heavy lane only: exit 0 when this host has a GPU the heavy engine serves on, 1 when it
+        /// has none (the "auto" unit's ExecCondition, so systemd skips it), 255 on an error.
+        #[arg(long, conflicts_with = "apply")]
+        probe: bool,
     },
     /// Fail when any lane, tier row or light model-map entry is below the [llamacpp.tool_safe] floor.
     ToolSafe {
@@ -2721,14 +2725,38 @@ fn main() -> ExitCode {
                     .map_err(|message| (message, 1)),
             )
         }
-        Commands::ModelTier { root, lane, apply } => {
+        Commands::ModelTier {
+            root,
+            lane,
+            apply,
+            probe,
+        } => {
             let root = root.unwrap_or_else(|| PathBuf::from("/"));
+            let outcome = if probe {
+                if lane != "heavy" {
+                    Err(("--probe applies to --lane heavy only".to_string(), 255))
+                } else {
+                    match light_tiers::probe_heavy(&root) {
+                        Ok(Some((engine, kind))) => {
+                            println!("{}", serde_json::json!({"lane": "heavy", "engine": engine, "gpu": format!("{kind:?}")}));
+                            Ok(())
+                        }
+                        Ok(None) => Err((
+                            "no GPU the heavy engine serves on: the heavy lane does not start and the CPU lanes keep serving".to_string(),
+                            1,
+                        )),
+                        Err(message) => Err((message, 255)),
+                    }
+                }
+            } else {
+                light_tiers::run_model_tier(&root, &lane, apply)
+                    .map(|report| println!("{report}"))
+                    .map_err(|message| (message, 1))
+            };
             (
                 "model-tier",
                 "<[llamacpp.tier_policy].env_dir>/<lane>.env",
-                light_tiers::run_model_tier(&root, &lane, apply)
-                    .map(|report| println!("{report}"))
-                    .map_err(|message| (message, 1)),
+                outcome,
             )
         }
         Commands::ToolSafe { root, check: _ } => {
