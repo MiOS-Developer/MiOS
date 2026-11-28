@@ -2347,6 +2347,104 @@ pub fn ensure_heavy_cdi(
     Ok(json!({"action":"regenerated","producer":producer,"spec":present()?}))
 }
 
+/// The first line of the heavy image drop-in: who owns it (an existing drop-in without it is
+/// never overwritten).
+const HEAVY_DROPIN_HEADER: &str = "# AI-hint: Native heavy engine image projection: the llama.cpp image of the GPU this host's heavy engine resolves to (mios-gen model-tier --image-dropin); never edit.";
+
+/// The heavy engine's Quadlet drop-in for this host: Image= of the GPU kind the engine resolves
+/// to (CUDA: image.sidecars.llm_heavy_llamacpp, Vulkan: [llamacpp.heavy_vulkan].image_key). The
+/// unit is bootc-bound, so its own Image= stays the concrete CUDA reference and a Vulkan host
+/// gets its image here. None: no llama.cpp heavy engine with a GPU on this host.
+pub fn heavy_image_dropin(root: &Path, data: &Value) -> Result<Option<LightBackendPlan>, String> {
+    let Some((engine, kind)) = crate::light_tiers::resolve_heavy_engine(root, data)? else {
+        return Ok(None);
+    };
+    let llama = data.get("llamacpp").ok_or("missing [llamacpp]")?;
+    let key = match kind {
+        crate::light_tiers::GpuKind::Cuda => "llm_heavy_llamacpp".to_string(),
+        crate::light_tiers::GpuKind::Vulkan => light_string(
+            llama
+                .get("heavy_vulkan")
+                .ok_or("missing [llamacpp.heavy_vulkan]")?,
+            "image_key",
+        )?
+        .to_string(),
+    };
+    let image = data
+        .get("image")
+        .and_then(|i| i.get("sidecars"))
+        .and_then(|s| s.get(&key))
+        .and_then(Value::as_str)
+        .filter(|i| {
+            !i.is_empty()
+                && i.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"/._-:@".contains(&c))
+        })
+        .ok_or_else(|| format!("image.sidecars.{key} is not a single OCI image reference"))?;
+    let policy = llama
+        .get("tier_policy")
+        .ok_or("missing [llamacpp.tier_policy]")?;
+    let dropin = PathBuf::from(light_string(policy, "heavy_dropin")?);
+    if dropin.parent()
+        != Some(Path::new(
+            "/etc/containers/systemd/mios-llm-heavy.container.d",
+        ))
+        || !dropin.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+            name.starts_with("30-")
+                && name.ends_with(".conf")
+                && name
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        })
+    {
+        return Err(
+            "llamacpp.tier_policy.heavy_dropin must be a 30-*.conf in the heavy container's /etc dropin directory"
+                .into(),
+        );
+    }
+    Ok(Some(LightBackendPlan {
+        backend: engine,
+        image: image.to_string(),
+        profile: None,
+        resource: None,
+        pci: None,
+        output: root.join(dropin.strip_prefix("/").map_err(|e| e.to_string())?),
+        contents: format!("{HEAVY_DROPIN_HEADER}\n[Container]\nImage={image}\n"),
+    }))
+}
+
+/// `mios-gen model-tier --lane heavy --image-dropin [--apply [--reload]]`, mios-heavy-engine.service:
+/// write the heavy image drop-in and reload systemd only when it changed, so the heavy start
+/// that follows runs the right image. A host without a GPU for the engine is left alone.
+pub fn run_heavy_image_dropin(root: &Path, apply: bool, reload: bool) -> Result<Json, String> {
+    if reload && (!apply || root != Path::new("/")) {
+        return Err("--reload requires --apply on the live root".into());
+    }
+    let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
+    let Some(plan) = heavy_image_dropin(root, &data)? else {
+        return Ok(
+            json!({"action":"none","reason":"no llama.cpp heavy engine with a GPU on this host"}),
+        );
+    };
+    let changed = if reload {
+        apply_light_with_reload(root, &plan, &mut || {
+            let status = std::process::Command::new("systemctl")
+                .arg("daemon-reload")
+                .status()
+                .map_err(|e| format!("cannot reload systemd: {e}"))?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("systemd daemon-reload failed: {status}"))
+            }
+        })?
+    } else {
+        apply && apply_light_backend(root, &plan)?
+    };
+    Ok(plan.to_json(changed))
+}
+
 /// [`ensure_heavy_cdi`] on the live root, running the producer as this (root) unit step.
 pub fn run_ensure_heavy_cdi(root: &Path) -> Result<Json, String> {
     let data = mios_resolver::resolve_merged(Some(root), false).map_err(|e| e.to_string())?;
@@ -3475,7 +3573,13 @@ mod tests {
         let bare = tempfile::tempdir().unwrap();
         let mut auto = ssot();
         auto["ai"]["heavy_engine"] = Value::String("auto".into());
-        let d = fixture();
+        let d = rooted_fixture();
+        assert_eq!(
+            crate::light_tiers::resolve_heavy_engine(d.path(), &auto)
+                .unwrap()
+                .map(|(engine, _)| engine),
+            Some("llamacpp-vulkan".to_string())
+        );
         for root in [bare.path(), d.path()] {
             let report = ensure_heavy_cdi(root, &auto, &mut |_| {
                 panic!("ran the CDI producer on a host whose heavy engine is not CUDA")
@@ -3510,6 +3614,68 @@ mod tests {
         })
         .is_err());
         assert!(!ran);
+    }
+
+    /// [`fixture`] laid out at the root's own /dev/dri and /sys/class/drm, where the heavy
+    /// engine's detection looks on a live host.
+    fn rooted_fixture() -> tempfile::TempDir {
+        let d = fixture();
+        fs::create_dir_all(d.path().join("dev")).unwrap();
+        symlink(d.path().join("dri"), d.path().join("dev/dri")).unwrap();
+        fs::create_dir_all(d.path().join("sys/class")).unwrap();
+        symlink(d.path().join("sys"), d.path().join("sys/class/drm")).unwrap();
+        d
+    }
+
+    #[test]
+    fn the_heavy_image_dropin_carries_the_detected_gpus_image() {
+        let mut data = ssot();
+        data["ai"]["heavy_engine"] = Value::String("auto".into());
+        let sidecar = |key: &str| data["image"]["sidecars"][key].as_str().unwrap().to_string();
+        // An amdgpu render node: the Vulkan image.
+        let d = rooted_fixture();
+        let plan = heavy_image_dropin(d.path(), &data).unwrap().unwrap();
+        let vulkan = sidecar(
+            data["llamacpp"]["heavy_vulkan"]["image_key"]
+                .as_str()
+                .unwrap(),
+        );
+        assert_eq!(plan.image, vulkan);
+        assert_eq!(plan.backend, "llamacpp-vulkan");
+        assert!(plan.contents.starts_with(HEAVY_DROPIN_HEADER));
+        assert!(plan
+            .contents
+            .ends_with(&format!("\n[Container]\nImage={vulkan}\n")));
+        assert!(plan.output.ends_with(
+            "etc/containers/systemd/mios-llm-heavy.container.d/30-mios-heavy-engine.conf"
+        ));
+        // Written once, then a no-op; a foreign drop-in at the path is never overwritten.
+        assert!(apply_light_backend(d.path(), &plan).unwrap());
+        assert!(!apply_light_backend(d.path(), &plan).unwrap());
+        fs::write(&plan.output, "[Container]\nImage=evil\n").unwrap();
+        assert!(apply_light_backend(d.path(), &plan).is_err());
+        // The bare-metal NVIDIA driver as well: the CUDA image, which the bound unit also names.
+        fs::create_dir_all(d.path().join("dev")).unwrap();
+        fs::write(d.path().join("dev/nvidiactl"), "").unwrap();
+        let plan = heavy_image_dropin(d.path(), &data).unwrap().unwrap();
+        assert_eq!(plan.image, sidecar("llm_heavy_llamacpp"));
+        // No GPU, or a vLLM pin: nothing to project.
+        let bare = tempfile::tempdir().unwrap();
+        assert!(heavy_image_dropin(bare.path(), &data).unwrap().is_none());
+        let mut vllm = data.clone();
+        vllm["ai"]["heavy_engine"] = Value::String("vllm".into());
+        assert!(heavy_image_dropin(d.path(), &vllm).unwrap().is_none());
+        // The drop-in path is the heavy container's own 30-*.conf, nothing else.
+        for path in [
+            "/etc/containers/systemd/mios-llm-light.container.d/30-x.conf",
+            "/etc/containers/systemd/mios-llm-heavy.container.d/10-x.conf",
+            "/etc/containers/systemd/mios-llm-heavy.container.d/30-x y.conf",
+        ] {
+            let mut bad = data.clone();
+            bad["llamacpp"]["tier_policy"]["heavy_dropin"] = Value::String(path.into());
+            assert!(heavy_image_dropin(d.path(), &bad).is_err(), "{path}");
+        }
+        assert!(run_heavy_image_dropin(d.path(), false, true).is_err());
     }
 
     #[test]

@@ -162,4 +162,17 @@ _ssot_lint_ports_dummy=(
     "MIOS_PORTS_WIN_LLM_LIGHT"
     "MIOS_PORT_WIN_LLM_LIGHT"
     "MIOS_VERSIONS_FEDORA"
+    # [generator].placeholders the model tier rewrites per host at start (systemd expands them
+    # from install.env, then the lane's <[llamacpp.tier_policy].env_dir>/<lane>.env).
+    "MIOS_LLAMACPP_CPU_NODE_MODEL_FILE"
+    "MIOS_LLAMACPP_CPU_NODE_CONTEXT"
+    "MIOS_LLAMACPP_CPU_NODE_CACHE_TYPE"
+    "MIOS_LLAMACPP_HEAVY_MODEL_FILE"
+    "MIOS_LLAMACPP_HEAVY_CONTEXT"
+    "MIOS_LLAMACPP_HEAVY_CACHE_TYPE"
+    "MIOS_LLAMACPP_HEAVY_DEVICE"
+    "MIOS_LLAMACPP_HEAVY_DEVICE_GID"
+    "MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE"
+    "MIOS_LLAMACPP_HEAVY_GPU_LAYERS"
+    "MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB"
 )

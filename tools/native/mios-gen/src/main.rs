@@ -109,6 +109,13 @@ enum Commands {
         /// CUDA host, run the specs' producer once (a step before the admission).
         #[arg(long, conflicts_with_all = ["apply", "probe"])]
         ensure_cdi: bool,
+        /// Heavy lane only: project the image of the GPU the heavy engine resolves to as the
+        /// heavy container's Quadlet drop-in (mios-heavy-engine.service); written with --apply.
+        #[arg(long, conflicts_with_all = ["probe", "ensure_cdi"])]
+        image_dropin: bool,
+        /// With --image-dropin --apply on the live root: reload systemd when the drop-in changed.
+        #[arg(long, requires = "image_dropin")]
+        reload: bool,
     },
     /// Fail when any lane, tier row or light model-map entry is below the [llamacpp.tool_safe] floor.
     ToolSafe {
@@ -2735,9 +2742,19 @@ fn main() -> ExitCode {
             apply,
             probe,
             ensure_cdi,
+            image_dropin,
+            reload,
         } => {
             let root = root.unwrap_or_else(|| PathBuf::from("/"));
-            let outcome = if ensure_cdi {
+            let outcome = if image_dropin {
+                if lane != "heavy" {
+                    Err(("--image-dropin applies to --lane heavy only".to_string(), 1))
+                } else {
+                    gpu_topology::run_heavy_image_dropin(&root, apply, reload)
+                        .map(|report| println!("{report}"))
+                        .map_err(|message| (message, 1))
+                }
+            } else if ensure_cdi {
                 if lane != "heavy" {
                     Err(("--ensure-cdi applies to --lane heavy only".to_string(), 1))
                 } else {

@@ -177,7 +177,8 @@ class TestSeatActivatesNothing(unittest.TestCase):
         c = engine["Container"]
         self.assertEqual(c["AddDevice"], "${MIOS_LLAMACPP_HEAVY_DEVICE}")
         self.assertEqual(c["GroupAdd"], "${MIOS_LLAMACPP_HEAVY_DEVICE_GID}")
-        self.assertEqual(c["Image"], "${MIOS_LLAMACPP_HEAVY_IMAGE}")
+        # A bootc-bound Quadlet: Image= is concrete; a Vulkan host's image comes as a drop-in.
+        self.assertEqual(c["Image"], "${MIOS_LLM_HEAVY_LLAMACPP_IMAGE}")
         self.assertIn("--device ${MIOS_LLAMACPP_HEAVY_LLAMA_DEVICE} --n-gpu-layers ${MIOS_LLAMACPP_HEAVY_GPU_LAYERS} --fit-target ${MIOS_LLAMACPP_HEAVY_FIT_TARGET_MIB}", c["Exec"])
         self.assertIn("--flash-attn on", c["Exec"])
         self.assertIn("--cache-type-k ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE} --cache-type-v ${MIOS_LLAMACPP_HEAVY_CACHE_TYPE}", c["Exec"])
@@ -187,7 +188,7 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertNotEqual(c["User"], "0")
         placeholders = self.d["generator"]["placeholders"]
         lane_keys = self.d["llamacpp"]["tier_lanes"]["heavy"]["keys"]
-        for field in ("device", "device_gid", "llama_device", "image", "gpu_layers", "fit_target_mib"):
+        for field in ("device", "device_gid", "llama_device", "gpu_layers", "fit_target_mib"):
             dotted = lane_keys[field]
             section, key = dotted.split(".", 1)
             self.assertIn(key, self.d[section], dotted)
@@ -196,6 +197,32 @@ class TestSeatActivatesNothing(unittest.TestCase):
         self.assertEqual(auto["prefer"][0], "cuda")
         self.assertTrue(set(auto["prefer"]) <= set(self.d["llamacpp"]["tier_lanes"]["heavy"]["engines"].values()))
         self.assertIn("auto", self.d["images"]["mios-llm-heavy"]["engine"])
+
+    def test_the_auto_heavy_image_is_projected_before_each_start_never_a_placeholder(self):
+        # bootc pulls every bound Quadlet's Image= at upgrade, so it can never be a runtime
+        # placeholder; mios-heavy-engine.service writes the Vulkan image as a drop-in instead.
+        heavy = self.d["containers"]["mios-llm-heavy"]
+        auto = heavy["engine"]["auto"]
+        self.assertNotIn("${MIOS_LLAMACPP_HEAVY_IMAGE}", str(heavy))
+        self.assertNotIn("MIOS_LLAMACPP_HEAVY_IMAGE", self.d["generator"]["placeholders"])
+        self.assertNotIn("heavy_image", self.d["llamacpp"])
+        self.assertEqual(auto["Unit"]["Requires"], "mios-heavy-engine.service")
+        self.assertIn("mios-heavy-engine.service", auto["Unit"]["After"].split())
+        for kept in heavy["Unit"]["After"].split():
+            self.assertIn(kept, auto["Unit"]["After"].split(), kept)
+        unit = self.d["units"]["mios-heavy-engine.service"]
+        self.assertEqual(unit["Unit"]["Before"], "mios-llm-heavy.service")
+        self.assertEqual(unit["Service"]["Type"], "oneshot")
+        self.assertEqual(unit["Service"]["RemainAfterExit"], "no")
+        self.assertEqual(unit["Service"]["ExecStart"],
+                         "/usr/bin/mios-gen model-tier --root / --lane heavy --image-dropin --apply --reload")
+        self.assertNotIn("Install", unit)
+        dropin = self.d["llamacpp"]["tier_policy"]["heavy_dropin"]
+        self.assertTrue(dropin.startswith("/etc/containers/systemd/mios-llm-heavy.container.d/30-"), dropin)
+        # Both images it can pick are baked into bootc's read-only store.
+        core = self.d["build"]["bake"]["core"]
+        for key in ("llm_heavy_llamacpp", self.d["llamacpp"]["heavy_vulkan"]["image_key"]):
+            self.assertIn(self.d["image"]["sidecars"][key], core, key)
 
     def test_heavy_gpu_layers_and_fit_margin_come_from_the_ssot(self):
         # A dedicated dGPU or APU keeps every layer on the device; the WSL transport, whose
