@@ -38,16 +38,10 @@ models:
   # alias keeps every pipeline-emitted micro name resolving onto the new model.
   # Part 10 CONV-04: --cache-reuse 256 (gate: MIOS_CONVERGE_INFERENCE_LLAMA_CACHE_REUSE_TOKENS > 0); --np 4 for shared-prefix concurrency.
   # TOOL-SAFE: lfm2-700m.gguf is LFM2-700M at Q8_0, the [llamacpp.tool_safe] small floor
-  # for a sub-1B non-reasoning micro. It also backs the mios-micro names: their old
-  # entry ran the mios-micro image's Qwen2.5-Coder-1.5B at Q4_K_M, below that floor,
-  # as a second always-resident micro. One micro GGUF in RAM is what lets the light
-  # lane's helpers fit a 14G Blade's 25% bound next to its GPU and CPU lanes.
+  # for a sub-1B non-reasoning micro.
   "lfm2:700m":
     aliases:
       - qwen3:1.7b
-      - mios-micro:1.5b
-      - mios-micro
-      - micro
     cmd: >
       /app/llama-server --model /models/lfm2-700m.gguf
       --port ${PORT} --host 127.0.0.1
@@ -57,6 +51,28 @@ models:
       --slot-save-path /var/lib/mios/llamacpp/slots --jinja
     proxy: "http://127.0.0.1:${PORT}"
     ttl: 300
+
+  # mios-micro:1.5b -- the resident JSON-tool micro (mios-log-watcher, mios-cron-director,
+  # prefilter, mios-micro-llm). Qwen2.5-Coder-1.5B-Instruct (Apache-2.0, 'qwen2' arch) at
+  # Q8_0, the [llamacpp.tool_safe] small floor for a sub-4B non-reasoning model; it emits
+  # native OpenAI JSON tool calls (llama.cpp's Hermes-style <tool_call> handler), which
+  # LFM2's Pythonic format does not. The GGUF is the Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF
+  # upstream file under /models, fetched on every host by [[ai.firstboot_models]]; the
+  # mios-micro OCI image's /models-micro Q4_K_M file is below the floor and is not served.
+  # 8k context keeps its KV at ~0.1 GiB (q8_0), so it stays resident (ttl -1).
+  "mios-micro:1.5b":
+    aliases:
+      - mios-micro
+      - micro
+    cmd: >
+      /app/llama-server --model /models/qwen2.5-coder-1.5b-instruct-q8_0.gguf
+      --port ${PORT} --host 127.0.0.1
+      --ctx-size 8192 --parallel 1 --cache-reuse 256
+      --n-gpu-layers 999 --flash-attn on
+      --cache-type-k q8_0 --cache-type-v q8_0
+      --slot-save-path /var/lib/mios/llamacpp/slots --jinja
+    proxy: "http://127.0.0.1:${PORT}"
+    ttl: -1
 
   # light_brain + coder -- IBM Granite 4.1 8B Instruct (dense). fleet
   # modernization: the served chat/reasoning GGUF moves from gemma4:12b to Granite 4.1
@@ -368,5 +384,6 @@ groups:
       - "granite4.1:8b"
       - "lfm2:700m"
       - "nomic-embed-text"
+      - "mios-micro:1.5b"
       - "lfm3:1.7b"
       - "embeddinggemma2:270m"
